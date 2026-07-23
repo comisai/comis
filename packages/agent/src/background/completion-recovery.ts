@@ -3,7 +3,7 @@ import {
   conversationScopeToSessionKey,
   type BackgroundTaskOrigin,
 } from "@comis/core";
-import { isSilentResponse, type Result } from "@comis/shared";
+import { isSilentResponse, ok, type Result } from "@comis/shared";
 import type { BackgroundTaskManager } from "./background-task-manager.js";
 import type {
   BackgroundContinuationOutbox,
@@ -20,7 +20,10 @@ type RecoveryTaskManager = Pick<
   | "getTask"
   | "persistContinuationOutbox"
   | "persistCleanupPendingOutbox"
+  | "persistFinalizedResult"
   | "scheduleDispatchRetry"
+  | "scheduleStateRetry"
+  | "recordRecoveryIncident"
 >;
 
 interface CompletionRecoveryDeps {
@@ -36,7 +39,7 @@ interface CompletionRecoveryDeps {
     input: Omit<BackgroundFinalizedResultRecoveryInput, "journalKey">,
   ): Promise<Result<void, Error>>;
   reconcileDelivery(
-    input: BackgroundCompletionDeliveryInput,
+    input: Omit<BackgroundCompletionDeliveryInput, "onSendStart">,
   ): Promise<Result<BackgroundCompletionDeliveryOutcome, Error>>;
   deliveryProtection: BackgroundContinuationOutbox["deliveryProtection"];
   commitState(
@@ -64,6 +67,16 @@ interface CompletionRecoveryDeps {
 }
 
 export function createCompletionRecovery(deps: CompletionRecoveryDeps) {
+  function scheduleRecoveryRetry(
+    taskId: string,
+    origin: BackgroundTaskOrigin,
+    toolName: string,
+  ): void {
+    deps.taskManager.recordRecoveryIncident(taskId);
+    deps.taskManager.scheduleDispatchRetry(taskId);
+    deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+  }
+
   async function finishCleanup(
     taskId: string,
     origin: BackgroundTaskOrigin,
@@ -73,8 +86,7 @@ export function createCompletionRecovery(deps: CompletionRecoveryDeps) {
     if (task?.dispatchState !== "cleanup_pending" || task.continuationOutbox === undefined) return;
     const projected = conversationScopeToSessionKey(origin.turnScope.conversation);
     if (!projected.ok) {
-      deps.taskManager.scheduleDispatchRetry(taskId);
-      deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+      scheduleRecoveryRetry(taskId, origin, toolName);
       return;
     }
     const cleaned = await deps.cleanupFinalizedSession({
@@ -82,22 +94,21 @@ export function createCompletionRecovery(deps: CompletionRecoveryDeps) {
       sessionKey: projected.value,
     });
     if (!cleaned.ok) {
-      deps.taskManager.scheduleDispatchRetry(taskId);
-      deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+      scheduleRecoveryRetry(taskId, origin, toolName);
       return;
     }
     if (isSilentResponse(task.continuationOutbox.response)) {
       const delivered = deps.commitState(taskId, "delivered", ["cleanup_pending"]);
       if (!delivered.ok) {
-        deps.taskManager.scheduleDispatchRetry(taskId);
-        deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+        deps.taskManager.scheduleStateRetry(taskId, "delivered", ["cleanup_pending"]);
+        scheduleRecoveryRetry(taskId, origin, toolName);
       }
       return;
     }
     const ready = deps.commitState(taskId, "ready_to_deliver", ["cleanup_pending"]);
     if (!ready.ok) {
-      deps.taskManager.scheduleDispatchRetry(taskId);
-      deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+      deps.taskManager.scheduleStateRetry(taskId, "ready_to_deliver", ["cleanup_pending"]);
+      scheduleRecoveryRetry(taskId, origin, toolName);
       return;
     }
     if (ready.value) {
@@ -122,35 +133,49 @@ export function createCompletionRecovery(deps: CompletionRecoveryDeps) {
       if (parked.ok && parked.value) {
         deps.emitRoutingOutcome(taskId, origin, toolName, false, "uncertain_parked");
       } else if (!parked.ok) {
-        deps.taskManager.scheduleDispatchRetry(taskId);
-        deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+        scheduleRecoveryRetry(taskId, origin, toolName);
       }
       return;
     }
-    const recovered = await deps.recoverFinalizedResult({
-      agentId: origin.turnScope.conversation.agentId,
-      sessionKey: projected.value,
-      journalKey: task.continuationExecutionId,
-    });
+    let protectedResult = task.finalizedResult ?? task._pendingFinalizedResult;
+    if (task.finalizedResult === undefined && protectedResult !== undefined) {
+      const persistedResult = deps.taskManager.persistFinalizedResult(
+        taskId,
+        protectedResult,
+        [currentState],
+      );
+      if (!persistedResult.ok) {
+        scheduleRecoveryRetry(taskId, origin, toolName);
+        return;
+      }
+      protectedResult = deps.taskManager.getTask(taskId)?.finalizedResult;
+    }
+    const recovered = protectedResult === undefined
+      ? await deps.recoverFinalizedResult({
+          agentId: origin.turnScope.conversation.agentId,
+          sessionKey: projected.value,
+          journalKey: task.continuationExecutionId,
+        })
+      : ok(protectedResult);
     if (!recovered.ok) {
-      deps.taskManager.scheduleDispatchRetry(taskId);
-      deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+      scheduleRecoveryRetry(taskId, origin, toolName);
       return;
     }
     if (recovered.value === undefined) {
       if (currentState === "execution_claimed") {
         const pending = deps.commitState(taskId, "pending", ["execution_claimed"]);
-        if ((pending.ok && pending.value) || !pending.ok) {
+        if (pending.ok && pending.value) {
           deps.taskManager.scheduleDispatchRetry(taskId);
           deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+        } else if (!pending.ok) {
+          scheduleRecoveryRetry(taskId, origin, toolName);
         }
       } else {
         const parked = deps.commitState(taskId, "parked_uncertain", ["executing"]);
         if (parked.ok && parked.value) {
           deps.emitRoutingOutcome(taskId, origin, toolName, false, "uncertain_parked");
         } else if (!parked.ok) {
-          deps.taskManager.scheduleDispatchRetry(taskId);
-          deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+          scheduleRecoveryRetry(taskId, origin, toolName);
         }
       }
       return;
@@ -169,8 +194,7 @@ export function createCompletionRecovery(deps: CompletionRecoveryDeps) {
         [currentState],
       );
       if (!persisted.ok) {
-        deps.taskManager.scheduleDispatchRetry(taskId);
-        deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+        scheduleRecoveryRetry(taskId, origin, toolName);
         return;
       }
       await finishCleanup(taskId, origin, toolName);
@@ -179,8 +203,8 @@ export function createCompletionRecovery(deps: CompletionRecoveryDeps) {
     if (isSilentResponse(recovered.value.response)) {
       const delivered = deps.commitState(taskId, "delivered", [currentState]);
       if (!delivered.ok) {
-        deps.taskManager.scheduleDispatchRetry(taskId);
-        deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+        deps.taskManager.scheduleStateRetry(taskId, "delivered", [currentState]);
+        scheduleRecoveryRetry(taskId, origin, toolName);
       }
       return;
     }
@@ -190,8 +214,7 @@ export function createCompletionRecovery(deps: CompletionRecoveryDeps) {
       [currentState],
     );
     if (!persisted.ok) {
-      deps.taskManager.scheduleDispatchRetry(taskId);
-      deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+      scheduleRecoveryRetry(taskId, origin, toolName);
       return;
     }
     await deps.deliverPersistedOutbox(taskId, origin, recoveredOutbox);
@@ -211,8 +234,7 @@ export function createCompletionRecovery(deps: CompletionRecoveryDeps) {
     });
     const toolName = deps.taskManager.getTask(taskId)?.toolName ?? "background_task";
     if (!reconciled.ok) {
-      deps.taskManager.scheduleDispatchRetry(taskId);
-      deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+      scheduleRecoveryRetry(taskId, origin, toolName);
       return;
     }
     if (reconciled.value.kind === "accepted") {
@@ -225,14 +247,19 @@ export function createCompletionRecovery(deps: CompletionRecoveryDeps) {
           true,
           outbox.kind === "continuation" ? "continuation_accepted" : "fallback_accepted",
         );
+      } else if (!delivered.ok) {
+        deps.taskManager.scheduleStateRetry(taskId, "delivered", ["delivering"]);
+        scheduleRecoveryRetry(taskId, origin, toolName);
       }
       return;
     }
     if (reconciled.value.kind === "retryable_pre_send") {
-      const ready = deps.commitState(taskId, "ready_to_deliver", ["delivering"]);
+      const ready = deps.commitState(taskId, "pre_send", ["delivering"]);
       if ((ready.ok && ready.value) || !ready.ok) {
-        deps.taskManager.scheduleDispatchRetry(taskId);
-        deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+        if (!ready.ok) {
+          deps.taskManager.scheduleStateRetry(taskId, "pre_send", ["delivering"]);
+        }
+        scheduleRecoveryRetry(taskId, origin, toolName);
       }
       return;
     }
@@ -248,6 +275,9 @@ export function createCompletionRecovery(deps: CompletionRecoveryDeps) {
         false,
         parkedState === "parked_permanent" ? "permanent_parked" : "uncertain_parked",
       );
+    } else if (!parked.ok) {
+      deps.taskManager.scheduleStateRetry(taskId, parkedState, ["delivering"]);
+      scheduleRecoveryRetry(taskId, origin, toolName);
     }
   }
 

@@ -25,6 +25,7 @@ import {
 import { runPostBatchContinuation } from "../post-batch-continuation.js";
 import { runNarrateNudge } from "../narrate-nudge.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
+import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { TurnBudgetTracker } from "../../budget/turn-budget-tracker.js";
@@ -132,6 +133,11 @@ async function maybeEscalateOutput(
     return originalStreamFn(model, context, options);
   };
 
+  const guardProviderDispatch = resolveProviderDispatchGuard(
+    params.executionOverrides?.onProviderStart,
+  );
+  const admitted = guardProviderDispatch();
+  if (!admitted.ok) return true;
   try {
     await withPromptTimeout(
       session.prompt(messageText, {
@@ -230,6 +236,7 @@ async function processSuccessPath(
       const continuationResult = await runContinuationTurn(
         session,
         "Please provide a visible response summarizing what you did.",
+        resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
       );
       if (continuationResult.ok) {
         const lateRecovered = getVisibleAssistantText(session);
@@ -355,6 +362,9 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
     logger: deps.logger,
     agentId,
     getVisibleAssistantText,
+    guardProviderDispatch: resolveProviderDispatchGuard(
+      params.executionOverrides?.onProviderStart,
+    ),
   });
   if (continuationResult.ok) {
     const v = continuationResult.value;
@@ -393,6 +403,9 @@ async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
     logger: deps.logger,
     agentId,
     getVisibleAssistantText,
+    guardProviderDispatch: resolveProviderDispatchGuard(
+      params.executionOverrides?.onProviderStart,
+    ),
   });
   if (outcome.recovered && outcome.response) {
     result.response = outcome.response;
@@ -433,7 +446,11 @@ async function runBudgetContinuation(
       "Budget continuation nudge",
     );
 
-    const continuationResult = await runContinuationTurn(session, budgetNudgeText);
+    const continuationResult = await runContinuationTurn(
+      session,
+      budgetNudgeText,
+      resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
+    );
     if (!continuationResult.ok) {
       deps.logger.warn(
         { err: toSafeErrorLogString(continuationResult.error), hint: "Budget continuation turn failed; preserving response collected so far", errorKind: "dependency" as ErrorKind },

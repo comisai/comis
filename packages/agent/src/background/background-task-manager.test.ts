@@ -4,6 +4,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createConversationRef, safePath, TypedEventBus } from "@comis/core";
+import { ok } from "@comis/shared";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
 import { loadTask, persistTaskSync } from "./background-task-persistence.js";
 import type { BackgroundTaskOrigin, PersistedTaskState } from "./background-task-types.js";
@@ -161,6 +162,32 @@ describe("BackgroundTaskManager", () => {
       if (result.ok) return;
       expect(result.error.message).toContain("total");
     });
+
+    it("rejects admission when the protected task record cannot commit", () => {
+      const blockedDataDir = safePath(dataDir, "blocked");
+      writeFileSync(blockedDataDir, "not-a-directory");
+      const blockedManager = createBackgroundTaskManager({
+        dataDir: blockedDataDir,
+        eventBus,
+        logger,
+        clock: testClock,
+        timers: testTimers,
+      });
+
+      const promoted = blockedManager.promote(
+        "tool",
+        new Promise(() => {}),
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+
+      expect(promoted.ok).toBe(false);
+      expect(blockedManager.getAllTasks()).toHaveLength(0);
+      expect(eventBus.emit).not.toHaveBeenCalledWith(
+        "background_task:promoted",
+        expect.anything(),
+      );
+    });
   });
 
   describe("complete", () => {
@@ -190,6 +217,28 @@ describe("BackgroundTaskManager", () => {
       expect((eventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
         "background_task:completed",
         expect.objectContaining({ agentId: "agent-1", toolName: "tool" }),
+      );
+    });
+
+    it("retains running ownership when terminal persistence fails", () => {
+      const result = manager.promote(
+        "tool",
+        new Promise(() => {}),
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+      if (!result.ok) return;
+      const agentDir = safePath(dataDir, "agent-1");
+      rmSync(agentDir, { recursive: true, force: true });
+      writeFileSync(agentDir, "not-a-directory");
+
+      const completed = manager.complete(result.value, "done");
+
+      expect(completed.ok).toBe(false);
+      expect(manager.getTask(result.value)?.status).toBe("running");
+      expect(eventBus.emit).not.toHaveBeenCalledWith(
+        "background_task:completed",
+        expect.objectContaining({ taskId: result.value }),
       );
     });
   });
@@ -466,6 +515,47 @@ describe("BackgroundTaskManager", () => {
         { count: 1 },
         "Recovered background tasks marked as failed",
       );
+    });
+
+    it("records a canonical incident when startup terminalization cannot persist", () => {
+      const task: PersistedTaskState = {
+        id: "recovered-storage-failure",
+        toolName: "tool1",
+        status: "running",
+        startedAt: 1000,
+        origin: buildOrigin({ agentId: "a1" }),
+        continuationExecutionId: "recovered-storage-failure",
+        dispatchAttempts: 0,
+      };
+      persistTaskSync(dataDir, task);
+      const recordIncident = vi.fn(() => ok(undefined));
+      const mgr2 = createBackgroundTaskManager({
+        dataDir,
+        eventBus,
+        logger,
+        clock: testClock,
+        timers: testTimers,
+        persistenceOps: {
+          open: vi.fn(() => {
+            throw new Error("storage unavailable");
+          }),
+          write: vi.fn(),
+          sync: vi.fn(),
+          close: vi.fn(),
+          rename: vi.fn(),
+          unlink: vi.fn(),
+        },
+      });
+
+      mgr2.recoverOnStartup(recordIncident);
+
+      expect(mgr2.getTask(task.id)?.status).toBe("running");
+      expect(recordIncident).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: task.id,
+        toolName: task.toolName,
+        sessionKey: expect.any(String),
+        projectedSessionKey: expect.any(Object),
+      }));
     });
   });
 

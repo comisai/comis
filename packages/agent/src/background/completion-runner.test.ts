@@ -94,12 +94,21 @@ function executeFinalized(result: Record<string, unknown>) {
         value: Record<string, unknown>,
         phase: "cleanup_pending" | "ready",
       ) => Promise<void>;
+      onJournalFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
     } | undefined;
     const started = overrides?.onProviderStart?.();
     if (started !== undefined && !started.ok) return Promise.reject(started.error);
+    await overrides?.onJournalFinalizedResult?.(result);
     await overrides?.onFinalizedResult?.(result, "ready");
     return result;
   };
+}
+
+async function acceptDelivery(input: Parameters<BackgroundCompletionRunnerDeps["deliverCompletion"]>[0]) {
+  const started = input.onSendStart();
+  return started.ok
+    ? { kind: "accepted" as const }
+    : { kind: "retryable_pre_send" as const, errorKind: "resource" as const, message: started.error.message };
 }
 
 describe("createBackgroundCompletionRunner", () => {
@@ -111,7 +120,10 @@ describe("createBackgroundCompletionRunner", () => {
     commitDispatchState: ReturnType<typeof vi.fn>;
     persistContinuationOutbox: ReturnType<typeof vi.fn>;
     persistCleanupPendingOutbox: ReturnType<typeof vi.fn>;
+    persistFinalizedResult: ReturnType<typeof vi.fn>;
+    recordRecoveryIncident: ReturnType<typeof vi.fn>;
     scheduleDispatchRetry: ReturnType<typeof vi.fn>;
+    scheduleStateRetry: ReturnType<typeof vi.fn>;
   };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
   let commitDispatchState: ReturnType<typeof vi.fn>;
@@ -147,7 +159,10 @@ describe("createBackgroundCompletionRunner", () => {
         return ok(undefined);
       }),
       persistCleanupPendingOutbox: vi.fn(),
+      persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+      recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
       scheduleDispatchRetry: vi.fn(),
+      scheduleStateRetry: vi.fn(),
     };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
   });
@@ -156,7 +171,12 @@ describe("createBackgroundCompletionRunner", () => {
     maxBackgroundHops = 3,
     isTurnInFlight?: (key: string) => boolean,
     assembleToolsForAgent?: BackgroundCompletionRunnerDeps["assembleToolsForAgent"],
-    deliverCompletion: BackgroundCompletionRunnerDeps["deliverCompletion"] = vi.fn().mockResolvedValue({ kind: "accepted" }),
+    deliverCompletion: BackgroundCompletionRunnerDeps["deliverCompletion"] = vi.fn(async (input) => {
+      const started = input.onSendStart();
+      return started.ok
+        ? { kind: "accepted" as const }
+        : { kind: "retryable_pre_send" as const, errorKind: "resource" as const, message: started.error.message };
+    }),
   ) {
     return createBackgroundCompletionRunner({
       eventBus,
@@ -166,7 +186,12 @@ describe("createBackgroundCompletionRunner", () => {
       recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
       cleanupFinalizedSession: vi.fn().mockResolvedValue(ok(undefined)),
       reconcileDelivery: vi.fn().mockResolvedValue(ok({ kind: "accepted" })),
-      deliverFallback: async ({ origin, response }) => {
+      deliverFallback: async (input) => {
+        const started = input.onSendStart();
+        if (!started.ok) {
+          return { kind: "retryable_pre_send" as const, errorKind: "resource" as const, message: started.error.message };
+        }
+        const { origin, response } = input;
         await fallbackNotifyFn({
           agentId: origin.turnScope.conversation.agentId,
           message: response,
@@ -232,6 +257,7 @@ describe("createBackgroundCompletionRunner", () => {
     taskManager.getTask.mockReturnValue(task);
     executor.execute.mockImplementation(async (...args: unknown[]) => {
       const overrides = args[7] as {
+        onJournalFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
         onFinalizedResult?: (
           value: Record<string, unknown>,
           phase: "cleanup_pending" | "ready",
@@ -242,10 +268,11 @@ describe("createBackgroundCompletionRunner", () => {
         executionId: "execution-pre-provider",
         finishReason: "error",
       };
+      await overrides?.onJournalFinalizedResult?.(result);
       await overrides?.onFinalizedResult?.(result, "ready");
       return result;
     });
-    const deliverCompletion = vi.fn().mockResolvedValue({ kind: "accepted" });
+    const deliverCompletion = vi.fn(acceptDelivery);
     const runner = build(3, undefined, undefined, deliverCompletion);
 
     eventBus.emit("background_task:completed", {
@@ -269,6 +296,14 @@ describe("createBackgroundCompletionRunner", () => {
       expect.objectContaining({ response: "pre-provider response" }),
       ["execution_claimed", "executing"],
     );
+    expect(taskManager.persistFinalizedResult).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({
+        response: "pre-provider response",
+        executionId: "execution-pre-provider",
+      }),
+      ["execution_claimed", "executing"],
+    );
     expect(deliverCompletion).toHaveBeenCalledOnce();
     expect(task.dispatchState).toBe("delivered");
     await runner.shutdown();
@@ -279,6 +314,7 @@ describe("createBackgroundCompletionRunner", () => {
     taskManager.getTask.mockReturnValue(task);
     executor.execute.mockImplementation(async (...args: unknown[]) => {
       const overrides = args[7] as {
+        onJournalFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
         onFinalizedResult?: (
           value: Record<string, unknown>,
           phase: "cleanup_pending" | "ready",
@@ -289,6 +325,7 @@ describe("createBackgroundCompletionRunner", () => {
         executionId: "execution-silent-pre-provider",
         finishReason: "stop",
       };
+      await overrides?.onJournalFinalizedResult?.(result);
       await overrides?.onFinalizedResult?.(result, "ready");
       return result;
     });
@@ -371,7 +408,7 @@ describe("createBackgroundCompletionRunner", () => {
       executionId: "execution-1",
       finishReason: "stop",
     }));
-    const deliverCompletion = vi.fn().mockResolvedValue({ kind: "accepted" });
+    const deliverCompletion = vi.fn(acceptDelivery);
     const runner = build(3, undefined, undefined, deliverCompletion);
 
     eventBus.emit("background_task:completed", {
@@ -398,13 +435,13 @@ describe("createBackgroundCompletionRunner", () => {
         onFinalizedResult: expect.any(Function),
       }),
     );
-    expect(deliverCompletion).toHaveBeenCalledWith({
+    expect(deliverCompletion).toHaveBeenCalledWith(expect.objectContaining({
       taskId: task.id,
       origin: task.origin,
       response: "תוצאת הרקע הושלמה",
       executionId: "execution-1",
       idempotencyKey: "background-continuation:task-1",
-    });
+    }));
   });
 
   it("continues re-entry execution and reaches later observers when the first re-entry subscriber throws", async () => {
@@ -851,7 +888,10 @@ describe("trace continuity sub-tests", () => {
     commitDispatchState: ReturnType<typeof vi.fn>;
     persistContinuationOutbox: ReturnType<typeof vi.fn>;
     persistCleanupPendingOutbox: ReturnType<typeof vi.fn>;
+    persistFinalizedResult: ReturnType<typeof vi.fn>;
+    recordRecoveryIncident: ReturnType<typeof vi.fn>;
     scheduleDispatchRetry: ReturnType<typeof vi.fn>;
+    scheduleStateRetry: ReturnType<typeof vi.fn>;
   };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
   let logger: ReturnType<typeof makeLogger>;
@@ -871,7 +911,10 @@ describe("trace continuity sub-tests", () => {
       commitDispatchState: vi.fn().mockReturnValue(ok(true)),
       persistContinuationOutbox: vi.fn().mockReturnValue(ok(undefined)),
       persistCleanupPendingOutbox: vi.fn().mockReturnValue(ok(undefined)),
+      persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+      recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
       scheduleDispatchRetry: vi.fn(),
+      scheduleStateRetry: vi.fn(),
     };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
     logger = makeLogger();
@@ -886,8 +929,18 @@ describe("trace continuity sub-tests", () => {
       recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
       cleanupFinalizedSession: vi.fn().mockResolvedValue(ok(undefined)),
       reconcileDelivery: vi.fn().mockResolvedValue(ok({ kind: "accepted" })),
-      deliverCompletion: async () => ({ kind: "accepted" }),
-      deliverFallback: async ({ origin, response }) => {
+      deliverCompletion: async (input) => {
+        const started = input.onSendStart();
+        return started.ok
+          ? { kind: "accepted" }
+          : { kind: "retryable_pre_send", errorKind: "resource", message: started.error.message };
+      },
+      deliverFallback: async (input) => {
+        const started = input.onSendStart();
+        if (!started.ok) {
+          return { kind: "retryable_pre_send", errorKind: "resource", message: started.error.message };
+        }
+        const { origin, response } = input;
         await fallbackNotifyFn({
           agentId: origin.turnScope.conversation.agentId,
           message: response,

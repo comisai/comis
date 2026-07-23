@@ -199,9 +199,9 @@ describe("background-task-persistence", () => {
       expect(recovered).toHaveLength(2);
 
       const t1 = recovered.find((t) => t.id === "t1");
-      expect(t1?.status).toBe("failed");
-      expect(t1?.error).toBe("Daemon restarted while task was running");
-      expect(t1?.completedAt).toBeGreaterThan(0);
+      expect(t1?.status).toBe("running");
+      expect(t1?.error).toBeUndefined();
+      expect(t1?.completedAt).toBeUndefined();
 
       const t2 = recovered.find((t) => t.id === "t2");
       expect(t2?.status).toBe("completed");
@@ -229,7 +229,7 @@ describe("background-task-persistence", () => {
 
       const recovered = recoverTasks(dataDir);
       expect(recovered).toHaveLength(2);
-      expect(recovered.every((t) => t.status === "failed")).toBe(true);
+      expect(recovered.every((t) => t.status === "running")).toBe(true);
     });
 
     it("returns empty array for nonexistent dataDir", () => {
@@ -237,7 +237,7 @@ describe("background-task-persistence", () => {
       expect(recovered).toEqual([]);
     });
 
-    it("persists recovery status change to disk", () => {
+    it("preserves recovery status on disk for the manager owner", () => {
       persistTaskSync(dataDir, {
         id: "t1",
         toolName: "tool1",
@@ -249,10 +249,9 @@ describe("background-task-persistence", () => {
       });
       recoverTasks(dataDir);
 
-      // Verify the file on disk was updated
       const raw = readFileSync(safePath(safePath(dataDir, "a1"), "t1.json"), "utf-8");
       const onDisk = JSON.parse(raw) as PersistedTaskState;
-      expect(onDisk.status).toBe("failed");
+      expect(onDisk.status).toBe("running");
     });
 
     it("skips files missing id or toolName (sanity guard)", () => {

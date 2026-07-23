@@ -26,11 +26,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { BackgroundTaskOriginSchema, safePath, systemNowMs } from "@comis/core";
+import { BackgroundTaskOriginSchema, safePath } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import {
   BackgroundContinuationOutboxSchema,
+  BackgroundFinalizedResultSchema,
   type BackgroundTask,
   type PersistedTaskState,
 } from "./background-task-types.js";
@@ -59,6 +60,7 @@ export function toPersistedState(task: BackgroundTask | PersistedTaskState): Per
     continuationExecutionId: task.continuationExecutionId,
     dispatchAttempts: task.dispatchAttempts,
     ...(task.continuationOutbox !== undefined && { continuationOutbox: task.continuationOutbox }),
+    ...(task.finalizedResult !== undefined && { finalizedResult: task.finalizedResult }),
     ...(task.notificationPolicy !== undefined && { notificationPolicy: task.notificationPolicy }),
     ...(task.dispatchState !== undefined && { dispatchState: task.dispatchState }),
   };
@@ -179,10 +181,7 @@ export function loadTask(dataDir: string, agentId: string, taskId: string): Pers
 }
 
 /**
- * Recover all tasks from disk on daemon startup.
- *
- * Scans all `dataDir/{agentId}/{taskId}.json` files. Tasks with status "running"
- * are marked as "failed" with an error message indicating daemon restart.
+ * Recover all task records from disk without changing their lifecycle state.
  */
 export function recoverTasks(dataDir: string): PersistedTaskState[] {
   const recovered: PersistedTaskState[] = [];
@@ -238,16 +237,14 @@ export function recoverTasks(dataDir: string): PersistedTaskState[] {
             parsed.continuationOutbox !== undefined
             && !BackgroundContinuationOutboxSchema.safeParse(parsed.continuationOutbox).success
           )
+          || (
+            parsed.finalizedResult !== undefined
+            && !BackgroundFinalizedResultSchema.safeParse(parsed.finalizedResult).success
+          )
         ) {
           continue;
         }
         const task = parsed as PersistedTaskState;
-        if (task.status === "running") {
-          task.status = "failed";
-          task.error = "Daemon restarted while task was running";
-          task.completedAt = systemNowMs();
-          writeRegularFile({ path: filePath, content: JSON.stringify(task, null, 2), confinedBaseDir: dataDir });
-        }
         recovered.push(task);
       } catch {
         // Skip unparseable files

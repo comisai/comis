@@ -65,7 +65,10 @@ export interface SetupBackgroundCompletionRunnerDeps {
     | "commitDispatchState"
     | "persistContinuationOutbox"
     | "persistCleanupPendingOutbox"
+    | "persistFinalizedResult"
+    | "recordRecoveryIncident"
     | "scheduleDispatchRetry"
+    | "scheduleStateRetry"
   >;
   /** bgNotifyFn closure used when the originating session is gone. */
   fallbackNotifyFn: NotifyFn;
@@ -108,6 +111,14 @@ export function setupBackgroundCompletionRunner(
         kind: "retryable_pre_send",
         errorKind: "dependency",
         message: allocated.error.message,
+      };
+    }
+    const sendStarted = input.onSendStart();
+    if (!sendStarted.ok) {
+      return {
+        kind: "retryable_pre_send",
+        errorKind: "resource",
+        message: sendStarted.error.message,
       };
     }
     const attemptedSend = await fromPromise(wrapOutwardSend({

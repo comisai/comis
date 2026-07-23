@@ -6,7 +6,10 @@ import {
   type BackgroundTaskOrigin,
 } from "@comis/core";
 import { err, ok, type Result } from "@comis/shared";
-import { createBackgroundCompletionRunner } from "./completion-runner.js";
+import {
+  createBackgroundCompletionRunner,
+  type BackgroundCompletionDeliveryInput,
+} from "./completion-runner.js";
 import type {
   BackgroundSessionState,
   BackgroundTask,
@@ -54,7 +57,184 @@ async function flush(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+async function acceptDelivery(
+  input: BackgroundCompletionDeliveryInput,
+) {
+  const started = input.onSendStart();
+  return started.ok
+    ? { kind: "accepted" as const }
+    : { kind: "retryable_pre_send" as const, errorKind: "resource" as const, message: started.error.message };
+}
+
 describe("background completion retry lifecycle", () => {
+  it("retries a proven pre-send failure without ledger reconciliation", async () => {
+    const eventBus = new TypedEventBus();
+    const task: BackgroundTask = {
+      id: "task-pre-send",
+      continuationExecutionId: "continuation-pre-send",
+      dispatchAttempts: 1,
+      toolName: "report",
+      status: "completed",
+      startedAt: 1,
+      completedAt: 2,
+      origin: makeOrigin(),
+      dispatchState: "ready_to_deliver",
+      continuationOutbox: {
+        kind: "continuation",
+        response: "ready",
+        executionId: "execution-pre-send",
+        idempotencyKey: "background-continuation:continuation-pre-send",
+        deliveryProtection: "none",
+      },
+    };
+    const commitDispatchState = vi.fn((
+      _taskId: string,
+      next: BackgroundSessionState,
+      expected?: readonly BackgroundSessionState[],
+    ) => {
+      const current = task.dispatchState ?? "pending";
+      if (expected && !expected.includes(current)) return ok(false);
+      task.dispatchState = next;
+      return ok(true);
+    });
+    let attempt = 0;
+    const deliverCompletion = vi.fn(async (input: BackgroundCompletionDeliveryInput) => {
+      attempt++;
+      if (attempt === 1) {
+        return {
+          kind: "retryable_pre_send" as const,
+          errorKind: "precondition" as const,
+          message: "adapter unavailable",
+        };
+      }
+      return acceptDelivery(input);
+    });
+    const reconcileDelivery = vi.fn();
+    const runner = createBackgroundCompletionRunner({
+      eventBus,
+      getExecutor: vi.fn() as never,
+      sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
+      recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
+      cleanupFinalizedSession: vi.fn().mockResolvedValue(ok(undefined)),
+      reconcileDelivery,
+      taskManager: {
+        getTask: () => task,
+        commitDispatchState,
+        persistContinuationOutbox: vi.fn().mockReturnValue(ok(undefined)),
+        persistCleanupPendingOutbox: vi.fn().mockReturnValue(ok(undefined)),
+        persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+        recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
+        scheduleDispatchRetry: vi.fn(),
+        scheduleStateRetry: vi.fn(),
+      },
+      deliverCompletion,
+      deliverFallback: vi.fn(acceptDelivery),
+      deliveryProtection: "none",
+      maxBackgroundHops: 3,
+      logger: {
+        child: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }),
+      } as never,
+    });
+    const completed = {
+      agentId: "agent-a",
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 2,
+    };
+
+    eventBus.emit("background_task:completed", completed);
+    await flush();
+    expect(task.dispatchState).toBe("pre_send");
+    expect(reconcileDelivery).not.toHaveBeenCalled();
+
+    eventBus.emit("background_task:completed", completed);
+    await flush();
+    expect(task.dispatchState).toBe("delivered");
+    expect(deliverCompletion).toHaveBeenCalledTimes(2);
+    expect(reconcileDelivery).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
+  it("schedules a state-only retry when accepted delivery cannot terminalize", async () => {
+    const eventBus = new TypedEventBus();
+    const task: BackgroundTask = {
+      id: "task-terminal-retry",
+      continuationExecutionId: "continuation-terminal-retry",
+      dispatchAttempts: 1,
+      toolName: "report",
+      status: "completed",
+      startedAt: 1,
+      completedAt: 2,
+      origin: makeOrigin(),
+      dispatchState: "ready_to_deliver",
+      continuationOutbox: {
+        kind: "continuation",
+        response: "ready",
+        executionId: "execution-terminal-retry",
+        idempotencyKey: "background-continuation:continuation-terminal-retry",
+        deliveryProtection: "none",
+      },
+    };
+    const scheduleStateRetry = vi.fn();
+    const commitDispatchState = vi.fn((
+      _taskId: string,
+      next: BackgroundSessionState,
+      expected?: readonly BackgroundSessionState[],
+    ) => {
+      const current = task.dispatchState ?? "pending";
+      if (expected && !expected.includes(current)) return ok(false);
+      if (next === "delivered") return err(new Error("terminal storage unavailable"));
+      task.dispatchState = next;
+      return ok(true);
+    });
+    const deliverCompletion = vi.fn(acceptDelivery);
+    const runner = createBackgroundCompletionRunner({
+      eventBus,
+      getExecutor: vi.fn() as never,
+      sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
+      recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
+      cleanupFinalizedSession: vi.fn().mockResolvedValue(ok(undefined)),
+      reconcileDelivery: vi.fn().mockResolvedValue(ok({ kind: "accepted" })),
+      taskManager: {
+        getTask: () => task,
+        commitDispatchState,
+        persistContinuationOutbox: vi.fn().mockReturnValue(ok(undefined)),
+        persistCleanupPendingOutbox: vi.fn().mockReturnValue(ok(undefined)),
+        persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+        recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
+        scheduleDispatchRetry: vi.fn(),
+        scheduleStateRetry,
+      },
+      deliverCompletion,
+      deliverFallback: vi.fn(acceptDelivery),
+      deliveryProtection: "none",
+      maxBackgroundHops: 3,
+      logger: {
+        child: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }),
+      } as never,
+    });
+
+    eventBus.emit("background_task:completed", {
+      agentId: "agent-a",
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 2,
+    });
+    await flush();
+
+    expect(deliverCompletion).toHaveBeenCalledOnce();
+    expect(scheduleStateRetry).toHaveBeenCalledWith(
+      task.id,
+      "delivered",
+      ["delivering"],
+    );
+    await runner.shutdown();
+  });
+
   it("retries failed delivery with stable identities and commits only after acceptance", async () => {
     const eventBus = new TypedEventBus();
     const task: BackgroundTask = {
@@ -70,6 +250,7 @@ describe("background completion retry lifecycle", () => {
       dispatchState: "pending",
     };
     const scheduleDispatchRetry = vi.fn();
+    const scheduleStateRetry = vi.fn();
     let failFirstPreSendReset = true;
     const commitDispatchState = vi.fn((
       _taskId: string,
@@ -81,7 +262,7 @@ describe("background completion retry lifecycle", () => {
       if (
         failFirstPreSendReset
         && current === "delivering"
-        && next === "ready_to_deliver"
+        && next === "pre_send"
       ) {
         failFirstPreSendReset = false;
         return err(new Error("protected storage unavailable"));
@@ -90,13 +271,17 @@ describe("background completion retry lifecycle", () => {
       if (next === "executing") task.dispatchAttempts++;
       return ok(true);
     });
-    const deliverCompletion = vi.fn()
-      .mockResolvedValueOnce({
-        kind: "retryable_pre_send",
-        errorKind: "dependency",
-        message: "offline",
-      })
-      .mockResolvedValueOnce({ kind: "accepted" });
+    let deliveryAttempt = 0;
+    const deliverCompletion = vi.fn(async (input: BackgroundCompletionDeliveryInput) => {
+      const started = input.onSendStart();
+      if (!started.ok) {
+        return { kind: "retryable_pre_send" as const, errorKind: "resource" as const, message: started.error.message };
+      }
+      deliveryAttempt++;
+      return deliveryAttempt === 1
+        ? { kind: "retryable_pre_send" as const, errorKind: "dependency" as const, message: "offline" }
+        : { kind: "accepted" as const };
+    });
     const execute = vi.fn(async (...args: unknown[]) => {
       const result = {
         response: "continued",
@@ -104,6 +289,7 @@ describe("background completion retry lifecycle", () => {
       };
       const overrides = args[7] as {
         onProviderStart?: () => Result<void, Error>;
+        onJournalFinalizedResult?: (value: typeof result) => Promise<void>;
         onFinalizedResult?: (
           value: typeof result,
           phase: "cleanup_pending" | "ready",
@@ -111,9 +297,11 @@ describe("background completion retry lifecycle", () => {
       } | undefined;
       const started = overrides?.onProviderStart?.();
       if (started !== undefined && !started.ok) return Promise.reject(started.error);
+      await overrides?.onJournalFinalizedResult?.(result);
       await overrides?.onFinalizedResult?.(result, "ready");
       return result;
     });
+    const recordRecoveryIncident = vi.fn().mockReturnValue(ok(undefined));
     const runner = createBackgroundCompletionRunner({
       eventBus,
       getExecutor: () => ({
@@ -141,10 +329,13 @@ describe("background completion retry lifecycle", () => {
         },
         persistCleanupPendingOutbox: vi.fn().mockReturnValue(ok(undefined)),
         scheduleDispatchRetry,
+        scheduleStateRetry,
+        persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+        recordRecoveryIncident,
       },
       deliverCompletion,
-      deliverFallback: vi.fn(async () => ({ kind: "accepted" })),
-      deliveryProtection: "ledger",
+      deliverFallback: vi.fn(acceptDelivery),
+      deliveryProtection: "none",
       maxBackgroundHops: 3,
       logger: {
         child: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }),
@@ -161,11 +352,14 @@ describe("background completion retry lifecycle", () => {
     eventBus.emit("background_task:completed", completion);
     await flush();
     expect(task.dispatchState).toBe("delivering");
-    expect(scheduleDispatchRetry).toHaveBeenCalledWith(task.id);
-    eventBus.emit("background_task:completed", completion);
-    await flush();
-    expect(task.dispatchState).toBe("ready_to_deliver");
-    expect(deliverCompletion).toHaveBeenCalledOnce();
+    expect(scheduleStateRetry).toHaveBeenCalledWith(
+      task.id,
+      "pre_send",
+      ["delivering"],
+    );
+    expect(scheduleDispatchRetry).not.toHaveBeenCalled();
+    expect(recordRecoveryIncident).not.toHaveBeenCalled();
+    task.dispatchState = "pre_send";
     eventBus.emit("background_task:completed", completion);
     await flush();
     expect(task.dispatchState).toBe("delivered");
@@ -190,9 +384,14 @@ describe("background completion retry lifecycle", () => {
       result: "ready",
       origin: makeOrigin(),
       dispatchState: "execution_claimed",
+      finalizedResult: {
+        response: "persisted exact response",
+        executionId: "execution-recovered",
+        cleanupRequired: false,
+      },
     };
     const execute = vi.fn();
-    const deliverCompletion = vi.fn().mockResolvedValue({ kind: "accepted" });
+    const deliverCompletion = vi.fn(acceptDelivery);
     const commitDispatchState = vi.fn((
       _taskId: string,
       next: BackgroundSessionState,
@@ -203,15 +402,12 @@ describe("background completion retry lifecycle", () => {
       task.dispatchState = next;
       return ok(true);
     });
+    const recoverFinalizedResult = vi.fn().mockResolvedValue(ok(undefined));
     const runner = createBackgroundCompletionRunner({
       eventBus,
       getExecutor: () => ({ execute }) as never,
       sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
-      recoverFinalizedResult: vi.fn().mockResolvedValue(ok({
-        response: "persisted exact response",
-        executionId: "execution-recovered",
-        cleanupRequired: false,
-      })),
+      recoverFinalizedResult,
       cleanupFinalizedSession: vi.fn().mockResolvedValue(ok(undefined)),
       reconcileDelivery: vi.fn().mockResolvedValue(ok({ kind: "accepted" })),
       taskManager: {
@@ -227,9 +423,12 @@ describe("background completion retry lifecycle", () => {
         }),
         persistCleanupPendingOutbox: vi.fn().mockReturnValue(ok(undefined)),
         scheduleDispatchRetry: vi.fn(),
+        scheduleStateRetry: vi.fn(),
+        persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+        recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
       },
       deliverCompletion,
-      deliverFallback: vi.fn(async () => ({ kind: "accepted" })),
+      deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "ledger",
       maxBackgroundHops: 3,
       logger: {
@@ -248,13 +447,14 @@ describe("background completion retry lifecycle", () => {
     await flush();
 
     expect(execute).not.toHaveBeenCalled();
-    expect(deliverCompletion).toHaveBeenCalledWith({
+    expect(recoverFinalizedResult).not.toHaveBeenCalled();
+    expect(deliverCompletion).toHaveBeenCalledWith(expect.objectContaining({
       taskId: task.id,
       origin: task.origin,
       response: "persisted exact response",
       executionId: "execution-recovered",
       idempotencyKey: "background-continuation:continuation-recovered",
-    });
+    }));
     expect(task.dispatchState).toBe("delivered");
     await runner.shutdown();
   });
@@ -301,9 +501,12 @@ describe("background completion retry lifecycle", () => {
         persistContinuationOutbox: vi.fn(),
         persistCleanupPendingOutbox: vi.fn(),
         scheduleDispatchRetry: vi.fn(),
+        scheduleStateRetry: vi.fn(),
+        persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+        recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
       },
       deliverCompletion,
-      deliverFallback: vi.fn(async () => ({ kind: "accepted" })),
+      deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "ledger",
       maxBackgroundHops: 3,
       logger: {
@@ -380,7 +583,7 @@ describe("background completion retry lifecycle", () => {
       return exactResult;
     });
     const recoverFinalizedResult = vi.fn().mockResolvedValue(ok(exactResult));
-    const deliverCompletion = vi.fn().mockResolvedValue({ kind: "accepted" });
+    const deliverCompletion = vi.fn(acceptDelivery);
     const runner = createBackgroundCompletionRunner({
       eventBus,
       getExecutor: () => ({ execute }) as never,
@@ -394,9 +597,12 @@ describe("background completion retry lifecycle", () => {
         persistContinuationOutbox,
         persistCleanupPendingOutbox: vi.fn().mockReturnValue(ok(undefined)),
         scheduleDispatchRetry,
+        scheduleStateRetry: vi.fn(),
+        persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+        recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
       },
       deliverCompletion,
-      deliverFallback: vi.fn(async () => ({ kind: "accepted" })),
+      deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "ledger",
       maxBackgroundHops: 3,
       logger: {
@@ -461,6 +667,7 @@ describe("background completion retry lifecycle", () => {
       if (started !== undefined && !started.ok) return Promise.reject(started.error);
       return Promise.reject(new Error("handoff failed"));
     });
+    const recordJournalRecoveryIncident = vi.fn().mockReturnValue(ok(undefined));
     const runner = createBackgroundCompletionRunner({
       eventBus,
       getExecutor: () => ({ execute }) as never,
@@ -474,9 +681,12 @@ describe("background completion retry lifecycle", () => {
         persistContinuationOutbox: vi.fn(),
         persistCleanupPendingOutbox: vi.fn(),
         scheduleDispatchRetry,
+        scheduleStateRetry: vi.fn(),
+        persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+        recordRecoveryIncident: recordJournalRecoveryIncident,
       },
       deliverCompletion: vi.fn(),
-      deliverFallback: vi.fn(async () => ({ kind: "accepted" })),
+      deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "ledger",
       maxBackgroundHops: 3,
       logger: {
@@ -496,6 +706,7 @@ describe("background completion retry lifecycle", () => {
 
     expect(task.dispatchState).toBe("executing");
     expect(scheduleDispatchRetry).toHaveBeenCalledWith(task.id);
+    expect(recordJournalRecoveryIncident).toHaveBeenCalledWith(task.id);
     expect(commitDispatchState).not.toHaveBeenCalledWith(
       task.id,
       "parked_uncertain",
@@ -543,9 +754,12 @@ describe("background completion retry lifecycle", () => {
         persistContinuationOutbox: vi.fn(),
         persistCleanupPendingOutbox: vi.fn(),
         scheduleDispatchRetry,
+        scheduleStateRetry: vi.fn(),
+        persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+        recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
       },
       deliverCompletion: vi.fn(),
-      deliverFallback: vi.fn(async () => ({ kind: "accepted" })),
+      deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "ledger",
       maxBackgroundHops: 3,
       logger: {
@@ -614,7 +828,7 @@ describe("background completion retry lifecycle", () => {
     const cleanupFinalizedSession = vi.fn()
       .mockResolvedValueOnce(err(new Error("session cleanup unavailable")))
       .mockResolvedValueOnce(ok(undefined));
-    const deliverCompletion = vi.fn().mockResolvedValue({ kind: "accepted" });
+    const deliverCompletion = vi.fn(acceptDelivery);
     const runner = createBackgroundCompletionRunner({
       eventBus,
       getExecutor: () => ({ execute }) as never,
@@ -642,9 +856,12 @@ describe("background completion retry lifecycle", () => {
           return ok(undefined);
         }),
         scheduleDispatchRetry,
+        scheduleStateRetry: vi.fn(),
+        persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+        recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
       },
       deliverCompletion,
-      deliverFallback: vi.fn(async () => ({ kind: "accepted" })),
+      deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "ledger",
       maxBackgroundHops: 3,
       logger: {
@@ -720,10 +937,13 @@ describe("background completion retry lifecycle", () => {
         commitDispatchState: vi.fn(() => err(new Error("protected storage unavailable"))),
         persistContinuationOutbox: vi.fn(),
         persistCleanupPendingOutbox: vi.fn(),
+        persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+        recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
         scheduleDispatchRetry,
+        scheduleStateRetry: vi.fn(),
       },
       deliverCompletion,
-      deliverFallback: vi.fn(async () => ({ kind: "accepted" })),
+      deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "ledger",
       maxBackgroundHops: 3,
       logger: {

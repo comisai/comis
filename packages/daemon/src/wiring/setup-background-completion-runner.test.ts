@@ -23,9 +23,11 @@ function executeFinalized(result: Record<string, unknown>) {
         value: Record<string, unknown>,
         phase: "cleanup_pending" | "ready",
       ) => Promise<void>;
+      onJournalFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
     } | undefined;
     const started = overrides?.onProviderStart?.();
     if (started !== undefined && !started.ok) return Promise.reject(started.error);
+    await overrides?.onJournalFinalizedResult?.(result);
     await overrides?.onFinalizedResult?.(result, "ready");
     return result;
   };
@@ -267,7 +269,10 @@ describe("setupBackgroundCompletionRunner", () => {
         return ok(undefined);
       }),
       persistCleanupPendingOutbox: vi.fn(),
+      persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+      recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
       scheduleDispatchRetry: vi.fn(),
+      scheduleStateRetry: vi.fn(),
     };
     const ctx = setupBackgroundCompletionRunner({
       eventBus: recording.bus,
@@ -302,6 +307,7 @@ describe("setupBackgroundCompletionRunner", () => {
     });
     await ctx.runner.shutdown();
 
+    expect(task.dispatchState).toBe("delivered");
     expect(deliverToChannel).toHaveBeenCalledWith(
       adapter,
       origin.turnScope.endpoint.conversationId,
@@ -352,7 +358,10 @@ describe("setupBackgroundCompletionRunner", () => {
         return ok(undefined);
       },
       persistCleanupPendingOutbox: vi.fn(),
+      persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+      recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
       scheduleDispatchRetry: vi.fn(),
+      scheduleStateRetry: vi.fn(),
     };
     const execute = vi.fn(executeFinalized({
       response: "finalized completion",
@@ -453,7 +462,10 @@ describe("setupBackgroundCompletionRunner", () => {
         return ok(undefined);
       },
       persistCleanupPendingOutbox: vi.fn(),
+      persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+      recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
       scheduleDispatchRetry: vi.fn(),
+      scheduleStateRetry: vi.fn(),
     };
     const ctx = setupBackgroundCompletionRunner({
       eventBus: recording.bus,

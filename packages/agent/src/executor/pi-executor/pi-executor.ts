@@ -277,7 +277,12 @@ export function createPiExecutor(
       overrides?: ExecutionOverrides,
     ): Promise<ExecutionResult> {
       const executionId = randomUUID();
+      let finalizedResultJournaled = false;
       const finalizeResult = async (candidate: ExecutionResult): Promise<ExecutionResult> => {
+        if (!finalizedResultJournaled) {
+          await overrides?.onJournalFinalizedResult?.(candidate);
+          finalizedResultJournaled = true;
+        }
         await overrides?.onFinalizedResult?.(candidate, "ready");
         return candidate;
       };
@@ -637,6 +642,10 @@ export function createPiExecutor(
 
       if (resultJournalFailure.error !== undefined) {
         return Promise.reject(resultJournalFailure.error);
+      }
+      if (lockResult.ok) {
+        await overrides?.onJournalFinalizedResult?.(lockResult.value);
+        finalizedResultJournaled = true;
       }
       if (lockResult.ok && lockResult.value.finishReason === "session_reset") {
         await overrides?.onFinalizedResult?.(lockResult.value, "cleanup_pending");

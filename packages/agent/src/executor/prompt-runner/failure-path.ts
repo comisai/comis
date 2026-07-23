@@ -24,6 +24,7 @@ import { isContextOverflowError } from "../../safety/context-truncation-recovery
 import { scanWithOutputGuard } from "../executor-response-filter.js";
 import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
 import { getCacheProviderInfo } from "../cache-usage-helpers.js";
+import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
@@ -63,6 +64,12 @@ export async function processFailurePath(
     const originalStreamFn = session.agent.streamFn;
     session.agent.streamFn = recoveryWrapper(originalStreamFn);
 
+    const admitted = resolveProviderDispatchGuard(
+      params.executionOverrides?.onProviderStart,
+    )();
+    if (!admitted.ok) {
+      return { promptSucceeded: false, promptError: admitted.error, ghostCost };
+    }
     try {
       await withPromptTimeout(
         session.prompt(messageText, {

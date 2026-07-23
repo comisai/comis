@@ -1,29 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Background completion runner: subscribes to background_task:completed and
- * background_task:failed events from the TypedEventBus and re-enters the
- * originating agent session with a formatted completion announcement.
- *
- * Per-session lock serialization is delegated to the existing session
- * manager (ComisSessionManager.withSession in packages/agent/src/session/).
- * The runner does NOT introduce its own queueing -- one turn per completion
- * event, ordering follows the existing per-session lock.
- *
- * Recursion bound: per-task incoming hop count + 1 must stay below
- * `maxBackgroundHops` (default 3). When the cap is hit, the runner emits
- * the fallback notification instead of triggering executor.execute().
- * The hop count is read from `task.origin.backgroundHopCount`
- * (populated by the originResolver).
- *
- * Latency-instrumentation hook: emits `background_task:reentered`
- * immediately before executor.execute(). Integration tests compute the delta
- * from `background_task:completed.timestamp` to this event for SLO tracking.
- *
- * Failure isolation: each handler is wrapped in suppressError so a single
- * completion's failure does not tear down the subscription.
- *
- * @module
- */
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { randomUUID } from "node:crypto";
@@ -55,10 +30,7 @@ import { createCompletionRecovery } from "./completion-recovery.js";
 import type { BackgroundTaskManager } from "./background-task-manager.js";
 import type { BackgroundContinuationOutbox } from "./background-task-types.js";
 
-/** Public-facing handle on the runner returned by createBackgroundCompletionRunner. */
 export interface BackgroundCompletionRunner {
-  /** Unsubscribe from the event bus. Idempotent. Awaitable so callers can
-   *  ensure no in-flight handler outlives the daemon shutdown. */
   shutdown(): Promise<void>;
 }
 
@@ -74,6 +46,7 @@ export interface BackgroundCompletionDeliveryInput {
   readonly response: string;
   readonly executionId: string;
   readonly idempotencyKey: string;
+  readonly onSendStart: () => Result<void, Error>;
 }
 
 export interface BackgroundFinalizedResultRecoveryInput {
@@ -82,7 +55,6 @@ export interface BackgroundFinalizedResultRecoveryInput {
   readonly journalKey: string;
 }
 
-/** Session-store dependency retained by daemon composition; it is not routing authority. */
 export interface RunnerSessionStore {
   loadByRef(scope: SessionQueryScope, conversationRef: BackgroundTaskOrigin["conversationRef"]): Result<unknown | undefined, SessionStoreError>;
 }
@@ -90,7 +62,6 @@ export interface RunnerSessionStore {
 export interface BackgroundCompletionRunnerDeps {
   eventBus: TypedEventBus;
   getExecutor: (agentId: string) => AgentExecutor;
-  /** Assemble the same agent-scoped tools available to an ordinary inbound turn. */
   assembleToolsForAgent?: (
     agentId: string,
     options?: { sessionKey?: SessionKey },
@@ -104,6 +75,9 @@ export interface BackgroundCompletionRunnerDeps {
       | "persistCleanupPendingOutbox"
       | "scheduleDispatchRetry"
       | "commitDispatchState"
+      | "persistFinalizedResult"
+      | "recordRecoveryIncident"
+      | "scheduleStateRetry"
     >;
   recoverFinalizedResult(
     input: BackgroundFinalizedResultRecoveryInput,
@@ -116,10 +90,8 @@ export interface BackgroundCompletionRunnerDeps {
     input: Omit<BackgroundFinalizedResultRecoveryInput, "journalKey">,
   ): Promise<Result<void, Error>>;
   reconcileDelivery(
-    input: BackgroundCompletionDeliveryInput,
+    input: Omit<BackgroundCompletionDeliveryInput, "onSendStart">,
   ): Promise<Result<BackgroundCompletionDeliveryOutcome, Error>>;
-  /** Deliver the finalized continuation through the exact persisted channel
-   *  authority. The runner owns execution; the composition root owns adapters. */
   deliverCompletion: (
     input: BackgroundCompletionDeliveryInput,
   ) => Promise<BackgroundCompletionDeliveryOutcome>;
@@ -173,10 +145,6 @@ function createReentryContext(
   return createResolvedRequestContext(built.value);
 }
 
-/**
- * Wire the completion runner against an event bus + executor + session store.
- * Subscriptions are installed synchronously; call shutdown() to remove them.
- */
 export function createBackgroundCompletionRunner(
   deps: BackgroundCompletionRunnerDeps,
 ): BackgroundCompletionRunner {
@@ -293,6 +261,10 @@ export function createBackgroundCompletionRunner(
     }
     if (task.dispatchState === "delivering" && task.continuationOutbox !== undefined) {
       await recovery.reconcileDeliveryClaim(task.id, task.origin, task.continuationOutbox);
+      return;
+    }
+    if (task.dispatchState === "pre_send" && task.continuationOutbox !== undefined) {
+      await deliverPersistedOutbox(task.id, task.origin, task.continuationOutbox);
       return;
     }
     if (
@@ -488,6 +460,18 @@ export function createBackgroundCompletionRunner(
             operationType: "interactive",
             responseLocalePolicy: origin.responseLocalePolicy,
             finalizedResultJournalKey: task.continuationExecutionId,
+            onJournalFinalizedResult: async (finalized) => {
+              const persisted = deps.taskManager.persistFinalizedResult(
+                taskId,
+                {
+                  response: finalized.response,
+                  executionId: finalized.executionId,
+                  cleanupRequired: finalized.finishReason === "session_reset",
+                },
+                ["execution_claimed", "executing"],
+              );
+              if (!persisted.ok) return Promise.reject(persisted.error);
+            },
             onProviderStart: () => {
               const current = deps.taskManager.getTask(taskId);
               if (current?.dispatchState === "executing") return ok(undefined);
@@ -635,7 +619,10 @@ export function createBackgroundCompletionRunner(
     origin: BackgroundTaskOrigin,
     outbox: BackgroundContinuationOutbox,
   ): Promise<void> {
-    const deliveryClaim = commitState(taskId, "delivering", ["ready_to_deliver"]);
+    const current = deps.taskManager.getTask(taskId);
+    const deliveryClaim = current?.dispatchState === "pre_send"
+      ? ok(true)
+      : commitState(taskId, "pre_send", ["ready_to_deliver"]);
     if (!deliveryClaim.ok) {
       deps.taskManager.scheduleDispatchRetry(taskId);
       const task = deps.taskManager.getTask(taskId);
@@ -661,14 +648,29 @@ export function createBackgroundCompletionRunner(
       response: outbox.response,
       executionId: outbox.executionId,
       idempotencyKey: outbox.idempotencyKey,
+      onSendStart: () => {
+        const started = commitState(taskId, "delivering", ["pre_send"]);
+        return started.ok && started.value
+          ? ok(undefined)
+          : err(started.ok
+            ? new Error("Background delivery send-start claim was not acquired")
+            : started.error);
+      },
     }));
+    const stateAfterAttempt = deps.taskManager.getTask(taskId)?.dispatchState;
     const outcome: BackgroundCompletionDeliveryOutcome = attempted.ok
       ? attempted.value
-      : {
-          kind: "uncertain",
-          errorKind: "internal",
-          message: toSafeErrorLogString(attempted.error),
-        };
+      : stateAfterAttempt === "pre_send"
+        ? {
+            kind: "retryable_pre_send",
+            errorKind: "internal",
+            message: toSafeErrorLogString(attempted.error),
+          }
+        : {
+            kind: "uncertain",
+            errorKind: "internal",
+            message: toSafeErrorLogString(attempted.error),
+          };
     const durationMs = Math.max(0, systemNowMs() - deliveryStartedAt);
     if (outcome.kind === "accepted") {
       const delivered = commitState(taskId, "delivered", ["delivering"]);
@@ -680,6 +682,15 @@ export function createBackgroundCompletionRunner(
           task?.toolName ?? "background_task",
           true,
           outbox.kind === "continuation" ? "continuation_accepted" : "fallback_accepted",
+        );
+      } else if (!delivered.ok) {
+        deps.taskManager.scheduleStateRetry(taskId, "delivered", ["delivering"]);
+        emitRoutingOutcome(
+          taskId,
+          origin,
+          task?.toolName ?? "background_task",
+          false,
+          "retry_scheduled",
         );
       }
       log.info(
@@ -694,23 +705,32 @@ export function createBackgroundCompletionRunner(
       return;
     }
     if (outcome.kind === "retryable_pre_send") {
-      const retryable = commitState(taskId, "ready_to_deliver", ["delivering"]);
+      const retryState = deps.taskManager.getTask(taskId)?.dispatchState;
+      const retryable = retryState === "pre_send"
+        ? ok(true)
+        : commitState(taskId, "pre_send", ["delivering"]);
       if (retryable.ok && retryable.value) {
         deps.taskManager.scheduleDispatchRetry(taskId);
         emitRoutingOutcome(taskId, origin, deps.taskManager.getTask(taskId)?.toolName ?? "background_task", false, "retry_scheduled");
       } else if (!retryable.ok) {
-        deps.taskManager.scheduleDispatchRetry(taskId);
+        deps.taskManager.scheduleStateRetry(taskId, "pre_send", ["delivering"]);
         emitRoutingOutcome(taskId, origin, deps.taskManager.getTask(taskId)?.toolName ?? "background_task", false, "retry_scheduled");
       }
     } else if (outcome.kind === "permanent") {
       const parked = commitState(taskId, "parked_permanent", ["delivering"]);
       if (parked.ok && parked.value) {
         emitRoutingOutcome(taskId, origin, deps.taskManager.getTask(taskId)?.toolName ?? "background_task", false, "permanent_parked");
+      } else if (!parked.ok) {
+        deps.taskManager.scheduleStateRetry(taskId, "parked_permanent", ["delivering"]);
+        emitRoutingOutcome(taskId, origin, deps.taskManager.getTask(taskId)?.toolName ?? "background_task", false, "retry_scheduled");
       }
     } else {
       const parked = commitState(taskId, "parked_uncertain", ["delivering"]);
       if (parked.ok && parked.value) {
         emitRoutingOutcome(taskId, origin, deps.taskManager.getTask(taskId)?.toolName ?? "background_task", false, "uncertain_parked");
+      } else if (!parked.ok) {
+        deps.taskManager.scheduleStateRetry(taskId, "parked_uncertain", ["delivering"]);
+        emitRoutingOutcome(taskId, origin, deps.taskManager.getTask(taskId)?.toolName ?? "background_task", false, "retry_scheduled");
       }
     }
     log.warn(

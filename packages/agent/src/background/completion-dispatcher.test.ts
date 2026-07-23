@@ -63,6 +63,7 @@ describe("completion dispatcher observation boundary", () => {
       "executing",
       "cleanup_pending",
       "ready_to_deliver",
+      "pre_send",
       "delivering",
       "delivered",
       "parked_permanent",

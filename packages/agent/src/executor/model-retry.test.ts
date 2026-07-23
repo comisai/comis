@@ -95,6 +95,7 @@ function makeParams(overrides?: Partial<ModelRetryParams>): ModelRetryParams {
     messageText: "Hello agent",
     config: { provider: "anthropic", model: "claude-3-opus" },
     timeoutConfig: { promptTimeoutMs: 180_000, retryPromptTimeoutMs: 60_000 },
+    onProviderStart: () => ok(undefined),
     deps: {
       eventBus: makeEventBus(),
       logger: createMockLogger(),

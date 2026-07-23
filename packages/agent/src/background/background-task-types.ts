@@ -38,6 +38,7 @@ export type BackgroundSessionState =
   | "executing"
   | "cleanup_pending"
   | "ready_to_deliver"
+  | "pre_send"
   | "delivering"
   | "delivered"
   | "parked_permanent"
@@ -53,6 +54,14 @@ export const BackgroundContinuationOutboxSchema = z.strictObject({
 });
 
 export type BackgroundContinuationOutbox = z.infer<typeof BackgroundContinuationOutboxSchema>;
+
+export const BackgroundFinalizedResultSchema = z.strictObject({
+  response: z.string().max(102_400),
+  executionId: z.string().min(1).max(256),
+  cleanupRequired: z.boolean(),
+});
+
+export type BackgroundFinalizedResult = z.infer<typeof BackgroundFinalizedResultSchema>;
 
 export interface BackgroundTask {
   id: string;
@@ -74,11 +83,19 @@ export interface BackgroundTask {
   continuationExecutionId: string;
   dispatchAttempts: number;
   continuationOutbox?: BackgroundContinuationOutbox;
+  finalizedResult?: BackgroundFinalizedResult;
   // In-memory only (not serialized):
   _promise?: Promise<unknown>;
   _abortController?: AbortController;
   /** TimerHandle replaces NodeJS.Timeout for cancel-safe shutdown. */
   _hardTimeoutTimer?: TimerHandle;
+  _pendingFinalizedResult?: BackgroundFinalizedResult;
+  _pendingTerminal?: {
+    status: Extract<BackgroundTaskStatus, "completed" | "failed" | "cancelled">;
+    completedAt: number;
+    result?: string;
+    error?: string;
+  };
 }
 
 /** Serializable subset of BackgroundTask for file persistence. */
@@ -105,4 +122,5 @@ export interface PersistedTaskState {
   continuationExecutionId: string;
   dispatchAttempts: number;
   continuationOutbox?: BackgroundContinuationOutbox;
+  finalizedResult?: BackgroundFinalizedResult;
 }

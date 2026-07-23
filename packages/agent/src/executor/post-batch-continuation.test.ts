@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, type Mock } from "vitest";
 import { runPostBatchContinuation } from "./post-batch-continuation.js";
 import type { ComisLogger } from "@comis/core";
+import { allowProviderDispatch } from "./provider-dispatch.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -139,6 +140,7 @@ describe("runPostBatchContinuation", () => {
       logger,
       agentId: "agent-test",
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(result.ok).toBe(true);
@@ -168,6 +170,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: true, maxRetries: 2 },
       logger: mockLogger(),
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(result.ok).toBe(true);
@@ -193,6 +196,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: true, maxRetries: 2 },
       logger: mockLogger(),
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(result.ok).toBe(true);
@@ -229,6 +233,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: true, maxRetries: 2 },
       logger: mockLogger(),
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(result.ok).toBe(true);
@@ -248,6 +253,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: true, maxRetries: 2 },
       logger: mockLogger(),
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(result.ok).toBe(true);
@@ -271,6 +277,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: true, maxRetries: 2 },
       logger: mockLogger(),
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(result.ok).toBe(true);
@@ -296,6 +303,7 @@ describe("runPostBatchContinuation", () => {
       logger,
       agentId: "agent-7",
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     const infoCalls = (logger.info as Mock).mock.calls;
@@ -340,6 +348,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: false, maxRetries: 2 },
       logger: mockLogger(),
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
     expect(result8a.ok).toBe(true);
     if (!result8a.ok) return;
@@ -359,6 +368,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: true, maxRetries: 0 },
       logger: mockLogger(),
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
     expect(result8b.ok).toBe(true);
     if (!result8b.ok) return;
@@ -385,6 +395,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: true, maxRetries: 2 },
       logger: mockLogger(),
       getVisibleAssistantText: () => "",
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(result.ok).toBe(false);

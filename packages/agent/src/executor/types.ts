@@ -141,7 +141,7 @@ export type ExecutionResult = ExecutionResultBase & (
 );
 
 /** Optional overrides for per-execution behavior (e.g., sub-agent isolation). */
-// @optional-field-count: 21 — ExecutionOverrides is the per-EXECUTION override bag;
+// @optional-field-count: 22 — ExecutionOverrides is the per-EXECUTION override bag;
 // every `?` field is an independent per-run knob the caller MAY set (stepCounter/
 // tokenBudget for sub-agent isolation, spawnPacket/model/cacheRetention/skipRag/
 // graphId/nodeId/activeToolGroups for graph nodes, ephemeralSessionAdapter/skipSep/
@@ -209,6 +209,8 @@ export interface ExecutionOverrides {
     result: ExecutionResult,
     phase: "cleanup_pending" | "ready",
   ) => Promise<void>;
+  /** Protected durable result journal written before any delivery handoff. */
+  onJournalFinalizedResult?: (result: ExecutionResult) => Promise<void>;
   /** Stable protected-session journal identity for crash-recoverable execution results. */
   finalizedResultJournalKey?: string;
   /** Authoritative callback invoked immediately before every provider dispatch. */

@@ -14,6 +14,7 @@
 import { ok, err, type Result } from "@comis/shared";
 import type { ComisLogger } from "@comis/core";
 import { runContinuationTurn, type ContinuationTurnSession } from "./continuation-turn.js";
+import type { ProviderDispatchGuard } from "./provider-dispatch.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -65,6 +66,7 @@ export interface RunPostBatchContinuationDeps {
   /** Read visible text from the latest assistant continuation turn. */
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   getVisibleAssistantText: (session: any) => string;
+  guardProviderDispatch: ProviderDispatchGuard;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +252,11 @@ export async function runPostBatchContinuation(
   // Step 5: directive multi-shot retry loop.
   const directive = buildDirective(priorToolCallCount, priorToolNames);
   for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
-    const continuationResult = await runContinuationTurn(session, directive);
+    const continuationResult = await runContinuationTurn(
+      session,
+      directive,
+      deps.guardProviderDispatch,
+    );
     if (!continuationResult.ok) {
       return err({ kind: "followup_error", cause: continuationResult.error });
     }

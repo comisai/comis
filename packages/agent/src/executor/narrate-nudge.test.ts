@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { isIntentPrelude, runNarrateNudge, type RunNarrateNudgeDeps } from "./narrate-nudge.js";
+import { allowProviderDispatch } from "./provider-dispatch.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -39,6 +40,7 @@ function makeDeps(overrides: Partial<RunNarrateNudgeDeps> = {}): RunNarrateNudge
     logger: makeLogger() as unknown as RunNarrateNudgeDeps["logger"],
     agentId: "agent_a",
     getVisibleAssistantText: () => "The comparison shows NVDA outperformed by 12%.",
+    guardProviderDispatch: allowProviderDispatch,
     ...overrides,
   };
 }
