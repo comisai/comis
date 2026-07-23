@@ -27,6 +27,10 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     calls.push("cron_activate");
     return ok(undefined);
   });
+  const prepareTaskSchedules = vi.fn(async () => {
+    calls.push("task_prepare");
+    return ok(undefined);
+  });
   const deactivateCronSchedulers = vi.fn(() => {
     calls.push("cron_deactivate");
   });
@@ -44,6 +48,7 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       getAgentSchedulerSeed: vi.fn(() => ok("seed-a")),
       coordinator: { configurePeriodicHeartbeat, activate, shutdown },
       activateCronSchedulers,
+      prepareTaskSchedules,
       deactivateCronSchedulers,
       activateTaskSchedules,
       rollbackTaskSchedules,
@@ -55,6 +60,7 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     activate,
     shutdown,
     activateCronSchedulers,
+    prepareTaskSchedules,
     deactivateCronSchedulers,
     activateTaskSchedules,
     rollbackTaskSchedules,
@@ -74,6 +80,34 @@ describe("proactive scheduler activation", () => {
     });
     expect(runtime.calls).toEqual([
       "configure",
+      "heartbeat_activate",
+      "cron_activate",
+      "task_activate",
+    ]);
+  });
+
+  it("keeps every scheduler quiescent while asynchronous task preflight is pending", async () => {
+    let finishPreflight: ((result: ReturnType<typeof ok<void>>) => void) | undefined;
+    const runtime = makeDeps({
+      prepareTaskSchedules: vi.fn(() => new Promise((resolve) => {
+        runtime.calls.push("task_prepare");
+        finishPreflight = resolve;
+      })),
+    });
+
+    const activation = activateProactiveSchedulers(runtime.deps);
+    await Promise.resolve();
+
+    expect(runtime.calls).toEqual(["configure", "task_prepare"]);
+    expect(runtime.activate).not.toHaveBeenCalled();
+    expect(runtime.activateCronSchedulers).not.toHaveBeenCalled();
+    expect(runtime.activateTaskSchedules).not.toHaveBeenCalled();
+
+    finishPreflight?.(ok(undefined));
+    await expect(activation).resolves.toEqual(ok(undefined));
+    expect(runtime.calls).toEqual([
+      "configure",
+      "task_prepare",
       "heartbeat_activate",
       "cron_activate",
       "task_activate",
