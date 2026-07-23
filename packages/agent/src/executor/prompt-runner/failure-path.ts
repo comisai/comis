@@ -57,10 +57,6 @@ export async function processFailurePath(
     const guardProviderDispatch = resolveProviderDispatchGuard(
       params.executionOverrides?.onProviderStart,
     );
-    const initialAdmission = guardProviderDispatch();
-    if (!initialAdmission.ok) {
-      return { promptSucceeded: false, promptError: initialAdmission.error, ghostCost };
-    }
     const { wrapper: recoveryWrapper, getResult: getRecoveryResult } =
       createOverflowRecoveryWrapper(
         { maxContextChars: config.maxContextChars },

@@ -75,6 +75,7 @@ import {
   setupNotifications,
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
+  createBackgroundRecoveryRecorder,
   setupTerminalWake,
   setupMcp,
   selectMcpTokenStore,
@@ -2299,26 +2300,13 @@ async function bootChannels(boot: BootContext): Promise<void> {
     logger: daemonLogger,
   });
   // 6.6.8.0.3. Recover background tasks NOW (after the runner is subscribed)
-  backgroundTaskManager.recoverOnStartup((incident) => {
-    const sessionAdapter = handle.piSessionAdapters.get(incident.agentId);
-    if (sessionAdapter === undefined) {
-      return err(new Error("Background recovery session adapter is unavailable"));
-    }
-    const recorder = handle.trajectoryRegistry.getOrCreate(
-      incident.sessionKey,
-      {
-        agentId: incident.agentId,
-        sessionId: incident.sessionKey,
-        sessionKey: incident.sessionKey,
-        sessionFile: sessionAdapter.getSessionPath(incident.projectedSessionKey),
-        logger: daemonLogger,
-        confinedBaseDir: container.config.dataDir || ".",
-      },
-      container.eventBus,
-    );
-    if (!recorder.ok) return err(recorder.error);
-    return ok(undefined);
-  });
+  backgroundTaskManager.recoverOnStartup(createBackgroundRecoveryRecorder({
+    dataDir: boot.dataDir,
+    eventBus: container.eventBus,
+    logger: daemonLogger,
+    sessionAdapters: handle.piSessionAdapters,
+    trajectoryRegistry: handle.trajectoryRegistry,
+  }));
 
   // Channel health monitor (start + stop produced by helper).
   const { monitor: channelHealthMonitor, stop: stopChannelHealthMonitor } = setupChannelHealthMonitor({ adaptersByType, daemonLogger, container });

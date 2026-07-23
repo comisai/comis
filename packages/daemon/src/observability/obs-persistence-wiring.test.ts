@@ -1722,6 +1722,7 @@ describe("backgroundRecoveryEventToRow", () => {
       reason: "recovery_retry_required",
       traceId: null,
       timestamp: 10_002,
+      trajectoryRecorded: true,
     });
 
     expect(row).toEqual({

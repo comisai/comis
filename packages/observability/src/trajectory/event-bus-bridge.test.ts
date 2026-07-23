@@ -1211,6 +1211,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       reason: "live_turn_consumed",
       traceId: null,
       timestamp: 1000,
+      trajectoryRecorded: false,
     },
     "scheduler:task_extraction_completed": {
       rootRunId: "root-task-extract-a", itemCount: 1, candidateCount: 1,
@@ -4509,5 +4510,31 @@ describe("attachTrajectoryToEventBus ownerSessionKey scoping", () => {
       toolName: "exec", toolCallId: "t-other", timestamp: 1, sessionKey: OTHER,
     });
     expect(recorder.calls).toHaveLength(1);
+  });
+});
+
+describe("attachTrajectoryToEventBus direct recovery admission", () => {
+  it("does not duplicate an acknowledged direct recovery trajectory event", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({
+      eventBus: bus,
+      recorder,
+      ownerSessionKey: "default:agent-a:echo:conversation-a:user_a",
+    });
+
+    bus.emit("background_task:notified", {
+      agentId: "agent-a",
+      taskId: "task-a",
+      toolName: "report",
+      sessionKey: "default:agent-a:echo:conversation-a:user_a",
+      notified: false,
+      reason: "recovery_retry_required",
+      traceId: null,
+      timestamp: 10,
+      trajectoryRecorded: true,
+    });
+
+    expect(recorder.calls).toHaveLength(0);
   });
 });

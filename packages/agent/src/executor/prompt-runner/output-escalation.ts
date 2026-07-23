@@ -116,8 +116,6 @@ async function maybeEscalateOutput(
   const guardProviderDispatch = resolveProviderDispatchGuard(
     params.executionOverrides?.onProviderStart,
   );
-  const initialAdmission = guardProviderDispatch();
-  if (!initialAdmission.ok) return err(initialAdmission.error);
 
   const originalStreamFn = session.agent.streamFn;
   let escalationUsed = false;

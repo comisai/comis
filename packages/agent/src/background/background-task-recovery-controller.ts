@@ -29,8 +29,16 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     ((input: BackgroundRecoveryIncidentInput) => Result<void, Error>)
     | undefined;
   let scanRetry: TimerHandle | undefined;
+  let scanFailureAttempts = 0;
+  let lastScanEvidenceAt: number | undefined;
+  let lastScanEvidenceKey: string | undefined;
   const healthAnnounced = new Set<string>();
   const durableAnnounced = new Set<string>();
+  const scanTaskIds = new Set<string>();
+  const unresolvedTasks = new Map<
+    string,
+    Pick<BackgroundTask, "id" | "toolName" | "origin">
+  >();
   const incidentRetries = new Map<string, {
     input: BackgroundRecoveryIncidentInput;
     timer?: TimerHandle;
@@ -38,6 +46,7 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
 
   function buildIncident(
     task: Pick<BackgroundTask, "id" | "toolName" | "origin">,
+    reason: BackgroundRecoveryIncidentInput["reason"],
   ): Result<BackgroundRecoveryIncidentInput, Error> {
     const projected = conversationScopeToSessionKey(task.origin.turnScope.conversation);
     if (!projected.ok) return err(new Error(projected.error.message));
@@ -49,19 +58,24 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
       projectedSessionKey: projected.value,
       traceId: task.origin.traceId ?? null,
       timestamp: deps.clock.now(),
+      reason,
     });
   }
 
-  function emitRecoveryRequired(input: BackgroundRecoveryIncidentInput): void {
+  function emitRecoveryLifecycle(
+    input: BackgroundRecoveryIncidentInput,
+    trajectoryRecorded: boolean,
+  ): void {
     emitObservationalEventSafely({ eventBus: deps.eventBus, logger: deps.logger }, "background_task:notified", {
       agentId: input.agentId,
       taskId: input.taskId,
       toolName: input.toolName,
       sessionKey: input.sessionKey,
       notified: false,
-      reason: "recovery_retry_required",
+      reason: input.reason,
       traceId: input.traceId,
       timestamp: input.timestamp,
+      trajectoryRecorded,
     });
   }
 
@@ -80,9 +94,10 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
       ?? err(new Error("Background recovery incident recorder is not configured"));
     if (persisted.ok) {
       incidentRetries.delete(input.taskId);
-      if (!durableAnnounced.has(input.taskId)) {
-        durableAnnounced.add(input.taskId);
-        emitRecoveryRequired(input);
+      const durableKey = `${input.taskId}:${input.reason}`;
+      if (!durableAnnounced.has(durableKey)) {
+        durableAnnounced.add(durableKey);
+        emitRecoveryLifecycle(input, true);
       }
       return;
     }
@@ -92,7 +107,7 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     });
     if (!healthAnnounced.has(input.taskId)) {
       healthAnnounced.add(input.taskId);
-      emitRecoveryRequired(input);
+      emitRecoveryLifecycle(input, false);
       deps.logger.warn(
         {
           taskId: input.taskId,
@@ -106,35 +121,87 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     scheduleIncidentRetry(input.taskId);
   }
 
+  function recordTask(
+    task: Pick<BackgroundTask, "id" | "toolName" | "origin">,
+  ): void {
+    if (unresolvedTasks.has(task.id)) return;
+    const incident = buildIncident(task, "recovery_retry_required");
+    if (!incident.ok) return;
+    unresolvedTasks.set(task.id, task);
+    persistIncident(incident.value);
+  }
+
+  function resolveTask(
+    task: Pick<BackgroundTask, "id" | "toolName" | "origin">,
+  ): void {
+    const unresolved = unresolvedTasks.get(task.id);
+    if (unresolved === undefined) return;
+    unresolvedTasks.delete(task.id);
+    scanTaskIds.delete(task.id);
+    healthAnnounced.delete(task.id);
+    incidentRetries.get(task.id)?.timer?.cancel();
+    incidentRetries.delete(task.id);
+    const resolved = buildIncident(task, "recovery_resolved");
+    if (resolved.ok) persistIncident(resolved.value);
+  }
+
   function reportScanFailures(
     failures: readonly TaskRecoveryFailure[],
     retry: () => void,
   ): void {
-    if (failures.length === 0) return;
-    const kinds = [...new Set(failures.map((failure) => failure.kind))].sort();
-    deps.logger.warn(
-      {
-        failureCount: failures.length,
-        failureKinds: kinds,
-        hint: "Repair protected background-task storage; startup recovery will retry",
-        errorKind: "resource" as const,
-      },
-      "Background task recovery scan incomplete",
+    const currentTaskIds = new Set(
+      failures.flatMap((failure) => failure.identity === undefined ? [] : [failure.identity.id]),
     );
-    emitObservationalEventSafely({ eventBus: deps.eventBus, logger: deps.logger }, "system:error", {
-      error: new Error("Background task recovery scan incomplete"),
-      source: "background-task-recovery",
-    });
+    if (failures.every((failure) => failure.identity !== undefined)) {
+      for (const taskId of scanTaskIds) {
+        if (currentTaskIds.has(taskId)) continue;
+        const task = unresolvedTasks.get(taskId);
+        if (task !== undefined) resolveTask(task);
+      }
+    }
+    if (failures.length === 0) {
+      scanFailureAttempts = 0;
+      lastScanEvidenceAt = undefined;
+      lastScanEvidenceKey = undefined;
+      return;
+    }
+    const kinds = [...new Set(failures.map((failure) => failure.kind))].sort();
+    const evidenceKey = `${kinds.join(",")}:${[...currentTaskIds].sort().join(",")}`;
+    const now = deps.clock.now();
+    if (
+      evidenceKey !== lastScanEvidenceKey
+      || lastScanEvidenceAt === undefined
+      || now - lastScanEvidenceAt >= 60_000
+    ) {
+      lastScanEvidenceKey = evidenceKey;
+      lastScanEvidenceAt = now;
+      deps.logger.warn(
+        {
+          failureCount: failures.length,
+          failureKinds: kinds,
+          hint: "Repair protected background-task storage; startup recovery will retry",
+          errorKind: "resource" as const,
+        },
+        "Background task recovery scan incomplete",
+      );
+      emitObservationalEventSafely({ eventBus: deps.eventBus, logger: deps.logger }, "system:error", {
+        error: new Error("Background task recovery scan incomplete"),
+        source: "background-task-recovery",
+      });
+    }
     for (const failure of failures) {
       if (failure.identity === undefined) continue;
-      const incident = buildIncident(failure.identity);
-      if (incident.ok) persistIncident(incident.value);
+      if (unresolvedTasks.has(failure.identity.id)) continue;
+      scanTaskIds.add(failure.identity.id);
+      recordTask(failure.identity);
     }
     if (scanRetry !== undefined) return;
+    const delayMs = Math.min(60_000, 1_000 * (2 ** Math.min(scanFailureAttempts, 6)));
+    scanFailureAttempts++;
     scanRetry = deps.timers.setTimeout(() => {
       scanRetry = undefined;
       retry();
-    }, 1_000);
+    }, delayMs);
     scanRetry.unref();
   }
 
@@ -142,10 +209,8 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     setRecorder(next: typeof recorder): void {
       recorder = next;
     },
-    recordTask(task: Pick<BackgroundTask, "id" | "toolName" | "origin">): void {
-      const incident = buildIncident(task);
-      if (incident.ok) persistIncident(incident.value);
-    },
+    recordTask,
+    resolveTask,
     reportScanFailures,
   };
 }

@@ -202,6 +202,7 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
         || reason === "fallback_accepted"
         || reason === "permanent_parked"
         || reason === "uncertain_parked"
+        || reason === "recovery_resolved"
       ) {
         const existing = acc.backgroundRecoveryByTask.get(taskId);
         if (existing !== undefined) {

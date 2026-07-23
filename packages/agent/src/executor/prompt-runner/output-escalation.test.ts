@@ -19,9 +19,10 @@ import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { err, ok } from "@comis/shared";
+import { err } from "@comis/shared";
 
 import { escalateOutput } from "./output-escalation.js";
+import { processFailurePath } from "./failure-path.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sourcePath = resolve(here, "output-escalation.ts");
@@ -87,7 +88,7 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
       executionOverrides: {
         onProviderStart: () => {
           admissionChecks += 1;
-          return admissionChecks === 1 ? ok(undefined) : err(denial);
+          return err(denial);
         },
       },
       executionStartMs: 0,
@@ -122,6 +123,7 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
     );
 
     expect(prompt).not.toHaveBeenCalled();
+    expect(admissionChecks).toBe(1);
     expect((params as { session: { agent: { streamFn: unknown } } }).session.agent.streamFn)
       .toBe(originalStreamFn);
     expect(result).toMatchObject({
@@ -130,6 +132,41 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
       promptError: denial,
     });
     expect(emit).not.toHaveBeenCalledWith("execution:output_escalated", expect.anything());
+  });
+
+  it("restores overflow recovery state after one terminal admission denial", async () => {
+    const originalStreamFn = vi.fn();
+    const prompt = vi.fn();
+    const denial = new Error("execution terminalized");
+    const onProviderStart = vi.fn(() => err(denial));
+    const params = {
+      session: {
+        agent: { streamFn: originalStreamFn },
+        prompt,
+      },
+      config: { maxContextChars: 10_000 },
+      effectiveTimeout: { retryPromptTimeoutMs: 1_000 },
+      executionOverrides: { onProviderStart },
+      deps: {
+        logger: { info: vi.fn(), warn: vi.fn() },
+      },
+    } as never;
+
+    const result = await processFailurePath(
+      params,
+      "hello",
+      undefined,
+      new Error("prompt is too long"),
+    );
+
+    expect(onProviderStart).toHaveBeenCalledTimes(1);
+    expect(prompt).not.toHaveBeenCalled();
+    expect((params as { session: { agent: { streamFn: unknown } } }).session.agent.streamFn)
+      .toBe(originalStreamFn);
+    expect(result).toMatchObject({
+      promptSucceeded: false,
+      promptError: denial,
+    });
   });
 });
 

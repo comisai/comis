@@ -169,6 +169,7 @@ export function createBackgroundCompletionRunner(
       reason,
       traceId: origin.traceId,
       timestamp: systemNowMs(),
+      trajectoryRecorded: false,
     });
   }
 

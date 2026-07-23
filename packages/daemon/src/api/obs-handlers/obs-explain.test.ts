@@ -774,7 +774,7 @@ describe("assembleIncidentReportFromSources", () => {
           taskId: "task-recovery-a",
           toolName: "report",
           notified: false,
-          reason: "silent_consumed",
+          reason: "recovery_resolved",
         },
       },
     ];

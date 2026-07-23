@@ -117,6 +117,7 @@ export interface BackgroundTask {
     result?: string;
     error?: string;
   };
+  _ownsCounterSlot?: boolean;
 }
 
 /** Serializable subset of BackgroundTask for file persistence. */

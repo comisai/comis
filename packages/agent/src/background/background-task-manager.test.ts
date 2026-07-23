@@ -618,6 +618,70 @@ describe("BackgroundTaskManager", () => {
       }
     });
 
+    it("does not release a live task counter for recovered terminal retries", async () => {
+      vi.useFakeTimers();
+      try {
+        let failNextOpen = false;
+        const controlled = createBackgroundTaskManager({
+          dataDir,
+          eventBus,
+          logger,
+          clock: testClock,
+          timers: testTimers,
+          maxPerAgent: 1,
+          maxTotal: 1,
+          persistenceOps: {
+            open: (path, flags, mode) => {
+              if (failNextOpen) {
+                failNextOpen = false;
+                throw new Error("storage unavailable");
+              }
+              return openSync(path, flags, mode);
+            },
+            write: writeFileSync,
+            sync: fsyncSync,
+            close: closeSync,
+            rename: renameSync,
+            unlink: unlinkSync,
+          },
+        });
+        const origin = buildOrigin({ agentId: "a1" });
+        const live = controlled.promote(
+          "live",
+          new Promise(() => {}),
+          new AbortController(),
+          origin,
+        );
+        expect(live.ok).toBe(true);
+        persistTaskSync(dataDir, {
+          id: "recovered-without-counter",
+          toolName: "recovered",
+          status: "running",
+          startedAt: 1,
+          origin,
+          continuationExecutionId: "recovered-without-counter",
+          dispatchAttempts: 0,
+        });
+
+        failNextOpen = true;
+        controlled.recoverOnStartup(() => ok(undefined));
+        await vi.advanceTimersByTimeAsync(1_001);
+
+        const next = controlled.promote(
+          "next",
+          new Promise(() => {}),
+          new AbortController(),
+          origin,
+        );
+        expect(next.ok).toBe(false);
+        for (const task of controlled.getAllTasks()) {
+          task._hardTimeoutTimer?.cancel();
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("surfaces and retries canonical incident persistence failures", async () => {
       vi.useFakeTimers();
       try {

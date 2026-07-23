@@ -121,6 +121,7 @@ export interface BackgroundRecoveryIncidentInput {
   readonly projectedSessionKey: SessionKey;
   readonly traceId: string | null;
   readonly timestamp: number;
+  readonly reason: "recovery_retry_required" | "recovery_resolved";
 }
 
 const MAX_RESULT_CHARS = 102_400; // 100KB
@@ -169,15 +170,21 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     );
   }
 
-  function incrementCounters(agentId: string): void {
+  function incrementCounters(task: BackgroundTask): void {
+    if (task._ownsCounterSlot) return;
+    const agentId = task.origin.turnScope.conversation.agentId;
     perAgentCount.set(agentId, (perAgentCount.get(agentId) ?? 0) + 1);
     totalCount++;
+    task._ownsCounterSlot = true;
   }
 
-  function decrementCounters(agentId: string): void {
+  function decrementCounters(task: BackgroundTask): void {
+    if (!task._ownsCounterSlot) return;
+    const agentId = task.origin.turnScope.conversation.agentId;
     const current = perAgentCount.get(agentId) ?? 1;
     perAgentCount.set(agentId, Math.max(0, current - 1));
     totalCount = Math.max(0, totalCount - 1);
+    task._ownsCounterSlot = false;
   }
 
   function truncateResult(value: unknown): string {
@@ -243,7 +250,8 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     terminalRetryTimers.delete(task.id);
     terminalSignals.get(task.id)?.resolve();
     task._hardTimeoutTimer?.cancel();
-    decrementCounters(task.origin.turnScope.conversation.agentId);
+    decrementCounters(task);
+    recoveryController.resolveTask(task);
     reportPersistenceOutcome(task, persisted.value);
     return ok(undefined);
   }
@@ -259,6 +267,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       projectedSessionKey: projected.value,
       traceId: task.origin.traceId ?? null,
       timestamp: clock.now(),
+      reason: "recovery_retry_required",
     });
   }
 
@@ -332,7 +341,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       task._hardTimeoutTimer = timer;
 
       tasks.set(taskId, task);
-      incrementCounters(agentId);
+      incrementCounters(task);
 
       emitObservationalEventSafely({ eventBus, logger }, "background_task:promoted", {
         agentId,
@@ -532,13 +541,8 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         }
         tasks.set(task.id, task);
 
-        if (
-          task.dispatchState === "delivered"
-          || task.dispatchState === "parked_permanent"
-          || task.dispatchState === "parked_uncertain"
-          || task.dispatchState === "consumed_live"
-          || persisted.status === "cancelled"
-        ) {
+        if (isClosedBackgroundTask(task)) {
+          recoveryController.resolveTask(task);
           dispatchPreserved++;
           continue;
         }
@@ -771,6 +775,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
                 : "uncertain_parked",
           traceId: incident.value.traceId,
           timestamp: clock.now(),
+          trajectoryRecorded: false,
         });
       }, 1_000);
       retry.unref();

@@ -700,10 +700,12 @@ export interface InfraEvents {
       | "retry_scheduled"
       | "permanent_parked"
       | "uncertain_parked"
-      | "recovery_retry_required";
+      | "recovery_retry_required"
+      | "recovery_resolved";
     /** traceId from task.origin for operator log continuity (null when absent). */
     traceId: string | null;
     timestamp: number;
+    trajectoryRecorded: boolean;
   };
 
   /** Background completion runner is about to invoke executor.execute() on

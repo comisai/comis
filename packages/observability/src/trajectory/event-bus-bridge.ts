@@ -585,6 +585,12 @@ export function attachTrajectoryToEventBus(
         const eventSessionKey = resolveEventSessionKey(payload);
         if (eventSessionKey !== undefined && eventSessionKey !== ownerSessionKey) return;
       }
+      if (
+        eventName === "background_task:notified"
+        && (payload as EventMap["background_task:notified"]).trajectoryRecorded
+      ) {
+        return;
+      }
       const data = translatePayload(eventName, payload);
       const trajectoryType = TRAJECTORY_BRIDGE_MAPPING[eventName];
       recorder.recordEvent(trajectoryType, data);
