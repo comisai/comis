@@ -304,11 +304,14 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
     // -----------------------------------------------------------------------
 
     it(
-      "session.run_status rejects unknown run ID",
+      "session.run_status rejects unknown run ID for authenticated operator",
       async () => {
         await expect(
-          rpcCall("session.run_status", { run_id: "nonexistent-run-id" }),
-        ).rejects.toThrow(/Unknown run ID/);
+          rpcCall("session.run_status", {
+            run_id: "nonexistent-run-id",
+            _trustLevel: "admin",
+          }),
+        ).rejects.toThrow(/Sub-agent target is unavailable/);
       },
       10_000,
     );
