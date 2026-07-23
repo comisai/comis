@@ -1208,7 +1208,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       toolName: "mcp__weather--weather_forecast",
       sessionKey: "k",
       notified: false,
-      reason: "live_turn_suppressed",
+      reason: "live_turn_consumed",
       traceId: null,
       timestamp: 1000,
     },

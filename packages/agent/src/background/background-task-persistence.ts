@@ -13,9 +13,22 @@
  *
  * @module
  */
-import { readFileSync, readdirSync, statSync, unlinkSync, existsSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { randomUUID } from "node:crypto";
 import { BackgroundTaskOriginSchema, safePath, systemNowMs } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 import {
   BackgroundContinuationOutboxSchema,
   type BackgroundTask,
@@ -33,7 +46,7 @@ export const TASK_DIR_NAME = "background-tasks";
  * PersistedTaskState; we use spread-when-defined to avoid emitting
  * `"notificationPolicy": undefined` to disk for callers that do not set them.
  */
-function toPersistedState(task: BackgroundTask | PersistedTaskState): PersistedTaskState {
+export function toPersistedState(task: BackgroundTask | PersistedTaskState): PersistedTaskState {
   return {
     id: task.id,
     toolName: task.toolName,
@@ -49,6 +62,66 @@ function toPersistedState(task: BackgroundTask | PersistedTaskState): PersistedT
     ...(task.notificationPolicy !== undefined && { notificationPolicy: task.notificationPolicy }),
     ...(task.dispatchState !== undefined && { dispatchState: task.dispatchState }),
   };
+}
+
+export interface AtomicTaskPersistenceOps {
+  open(path: string, flags: string, mode?: number): number;
+  write(fd: number, content: string): void;
+  sync(fd: number): void;
+  close(fd: number): void;
+  rename(from: string, to: string): void;
+  unlink(path: string): void;
+}
+
+const defaultAtomicTaskPersistenceOps: AtomicTaskPersistenceOps = {
+  open: openSync,
+  write: writeFileSync,
+  sync: fsyncSync,
+  close: closeSync,
+  rename: renameSync,
+  unlink: unlinkSync,
+};
+
+export function persistTaskAtomically(
+  dataDir: string,
+  task: BackgroundTask | PersistedTaskState,
+  ops: AtomicTaskPersistenceOps = defaultAtomicTaskPersistenceOps,
+): Result<void, Error> {
+  const agentDir = safePath(dataDir, task.origin.turnScope.conversation.agentId);
+  const ensured = ensureContainedDir({ dir: agentDir, mode: 0o700, confinedBaseDir: dataDir });
+  if (!ensured.ok) return err(ensured.error);
+  const filePath = safePath(agentDir, `${task.id}.json`);
+  const tempPath = safePath(agentDir, `.${task.id}.${randomUUID()}.tmp`);
+  const state = toPersistedState(task);
+  let fileDescriptor: number | undefined;
+  let directoryDescriptor: number | undefined;
+  let renamed = false;
+  const written = tryCatch(() => {
+    fileDescriptor = ops.open(tempPath, "wx", 0o600);
+    ops.write(fileDescriptor, JSON.stringify(state, null, 2));
+    ops.sync(fileDescriptor);
+    ops.close(fileDescriptor);
+    fileDescriptor = undefined;
+    ops.rename(tempPath, filePath);
+    renamed = true;
+    directoryDescriptor = ops.open(agentDir, "r");
+    ops.sync(directoryDescriptor);
+    ops.close(directoryDescriptor);
+    directoryDescriptor = undefined;
+  });
+  if (!written.ok) {
+    if (fileDescriptor !== undefined) {
+      tryCatch(() => ops.close(fileDescriptor!));
+    }
+    if (directoryDescriptor !== undefined) {
+      tryCatch(() => ops.close(directoryDescriptor!));
+    }
+    if (!renamed) {
+      tryCatch(() => ops.unlink(tempPath));
+    }
+    return err(written.error);
+  }
+  return ok(undefined);
 }
 
 /**

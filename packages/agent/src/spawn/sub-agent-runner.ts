@@ -50,6 +50,7 @@ import {
   type MemoryWriteScope,
   type ResolvedTurnScope,
   type WorkspacePolicySnapshot,
+  verifyWorkspacePolicySnapshot,
   SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
 } from "@comis/core";
 import { err, fromPromise, ok, suppressError, tryCatch, type Result } from "@comis/shared";
@@ -543,6 +544,10 @@ export interface SubAgentRunnerDeps {
    * not a correctness gate on the live run).
    */
   durableRuns?: DurableRunPort;
+  resolveWorkspacePolicySnapshot?: (
+    agentId: string,
+    policyHash: string,
+  ) => Result<WorkspacePolicySnapshot, Error>;
   /**
    * The keep-alive cadence + lapsed threshold (from
    * `autonomy.durability`). `keepAliveMs` drives the heartbeat-refresh interval
@@ -811,7 +816,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     resolve(completion: SubAgentCompletion): void;
     settled: boolean;
   }
+  interface StartDeferred {
+    promise: Promise<Result<void, Error>>;
+    resolve(result: Result<void, Error>): void;
+    settled: boolean;
+  }
   const completionDeferreds = new Map<string, CompletionDeferred>();
+  const startDeferreds = new Map<string, StartDeferred>();
   const activePromises = new Set<Promise<void>>();
   const activeRunIds = new Set<string>();
   const providerSettledRunIds = new Set<string>();
@@ -838,6 +849,19 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       settled: false,
     };
     completionDeferreds.set(runId, deferred);
+    let resolveStart!: (result: Result<void, Error>) => void;
+    const startDeferred: StartDeferred = {
+      promise: new Promise((resolve) => {
+        resolveStart = resolve;
+      }),
+      resolve(result) {
+        if (startDeferred.settled) return;
+        startDeferred.settled = true;
+        resolveStart(result);
+      },
+      settled: false,
+    };
+    startDeferreds.set(runId, startDeferred);
   }
 
   function boundedCompletionSummary(text: string | undefined): string | undefined {
@@ -935,6 +959,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         };
     }
     runs.set(runId, terminal);
+    startDeferreds.get(runId)?.resolve(
+      err(new Error(`Sub-agent provider did not start: ${completion.endReason}`)),
+    );
     removeDedupEntry(terminal);
     completionDeferreds.get(runId)?.resolve(completion);
     return terminal;
@@ -2320,10 +2347,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   function startExecution(
     runId: string,
     admittedRun: SubAgentQueuedRun | SubAgentRunningRun,
-    params: SpawnParams,
+    inputParams: SpawnParams,
     currentDepth: number,
     maxDepth: number,
   ): void {
+    let params = inputParams;
     let run: SubAgentRunningRun;
     if (admittedRun.status === "queued") {
       const { status: _status, queuedAt: _queuedAt, ...common } = admittedRun;
@@ -2349,6 +2377,28 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         durableAdmissionError = new DurableSubAgentAdmissionError(
           "Durable sub-agent workspace policy authority is missing",
         );
+      }
+      const snapshotResult = params.workspacePolicySnapshot !== undefined
+        ? ok(params.workspacePolicySnapshot)
+        : workspacePolicyHash === undefined
+          ? err(new Error("Durable sub-agent workspace policy snapshot is missing"))
+          : deps.resolveWorkspacePolicySnapshot?.(params.agentId, workspacePolicyHash)
+            ?? err(new Error("Durable sub-agent workspace policy resolver is missing"));
+      if (
+        !snapshotResult.ok
+        || !verifyWorkspacePolicySnapshot(snapshotResult.value).ok
+        || snapshotResult.value.agentId !== params.agentId
+        || snapshotResult.value.combinedHash !== workspacePolicyHash
+      ) {
+        durableAdmissionError = new DurableSubAgentAdmissionError(
+          "Durable sub-agent workspace policy snapshot verification failed",
+        );
+      } else {
+        params = {
+          ...params,
+          workspacePolicyHash: snapshotResult.value.combinedHash,
+          workspacePolicySnapshot: snapshotResult.value,
+        };
       }
       const descriptor = SubAgentResumeDescriptorSchema.safeParse({
         kind: "subagent_resume",
@@ -2457,6 +2507,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             durableAdmission.error,
           );
         }
+        if (runs.get(runId)?.status !== "running" || deliverySuppressedRunIds.has(runId)) {
+          throw new DurableSubAgentAdmissionError(
+            "Sub-agent terminalized during checkpoint admission",
+          );
+        }
 
         if (deps.lifecycleHooks) {
           try {
@@ -2476,6 +2531,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               errorKind: "internal" as const,
             }, "Lifecycle hook prepareSpawn failed");
           }
+        }
+        if (runs.get(runId)?.status !== "running" || deliverySuppressedRunIds.has(runId)) {
+          throw new DurableSubAgentAdmissionError(
+            "Sub-agent terminalized during spawn preparation",
+          );
         }
 
         startProgressFork(run, params);
@@ -2561,14 +2621,20 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         const childTask = appendExpectedOutputContract(params.task, params.expected_outputs);
         const result = await runWithContext(
           childContext.value,
-          () => deps.executeAgent(
-            params.agentId,
-            subSessionKey,
-            { conversationScope: run.conversationScope, conversationRef: run.conversationRef },
-            childTask,
-            params.max_steps,
-            params.callerAgentId,
-            params.graphId && params.nodeId
+          () => {
+            if (runs.get(runId)?.status !== "running" || deliverySuppressedRunIds.has(runId)) {
+              return Promise.reject(
+                new DurableSubAgentAdmissionError("Sub-agent terminalized before provider start"),
+              );
+            }
+            const providerExecution = deps.executeAgent(
+              params.agentId,
+              subSessionKey,
+              { conversationScope: run.conversationScope, conversationRef: run.conversationRef },
+              childTask,
+              params.max_steps,
+              params.callerAgentId,
+              params.graphId && params.nodeId
               ? {
                   graphId: params.graphId,
                   nodeId: params.nodeId,
@@ -2584,8 +2650,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                 : params.workspacePolicySnapshot === undefined
                   ? undefined
                   : { workspacePolicySnapshot: params.workspacePolicySnapshot },
-            params.tokenBudget,
-            {
+              params.tokenBudget,
+              {
               rootRunId: run.rootRunId,
               ...(run.parentLeaseId !== undefined
                 ? { parentLeaseId: run.parentLeaseId }
@@ -2602,8 +2668,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                 run.caps = [...authority.caps];
                 persistDurableCheckpoint(run, params);
               },
-            },
-          ),
+              },
+            );
+            startDeferreds.get(runId)?.resolve(ok(undefined));
+            return providerExecution;
+          },
         );
         providerSettledRunIds.add(runId);
 
@@ -3858,9 +3927,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       jobName: descriptor.value.jobName,
     }));
     if (!resumed.ok) return resumed;
-    return resumed.value === record.checkpointId
-      ? ok(resumed.value)
-      : err(new Error("Durable sub-agent resume execution identity mismatch"));
+    if (resumed.value !== record.checkpointId) {
+      return err(new Error("Durable sub-agent resume execution identity mismatch"));
+    }
+    const started = startDeferreds.get(resumed.value);
+    if (!started) return err(new Error("Durable sub-agent resume start handshake is missing"));
+    const admitted = await started.promise;
+    return admitted.ok ? ok(resumed.value) : admitted;
   }
 
   return {

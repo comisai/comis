@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createConversationRef, safePath, TypedEventBus } from "@comis/core";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
-import { persistTaskSync } from "./background-task-persistence.js";
+import { loadTask, persistTaskSync } from "./background-task-persistence.js";
 import type { BackgroundTaskOrigin, PersistedTaskState } from "./background-task-types.js";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
@@ -612,6 +612,37 @@ describe("BackgroundTaskManager", () => {
   // boundary so recovered tasks reflect their pre-restart dispatch state.
   // ---------------------------------------------------------------------------
   describe("recoverOnStartup preserves dispatchState", () => {
+    it("parks a provider-started continuation instead of replaying execution", () => {
+      const testDir = safePath(tmpdir(), `comis-bg-mgr-exec-${randomUUID()}`);
+      mkdirSync(testDir, { recursive: true });
+      try {
+        const origin = buildOrigin({ agentId: "exec-agent" });
+        persistTaskSync(testDir, {
+          id: "exec-task-1",
+          toolName: "exec",
+          status: "completed",
+          startedAt: 1,
+          completedAt: 2,
+          origin,
+          dispatchState: "executing",
+          continuationExecutionId: "continuation-1",
+          dispatchAttempts: 1,
+        });
+        const recovered = createBackgroundTaskManager({
+          dataDir: testDir,
+          eventBus: createMockEventBus(),
+          logger: createMockLogger(),
+          clock: testClock,
+          timers: testTimers,
+        });
+        recovered.recoverOnStartup();
+        expect(recovered.getTask("exec-task-1")?.dispatchState).toBe("parked_uncertain");
+        expect(loadTask(testDir, "exec-agent", "exec-task-1")?.dispatchState).toBe("parked_uncertain");
+      } finally {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    });
+
     it("preserves a parked delivery outcome without replaying it", () => {
       const testDir = safePath(tmpdir(), `comis-bg-mgr-disp-${randomUUID()}`);
       mkdirSync(testDir, { recursive: true });

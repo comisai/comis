@@ -34,6 +34,7 @@ export type BackgroundTaskNotificationPolicy = "deferred" | "immediate" | "silen
 /** Durable execution, outbox delivery, and reconciliation lifecycle. */
 export type BackgroundSessionState =
   | "pending"
+  | "execution_claimed"
   | "executing"
   | "ready_to_deliver"
   | "delivering"

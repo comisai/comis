@@ -35,7 +35,7 @@ import { err, fromPromise, ok } from "@comis/shared";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor } from "@comis/agent";
 import type { RunnerSessionStore } from "@comis/agent";
-import { wrapOutwardSend } from "../api/outward-ledger-wrap.js";
+import { OutwardSendPreSendError, wrapOutwardSend } from "../api/outward-ledger-wrap.js";
 
 /** Result of setupBackgroundCompletionRunner -- exposed to the daemon for shutdown. */
 export interface BackgroundCompletionRunnerContext {
@@ -64,7 +64,7 @@ export interface SetupBackgroundCompletionRunnerDeps {
    */
   taskManager: Pick<
     BackgroundTaskManager,
-    "getTask" | "transitionDispatchState" | "persistContinuationOutbox" | "scheduleDispatchRetry"
+    "getTask" | "commitDispatchState" | "transitionDispatchState" | "persistContinuationOutbox" | "scheduleDispatchRetry"
   >;
   /** bgNotifyFn closure used when the originating session is gone. */
   fallbackNotifyFn: NotifyFn;
@@ -163,6 +163,18 @@ export function setupBackgroundCompletionRunner(
       return isPermanentError(message)
         ? { kind: "permanent", errorKind: "platform", message }
         : { kind: "uncertain", errorKind: "dependency", message };
+    }
+    if (failure instanceof OutwardSendPreSendError) {
+      const reclaimed = deps.outwardLedger.reclaimPreSend
+        ? await deps.outwardLedger.reclaimPreSend(rootRunId, allocated.value)
+        : err(new Error("The outward ledger cannot reclaim a proven pre-send attempt"));
+      return reclaimed.ok && reclaimed.value
+        ? { kind: "retryable_pre_send", errorKind: "dependency", message }
+        : {
+            kind: "uncertain",
+            errorKind: "dependency",
+            message: reclaimed.ok ? "The proven pre-send attempt was not reclaimable" : reclaimed.error.message,
+          };
     }
     const retained = await deps.outwardLedger.lookup(rootRunId, allocated.value);
     if (!retained.ok) {

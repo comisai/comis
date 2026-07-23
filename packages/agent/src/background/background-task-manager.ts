@@ -17,7 +17,12 @@ import {
   type TimerHandle,
   type TimerPort,
 } from "@comis/core";
-import { persistTaskSync, recoverTasks, removeTaskFile } from "./background-task-persistence.js";
+import {
+  persistTaskAtomically,
+  persistTaskSync,
+  recoverTasks,
+  removeTaskFile,
+} from "./background-task-persistence.js";
 import type {
   BackgroundTask,
   BackgroundContinuationOutbox,
@@ -101,6 +106,11 @@ export interface BackgroundTaskManager {
     next: BackgroundSessionState,
     expected?: readonly BackgroundSessionState[],
   ): boolean;
+  commitDispatchState(
+    taskId: string,
+    next: BackgroundSessionState,
+    expected?: readonly BackgroundSessionState[],
+  ): Result<boolean, Error>;
   persistContinuationOutbox(
     taskId: string,
     outbox: BackgroundContinuationOutbox,
@@ -384,16 +394,21 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           dispatchPreserved++;
           continue;
         }
-        if (
-          task.dispatchState === "executing"
-        ) {
-          task.dispatchState = "pending";
-          persistTaskSync(dataDir, task);
+        if (task.dispatchState === "execution_claimed") {
+          const candidate = { ...task, dispatchState: "pending" as const };
+          const persistedReset = persistTaskAtomically(dataDir, candidate);
+          if (persistedReset.ok) task.dispatchState = "pending";
+        } else if (task.dispatchState === "executing") {
+          const candidate = { ...task, dispatchState: "parked_uncertain" as const };
+          const persistedReset = persistTaskAtomically(dataDir, candidate);
+          if (persistedReset.ok) task.dispatchState = "parked_uncertain";
         } else if (task.dispatchState === "delivering") {
-          task.dispatchState = task.continuationOutbox?.deliveryProtection === "ledger"
+          const recoveredState: BackgroundSessionState = task.continuationOutbox?.deliveryProtection === "ledger"
             ? "ready_to_deliver"
             : "parked_uncertain";
-          persistTaskSync(dataDir, task);
+          const candidate = { ...task, dispatchState: recoveredState };
+          const persistedReset = persistTaskAtomically(dataDir, candidate);
+          if (persistedReset.ok) task.dispatchState = recoveredState;
         }
         if (persisted.status === "completed") {
           count++;
@@ -442,6 +457,22 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       return true;
     },
 
+    commitDispatchState(taskId, next, expected) {
+      const task = tasks.get(taskId);
+      if (!task) return ok(false);
+      const current = task.dispatchState ?? "pending";
+      if (expected && !expected.includes(current)) return ok(false);
+      const dispatchAttempts = next === "execution_claimed"
+        ? task.dispatchAttempts + 1
+        : task.dispatchAttempts;
+      const candidate = { ...task, dispatchState: next, dispatchAttempts };
+      const persisted = persistTaskAtomically(dataDir, candidate);
+      if (!persisted.ok) return persisted;
+      task.dispatchState = next;
+      task.dispatchAttempts = dispatchAttempts;
+      return ok(true);
+    },
+
     persistContinuationOutbox(taskId, outbox, expected) {
       const parsed = BackgroundContinuationOutboxSchema.safeParse(outbox);
       if (!parsed.success) return err(new Error("Background continuation outbox validation failed"));
@@ -451,9 +482,15 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       if (expected && !expected.includes(current)) {
         return err(new Error(`Background task ${taskId} cannot persist an outbox from ${current}`));
       }
+      const candidate = {
+        ...task,
+        continuationOutbox: parsed.data,
+        dispatchState: "ready_to_deliver" as const,
+      };
+      const persisted = persistTaskAtomically(dataDir, candidate);
+      if (!persisted.ok) return persisted;
       task.continuationOutbox = parsed.data;
       task.dispatchState = "ready_to_deliver";
-      persistTaskSync(dataDir, task);
       return ok(undefined);
     },
 

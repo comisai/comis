@@ -1,11 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createConversationRef, safePath } from "@comis/core";
 import {
   persistTaskSync,
+  persistTaskAtomically,
   loadTask,
   recoverTasks,
   removeTaskFile,
@@ -47,6 +60,47 @@ describe("background-task-persistence", () => {
   });
 
   describe("persistTaskSync / loadTask round-trip", () => {
+    it.each(["write", "sync", "rename"] as const)(
+      "preserves the prior durable task when atomic %s fails",
+      (failure) => {
+        const prior: PersistedTaskState = {
+          id: "atomic-task",
+          toolName: "exec_command",
+          status: "completed",
+          startedAt: 1,
+          completedAt: 2,
+          origin: buildOrigin({ agentId: "agent-a" }),
+          continuationExecutionId: "execution-a",
+          dispatchAttempts: 0,
+          dispatchState: "pending",
+        };
+        persistTaskSync(dataDir, prior);
+        const attempted = persistTaskAtomically(
+          dataDir,
+          { ...prior, dispatchState: "ready_to_deliver" },
+          {
+            open: openSync,
+            write: (fd, content) => {
+              if (failure === "write") throw new Error("injected write failure");
+              writeFileSync(fd, content);
+            },
+            sync: (fd) => {
+              if (failure === "sync") throw new Error("injected sync failure");
+              fsyncSync(fd);
+            },
+            close: closeSync,
+            rename: (from, to) => {
+              if (failure === "rename") throw new Error("injected rename failure");
+              renameSync(from, to);
+            },
+            unlink: unlinkSync,
+          },
+        );
+        expect(attempted.ok).toBe(false);
+        expect(loadTask(dataDir, "agent-a", prior.id)?.dispatchState).toBe("pending");
+      },
+    );
+
     it("writes and reads back a task", () => {
       const task: PersistedTaskState = {
         id: "task-1",
@@ -85,6 +139,8 @@ describe("background-task-persistence", () => {
         status: "running",
         startedAt: 1000,
         origin: buildOrigin({ agentId: "a1" }),
+        continuationExecutionId: "t1",
+        dispatchAttempts: 0,
       };
       const completed: PersistedTaskState = {
         id: "t2",
@@ -94,6 +150,8 @@ describe("background-task-persistence", () => {
         completedAt: 2000,
         result: "done",
         origin: buildOrigin({ agentId: "a1" }),
+        continuationExecutionId: "t2",
+        dispatchAttempts: 0,
       };
       persistTaskSync(dataDir, running);
       persistTaskSync(dataDir, completed);
@@ -117,6 +175,8 @@ describe("background-task-persistence", () => {
         status: "running",
         startedAt: 1000,
         origin: buildOrigin({ agentId: "a1" }),
+        continuationExecutionId: "t1",
+        dispatchAttempts: 0,
       });
       persistTaskSync(dataDir, {
         id: "t2",
@@ -124,6 +184,8 @@ describe("background-task-persistence", () => {
         status: "running",
         startedAt: 2000,
         origin: buildOrigin({ agentId: "a2" }),
+        continuationExecutionId: "t2",
+        dispatchAttempts: 0,
       });
 
       const recovered = recoverTasks(dataDir);
@@ -143,6 +205,8 @@ describe("background-task-persistence", () => {
         status: "running",
         startedAt: 1000,
         origin: buildOrigin({ agentId: "a1" }),
+        continuationExecutionId: "t1",
+        dispatchAttempts: 0,
       });
       recoverTasks(dataDir);
 
@@ -197,6 +261,8 @@ describe("background-task-persistence", () => {
         completedAt: 2000,
         result: "ok",
         origin: buildOrigin({ agentId: "real-agent" }),
+        continuationExecutionId: "wr-04-task",
+        dispatchAttempts: 0,
       };
       persistTaskSync(dataDir, task);
 

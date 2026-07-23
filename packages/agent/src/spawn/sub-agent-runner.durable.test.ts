@@ -26,7 +26,7 @@ import {
   hashSubAgentResumeDescriptor,
   type SubAgentResumeDescriptor,
 } from "./sub-agent-resume-descriptor.js";
-import { createConversationRef } from "@comis/core";
+import { computeWorkspacePolicyCombinedHash, createConversationRef } from "@comis/core";
 import type {
   ClockPort,
   TimerPort,
@@ -54,6 +54,7 @@ const testTimers: TimerPort = {
   setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
   setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
 };
+const POLICY_HASH = computeWorkspacePolicyCombinedHash([]);
 
 // ---------------------------------------------------------------------------
 // A recording DurableRunPort stub.
@@ -111,6 +112,11 @@ function createDeps(over: Partial<SubAgentRunnerDeps> = {}): SubAgentRunnerDeps 
     tenantId: "default",
     clock: testClock,
     timers: testTimers,
+    resolveWorkspacePolicySnapshot: (agentId, policyHash) => ok({
+      agentId,
+      sections: [],
+      combinedHash: policyHash,
+    }),
     ...over,
   };
 }
@@ -122,7 +128,7 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
   it("writes an initial execution checkpoint at the spawn boundary", async () => {
     const store = createRecordingStore();
     const runner = createSubAgentRunner(createDeps({ durableRuns: store }));
-    const runId = runner.spawn({ task: "long task", agentId: "worker", rootRunId: "root-A", workspacePolicyHash: "b".repeat(64) });
+    const runId = runner.spawn({ task: "long task", agentId: "worker", rootRunId: "root-A", workspacePolicyHash: POLICY_HASH });
     await vi.advanceTimersByTimeAsync(0);
 
     expect(store.checkpoints.length).toBe(1);
@@ -154,7 +160,7 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     const executeAgent = vi.fn().mockReturnValue(new Promise(() => undefined));
     const runner = createSubAgentRunner(createDeps({ durableRuns: store, logger, executeAgent }));
 
-    const runId = runner.spawn({ task: "long task", agentId: "worker", rootRunId: "root-safe-log", workspacePolicyHash: "b".repeat(64) });
+    const runId = runner.spawn({ task: "long task", agentId: "worker", rootRunId: "root-safe-log", workspacePolicyHash: POLICY_HASH });
     await vi.advanceTimersByTimeAsync(0);
 
     const failure = log.mock.calls.find((call) =>
@@ -162,6 +168,82 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     );
     expect(failure).toBeDefined();
     expect(String((failure![0] as Record<string, unknown>).err)).not.toContain(credential);
+    expect(executeAgent).not.toHaveBeenCalled();
+    expect(runner.getRunStatus(runId)?.status).toBe("failed");
+  });
+
+  it("rejects durable execution without an exact immutable policy snapshot", async () => {
+    const executeAgent = vi.fn().mockReturnValue(new Promise(() => undefined));
+    const runner = createSubAgentRunner(createDeps({
+      durableRuns: createRecordingStore(),
+      executeAgent,
+      resolveWorkspacePolicySnapshot: undefined,
+    }));
+    const runId = runner.spawn({
+      task: "protected task",
+      agentId: "worker",
+      rootRunId: "root-policy-missing",
+      workspacePolicyHash: POLICY_HASH,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(executeAgent).not.toHaveBeenCalled();
+    expect(runner.getRunStatus(runId)?.status).toBe("failed");
+  });
+
+  it("does not start the provider when watchdog terminalizes deferred checkpoint admission", async () => {
+    let releaseCheckpoint!: (value: Result<void, Error>) => void;
+    const store = createRecordingStore();
+    store.upsertCheckpoint = vi.fn(() => new Promise((resolve) => {
+      releaseCheckpoint = resolve;
+    }));
+    const executeAgent = vi.fn().mockReturnValue(new Promise(() => undefined));
+    const runner = createSubAgentRunner(createDeps({
+      durableRuns: store,
+      executeAgent,
+      config: {
+        ...createDeps().config,
+        subagentContext: { maxRunTimeoutMs: 10, perStepTimeoutMs: 10 },
+      },
+    }));
+    const runId = runner.spawn({
+      task: "deferred checkpoint",
+      agentId: "worker",
+      rootRunId: "root-deferred-checkpoint",
+      workspacePolicyHash: POLICY_HASH,
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    releaseCheckpoint(ok(undefined));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(executeAgent).not.toHaveBeenCalled();
+    expect(runner.getRunStatus(runId)?.status).toBe("failed");
+  });
+
+  it("does not start the provider when watchdog terminalizes deferred spawn preparation", async () => {
+    let releasePreparation!: () => void;
+    const executeAgent = vi.fn().mockReturnValue(new Promise(() => undefined));
+    const runner = createSubAgentRunner(createDeps({
+      durableRuns: createRecordingStore(),
+      executeAgent,
+      lifecycleHooks: {
+        prepareSpawn: vi.fn(() => new Promise((resolve) => {
+          releasePreparation = () => resolve(undefined);
+        })),
+        onEnded: vi.fn(async () => undefined),
+      },
+      config: {
+        ...createDeps().config,
+        subagentContext: { maxRunTimeoutMs: 10, perStepTimeoutMs: 10 },
+      },
+    }));
+    const runId = runner.spawn({
+      task: "deferred preparation",
+      agentId: "worker",
+      rootRunId: "root-deferred-preparation",
+      workspacePolicyHash: POLICY_HASH,
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    releasePreparation();
+    await vi.advanceTimersByTimeAsync(0);
     expect(executeAgent).not.toHaveBeenCalled();
     expect(runner.getRunStatus(runId)?.status).toBe("failed");
   });
@@ -178,7 +260,7 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
       task: "x".repeat(65_537),
       agentId: "worker",
       rootRunId: "root-oversized",
-      workspacePolicyHash: "b".repeat(64),
+      workspacePolicyHash: POLICY_HASH,
     });
     await vi.advanceTimersByTimeAsync(0);
 
@@ -196,7 +278,7 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
       rootRunId: "root-cron",
       isCronAgentTurn: true,
       jobId: "job-42",
-      workspacePolicyHash: "b".repeat(64),
+      workspacePolicyHash: POLICY_HASH,
     });
     await vi.advanceTimersByTimeAsync(0);
 
@@ -206,7 +288,7 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
   it("a non-cron spawn records cronOrigin = null", async () => {
     const store = createRecordingStore();
     const runner = createSubAgentRunner(createDeps({ durableRuns: store }));
-    runner.spawn({ task: "interactive task", agentId: "worker", rootRunId: "root-B", workspacePolicyHash: "b".repeat(64) });
+    runner.spawn({ task: "interactive task", agentId: "worker", rootRunId: "root-B", workspacePolicyHash: POLICY_HASH });
     await vi.advanceTimersByTimeAsync(0);
 
     expect(store.checkpoints[0]!.cronOrigin).toBe(null);
@@ -220,7 +302,7 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
       agentId: "worker",
       rootRunId: "root-C",
       caps: ["orch:read", "orch:message"],
-      workspacePolicyHash: "b".repeat(64),
+      workspacePolicyHash: POLICY_HASH,
     });
     await vi.advanceTimersByTimeAsync(0);
 
@@ -252,7 +334,7 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
       rootRunId: "root-child",
       parentLeaseId: "lease-parent",
       caps: ["orch:read", "orch:message"],
-      workspacePolicyHash: "b".repeat(64),
+      workspacePolicyHash: POLICY_HASH,
     });
     await vi.advanceTimersByTimeAsync(0);
 
@@ -276,7 +358,7 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     const runner = createSubAgentRunner(
       createDeps({ durableRuns: store, durability: { keepAliveMs: 1_000, staleHeartbeatMs: 4_000 } }),
     );
-    runner.spawn({ task: "long task", agentId: "worker", rootRunId: "root-HB", workspacePolicyHash: "b".repeat(64) });
+    runner.spawn({ task: "long task", agentId: "worker", rootRunId: "root-HB", workspacePolicyHash: POLICY_HASH });
     await vi.advanceTimersByTimeAsync(0);
     expect(store.checkpoints.length).toBe(1); // initial boundary only
 
@@ -301,7 +383,7 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
         }),
       }),
     );
-    const runId = runner.spawn({ task: "quick task", agentId: "worker", rootRunId: "root-DONE", workspacePolicyHash: "b".repeat(64) });
+    const runId = runner.spawn({ task: "quick task", agentId: "worker", rootRunId: "root-DONE", workspacePolicyHash: POLICY_HASH });
     await vi.advanceTimersByTimeAsync(0);
 
     expect(store.completed).toContainEqual({ checkpointId: runId, terminalReason: "completed" });
@@ -326,7 +408,7 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
       },
       executeAgent: vi.fn().mockReturnValue(new Promise(() => undefined)),
     }));
-    const runId = runner.spawn({ task: "stuck task", agentId: "worker", rootRunId: "root-timeout", workspacePolicyHash: "b".repeat(64) });
+    const runId = runner.spawn({ task: "stuck task", agentId: "worker", rootRunId: "root-timeout", workspacePolicyHash: POLICY_HASH });
     await vi.advanceTimersByTimeAsync(500);
     expect(store.completed).toContainEqual({
       checkpointId: runId,
@@ -365,7 +447,7 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
       maxDepth: 3,
       rootRunId: "root-resume",
       capabilityCeiling: ["orch:read"],
-      workspacePolicyHash: "b".repeat(64),
+      workspacePolicyHash: POLICY_HASH,
     };
     const record: DurableRunRecord = {
       checkpointId: "run-resume",
@@ -419,7 +501,6 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
       combinedHash: descriptor.workspacePolicyHash,
     });
     expect(resumed).toEqual(ok("run-resume"));
-    await vi.advanceTimersByTimeAsync(0);
     expect(executeAgent).toHaveBeenCalledOnce();
     expect(executeAgent.mock.calls[0]![6]).toEqual({
       reuseConversation: {

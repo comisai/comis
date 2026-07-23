@@ -185,6 +185,11 @@ export function createSqliteOutwardSendLedger(
     WHERE root_run_id = ? AND step_index = ? AND state = 'send_attempt_started'
   `);
 
+  const reclaimPreSendStmt = db.prepare(`
+    DELETE FROM outward_send_ledger
+    WHERE root_run_id = ? AND step_index = ? AND state = 'send_attempt_started'
+  `);
+
   const commitStmt = db.prepare(`
     UPDATE outward_send_ledger
     SET state = 'committed', platform_message_id = ?, updated_at_ms = ?
@@ -307,6 +312,15 @@ export function createSqliteOutwardSendLedger(
           return Promise.resolve(err(new Error("outward ledger markUnknown transition rejected")));
         }
         return Promise.resolve(ok(undefined));
+      } catch (e) {
+        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
+      }
+    },
+
+    reclaimPreSend(rootRunId: string, stepIndex: number): Promise<Result<boolean, Error>> {
+      try {
+        const changed = reclaimPreSendStmt.run(rootRunId, stepIndex);
+        return Promise.resolve(ok(changed.changes === 1));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
       }

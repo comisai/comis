@@ -27,6 +27,7 @@ import type { NotifyFn } from "./background-task-manager.js";
 /** Closed durable completion lifecycle exposed for diagnostics and tests. */
 export const STATES: readonly BackgroundSessionState[] = [
   "pending",
+  "execution_claimed",
   "executing",
   "ready_to_deliver",
   "delivering",

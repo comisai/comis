@@ -36,6 +36,7 @@ import {
   type SendGovernedCompletionAnnouncement,
 } from "@comis/orchestrator";
 import { randomUUID } from "node:crypto";
+import { err, ok } from "@comis/shared";
 import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
 import { createAnnouncementDelivery } from "./governed-announcement-delivery.js";
@@ -570,6 +571,16 @@ export function setupCrossSession(deps: {
     // resolver (the runner writes a per-root checkpoint + heartbeat). Inert when
     // absent; the daemon wires these only when durability is enabled.
     ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
+    ...(deps.durableRuns ? {
+      resolveWorkspacePolicySnapshot: (agentId: string, policyHash: string) => {
+        const snapshot = container.workspacePolicyPort?.get(policyHash);
+        if (snapshot === undefined) return err(new Error("Workspace policy port is unavailable"));
+        if (!snapshot.ok) return err(new Error(`Workspace policy snapshot unavailable for ${agentId}`));
+        return snapshot.value.agentId === agentId
+          ? ok(snapshot.value)
+          : err(new Error("Workspace policy snapshot agent mismatch"));
+      },
+    } : {}),
     ...(deps.durability ? { durability: deps.durability } : {}),
     ...(deps.durableRunFacts ? { durableRunFacts: deps.durableRunFacts } : {}),
     // Trajectory-recorder release on terminal settle (registry.close).

@@ -152,6 +152,9 @@ export interface OutwardSendLedgerPort {
    */
   markUnknown(rootRunId: string, stepIndex: number): Promise<Result<void, Error>>;
 
+  /** Remove a retained begin only when the platform call was never entered. */
+  reclaimPreSend?(rootRunId: string, stepIndex: number): Promise<Result<boolean, Error>>;
+
   /**
    * Transition to `committed` and record the `platformMessageId` — the platform
    * confirmed the send. A committed row is the terminal success and is never replayed.

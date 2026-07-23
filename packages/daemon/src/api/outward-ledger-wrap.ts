@@ -192,6 +192,15 @@ export interface WrapOutwardSendArgs {
   logger: ComisLogger;
 }
 
+export class OutwardSendPreSendError extends Error {
+  readonly phase = "mark_unknown" as const;
+
+  constructor(cause: Error) {
+    super(cause.message, { cause });
+    this.name = "OutwardSendPreSendError";
+  }
+}
+
 /**
  * Wrap an outward send with the five-state ledger. Result-returning; never
  * throws. See the module doc for the lifecycle, the crash window, and the two
@@ -327,7 +336,7 @@ export async function wrapOutwardSend(
       },
       "Outward send ledger mark-unknown failed",
     );
-    return err(markedUnknown.error);
+    return err(new OutwardSendPreSendError(markedUnknown.error));
   }
 
   // TEST-ONLY: crash in the exact crash window. Either way the row is left
