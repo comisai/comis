@@ -82,6 +82,7 @@ function makeFakeChild(stdout: string, exitCode = 0, stderr = ""): OrchestrateSp
 function makeDurableRuns(scriptRef: string | undefined): OrchestrateDurableRuns {
   return {
     upsertCheckpoint: async () => ok(undefined),
+    terminalize: async () => ok({ kind: "terminalized" as const }),
     getByCheckpoint: async (): Promise<Result<DurableRunRecord | undefined, Error>> =>
       ok(
         scriptRef === undefined

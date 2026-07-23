@@ -302,9 +302,9 @@ describe("orchestrate-tool", () => {
             ? ok({ kind: "claimed", record: over.getRow })
             : ok({ kind: "not_found" }),
       ),
-      markCompleted: vi.fn(async (checkpointId: string): Promise<Result<void, Error>> => {
+      terminalize: vi.fn(async (checkpointId: string) => {
         completed.push(checkpointId);
-        return ok(undefined);
+        return ok({ kind: "terminalized" as const });
       }),
       markOrphaned: vi.fn(async (checkpointId: string, reason: string): Promise<Result<void, Error>> => {
         orphaned.push({ checkpointId, reason });

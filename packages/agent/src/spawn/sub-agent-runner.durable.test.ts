@@ -76,9 +76,9 @@ function createRecordingStore(): RecordingStore {
     completed,
     upsertCheckpoint: (record): Promise<Result<void, Error>> => { checkpoints.push(record); return Promise.resolve(ok(undefined)); },
     touchHeartbeat: (checkpointId, atMs): Promise<Result<void, Error>> => { heartbeats.push({ checkpointId, atMs }); return Promise.resolve(ok(undefined)); },
-    markCompleted: (checkpointId, terminalReason): Promise<Result<void, Error>> => {
+    terminalize: (checkpointId, terminalReason) => {
       completed.push({ checkpointId, terminalReason });
-      return Promise.resolve(ok(undefined));
+      return Promise.resolve(ok({ kind: "terminalized" as const }));
     },
     listResumable: () => Promise.resolve(ok({ records: [], invalid: [] })),
     getByCheckpoint: () => Promise.resolve(ok(undefined)),
@@ -508,7 +508,8 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     const executeAgent = vi.fn(async (
       ...args: Parameters<SubAgentRunnerDeps["executeAgent"]>
     ) => {
-      args[9]?.onProviderStart();
+      const started = args[9]?.onProviderStart();
+      if (started !== undefined && !started.ok) return Promise.reject(started.error);
       return {
         response: "done",
         tokensUsed: { total: 1 },

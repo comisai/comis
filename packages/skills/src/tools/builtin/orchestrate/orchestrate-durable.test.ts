@@ -72,6 +72,7 @@ function makeFakeRuns(over?: {
           : ok({ kind: "not_found" });
       },
     ),
+    terminalize: vi.fn(async () => ok({ kind: "terminalized" as const })),
   };
   if (!over?.omitTouch) {
     base.touchHeartbeat = vi.fn(

@@ -26,6 +26,7 @@ import type { StepCounter } from "./step-counter.js";
 import type { ComisSessionManager } from "../session/comis-session-manager.js";
 import type { InboundMessageProvenancePlan } from "../session/inbound-message-provenance.js";
 import type { TimeoutSource } from "../model/operation-model-resolver.js";
+import type { Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -140,11 +141,12 @@ export type ExecutionResult = ExecutionResultBase & (
 );
 
 /** Optional overrides for per-execution behavior (e.g., sub-agent isolation). */
-// @optional-field-count: 19 — ExecutionOverrides is the per-EXECUTION override bag;
+// @optional-field-count: 21 — ExecutionOverrides is the per-EXECUTION override bag;
 // every `?` field is an independent per-run knob the caller MAY set (stepCounter/
 // tokenBudget for sub-agent isolation, spawnPacket/model/cacheRetention/skipRag/
 // graphId/nodeId/activeToolGroups for graph nodes, ephemeralSessionAdapter/skipSep/
 // promptTimeout, workspacePolicySnapshot/responseLocalePolicy for immutable background work,
+// finalizedResultJournalKey/onProviderStart for durable provider execution,
 // capabilityAccess for isolated model-only runs, and workspaceDir for an
 // isolated worktree run). They are
 // not a cluster-split candidate — each describes ONE execution's override surface,
@@ -204,6 +206,10 @@ export interface ExecutionOverrides {
   responseLocalePolicy?: ResponseLocalePolicy;
   /** Awaited after the exact terminal result is finalized and before execute resolves. */
   onFinalizedResult?: (result: ExecutionResult) => Promise<void>;
+  /** Stable protected-session journal identity for crash-recoverable execution results. */
+  finalizedResultJournalKey?: string;
+  /** Authoritative callback invoked immediately before the first provider dispatch. */
+  onProviderStart?: () => Result<void, Error>;
   /** Graph ID for cache write signal emission. Set only for graph subagents. */
   graphId?: string;
   /** Graph node ID for cache write signal emission. Set only for graph subagents. */

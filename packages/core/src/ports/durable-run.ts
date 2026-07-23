@@ -60,6 +60,11 @@ export type DurableRunResumeClaimOutcome =
   | { readonly kind: "not_resumable" }
   | { readonly kind: "authorization_denied" };
 
+export type DurableRunTerminalizationOutcome =
+  | { readonly kind: "terminalized" }
+  | { readonly kind: "already_terminal" }
+  | { readonly kind: "not_found" };
+
 /**
  * The persisted run-checkpoint store. Execution lifecycle methods are keyed on
  * `checkpointId`; tree-wide revocation is keyed on `rootRunId`.
@@ -102,11 +107,11 @@ export interface DurableRunPort {
    */
   markOrphaned(checkpointId: string, reason: string): Promise<Result<void, Error>>;
 
-  /** Flip a record to status `completed` — the run finished; resume skips it. */
-  markCompleted(
+  /** Idempotently persist the exact terminal reason for a completed run. */
+  terminalize(
     checkpointId: string,
     terminalReason: NonNullable<DurableRunRecord["terminalReason"]>,
-  ): Promise<Result<void, Error>>;
+  ): Promise<Result<DurableRunTerminalizationOutcome, Error>>;
 
   /**
    * The keep-alive write: stamp `lastHeartbeatAt = atMs`. A run whose

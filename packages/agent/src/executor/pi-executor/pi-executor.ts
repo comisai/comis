@@ -96,6 +96,7 @@ import type { DiscoveryTracker } from "../discovery-tracker.js";
 import { applyCommandDirectives } from "../executor-command-handlers.js";
 import { setupContextEngine } from "../executor-context-engine-setup.js";
 import { runPrompt } from "../prompt-runner/index.js";
+import { appendExecutionResultJournal } from "../../session/execution-result-journal.js";
 import { wrapToolResultWithGuide } from "../jit-guide-injector.js";
 import { postExecution } from "../executor-post-execution.js";
 import { resolveLocale } from "../resolve-response-locale-policy.js";
@@ -598,6 +599,7 @@ export function createPiExecutor(
 
       // 5. Execute within session adapter (use ephemeral adapter if provided)
       const sessionAdapter = overrides?.ephemeralSessionAdapter ?? deps.sessionAdapter;
+      const resultJournalFailure: { error?: Error } = {};
       const lockResult = await sessionAdapter.withSession(
         sessionKey,
         (sm) => runSessionLocked(sm, {
@@ -629,6 +631,7 @@ export function createPiExecutor(
           adaptiveRetentionRef,
           minTokensOverrideRef,
           externalAbortState,
+          resultJournalFailure,
         }),
       );
 
@@ -639,6 +642,9 @@ export function createPiExecutor(
         deps,
         { lockResult, sessionAdapter, sessionKey },
       );
+      if (resultJournalFailure.error !== undefined) {
+        return Promise.reject(resultJournalFailure.error);
+      }
       return finalizeResult(finalized);
     },
   };
@@ -687,6 +693,7 @@ interface RunSessionLockedContext {
   readonly adaptiveRetentionRef: MutableRef<AdaptiveCacheRetention | undefined>;
   readonly minTokensOverrideRef: MutableRef<number | undefined>;
   readonly externalAbortState: ExternalAbortState;
+  readonly resultJournalFailure: { error?: Error };
 }
 
 async function runSessionLocked(
@@ -703,6 +710,7 @@ async function runSessionLocked(
     sessionAdapter,
     cacheRetentionRef, adaptiveRetentionRef, minTokensOverrideRef,
     externalAbortState,
+    resultJournalFailure,
   } = ctx;
   if (executionOverrides?.signal?.aborted) {
     settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);
@@ -2427,6 +2435,14 @@ async function runSessionLocked(
       adaptiveRetentionClear,
       executionMinTokensOverrideClear,
     });
+    if (executionOverrides?.finalizedResultJournalKey !== undefined) {
+      const journaled = appendExecutionResultJournal(sm, {
+        journalKey: executionOverrides.finalizedResultJournalKey,
+        executionId: result.executionId,
+        response: result.response,
+      });
+      if (!journaled.ok) resultJournalFailure.error = journaled.error;
+    }
     localeDeltaDelivery.flush(result.response);
 
     // Tear down the trajectory recorder + bridge subscription as the very

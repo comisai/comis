@@ -4348,9 +4348,9 @@ function createRecordingDurableRuns(): DurableRunPort & {
     listResumable: vi.fn(async () => ok({ records: [], invalid: [] })),
     getByCheckpoint: vi.fn(async () => ok(undefined)),
     markOrphaned: vi.fn(async () => ok(undefined)),
-    markCompleted: vi.fn(async (checkpointId: string) => {
+    terminalize: vi.fn(async (checkpointId: string) => {
       completed.push(checkpointId);
-      return ok(undefined);
+      return ok({ kind: "terminalized" as const });
     }),
     touchHeartbeat: vi.fn(async () => ok(undefined)),
     invalidateForRevoke: vi.fn(async () => ok(undefined)),
@@ -4751,9 +4751,9 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       const completed = new Promise<void>((resolve) => {
         reportCompleted = resolve;
       });
-      vi.mocked(durableRuns.markCompleted).mockImplementation(async () => {
+      vi.mocked(durableRuns.terminalize).mockImplementation(async () => {
         reportCompleted();
-        return ok(undefined);
+        return ok({ kind: "terminalized" as const });
       });
       const retainDurableRoot = vi.fn();
       const releaseDurableRoot = vi.fn();
@@ -4788,7 +4788,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       simulateCompletion(eventBus, aRun, true);
       await completed;
       await coordinator.shutdown();
-      expect(durableRuns.markCompleted).toHaveBeenCalledWith(runResult.value, "completed");
+      expect(durableRuns.terminalize).toHaveBeenCalledWith(runResult.value, "completed");
       const finalCheckpoint = durableRuns._checkpoints().at(-1);
       expect(finalCheckpoint).toBeDefined();
       expect(finalCheckpoint?.checkpointId).toBe(runResult.value);
@@ -4904,9 +4904,9 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       const authorityCompleted = new Promise<void>((resolve) => {
         reportAuthorityCompleted = resolve;
       });
-      vi.mocked(durableRuns.markCompleted).mockImplementation(async () => {
+      vi.mocked(durableRuns.terminalize).mockImplementation(async () => {
         reportAuthorityCompleted();
-        return ok(undefined);
+        return ok({ kind: "terminalized" as const });
       });
       const sendGovernedAnnouncement = vi.fn(async () => {
         reportDeliveryStarted();
@@ -4949,12 +4949,12 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       runner._completeRun(runId, "done");
       simulateCompletion(eventBus, runId, true);
       await deliveryStarted;
-      expect(durableRuns.markCompleted).not.toHaveBeenCalled();
+      expect(durableRuns.terminalize).not.toHaveBeenCalled();
       expect(completedEvents).toHaveLength(1);
 
       releaseDelivery();
       await authorityCompleted;
-      expect(durableRuns.markCompleted).toHaveBeenCalledWith(
+      expect(durableRuns.terminalize).toHaveBeenCalledWith(
         runResult.ok ? runResult.value : "",
         "completed",
       );
@@ -5012,7 +5012,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         );
       });
 
-      expect(durableRuns.markCompleted).not.toHaveBeenCalled();
+      expect(durableRuns.terminalize).not.toHaveBeenCalled();
       expect(durableRuns._checkpoints().at(-1)).toEqual(expect.objectContaining({
         checkpointId: runResult.ok ? runResult.value : "",
         status: "running",

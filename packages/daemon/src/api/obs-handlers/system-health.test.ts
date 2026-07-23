@@ -1118,7 +1118,7 @@ function fakeDurableRuns(counts: DurableStatusCounts): import("@comis/core").Dur
     listResumable: unexpected,
     getByRootRun: unexpected,
     markOrphaned: unexpected,
-    markCompleted: unexpected,
+    terminalize: unexpected,
     touchHeartbeat: unexpected,
     invalidateForRevoke: unexpected,
     allocateOutwardStep: unexpected,

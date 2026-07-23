@@ -376,7 +376,7 @@ export interface SubAgentRunnerDeps {
       }): void;
     },
     providerLifecycle?: {
-      onProviderStart(): void;
+      onProviderStart(): Result<void, Error>;
     },
   ) => Promise<{
     response: string;
@@ -1146,11 +1146,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     if (!written.value.ok) return written.value;
     const terminalReason = durableTerminalReasons.get(run.runId);
     if (runs.get(run.runId)?.status !== "running" || terminalReason !== undefined) {
-      const reapplied = await fromPromise(
-        store.markCompleted(run.runId, terminalReason ?? "failed"),
-      );
-      if (!reapplied.ok) return err(reapplied.error);
-      if (!reapplied.value.ok) return reapplied.value;
+      if (terminalReason !== undefined) {
+        const reapplied = await fromPromise(
+          store.terminalize(run.runId, terminalReason),
+        );
+        if (!reapplied.ok) return err(reapplied.error);
+        if (!reapplied.value.ok) return reapplied.value;
+      }
       return err(new Error("Durable checkpoint terminal state won the admission race"));
     }
     return ok(undefined);
@@ -1232,16 +1234,16 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     if (!store) return;
     suppressError(
       store
-        .markCompleted(run.runId, terminalReason)
+        .terminalize(run.runId, terminalReason)
         .then((r) => {
           if (!r.ok) {
             deps.logger?.warn(
-              { rootRunId: run.rootRunId, err: r.error, hint: "durable markCompleted failed — the watchdog will eventually orphan-sweep the stale record (no live impact)", errorKind: "internal" as const },
-              "Durable checkpoint: markCompleted failed",
+              { rootRunId: run.rootRunId, err: r.error, hint: "Retry durable terminalization before resuming this checkpoint", errorKind: "internal" as const },
+              "Durable checkpoint terminalization failed",
             );
           }
         }),
-      "durable terminal markCompleted (best-effort)",
+      "durable terminalization",
     );
   }
 
@@ -2736,10 +2738,19 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               },
               {
                 onProviderStart: () => {
+                  const current = runs.get(runId);
+                  if (
+                    current?.status !== "running"
+                    || durableTerminalReasons.has(runId)
+                    || deliverySuppressedRunIds.has(runId)
+                  ) {
+                    return err(new Error("Sub-agent provider start was suppressed after terminal state"));
+                  }
                   startDeferreds.get(runId)?.resolve(ok(undefined));
                   if (!durableResumeHandshakeRunIds.has(runId)) {
                     startDeferreds.delete(runId);
                   }
+                  return ok(undefined);
                 },
               },
             );

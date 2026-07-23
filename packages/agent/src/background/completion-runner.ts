@@ -75,6 +75,12 @@ export interface BackgroundCompletionDeliveryInput {
   readonly idempotencyKey: string;
 }
 
+export interface BackgroundFinalizedResultRecoveryInput {
+  readonly agentId: string;
+  readonly sessionKey: SessionKey;
+  readonly journalKey: string;
+}
+
 /** Session-store dependency retained by daemon composition; it is not routing authority. */
 export interface RunnerSessionStore {
   loadByRef(scope: SessionQueryScope, conversationRef: BackgroundTaskOrigin["conversationRef"]): Result<unknown | undefined, SessionStoreError>;
@@ -94,6 +100,9 @@ export interface BackgroundCompletionRunnerDeps {
       BackgroundTaskManager,
       "getTask" | "persistContinuationOutbox" | "scheduleDispatchRetry" | "commitDispatchState"
     >;
+  recoverFinalizedResult(
+    input: BackgroundFinalizedResultRecoveryInput,
+  ): Promise<Result<{ response: string; executionId: string } | undefined, Error>>;
   /** Deliver the finalized continuation through the exact persisted channel
    *  authority. The runner owns execution; the composition root owns adapters. */
   deliverCompletion: (
@@ -254,6 +263,66 @@ export function createBackgroundCompletionRunner(
     }
     if (task.continuationOutbox !== undefined) {
       await deliverPersistedOutbox(task.id, task.origin, task.continuationOutbox);
+      return;
+    }
+    if (task.dispatchState === "executing") {
+      const projected = conversationScopeToSessionKey(task.origin.turnScope.conversation);
+      if (!projected.ok) {
+        const parked = commitState(taskId, "parked_uncertain", ["executing"]);
+        if (parked.ok && parked.value) {
+          emitRoutingOutcome(taskId, task.origin, task.toolName, false, "uncertain_parked");
+        } else if (!parked.ok) {
+          deps.taskManager.scheduleDispatchRetry(taskId);
+          emitRoutingOutcome(taskId, task.origin, task.toolName, false, "retry_scheduled");
+        }
+        return;
+      }
+      const recovered = await deps.recoverFinalizedResult({
+        agentId: task.origin.turnScope.conversation.agentId,
+        sessionKey: projected.value,
+        journalKey: task.continuationExecutionId,
+      });
+      if (!recovered.ok) {
+        deps.taskManager.scheduleDispatchRetry(taskId);
+        emitRoutingOutcome(taskId, task.origin, task.toolName, false, "retry_scheduled");
+        return;
+      }
+      if (recovered.value === undefined) {
+        const parked = commitState(taskId, "parked_uncertain", ["executing"]);
+        if (parked.ok && parked.value) {
+          emitRoutingOutcome(taskId, task.origin, task.toolName, false, "uncertain_parked");
+        } else if (!parked.ok) {
+          deps.taskManager.scheduleDispatchRetry(taskId);
+          emitRoutingOutcome(taskId, task.origin, task.toolName, false, "retry_scheduled");
+        }
+        return;
+      }
+      if (isSilentResponse(recovered.value.response)) {
+        const delivered = commitState(taskId, "delivered", ["executing"]);
+        if (!delivered.ok) {
+          deps.taskManager.scheduleDispatchRetry(taskId);
+          emitRoutingOutcome(taskId, task.origin, task.toolName, false, "retry_scheduled");
+        }
+        return;
+      }
+      const recoveredOutbox: BackgroundContinuationOutbox = {
+        kind: "continuation",
+        response: recovered.value.response,
+        executionId: recovered.value.executionId,
+        idempotencyKey: `background-continuation:${task.continuationExecutionId}`,
+        deliveryProtection: deps.deliveryProtection,
+      };
+      const persisted = deps.taskManager.persistContinuationOutbox(
+        taskId,
+        recoveredOutbox,
+        ["executing"],
+      );
+      if (!persisted.ok) {
+        deps.taskManager.scheduleDispatchRetry(taskId);
+        emitRoutingOutcome(taskId, task.origin, task.toolName, false, "retry_scheduled");
+        return;
+      }
+      await deliverPersistedOutbox(taskId, task.origin, recoveredOutbox);
       return;
     }
     const claim = commitState(taskId, "execution_claimed", ["pending"]);
@@ -422,10 +491,6 @@ export function createBackgroundCompletionRunner(
           ? await fromPromise(deps.assembleToolsForAgent(agentId, { sessionKey: parsedKey }))
           : undefined;
         if (toolAssembly !== undefined && !toolAssembly.ok) return toolAssembly;
-        const executing = commitState(taskId, "executing", ["execution_claimed"]);
-        if (!executing.ok || !executing.value) {
-          return err(new Error("Background continuation execution claim was not durably started"));
-        }
         let finalizedOutbox: BackgroundContinuationOutbox | undefined;
         const execution = tryCatch(() => executor.value.execute(
           syntheticMsg,
@@ -438,6 +503,15 @@ export function createBackgroundCompletionRunner(
           {
             operationType: "interactive",
             responseLocalePolicy: origin.responseLocalePolicy,
+            finalizedResultJournalKey: task.continuationExecutionId,
+            onProviderStart: () => {
+              const executing = commitState(taskId, "executing", ["execution_claimed"]);
+              return executing.ok && executing.value
+                ? ok(undefined)
+                : err(executing.ok
+                  ? new Error("Background continuation provider start claim was not acquired")
+                  : executing.error);
+            },
             onFinalizedResult: async (finalized) => {
               if (isSilentResponse(finalized.response)) {
                 const delivered = commitState(taskId, "delivered", ["executing"]);
@@ -497,6 +571,9 @@ export function createBackgroundCompletionRunner(
         const parked = commitState(taskId, "parked_uncertain", ["executing"]);
         if (parked.ok && parked.value) {
           emitRoutingOutcome(taskId, origin, task.toolName, false, "uncertain_parked");
+        } else if (!parked.ok) {
+          deps.taskManager.scheduleDispatchRetry(taskId);
+          emitRoutingOutcome(taskId, origin, task.toolName, false, "retry_scheduled");
         }
       }
       return;
@@ -543,7 +620,19 @@ export function createBackgroundCompletionRunner(
     outbox: BackgroundContinuationOutbox,
   ): Promise<void> {
     const deliveryClaim = commitState(taskId, "delivering", ["ready_to_deliver"]);
-    if (!deliveryClaim.ok || !deliveryClaim.value) {
+    if (!deliveryClaim.ok) {
+      deps.taskManager.scheduleDispatchRetry(taskId);
+      const task = deps.taskManager.getTask(taskId);
+      emitRoutingOutcome(
+        taskId,
+        origin,
+        task?.toolName ?? "background_task",
+        false,
+        "retry_scheduled",
+      );
+      return;
+    }
+    if (!deliveryClaim.value) {
       return;
     }
     const deliveryStartedAt = systemNowMs();

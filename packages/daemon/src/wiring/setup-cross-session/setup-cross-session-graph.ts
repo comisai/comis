@@ -89,7 +89,7 @@ export type ExecuteSubAgentFn = (
     }): void;
   },
   providerLifecycle?: {
-    onProviderStart(): void;
+    onProviderStart(): Result<void, Error>;
   },
 ) => Promise<Pick<ExecutionResult, "response" | "tokensUsed" | "cost" | "finishReason" | "stepsExecuted" | "toolCallHistory" | "terminalErrorKind">>;
 /**
@@ -549,10 +549,12 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       // exec/read/write/edit resolve inside it. Omitted when no worktree ⇒ the
       // executor uses its construction-bound deps.workspaceDir (byte-identical).
       ...(worktreeHandle ? { workspaceDir: effectiveWorkspaceDir } : {}),
+      ...(providerLifecycle !== undefined
+        ? { onProviderStart: providerLifecycle.onProviderStart }
+        : {}),
     };
     let result;
     try {
-      providerLifecycle?.onProviderStart();
       result = ctx
         ? await runWithContext(ctx, () =>
             getExecutor(effectiveAgentId).execute(

@@ -28,6 +28,7 @@ import { getVisibleAssistantText } from "../phase-filter.js";
 import { CONTINUATION_USER_MESSAGE } from "../../session/synthetic-user-messages.js";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
+import { ok } from "@comis/shared";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
 import {
   handleClientRequest,
@@ -77,8 +78,17 @@ export async function runRetryLoop(
 
   // Bind the model-retry invocation so the silent-failure branches share
   // the deps wiring without re-threading every dependency.
+  let providerStarted = false;
+  const acknowledgeProviderStart = params.executionOverrides?.onProviderStart === undefined
+    ? undefined
+    : () => {
+        if (providerStarted) return ok(undefined);
+        const started = params.executionOverrides?.onProviderStart?.() ?? ok(undefined);
+        if (started.ok) providerStarted = true;
+        return started;
+      };
   const invokeRetry: InvokeRetry = (msgText, images) =>
-    invokeModelRetry(params, msgText, images);
+    invokeModelRetry(params, msgText, images, acknowledgeProviderStart);
 
   if (!skipPrompt) {
     const retryResult = await invokeRetry(messageText, promptImages);
@@ -209,6 +219,7 @@ async function invokeModelRetry(
   params: RunPromptParams,
   messageText: string,
   promptImages: ImageContent[] | undefined,
+  onProviderStart?: NonNullable<RunPromptParams["executionOverrides"]>["onProviderStart"],
 ) {
   const {
     session, config, sessionKey, agentId, effectiveTimeout, resolvedModel, deps, onResetTimer,
@@ -217,6 +228,7 @@ async function invokeModelRetry(
     session,
     messageText,
     promptImages,
+    onProviderStart,
     config: { provider: config.provider, model: config.model },
     resolvedModel: resolvedModel ? `${resolvedModel.provider}:${resolvedModel.id}` : undefined,
     timeoutConfig: {

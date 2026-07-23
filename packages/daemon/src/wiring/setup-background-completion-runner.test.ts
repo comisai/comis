@@ -18,8 +18,11 @@ import { setupBackgroundCompletionRunner } from "./setup-background-completion-r
 function executeFinalized(result: Record<string, unknown>) {
   return async (...args: unknown[]) => {
     const overrides = args[7] as {
+      onProviderStart?: () => import("@comis/shared").Result<void, Error>;
       onFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
     } | undefined;
+    const started = overrides?.onProviderStart?.();
+    if (started !== undefined && !started.ok) return Promise.reject(started.error);
     await overrides?.onFinalizedResult?.(result);
     return result;
   };
@@ -121,6 +124,7 @@ function makeLogger() {
 function makeDeliveryDeps() {
   return {
     adaptersByType: new Map(),
+    resolveSessionManager: vi.fn(() => undefined),
     deliveryService: {
       deliverToChannel: vi.fn(),
       drainInFlight: vi.fn(),
@@ -277,6 +281,7 @@ describe("setupBackgroundCompletionRunner", () => {
       }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       sessionStore: { loadByRef: vi.fn().mockReturnValue(ok(undefined)) },
+      resolveSessionManager: vi.fn(() => undefined),
       taskManager: taskManager as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
       maxBackgroundHops: 3,
@@ -356,6 +361,7 @@ describe("setupBackgroundCompletionRunner", () => {
       getExecutor: () => ({ execute }) as never,
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       sessionStore: { loadByRef: vi.fn().mockReturnValue(ok(undefined)) },
+      resolveSessionManager: vi.fn(() => undefined),
       taskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
       maxBackgroundHops: 3,
@@ -459,6 +465,7 @@ describe("setupBackgroundCompletionRunner", () => {
       }) as never,
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       sessionStore: { loadByRef: vi.fn().mockReturnValue(ok(undefined)) },
+      resolveSessionManager: vi.fn(() => undefined),
       taskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
       outwardLedger: outwardLedger as never,
@@ -659,7 +666,7 @@ describe("setupBackgroundCompletionRunner", () => {
         maxBackgroundDurationMs: 60_000,
       });
 
-      manager.recoverOnStartup();
+      manager.recoverOnStartup(() => ok(undefined));
 
       // The recovered task is in memory, with dispatchState preserved.
       const recovered = manager.getTask("ac5-task-1") as

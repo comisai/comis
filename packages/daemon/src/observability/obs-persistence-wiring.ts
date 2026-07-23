@@ -48,6 +48,7 @@ import {
   diagnosticEventToRow,
   sessionSummaryEventToRow,
   trajectoryDegradedEventToRow,
+  backgroundRecoveryEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
   recallDegradedEventToRow,
@@ -233,6 +234,7 @@ export {
   diagnosticEventToRow,
   sessionSummaryEventToRow,
   trajectoryDegradedEventToRow,
+  backgroundRecoveryEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
   recallDegradedEventToRow,
@@ -500,6 +502,11 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   // identifiers + closed failure labels only.
   eventBus.on("observability:trajectory_degraded", (payload) => {
     diagnosticBuffer.push(trajectoryDegradedEventToRow(payload));
+  });
+  eventBus.on("background_task:notified", (payload) => {
+    if (payload.reason === "recovery_retry_required") {
+      diagnosticBuffer.push(backgroundRecoveryEventToRow(payload));
+    }
   });
 
   // Persist the high-value WARNs to obs_diagnostics

@@ -16,6 +16,9 @@ import {
   type ClockPort,
   type TimerHandle,
   type TimerPort,
+  type SessionKey,
+  conversationScopeToSessionKey,
+  formatSessionKey,
 } from "@comis/core";
 import {
   persistTaskAtomically,
@@ -93,7 +96,9 @@ export interface BackgroundTaskManager {
   ): Promise<Result<BackgroundTask, Error>>;
   getTasks(agentId: string): BackgroundTask[];
   getAllTasks(): BackgroundTask[];
-  recoverOnStartup(): void;
+  recoverOnStartup(
+    recordIncident: (input: BackgroundRecoveryIncidentInput) => Result<void, Error>,
+  ): void;
   cleanup(maxAgeMs?: number): void;
   commitDispatchState(
     taskId: string,
@@ -106,6 +111,16 @@ export interface BackgroundTaskManager {
     expected?: readonly BackgroundSessionState[],
   ): Result<void, Error>;
   scheduleDispatchRetry(taskId: string): void;
+}
+
+export interface BackgroundRecoveryIncidentInput {
+  readonly agentId: string;
+  readonly taskId: string;
+  readonly toolName: string;
+  readonly sessionKey: string;
+  readonly projectedSessionKey: SessionKey;
+  readonly traceId: string | null;
+  readonly timestamp: number;
 }
 
 const MAX_RESULT_CHARS = 102_400; // 100KB
@@ -375,7 +390,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       return [...tasks.values()];
     },
 
-    recoverOnStartup() {
+    recoverOnStartup(recordIncident) {
       const recovered = recoverTasks(dataDir);
       let count = 0;
       let dispatchPreserved = 0;
@@ -409,15 +424,6 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           } else {
             recoveredLifecycle = false;
           }
-        } else if (task.dispatchState === "executing") {
-          const candidate = { ...task, dispatchState: "parked_uncertain" as const };
-          const persistedReset = persistTaskAtomically(dataDir, candidate);
-          if (persistedReset.ok) {
-            task.dispatchState = "parked_uncertain";
-            reportPersistenceOutcome(task, persistedReset.value);
-          } else {
-            recoveredLifecycle = false;
-          }
         } else if (task.dispatchState === "delivering") {
           const recoveredState: BackgroundSessionState = task.continuationOutbox?.deliveryProtection === "ledger"
             ? "ready_to_deliver"
@@ -442,16 +448,29 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             },
             "Background task lifecycle recovery could not be persisted",
           );
-          emitObservationalEventSafely({ eventBus, logger }, "background_task:notified", {
-            agentId: task.origin.turnScope.conversation.agentId,
-            taskId: task.id,
-            toolName: task.toolName,
-            sessionKey: task.origin.conversationRef,
-            notified: false,
-            reason: "recovery_retry_required",
-            traceId: task.origin.traceId,
-            timestamp: clock.now(),
-          });
+          const projected = conversationScopeToSessionKey(task.origin.turnScope.conversation);
+          const incident = projected.ok
+            ? recordIncident({
+                agentId: task.origin.turnScope.conversation.agentId,
+                taskId: task.id,
+                toolName: task.toolName,
+                sessionKey: formatSessionKey(projected.value),
+                projectedSessionKey: projected.value,
+                traceId: task.origin.traceId,
+                timestamp: clock.now(),
+              })
+            : err(new Error("Background recovery incident session scope is invalid"));
+          if (!incident.ok) {
+            logger.warn(
+              {
+                taskId: task.id,
+                toolName: task.toolName,
+                hint: "Repair the session trajectory artifact before retrying background lifecycle recovery",
+                errorKind: "resource" as const,
+              },
+              "Background task recovery incident could not be persisted",
+            );
+          }
           continue;
         }
         if (persisted.status === "completed") {
@@ -531,7 +550,11 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       const task = tasks.get(taskId);
       if (
         !task
-        || (task.dispatchState !== "pending" && task.dispatchState !== "ready_to_deliver")
+        || (
+          task.dispatchState !== "pending"
+          && task.dispatchState !== "ready_to_deliver"
+          && task.dispatchState !== "executing"
+        )
         || dispatchRetryTimers.has(taskId)
       ) return;
       const delayMs = Math.min(60_000, 1_000 * (2 ** Math.min(task.dispatchAttempts, 6)));
@@ -540,7 +563,11 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         const current = tasks.get(taskId);
         if (
           !current
-          || (current.dispatchState !== "pending" && current.dispatchState !== "ready_to_deliver")
+          || (
+            current.dispatchState !== "pending"
+            && current.dispatchState !== "ready_to_deliver"
+            && current.dispatchState !== "executing"
+          )
         ) return;
         const event = current.status === "completed"
           ? "background_task:completed" as const

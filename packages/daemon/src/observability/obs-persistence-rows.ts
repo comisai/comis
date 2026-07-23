@@ -195,6 +195,26 @@ export function trajectoryDegradedEventToRow(
   };
 }
 
+export function backgroundRecoveryEventToRow(
+  payload: EventMap["background_task:notified"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: payload.agentId,
+    sessionKey: payload.sessionKey,
+    traceId: payload.traceId ?? payload.taskId,
+    message: "background_task_recovery_failed",
+    details: JSON.stringify({
+      signal: "background_task_recovery_failed",
+      reason: payload.reason,
+      taskId: payload.taskId,
+      toolName: payload.toolName,
+    }),
+  };
+}
+
 /**
  * The `context:dag_degraded` reasons that are NOT genuine degrades:
  *  - `serialized_wait`: the bounded-wait back-pressure signal (an

@@ -5748,7 +5748,7 @@ describe("coordinator-child attenuated lease + own jailed workspace (no escalati
       deps.durableRuns = {
         upsertCheckpoint,
         touchHeartbeat: vi.fn().mockResolvedValue({ ok: true }),
-        markCompleted: vi.fn().mockResolvedValue({ ok: true }),
+        terminalize: vi.fn().mockResolvedValue(ok({ kind: "terminalized" as const })),
       } as unknown as NonNullable<SubAgentRunnerDeps["durableRuns"]>;
 
       const parent: AgentCapability[] = ["orch:spawn", "orch:read", "orch:graph"];

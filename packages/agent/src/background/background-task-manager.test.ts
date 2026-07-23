@@ -447,7 +447,7 @@ describe("BackgroundTaskManager", () => {
         maxPerAgent: 5,
         maxTotal: 20,
       });
-      mgr2.recoverOnStartup();
+      mgr2.recoverOnStartup(() => ok(undefined));
 
       const recovered = mgr2.getTask("recovered-1");
       expect(recovered).toBeDefined();
@@ -591,7 +591,7 @@ describe("BackgroundTaskManager", () => {
           maxPerAgent: 5,
           maxTotal: 20,
         });
-        recoverMgr.recoverOnStartup();
+        recoverMgr.recoverOnStartup(() => ok(undefined));
 
         expect((recoverEventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
           "background_task:failed",
@@ -612,7 +612,7 @@ describe("BackgroundTaskManager", () => {
   // boundary so recovered tasks reflect their pre-restart dispatch state.
   // ---------------------------------------------------------------------------
   describe("recoverOnStartup preserves dispatchState", () => {
-    it("parks a provider-started continuation instead of replaying execution", () => {
+    it("preserves provider-started execution for journal recovery", () => {
       const testDir = safePath(tmpdir(), `comis-bg-mgr-exec-${randomUUID()}`);
       mkdirSync(testDir, { recursive: true });
       try {
@@ -635,9 +635,9 @@ describe("BackgroundTaskManager", () => {
           clock: testClock,
           timers: testTimers,
         });
-        recovered.recoverOnStartup();
-        expect(recovered.getTask("exec-task-1")?.dispatchState).toBe("parked_uncertain");
-        expect(loadTask(testDir, "exec-agent", "exec-task-1")?.dispatchState).toBe("parked_uncertain");
+        recovered.recoverOnStartup(() => ok(undefined));
+        expect(recovered.getTask("exec-task-1")?.dispatchState).toBe("executing");
+        expect(loadTask(testDir, "exec-agent", "exec-task-1")?.dispatchState).toBe("executing");
       } finally {
         rmSync(testDir, { recursive: true, force: true });
       }
@@ -675,7 +675,7 @@ describe("BackgroundTaskManager", () => {
           maxPerAgent: 5,
           maxTotal: 20,
         });
-        dispMgr.recoverOnStartup();
+        dispMgr.recoverOnStartup(() => ok(undefined));
 
         const recovered = dispMgr.getTask("disp-task-1") as
           | (import("./background-task-types.js").BackgroundTask & {

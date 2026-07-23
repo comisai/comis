@@ -810,7 +810,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           }
           if (registered.ok && resumeAuthority !== undefined) {
             resumeReplacementStarted = true;
-            await deps.durableRuns.markCompleted?.(
+            await deps.durableRuns.terminalize(
               resumeAuthority.sourceCheckpointId,
               "completed",
             );

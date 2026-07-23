@@ -38,6 +38,7 @@ import { withPromptTimeout, withResettablePromptTimeout, PromptTimeoutError } fr
 import { describeTimeoutKnob, describeRetryTimeoutKnob } from "./timeout-knob.js";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
 import { classifyError } from "./error-classifier.js";
+import type { Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Cache-aware short retry constants
@@ -59,6 +60,7 @@ export interface ModelRetryParams {
   session: AgentSession;
   messageText: string;
   promptImages?: ImageContent[];
+  onProviderStart?: () => Result<void, Error>;
   config: { provider: string; model: string };
   /** Session-resolved model string ("provider:modelId") for diagnostic logging. */
   resolvedModel?: string;
@@ -235,6 +237,10 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
   let effectiveModel: { provider: string; model: string } | undefined;
 
   try {
+    const providerStart = params.onProviderStart?.();
+    if (providerStart !== undefined && !providerStart.ok) {
+      return Promise.reject(providerStart.error);
+    }
     // Primary prompt uses resettable timeout so tool completions and stream
     // deltas can reset the deadline. Retry/fallback paths use
     // the original withPromptTimeout (fresh whole-turn timeout).

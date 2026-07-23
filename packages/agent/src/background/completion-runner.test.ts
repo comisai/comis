@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { err, ok } from "@comis/shared";
+import { err, ok, type Result } from "@comis/shared";
 import {
   createBackgroundCompletionRunner,
   type BackgroundCompletionRunnerDeps,
@@ -89,8 +89,11 @@ function makeLogger() {
 function executeFinalized(result: Record<string, unknown>) {
   return async (...args: unknown[]) => {
     const overrides = args[7] as {
+      onProviderStart?: () => Result<void, Error>;
       onFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
     } | undefined;
+    const started = overrides?.onProviderStart?.();
+    if (started !== undefined && !started.ok) return Promise.reject(started.error);
     await overrides?.onFinalizedResult?.(result);
     return result;
   };
@@ -155,6 +158,7 @@ describe("createBackgroundCompletionRunner", () => {
       getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
+      recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
       deliverFallback: async ({ origin, response }) => {
         await fallbackNotifyFn({
           agentId: origin.turnScope.conversation.agentId,
@@ -742,6 +746,7 @@ describe("trace continuity sub-tests", () => {
       getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
+      recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
       deliverCompletion: async () => ({ kind: "accepted" }),
       deliverFallback: async ({ origin, response }) => {
         await fallbackNotifyFn({

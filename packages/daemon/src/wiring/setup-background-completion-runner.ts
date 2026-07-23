@@ -22,6 +22,8 @@ import {
   type BackgroundTaskManager,
   type CompletionDispatcher,
   type NotifyFn,
+  readExecutionResultJournal,
+  type ComisSessionManager,
 } from "@comis/agent";
 import {
   resolvePlatformDeliveryResult,
@@ -53,6 +55,7 @@ export interface SetupBackgroundCompletionRunnerDeps {
   adaptersByType: ReadonlyMap<string, ChannelPort>;
   deliveryService: DeliveryService;
   sessionStore: RunnerSessionStore;
+  resolveSessionManager(agentId: string): ComisSessionManager | undefined;
   /**
    * The runner commits every lifecycle transition before acting on it.
    */
@@ -215,6 +218,13 @@ export function setupBackgroundCompletionRunner(
     assembleToolsForAgent: deps.assembleToolsForAgent,
     sessionStore: deps.sessionStore,
     taskManager: deps.taskManager,
+    recoverFinalizedResult: async ({ agentId, sessionKey, journalKey }) => {
+      const sessionManager = deps.resolveSessionManager(agentId);
+      if (sessionManager === undefined) {
+        return err(new Error(`No session manager is registered for ${agentId}`));
+      }
+      return readExecutionResultJournal(sessionManager, sessionKey, journalKey);
+    },
     deliverCompletion: deliver,
     deliverFallback: deliver,
     deliveryProtection: deps.outwardLedger ? "ledger" : "none",

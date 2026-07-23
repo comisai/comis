@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { err } from "@comis/shared";
 
 import { hostileMcpTool } from "../../provider/tool-schema/gbnf-hostile-fixtures.js";
 import { setSessionStateClock } from "../executor-session-state.js";
@@ -184,6 +185,25 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     // Reset the module once-gate between tests.
     const sfh = (await import("./silent-failure-handlers.js")) as Record<string, unknown>;
     (sfh.resetToolSchemaStripGateForTest as undefined | (() => void))?.();
+  });
+
+  it("rejects a terminal provider-start claim before model dispatch", async () => {
+    const { params } = makeDispatchParams([], "", "provider-start-terminal");
+    params.executionOverrides = {
+      operationType: "interactive",
+      onProviderStart: () => err(new Error("run already terminal")),
+    };
+    vi.mocked(runWithModelRetry).mockImplementation(async (retryParams) => {
+      const started = retryParams.onProviderStart?.();
+      if (started !== undefined && !started.ok) throw started.error;
+      return { succeeded: true };
+    });
+
+    await expect(runRetryLoop(params, "hello", undefined, false)).rejects.toThrow(
+      "run already terminal",
+    );
+    expect(runWithModelRetry).toHaveBeenCalledOnce();
+    expect(params.session.prompt).not.toHaveBeenCalled();
   });
 
   it("grammar-400 on the SILENT path dispatches to the strip-retry handler: the single retry fires with STRIPPED tools and emits execution:tool_schema_unsupported", async () => {

@@ -477,9 +477,9 @@ function makeDurableRuns(opts?: {
       rec("markOrphaned", rootRunId, reason);
       return ok(undefined);
     },
-    markCompleted: async (rootRunId) => {
-      rec("markCompleted", rootRunId);
-      return ok(undefined);
+    terminalize: async (rootRunId) => {
+      rec("terminalize", rootRunId);
+      return ok({ kind: "terminalized" as const });
     },
     touchHeartbeat: async (rootRunId, atMs) => {
       rec("touchHeartbeat", rootRunId, atMs);

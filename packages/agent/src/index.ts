@@ -8,6 +8,11 @@ export type { AgentExecutor, ExecutionResult, ExecutionOverrides } from "./execu
 export { retainLastCompleteUserTurns } from "./session/bounded-session-history.js";
 export { pruneAcknowledgedHeartbeatTurn } from "./session/acknowledged-heartbeat-turn.js";
 export { replaceContextStoreHistory } from "./session/context-history-replacement.js";
+export {
+  appendExecutionResultJournal,
+  readExecutionResultJournal,
+} from "./session/execution-result-journal.js";
+export type { ExecutionResultJournalRecord } from "./session/execution-result-journal.js";
 
 // Step counter
 export { createStepCounter } from "./executor/step-counter.js";

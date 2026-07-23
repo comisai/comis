@@ -22,6 +22,7 @@ import {
   pipelineAuthoredEventToRow,
   orchestrateRunSummaryEventToRow,
   trajectoryDegradedEventToRow,
+  backgroundRecoveryEventToRow,
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
@@ -1707,6 +1708,37 @@ describe("trajectoryDegradedEventToRow", () => {
         failureKind,
       });
     }
+  });
+});
+
+describe("backgroundRecoveryEventToRow", () => {
+  it("maps a canonical recovery incident to a content-free health warning", () => {
+    const row = backgroundRecoveryEventToRow({
+      agentId: "agent-1",
+      taskId: "task-1",
+      toolName: "report",
+      sessionKey: "tenant:agent-1:telegram:chat:user_a",
+      notified: false,
+      reason: "recovery_retry_required",
+      traceId: null,
+      timestamp: 10_002,
+    });
+
+    expect(row).toEqual({
+      timestamp: 10_002,
+      category: "health_signal",
+      severity: "warning",
+      agentId: "agent-1",
+      sessionKey: "tenant:agent-1:telegram:chat:user_a",
+      traceId: "task-1",
+      message: "background_task_recovery_failed",
+      details: JSON.stringify({
+        signal: "background_task_recovery_failed",
+        reason: "recovery_retry_required",
+        taskId: "task-1",
+        toolName: "report",
+      }),
+    });
   });
 });
 
