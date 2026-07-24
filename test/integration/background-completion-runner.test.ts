@@ -39,6 +39,7 @@ import { createConversationRef, TypedEventBus } from "@comis/core";
 import type { BackgroundTaskOrigin } from "@comis/core";
 import { ok } from "@comis/shared";
 import { createCompletionRecovery } from "../../packages/agent/dist/background/completion-recovery.js";
+import { createBackgroundTaskRecoveryController } from "../../packages/agent/dist/background/background-task-recovery-controller.js";
 import {
   persistBackgroundRecoveryAuthority,
   recoverBackgroundRecoveryAuthorities,
@@ -917,6 +918,251 @@ describe("background-task compiled durable recovery integration", () => {
       expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
         ok: true,
         value: [],
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("records and resolves a recovery incident through the compiled durable controller", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-recovery-controller-"));
+    const eventBus = new TypedEventBus();
+    const notified = vi.fn();
+    const recorder = vi.fn(() => ok("accepted" as const));
+    eventBus.on("background_task:notified", notified);
+    try {
+      const controller = createBackgroundTaskRecoveryController({
+        eventBus,
+        logger: { warn: vi.fn() },
+        clock: createFakeClock(1_000),
+        timers: createFakeTimers(1_000),
+        dataDir,
+      });
+      controller.setRecorder(recorder);
+      const task = {
+        id: "task-controller-lifecycle",
+        toolName: "report",
+        origin: makeTestOrigin(),
+      };
+
+      controller.recordTask(task);
+
+      expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
+        ok: true,
+        value: [
+          expect.objectContaining({
+            taskId: task.id,
+            requiredDisposition: "accepted",
+            resolutionRequested: false,
+          }),
+        ],
+      });
+      expect(notified).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: task.id,
+        reason: "recovery_retry_required",
+        trajectoryRecorded: true,
+      }));
+
+      controller.resolveTask(task);
+
+      expect(recorder.mock.calls.map(([incident]) => incident.reason)).toEqual([
+        "recovery_retry_required",
+        "recovery_resolved",
+      ]);
+      expect(notified).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: task.id,
+        reason: "recovery_resolved",
+        trajectoryRecorded: true,
+      }));
+      expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
+        ok: true,
+        value: [],
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles restored recovery authority only after a complete restart scan", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-recovery-controller-"));
+    const origin = makeTestOrigin();
+    const authority = {
+      agentId: TEST_AGENT_ID,
+      taskId: "task-restored-controller",
+      toolName: "report",
+      sessionKey: TEST_SESSION_KEY,
+      projectedSessionKey: {
+        tenantId: "test",
+        agentId: TEST_AGENT_ID,
+        channelId: "echo:test-instance:bg-completion-test",
+        userId: "test-user",
+        peerId: "test-user",
+      },
+      traceId: null,
+      timestamp: 1_000,
+      source: "scan" as const,
+      requiredDisposition: "accepted" as const,
+      resolutionRequested: false,
+    };
+    const persisted = persistBackgroundRecoveryAuthority(dataDir, authority);
+    expect(persisted.ok).toBe(true);
+    const recorder = vi.fn(() => ok("accepted" as const));
+    try {
+      const controller = createBackgroundTaskRecoveryController({
+        eventBus: new TypedEventBus(),
+        logger: { warn: vi.fn() },
+        clock: createFakeClock(2_000),
+        timers: createFakeTimers(2_000),
+        dataDir,
+      });
+      controller.setRecorder(recorder);
+
+      expect(recorder).not.toHaveBeenCalled();
+
+      controller.reportScanFailures([], [], vi.fn());
+
+      expect(recorder).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: authority.taskId,
+        reason: "recovery_resolved",
+      }));
+      expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
+        ok: true,
+        value: [],
+      });
+
+      controller.recordTask({
+        id: "task-after-restart",
+        toolName: "report",
+        origin,
+      });
+      expect(recorder).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: "task-after-restart",
+        reason: "recovery_retry_required",
+      }));
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps restart authority durable while trajectory resolution is suppressed", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-recovery-controller-"));
+    const eventBus = new TypedEventBus();
+    const systemErrors = vi.fn();
+    const logger = { warn: vi.fn() };
+    const recorder = vi.fn()
+      .mockReturnValueOnce(ok("accepted" as const))
+      .mockReturnValueOnce(ok("suppressed" as const))
+      .mockReturnValue(ok("accepted" as const));
+    eventBus.on("system:error", systemErrors);
+    try {
+      const controller = createBackgroundTaskRecoveryController({
+        eventBus,
+        logger,
+        clock: createFakeClock(2_500),
+        timers: createFakeTimers(2_500),
+        dataDir,
+      });
+      controller.setRecorder(recorder);
+      const task = {
+        id: "task-suppressed-resolution",
+        toolName: "report",
+        origin: makeTestOrigin(),
+      };
+      controller.recordTask(task);
+
+      controller.resolveTask(task);
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          errorKind: "config",
+          hint: expect.stringContaining("diagnostics.trajectory.enabled"),
+        }),
+        "Background recovery resolution is suppressed",
+      );
+      expect(systemErrors).toHaveBeenCalledWith(expect.objectContaining({
+        source: "background-recovery-configuration",
+      }));
+      expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
+        ok: true,
+        value: [
+          expect.objectContaining({
+            taskId: task.id,
+            resolutionRequested: true,
+          }),
+        ],
+      });
+
+      controller.setRecorder(recorder);
+
+      expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
+        ok: true,
+        value: [],
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces an incomplete restart scan and retries it deterministically", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-recovery-controller-"));
+    const eventBus = new TypedEventBus();
+    const systemErrors = vi.fn();
+    const logger = { warn: vi.fn() };
+    const timers = createFakeTimers(3_000);
+    const retry = vi.fn();
+    eventBus.on("system:error", systemErrors);
+    try {
+      const controller = createBackgroundTaskRecoveryController({
+        eventBus,
+        logger,
+        clock: createFakeClock(3_000),
+        timers,
+        dataDir,
+      });
+      controller.setRecorder(vi.fn(() => ok("accepted" as const)));
+      const failedTask = {
+        id: "task-incomplete-scan",
+        toolName: "report",
+        origin: makeTestOrigin(),
+      };
+
+      controller.reportScanFailures(
+        [{ kind: "task_read", identity: failedTask }],
+        [],
+        retry,
+      );
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          failureCount: 1,
+          failureKinds: ["task_read"],
+          errorKind: "resource",
+        }),
+        "Background task recovery scan incomplete",
+      );
+      expect(systemErrors).toHaveBeenCalledWith(expect.objectContaining({
+        source: "background-task-recovery",
+      }));
+      expect(timers.unrefRecord()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: "timeout",
+          delay: 1_000,
+          unrefCalled: true,
+        }),
+      ]));
+
+      timers.advance(1_000);
+
+      expect(retry).toHaveBeenCalledOnce();
+      expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
+        ok: true,
+        value: [
+          expect.objectContaining({
+            taskId: failedTask.id,
+            source: "scan",
+            requiredDisposition: "accepted",
+          }),
+        ],
       });
     } finally {
       rmSync(dataDir, { recursive: true, force: true });

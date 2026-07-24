@@ -67,7 +67,12 @@ const silentLogger: ComisLogger = (() => {
 })();
 
 function makeBoundedAutonomy() {
-  return { registerRoot: vi.fn(), leaseIdsForRoot: vi.fn(() => new Set<string>()) };
+  return {
+    registerRoot: vi.fn(),
+    rehydrateBudget: vi.fn(),
+    evictRootIfIdle: vi.fn(),
+    leaseIdsForRoot: vi.fn(() => new Set<string>()),
+  };
 }
 function makeLeaseManager(): LeaseManager {
   return {
