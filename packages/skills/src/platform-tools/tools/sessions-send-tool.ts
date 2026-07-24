@@ -21,7 +21,9 @@ import type { RpcCall } from "./cron-tool.js";
 // ── Parameter Schema ────────────────────────────────────────────────
 
 const SessionsSendParams = Type.Object({
-  session_key: Type.String({ description: "Target session key to send the message to" }),
+  tenant_id: Type.String({ description: "Tenant that owns the target conversation" }),
+  agent_id: Type.String({ description: "Agent that owns the target conversation" }),
+  conversation_ref: Type.String({ description: "Opaque durable reference of the target conversation" }),
   text: Type.String({ description: "Message text to inject into target session" }),
   mode: Type.Optional(
     Type.Union(
@@ -58,18 +60,23 @@ export function createSessionsSendTool(rpcCall: RpcCall): AgentTool<typeof Sessi
       name: "sessions_send",
       label: "Sessions Send",
       description:
-        "Send a message into another session. Supports fire-and-forget (default), wait (blocks for response), and ping-pong (multi-turn exchange) modes.",
+        "Send a message to an exact tenant, agent, and durable conversation reference. " +
+        "Use sessions_list to discover targets. Supports fire-and-forget (default), wait, and ping-pong modes.",
       parameters: SessionsSendParams,
       rpcMethod: "session.send",
       useToolCallIdAsOperationId: true,
       transformParams(p) {
-        const sessionKey = readStringParam(p, "session_key");
+        const tenantId = readStringParam(p, "tenant_id");
+        const agentId = readStringParam(p, "agent_id");
+        const conversationRef = readStringParam(p, "conversation_ref");
         const text = readStringParam(p, "text");
         const mode = readStringParam(p, "mode", false) ?? "fire-and-forget";
         const timeoutMs = readNumberParam(p, "timeout_ms", false);
         const maxTurns = readNumberParam(p, "max_turns", false);
         return {
-          session_key: sessionKey,
+          tenant_id: tenantId,
+          agent_id: agentId,
+          conversation_ref: conversationRef,
           text,
           mode,
           timeout_ms: timeoutMs,
