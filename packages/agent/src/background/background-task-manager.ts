@@ -6,6 +6,7 @@ import {
   conversationScopeToSessionKey,
   emitObservationalEventSafely,
   formatSessionKey,
+  sanitizeLogString,
   type TypedEventBus,
   type ClockPort,
   type TimerHandle,
@@ -302,10 +303,16 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
 
       const persisted = persistTaskAtomically(dataDir, task, persistenceOps);
       if (!persisted.ok) {
+        const errorCode =
+          "code" in persisted.error && typeof persisted.error.code === "string"
+            ? persisted.error.code
+            : undefined;
         logger.warn(
           {
             toolName,
             agentId,
+            ...(errorCode !== undefined ? { errorCode } : {}),
+            errorMessage: sanitizeLogString(persisted.error.message).slice(0, 1500),
             hint: "Repair protected background-task storage before promoting the tool execution",
             errorKind: "resource" as const,
           },
