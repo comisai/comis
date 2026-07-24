@@ -169,7 +169,7 @@ export function persistTaskAtomically(
   if (fsyncUnavailableError !== undefined) {
     return ok({ kind: "committed_without_fsync", error: fsyncUnavailableError });
   }
-  let durabilityError: Error | undefined;
+  let directorySyncError: Error | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
     const synced = tryCatch(() => {
       directoryDescriptor = ops.open(agentDir, "r");
@@ -181,16 +181,13 @@ export function persistTaskAtomically(
     if (isPermissionModelFsyncUnavailable(synced.error)) {
       return ok({ kind: "committed_without_fsync", error: synced.error });
     }
-    durabilityError = synced.error;
+    directorySyncError = synced.error;
     if (directoryDescriptor !== undefined) {
       tryCatch(() => ops.close(directoryDescriptor!));
       directoryDescriptor = undefined;
     }
   }
-  return ok({
-    kind: "committed_durability_uncertain",
-    error: durabilityError ?? new Error("Background task directory durability was not confirmed"),
-  });
+  return err(directorySyncError ?? new Error("Background task directory durability was not confirmed"));
 }
 
 /**

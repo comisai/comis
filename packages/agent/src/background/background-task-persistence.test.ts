@@ -102,7 +102,7 @@ describe("background-task-persistence", () => {
       },
     );
 
-    it("reports committed state when directory durability remains uncertain", () => {
+    it("returns the directory fsync failure after bounded retries", () => {
       const prior: PersistedTaskState = {
         id: "atomic-directory-task",
         toolName: "exec_command",
@@ -135,9 +135,9 @@ describe("background-task-persistence", () => {
           unlink: unlinkSync,
         },
       );
-      expect(attempted.ok).toBe(true);
-      if (!attempted.ok) return;
-      expect(attempted.value.kind).toBe("committed_durability_uncertain");
+      expect(attempted.ok).toBe(false);
+      if (attempted.ok) return;
+      expect(attempted.error.message).toBe("injected directory sync failure");
       expect(loadTask(dataDir, "agent-a", prior.id)?.dispatchState).toBe("ready_to_deliver");
     });
 

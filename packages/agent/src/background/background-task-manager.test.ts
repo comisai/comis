@@ -252,6 +252,52 @@ describe("BackgroundTaskManager", () => {
         "Background task state committed without fsync under Node Permission Model",
       );
     });
+
+    it("rejects admission when directory fsync fails outside the permission model", () => {
+      const directoryDescriptors = new Set<number>();
+      const persistenceError = Object.assign(new Error("injected directory fsync failure"), {
+        code: "EIO",
+      });
+      const durabilityManager = createBackgroundTaskManager({
+        dataDir,
+        eventBus,
+        logger,
+        clock: testClock,
+        timers: testTimers,
+        persistenceOps: {
+          open: (path, flags, mode) => {
+            const fd = openSync(path, flags, mode);
+            if (flags === "r") directoryDescriptors.add(fd);
+            return fd;
+          },
+          write: writeFileSync,
+          sync: (fd) => {
+            if (directoryDescriptors.has(fd)) throw persistenceError;
+            fsyncSync(fd);
+          },
+          close: (fd) => {
+            directoryDescriptors.delete(fd);
+            closeSync(fd);
+          },
+          rename: renameSync,
+          unlink: unlinkSync,
+        },
+      });
+
+      const promoted = durabilityManager.promote(
+        "slow_report",
+        new Promise(() => {}),
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+
+      expect(promoted.ok).toBe(false);
+      expect(durabilityManager.getAllTasks()).toHaveLength(0);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ errorCode: "EIO" }),
+        "Background task admission persistence failed",
+      );
+    });
   });
 
   describe("complete", () => {
