@@ -141,6 +141,44 @@ describe("background-task-persistence", () => {
       expect(loadTask(dataDir, "agent-a", prior.id)?.dispatchState).toBe("ready_to_deliver");
     });
 
+    it("commits atomically when the Node permission model disables fsync", () => {
+      const prior: PersistedTaskState = {
+        id: "atomic-permission-model-task",
+        toolName: "web_fetch",
+        status: "running",
+        startedAt: 1,
+        origin: buildOrigin({ agentId: "agent-a" }),
+        continuationExecutionId: "execution-permission-model",
+        dispatchAttempts: 0,
+        dispatchState: "pending",
+      };
+      persistTaskSync(dataDir, prior);
+      const fsyncUnavailable = Object.assign(
+        new Error("fsync API is disabled when Permission Model is enabled."),
+        { code: "ERR_ACCESS_DENIED", permission: "", resource: "" },
+      );
+
+      const attempted = persistTaskAtomically(
+        dataDir,
+        { ...prior, dispatchState: "ready_to_deliver" },
+        {
+          open: openSync,
+          write: writeFileSync,
+          sync: () => {
+            throw fsyncUnavailable;
+          },
+          close: closeSync,
+          rename: renameSync,
+          unlink: unlinkSync,
+        },
+      );
+
+      expect(attempted.ok).toBe(true);
+      if (!attempted.ok) return;
+      expect(attempted.value.kind).toBe("committed_without_fsync");
+      expect(loadTask(dataDir, "agent-a", prior.id)?.dispatchState).toBe("ready_to_deliver");
+    });
+
     it("writes and reads back a task", () => {
       const task: PersistedTaskState = {
         id: "task-1",

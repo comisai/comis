@@ -207,6 +207,51 @@ describe("BackgroundTaskManager", () => {
         "Background task admission persistence failed",
       );
     });
+
+    it("admits a task when the Node permission model disables fsync", () => {
+      const fsyncUnavailable = Object.assign(
+        new Error("fsync API is disabled when Permission Model is enabled."),
+        { code: "ERR_ACCESS_DENIED", permission: "", resource: "" },
+      );
+      const permissionModelManager = createBackgroundTaskManager({
+        dataDir,
+        eventBus,
+        logger,
+        clock: testClock,
+        timers: testTimers,
+        persistenceOps: {
+          open: openSync,
+          write: writeFileSync,
+          sync: () => {
+            throw fsyncUnavailable;
+          },
+          close: closeSync,
+          rename: renameSync,
+          unlink: unlinkSync,
+        },
+      });
+
+      const promoted = permissionModelManager.promote(
+        "slow_report",
+        new Promise(() => {}),
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+
+      expect(promoted.ok).toBe(true);
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "background_task:promoted",
+        expect.objectContaining({ toolName: "slow_report" }),
+      );
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        "Background task admission persistence failed",
+      );
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ toolName: "slow_report" }),
+        "Background task state committed without fsync under Node Permission Model",
+      );
+    });
   });
 
   describe("complete", () => {
