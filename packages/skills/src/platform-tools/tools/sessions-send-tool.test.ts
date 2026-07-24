@@ -12,7 +12,13 @@ function parseResult(result: { content: Array<{ type: string; text?: string }> }
 }
 
 describe("sessions_send tool", () => {
-  it("delegates with session_key, text, and default mode 'fire-and-forget'", async () => {
+  const target = {
+    tenant_id: "default",
+    agent_id: "agent_a",
+    conversation_ref: "cv_target",
+  };
+
+  it("delegates with exact target authority and default mode 'fire-and-forget'", async () => {
     const mockRpcCall: RpcCall = vi.fn(async (method, _params) => {
       if (method === "session.send") {
         return { delivered: true };
@@ -22,14 +28,14 @@ describe("sessions_send tool", () => {
 
     const tool = createSessionsSendTool(mockRpcCall);
     const result = await tool.execute("call-1", {
-      session_key: "t:u:c",
+      ...target,
       text: "hello",
     } as never);
 
     const parsed = parseResult(result) as { delivered: boolean };
     expect(parsed.delivered).toBe(true);
     expect(mockRpcCall).toHaveBeenCalledWith("session.send", {
-      session_key: "t:u:c",
+      ...target,
       text: "hello",
       mode: "fire-and-forget",
       timeout_ms: undefined,
@@ -42,7 +48,7 @@ describe("sessions_send tool", () => {
 
     const tool = createSessionsSendTool(mockRpcCall);
     await tool.execute("call-2", {
-      session_key: "t:u:c",
+      ...target,
       text: "ping",
       mode: "ping-pong",
       timeout_ms: 30000,
@@ -50,7 +56,7 @@ describe("sessions_send tool", () => {
     } as never);
 
     expect(mockRpcCall).toHaveBeenCalledWith("session.send", {
-      session_key: "t:u:c",
+      ...target,
       text: "ping",
       mode: "ping-pong",
       timeout_ms: 30000,
@@ -58,14 +64,18 @@ describe("sessions_send tool", () => {
     }, { outwardOperationId: "call-2" });
   });
 
-  it("throws when session_key is missing", async () => {
+  it("throws when target tenant authority is missing", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({}));
 
     const tool = createSessionsSendTool(mockRpcCall);
 
     await expect(
-      tool.execute("call-3", { text: "hello" } as never),
-    ).rejects.toThrow("Missing required parameter: session_key");
+      tool.execute("call-3", {
+        agent_id: target.agent_id,
+        conversation_ref: target.conversation_ref,
+        text: "hello",
+      } as never),
+    ).rejects.toThrow("Missing required parameter: tenant_id");
     expect(mockRpcCall).not.toHaveBeenCalled();
   });
 
@@ -75,7 +85,7 @@ describe("sessions_send tool", () => {
     const tool = createSessionsSendTool(mockRpcCall);
 
     await expect(
-      tool.execute("call-4", { session_key: "t:u:c" } as never),
+      tool.execute("call-4", target as never),
     ).rejects.toThrow("Missing required parameter: text");
     expect(mockRpcCall).not.toHaveBeenCalled();
   });
@@ -88,7 +98,7 @@ describe("sessions_send tool", () => {
     const tool = createSessionsSendTool(mockRpcCall);
 
     await expect(
-      tool.execute("call-5", { session_key: "t:u:c", text: "hello" } as never),
+      tool.execute("call-5", { ...target, text: "hello" } as never),
     ).rejects.toThrow("network failure");
   });
 });
