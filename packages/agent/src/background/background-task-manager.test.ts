@@ -199,6 +199,13 @@ describe("BackgroundTaskManager", () => {
         "background_task:promoted",
         expect.anything(),
       );
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          errorCode: "ENOTDIR",
+          errorMessage: expect.stringContaining("ENOTDIR"),
+        }),
+        "Background task admission persistence failed",
+      );
     });
   });
 
