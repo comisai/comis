@@ -147,7 +147,8 @@
       "qs": ">=6.15.2"
     },
     "patchedDependencies": {
-      "@earendil-works/pi-ai@0.80.10": "patches/@earendil-works__pi-ai@0.80.10.patch"
+      "@earendil-works/pi-ai@0.80.10": "patches/@earendil-works__pi-ai@0.80.10.patch",
+      "sharp@0.35.0": "patches/sharp@0.35.0.patch"
     }
   }
 }
