@@ -228,25 +228,9 @@ checking before executing the generation request.
 
 ### Background Tasks
 
-#### background_tasks
-
-Manages background tasks that are running or have completed for the current
-agent. Provides four actions for task lifecycle management. Any agent can
-check its own tasks -- this is not restricted to supervisor agents.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `action` | `string` | Yes | `list`, `get`, `cancel`, or `read_output` |
-| `taskId` | `string` | For get/cancel/read_output | Task ID to operate on |
-
-**Actions:**
-
-- **list** -- show all tasks for the current agent with status and metadata
-- **get** -- get detailed information about a specific task by ID
-- **cancel** -- cancel a running task
-- **read_output** -- wait once for a running task and return its terminal output
+See the authoritative
+[`background_tasks` tool reference](/agent-tools/infrastructure)
+for its agent-scoped actions and long-running wait behavior.
 
 ## Regular vs Supervisor Tools
 

@@ -27,6 +27,7 @@ import {
   type ChannelManagerDeps,
   createCommandQueue,
   coalesceMessages,
+  createDeterministicLocalization,
 } from "@comis/orchestrator";
 import {
   QueueConfigSchema,
@@ -65,6 +66,10 @@ function makeRealDeliveryService(eventBus: any) {
     deliveryQueue: createNoOpDeliveryQueue(),
     logger,
     eventBus,
+    clock: {
+      now: () => Date.now(),
+      nowDate: () => new Date(),
+    },
   });
 }
 
@@ -142,6 +147,11 @@ function makeMinimalDeps(
     tenantId: "default",
     principalResolver: createFakePrincipalResolver(),
     getDmScope: () => DmScopeConfigSchema.parse({}),
+    clock: {
+      now: () => Date.now(),
+      nowDate: () => new Date(),
+    },
+    localization: createDeterministicLocalization(),
     eventBus,
     messageRouter: { resolve: vi.fn(() => "default"), updateConfig: vi.fn() },
     // SessionLifecycle methods return Result now; loadOrCreate is .ok-checked

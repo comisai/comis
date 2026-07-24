@@ -37,6 +37,7 @@ import * as os from "node:os";
 
 import {
   attachTrajectoryToEventBus,
+  createTrajectoryEventTypeFilter,
   createTrajectoryRecorder,
   type TrajectoryRecorder,
   type TrajectoryResumeError,
@@ -102,6 +103,7 @@ import type { DiscoveryTracker } from "../discovery-tracker.js";
 import { applyCommandDirectives } from "../executor-command-handlers.js";
 import { setupContextEngine } from "../executor-context-engine-setup.js";
 import { runPrompt } from "../prompt-runner/index.js";
+import { appendExecutionResultJournal } from "../../session/execution-result-journal.js";
 import { wrapToolResultWithGuide } from "../jit-guide-injector.js";
 import { postExecution } from "../executor-post-execution.js";
 import { resolveLocale } from "../resolve-response-locale-policy.js";
@@ -333,6 +335,15 @@ export function createPiExecutor(
       overrides?: ExecutionOverrides,
     ): Promise<ExecutionResult> {
       const executionId = randomUUID();
+      let finalizedResultJournaled = false;
+      const finalizeResult = async (candidate: ExecutionResult): Promise<ExecutionResult> => {
+        if (!finalizedResultJournaled) {
+          await overrides?.onJournalFinalizedResult?.(candidate);
+          finalizedResultJournaled = true;
+        }
+        await overrides?.onFinalizedResult?.(candidate, "ready");
+        return candidate;
+      };
       // Resolved request identity is write-once. An executor selected for a
       // different agent/session must not relabel the live ALS object and retain
       // the original principal's trust or delivery origin. Reject before OAuth,
@@ -363,7 +374,7 @@ export function createPiExecutor(
           message: "Agent execution rejected because request context identity did not match the selected execution identity",
           timestamp: deps.clock.now(),
         });
-        return {
+        return finalizeResult({
           response: "The request could not be executed safely because its identity context was inconsistent.",
           sessionKey,
           executionId,
@@ -385,7 +396,7 @@ export function createPiExecutor(
             retryable: false,
             originalError: "Resolved request context identity did not match execution identity",
           },
-        };
+        });
       }
 
       agentId = deps.agentId;
@@ -406,7 +417,7 @@ export function createPiExecutor(
       const externalAbortState: ExternalAbortState = { emitted: false };
       if (overrides?.signal?.aborted) {
         settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);
-        return result;
+        return finalizeResult(result);
       }
 
       // 2. Pre-lock safety gates: input validation, provider health, circuit
@@ -416,7 +427,7 @@ export function createPiExecutor(
         deps,
         { msg, sessionKey, agentId, provider: config.provider },
       );
-      if (!safetyOutcome.passed) return result;
+      if (!safetyOutcome.passed) return finalizeResult(result);
       const safetyReinforcement = safetyOutcome.safetyReinforcement;
 
       // 3. Decode per-execute overrides into the factory's mutable refs
@@ -651,6 +662,7 @@ export function createPiExecutor(
 
       // 5. Execute within session adapter (use ephemeral adapter if provided)
       const sessionAdapter = overrides?.ephemeralSessionAdapter ?? deps.sessionAdapter;
+      const resultJournalFailure: { error?: Error } = {};
       const lockResult = await sessionAdapter.withSession(
         sessionKey,
         (sm) => runSessionLocked(sm, {
@@ -682,16 +694,29 @@ export function createPiExecutor(
           adaptiveRetentionRef,
           minTokensOverrideRef,
           externalAbortState,
+          resultJournalFailure,
         }),
       );
 
+      if (resultJournalFailure.error !== undefined) {
+        return Promise.reject(resultJournalFailure.error);
+      }
+      if (lockResult.ok) {
+        await overrides?.onJournalFinalizedResult?.(lockResult.value);
+        finalizedResultJournaled = true;
+      }
+      if (lockResult.ok && lockResult.value.finishReason === "session_reset") {
+        await overrides?.onFinalizedResult?.(lockResult.value, "cleanup_pending");
+      }
+
       // 6. Post-lock outcome: destroy session if session_reset; map lock failure
       //    (closure-extracted)
-      return finalizeLockResult(
+      const finalized = await finalizeLockResult(
         { result },
         deps,
         { lockResult, sessionAdapter, sessionKey },
       );
+      return finalizeResult(finalized);
     },
   };
 }
@@ -739,6 +764,7 @@ interface RunSessionLockedContext {
   readonly adaptiveRetentionRef: MutableRef<AdaptiveCacheRetention | undefined>;
   readonly minTokensOverrideRef: MutableRef<number | undefined>;
   readonly externalAbortState: ExternalAbortState;
+  readonly resultJournalFailure: { error?: Error };
 }
 
 async function runSessionLocked(
@@ -755,6 +781,7 @@ async function runSessionLocked(
     sessionAdapter,
     cacheRetentionRef, adaptiveRetentionRef, minTokensOverrideRef,
     externalAbortState,
+    resultJournalFailure,
   } = ctx;
   if (executionOverrides?.signal?.aborted) {
     settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);
@@ -1408,10 +1435,7 @@ async function runSessionLocked(
         : {}),
     };
     const eventTypes = deps.trajectoryConfig?.eventTypes;
-    const eventTypesFilter =
-      eventTypes && eventTypes.length > 0
-        ? (n: string) => eventTypes.includes(n)
-        : undefined;
+    const eventTypesFilter = createTrajectoryEventTypeFilter(eventTypes);
 
     const reportTrajectoryResumeFailure = (
       error: TrajectoryResumeError,
@@ -2512,6 +2536,15 @@ async function runSessionLocked(
       adaptiveRetentionClear,
       executionMinTokensOverrideClear,
     });
+    if (executionOverrides?.finalizedResultJournalKey !== undefined) {
+      const journaled = appendExecutionResultJournal(sm, {
+        journalKey: executionOverrides.finalizedResultJournalKey,
+        executionId: result.executionId,
+        response: result.response,
+        cleanupRequired: result.finishReason === "session_reset",
+      });
+      if (!journaled.ok) resultJournalFailure.error = journaled.error;
+    }
     localeDeltaDelivery.flush(result.response);
 
     // Tear down the trajectory recorder + bridge subscription as the very

@@ -10,9 +10,18 @@ import {
 } from "./response-processor.js";
 
 describe("heartbeat response normalization", () => {
+  it("drops an unterminated HTML tag tail before classifying a heartbeat reply", () => {
+    expect(stripMarkup("HEARTBEAT_OK<script")).toBe("HEARTBEAT_OK");
+  });
+
   it("exposes a wrapped heartbeat token through bounded markup removal", () => {
     expect(stripMarkup("<p>**HEARTBEAT_OK**</p>")).toBe("HEARTBEAT_OK");
     expect(stripMarkup("  plain text  ")).toBe("plain text");
+  });
+
+  it("strips long runs of Markdown wrappers in linear passes", () => {
+    const wrappers = "*".repeat(10_000);
+    expect(stripMarkup(`${wrappers}HEARTBEAT_OK${wrappers}`)).toBe("HEARTBEAT_OK");
   });
 
   it("recognizes only leading trailing or exact heartbeat tokens", () => {

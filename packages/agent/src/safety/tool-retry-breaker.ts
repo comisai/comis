@@ -187,13 +187,15 @@ function peelEnvelope(text: string): string {
   //   `Tool "exec" has failed 2 consecutive times with the same error:
   //    "{\"content\":[...]}". This tool appears to be unavailable. ...`
   // Peel the quoted JSON substring, if present.
-  const quoted = /same error: "([^]+?)"\.\s/.exec(text);
-  if (quoted) {
+  const quotedStart = text.indexOf('same error: "');
+  const contentStart = quotedStart === -1 ? -1 : quotedStart + 'same error: "'.length;
+  const quotedEnd = contentStart === -1 ? -1 : text.indexOf('". ', contentStart);
+  if (quotedEnd !== -1) {
     // The captured group is JSON with escaped quotes. Unescape by parsing
     // the outer quoted string as JSON (wrap in extra quotes so JSON.parse
     // handles the escapes).
     try {
-      const inner = JSON.parse(`"${quoted[1]!}"`) as string;
+      const inner = JSON.parse(`"${text.slice(contentStart, quotedEnd)}"`) as string;
       return inner;
     } catch {
       // Fall through — return prefix + match unchanged.

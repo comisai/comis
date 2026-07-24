@@ -510,6 +510,9 @@ export function assembleIncidentReport(
     // The silent-failure recovery re-drives (model re-entry) — previously
     // log-only, so explain could not show a session re-entered the model.
     ...(signals.recoveries !== undefined ? { recoveries: signals.recoveries } : {}),
+    ...(signals.backgroundRecovery !== undefined
+      ? { backgroundRecovery: signals.backgroundRecovery }
+      : {}),
     // The turn span (>1 only) — flags the
     // whole-session toolStats as cumulative across N turns (append-only trajectory).
     ...(signals.turnCount !== undefined ? { turnCount: signals.turnCount } : {}),

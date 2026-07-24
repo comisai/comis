@@ -130,7 +130,20 @@ export function isSafeToRetrySendError(error: Error): boolean {
  * Used for markdown fallback when parse_mode causes errors.
  */
 export function stripHtmlTags(text: string): string {
-  return text.replace(/<[^>]+>/g, "");
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const start = text.indexOf("<", cursor);
+    if (start === -1) {
+      parts.push(text.slice(cursor));
+      break;
+    }
+    parts.push(text.slice(cursor, start));
+    const end = text.indexOf(">", start + 1);
+    if (end === -1) break;
+    cursor = end + 1;
+  }
+  return parts.join("");
 }
 
 // ---------------------------------------------------------------------------

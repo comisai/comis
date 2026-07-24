@@ -4,6 +4,10 @@ import { DEFAULT_TEMPLATES } from "@comis/core";
 import { isHeartbeatContentEffectivelyEmpty } from "./heartbeat-file.js";
 
 describe("isHeartbeatContentEffectivelyEmpty", () => {
+  it("treats an unterminated HTML comment as non-instructional content", () => {
+    expect(isHeartbeatContentEffectivelyEmpty("<!-- unfinished operator note")).toBe(true);
+  });
+
   it("returns true for the default HEARTBEAT.md template", () => {
     expect(isHeartbeatContentEffectivelyEmpty(DEFAULT_TEMPLATES["HEARTBEAT.md"])).toBe(true);
   });

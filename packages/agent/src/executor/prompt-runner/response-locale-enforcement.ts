@@ -10,6 +10,10 @@ import {
 } from "@comis/core";
 import { err, ok, type Result } from "@comis/shared";
 import { runContinuationTurn } from "../continuation-turn.js";
+import {
+  resolveProviderDispatchGuard,
+  type ProviderDispatchGuard,
+} from "../provider-dispatch.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
 import {
   evaluateResponseLocale,
@@ -150,6 +154,7 @@ export async function enforceResponseLocale(input: {
   readonly response: string;
   readonly session: LocaleEnforcementSession;
   readonly getVisibleResponse: () => string;
+  readonly guardProviderDispatch: ProviderDispatchGuard;
 }): Promise<Result<ResponseLocaleEnforcementOutcome, ResponseLocaleEnforcementError>> {
   const initialFinding = evaluateResponseLocale(input.policy, input.response);
   if (initialFinding === undefined) {
@@ -165,6 +170,7 @@ export async function enforceResponseLocale(input: {
     continuation = await runContinuationTurn(
       input.session,
       repairInstruction(initialFinding.locale, input.response),
+      input.guardProviderDispatch,
     );
   } catch (cause) {
     return err({
@@ -230,6 +236,9 @@ export async function applyResponseLocaleEnforcement(params: RunPromptParams): P
     response: params.result.response,
     session: params.session,
     getVisibleResponse: () => getVisibleAssistantText(params.session),
+    guardProviderDispatch: resolveProviderDispatchGuard(
+      params.executionOverrides?.onProviderStart,
+    ),
   });
   const durationMs = Math.max(0, params.deps.clock.now() - enforcementStartedAt);
 

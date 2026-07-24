@@ -39,10 +39,10 @@ export default defineConfig({
     teardownTimeout: 30_000,
     pool: "forks",
     maxConcurrency: 1,
-    // Integration and live scenarios start daemons and share host resources.
-    // Serialize files as well as tests within each file so those processes
-    // cannot race over ports, generated state, or repository preconditions.
-    fileParallelism: false,
+    // Daemon-backed files need parallelism to finish within the E2E budget,
+    // but deriving the worker count from every host CPU can starve teardown
+    // and make retries collide with a daemon that still holds its data lock.
+    maxWorkers: 4,
     retry: 1,
     env: {
       // Repo root, exposed to test daemon configs as ${COMIS_REPO_ROOT}.

@@ -668,6 +668,7 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
     }
     let retainRegisteredRoot = false;
     if (!resolved.ok) {
+      retainRegisteredRoot = true;
       const consumed = eventQueue.consume(key, occurrence.correlationId);
       emitTerminal(occurrence, "unsettled", consumed, durationMs, "internal");
     } else if (!resolved.value.ok) {

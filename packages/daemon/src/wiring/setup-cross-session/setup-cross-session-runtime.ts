@@ -36,17 +36,12 @@ import {
   type SendGovernedCompletionAnnouncement,
 } from "@comis/orchestrator";
 import { randomUUID } from "node:crypto";
+import { err, ok } from "@comis/shared";
 import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
 import { createAnnouncementDelivery } from "./governed-announcement-delivery.js";
 import { createCompletionAttachmentPreparer } from "./completion-attachment.js";
-
-/**
- * A silent {@link ComisLogger} used only when the optional `deps.logger` is
- * absent (test wiring). `createResultRefStore` requires a full ComisLogger; the
- * production composition root always supplies one, so this never logs in
- * production — it exists so the materialize feature is wired regardless.
- */
+/** Silent fallback for test wiring that omits the production logger. */
 const NOOP_LOGGER: ComisLogger = {
   level: "silent",
   trace: () => {},
@@ -58,7 +53,6 @@ const NOOP_LOGGER: ComisLogger = {
   audit: () => {},
   child: () => NOOP_LOGGER,
 };
-
 function createInternalTurnScope(conversation: ConversationScope): ResolvedTurnScope {
   const partition = conversation.partition;
   const reference = createConversationRef(conversation);
@@ -105,10 +99,6 @@ export interface CrossSessionResult {
    */
   proxyTypingCleanup: () => void;
 }
-
-// ---------------------------------------------------------------------------
-// Setup function
-// ---------------------------------------------------------------------------
 
 /**
  * Create cross-session messaging services: cross-session sender + sub-agent runner.
@@ -570,6 +560,16 @@ export function setupCrossSession(deps: {
     // resolver (the runner writes a per-root checkpoint + heartbeat). Inert when
     // absent; the daemon wires these only when durability is enabled.
     ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
+    ...(deps.durableRuns ? {
+      resolveWorkspacePolicySnapshot: async (agentId: string) => {
+        const snapshot = await container.workspacePolicyPort?.load(agentId);
+        if (snapshot === undefined) return err(new Error("Workspace policy port is unavailable"));
+        if (!snapshot.ok) return err(new Error(`Workspace policy snapshot unavailable for ${agentId}`));
+        return snapshot.value.agentId === agentId
+          ? ok(snapshot.value)
+          : err(new Error("Workspace policy snapshot agent mismatch"));
+      },
+    } : {}),
     ...(deps.durability ? { durability: deps.durability } : {}),
     ...(deps.durableRunFacts ? { durableRunFacts: deps.durableRunFacts } : {}),
     // Trajectory-recorder release on terminal settle (registry.close).

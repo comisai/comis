@@ -21,7 +21,7 @@
  *      parsedBody)`.
  *
  * Hono c.env accessor:
- *   The `@hono/node-server@1.19.14` `HttpBindings` type declares
+ *   The `@hono/node-server@2.0.11` `HttpBindings` type declares
  *   `{ incoming: IncomingMessage; outgoing: ServerResponse }`. Verified by
  *   reading `node_modules/@hono/node-server/dist/types.d.ts` directly.
  *
@@ -35,6 +35,7 @@
 
 import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { RESPONSE_ALREADY_SENT } from "@hono/node-server/utils/response";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -64,24 +65,6 @@ type NodeHttpBindings = {
   incoming: IncomingMessage;
   outgoing: ServerResponse;
 };
-
-/**
- * `@hono/node-server`'s internal "response already sent" header sentinel.
- *
- * When a returned Response carries this header (with no body), the node
- * adapter's `responseViaResponseObject` skips writing to the raw
- * `ServerResponse` entirely — the same mechanism the adapter's own
- * `RESPONSE_ALREADY_SENT` export is built from. The MCP SDK transport writes
- * the full response (SSE or JSON) directly on `c.env.outgoing`, so the route
- * MUST return this sentinel; any other Response (including `c.body(null)`)
- * makes the adapter call `outgoing.writeHead()` a SECOND time, throwing
- * `ERR_HTTP_HEADERS_SENT` and destroying the socket mid-response.
- *
- * Pinned to the literal header string because `@hono/node-server@1.19.14`
- * does not export the `RESPONSE_ALREADY_SENT` constant; the version is
- * exact-pinned in package.json so the internal name cannot drift underneath us.
- */
-const RESPONSE_ALREADY_SENT_HEADER = "x-hono-already-sent";
 
 // ---------------------------------------------------------------------------
 // Deps
@@ -341,9 +324,7 @@ export function mountMcpServerEndpoint(
     // `outgoing.writeHead()` a SECOND time — throwing ERR_HTTP_HEADERS_SENT and
     // destroying the socket mid-response, corrupting/truncating every reply.
     if (outgoing.headersSent) {
-      return new Response(null, {
-        headers: { [RESPONSE_ALREADY_SENT_HEADER]: "true" },
-      });
+      return RESPONSE_ALREADY_SENT;
     }
 
     // The transport returned without writing anything (not expected for a

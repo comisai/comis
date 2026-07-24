@@ -34,23 +34,41 @@ export interface ParsedBudget {
   cleanedText: string;
 }
 
-// ---------------------------------------------------------------------------
-// Regex patterns
-// ---------------------------------------------------------------------------
+interface BudgetMatch {
+  number: string;
+  suffix: string;
+  start: number;
+  end: number;
+}
 
-/**
- * Match +Nk or +Nm at the START of the message.
- * Captures: group 1 = number, group 2 = suffix (k or m).
- * Uses \b word boundary after suffix to avoid matching "+500kilo".
- */
-const START_PATTERN = /^\s*\+(\d+)(k|m)\b\s*/i;
+function matchBudgetAtStart(text: string): BudgetMatch | undefined {
+  let cursor = 0;
+  while (cursor < text.length && /\s/.test(text[cursor]!)) cursor++;
+  if (text[cursor] !== "+") return undefined;
+  const numberStart = ++cursor;
+  while (cursor < text.length && text[cursor]! >= "0" && text[cursor]! <= "9") cursor++;
+  const numberEnd = cursor;
+  if (cursor === numberStart || !/[km]/i.test(text[cursor] ?? "")) return undefined;
+  const suffix = text[cursor]!;
+  cursor++;
+  if (/\w/.test(text[cursor] ?? "")) return undefined;
+  while (cursor < text.length && /\s/.test(text[cursor]!)) cursor++;
+  return { number: text.slice(numberStart, numberEnd), suffix, start: 0, end: cursor };
+}
 
-/**
- * Match +Nk or +Nm at the END of the message.
- * Captures: group 1 = number, group 2 = suffix (k or m).
- * Requires whitespace or start-of-string before the + to ensure word boundary.
- */
-const END_PATTERN = /\s+\+(\d+)(k|m)\s*$/i;
+function matchBudgetAtEnd(text: string): BudgetMatch | undefined {
+  let end = text.length;
+  while (end > 0 && /\s/.test(text[end - 1]!)) end--;
+  const suffix = text[end - 1];
+  if (!/[km]/i.test(suffix ?? "")) return undefined;
+  let cursor = end - 1;
+  const digitEnd = cursor;
+  while (cursor > 0 && text[cursor - 1]! >= "0" && text[cursor - 1]! <= "9") cursor--;
+  if (cursor === digitEnd || text[cursor - 1] !== "+") return undefined;
+  const plus = cursor - 1;
+  if (plus === 0 || !/\s/.test(text[plus - 1]!)) return undefined;
+  return { number: text.slice(cursor, digitEnd), suffix: suffix!, start: plus, end: text.length };
+}
 
 // ---------------------------------------------------------------------------
 // Parser
@@ -75,11 +93,11 @@ export function parseUserTokenBudget(text: string): ParsedBudget {
   }
 
   // Try start-of-message match first
-  const startMatch = START_PATTERN.exec(text);
+  const startMatch = matchBudgetAtStart(text);
   if (startMatch) {
-    const tokens = convertToTokens(startMatch[1]!, startMatch[2]!);
+    const tokens = convertToTokens(startMatch.number, startMatch.suffix);
     if (tokens !== undefined && tokens >= MIN_USER_BUDGET && tokens <= MAX_USER_BUDGET) {
-      const cleanedText = text.slice(startMatch[0].length).trim();
+      const cleanedText = text.slice(startMatch.end).trim();
       return { tokens, cleanedText };
     }
     // Out of range or zero -- return original text unchanged
@@ -87,11 +105,11 @@ export function parseUserTokenBudget(text: string): ParsedBudget {
   }
 
   // Try end-of-message match
-  const endMatch = END_PATTERN.exec(text);
+  const endMatch = matchBudgetAtEnd(text);
   if (endMatch) {
-    const tokens = convertToTokens(endMatch[1]!, endMatch[2]!);
+    const tokens = convertToTokens(endMatch.number, endMatch.suffix);
     if (tokens !== undefined && tokens >= MIN_USER_BUDGET && tokens <= MAX_USER_BUDGET) {
-      const cleanedText = text.slice(0, endMatch.index).trim();
+      const cleanedText = text.slice(0, endMatch.start).trim();
       return { tokens, cleanedText };
     }
     // Out of range or zero -- return original text unchanged

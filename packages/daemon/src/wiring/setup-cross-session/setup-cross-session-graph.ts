@@ -6,7 +6,7 @@
  *
  * @module
  */
-import type { AgentCapability, NormalizedMessage, SessionKey, SpawnPacket, AppContainer, AgentConfig, FileLockPort, ConversationLocator, SessionStorePort } from "@comis/core";
+import type { AgentCapability, NormalizedMessage, SessionKey, SpawnPacket, AppContainer, AgentConfig, FileLockPort, ConversationLocator, SessionStorePort, WorkspacePolicySnapshot } from "@comis/core";
 import { ConversationRefSchema, ConversationScopeSchema, tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -21,21 +21,15 @@ import {
   type ExecutionResult,
 } from "@comis/agent";
 import { randomUUID } from "node:crypto";
+import type { Result } from "@comis/shared";
 import type { GitExec } from "@comis/skills/tools";
 import type { WorktreeRegistry } from "../setup-worktree-sweep.js";
 import { resolveGraphCacheRetention } from "./graph-cache-retention.js";
 import { maybePrepareWorktreeForSpawn } from "./worktree-spawn-run.js";
 export { resolveGraphCacheRetention } from "./graph-cache-retention.js";
-/** Minimum step budget for sub-agent spawns — prevents boot sequence from consuming all steps. */
+/** Minimum spawn budget so boot cannot consume every step. */
 export const MIN_SUB_AGENT_STEPS = 30;
-
-// ---------------------------------------------------------------------------
-// executeSubAgent builder
-// ---------------------------------------------------------------------------
-
-/**
- * Closure-captured deps for the executeSubAgent callback.
- */
+/** Closure-captured dependencies for executeSubAgent. */
 export interface ExecuteSubAgentDeps {
   container: AppContainer;
   sessionStore: Pick<SessionStorePort, "load" | "loadByRef">;
@@ -45,22 +39,12 @@ export interface ExecuteSubAgentDeps {
   getExecutor: (agentId: string) => { execute: (...args: any[]) => Promise<any> };
   fileLock: FileLockPort;
   logger?: ComisLogger;
-  /**
-   * The lifecycle GitExec the composition root binds (the real
-   * execFile-backed `createExecGit` adapted to `{ stdout, exitCode }`). Present
-   * ⇒ a child whose session metadata carries `worktree:true` runs in an isolated
-   * git worktree. **Absent ⇒ the worktree request is honestly ignored** (no git
-   * seam to create one) — a content-free WARN surfaces the skip rather than a
-   * silent no-op. Paired with {@link worktreeRegistry}; the daemon wires BOTH.
-   */
+  /** Git seam for isolated child worktrees; absence is reported and skips isolation. */
   worktreeGitExec?: GitExec;
-  /** The shared registry the boot/periodic orphan sweep reads. Paired with {@link worktreeGitExec}. */
+  /** Shared registry used by boot and periodic orphan sweeps. */
   worktreeRegistry?: WorktreeRegistry;
 }
-
-/**
- * The executeSubAgent callback signature accepted by createSubAgentRunner.
- */
+/** Callback signature accepted by createSubAgentRunner. */
 export type ExecuteSubAgentFn = (
   agentId: string,
   sessionKey: SessionKey,
@@ -68,7 +52,13 @@ export type ExecuteSubAgentFn = (
   task: string,
   maxSteps?: number,
   callerAgentId?: string,
-  graphOverrides?: { graphId?: string; nodeId?: string; reuseConversation?: ConversationLocator; graphNodeDepth?: number },
+  graphOverrides?: {
+    graphId?: string;
+    nodeId?: string;
+    reuseConversation?: ConversationLocator;
+    graphNodeDepth?: number;
+    workspacePolicySnapshot?: WorkspacePolicySnapshot;
+  },
   /** Per-spawn token budget — rides executionOverrides into the child's
    *  BudgetGuard per-execution cap. Absent ⇒ no per-execution cap. */
   tokenBudget?: number,
@@ -81,6 +71,9 @@ export type ExecuteSubAgentFn = (
       leaseId: string;
       caps: readonly AgentCapability[];
     }): void;
+  },
+  providerLifecycle?: {
+    onProviderStart(): Result<void, Error>;
   },
 ) => Promise<Pick<ExecutionResult, "response" | "tokensUsed" | "cost" | "finishReason" | "stepsExecuted" | "toolCallHistory" | "terminalErrorKind">>;
 /**
@@ -106,6 +99,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
     graphOverrides,
     tokenBudget,
     autonomyContext,
+    providerLifecycle,
   ) => {
     deps.logger?.debug({
       agentId,
@@ -531,11 +525,17 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       // cap (pi-executor feeds it to budgetGuard.resetExecution). Omitted when
       // absent so the no-budget path stays byte-identical to today.
       ...(tokenBudget !== undefined && { tokenBudget }),
+      ...(graphOverrides?.workspacePolicySnapshot !== undefined && {
+        workspacePolicySnapshot: graphOverrides.workspacePolicySnapshot,
+      }),
       // When a worktree was created, the child's file-tool jail cwd IS the
       // worktree (the SDK session cwd + resource-loader / context-engine root), so
       // exec/read/write/edit resolve inside it. Omitted when no worktree ⇒ the
       // executor uses its construction-bound deps.workspaceDir (byte-identical).
       ...(worktreeHandle ? { workspaceDir: effectiveWorkspaceDir } : {}),
+      ...(providerLifecycle !== undefined
+        ? { onProviderStart: providerLifecycle.onProviderStart }
+        : {}),
     };
     let result;
     try {

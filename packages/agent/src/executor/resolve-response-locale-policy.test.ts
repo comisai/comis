@@ -100,6 +100,14 @@ describe("resolveResponseLocalePolicy", () => {
     )).toBeUndefined();
   });
 
+  it("ignores uppercase URLs when evaluating response prose script", () => {
+    expect(evaluateResponseLocale(
+      { locale: "ar-EG", source: "request", enforceLocale: true },
+      "هذه إجابة عربية مفصلة تشرح النتيجة المطلوبة بصورة واضحة ومباشرة "
+        + "HTTPS://example.com/this/is/an/english/url/path",
+    )).toBeUndefined();
+  });
+
   it("rejects a substantial Latin prose preamble hidden by a longer Arabic tail", () => {
     const finding = evaluateResponseLocale(
       { locale: "ar", source: "request", enforceLocale: true },

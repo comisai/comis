@@ -26,6 +26,7 @@ import { normalizeModelId } from "../../provider/model-id-normalize.js";
 import { withPromptTimeout } from "../prompt-timeout.js";
 import { scrubSignedReplayStateInPlace } from "../signature-block-scrubber.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
+import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { RunPromptParams } from "./prompt-runner-types.js";
@@ -385,6 +386,14 @@ async function attemptLkwFallback(
     // Strip trailing empty assistant turns before the LKW attempt
     stripTrailingEmptyAssistantTurns(session);
 
+    const admitted = resolveProviderDispatchGuard(
+      params.executionOverrides?.onProviderStart,
+    )();
+    if (!admitted.ok) {
+      retryState.promptSucceeded = false;
+      retryState.promptError = admitted.error;
+      return;
+    }
     await withPromptTimeout(
       session.prompt(messageText, { expandPromptTemplates: false, images: promptImages }),
       effectiveTimeout.retryPromptTimeoutMs,

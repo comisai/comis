@@ -23,9 +23,6 @@ const AAD_GUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4
 /** Anchored Bot Framework bot id: the `28:` prefix followed by a hex/dash guid. */
 const BOT_ID_RE = /^28:[0-9a-fA-F-]+$/;
 
-/** `@[Display Name](id)` mention markup — name excludes `]`, id excludes `)`. */
-const MENTION_MARKUP_RE = /@\[([^\]]+)\]\(([^)]+)\)/g;
-
 /** A Teams `entities[]` mention element paired with an `<at>…</at>` tag in the body. */
 export interface TeamsMentionEntity {
   type: "mention";
@@ -68,11 +65,33 @@ function isMentionableId(id: string): boolean {
  */
 export function buildMentionEntities(markup: string): BuiltMention {
   const entities: TeamsMentionEntity[] = [];
-  const text = markup.replace(MENTION_MARKUP_RE, (whole, name: string, id: string) => {
-    if (!isMentionableId(id)) return whole;
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < markup.length) {
+    const start = markup.indexOf("@[", cursor);
+    if (start === -1) {
+      parts.push(markup.slice(cursor));
+      break;
+    }
+    const nameEnd = markup.indexOf("](", start + 2);
+    const idEnd = nameEnd === -1 ? -1 : markup.indexOf(")", nameEnd + 2);
+    if (nameEnd <= start + 2 || idEnd <= nameEnd + 2) {
+      parts.push(markup.slice(cursor, start + 2));
+      cursor = start + 2;
+      continue;
+    }
+    const name = markup.slice(start + 2, nameEnd);
+    const id = markup.slice(nameEnd + 2, idEnd);
+    parts.push(markup.slice(cursor, start));
+    if (!isMentionableId(id)) {
+      parts.push(markup.slice(start, idEnd + 1));
+      cursor = idEnd + 1;
+      continue;
+    }
     const tag = `<at>${name}</at>`;
     entities.push({ type: "mention", text: tag, mentioned: { id, name } });
-    return tag;
-  });
-  return { text, entities };
+    parts.push(tag);
+    cursor = idEnd + 1;
+  }
+  return { text: parts.join(""), entities };
 }

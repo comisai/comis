@@ -19,14 +19,42 @@ export const NO_REPLY_TOKEN = "NO_REPLY";
 export const HEARTBEAT_OK_TOKEN = "HEARTBEAT_OK";
 export const SILENT_PREFIX = "[SILENT]";
 
-const REPLY_TAG_RE = /<\/?reply(?:\s[^>]*)?>|<reply>/gi;
-
 /**
  * Strip `<reply>` / `<reply to="...">` opening tags and `</reply>` closing
  * tags from a response, then trim whitespace.
  */
 export function stripReplyTags(s: string): string {
-  return s.replace(REPLY_TAG_RE, "").trim();
+  const lower = s.toLowerCase();
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < s.length) {
+    const start = lower.indexOf("<reply", cursor);
+    const close = lower.indexOf("</reply", cursor);
+    const next = start === -1 ? close : close === -1 ? start : Math.min(start, close);
+    if (next === -1) {
+      parts.push(s.slice(cursor));
+      break;
+    }
+    const isClosing = next === close;
+    const boundaryIndex = next + (isClosing ? "</reply".length : "<reply".length);
+    const boundary = s[boundaryIndex];
+    const isReplyTag = isClosing
+      ? boundary === ">"
+      : boundary === ">" || (boundary !== undefined && /\s/.test(boundary));
+    if (!isReplyTag) {
+      parts.push(s.slice(cursor, next + 1));
+      cursor = next + 1;
+      continue;
+    }
+    parts.push(s.slice(cursor, next));
+    const end = s.indexOf(">", next + 1);
+    if (end === -1) {
+      parts.push(s.slice(next));
+      break;
+    }
+    cursor = end + 1;
+  }
+  return parts.join("").trim();
 }
 
 /**

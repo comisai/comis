@@ -32,6 +32,8 @@ import {
   type TimerPort,
   type TimerHandle,
   type DurableRunPort,
+  type DurableRunRecord,
+  type DurableRunTerminalReason,
   type AgentCapability,
   type ResultRef,
   type ErrorKind,
@@ -47,9 +49,11 @@ import {
   type MemoryWriteEntry,
   type MemoryWriteScope,
   type ResolvedTurnScope,
+  type WorkspacePolicySnapshot,
+  verifyWorkspacePolicySnapshot,
   SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
 } from "@comis/core";
-import { suppressError } from "@comis/shared";
+import { err, fromPromise, ok, suppressError, tryCatch, type Result } from "@comis/shared";
 import {
   createCoordinatorProgressFork,
   type CoordinatorProgressForkHandle,
@@ -77,6 +81,13 @@ import {
 import { comparePosture, SandboxDowngradeError, type SandboxPosture } from "./sandbox-posture.js";
 import { steerRun as steerRunHelper, type SteerRunDeps, type SteerableRun } from "./steer-run.js";
 import type { RunHandle } from "../executor/active-run-registry.js";
+import {
+  hashSubAgentResumeDescriptor,
+  parseSubAgentResumeDescriptor,
+  SubAgentResumeDescriptorSchema,
+  validateSubAgentResumeAuthority,
+  type SubAgentResumeDescriptor,
+} from "./sub-agent-resume-descriptor.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -328,6 +339,13 @@ export class SubAgentSpawnPausedError extends Error {
   }
 }
 
+class DurableSubAgentAdmissionError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "DurableSubAgentAdmissionError";
+  }
+}
+
 export interface SubAgentRunnerDeps {
   sessionStore: Pick<SessionStorePort, "save" | "delete" | "loadByRef">;
   executeAgent: (
@@ -337,7 +355,13 @@ export interface SubAgentRunnerDeps {
     task: string,
     maxSteps?: number,
     callerAgentId?: string,
-    overrides?: { graphId?: string; nodeId?: string; reuseConversation?: ConversationLocator; graphNodeDepth?: number },
+    overrides?: {
+      graphId?: string;
+      nodeId?: string;
+      reuseConversation?: ConversationLocator;
+      graphNodeDepth?: number;
+      workspacePolicySnapshot?: WorkspacePolicySnapshot;
+    },
     /** Per-spawn token budget — becomes the child's BudgetGuard per-execution cap. */
     tokenBudget?: number,
     /** Exact parent authority used to attenuate the child's own tool assembly. */
@@ -350,6 +374,9 @@ export interface SubAgentRunnerDeps {
         leaseId: string;
         caps: readonly AgentCapability[];
       }): void;
+    },
+    providerLifecycle?: {
+      onProviderStart(): Result<void, Error>;
     },
   ) => Promise<{
     response: string;
@@ -520,6 +547,9 @@ export interface SubAgentRunnerDeps {
    * not a correctness gate on the live run).
    */
   durableRuns?: DurableRunPort;
+  resolveWorkspacePolicySnapshot?: (
+    agentId: string,
+  ) => Promise<Result<WorkspacePolicySnapshot, Error>>;
   /**
    * The keep-alive cadence + lapsed threshold (from
    * `autonomy.durability`). `keepAliveMs` drives the heartbeat-refresh interval
@@ -662,7 +692,7 @@ export interface SpawnParams {
   caps?: readonly AgentCapability[];
   /** Caller boundary. GraphCoordinator bypasses the children limit; the
    *  authenticated control plane bypasses agent-principal binding only. */
-  callerType?: "agent" | "graph" | "control-plane";
+  callerType?: "agent" | "graph" | "control-plane" | "durable-resume";
   /**
    * Attempt identity reserved by GraphCoordinator and persisted in its running
    * launch claim before this runner is allowed to start the side effect. Honored
@@ -742,6 +772,8 @@ export interface SpawnParams {
    * Absent/false ⇒ the child runs in its normal jailed workspace (the default).
    */
   worktree?: boolean;
+  workspacePolicyHash?: string;
+  workspacePolicySnapshot?: WorkspacePolicySnapshot;
 }
 
 // ---------------------------------------------------------------------------
@@ -786,11 +818,22 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     resolve(completion: SubAgentCompletion): void;
     settled: boolean;
   }
+  interface StartDeferred {
+    promise: Promise<Result<void, Error>>;
+    resolve(result: Result<void, Error>): void;
+    settled: boolean;
+  }
   const completionDeferreds = new Map<string, CompletionDeferred>();
+  const startDeferreds = new Map<string, StartDeferred>();
+  const durableResumeHandshakeRunIds = new Set<string>();
   const activePromises = new Set<Promise<void>>();
   const activeRunIds = new Set<string>();
   const providerSettledRunIds = new Set<string>();
   const deliverySuppressedRunIds = new Set<string>();
+  const forcedTerminalRunIds = new Set<string>();
+  const durableTerminalReasons = new Map<string, DurableRunTerminalReason>();
+  const trajectoryClosedRunIds = new Set<string>();
+  const watchdogTimers = new Map<string, TimerHandle>();
   const failureNotificationPromises = new Set<Promise<void>>();
   let acceptingSpawns = true;
   let spawnPaused = false;
@@ -810,6 +853,19 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       settled: false,
     };
     completionDeferreds.set(runId, deferred);
+    let resolveStart!: (result: Result<void, Error>) => void;
+    const startDeferred: StartDeferred = {
+      promise: new Promise((resolve) => {
+        resolveStart = resolve;
+      }),
+      resolve(result) {
+        if (startDeferred.settled) return;
+        startDeferred.settled = true;
+        resolveStart(result);
+      },
+      settled: false,
+    };
+    startDeferreds.set(runId, startDeferred);
   }
 
   function boundedCompletionSummary(text: string | undefined): string | undefined {
@@ -907,6 +963,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         };
     }
     runs.set(runId, terminal);
+    startDeferreds.get(runId)?.resolve(
+      err(new Error(`Sub-agent provider did not start: ${completion.endReason}`)),
+    );
+    if (!durableResumeHandshakeRunIds.has(runId)) {
+      startDeferreds.delete(runId);
+    }
     removeDedupEntry(terminal);
     completionDeferreds.get(runId)?.resolve(completion);
     return terminal;
@@ -1009,6 +1071,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   // WARN-logged but NEVER crashes the live run (durability is a recovery aid).
   // -------------------------------------------------------------------------
   const heartbeatTimers = new Map<string, TimerHandle>();
+  const resumeDescriptors = new Map<string, SubAgentResumeDescriptor>();
   const DURABLE_KEEPALIVE_MS = deps.durability?.keepAliveMs ?? 30_000;
 
   /**
@@ -1026,9 +1089,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
    * the keep-alive heartbeat.
    * Inert when no store is wired. Never throws.
    */
-  function persistDurableCheckpoint(run: SubAgentRun, params: SpawnParams): void {
+  async function writeDurableCheckpoint(
+    run: SubAgentRun,
+    params: SpawnParams,
+  ): Promise<Result<void, Error>> {
     const store = deps.durableRuns;
-    if (!store) return;
+    if (!store) return ok(undefined);
+    if (runs.get(run.runId)?.status !== "running" || durableTerminalReasons.has(run.runId)) {
+      return err(new Error("Durable checkpoint write was suppressed after terminal state"));
+    }
     const rootRunId = run.rootRunId;
     const facts = deps.durableRunFacts?.(rootRunId, params.agentId);
     const leaseIds = facts?.leaseIds ?? [run.parentLeaseId, run.leaseId]
@@ -1041,19 +1110,14 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     const cronOrigin = deriveCronOrigin(params);
     const partition = run.conversationScope.partition;
     if (partition.kind !== "endpoint-conversation-principal") {
-      deps.logger?.warn(
-        {
-          runId: run.runId,
-          rootRunId,
-          hint: "Persist the child with the canonical sub-agent principal partition before starting durability",
-          errorKind: "validation" as const,
-        },
-        "Durable checkpoint skipped: invalid child conversation authority",
-      );
-      return;
+      return err(new Error("Durable child conversation authority is invalid"));
     }
-    void store
-      .upsertCheckpoint({
+    const descriptor = resumeDescriptors.get(run.runId);
+    const workspacePolicyHash = params.workspacePolicyHash ?? tryGetContext()?.workspacePolicyHash;
+    if (descriptor === undefined || workspacePolicyHash === undefined) {
+      return err(new Error("Durable sub-agent restart authority is incomplete"));
+    }
+    const written = await fromPromise(store.upsertCheckpoint({
         checkpointId: run.runId,
         rootRunId,
         tenantId: run.conversationScope.tenantId,
@@ -1075,40 +1139,78 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         lastHeartbeatAt: clock.now(),
         scriptRef: null,
         checkpointRef: null,
-        workspacePolicyHash: tryGetContext()?.workspacePolicyHash,
-      })
-      .then((r) => {
-        if (!r.ok) {
+        workspacePolicyHash,
+        resumeDescriptorHash: hashSubAgentResumeDescriptor(descriptor),
+      }));
+    if (!written.ok) return err(written.error);
+    if (!written.value.ok) return written.value;
+    const terminalReason = durableTerminalReasons.get(run.runId);
+    if (runs.get(run.runId)?.status !== "running" || terminalReason !== undefined) {
+      if (terminalReason !== undefined) {
+        const reapplied = await fromPromise(
+          store.terminalize(run.runId, terminalReason),
+        );
+        if (!reapplied.ok) return err(reapplied.error);
+        if (!reapplied.value.ok) return reapplied.value;
+      }
+      return err(new Error("Durable checkpoint terminal state won the admission race"));
+    }
+    return ok(undefined);
+  }
+
+  function persistDurableCheckpoint(run: SubAgentRun, params: SpawnParams): void {
+    if (
+      !deps.durableRuns
+      || runs.get(run.runId)?.status !== "running"
+      || durableTerminalReasons.has(run.runId)
+    ) return;
+    suppressError(
+      writeDurableCheckpoint(run, params).then((written) => {
+        if (!written.ok) {
           deps.logger?.warn(
-            { rootRunId, err: toSafeErrorLogString(r.error), hint: "durable checkpoint upsert failed — the run still proceeds; it will not be resumable after a crash", errorKind: "internal" as const },
-            "Durable checkpoint: upsert failed (run continues)",
+            {
+              rootRunId: run.rootRunId,
+              err: toSafeErrorLogString(written.error),
+              hint: "Inspect durable-run storage before relying on further checkpoint progress",
+              errorKind: "internal" as const,
+            },
+            "Durable checkpoint progress write failed",
           );
         }
-      })
-      .catch((err: unknown) => {
-        deps.logger?.warn(
-          { rootRunId, err: toSafeErrorLogString(err), hint: "durable checkpoint upsert threw — the run still proceeds", errorKind: "internal" as const },
-          "Durable checkpoint: upsert threw (run continues)",
-        );
-      });
+      }),
+      "durable checkpoint progress write",
+    );
   }
 
   /** Write the initial durable row and start its independent keep-alive. */
-  function startDurableCheckpoint(run: SubAgentRun, params: SpawnParams): void {
+  async function startDurableCheckpoint(
+    run: SubAgentRun,
+    params: SpawnParams,
+  ): Promise<Result<void, Error>> {
     const store = deps.durableRuns;
-    if (!store) return;
-    persistDurableCheckpoint(run, params);
+    if (!store) return ok(undefined);
+    if (runs.get(run.runId)?.status !== "running" || durableTerminalReasons.has(run.runId)) {
+      return err(new Error("Durable checkpoint admission was suppressed after terminal state"));
+    }
+    const written = await writeDurableCheckpoint(run, params);
+    if (!written.ok) return written;
+    if (runs.get(run.runId)?.status !== "running" || durableTerminalReasons.has(run.runId)) {
+      return err(new Error("Durable checkpoint heartbeat was suppressed after terminal state"));
+    }
 
     // A keep-alive that fires INDEPENDENT of step/spawn completion so a
     // long-running child never trips the watchdog's stale threshold.
     // One interval per run, cleared on terminal settle (no leaked timer).
     if (!heartbeatTimers.has(run.runId)) {
       const handle = timers.setInterval(() => {
-        persistDurableCheckpoint(run, params);
+        if (runs.get(run.runId)?.status === "running" && !durableTerminalReasons.has(run.runId)) {
+          persistDurableCheckpoint(run, params);
+        }
       }, DURABLE_KEEPALIVE_MS);
       handle.unref();
       heartbeatTimers.set(run.runId, handle);
     }
+    return ok(undefined);
   }
 
   /**
@@ -1118,7 +1220,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
    * settles), so the interval is reclaimed and the durable record stops being
    * resumable. Inert + idempotent when no store / no timer. Never throws.
    */
-  function finishDurableCheckpoint(run: SubAgentRun): void {
+  function finishDurableCheckpoint(
+    run: SubAgentRun,
+    terminalReason: DurableRunTerminalReason,
+  ): void {
+    durableTerminalReasons.set(run.runId, terminalReason);
     const handle = heartbeatTimers.get(run.runId);
     if (handle) {
       handle.cancel();
@@ -1128,17 +1234,41 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     if (!store) return;
     suppressError(
       store
-        .markCompleted(run.runId)
+        .terminalize(run.runId, terminalReason)
         .then((r) => {
           if (!r.ok) {
             deps.logger?.warn(
-              { rootRunId: run.rootRunId, err: r.error, hint: "durable markCompleted failed — the watchdog will eventually orphan-sweep the stale record (no live impact)", errorKind: "internal" as const },
-              "Durable checkpoint: markCompleted failed",
+              { rootRunId: run.rootRunId, err: r.error, hint: "Retry durable terminalization before resuming this checkpoint", errorKind: "internal" as const },
+              "Durable checkpoint terminalization failed",
             );
           }
         }),
-      "durable terminal markCompleted (best-effort)",
+      "durable terminalization",
     );
+  }
+
+  function closeTrajectoryOnce(run: SubAgentRun): void {
+    if (!deps.closeTrajectory || trajectoryClosedRunIds.has(run.runId)) return;
+    trajectoryClosedRunIds.add(run.runId);
+    suppressError(
+      deps.closeTrajectory(run.sessionKey),
+      "sub-agent trajectory close",
+      (message) => deps.logger?.debug({ runId: run.runId }, message),
+    );
+  }
+
+  function forceTerminalCleanup(
+    run: SubAgentRun,
+    terminalReason: Exclude<DurableRunTerminalReason, "completed" | "failed">,
+  ): void {
+    if (forcedTerminalRunIds.has(run.runId)) return;
+    forcedTerminalRunIds.add(run.runId);
+    durableTerminalReasons.set(run.runId, terminalReason);
+    watchdogTimers.get(run.runId)?.cancel();
+    watchdogTimers.delete(run.runId);
+    finishDurableCheckpoint(run, terminalReason);
+    stopProgressFork(run);
+    closeTrajectoryOnce(run);
   }
 
   // -------------------------------------------------------------------------
@@ -1232,7 +1362,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   }
 
   function isDedupEligible(params: { callerSessionKey?: string; callerType?: string }): boolean {
-    return params.callerSessionKey !== undefined && params.callerType !== "graph";
+    return (
+      params.callerSessionKey !== undefined
+      && params.callerType !== "graph"
+      && params.callerType !== "durable-resume"
+    );
   }
 
   function removeDedupEntry(run: SubAgentRun): void {
@@ -1361,6 +1495,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         removeDedupEntry(run);
         runs.delete(runId);
         completionDeferreds.delete(runId);
+        startDeferreds.delete(runId);
+        durableResumeHandshakeRunIds.delete(runId);
+        forcedTerminalRunIds.delete(runId);
+        durableTerminalReasons.delete(runId);
+        trajectoryClosedRunIds.delete(runId);
+        resumeDescriptors.delete(runId);
       }
     }
 
@@ -1384,6 +1524,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         removeDedupEntry(pruneRun);
         runs.delete(pruneRunId);
         completionDeferreds.delete(pruneRunId);
+        startDeferreds.delete(pruneRunId);
+        durableResumeHandshakeRunIds.delete(pruneRunId);
+        forcedTerminalRunIds.delete(pruneRunId);
+        durableTerminalReasons.delete(pruneRunId);
+        trajectoryClosedRunIds.delete(pruneRunId);
+        resumeDescriptors.delete(pruneRunId);
       }
     }
 
@@ -1467,6 +1613,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         errorKind: "timeout",
         summary: errorMessage,
       });
+      forceTerminalCleanup(run, "ghost_sweep");
 
       // Persist failure record
       if (deps.dataDir) {
@@ -1605,11 +1752,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
     const requesterOrigin = params.requesterOrigin;
     const isGraphSpawn = params.callerType === "graph";
-    if (isGraphSpawn && params.reservedRunId !== undefined && runs.has(params.reservedRunId)) {
+    const isDurableResume = params.callerType === "durable-resume";
+    if ((isGraphSpawn || isDurableResume) && params.reservedRunId !== undefined && runs.has(params.reservedRunId)) {
       // @allow-throw: graph launch identity collisions are rejected before any spawn ceiling is acquired.
       throw new Error("Graph spawn reserved run identity is already active");
     }
-    const isContextIndependentSpawn = isGraphSpawn || params.callerType === "control-plane";
+    const isContextIndependentSpawn =
+      isGraphSpawn || isDurableResume || params.callerType === "control-plane";
     const callerContext = tryGetContext();
     const hasExplicitAnnouncementRoute = params.announceChannelType !== undefined
       || params.announceChannelId !== undefined;
@@ -1739,7 +1888,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // only the live framework context; a caller-provided field cannot elevate
     // them. Graph nodes consume the coordinator's submission-time snapshot.
     // Missing context/data is guest, never the RequestContext schema default.
-    const acceptedTrustLevel: UserTrustLevel = isGraphSpawn
+    const acceptedTrustLevel: UserTrustLevel = isGraphSpawn || isDurableResume
       ? params.callerTrustLevel ?? "guest"
       : callerContext?.trustLevel ?? "guest";
 
@@ -1952,7 +2101,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
 
     // Children check (bypassed for graph spawns)
-    if (!isGraphSpawn && params.callerSessionKey) {
+    if (!isGraphSpawn && !isDurableResume && params.callerSessionKey) {
       const maxChildren = deps.config.subagentContext?.maxChildrenPerAgent ?? 5;
       const activeChildren = countActiveChildren(params.callerSessionKey);
       if (activeChildren >= maxChildren) {
@@ -2178,7 +2327,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
 
     // Normal (non-queued) path: create run and start execution
-    const runId = isGraphSpawn && params.reservedRunId !== undefined
+    const runId = (isGraphSpawn || isDurableResume) && params.reservedRunId !== undefined
       ? params.reservedRunId
       : randomUUID();
     const runPrincipalId = params.callerConversation?.conversationScope.partition.kind
@@ -2241,10 +2390,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   function startExecution(
     runId: string,
     admittedRun: SubAgentQueuedRun | SubAgentRunningRun,
-    params: SpawnParams,
+    inputParams: SpawnParams,
     currentDepth: number,
     maxDepth: number,
   ): void {
+    let params = inputParams;
     let run: SubAgentRunningRun;
     if (admittedRun.status === "queued") {
       const { status: _status, queuedAt: _queuedAt, ...common } = admittedRun;
@@ -2263,8 +2413,84 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     });
     const subSessionKey = display.key;
     const formattedKey = display.formatted;
+    let workspacePolicyHash = params.workspacePolicyHash;
 
-    if (!params.reuseConversation) {
+    async function prepareDurableAuthority(): Promise<Result<void, Error>> {
+      if (!deps.durableRuns) return ok(undefined);
+      const snapshotResult = params.callerType === "durable-resume"
+        ? params.workspacePolicySnapshot === undefined
+          ? err(new Error("Durable sub-agent resume workspace policy snapshot is missing"))
+          : ok(params.workspacePolicySnapshot)
+        : deps.resolveWorkspacePolicySnapshot === undefined
+          ? err(new Error("Durable sub-agent workspace policy resolver is missing"))
+          : await deps.resolveWorkspacePolicySnapshot(params.agentId);
+      if (!snapshotResult.ok) return snapshotResult;
+      const verified = verifyWorkspacePolicySnapshot(snapshotResult.value);
+      if (
+        !verified.ok
+        || snapshotResult.value.agentId !== params.agentId
+        || (
+          params.callerType === "durable-resume"
+          && params.workspacePolicyHash !== snapshotResult.value.combinedHash
+        )
+      ) {
+        return err(new Error("Durable sub-agent workspace policy snapshot verification failed"));
+      }
+      workspacePolicyHash = snapshotResult.value.combinedHash;
+      params = {
+        ...params,
+        workspacePolicyHash,
+        workspacePolicySnapshot: snapshotResult.value,
+      };
+      const descriptor = SubAgentResumeDescriptorSchema.safeParse({
+        kind: "subagent_resume",
+        task: params.task,
+        agentId: params.agentId,
+        callerSessionKey: params.callerSessionKey,
+        callerConversation: params.callerConversation,
+        callerEndpoint: run.callerEndpoint,
+        callerAgentId: params.callerAgentId,
+        announceChannelType: params.announceChannelType,
+        announceChannelId: params.announceChannelId,
+        model: params.model,
+        maxSteps: params.max_steps,
+        tokenBudget: params.tokenBudget,
+        expectedOutputs: params.expected_outputs,
+        requesterOrigin: params.requesterOrigin,
+        depth: currentDepth,
+        maxDepth,
+        rootRunId: run.rootRunId,
+        capabilityCeiling: run.caps,
+        isCronAgentTurn: params.isCronAgentTurn,
+        jobId: params.jobId,
+        jobName: params.jobName,
+        artifactRefs: params.artifactRefs,
+        objective: params.objective,
+        domainKnowledge: params.domainKnowledge,
+        toolGroups: params.toolGroups,
+        resolvedLanguage: params.resolvedLanguage,
+        requiredTools: params.requiredTools,
+        includeParentHistory: params.includeParentHistory,
+        discoveredDeferredTools: params.discoveredDeferredTools,
+        graphToolNames: params.graphToolNames,
+        worktree: params.worktree,
+        workspacePolicyHash,
+      });
+      if (!descriptor.success) {
+        return err(new Error("Durable sub-agent resume descriptor validation failed"));
+      }
+      resumeDescriptors.set(runId, descriptor.data);
+      return ok(undefined);
+    }
+
+    function saveSession(): Result<void, Error> {
+      if (params.reuseConversation) {
+        deps.logger?.info(
+          { runId, conversationRef: run.conversationRef, agentId: params.agentId },
+          "Reusing persistent conversation for multi-round driver",
+        );
+        return ok(undefined);
+      }
       const saved = deps.sessionStore.save(run.conversationScope, [], {
         agentId: params.agentId,
         parentSessionKey: params.callerSessionKey,
@@ -2293,16 +2519,19 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // workspace resolver) can run the child in an isolated git worktree.
         // Defaults to false so the no-worktree path stays byte-identical.
         worktree: params.worktree ?? false,
+        ...(resumeDescriptors.has(runId)
+          ? { durableResumeDescriptor: resumeDescriptors.get(runId) }
+          : {}),
       });
+      return saved.ok ? ok(undefined) : err(saved.error);
+    }
+
+    if (!deps.durableRuns) {
+      const saved = saveSession();
       if (!saved.ok) {
         // @allow-throw: session creation is part of the synchronous spawn admission boundary.
         throw saved.error;
       }
-    } else {
-      deps.logger?.info(
-        { runId, conversationRef: run.conversationRef, agentId: params.agentId },
-        "Reusing persistent conversation for multi-round driver",
-      );
     }
 
     // Update run with canonical session info. Queued records were replaced by
@@ -2311,60 +2540,86 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     run.sessionKey = formattedKey;
     run.startedAt = clock.now();
 
-    // The SPAWN BOUNDARY — the run is now registered
-    // + running, so write the initial durable checkpoint (stepIndex -1) + start
-    // the keep-alive heartbeat. Inert when no durable store is wired. The keep-
-    // alive is cleared + the record marked completed in the terminal `finally`.
-    startDurableCheckpoint(run, params);
-
-    // Start the ~30s read-only progress fork so a long-running child
-    // surfaces its advance (a content-free session:sub_agent_progress) WITHOUT
-    // completing. Stopped in the terminal `finally` (no leaked timer). Runs
-    // independent of the durable store.
-    startProgressFork(run, params);
-
-    deps.logger?.info({
-      runId, agentId: params.agentId,
-      callerAgentId: params.callerAgentId ?? "unknown",
-      parentSessionKey: params.callerSessionKey ?? "unknown",
-      maxSteps: params.max_steps ?? deps.config.subAgentMaxSteps,
-      toolProfile: deps.config.subAgentToolGroups,
-    }, "Sub-agent spawn initiated");
-
-    // Emit spawn event
-    deps.eventBus.emit("session:sub_agent_spawned", {
-      runId, parentSessionKey: params.callerSessionKey ?? "unknown",
-      agentId: params.agentId, timestamp: clock.now(),
-    });
-
     // Async execution
     const execPromise = (async () => {
-      // Lifecycle hook - prepareSpawn
       let rollbackHandle: { rollback: () => Promise<void> } | undefined;
-      if (deps.lifecycleHooks) {
-        try {
-          rollbackHandle = await deps.lifecycleHooks.prepareSpawn({
-            runId,
-            parentSessionKey: params.callerSessionKey ?? "unknown",
-            childSessionKey: formattedKey,
-            agentId: params.agentId,
-            task: params.task,
-            depth: currentDepth,
-            maxDepth,
-          });
-        } catch (hookErr) {
-          deps.logger?.warn({
-            runId, err: hookErr,
-            hint: "prepareSubagentSpawn hook failed; proceeding with legacy spawn",
-            errorKind: "internal" as const,
-          }, "Lifecycle hook prepareSpawn failed");
-        }
-      }
-
-      // Hoist traceId for availability in catch block (failure record correlation)
       const traceId = params.graphTraceId ?? randomUUID();
 
       try {
+        const authority = await prepareDurableAuthority();
+        if (!authority.ok) {
+          throw new DurableSubAgentAdmissionError(
+            "Durable sub-agent workspace policy admission failed",
+            authority.error,
+          );
+        }
+        if (runs.get(runId)?.status !== "running" || deliverySuppressedRunIds.has(runId)) {
+          throw new DurableSubAgentAdmissionError(
+            "Sub-agent terminalized during workspace policy admission",
+          );
+        }
+        if (deps.durableRuns) {
+          const saved = saveSession();
+          if (!saved.ok) {
+            throw new DurableSubAgentAdmissionError(
+              "Durable sub-agent session admission failed",
+              saved.error,
+            );
+          }
+        }
+        const durableAdmission = await startDurableCheckpoint(run, params);
+        if (!durableAdmission.ok) {
+          throw new DurableSubAgentAdmissionError(
+            "Durable sub-agent checkpoint admission failed",
+            durableAdmission.error,
+          );
+        }
+        if (runs.get(runId)?.status !== "running" || deliverySuppressedRunIds.has(runId)) {
+          throw new DurableSubAgentAdmissionError(
+            "Sub-agent terminalized during checkpoint admission",
+          );
+        }
+
+        if (deps.lifecycleHooks) {
+          try {
+            rollbackHandle = await deps.lifecycleHooks.prepareSpawn({
+              runId,
+              parentSessionKey: params.callerSessionKey ?? "unknown",
+              childSessionKey: formattedKey,
+              agentId: params.agentId,
+              task: params.task,
+              depth: currentDepth,
+              maxDepth,
+            });
+          } catch (hookErr) {
+            deps.logger?.warn({
+              runId, err: hookErr,
+              hint: "prepareSubagentSpawn hook failed; inspect lifecycle integration",
+              errorKind: "internal" as const,
+            }, "Lifecycle hook prepareSpawn failed");
+          }
+        }
+        if (runs.get(runId)?.status !== "running" || deliverySuppressedRunIds.has(runId)) {
+          throw new DurableSubAgentAdmissionError(
+            "Sub-agent terminalized during spawn preparation",
+          );
+        }
+
+        startProgressFork(run, params);
+
+        deps.logger?.info({
+          runId, agentId: params.agentId,
+          callerAgentId: params.callerAgentId ?? "unknown",
+          parentSessionKey: params.callerSessionKey ?? "unknown",
+          maxSteps: params.max_steps ?? deps.config.subAgentMaxSteps,
+          toolProfile: deps.config.subAgentToolGroups,
+        }, "Sub-agent spawn initiated");
+
+        deps.eventBus.emit("session:sub_agent_spawned", {
+          runId, parentSessionKey: params.callerSessionKey ?? "unknown",
+          agentId: params.agentId, timestamp: clock.now(),
+        });
+
         deps.logger?.info({
           runId, agentId: params.agentId,
           ...(params.graphId ? { graphId: params.graphId } : {}),
@@ -2413,6 +2668,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           agentId: run.agentId,
           startedAt: clock.now(),
           trustLevel: run.trustLevel,
+          workspacePolicyHash,
           // Propagate channel context for downstream tool RPC injection
           ...(subDeliveryOrigin && { channelType: subDeliveryOrigin.channelType }),
           ...(subDeliveryOrigin && { deliveryOrigin: subDeliveryOrigin }),
@@ -2432,20 +2688,37 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         const childTask = appendExpectedOutputContract(params.task, params.expected_outputs);
         const result = await runWithContext(
           childContext.value,
-          () => deps.executeAgent(
-            params.agentId,
-            subSessionKey,
-            { conversationScope: run.conversationScope, conversationRef: run.conversationRef },
-            childTask,
-            params.max_steps,
-            params.callerAgentId,
-            params.graphId && params.nodeId
-              ? { graphId: params.graphId, nodeId: params.nodeId, reuseConversation: params.reuseConversation, graphNodeDepth: params.graphNodeDepth }
+          () => {
+            if (runs.get(runId)?.status !== "running" || deliverySuppressedRunIds.has(runId)) {
+              return Promise.reject(
+                new DurableSubAgentAdmissionError("Sub-agent terminalized before provider start"),
+              );
+            }
+            const providerExecution = deps.executeAgent(
+              params.agentId,
+              subSessionKey,
+              { conversationScope: run.conversationScope, conversationRef: run.conversationRef },
+              childTask,
+              params.max_steps,
+              params.callerAgentId,
+              params.graphId && params.nodeId
+              ? {
+                  graphId: params.graphId,
+                  nodeId: params.nodeId,
+                  reuseConversation: params.reuseConversation,
+                  graphNodeDepth: params.graphNodeDepth,
+                  workspacePolicySnapshot: params.workspacePolicySnapshot,
+                }
               : params.reuseConversation
-                ? { reuseConversation: params.reuseConversation }
-                : undefined,
-            params.tokenBudget,
-            {
+                ? {
+                    reuseConversation: params.reuseConversation,
+                    workspacePolicySnapshot: params.workspacePolicySnapshot,
+                  }
+                : params.workspacePolicySnapshot === undefined
+                  ? undefined
+                  : { workspacePolicySnapshot: params.workspacePolicySnapshot },
+              params.tokenBudget,
+              {
               rootRunId: run.rootRunId,
               ...(run.parentLeaseId !== undefined
                 ? { parentLeaseId: run.parentLeaseId }
@@ -2462,8 +2735,27 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                 run.caps = [...authority.caps];
                 persistDurableCheckpoint(run, params);
               },
-            },
-          ),
+              },
+              {
+                onProviderStart: () => {
+                  const current = runs.get(runId);
+                  if (
+                    current?.status !== "running"
+                    || durableTerminalReasons.has(runId)
+                    || deliverySuppressedRunIds.has(runId)
+                  ) {
+                    return err(new Error("Sub-agent provider start was suppressed after terminal state"));
+                  }
+                  startDeferreds.get(runId)?.resolve(ok(undefined));
+                  if (!durableResumeHandshakeRunIds.has(runId)) {
+                    startDeferreds.delete(runId);
+                  }
+                  return ok(undefined);
+                },
+              },
+            );
+            return providerExecution;
+          },
         );
         providerSettledRunIds.add(runId);
 
@@ -2892,6 +3184,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
         const completedAt = clock.now();
         const errorMessage = error instanceof Error ? error.message : String(error);
+        const admissionRejected = error instanceof DurableSubAgentAdmissionError;
         const runtimeMs = completedAt - run.startedAt;
         terminalizeRun(runId, {
           endReason: "failed",
@@ -2903,13 +3196,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         deps.logger?.error({
           runId,
           durationMs: runtimeMs,
-          err: error,
+          err: toSafeErrorLogString(error),
           hint: "Sub-agent execution failed; check agent config, model availability, and API key",
           errorKind: "internal" as const,
         }, "Sub-agent execution failed");
 
         // Persist failure record BEFORE rollback deletes the directory
-        if (deps.dataDir) {
+        if (deps.dataDir && !admissionRejected) {
           await persistFailureRecord({
             dataDir: deps.dataDir,
             sessionKey: formattedKey,
@@ -2962,7 +3255,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         emitProxyStop(run, runId, "failed");
 
         // Announce failure to channel -- LLM-free direct send
-        if (params.announceChannelType && params.announceChannelId) {
+        if (!admissionRejected && params.announceChannelType && params.announceChannelId) {
           await deliverFailureNotification({
             channelType: params.announceChannelType,
             channelId: params.announceChannelId,
@@ -2979,7 +3272,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             callerConversation: params.callerConversation,
             destinationEndpoint: run.callerEndpoint,
           }, deps);
-        } else {
+        } else if (!admissionRejected) {
           // Log explicit reason when failure announcement cannot be routed
           deps.logger?.debug({
             runId,
@@ -2989,7 +3282,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }
 
         // Lifecycle hook - onEnded (failure path)
-        if (deps.lifecycleHooks) {
+        if (deps.lifecycleHooks && !admissionRejected) {
           try {
             await deps.lifecycleHooks.onEnded({
               runId,
@@ -3017,13 +3310,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // to the shared event bus for the daemon's lifetime and keeps
         // ingesting other sessions' events into its trajectory file (stamped
         // with the dead child's sessionId).
-        if (deps.closeTrajectory) {
-          try {
-            await deps.closeTrajectory(run.sessionKey);
-          } catch (closeErr) {
-            deps.logger?.debug({ runId, err: closeErr }, "Sub-agent trajectory close best-effort failed");
-          }
-        }
+        closeTrajectoryOnce(run);
       }
     })();
 
@@ -3053,6 +3340,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         errorKind: "timeout",
         summary: errorMessage,
       });
+      forceTerminalCleanup(run, "watchdog_timeout");
 
       deps.logger?.error({
         runId, agentId: run.agentId,
@@ -3139,9 +3427,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         });
       }
     }, runTimeoutMs);
+    watchdogTimers.set(runId, watchdogTimer);
 
     // Clear watchdog on normal completion/failure
-    execPromise.finally(() => watchdogTimer.cancel());
+    execPromise.finally(() => {
+      watchdogTimer.cancel();
+      watchdogTimers.delete(runId);
+    });
 
     activePromises.add(execPromise);
     activeRunIds.add(runId);
@@ -3159,7 +3451,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       // The SAME universal terminal seam — mark the
       // durable record completed + clear its keep-alive heartbeat (no leaked
       // interval). Inert + idempotent when no durable store is wired.
-      finishDurableCheckpoint(run);
+      const terminalRun = runs.get(runId);
+      if (!forcedTerminalRunIds.has(runId) && terminalRun && terminalRun.status !== "running" && terminalRun.status !== "queued") {
+        finishDurableCheckpoint(run, terminalRun.completion.endReason);
+      }
       // Stop the read-only progress fork on the same universal terminal
       // seam so it never outlives the child (no leaked timer).
       stopProgressFork(run);
@@ -3295,6 +3590,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       errorKind: killedBy === "health_monitor" ? "timeout" : "precondition",
       summary: errorMessage,
     });
+    forceTerminalCleanup(run, "killed");
 
     // Persist failure record for killed runs (fire-and-forget, belt-defense)
     if (deps.dataDir) {
@@ -3593,6 +3889,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       }
     }
 
+    startDeferreds.clear();
+    durableResumeHandshakeRunIds.clear();
   }
 
   function shutdown(): Promise<void> {
@@ -3637,6 +3935,102 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return { deduped: true, existingRunId: lastDedupHit.existingRunId, ageMs: lastDedupHit.ageMs };
   }
 
+  async function resumeDurable(
+    record: DurableRunRecord,
+    leaseId: string,
+    workspacePolicySnapshot: WorkspacePolicySnapshot,
+  ): Promise<Result<string, Error>> {
+    const loaded = deps.sessionStore.loadByRef(
+      { tenantId: record.tenantId, agentId: record.agentId },
+      record.conversationRef,
+    );
+    if (!loaded.ok) return err(new Error(loaded.error.message));
+    if (loaded.value === undefined) {
+      return err(new Error("Protected sub-agent resume session was not found"));
+    }
+    if (
+      JSON.stringify(loaded.value.conversationScope)
+      !== JSON.stringify(record.conversationScope)
+    ) {
+      return err(new Error("Protected sub-agent resume session authority mismatch"));
+    }
+    const descriptor = parseSubAgentResumeDescriptor(
+      loaded.value.metadata.durableResumeDescriptor,
+    );
+    if (!descriptor.ok) return descriptor;
+    const authority = validateSubAgentResumeAuthority(descriptor.value, record);
+    if (!authority.ok) return authority;
+    if (descriptor.value.workspacePolicyHash !== record.workspacePolicyHash) {
+      return err(new Error("Protected sub-agent resume workspace policy mismatch"));
+    }
+    if (
+      workspacePolicySnapshot.agentId !== record.agentId
+      || workspacePolicySnapshot.combinedHash !== descriptor.value.workspacePolicyHash
+    ) {
+      return err(new Error("Verified sub-agent resume workspace policy mismatch"));
+    }
+    durableResumeHandshakeRunIds.add(record.checkpointId);
+    const resumed = tryCatch(() => spawn({
+      task: descriptor.value.task,
+      agentId: descriptor.value.agentId,
+      callerSessionKey: descriptor.value.callerSessionKey,
+      callerConversation: descriptor.value.callerConversation,
+      callerEndpoint: descriptor.value.callerEndpoint,
+      callerAgentId: descriptor.value.callerAgentId,
+      announceChannelType: descriptor.value.announceChannelType,
+      announceChannelId: descriptor.value.announceChannelId,
+      model: descriptor.value.model,
+      max_steps: descriptor.value.maxSteps,
+      tokenBudget: descriptor.value.tokenBudget,
+      expected_outputs: descriptor.value.expectedOutputs,
+      requesterOrigin: descriptor.value.requesterOrigin,
+      depth: descriptor.value.depth,
+      maxDepth: descriptor.value.maxDepth,
+      rootRunId: descriptor.value.rootRunId,
+      parentLeaseId: leaseId,
+      caps: record.caps,
+      callerType: "durable-resume",
+      reservedRunId: record.checkpointId,
+      callerTrustLevel: record.trustLevel,
+      artifactRefs: descriptor.value.artifactRefs,
+      objective: descriptor.value.objective,
+      domainKnowledge: descriptor.value.domainKnowledge,
+      toolGroups: descriptor.value.toolGroups,
+      resolvedLanguage: descriptor.value.resolvedLanguage,
+      requiredTools: descriptor.value.requiredTools,
+      includeParentHistory: descriptor.value.includeParentHistory,
+      discoveredDeferredTools: descriptor.value.discoveredDeferredTools,
+      graphToolNames: descriptor.value.graphToolNames,
+      worktree: descriptor.value.worktree,
+      workspacePolicyHash: descriptor.value.workspacePolicyHash,
+      workspacePolicySnapshot,
+      reuseConversation: {
+        conversationRef: record.conversationRef,
+        conversationScope: record.conversationScope,
+      },
+      isCronAgentTurn: descriptor.value.isCronAgentTurn,
+      jobId: descriptor.value.jobId,
+      jobName: descriptor.value.jobName,
+    }));
+    if (!resumed.ok) {
+      durableResumeHandshakeRunIds.delete(record.checkpointId);
+      startDeferreds.delete(record.checkpointId);
+      return resumed;
+    }
+    if (resumed.value !== record.checkpointId) {
+      return err(new Error("Durable sub-agent resume execution identity mismatch"));
+    }
+    const started = startDeferreds.get(resumed.value);
+    if (!started) {
+      durableResumeHandshakeRunIds.delete(resumed.value);
+      return err(new Error("Durable sub-agent resume start handshake is missing"));
+    }
+    const admitted = await started.promise;
+    startDeferreds.delete(resumed.value);
+    durableResumeHandshakeRunIds.delete(resumed.value);
+    return admitted.ok ? ok(resumed.value) : admitted;
+  }
+
   return {
     spawn,
     getRunStatus,
@@ -3653,5 +4047,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     shutdown,
     setGraphCoordinator,
     lastSpawnDedupInfo,
+    resumeDurable,
   };
 }

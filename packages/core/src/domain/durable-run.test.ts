@@ -116,6 +116,14 @@ describe("parseDurableRunRecord domain validation", () => {
     }
   });
 
+  it("accepts superseded as the exact terminal reason for a replacement claim", () => {
+    const result = parseDurableRunRecord(makeValidRecord({
+      status: "completed",
+      terminalReason: "superseded",
+    }));
+    expect(result.ok && result.value.terminalReason).toBe("superseded");
+  });
+
   it("rejects caps containing a string that is not a member of the AgentCapability union", () => {
     const result = parseDurableRunRecord(makeValidRecord({ caps: ["orch:read", "admin"] }));
     expect(result.ok).toBe(false);

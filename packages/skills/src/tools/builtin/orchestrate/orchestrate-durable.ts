@@ -44,6 +44,7 @@ import {
   type DurableRunRecord,
   type DurableRunResumeClaim,
   type DurableRunResumeClaimOutcome,
+  type DurableRunTerminalizationOutcome,
   type DurableRootBudget,
   type DeliveryOrigin,
   type AgentCapability,
@@ -71,15 +72,10 @@ export interface OrchestrateDurableRuns {
   claimForResume?(
     claim: DurableRunResumeClaim,
   ): Promise<Result<DurableRunResumeClaimOutcome, Error>>;
-  /**
-   * Mark the row terminal on a NON-resumable completion (success or a non-timeout
-   * failure) so `listResumable` stops re-surfacing a finished run on every boot and
-   * the orphan sweep never false-orphans it — mirroring the graph coordinator /
-   * sub-agent runner terminal write. A structural subset of the daemon's
-   * `DurableRunPort.markCompleted`; optional so a minimal store stub compiles (the
-   * concrete store always provides it, and the runner skips it on a resumable timeout).
-   */
-  markCompleted?(checkpointId: string): Promise<Result<void, Error>>;
+  terminalize(
+    checkpointId: string,
+    terminalReason: "completed" | "failed",
+  ): Promise<Result<DurableRunTerminalizationOutcome, Error>>;
   /** Quarantine a replacement whose pinned artifact cannot be loaded. */
   markOrphaned?(checkpointId: string, reason: string): Promise<Result<void, Error>>;
   /**
@@ -357,8 +353,8 @@ export async function markResumable(
  * coordinator / sub-agent runner terminal write — and unlink the pinned
  * `<runId>.<language>` script at the workspace ROOT (the run-end `cleanupRun` wipes
  * only `results/`). Only a resumable TIMEOUT keeps the row + script, and it never
- * calls this. Best-effort: a store/fs failure is logged (never thrown into the
- * run's terminal path); `markCompleted` absent (a minimal stub) ⇒ that half no-ops.
+ * calls this. Best-effort: a store/fs failure is logged and never thrown into the
+ * run's terminal path.
  */
 export async function finalizeCompletedRun(
   runs: OrchestrateDurableRuns | undefined,
@@ -368,15 +364,16 @@ export async function finalizeCompletedRun(
     scriptRef: string;
     workspacePath: string;
     runId: string;
+    terminalReason: "completed" | "failed";
   },
   logger?: ComisLogger,
 ): Promise<void> {
   if (runs === undefined) return; // resume surface off — nothing durable to finalize.
-  const done = await runs.markCompleted?.(input.checkpointId);
-  if (done !== undefined && !done.ok) {
+  const done = await runs.terminalize(input.checkpointId, input.terminalReason);
+  if (!done.ok) {
     logger?.warn(
       { runId: input.runId, rootRunId: input.rootRunId, err: toSafeErrorLogString(done.error), errorKind: "internal" as const, hint: "the durable row could not be marked completed — the watchdog re-anchor cap eventually orphans the stale 'running' row after repeated no-progress attempts (no live impact)" },
-      "orchestrate durable markCompleted failed (non-fatal)",
+      "orchestrate durable terminalize failed (non-fatal)",
     );
   }
   try {

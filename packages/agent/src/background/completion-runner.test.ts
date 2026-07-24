@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { ok } from "@comis/shared";
+import { err, ok, type Result } from "@comis/shared";
 import {
   createBackgroundCompletionRunner,
   type BackgroundCompletionRunnerDeps,
@@ -69,6 +69,9 @@ function buildTask(over: Partial<BackgroundTask> = {}): BackgroundTask {
     startedAt: 1,
     completedAt: 2,
     origin: buildOrigin(),
+    continuationExecutionId: "task-1",
+    dispatchAttempts: 0,
+    dispatchState: "pending",
     ...over,
   };
 }
@@ -83,22 +86,83 @@ function makeLogger() {
   } as unknown as import("@comis/core").ComisLogger;
 }
 
+function executeFinalized(result: Record<string, unknown>) {
+  return async (...args: unknown[]) => {
+    const overrides = args[7] as {
+      onProviderStart?: () => Result<void, Error>;
+      onFinalizedResult?: (
+        value: Record<string, unknown>,
+        phase: "cleanup_pending" | "ready",
+      ) => Promise<void>;
+      onJournalFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+    } | undefined;
+    const started = overrides?.onProviderStart?.();
+    if (started !== undefined && !started.ok) return Promise.reject(started.error);
+    await overrides?.onJournalFinalizedResult?.(result);
+    await overrides?.onFinalizedResult?.(result, "ready");
+    return result;
+  };
+}
+
+async function acceptDelivery(input: Parameters<BackgroundCompletionRunnerDeps["deliverCompletion"]>[0]) {
+  const started = input.onSendStart();
+  return started.ok
+    ? { kind: "accepted" as const }
+    : { kind: "retryable_pre_send" as const, errorKind: "resource" as const, message: started.error.message };
+}
+
 describe("createBackgroundCompletionRunner", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
   let sessionStore: { loadByRef: ReturnType<typeof vi.fn> };
-  let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn> };
+  let taskManager: {
+    getTask: ReturnType<typeof vi.fn>;
+    commitDispatchState: ReturnType<typeof vi.fn>;
+    persistContinuationOutbox: ReturnType<typeof vi.fn>;
+    persistCleanupPendingOutbox: ReturnType<typeof vi.fn>;
+    persistFinalizedResult: ReturnType<typeof vi.fn>;
+    recordRecoveryIncident: ReturnType<typeof vi.fn>;
+    scheduleDispatchRetry: ReturnType<typeof vi.fn>;
+    scheduleStateRetry: ReturnType<typeof vi.fn>;
+  };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
-  let transitionDispatchState: ReturnType<typeof vi.fn>;
+  let commitDispatchState: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     eventBus = createFakeEventBus();
-    executor = { execute: vi.fn().mockResolvedValue({ ok: true }) };
+    executor = {
+      execute: vi.fn(executeFinalized({
+        response: "continued",
+        executionId: "execution-default",
+        finishReason: "stop",
+      })),
+    };
     sessionStore = { loadByRef: vi.fn().mockReturnValue(ok({ messages: [] })) };
-    transitionDispatchState = vi.fn().mockReturnValue(true);
+    commitDispatchState = vi.fn((_taskId, next, expected) => {
+      const task = taskManager.getTask();
+      const current = task?.dispatchState ?? "pending";
+      if (!task || (expected && !expected.includes(current))) return ok(false);
+      task.dispatchState = next;
+      return ok(true);
+    });
     taskManager = {
       getTask: vi.fn(),
-      transitionDispatchState,
+      commitDispatchState,
+      persistContinuationOutbox: vi.fn((_taskId, outbox, expected) => {
+        const task = taskManager.getTask();
+        const current = task?.dispatchState ?? "pending";
+        if (!task || (expected && !expected.includes(current))) {
+          return { ok: false, error: new Error("outbox transition rejected") };
+        }
+        task.continuationOutbox = outbox;
+        task.dispatchState = "ready_to_deliver";
+        return ok(undefined);
+      }),
+      persistCleanupPendingOutbox: vi.fn(),
+      persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+      recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
+      scheduleDispatchRetry: vi.fn(),
+      scheduleStateRetry: vi.fn(),
     };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
   });
@@ -107,14 +171,36 @@ describe("createBackgroundCompletionRunner", () => {
     maxBackgroundHops = 3,
     isTurnInFlight?: (key: string) => boolean,
     assembleToolsForAgent?: BackgroundCompletionRunnerDeps["assembleToolsForAgent"],
-    deliverCompletion: BackgroundCompletionRunnerDeps["deliverCompletion"] = vi.fn().mockResolvedValue(ok(undefined)),
+    deliverCompletion: BackgroundCompletionRunnerDeps["deliverCompletion"] = vi.fn(async (input) => {
+      const started = input.onSendStart();
+      return started.ok
+        ? { kind: "accepted" as const }
+        : { kind: "retryable_pre_send" as const, errorKind: "resource" as const, message: started.error.message };
+    }),
   ) {
     return createBackgroundCompletionRunner({
       eventBus,
       getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
-      fallbackNotifyFn,
+      recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
+      cleanupFinalizedSession: vi.fn().mockResolvedValue(ok(undefined)),
+      reconcileDelivery: vi.fn().mockResolvedValue(ok({ kind: "accepted" })),
+      deliverFallback: async (input) => {
+        const started = input.onSendStart();
+        if (!started.ok) {
+          return { kind: "retryable_pre_send" as const, errorKind: "resource" as const, message: started.error.message };
+        }
+        const { origin, response } = input;
+        await fallbackNotifyFn({
+          agentId: origin.turnScope.conversation.agentId,
+          message: response,
+          priority: "normal",
+          origin: "background_task",
+        });
+        return { kind: "accepted" };
+      },
+      deliveryProtection: "ledger",
       maxBackgroundHops,
       ...(isTurnInFlight ? { isTurnInFlight } : {}),
       ...(assembleToolsForAgent ? { assembleToolsForAgent } : {}),
@@ -138,6 +224,197 @@ describe("createBackgroundCompletionRunner", () => {
     await new Promise((r) => setImmediate(r));
     expect(executor.execute).not.toHaveBeenCalled();
     expect(fallbackNotifyFn).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
+  it("retries a failed live-turn consumption commit without re-entry", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    commitDispatchState.mockImplementation((_taskId, next, expected) => {
+      const current = task.dispatchState ?? "pending";
+      if (expected && !expected.includes(current)) return ok(false);
+      if (next === "consumed_live") return err(new Error("storage unavailable"));
+      task.dispatchState = next;
+      return ok(true);
+    });
+    const runner = build(3, () => true);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(taskManager.scheduleStateRetry).toHaveBeenCalledWith(
+      task.id,
+      "consumed_live",
+      ["execution_claimed"],
+    );
+    expect(taskManager.recordRecoveryIncident).toHaveBeenCalledWith(task.id);
+    expect(executor.execute).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
+  it("retries a failed silent terminal commit without continuation execution", async () => {
+    const task = buildTask({ result: "ok", notificationPolicy: "silent" });
+    taskManager.getTask.mockReturnValue(task);
+    commitDispatchState.mockImplementation((_taskId, next, expected) => {
+      const current = task.dispatchState ?? "pending";
+      if (expected && !expected.includes(current)) return ok(false);
+      if (next === "delivered") return err(new Error("storage unavailable"));
+      task.dispatchState = next;
+      return ok(true);
+    });
+    const runner = build();
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(taskManager.scheduleStateRetry).toHaveBeenCalledWith(
+      task.id,
+      "delivered",
+      ["execution_claimed"],
+    );
+    expect(taskManager.recordRecoveryIncident).toHaveBeenCalledWith(task.id);
+    expect(executor.execute).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
+  it("retries a completion claim after acknowledged storage failure", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    commitDispatchState.mockReturnValueOnce(err(new Error("storage unavailable")));
+    const outcomes: Array<{ reason: string }> = [];
+    eventBus.on("background_task:notified", (event) => outcomes.push(event));
+    const runner = build();
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(task.dispatchState).toBe("pending");
+    expect(taskManager.scheduleDispatchRetry).toHaveBeenCalledWith(task.id);
+    expect(outcomes).toContainEqual(expect.objectContaining({ reason: "retry_scheduled" }));
+    expect(executor.execute).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
+  it("delivers a visible result finalized before provider dispatch", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    executor.execute.mockImplementation(async (...args: unknown[]) => {
+      const overrides = args[7] as {
+        onJournalFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+        onFinalizedResult?: (
+          value: Record<string, unknown>,
+          phase: "cleanup_pending" | "ready",
+        ) => Promise<void>;
+      } | undefined;
+      const result = {
+        response: "pre-provider response",
+        executionId: "execution-pre-provider",
+        finishReason: "error",
+      };
+      await overrides?.onJournalFinalizedResult?.(result);
+      await overrides?.onFinalizedResult?.(result, "ready");
+      return result;
+    });
+    const deliverCompletion = vi.fn(acceptDelivery);
+    const runner = build(3, undefined, undefined, deliverCompletion);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(commitDispatchState).not.toHaveBeenCalledWith(
+      task.id,
+      "executing",
+      expect.anything(),
+    );
+    expect(taskManager.persistContinuationOutbox).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({ response: "pre-provider response" }),
+      ["execution_claimed", "executing"],
+    );
+    expect(taskManager.persistFinalizedResult).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({
+        response: "pre-provider response",
+        executionId: "execution-pre-provider",
+      }),
+      ["execution_claimed", "executing"],
+    );
+    expect(deliverCompletion).toHaveBeenCalledOnce();
+    expect(task.dispatchState).toBe("delivered");
+    await runner.shutdown();
+  });
+
+  it("terminalizes a silent result finalized before provider dispatch", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    executor.execute.mockImplementation(async (...args: unknown[]) => {
+      const overrides = args[7] as {
+        onJournalFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+        onFinalizedResult?: (
+          value: Record<string, unknown>,
+          phase: "cleanup_pending" | "ready",
+        ) => Promise<void>;
+      } | undefined;
+      const result = {
+        response: "NO_REPLY",
+        executionId: "execution-silent-pre-provider",
+        finishReason: "stop",
+      };
+      await overrides?.onJournalFinalizedResult?.(result);
+      await overrides?.onFinalizedResult?.(result, "ready");
+      return result;
+    });
+    const deliverCompletion = vi.fn();
+    const runner = build(3, undefined, undefined, deliverCompletion);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(commitDispatchState).toHaveBeenCalledWith(
+      task.id,
+      "delivered",
+      ["execution_claimed", "executing"],
+    );
+    expect(taskManager.persistContinuationOutbox).not.toHaveBeenCalled();
+    expect(deliverCompletion).not.toHaveBeenCalled();
+    expect(task.dispatchState).toBe("delivered");
     await runner.shutdown();
   });
 
@@ -190,12 +467,12 @@ describe("createBackgroundCompletionRunner", () => {
       origin: buildOrigin({ responseLocalePolicy } as Partial<BackgroundTaskOrigin>),
     });
     taskManager.getTask.mockReturnValue(task);
-    executor.execute.mockResolvedValue({
+    executor.execute.mockImplementation(executeFinalized({
       response: "תוצאת הרקע הושלמה",
       executionId: "execution-1",
       finishReason: "stop",
-    });
-    const deliverCompletion = vi.fn().mockResolvedValue(ok(undefined));
+    }));
+    const deliverCompletion = vi.fn(acceptDelivery);
     const runner = build(3, undefined, undefined, deliverCompletion);
 
     eventBus.emit("background_task:completed", {
@@ -216,17 +493,19 @@ describe("createBackgroundCompletionRunner", () => {
       "default",
       undefined,
       undefined,
-      {
+      expect.objectContaining({
         operationType: "interactive",
         responseLocalePolicy,
-      },
+        onFinalizedResult: expect.any(Function),
+      }),
     );
-    expect(deliverCompletion).toHaveBeenCalledWith({
+    expect(deliverCompletion).toHaveBeenCalledWith(expect.objectContaining({
       taskId: task.id,
       origin: task.origin,
       response: "תוצאת הרקע הושלמה",
       executionId: "execution-1",
-    });
+      idempotencyKey: "background-continuation:task-1",
+    }));
   });
 
   it("continues re-entry execution and reaches later observers when the first re-entry subscriber throws", async () => {
@@ -274,10 +553,14 @@ describe("createBackgroundCompletionRunner", () => {
     eventBus.on("background_task:reentered", () => {
       reenteredContext = getContext();
     });
-    executor.execute.mockImplementation(async () => {
+    executor.execute.mockImplementation(async (...args) => {
       await Promise.resolve();
       executorContext = getContext();
-      return { ok: true };
+      return executeFinalized({
+        response: "continued",
+        executionId: "execution-context",
+        finishReason: "stop",
+      })(...args);
     });
 
     const ambientAdmin = RequestContextSchema.parse({
@@ -357,7 +640,7 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
 
     expect(executor.execute).not.toHaveBeenCalled();
-    expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "notified");
+    expect(task.dispatchState).toBe("delivered");
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
   });
 
@@ -381,10 +664,14 @@ describe("createBackgroundCompletionRunner", () => {
     eventBus.on("background_task:reentered", () => {
       reenteredContext = getContext();
     });
-    executor.execute.mockImplementation(async () => {
+    executor.execute.mockImplementation(async (...args) => {
       await Promise.resolve();
       executorContext = getContext();
-      return { ok: true };
+      return executeFinalized({
+        response: "continued",
+        executionId: "execution-restart-context",
+        finishReason: "stop",
+      })(...args);
     });
 
     const runner = build();
@@ -476,10 +763,23 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  it("subscription survives a handler error", async () => {
+  it("parks an ambiguous executor rejection without replaying it", async () => {
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);
-    executor.execute.mockRejectedValueOnce(new Error("transient")).mockResolvedValue({});
+    executor.execute
+      .mockImplementationOnce(async (...args: unknown[]) => {
+        const overrides = args[7] as {
+          onProviderStart?: () => Result<void, Error>;
+        } | undefined;
+        const started = overrides?.onProviderStart?.();
+        if (started !== undefined && !started.ok) return Promise.reject(started.error);
+        return Promise.reject(new Error("transient"));
+      })
+      .mockImplementationOnce(executeFinalized({
+        response: "continued",
+        executionId: "execution-retry",
+        finishReason: "stop",
+      }));
     const runner = build();
     eventBus.emit("background_task:completed", {
       agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
@@ -493,7 +793,8 @@ describe("createBackgroundCompletionRunner", () => {
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    expect(executor.execute).toHaveBeenCalledTimes(2);
+    expect(executor.execute).toHaveBeenCalledOnce();
+    expect(task.dispatchState).toBe("parked_uncertain");
     await runner.shutdown();
   });
 
@@ -544,17 +845,7 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  // -------------------------------------------------------------------------
-  // Two-phase commit on fallbackForTask.
-  //
-  // fallbackForTask persists dispatchState="notified" via
-  // taskManager.transitionDispatchState BEFORE invoking fallbackNotifyFn.
-  // The persist runs synchronously (persistTaskSync) so any SIGKILL after
-  // the persist returns leaves the on-disk state at "notified" -> recovery
-  // sees the at-most-once gate fire -> no duplicate. Without this ordering,
-  // the gate would miss and the user would see a duplicate notification.
-  // -------------------------------------------------------------------------
-  it("fallbackForTask persists dispatchState='notified' BEFORE firing fallbackNotifyFn (two-phase commit)", async () => {
+  it("fallbackForTask persists the exact outbox before firing fallback delivery", async () => {
     // Hop cap path is the simplest reach to fallbackForTask. With
     // maxBackgroundHops=3 and origin.backgroundHopCount=99, nextHopCount
     // exceeds the cap -> fallback fires.
@@ -572,44 +863,54 @@ describe("createBackgroundCompletionRunner", () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    // Both must have been called once.
-    expect(transitionDispatchState).toHaveBeenCalledTimes(1);
-    expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "notified");
+    expect(taskManager.persistContinuationOutbox).toHaveBeenCalledOnce();
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
 
-    // Critical ordering assertion: invocationCallOrder is a global counter
-    // across all vitest mocks; smaller = earlier. transitionDispatchState's
-    // call MUST precede fallbackNotifyFn's.
-    const persistOrder = transitionDispatchState.mock.invocationCallOrder[0]!;
+    const persistOrder = taskManager.persistContinuationOutbox.mock.invocationCallOrder[0]!;
     const fireOrder = fallbackNotifyFn.mock.invocationCallOrder[0]!;
     expect(persistOrder).toBeLessThan(fireOrder);
 
     await runner.shutdown();
   });
 
-  it("SIGKILL between persist and fire — recovery's at-most-once gate fires (no duplicate)", async () => {
-    // Simulate the crash: transitionDispatchState succeeds (state lands on
-    // disk via persistTaskSync), then fallbackNotifyFn rejects (modeling
-    // \"daemon dies during the network call\"). The runner WARNs but does
-    // not retry. A FRESH runner instance receiving the same task with
-    // dispatchState=\"notified\" (the persisted state) MUST skip via the
-    // at-most-once gate at completion-runner.ts handleEvent's early-return
-    // when task.dispatchState === \"notified\".
+  it("retries fallback outbox persistence before any outward send", async () => {
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ backgroundHopCount: 99 }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    taskManager.persistContinuationOutbox.mockReturnValueOnce(
+      err(new Error("protected storage unavailable")),
+    );
+    const outcomes: Array<{ reason: string }> = [];
+    eventBus.on("background_task:notified", (event) => outcomes.push(event));
+    const runner = build(3);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(task.dispatchState).toBe("pending");
+    expect(taskManager.scheduleDispatchRetry).toHaveBeenCalledWith(task.id);
+    expect(outcomes).toContainEqual(expect.objectContaining({ reason: "retry_scheduled" }));
+    expect(fallbackNotifyFn).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
+  it("parks a rejected fallback delivery as uncertain and does not replay it", async () => {
     fallbackNotifyFn.mockRejectedValueOnce(new Error("simulated SIGKILL during fire"));
     const task = buildTask({
       result: "ok",
       origin: buildOrigin({ backgroundHopCount: 99 }),
     });
     taskManager.getTask.mockReturnValue(task);
-    // Mirror what the real BackgroundTaskManager.transitionDispatchState
-    // does: mutate the in-memory task object BEFORE persistTaskSync. This
-    // mirrors the on-disk state for the subsequent recovery-instance
-    // assertion below.
-    transitionDispatchState.mockImplementation((tid: string, next: string) => {
-      if (tid === task.id) (task as unknown as { dispatchState: string }).dispatchState = next;
-      return true;
-    });
-
     const runner = build(3);
     eventBus.emit("background_task:completed", {
       agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
@@ -618,20 +919,13 @@ describe("createBackgroundCompletionRunner", () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    // Persist step ran.
-    expect(transitionDispatchState).toHaveBeenCalledTimes(1);
-    // Fire step was attempted and rejected.
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
-    // task.dispatchState is now "notified" on the in-memory task object,
-    // mirroring the on-disk state that recovery would load.
-    expect((task as unknown as { dispatchState: string }).dispatchState).toBe("notified");
+    expect(task.dispatchState).toBe("parked_uncertain");
     await runner.shutdown();
 
-    // Now simulate "daemon recovers" — fresh runner instance, same task
-    // object (dispatchState="notified" already set above).
     taskManager.getTask.mockReset();
     taskManager.getTask.mockReturnValue(task);
-    transitionDispatchState.mockReset();
+    commitDispatchState.mockReset();
     fallbackNotifyFn.mockReset();
     executor.execute.mockReset();
     const recoveredRunner = build(3);
@@ -642,10 +936,8 @@ describe("createBackgroundCompletionRunner", () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    // At-most-once gate (handleEvent: if task.dispatchState === "notified") returns
-    // immediately -> nothing fires.
     expect(fallbackNotifyFn).not.toHaveBeenCalled();
-    expect(transitionDispatchState).not.toHaveBeenCalled();
+    expect(commitDispatchState).not.toHaveBeenCalled();
     expect(executor.execute).not.toHaveBeenCalled();
     await recoveredRunner.shutdown();
   });
@@ -655,17 +947,38 @@ describe("trace continuity sub-tests", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
   let sessionStore: { loadByRef: ReturnType<typeof vi.fn> };
-  let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn> };
+  let taskManager: {
+    getTask: ReturnType<typeof vi.fn>;
+    commitDispatchState: ReturnType<typeof vi.fn>;
+    persistContinuationOutbox: ReturnType<typeof vi.fn>;
+    persistCleanupPendingOutbox: ReturnType<typeof vi.fn>;
+    persistFinalizedResult: ReturnType<typeof vi.fn>;
+    recordRecoveryIncident: ReturnType<typeof vi.fn>;
+    scheduleDispatchRetry: ReturnType<typeof vi.fn>;
+    scheduleStateRetry: ReturnType<typeof vi.fn>;
+  };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
   let logger: ReturnType<typeof makeLogger>;
 
   beforeEach(() => {
     eventBus = createFakeEventBus();
-    executor = { execute: vi.fn().mockResolvedValue({ ok: true }) };
+    executor = {
+      execute: vi.fn(executeFinalized({
+        response: "continued",
+        executionId: "execution-trace",
+        finishReason: "stop",
+      })),
+    };
     sessionStore = { loadByRef: vi.fn().mockReturnValue(ok({ messages: [] })) };
     taskManager = {
       getTask: vi.fn(),
-      transitionDispatchState: vi.fn().mockReturnValue(true),
+      commitDispatchState: vi.fn().mockReturnValue(ok(true)),
+      persistContinuationOutbox: vi.fn().mockReturnValue(ok(undefined)),
+      persistCleanupPendingOutbox: vi.fn().mockReturnValue(ok(undefined)),
+      persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+      recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
+      scheduleDispatchRetry: vi.fn(),
+      scheduleStateRetry: vi.fn(),
     };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
     logger = makeLogger();
@@ -677,8 +990,30 @@ describe("trace continuity sub-tests", () => {
       getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
-      deliverCompletion: async () => ok(undefined),
-      fallbackNotifyFn,
+      recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
+      cleanupFinalizedSession: vi.fn().mockResolvedValue(ok(undefined)),
+      reconcileDelivery: vi.fn().mockResolvedValue(ok({ kind: "accepted" })),
+      deliverCompletion: async (input) => {
+        const started = input.onSendStart();
+        return started.ok
+          ? { kind: "accepted" }
+          : { kind: "retryable_pre_send", errorKind: "resource", message: started.error.message };
+      },
+      deliverFallback: async (input) => {
+        const started = input.onSendStart();
+        if (!started.ok) {
+          return { kind: "retryable_pre_send", errorKind: "resource", message: started.error.message };
+        }
+        const { origin, response } = input;
+        await fallbackNotifyFn({
+          agentId: origin.turnScope.conversation.agentId,
+          message: response,
+          priority: "normal",
+          origin: "background_task",
+        });
+        return { kind: "accepted" };
+      },
+      deliveryProtection: "ledger",
       maxBackgroundHops,
       logger,
     });

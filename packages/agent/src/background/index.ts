@@ -31,6 +31,11 @@ export {
   createBackgroundTaskManager,
 } from "./background-task-manager.js";
 export type {
+  BackgroundRecoveryRecorderFailure,
+  BackgroundRecoveryRecorderFailureKind,
+  BackgroundRecoveryRecorderDisposition,
+} from "./background-task-types.js";
+export type {
   BackgroundTaskManager,
   BackgroundTaskManagerOpts,
   NotifyFn,
@@ -49,6 +54,9 @@ export type {
   BackgroundCompletionRunnerDeps,
   RunnerSessionStore,
 } from "./completion-runner.js";
+export type {
+  BackgroundCompletionDeliveryOutcome,
+} from "./background-task-types.js";
 export {
   createCompletionDispatcher,
   STATES,

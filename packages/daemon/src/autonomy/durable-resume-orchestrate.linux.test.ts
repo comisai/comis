@@ -32,6 +32,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  createConversationRef,
   TypedEventBus,
   type ClockPort,
   type TimerPort,
@@ -66,10 +67,18 @@ const silentLogger: ComisLogger = (() => {
 })();
 
 function makeBoundedAutonomy() {
-  return { registerRoot: vi.fn(), leaseIdsForRoot: vi.fn(() => new Set<string>()) };
+  return {
+    registerRoot: vi.fn(),
+    rehydrateBudget: vi.fn(),
+    evictRootIfIdle: vi.fn(),
+    leaseIdsForRoot: vi.fn(() => new Set<string>()),
+  };
 }
 function makeLeaseManager(): LeaseManager {
-  return { mintLease: vi.fn(() => ({ leaseId: "lease-vps", bearer: "bearer-vps" })) } as unknown as LeaseManager;
+  return {
+    mintLease: vi.fn(() => ({ leaseId: "lease-vps", bearer: "bearer-vps" })),
+    revoke: vi.fn(() => ({ revoked: 1 })),
+  } as unknown as LeaseManager;
 }
 
 describe.skipIf(!RUN_LINUX)("orchestrate durable-resume boot-sweep recovery (restart-sim, Linux/VPS only)", () => {
@@ -79,6 +88,23 @@ describe.skipIf(!RUN_LINUX)("orchestrate durable-resume boot-sweep recovery (res
   const AGENT = "agent-vps";
   const SCRIPT_REF = "orch-vps-1.ts";
   const CHECKPOINT_REF = "results/ckpt.json";
+  const endpoint = {
+    channelType: "test",
+    channelInstanceId: "durable-resume",
+    conversationId: "resume-vps",
+    conversationKind: "direct" as const,
+  };
+  const conversationScope = {
+    tenantId: "tenant-a",
+    agentId: AGENT,
+    partition: {
+      kind: "endpoint-conversation-principal" as const,
+      endpoint,
+      principalId: "user-a",
+    },
+  };
+  const conversationReference = createConversationRef(conversationScope);
+  if (!conversationReference.ok) throw conversationReference.error;
 
   beforeEach(async () => {
     ws = mkdtempSync(join(tmpdir(), "comis-resume-sim-"));
@@ -98,15 +124,17 @@ describe.skipIf(!RUN_LINUX)("orchestrate durable-resume boot-sweep recovery (res
     const r = await store.upsertCheckpoint({
       checkpointId: ROOT,
       rootRunId: ROOT,
+      tenantId: conversationScope.tenantId,
       agentId: AGENT,
-      sessionKey: "tenant-a:user-a:telegram:chat-a",
-      ownerTenantId: "tenant-a",
-      ownerUserId: "user-a",
+      conversationRef: conversationReference.value,
+      conversationScope,
+      principalId: "user-a",
       deliveryOrigin: null,
       spawnTree: [], // FLAT ⇒ the orchestrate arm (never resumeGraph)
       caps: [],
       leaseIds: [],
       budgetConsumed: 0,
+      rootBudget: { startedAtMs: testClock.now(), tokensConsumed: 0, usdConsumed: 0 },
       cronOrigin: null,
       trustLevel: "user",
       status: "running",

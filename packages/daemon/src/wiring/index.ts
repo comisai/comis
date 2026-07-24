@@ -91,6 +91,14 @@ export {
 export { setupNotifications, type NotificationContext } from "./setup-notifications.js";
 export { setupBackgroundTasks, type BackgroundTasksContext } from "./setup-background-tasks.js";
 export { setupBackgroundCompletionRunner } from "./setup-background-completion-runner.js";
+export {
+  createBackgroundRecoveryRecorder,
+  type BackgroundRecoveryRecorderDisposition,
+  type BackgroundRecoveryRecorderFailure,
+  type BackgroundRecoveryRecorderFailureKind,
+  type BackgroundRecoveryRecorderDeps,
+  type BackgroundRecoveryTrajectoryInput,
+} from "./background-recovery-recorder.js";
 export { setupTerminalWake, type SetupTerminalWakeDeps, type TerminalWakeContext } from "./setup-terminal-wake.js";
 export type {
   BackgroundCompletionRunnerContext,

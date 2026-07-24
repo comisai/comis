@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { ok, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks. buildExecuteSubAgent imports concrete symbols from
@@ -237,6 +238,68 @@ describe("setup-cross-session-graph", () => {
         promptTimeoutMs: 120_000,
         source: "operation_default",
       });
+    });
+
+    it("acknowledges provider start only after child preparation completes", async () => {
+      const { deps, executor } = makeGraphDeps({});
+      const order: string[] = [];
+      vi.mocked(deps.assembleToolsForAgent).mockImplementation(async () => {
+        order.push("assembled");
+        return [{ name: "tool-1" }] as never;
+      });
+      vi.mocked(executor.execute).mockImplementation(async (...args: unknown[]) => {
+        const overrides = args[7] as {
+          onProviderStart?: () => Result<void, Error>;
+        } | undefined;
+        const started = overrides?.onProviderStart?.();
+        if (started !== undefined && !started.ok) throw started.error;
+        order.push("executed");
+        return executionResult();
+      });
+      const executeSubAgent = buildExecuteSubAgent(deps);
+
+      await executeSubAgent(
+        "agent-2",
+        sessionKey,
+        conversation,
+        "task",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          onProviderStart: () => {
+            order.push("provider-started");
+            return ok(undefined);
+          },
+        },
+      );
+
+      expect(order).toEqual(["assembled", "provider-started", "executed"]);
+    });
+
+    it("does not acknowledge provider start when child preparation rejects", async () => {
+      const { deps, executor } = makeGraphDeps({});
+      vi.mocked(deps.assembleToolsForAgent).mockRejectedValue(new Error("tool preparation failed"));
+      const onProviderStart = vi.fn(() => ok(undefined));
+      const executeSubAgent = buildExecuteSubAgent(deps);
+
+      await expect(executeSubAgent(
+        "agent-2",
+        sessionKey,
+        conversation,
+        "task",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { onProviderStart },
+      )).rejects.toThrow("tool preparation failed");
+
+      expect(executor.execute).not.toHaveBeenCalled();
+      expect(onProviderStart).not.toHaveBeenCalled();
     });
 
     // -----------------------------------------------------------------------

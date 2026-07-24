@@ -230,9 +230,9 @@ that scope.
 
 | Layer | Tables | Durability |
 |-------|--------|------------|
-| **LCD store** | `lcd_messages`, `lcd_message_parts`, `lcd_context_items`, `lcd_summaries` | **Durable — the truth.** Every turn is persisted verbatim (auto-condensed past 75%). Survives daemon restarts, redeploys, and JSONL deletions. |
+| **LCD store** | `lcd_messages`, `lcd_message_parts`, `lcd_context_items`, `lcd_summaries` | **Durable — the truth.** Every turn keeps its structured messages and tool-call/result pairing after mandatory secret redaction (auto-condensed past 75%). Survives daemon restarts, redeploys, and JSONL deletions. |
 | **RAG memory** | `memory_*` | **Durable.** Distilled facts learned from conversations. Cleared per-session via `comis sessions reset --memory` (deletes paired + LCD-distilled memories by `source_session_key` and unlinks consolidated observations; `--purge-derived` also purges derived observations). |
-| **SDK session JSONL** | `~/.comis/workspace/sessions/.../<key>.jsonl` | **Disposable** — the SDK's per-session working transcript. Routinely deleted by the operator (housekeeping) and wiped by `comis sessions reset`. |
+| **SDK session JSONL** | `~/.comis/workspace/sessions/.../<key>.jsonl` | **Disposable and owner-only (`0600`)** — the SDK's per-session working transcript after mandatory secret redaction. Existing nested session artifacts are hardened at daemon startup. Routinely deleted by the operator (housekeeping) and wiped by `comis sessions reset`. |
 
 <Note>
 The SDK session JSONL is **disposable**. Deleting it directly (for any reason — operator housekeeping, `rm`, daemon restart) is always treated as "continue": the LCD store keeps its full history and appends the fresh transcript as a continuation. The daemon cannot distinguish disk-space housekeeping from a deliberate reset, so it never infers forget from a file deletion — it always continues. To perform an explicit reset, use `comis sessions reset` which clears both layers atomically.
@@ -352,7 +352,7 @@ An [`orchestrate`](/agent-tools/orchestrate) run uses the agent workspace direct
 - a `checkpoint(stateJson)` blob is a longer-TTL `kind:"json"` `ResultRef` under `results/` (the extended TTL outlasts a full run so a normal run-length GC never evicts it); `resume()` reads the last one back **wrapped as untrusted data** (never evaluated as control);
 - each side-effecting cap-socket call appends one **content-free** line to the run-scoped `results/replay.jsonl` — `{ seq, method, paramsDigest (sha256), result: <ResultRef pointer> }`, digests + on-disk pointers only, **never** a raw param, body, or bearer.
 
-A resumable **timeout** skips the run-end `results/` wipe, so the pinned `<runId>.<language>` script, the checkpoint, and `replay.jsonl` all survive for a later resume or replay; the orphan sweep reclaims them once the run is orphaned or its checkpoint TTL-expires. Everything here is **default-off** — with `orchestrateResume` off, an orchestrate run cleans its `results/` at run end exactly as before. `comis orchestrate replay <runId>` re-runs the pinned bytes against a **separate**, operator-only replay socket that serves those recorded results back → byte-identical stdout (see [`comis orchestrate replay`](/reference/cli#comis-orchestrate)).
+A resumable **timeout** skips the run-end `results/` wipe, so the pinned `<runId>.<language>` script, the checkpoint, and `replay.jsonl` all survive for a later resume or replay; the orphan sweep reclaims them once the run is orphaned or its checkpoint TTL-expires. This is **on by default** — with `orchestrateResume` off, an orchestrate run cleans its `results/` at run end. `comis orchestrate replay <runId>` re-runs the pinned bytes against a **separate**, operator-only replay socket that serves those recorded results back → byte-identical stdout (see [`comis orchestrate replay`](/reference/cli#comis-orchestrate)).
 
 **Written by:** the daemon on first startup for each agent.
 **Safe to delete?** Deleting a workspace erases the agent's identity files, cron job definitions, and skill configurations. The daemon recreates the directory structure but not the content you or the agent wrote there.
@@ -414,10 +414,23 @@ Holds per-agent RPC state such as subagent result files written during multi-age
 
 ### `background-tasks/`
 
-Persisted state for long-running background tasks promoted out of the LLM execution loop. Each task is a small JSON file.
+Persisted state for long-running background tasks promoted out of the LLM
+execution loop. Each task lives at
+`background-tasks/<agentId>/<taskId>.json`; directories are owner-only (`0700`)
+and files are owner-only (`0600`).
+
+The record preserves the originating conversation, terminal result, continuation
+execution id, retry count, and delivery/outbox state. A completed task can
+therefore resume exact-origin continuation delivery after a daemon restart.
+Delivery that is proven permanent is parked as such; delivery whose outward
+outcome cannot be established is parked uncertain instead of being replayed
+blindly.
 
 **Written by:** the daemon when background tasks are created or updated.
-**Safe to delete?** Yes, when no tasks are running. The daemon will lose track of any in-progress background work.
+**Safe to delete?** Only when no task is running and no completion remains
+undelivered or parked for reconciliation. Deleting an active record loses the
+runtime and continuation state; deleting an undelivered completed record loses
+the pending continuation.
 
 ---
 

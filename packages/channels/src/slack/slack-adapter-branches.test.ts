@@ -274,6 +274,21 @@ describe("createSlackAdapter reactToMessage", () => {
     });
   });
 
+  it("normalizes long runs of emoji delimiters before adding a reaction", async () => {
+    const adapter = createSlackAdapter(makeDeps());
+    await adapter.start();
+    mockReactionsAdd.mockResolvedValue(undefined);
+    const delimiters = ":".repeat(10_000);
+
+    await adapter.reactToMessage("C123", "msg-ts", `${delimiters}thumbsup${delimiters}`);
+
+    expect(mockReactionsAdd).toHaveBeenCalledWith({
+      channel: "C123",
+      timestamp: "msg-ts",
+      name: "thumbsup",
+    });
+  });
+
   it("returns err when reactions.add throws", async () => {
     const adapter = createSlackAdapter(makeDeps());
     await adapter.start();
@@ -292,6 +307,26 @@ describe("createSlackAdapter removeReaction", () => {
     mockReactionsRemove.mockResolvedValue(undefined);
 
     const result = await adapter.removeReaction("C123", "msg-ts", ":fire:");
+
+    expect(result.ok).toBe(true);
+    expect(mockReactionsRemove).toHaveBeenCalledWith({
+      channel: "C123",
+      timestamp: "msg-ts",
+      name: "fire",
+    });
+  });
+
+  it("normalizes long runs of emoji delimiters before removing a reaction", async () => {
+    const adapter = createSlackAdapter(makeDeps());
+    await adapter.start();
+    mockReactionsRemove.mockResolvedValue(undefined);
+    const delimiters = ":".repeat(10_000);
+
+    const result = await adapter.removeReaction(
+      "C123",
+      "msg-ts",
+      `${delimiters}fire${delimiters}`,
+    );
 
     expect(result.ok).toBe(true);
     expect(mockReactionsRemove).toHaveBeenCalledWith({

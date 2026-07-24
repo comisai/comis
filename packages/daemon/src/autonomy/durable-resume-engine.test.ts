@@ -131,6 +131,10 @@ function makeLedger(opts?: {
       record("markUnknown", rootRunId, stepIndex);
       return ok(undefined);
     },
+    reclaimPreSend: async (rootRunId, stepIndex) => {
+      record("reclaimPreSend", rootRunId, stepIndex);
+      return ok(true);
+    },
     commit: async (rootRunId, stepIndex, platformMessageId) => {
       record("commit", rootRunId, stepIndex, platformMessageId);
       return ok(undefined);
@@ -473,9 +477,9 @@ function makeDurableRuns(opts?: {
       rec("markOrphaned", rootRunId, reason);
       return ok(undefined);
     },
-    markCompleted: async (rootRunId) => {
-      rec("markCompleted", rootRunId);
-      return ok(undefined);
+    terminalize: async (rootRunId) => {
+      rec("terminalize", rootRunId);
+      return ok({ kind: "terminalized" as const });
     },
     touchHeartbeat: async (rootRunId, atMs) => {
       rec("touchHeartbeat", rootRunId, atMs);
@@ -1253,7 +1257,15 @@ describe("durable:orphaned / durable:resumed event payloads typed, content-free"
     expect(payload.checkpointId).toEqual(expect.stringMatching(/^resume-/));
     expect(payload.timestamp).toBe(9_999);
     expect(payload.rootRunId).toBe("root-resumed-ev");
-    expect(Object.keys(payload).sort()).toEqual(["checkpointId", "rootRunId", "timestamp"]);
+    expect(payload.sourceCheckpointId).toBe("checkpoint-resumed-ev");
+    expect(payload.sourceTerminalReason).toBe("superseded");
+    expect(Object.keys(payload).sort()).toEqual([
+      "checkpointId",
+      "rootRunId",
+      "sourceCheckpointId",
+      "sourceTerminalReason",
+      "timestamp",
+    ]);
   });
 });
 

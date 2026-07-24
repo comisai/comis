@@ -20,6 +20,7 @@ import {
   type DurableRunResumeClaim,
   type DurableRunResumeClaimOutcome,
   type DurableRunResumeScan,
+  type DurableRunTerminalizationOutcome,
   type InvalidDurableRunCheckpoint,
 } from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
@@ -44,6 +45,8 @@ const durableCheckpointPayloadSchema = z.strictObject({
   spawnTree: z.unknown(),
   rootBudget: DurableRootBudgetSchema,
   workspacePolicyHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  resumeDescriptorHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  terminalReason: z.enum(["completed", "failed", "killed", "watchdog_timeout", "ghost_sweep", "superseded"]).optional(),
 });
 const resumeClaimSchema = z.strictObject({
   checkpointId: z.string().min(1),
@@ -71,6 +74,8 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
   let conversationScope: unknown;
   let rootBudget: unknown;
   let workspacePolicyHash: string | undefined;
+  let resumeDescriptorHash: string | undefined;
+  let terminalReason: DurableRunRecord["terminalReason"];
   try {
     const payload = durableCheckpointPayloadSchema.safeParse(JSON.parse(row.spawn_tree));
     if (!payload.success) {
@@ -79,6 +84,8 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
     spawnTree = payload.data.spawnTree;
     rootBudget = payload.data.rootBudget;
     workspacePolicyHash = payload.data.workspacePolicyHash;
+    resumeDescriptorHash = payload.data.resumeDescriptorHash;
+    terminalReason = payload.data.terminalReason;
     caps = JSON.parse(row.caps);
     leaseIds = JSON.parse(row.lease_ids);
     deliveryOrigin = row.delivery_origin === null ? null : JSON.parse(row.delivery_origin);
@@ -120,6 +127,10 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
     ...(workspacePolicyHash === undefined
       ? {}
       : { workspacePolicyHash }),
+    ...(resumeDescriptorHash === undefined
+      ? {}
+      : { resumeDescriptorHash }),
+    ...(terminalReason === undefined ? {} : { terminalReason }),
   });
   if (!parsed.ok) {
     return err(new Error(`durable checkpoint validation failed: ${parsed.error.message}`));
@@ -141,20 +152,56 @@ export function createSqliteDurableRunStore(
       created_at_ms, updated_at_ms, script_ref, checkpoint_ref
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(checkpoint_id) DO UPDATE SET
-      spawn_tree = excluded.spawn_tree,
-      caps = excluded.caps,
-      lease_ids = excluded.lease_ids,
-      budget_consumed = excluded.budget_consumed,
-      cron_origin = excluded.cron_origin,
+      spawn_tree = CASE
+        WHEN durable_run_checkpoints.status IN ('revoked', 'completed', 'orphaned')
+          THEN durable_run_checkpoints.spawn_tree
+        ELSE excluded.spawn_tree
+      END,
+      caps = CASE
+        WHEN durable_run_checkpoints.status IN ('revoked', 'completed', 'orphaned')
+          THEN durable_run_checkpoints.caps
+        ELSE excluded.caps
+      END,
+      lease_ids = CASE
+        WHEN durable_run_checkpoints.status IN ('revoked', 'completed', 'orphaned')
+          THEN durable_run_checkpoints.lease_ids
+        ELSE excluded.lease_ids
+      END,
+      budget_consumed = CASE
+        WHEN durable_run_checkpoints.status IN ('revoked', 'completed', 'orphaned')
+          THEN durable_run_checkpoints.budget_consumed
+        ELSE excluded.budget_consumed
+      END,
+      cron_origin = CASE
+        WHEN durable_run_checkpoints.status IN ('revoked', 'completed', 'orphaned')
+          THEN durable_run_checkpoints.cron_origin
+        ELSE excluded.cron_origin
+      END,
       status = CASE
         WHEN durable_run_checkpoints.status IN ('revoked', 'completed', 'orphaned')
           THEN durable_run_checkpoints.status
         ELSE excluded.status
       END,
-      last_heartbeat_at = excluded.last_heartbeat_at,
-      updated_at_ms = excluded.updated_at_ms,
-      script_ref = COALESCE(excluded.script_ref, script_ref),
-      checkpoint_ref = COALESCE(excluded.checkpoint_ref, checkpoint_ref)
+      last_heartbeat_at = CASE
+        WHEN durable_run_checkpoints.status IN ('revoked', 'completed', 'orphaned')
+          THEN durable_run_checkpoints.last_heartbeat_at
+        ELSE excluded.last_heartbeat_at
+      END,
+      updated_at_ms = CASE
+        WHEN durable_run_checkpoints.status IN ('revoked', 'completed', 'orphaned')
+          THEN durable_run_checkpoints.updated_at_ms
+        ELSE excluded.updated_at_ms
+      END,
+      script_ref = CASE
+        WHEN durable_run_checkpoints.status IN ('revoked', 'completed', 'orphaned')
+          THEN durable_run_checkpoints.script_ref
+        ELSE COALESCE(excluded.script_ref, durable_run_checkpoints.script_ref)
+      END,
+      checkpoint_ref = CASE
+        WHEN durable_run_checkpoints.status IN ('revoked', 'completed', 'orphaned')
+          THEN durable_run_checkpoints.checkpoint_ref
+        ELSE COALESCE(excluded.checkpoint_ref, durable_run_checkpoints.checkpoint_ref)
+      END
     WHERE durable_run_checkpoints.root_run_id = excluded.root_run_id
       AND durable_run_checkpoints.tenant_id = excluded.tenant_id
       AND durable_run_checkpoints.agent_id = excluded.agent_id
@@ -210,10 +257,20 @@ export function createSqliteDurableRunStore(
     SET status = 'orphaned', orphan_reason = ?, updated_at_ms = ?
     WHERE checkpoint_id = ? AND status = 'running'
   `);
-  const markCompletedStmt = db.prepare(`
+  const terminalizeStmt = db.prepare(`
     UPDATE durable_run_checkpoints
-    SET status = 'completed', updated_at_ms = ?
+    SET status = 'completed',
+        spawn_tree = json_set(spawn_tree, '$.terminalReason', ?),
+        updated_at_ms = ?
     WHERE checkpoint_id = ? AND status = 'running'
+  `);
+  const repairCompletedReasonStmt = db.prepare(`
+    UPDATE durable_run_checkpoints
+    SET spawn_tree = json_set(spawn_tree, '$.terminalReason', ?),
+        updated_at_ms = ?
+    WHERE checkpoint_id = ?
+      AND status = 'completed'
+      AND json_extract(spawn_tree, '$.terminalReason') IS NULL
   `);
   const touchHeartbeatStmt = db.prepare(`
     UPDATE durable_run_checkpoints
@@ -248,6 +305,12 @@ export function createSqliteDurableRunStore(
         ...(record.workspacePolicyHash === undefined
           ? {}
           : { workspacePolicyHash: record.workspacePolicyHash }),
+        ...(record.resumeDescriptorHash === undefined
+          ? {}
+          : { resumeDescriptorHash: record.resumeDescriptorHash }),
+        ...(record.terminalReason === undefined
+          ? {}
+          : { terminalReason: record.terminalReason }),
       }),
       JSON.stringify(record.caps),
       JSON.stringify(record.leaseIds),
@@ -418,12 +481,51 @@ export function createSqliteDurableRunStore(
         return err(new Error(`durable replacement validation failed: ${replacementResult.error.message}`));
       }
 
-      const completed = markCompletedStmt.run(claim.claimedAtMs, record.checkpointId);
+      const completed = terminalizeStmt.run(
+        "superseded",
+        claim.claimedAtMs,
+        record.checkpointId,
+      );
       if (completed.changes !== 1) return ok({ kind: "not_resumable" });
       // A constraint failure here throws at the SQLite boundary and rolls the
       // transaction back, including the source completion.
       insertCheckpointStmt.run(...checkpointArgs(replacementResult.value, claim.claimedAtMs));
       return ok({ kind: "claimed", record: replacementResult.value });
+    },
+  );
+
+  const terminalizeTransaction = db.transaction(
+    (
+      checkpointId: string,
+      terminalReason: NonNullable<DurableRunRecord["terminalReason"]>,
+      t: number,
+    ): Result<DurableRunTerminalizationOutcome, Error> => {
+      const row = durableRunMapper.parseOptionalRow(getStmt.get(checkpointId));
+      if (!row.ok) return err(new Error(`Row validation failed: ${row.error.message}`));
+      if (row.value === undefined) return ok({ kind: "not_found" });
+      const record = rowToRecord(row.value);
+      if (!record.ok) return err(record.error);
+      if (record.value.status === "completed") {
+        if (record.value.terminalReason === terminalReason) {
+          return ok({ kind: "already_terminal" });
+        }
+        if (record.value.terminalReason !== undefined) {
+          return err(new Error(
+            `durable checkpoint ${checkpointId} is already terminal with ${record.value.terminalReason}`,
+          ));
+        }
+        const repaired = repairCompletedReasonStmt.run(terminalReason, t, checkpointId);
+        return repaired.changes === 1
+          ? ok({ kind: "terminalized" })
+          : err(new Error(`durable checkpoint ${checkpointId} terminal reason repair lost its CAS`));
+      }
+      if (record.value.status !== "running") {
+        return ok({ kind: "already_terminal" });
+      }
+      const completed = terminalizeStmt.run(terminalReason, t, checkpointId);
+      return completed.changes === 1
+        ? ok({ kind: "terminalized" })
+        : err(new Error(`durable checkpoint ${checkpointId} terminalization lost its CAS`));
     },
   );
 
@@ -522,10 +624,11 @@ export function createSqliteDurableRunStore(
       }
     },
 
-    markCompleted(checkpointId): Promise<Result<void, Error>> {
+    terminalize(checkpointId, terminalReason): Promise<Result<DurableRunTerminalizationOutcome, Error>> {
       try {
-        markCompletedStmt.run(nowMs(), checkpointId);
-        return Promise.resolve(ok(undefined));
+        return Promise.resolve(
+          terminalizeTransaction.immediate(checkpointId, terminalReason, nowMs()),
+        );
       } catch (cause) {
         return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));
       }

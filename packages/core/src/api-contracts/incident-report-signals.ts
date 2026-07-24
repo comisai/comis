@@ -103,6 +103,15 @@ export interface IncidentSignals {
    *  autonomous stuck-kill — the child's own rollup can still read success when
    *  the kill races completion. Absent (never `{}`) when no kill fired. */
   subagentKilled?: { killedBy: string; runtimeMs?: number; idleMs?: number; thresholdMs?: number };
+  /** Protected background-continuation recovery incidents folded from
+   *  `background_task.notified` records whose reason is
+   *  `recovery_retry_required`. Counts and stable identifiers only. */
+  backgroundRecovery?: {
+    retryRequiredCount: number;
+    unresolvedCount: number;
+    lastTaskId?: string;
+    lastToolName?: string;
+  };
   failures: IncidentFailure[]; // normalized, newest-first
   breakerEvents: Array<{
     seq: number;

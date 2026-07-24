@@ -36,6 +36,7 @@
 
 import type { ComisLogger } from "@comis/core";
 import { runContinuationTurn, type ContinuationTurnSession } from "./continuation-turn.js";
+import type { ProviderDispatchGuard } from "./provider-dispatch.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -71,6 +72,7 @@ export interface RunNarrateNudgeDeps {
   /** Read visible text from the latest assistant continuation turn. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   getVisibleAssistantText: (session: any) => string;
+  guardProviderDispatch: ProviderDispatchGuard;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +189,11 @@ export async function runNarrateNudge(deps: RunNarrateNudgeDeps): Promise<Narrat
   );
 
   // ONE bounded re-prompt — never a loop.
-  const continuationResult = await runContinuationTurn(session, NUDGE_DIRECTIVE);
+  const continuationResult = await runContinuationTurn(
+    session,
+    NUDGE_DIRECTIVE,
+    deps.guardProviderDispatch,
+  );
   if (!continuationResult.ok) {
     logger.warn(
       {

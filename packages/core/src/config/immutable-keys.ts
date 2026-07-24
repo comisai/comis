@@ -157,7 +157,7 @@ export function getMutableOverridesForSection(section: string, key?: string): st
   const keySegment = key?.split(".")[0]; // Extract first segment (e.g., "default" from "default.budgets.maxDailyUsd")
   return MUTABLE_CONFIG_OVERRIDES
     .filter(p => p.startsWith(section + "."))
-    .map(p => keySegment ? p.replace("*", keySegment) : p);
+    .map(p => keySegment ? p.replaceAll("*", keySegment) : p);
 }
 
 export function isImmutableConfigPath(section: string, key?: string): boolean {

@@ -1,11 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createConversationRef, safePath, TypedEventBus } from "@comis/core";
+import { err, ok } from "@comis/shared";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
-import { persistTaskSync } from "./background-task-persistence.js";
+import { loadTask, persistTaskSync } from "./background-task-persistence.js";
 import type { BackgroundTaskOrigin, PersistedTaskState } from "./background-task-types.js";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
@@ -161,6 +174,32 @@ describe("BackgroundTaskManager", () => {
       if (result.ok) return;
       expect(result.error.message).toContain("total");
     });
+
+    it("rejects admission when the protected task record cannot commit", () => {
+      const blockedDataDir = safePath(dataDir, "blocked");
+      writeFileSync(blockedDataDir, "not-a-directory");
+      const blockedManager = createBackgroundTaskManager({
+        dataDir: blockedDataDir,
+        eventBus,
+        logger,
+        clock: testClock,
+        timers: testTimers,
+      });
+
+      const promoted = blockedManager.promote(
+        "tool",
+        new Promise(() => {}),
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+
+      expect(promoted.ok).toBe(false);
+      expect(blockedManager.getAllTasks()).toHaveLength(0);
+      expect(eventBus.emit).not.toHaveBeenCalledWith(
+        "background_task:promoted",
+        expect.anything(),
+      );
+    });
   });
 
   describe("complete", () => {
@@ -190,6 +229,28 @@ describe("BackgroundTaskManager", () => {
       expect((eventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
         "background_task:completed",
         expect.objectContaining({ agentId: "agent-1", toolName: "tool" }),
+      );
+    });
+
+    it("retains running ownership when terminal persistence fails", () => {
+      const result = manager.promote(
+        "tool",
+        new Promise(() => {}),
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+      if (!result.ok) return;
+      const agentDir = safePath(dataDir, "agent-1");
+      rmSync(agentDir, { recursive: true, force: true });
+      writeFileSync(agentDir, "not-a-directory");
+
+      const completed = manager.complete(result.value, "done");
+
+      expect(completed.ok).toBe(false);
+      expect(manager.getTask(result.value)?.status).toBe("running");
+      expect(eventBus.emit).not.toHaveBeenCalledWith(
+        "background_task:completed",
+        expect.objectContaining({ taskId: result.value }),
       );
     });
   });
@@ -280,6 +341,42 @@ describe("BackgroundTaskManager", () => {
 
       expect(result.ok).toBe(true);
       expect(cancelInterval).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns after hard timeout when the provider ignores abort", async () => {
+      let hardTimeout: (() => void) | undefined;
+      const cancelHeartbeat = vi.fn();
+      const controlledManager = createBackgroundTaskManager({
+        dataDir,
+        eventBus,
+        logger,
+        clock: testClock,
+        timers: {
+          setTimeout: vi.fn((callback) => {
+            hardTimeout = callback;
+            return { cancelled: false, cancel: vi.fn(), unref: vi.fn() };
+          }),
+          setInterval: vi.fn(() => ({
+            cancelled: false,
+            cancel: cancelHeartbeat,
+            unref: vi.fn(),
+          })),
+        },
+        maxBackgroundDurationMs: 1_000,
+      });
+      const promoted = controlledManager.promote(
+        "abort_insensitive",
+        new Promise(() => undefined),
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+      expect(promoted.ok).toBe(true);
+      if (!promoted.ok) return;
+      const waiting = controlledManager.waitForTask(promoted.value, vi.fn(), 100);
+      hardTimeout?.();
+      const result = await waiting;
+      expect(result).toMatchObject({ ok: true, value: { status: "failed", error: "Hard timeout exceeded" } });
+      expect(cancelHeartbeat).toHaveBeenCalledOnce();
     });
   });
 
@@ -396,6 +493,8 @@ describe("BackgroundTaskManager", () => {
         status: "running",
         startedAt: 1000,
         origin: buildOrigin({ agentId: "a1" }),
+        continuationExecutionId: "recovered-1",
+        dispatchAttempts: 0,
       };
       persistTaskSync(dataDir, task);
 
@@ -409,7 +508,7 @@ describe("BackgroundTaskManager", () => {
         maxPerAgent: 5,
         maxTotal: 20,
       });
-      mgr2.recoverOnStartup();
+      mgr2.recoverOnStartup(() => ok("accepted" as const));
 
       const recovered = mgr2.getTask("recovered-1");
       expect(recovered).toBeDefined();
@@ -429,6 +528,360 @@ describe("BackgroundTaskManager", () => {
         "Recovered background tasks marked as failed",
       );
     });
+
+    it("defers canonical incident recording until recovery authority persists", () => {
+      const task: PersistedTaskState = {
+        id: "recovered-storage-failure",
+        toolName: "tool1",
+        status: "running",
+        startedAt: 1000,
+        origin: buildOrigin({ agentId: "a1" }),
+        continuationExecutionId: "recovered-storage-failure",
+        dispatchAttempts: 0,
+      };
+      persistTaskSync(dataDir, task);
+      const recordIncident = vi.fn(() => ok("accepted" as const));
+      const mgr2 = createBackgroundTaskManager({
+        dataDir,
+        eventBus,
+        logger,
+        clock: testClock,
+        timers: testTimers,
+        persistenceOps: {
+          open: vi.fn(() => {
+            throw new Error("storage unavailable");
+          }),
+          write: vi.fn(),
+          sync: vi.fn(),
+          close: vi.fn(),
+          rename: vi.fn(),
+          unlink: vi.fn(),
+        },
+      });
+
+      mgr2.recoverOnStartup(recordIncident);
+
+      expect(mgr2.getTask(task.id)?.status).toBe("running");
+      expect(recordIncident).not.toHaveBeenCalled();
+    });
+
+    it("retries startup terminalization until the failed state commits", async () => {
+      vi.useFakeTimers();
+      try {
+        const task: PersistedTaskState = {
+          id: "recovered-terminal-retry",
+          toolName: "tool1",
+          status: "running",
+          startedAt: 1000,
+          origin: buildOrigin({ agentId: "a1" }),
+          continuationExecutionId: "recovered-terminal-retry",
+          dispatchAttempts: 0,
+        };
+        persistTaskSync(dataDir, task);
+        let failOpen = true;
+        const mgr2 = createBackgroundTaskManager({
+          dataDir,
+          eventBus,
+          logger,
+          clock: testClock,
+          timers: testTimers,
+          persistenceOps: {
+            open: (path, flags, mode) => {
+              if (failOpen) {
+                failOpen = false;
+                throw new Error("storage unavailable");
+              }
+              return openSync(path, flags, mode);
+            },
+            write: writeFileSync,
+            sync: fsyncSync,
+            close: closeSync,
+            rename: renameSync,
+            unlink: unlinkSync,
+          },
+        });
+
+        mgr2.recoverOnStartup(() => ok("accepted" as const));
+        expect(mgr2.getTask(task.id)?.status).toBe("running");
+
+        await vi.advanceTimersByTimeAsync(1_001);
+
+        expect(mgr2.getTask(task.id)?.status).toBe("failed");
+        expect(loadTask(dataDir, "a1", task.id)?.status).toBe("failed");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not release a live task counter for recovered terminal retries", async () => {
+      vi.useFakeTimers();
+      try {
+        let failNextOpen = false;
+        const controlled = createBackgroundTaskManager({
+          dataDir,
+          eventBus,
+          logger,
+          clock: testClock,
+          timers: testTimers,
+          maxPerAgent: 1,
+          maxTotal: 1,
+          persistenceOps: {
+            open: (path, flags, mode) => {
+              if (failNextOpen) {
+                failNextOpen = false;
+                throw new Error("storage unavailable");
+              }
+              return openSync(path, flags, mode);
+            },
+            write: writeFileSync,
+            sync: fsyncSync,
+            close: closeSync,
+            rename: renameSync,
+            unlink: unlinkSync,
+          },
+        });
+        const origin = buildOrigin({ agentId: "a1" });
+        const live = controlled.promote(
+          "live",
+          new Promise(() => {}),
+          new AbortController(),
+          origin,
+        );
+        expect(live.ok).toBe(true);
+        persistTaskSync(dataDir, {
+          id: "recovered-without-counter",
+          toolName: "recovered",
+          status: "running",
+          startedAt: 1,
+          origin,
+          continuationExecutionId: "recovered-without-counter",
+          dispatchAttempts: 0,
+        });
+
+        failNextOpen = true;
+        controlled.recoverOnStartup(() => ok("accepted" as const));
+        await vi.advanceTimersByTimeAsync(1_001);
+
+        const next = controlled.promote(
+          "next",
+          new Promise(() => {}),
+          new AbortController(),
+          origin,
+        );
+        expect(next.ok).toBe(false);
+        for (const task of controlled.getAllTasks()) {
+          task._hardTimeoutTimer?.cancel();
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("retries authority persistence before canonical incident recording", async () => {
+      vi.useFakeTimers();
+      try {
+        const task: PersistedTaskState = {
+          id: "recovered-incident-retry",
+          toolName: "tool1",
+          status: "running",
+          startedAt: 1000,
+          origin: buildOrigin({ agentId: "a1" }),
+          continuationExecutionId: "recovered-incident-retry",
+          dispatchAttempts: 0,
+        };
+        persistTaskSync(dataDir, task);
+        const recorder = vi.fn(() => ok("accepted" as const));
+        const mgr2 = createBackgroundTaskManager({
+          dataDir,
+          eventBus,
+          logger,
+          clock: testClock,
+          timers: testTimers,
+          persistenceOps: {
+            open: vi.fn(() => {
+              throw new Error("storage unavailable");
+            }),
+            write: vi.fn(),
+            sync: vi.fn(),
+            close: vi.fn(),
+            rename: vi.fn(),
+            unlink: vi.fn(),
+          },
+        });
+
+        mgr2.recoverOnStartup(recorder);
+
+        expect(eventBus.emit).toHaveBeenCalledWith(
+          "system:error",
+          expect.objectContaining({
+            source: "background-recovery-authority-storage",
+          }),
+        );
+        await vi.advanceTimersByTimeAsync(1_001);
+        expect(recorder).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("retries incomplete protected-store scans", async () => {
+      vi.useFakeTimers();
+      try {
+        const task: PersistedTaskState = {
+          id: "recovered-read-retry",
+          toolName: "tool1",
+          status: "completed",
+          startedAt: 1000,
+          completedAt: 2000,
+          origin: buildOrigin({ agentId: "a1" }),
+          continuationExecutionId: "recovered-read-retry",
+          dispatchAttempts: 0,
+          dispatchState: "delivered",
+        };
+        persistTaskSync(dataDir, task);
+        let failRead = true;
+        const mgr2 = createBackgroundTaskManager({
+          dataDir,
+          eventBus,
+          logger,
+          clock: testClock,
+          timers: testTimers,
+          recoveryOps: {
+            readdir: readdirSync,
+            stat: statSync,
+            read: (path) => {
+              if (failRead) {
+                failRead = false;
+                throw new Error("read unavailable");
+              }
+              return readFileSync(path, "utf-8");
+            },
+          },
+        });
+
+        mgr2.recoverOnStartup(() => ok("accepted" as const));
+        expect(mgr2.getTask(task.id)).toBeUndefined();
+        expect(eventBus.emit).toHaveBeenCalledWith(
+          "system:error",
+          expect.objectContaining({ source: "background-task-recovery" }),
+        );
+
+        await vi.advanceTimersByTimeAsync(1_001);
+        expect(mgr2.getTask(task.id)?.dispatchState).toBe("delivered");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("records a canonical incident for a rejected task record", () => {
+      const origin = buildOrigin({ agentId: "a1" });
+      const agentDir = safePath(dataDir, "a1");
+      mkdirSync(agentDir, { recursive: true });
+      writeFileSync(safePath(agentDir, "invalid-state.json"), JSON.stringify({
+        id: "invalid-state",
+        toolName: "tool1",
+        status: "unknown",
+        startedAt: 1000,
+        origin,
+        continuationExecutionId: "invalid-state",
+        dispatchAttempts: 0,
+      }));
+      const recorder = vi.fn(() => ok("accepted" as const));
+      const mgr2 = createBackgroundTaskManager({
+        dataDir,
+        eventBus,
+        logger,
+        clock: testClock,
+        timers: testTimers,
+      });
+
+      mgr2.recoverOnStartup(recorder);
+
+      expect(recorder).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: "invalid-state",
+        sessionKey: expect.any(String),
+        projectedSessionKey: expect.any(Object),
+      }));
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "background_task:notified",
+        expect.objectContaining({
+          taskId: "invalid-state",
+          reason: "recovery_retry_required",
+        }),
+      );
+    });
+  });
+
+  describe("cleanup", () => {
+    it("retains unresolved durable delivery authority past retention", () => {
+      const origin = buildOrigin({ agentId: "cleanup-agent" });
+      persistTaskSync(dataDir, {
+        id: "cleanup-open",
+        toolName: "tool",
+        status: "completed",
+        startedAt: 1,
+        completedAt: 2,
+        origin,
+        continuationExecutionId: "cleanup-open",
+        dispatchAttempts: 0,
+        dispatchState: "ready_to_deliver",
+      });
+      persistTaskSync(dataDir, {
+        id: "cleanup-closed",
+        toolName: "tool",
+        status: "completed",
+        startedAt: 1,
+        completedAt: 2,
+        origin,
+        continuationExecutionId: "cleanup-closed",
+        dispatchAttempts: 0,
+        dispatchState: "delivered",
+      });
+      manager.recoverOnStartup(() => ok("accepted" as const));
+
+      manager.cleanup(0);
+
+      expect(manager.getTask("cleanup-open")).toBeDefined();
+      expect(manager.getTask("cleanup-closed")).toBeUndefined();
+    });
+  });
+
+  it("records silent state-only retry resolution without notification", async () => {
+    vi.useFakeTimers();
+    try {
+      const origin = buildOrigin({ agentId: "silent-agent" });
+      persistTaskSync(dataDir, {
+        id: "silent-state-retry",
+        toolName: "tool",
+        status: "completed",
+        startedAt: 1,
+        completedAt: 2,
+        origin,
+        notificationPolicy: "silent",
+        continuationExecutionId: "silent-state-retry",
+        dispatchAttempts: 1,
+        dispatchState: "execution_claimed",
+      });
+      manager.recoverOnStartup(() => ok("accepted" as const));
+
+      manager.scheduleStateRetry(
+        "silent-state-retry",
+        "delivered",
+        ["execution_claimed"],
+      );
+      await vi.advanceTimersByTimeAsync(1_001);
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "background_task:notified",
+        expect.objectContaining({
+          taskId: "silent-state-retry",
+          notified: false,
+          reason: "silent_consumed",
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   describe("origin capture", () => {
@@ -532,6 +985,8 @@ describe("BackgroundTaskManager", () => {
           completedAt: Date.now() - 4000,
           error: "Daemon restarted while task was running",
           origin,
+          continuationExecutionId: "restart-task-1",
+          dispatchAttempts: 0,
         };
 
         // Write directly to the agent subdir using safePath
@@ -551,7 +1006,7 @@ describe("BackgroundTaskManager", () => {
           maxPerAgent: 5,
           maxTotal: 20,
         });
-        recoverMgr.recoverOnStartup();
+        recoverMgr.recoverOnStartup(() => ok("accepted" as const));
 
         expect((recoverEventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
           "background_task:failed",
@@ -572,7 +1027,41 @@ describe("BackgroundTaskManager", () => {
   // boundary so recovered tasks reflect their pre-restart dispatch state.
   // ---------------------------------------------------------------------------
   describe("recoverOnStartup preserves dispatchState", () => {
-    it("propagates dispatchState='notified' from disk into the recovered task", () => {
+    it.each(["execution_claimed", "executing"] as const)(
+      "preserves %s execution for journal recovery",
+      (dispatchState) => {
+      const testDir = safePath(tmpdir(), `comis-bg-mgr-exec-${randomUUID()}`);
+      mkdirSync(testDir, { recursive: true });
+      try {
+        const origin = buildOrigin({ agentId: "exec-agent" });
+        persistTaskSync(testDir, {
+          id: "exec-task-1",
+          toolName: "exec",
+          status: "completed",
+          startedAt: 1,
+          completedAt: 2,
+          origin,
+          dispatchState,
+          continuationExecutionId: "continuation-1",
+          dispatchAttempts: 1,
+        });
+        const recovered = createBackgroundTaskManager({
+          dataDir: testDir,
+          eventBus: createMockEventBus(),
+          logger: createMockLogger(),
+          clock: testClock,
+          timers: testTimers,
+        });
+        recovered.recoverOnStartup(() => ok("accepted" as const));
+        expect(recovered.getTask("exec-task-1")?.dispatchState).toBe(dispatchState);
+        expect(loadTask(testDir, "exec-agent", "exec-task-1")?.dispatchState).toBe(dispatchState);
+      } finally {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+      },
+    );
+
+    it("preserves a parked delivery outcome without replaying it", () => {
       const testDir = safePath(tmpdir(), `comis-bg-mgr-disp-${randomUUID()}`);
       mkdirSync(testDir, { recursive: true });
 
@@ -585,7 +1074,9 @@ describe("BackgroundTaskManager", () => {
           startedAt: Date.now() - 5000,
           completedAt: Date.now() - 4000,
           origin,
-          dispatchState: "notified",
+          dispatchState: "parked_uncertain",
+          continuationExecutionId: "disp-task-1",
+          dispatchAttempts: 1,
         };
 
         const agentDir = safePath(testDir, origin.turnScope.conversation.agentId);
@@ -602,7 +1093,7 @@ describe("BackgroundTaskManager", () => {
           maxPerAgent: 5,
           maxTotal: 20,
         });
-        dispMgr.recoverOnStartup();
+        dispMgr.recoverOnStartup(() => ok("accepted" as const));
 
         const recovered = dispMgr.getTask("disp-task-1") as
           | (import("./background-task-types.js").BackgroundTask & {
@@ -610,7 +1101,7 @@ describe("BackgroundTaskManager", () => {
             })
           | undefined;
         expect(recovered).toBeDefined();
-        expect(recovered?.dispatchState).toBe("notified");
+        expect(recovered?.dispatchState).toBe("parked_uncertain");
       } finally {
         rmSync(testDir, { recursive: true, force: true });
       }

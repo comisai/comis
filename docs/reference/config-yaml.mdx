@@ -321,6 +321,7 @@ behavior.
 | `durability.staleHeartbeatMs` | `number` | `120000` | Lapsed-heartbeat threshold in milliseconds. A running run whose last heartbeat is older than this is treated as crashed and orphan-swept by the daemon-wide watchdog (which also fires at this cadence). Default is 4x `keepAliveMs` (the conservative ratio: a transiently-slow run must not be falsely failed and its work duplicated). Positive integer. |
 | `durability.keepAliveMs` | `number` | `30000` | Keep-alive write cadence in milliseconds — how often a live run stamps its heartbeat, independent of step/spawn completion so a long-running child never looks stale. Positive integer. |
 | `durability.recoveryBudgetMs` | `number` | `30000` | Wall-clock recovery budget in milliseconds for one boot/watchdog pass. A backlog larger than the budget is partially recovered and the remainder deferred to the next pass (no thundering herd on a large crash backlog). Positive integer. |
+| `durability.orchestrateResume` | `boolean` | `true` | Preserve a timed-out `orchestrate` run's pinned script and last checkpoint so an explicit `orchestrate({resumeRunId})` can restart it from verified artifacts. Set `false` to kill and clean timed-out runs without retaining resumable artifacts. |
 | `message` | `object` | `{ channels: ["origin"], maxPerHour: 20 }` | Outward-message posture. `channels` lists allowed channels (`"origin"` = the agent's own); `maxPerHour` is the rolling-hour send quota. A new channel is an explicit, always-escalating grant. |
 | `web` | `boolean` | _(from profile)_ | Toggle for `orch:web` (untrusted external content). |
 | `analyze` | `boolean` | _(from profile)_ | Toggle for `orch:analyze` (cost-bearing media analysis). |
@@ -373,17 +374,18 @@ Extensible key-value map of task type to model identifier. Any string key maps t
 
 Override the model and timeout for specific internal operation types. Each entry is an `OperationModelEntry` with optional `model` (string `"provider:modelId"`) and `timeout` (number) fields. The key is `timeout` (milliseconds) — `timeoutMs` is rejected by the strict config parser. Omit any type to use the agent's primary model.
 
-| Operation type | When it fires | Recommended model |
-|---------------|---------------|-------------------|
-| `cron` | Scheduled cron task execution | — |
-| `heartbeat` | Periodic heartbeat check | — |
-| `subagent` | Sub-agent task delegation | — |
-| `compaction` | Context compaction summarization | Capable model or `contextEngine.compaction.strongerSummarizerModel` |
-| `taskExtraction` | Task extraction from conversation | — |
-| `condensation` | Memory condensation | Capable model |
-| `verification` | Pre-delivery critic. Fires when `agents.<id>.verification.enabled=true` and the response is a completion-claiming response meeting `minResponseChars`. | Cheap model: `"anthropic:claude-haiku-4-5-20250929"` or `"ollama:qwen3.6:27b"` for local self-check. Omit to use the primary model. |
-| `planning` | Pre-execution planner. | Capable model for checklist generation. Omit to use the primary model. |
-| `outcomeJudge` | Post-execution classification for conversational turns without a deterministic tool or pipeline outcome. | A cheap classification model. The override is agent-scoped and verdict provenance records the resolved model. |
+| Operation type | Default timeout | When it fires | Recommended model |
+|---------------|-----------------|---------------|-------------------|
+| `cron` | `600000` (10 min) | Scheduled cron task execution | — |
+| `heartbeat` | `60000` (1 min) | Periodic heartbeat check | — |
+| `subagent` | `120000` (2 min) | Sub-agent task delegation | — |
+| `compaction` | `60000` (1 min) | Context compaction summarization | Capable model or `contextEngine.compaction.strongerSummarizerModel` |
+| `taskExtraction` | `30000` (30 s) | Task extraction from conversation | — |
+| `condensation` | `30000` (30 s) | Memory condensation | Capable model |
+| `verification` | `120000` (2 min) | Pre-delivery critic. Fires when `agents.<id>.verification.enabled=true` and the response is a completion-claiming response meeting `minResponseChars`. | Cheap model: `"anthropic:claude-haiku-4-5-20250929"` or `"ollama:qwen3.6:27b"` for local self-check. Omit to use the primary model. |
+| `planning` | Primary prompt timeout | Pre-execution planner. | Capable model for checklist generation. Omit to use the primary model. |
+| `outcomeJudge` | `30000` (30 s) | Post-execution classification for conversational turns without a deterministic tool or pipeline outcome. | A cheap classification model. The override is agent-scoped and verdict provenance records the resolved model. |
+| `skillSynthesis` | `150000` (2.5 min) | Offline procedural-skill synthesis from successful trajectories. | A mid-tier model capable of structured synthesis. |
 
 ```yaml
 agents:
@@ -426,6 +428,23 @@ agents:
 | `stallCeilingMultiplier` | `number` | `10` | Makespan ceiling: a turn is aborted at `promptTimeoutMs × stallCeilingMultiplier` even while still streaming — bounds runaway generations that would otherwise reset the stall budget forever. Valid range 1–100 (a value below 1 would fire the ceiling before the stall budget; the product is additionally capped at Node's ~24.8-day timer limit). Runtime-tunable. |
 
 See [Resilience](/agents/resilience) for how prompt timeouts fit into the full resilience stack.
+
+#### Background Tasks (agents.*.backgroundTasks)
+
+Controls automatic promotion of long-running tool calls into the daemon's
+durable background-task manager. The manager is shared across agents, so
+`maxTotal` is a daemon-wide ceiling while `maxPerAgent` is enforced separately
+for each agent.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable automatic background promotion. |
+| `autoBackgroundMs` | `number` | `10000` | Promote an eligible tool call after this many milliseconds. |
+| `maxPerAgent` | `number` | `5` | Maximum concurrent background tasks for one agent. |
+| `maxTotal` | `number` | `20` | Maximum concurrent background tasks across the shared manager. |
+| `maxBackgroundDurationMs` | `number` | `300000` | Hard runtime limit for a background task. When it expires, the task is aborted and finalized as failed. |
+| `excludeTools` | `string[]` | `[]` | Additional tool names that must never be auto-promoted. |
+| `maxBackgroundHops` | `number` | `3` | Maximum continuation re-entry depth, preventing a completion turn from creating an unbounded background chain. |
 
 #### RAG (agents.*.rag)
 

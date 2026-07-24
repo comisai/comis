@@ -67,7 +67,7 @@
     "p-queue": "9.3.0",
     "pdfjs-dist": "5.7.284",
     "playwright-core": "1.60.0",
-    "sharp": "0.34.5",
+    "sharp": "0.35.0",
     "undici": "8.5.0",
     "yaml": "2.9.0",
     "zod": "4.4.3"

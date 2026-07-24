@@ -75,7 +75,10 @@ import {
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
 import { subagentStuckKilledVerdict } from "./obs-explain-subagent-killed-verdict.js"; // health-monitor-killed sub-agent (sibling — subdir cap)
-import { backgroundPendingVerdict } from "./obs-explain-background-pending-verdict.js";
+import {
+  backgroundPendingVerdict,
+  backgroundRecoveryVerdict,
+} from "./obs-explain-background-pending-verdict.js";
 import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // recall_miss verdict (sibling — subdir cap)
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
@@ -146,6 +149,8 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     with killedBy health_monitor (absent on the established fixtures —
   //     cannot regress them; deliberate parent/operator kills return null).
   subagentStuckKilledVerdict,
+
+  backgroundRecoveryVerdict,
 
   // 3) execution_step_limit_reached. The executor records every blocked call
   //    as a tool failure, so count-only breaker inference would otherwise

@@ -6,6 +6,8 @@ import {
   enforceResponseLocale,
 } from "./response-locale-enforcement.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
+import { allowProviderDispatch } from "../provider-dispatch.js";
+import { err } from "@comis/shared";
 
 const ARABIC_POLICY: ResponseLocalePolicy = {
   locale: "ar",
@@ -23,6 +25,20 @@ function makeSession(onPrompt?: () => void) {
 }
 
 describe("enforceResponseLocale", () => {
+  it("does not dispatch locale repair after terminal admission is denied", async () => {
+    const { session } = makeSession();
+    const outcome = await enforceResponseLocale({
+      policy: ARABIC_POLICY,
+      response: "English response",
+      session,
+      getVisibleResponse: () => "unused",
+      guardProviderDispatch: () => err(new Error("run is terminal")),
+    });
+
+    expect(outcome.ok).toBe(false);
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
   it("leaves a matching response untouched without another model turn", async () => {
     const { session } = makeSession();
 
@@ -31,6 +47,7 @@ describe("enforceResponseLocale", () => {
       response: "هذه إجابة عربية عن Docker 25.",
       session,
       getVisibleResponse: () => "unused",
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(outcome.ok).toBe(true);
@@ -55,6 +72,7 @@ describe("enforceResponseLocale", () => {
       response: visibleResponse,
       session,
       getVisibleResponse: () => visibleResponse,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(outcome.ok).toBe(true);
@@ -97,6 +115,7 @@ describe("enforceResponseLocale", () => {
       response: originalResponse,
       session,
       getVisibleResponse: () => visibleResponse,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(outcome.ok).toBe(true);
@@ -139,6 +158,7 @@ describe("enforceResponseLocale", () => {
       response: originalResponse,
       session,
       getVisibleResponse: () => visibleResponse,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(outcome.ok).toBe(true);
@@ -176,6 +196,7 @@ describe("enforceResponseLocale", () => {
       response: visibleResponse,
       session,
       getVisibleResponse: () => visibleResponse,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(outcome.ok).toBe(true);
@@ -202,6 +223,7 @@ describe("enforceResponseLocale", () => {
       response: "This answer is in English.",
       session,
       getVisibleResponse: () => "unused",
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(outcome.ok).toBe(false);

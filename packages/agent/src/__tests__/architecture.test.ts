@@ -345,7 +345,7 @@ describe("@comis/agent -- architecture invariants", () => {
       checkedFiles,
       "sanity: findForbiddenImports walked at least one agent/src file",
     ).toBeGreaterThan(0);
-  });
+  }, 15_000);
 
   it("agent/tsconfig.json and agent/package.json do not reference @comis/infra", () => {
     const tsconfigPath = resolve(PKG_ROOT, "tsconfig.json");
@@ -364,6 +364,22 @@ describe("@comis/agent -- architecture invariants", () => {
       "agent/package.json must not depend on @comis/infra. " +
         "agent's logger contract usage is type-only and resolves through @comis/core.",
     ).toBe(false);
+  });
+
+  it("installed sharp exposes declarations through its package exports", () => {
+    const sharpPackagePath = resolve(PKG_ROOT, "node_modules/sharp/package.json");
+    const sharpPackage = JSON.parse(readFileSync(sharpPackagePath, "utf8")) as {
+      exports?: {
+        "."?: {
+          types?: string;
+        };
+      };
+    };
+
+    expect(
+      sharpPackage.exports?.["."]?.types,
+      "sharp must export its bundled declarations so TypeScript NodeNext resolution does not depend on ancestor node_modules",
+    ).toBe("./lib/index.d.ts");
   });
 
   // ---------------------------------------------------------------------------

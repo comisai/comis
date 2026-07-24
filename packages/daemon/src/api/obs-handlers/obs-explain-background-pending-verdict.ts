@@ -23,3 +23,23 @@ export const backgroundPendingVerdict = (
     ],
   };
 };
+
+export const backgroundRecoveryVerdict = (
+  signals: IncidentSignals,
+): BackgroundPendingVerdict | null => {
+  const recovery = signals.backgroundRecovery;
+  if (recovery === undefined || recovery.unresolvedCount === 0) return null;
+  const task = recovery.lastTaskId ?? "unknown";
+  const tool = recovery.lastToolName ?? "unknown";
+  return {
+    code: "background_recovery_retry_required",
+    detail:
+      `protected background completion recovery could not durably reset ${String(recovery.retryRequiredCount)} task lifecycle transition(s) ` +
+      `(last task=${task}, tool=${tool}); retry and reconciliation authority were retained`,
+    suggestedNextSteps: [
+      "repair the protected background-task store and restart recovery",
+      "inspect health_signal:background_task_recovery_failed in system-health",
+      "obs.explain depth=full",
+    ],
+  };
+};

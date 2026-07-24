@@ -62,7 +62,7 @@ describe("Daemon Shutdown", () => {
   describe("Pre-shutdown state", () => {
     it("daemon started successfully with cron scheduler", () => {
       const entries = logCapture.getEntries();
-      const result = assertLogContains(entries, { msg: /Per-agent CronScheduler started/ });
+      const result = assertLogContains(entries, { msg: "Cron schedulers activated" });
       expect(result.matched, result.error).toBe(true);
     });
 
@@ -156,8 +156,8 @@ describe("Daemon Shutdown", () => {
     it("SIGTERM stops cron scheduler without orphaned execution", async () => {
       const entries = logCapture.getEntries();
 
-      // Verify CronScheduler stopped log is present
-      const cronStopResult = assertLogContains(entries, { msg: /CronScheduler stopped/ });
+      // Verify scheduler admission closed before the governed scheduler stopped.
+      const cronStopResult = assertLogContains(entries, { msg: "Cron scheduler stopped accepting work" });
       expect(cronStopResult.matched, cronStopResult.error).toBe(true);
 
       // Verify NO orphaned execution errors
@@ -198,8 +198,8 @@ describe("Daemon Shutdown", () => {
       const result = assertLogSequence(entries, [
         { msg: /Graceful shutdown initiated/ },
         { msg: "Gateway server stopped" },
+        { msg: "Component stopped", component: "governed-schedulers" },
         { msg: "Component stopped", component: "sub-agent-runner" },
-        { msg: /CronScheduler stopped/ },
         { msg: "Component stopped", component: "memory-database" },
         { msg: "Graceful shutdown complete" },
       ]);

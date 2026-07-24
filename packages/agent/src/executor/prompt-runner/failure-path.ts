@@ -24,6 +24,7 @@ import { isContextOverflowError } from "../../safety/context-truncation-recovery
 import { scanWithOutputGuard } from "../executor-response-filter.js";
 import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
 import { getCacheProviderInfo } from "../cache-usage-helpers.js";
+import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
@@ -53,6 +54,9 @@ export async function processFailurePath(
   // When all models fail with a context overflow error, attempt to reduce
   // context via truncation and emergency compaction, then retry.
   if (promptError && isContextOverflowError(promptError)) {
+    const guardProviderDispatch = resolveProviderDispatchGuard(
+      params.executionOverrides?.onProviderStart,
+    );
     const { wrapper: recoveryWrapper, getResult: getRecoveryResult } =
       createOverflowRecoveryWrapper(
         { maxContextChars: config.maxContextChars },
@@ -64,6 +68,10 @@ export async function processFailurePath(
     session.agent.streamFn = recoveryWrapper(originalStreamFn);
 
     try {
+      const admitted = guardProviderDispatch();
+      if (!admitted.ok) {
+        return { promptSucceeded: false, promptError: admitted.error, ghostCost };
+      }
       await withPromptTimeout(
         session.prompt(messageText, {
           expandPromptTemplates: false,

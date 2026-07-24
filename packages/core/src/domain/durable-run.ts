@@ -50,6 +50,15 @@ export const AgentCapabilitySchema = z.enum(AGENT_CAPABILITIES);
 export const DurableRunStatusSchema = z.enum(["running", "orphaned", "completed", "revoked"]);
 
 export type DurableRunStatus = z.infer<typeof DurableRunStatusSchema>;
+const DurableRunTerminalReasonSchema = z.enum([
+  "completed",
+  "failed",
+  "killed",
+  "watchdog_timeout",
+  "ghost_sweep",
+  "superseded",
+]);
+export type DurableRunTerminalReason = z.infer<typeof DurableRunTerminalReasonSchema>;
 
 /**
  * A single spawn-tree node for a DAG/graph run — the `snapshotToSpawnTree`
@@ -223,6 +232,9 @@ export const DurableRunRecordSchema = z.strictObject({
   checkpointRef: z.string().nullable(),
   /** Hash of the immutable operator-policy snapshot used when the run started. */
   workspacePolicyHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  /** Hash of the protected restart descriptor referenced by the child session. */
+  resumeDescriptorHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  terminalReason: DurableRunTerminalReasonSchema.optional(),
 }).superRefine((record, ctx) => {
   if (record.budgetConsumed !== record.rootBudget.usdConsumed) {
     ctx.addIssue({

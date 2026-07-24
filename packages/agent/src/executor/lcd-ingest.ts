@@ -16,10 +16,12 @@
  *      `estimateMessageTokens` (which counts the `thinking` block) — the
  *      store NEVER computes tokens (the contract keeps core/memory free of
  *      the agent estimator dependency).
- *   3. VERBATIM PARTS: `parts` come from the core `messageToParts` codec
- *      (verbatim `metadata.raw` blocks + envelope) — NEVER flatten a
- *      `tool_use`/`tool_result` to text (flattening loses the stable id and
- *      breaks tool-result pairing on read-back).
+ *   3. STRUCTURED PARTS AFTER SECURITY PROJECTION: secret-bearing persistence
+ *      values are redacted before `parts` pass through the core
+ *      `messageToParts` codec. The remaining `metadata.raw` blocks + envelope
+ *      keep their structure — NEVER flatten a `tool_use`/`tool_result` to text
+ *      (flattening loses the stable id and breaks tool-result pairing on
+ *      read-back).
  *
  * Idempotency is the CALLER's responsibility: it derives `startSeq` from the
  * store's persisted count and passes ONLY the not-yet-persisted delta. This
@@ -46,8 +48,9 @@ import { estimateMessageTokens } from "../safety/token-estimator.js";
 
 /**
  * Append a turn's NEW messages to the LCD store at the afterTurn boundary.
- * Non-fatal; tokenCount computed agent-side; parts verbatim
- * via the codec. See the module header for the full contract.
+ * Non-fatal; tokenCount computed agent-side; structured parts pass through the
+ * persistence projection and codec. See the module header for the full
+ * contract.
  *
  * @param store    The injected core ContextStorePort (the concrete store is daemon-injected).
  * @param scope    The SECURITY scope columns (conversationRef/tenantId/agentId/sessionKey).
@@ -114,7 +117,7 @@ export function ingestTurn(
     // markers (`[System context]` / `[End system context]` / a line-start
     // `[<channel>] <id> (<time>):` header) the model emitted in its OWN output, so
     // model-authored text can never re-enter replay history masquerading as a
-    // system/user turn boundary (the comis-daniel 2026-07-09 self-forgery incident).
+    // system/user turn boundary.
     // Role-scoped + idempotent (see forged-context-markers.ts) → the clean path is
     // referentially unchanged and the replayed prefix stays byte-stable.
     const forged = neutralizeForgedMarkersInMessage(userStripped);
@@ -131,7 +134,7 @@ export function ingestTurn(
         role: m.role, // "user" | "assistant" | "toolResult" (LcdRole)
         tokenCount: estimateMessageTokens(m), // agent-side (counts the thinking block) — store never computes it
         createdAt: now,
-        parts: messageToParts(m), // verbatim metadata.raw blocks + envelope
+        parts: messageToParts(m), // structure preserved after secret projection
       });
       appended += 1;
     } catch (err) {
@@ -151,7 +154,7 @@ export function ingestTurn(
     }
   }
   if (forgedMarkersStripped > 0) {
-    // Post-incident visibility (§2.7): the model emitted context-boundary markers
+    // Operator-visible safety signal: the model emitted context-boundary markers
     // in its OWN output — a self-forgery attempt that was neutralized before it
     // could re-enter replay history. Counts only, no bodies. WARN (not DEBUG) so
     // it is visible at the default log level and can be lifted onto the
@@ -182,7 +185,7 @@ export function ingestTurn(
     );
   }
   if (appended > 0) {
-    // Post-incident visibility (§2.7): an operator can reconstruct what was
+    // An operator can reconstruct what was
     // persisted per turn from this line alone. No message bodies — ids/counts only.
     logger.debug(
       {

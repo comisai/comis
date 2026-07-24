@@ -118,7 +118,7 @@
     "overrides": {
       "tar": ">=7.5.7",
       "typebox": "1.2.8",
-      "protobufjs": ">=8.6.0",
+      "protobufjs": ">=8.6.6",
       "@protobufjs/utf8": ">=1.1.1",
       "undici": ">=8.5.0",
       "form-data": ">=4.0.6",
@@ -136,14 +136,19 @@
       "vite": ">=7.3.2",
       "fast-xml-parser": ">=5.7.0",
       "fast-xml-builder": ">=1.1.7",
-      "fast-uri": ">=3.1.2",
+      "fast-uri": ">=4.1.1",
+      "adm-zip": ">=0.6.0",
+      "linkify-it": "5.0.2",
+      "@hono/node-server": "2.0.11",
+      "sharp": "0.35.0",
       "uuid": ">=14.0.0",
       "@anthropic-ai/sdk": ">=0.91.1",
       "ip-address": ">=10.1.1",
       "qs": ">=6.15.2"
     },
     "patchedDependencies": {
-      "@earendil-works/pi-ai@0.80.10": "patches/@earendil-works__pi-ai@0.80.10.patch"
+      "@earendil-works/pi-ai@0.80.10": "patches/@earendil-works__pi-ai@0.80.10.patch",
+      "sharp@0.35.0": "patches/sharp@0.35.0.patch"
     }
   }
 }

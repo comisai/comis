@@ -17,6 +17,7 @@ import {
 } from "@comis/shared";
 import { getVisibleAssistantText } from "../phase-filter.js";
 import { runContinuationTurn } from "../continuation-turn.js";
+import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
 
 export const INTERACTIVE_SILENT_FAILURE_RESPONSE =
@@ -112,7 +113,11 @@ export async function applyInteractiveSilentRecovery(
       channelType: msg.channelType,
       channelId: msg.channelId,
     }),
-    continueTurn: (instruction) => runContinuationTurn(session, instruction),
+    continueTurn: (instruction) => runContinuationTurn(
+      session,
+      instruction,
+      resolveProviderDispatchGuard(executionOverrides?.onProviderStart),
+    ),
     getVisibleResponse: () => getVisibleAssistantText(session),
   });
 

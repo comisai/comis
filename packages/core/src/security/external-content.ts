@@ -345,7 +345,8 @@ export function wrapExternalContent(content: string, options: WrapExternalConten
  * {@link unwrapExternalContent} keys on.
  */
 function flattenMetadataValue(value: string): string {
-  return value.replace(/\s*\r?\n\s*/g, " ");
+  const lines = value.split(/\r?\n/);
+  return lines.map((line) => line.trim()).join(" ");
 }
 
 /** Reverse of {@link EXTERNAL_SOURCE_LABELS}: human label → source key. */

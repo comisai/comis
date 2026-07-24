@@ -38,6 +38,7 @@ import { withPromptTimeout, withResettablePromptTimeout, PromptTimeoutError } fr
 import { describeTimeoutKnob, describeRetryTimeoutKnob } from "./timeout-knob.js";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
 import { classifyError } from "./error-classifier.js";
+import type { ProviderDispatchGuard } from "./provider-dispatch.js";
 
 // ---------------------------------------------------------------------------
 // Cache-aware short retry constants
@@ -59,6 +60,7 @@ export interface ModelRetryParams {
   session: AgentSession;
   messageText: string;
   promptImages?: ImageContent[];
+  onProviderStart: ProviderDispatchGuard;
   config: { provider: string; model: string };
   /** Session-resolved model string ("provider:modelId") for diagnostic logging. */
   resolvedModel?: string;
@@ -234,6 +236,11 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
   let promptSucceeded = false;
   let effectiveModel: { provider: string; model: string } | undefined;
 
+  const primaryDispatch = params.onProviderStart();
+  if (!primaryDispatch.ok) {
+    return Promise.reject(primaryDispatch.error);
+  }
+
   try {
     // Primary prompt uses resettable timeout so tool completions and stream
     // deltas can reset the deadline. Retry/fallback paths use
@@ -366,6 +373,10 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           );
           await new Promise<void>(r => { const h = timers.setTimeout(() => r(), retryAfterMs); void h; });
           try {
+            const shortRetryDispatch = params.onProviderStart();
+            if (!shortRetryDispatch.ok) {
+              return Promise.reject(shortRetryDispatch.error);
+            }
             // Scope decision: retry/fallback prompts KEEP whole-turn
             // retryPromptTimeoutMs semantics (non-resettable) — pinned
             // by test; extend only if local retries die spuriously in
@@ -409,6 +420,10 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
         );
         // Retry with the same model but rotated key
         try {
+          const rotatedDispatch = params.onProviderStart();
+          if (!rotatedDispatch.ok) {
+            return Promise.reject(rotatedDispatch.error);
+          }
           await withPromptTimeout(
             session.prompt(messageText, { expandPromptTemplates: false, images: promptImages }),
             timeoutConfig.retryPromptTimeoutMs,
@@ -517,6 +532,10 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           }
         }
 
+        const fallbackDispatch = params.onProviderStart();
+        if (!fallbackDispatch.ok) {
+          return Promise.reject(fallbackDispatch.error);
+        }
         await withPromptTimeout(
           session.prompt(messageText, {
             expandPromptTemplates: false,
@@ -635,6 +654,10 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             await session.setModel(lkwModelObj);
           }
 
+          const lkwDispatch = params.onProviderStart();
+          if (!lkwDispatch.ok) {
+            return Promise.reject(lkwDispatch.error);
+          }
           await withPromptTimeout(
             session.prompt(messageText, {
               expandPromptTemplates: false,

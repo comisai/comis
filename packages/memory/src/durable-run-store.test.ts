@@ -9,6 +9,7 @@ import { initSchema } from "./schema.js";
 import { ensureDurableRunTable } from "./schema-durable-runs.js";
 import { createSqliteDurableRunStore } from "./durable-run-store.js";
 import type { DurableRunPort } from "@comis/core";
+import { ok } from "@comis/shared";
 
 const conversationScope = {
   tenantId: "tenant-a",
@@ -135,7 +136,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       expect(secondStored.ok && secondStored.value?.spawnTree).toEqual(["other-node"]);
       expect(db.prepare("SELECT COUNT(*) AS c FROM durable_run_checkpoints").get()).toEqual({ c: 2 });
 
-      expect((await store.markCompleted("checkpoint-a")).ok).toBe(true);
+      expect((await store.terminalize("checkpoint-a", "completed")).ok).toBe(true);
       expect((await store.invalidateForRevoke("tree-root")).ok).toBe(true);
       const afterFirst = await store.getByCheckpoint("checkpoint-a");
       const afterSecond = await store.getByCheckpoint("checkpoint-b");
@@ -685,7 +686,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       // The same terminal-preserve holds for completed/orphaned — a late checkpoint
       // upsert must not flip a finished run back to a resumable 'running'.
       await store.upsertCheckpoint(makeRecord({ rootRunId: "r-comp", status: "running" }));
-      await store.markCompleted("r-comp");
+      await store.terminalize("r-comp", "completed");
       await store.upsertCheckpoint(makeRecord({ rootRunId: "r-comp", status: "running" }));
       const comp = await store.getByCheckpoint("r-comp");
       if (comp.ok && comp.value) expect(comp.value.status).toBe("completed");
@@ -836,6 +837,8 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       });
 
       expect(claimed.ok && claimed.value.kind).toBe("claimed");
+      const sourceAfterClaim = await store.getByCheckpoint(source.checkpointId);
+      expect(sourceAfterClaim.ok && sourceAfterClaim.value?.terminalReason).toBe("superseded");
     });
 
     it("does not replace a source when the requested replacement already exists", async () => {
@@ -1134,10 +1137,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // markOrphaned / markCompleted
+  // markOrphaned / terminalize
   // -----------------------------------------------------------------------
 
-  describe("markOrphaned / markCompleted", () => {
+  describe("markOrphaned / terminalize", () => {
     it("never overwrites a concurrent revocation with an orphaned or completed status", async () => {
       await store.upsertCheckpoint(makeRecord({ rootRunId: "r-terminal-race" }));
       await store.invalidateForRevoke("r-terminal-race");
@@ -1145,7 +1148,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       expect((await store.markOrphaned("r-terminal-race", "invalid durable record")).ok).toBe(
         true,
       );
-      expect((await store.markCompleted("r-terminal-race")).ok).toBe(true);
+      expect((await store.terminalize("r-terminal-race", "completed")).ok).toBe(true);
 
       const stored = await store.getByCheckpoint("r-terminal-race");
       expect(stored.ok && stored.value?.status).toBe("revoked");
@@ -1170,13 +1173,80 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       expect(row.orphan_reason).toBe("no live lease on boot");
     });
 
-    it("markCompleted sets status='completed' (resume skips it)", async () => {
+    it("terminalize sets status='completed' (resume skips it)", async () => {
       await store.upsertCheckpoint(makeRecord({ rootRunId: "r-done", status: "running" }));
-      const m = await store.markCompleted("r-done");
+      const m = await store.terminalize("r-done", "watchdog_timeout");
       expect(m.ok).toBe(true);
       const got = await store.getByCheckpoint("r-done");
       expect(got.ok).toBe(true);
-      if (got.ok && got.value) expect(got.value.status).toBe("completed");
+      if (got.ok && got.value) {
+        expect(got.value.status).toBe("completed");
+        expect(got.value.terminalReason).toBe("watchdog_timeout");
+      }
+    });
+
+    it("repairs a missing terminal reason and reports an absent checkpoint", async () => {
+      expect(await store.terminalize("missing-terminal", "completed")).toEqual(
+        ok({ kind: "not_found" }),
+      );
+
+      const checkpointId = "completed-without-reason";
+      expect(
+        (
+          await store.upsertCheckpoint(
+            makeRecord({
+              checkpointId,
+              rootRunId: "root-completed-without-reason",
+              status: "completed",
+            }),
+          )
+        ).ok,
+      ).toBe(true);
+
+      expect(await store.terminalize(checkpointId, "ghost_sweep")).toEqual(
+        ok({ kind: "terminalized" }),
+      );
+      const stored = await store.getByCheckpoint(checkpointId);
+      expect(stored.ok && stored.value?.terminalReason).toBe("ghost_sweep");
+    });
+
+    it("preserves the exact terminal reason and payload across late running upserts", async () => {
+      const initial = makeRecord({
+        checkpointId: "r-late-terminal",
+        rootRunId: "r-late-terminal",
+        status: "running",
+        scriptRef: "initial-script",
+        checkpointRef: "initial-checkpoint",
+      });
+      await store.upsertCheckpoint(initial);
+
+      expect(await store.terminalize("r-late-terminal", "watchdog_timeout")).toEqual(
+        ok({ kind: "terminalized" }),
+      );
+      expect(await store.terminalize("r-late-terminal", "watchdog_timeout")).toEqual(
+        ok({ kind: "already_terminal" }),
+      );
+      expect((await store.terminalize("r-late-terminal", "failed")).ok).toBe(false);
+
+      await store.upsertCheckpoint({
+        ...initial,
+        spawnTree: ["late-heartbeat"],
+        budgetConsumed: 99,
+        lastHeartbeatAt: initial.lastHeartbeatAt + 10_000,
+        scriptRef: "late-script",
+        checkpointRef: "late-checkpoint",
+      });
+
+      const stored = await store.getByCheckpoint("r-late-terminal");
+      expect(stored).toEqual(ok(expect.objectContaining({
+        status: "completed",
+        terminalReason: "watchdog_timeout",
+        spawnTree: initial.spawnTree,
+        budgetConsumed: initial.budgetConsumed,
+        lastHeartbeatAt: initial.lastHeartbeatAt,
+        scriptRef: "initial-script",
+        checkpointRef: "initial-checkpoint",
+      })));
     });
   });
 
@@ -1202,7 +1272,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
 
     it("refuses to refresh a terminal or missing checkpoint", async () => {
       await store.upsertCheckpoint(makeRecord({ checkpointId: "r-terminal-hb" }));
-      await store.markCompleted("r-terminal-hb");
+      await store.terminalize("r-terminal-hb", "completed");
       expect((await store.touchHeartbeat("r-terminal-hb", 1_700_000_555_000)).ok).toBe(false);
       expect((await store.touchHeartbeat("missing-hb", 1_700_000_555_000)).ok).toBe(false);
     });
@@ -1397,8 +1467,8 @@ describe("createSqliteDurableRunStore — store-error resilience (every method r
     if (!r.ok) expect(r.error).toBeInstanceOf(Error);
   });
 
-  it("markCompleted returns err on a driver failure (no throw)", async () => {
-    const r = await makeClosedStore().markCompleted("run-err");
+  it("terminalize returns err on a driver failure (no throw)", async () => {
+    const r = await makeClosedStore().terminalize("run-err", "completed");
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBeInstanceOf(Error);
   });

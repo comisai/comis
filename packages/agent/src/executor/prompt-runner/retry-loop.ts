@@ -28,6 +28,10 @@ import { getVisibleAssistantText } from "../phase-filter.js";
 import { CONTINUATION_USER_MESSAGE } from "../../session/synthetic-user-messages.js";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
+import {
+  resolveProviderDispatchGuard,
+  type ProviderDispatchGuard,
+} from "../provider-dispatch.js";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
 import {
   handleClientRequest,
@@ -77,8 +81,11 @@ export async function runRetryLoop(
 
   // Bind the model-retry invocation so the silent-failure branches share
   // the deps wiring without re-threading every dependency.
+  const acknowledgeProviderStart = resolveProviderDispatchGuard(
+    params.executionOverrides?.onProviderStart,
+  );
   const invokeRetry: InvokeRetry = (msgText, images) =>
-    invokeModelRetry(params, msgText, images);
+    invokeModelRetry(params, msgText, images, acknowledgeProviderStart);
 
   if (!skipPrompt) {
     const retryResult = await invokeRetry(messageText, promptImages);
@@ -174,7 +181,7 @@ export async function runRetryLoop(
         // documents, threaded in as `false` here.
         await detectSilentFailure(
           params, messageText, promptImages, earlyBridgeResult, retryState,
-          invokeRetry, false,
+          invokeRetry, acknowledgeProviderStart, false,
         );
       }
     }
@@ -209,6 +216,7 @@ async function invokeModelRetry(
   params: RunPromptParams,
   messageText: string,
   promptImages: ImageContent[] | undefined,
+  onProviderStart: ProviderDispatchGuard,
 ) {
   const {
     session, config, sessionKey, agentId, effectiveTimeout, resolvedModel, deps, onResetTimer,
@@ -217,6 +225,7 @@ async function invokeModelRetry(
     session,
     messageText,
     promptImages,
+    onProviderStart,
     config: { provider: config.provider, model: config.model },
     resolvedModel: resolvedModel ? `${resolvedModel.provider}:${resolvedModel.id}` : undefined,
     timeoutConfig: {
@@ -266,6 +275,7 @@ async function detectSilentFailure(
   earlyBridgeResult: BridgeSnapshot,
   retryState: RetryState,
   invokeRetry: InvokeRetry,
+  acknowledgeProviderStart: ProviderDispatchGuard,
   silentRetryAttempted: boolean,
 ): Promise<boolean> {
   const { session, agentId, sessionKey, deps } = params;
@@ -283,7 +293,11 @@ async function detectSilentFailure(
       },
       "Attempting continuation after thinking-only final turn",
     );
-    const continuationResult = await runContinuationTurn(session, CONTINUATION_USER_MESSAGE);
+    const continuationResult = await runContinuationTurn(
+      session,
+      CONTINUATION_USER_MESSAGE,
+      acknowledgeProviderStart,
+    );
     const nudgeRecovered = continuationResult.ok && getVisibleAssistantText(session) !== "";
     // Announce whether the continuation produced visible text.
     emitObservationalEventSafely({ eventBus: deps.eventBus, logger: deps.logger }, "execution:recovery_attempted", {

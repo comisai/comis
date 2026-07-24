@@ -27,6 +27,7 @@ import {
   type TimerHandle,
   type DurableRunRecord,
   type DurableRunPort,
+  type WorkspacePolicySnapshot,
 } from "@comis/core";
 import { ok, type Result } from "@comis/shared";
 import type { ComisLogger, LeaseManager } from "@comis/infra";
@@ -363,6 +364,8 @@ describe("buildDurableResume resumeGraph dispatch", () => {
       checkpointRef: spawnTree.length > 0 && typeof spawnTree[0] === "object"
         ? `graph-runs/${rootRunId}/durable-checkpoint.json`
         : null,
+      resumeDescriptorHash: "a".repeat(64),
+      workspacePolicyHash: "b".repeat(64),
     });
     if (!r.ok) throw r.error;
   }
@@ -463,6 +466,12 @@ describe("buildDurableResume resumeGraph dispatch", () => {
     const db = await makeDb();
     const boundedAutonomy = makeBoundedAutonomy();
     const resumeGraph = vi.fn(async (_record: DRR) => ok(undefined));
+    const policySnapshot: WorkspacePolicySnapshot = {
+      agentId: "agent-a",
+      sections: [],
+      combinedHash: "b".repeat(64),
+    };
+    const resumePlain = vi.fn(async (_record: DRR) => ok(undefined));
     const wiring = buildDurableResume({
       db,
       durabilityCfg: { enabled: true, staleHeartbeatMs: 1_000, keepAliveMs: 250, recoveryBudgetMs: 5_000 },
@@ -473,6 +482,8 @@ describe("buildDurableResume resumeGraph dispatch", () => {
       clock: testClock,
       timers: testTimers,
       resumeGraph,
+      resumePlain,
+      resolveWorkspacePolicy: async () => ok(policySnapshot),
     });
 
     // A FLAT record: spawn_tree is a plain string[] of node/lease ids.
@@ -485,6 +496,8 @@ describe("buildDurableResume resumeGraph dispatch", () => {
     expect(boundedAutonomy.registerRoot).toHaveBeenCalledTimes(1);
     expect(boundedAutonomy.registerRoot.mock.calls[0]![0]).toBe("root-flat");
     expect(resumeGraph).not.toHaveBeenCalled();
+    expect(resumePlain).toHaveBeenCalledOnce();
+    expect(resumePlain.mock.calls[0]![2]).toBe(policySnapshot);
   });
 
   it("orphans a DAG checkpoint when graph recovery is not wired", async () => {

@@ -11896,6 +11896,28 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "backgroundRecovery": {
+          "type": "object",
+          "properties": {
+            "retryRequiredCount": {
+              "type": "number"
+            },
+            "unresolvedCount": {
+              "type": "number"
+            },
+            "lastTaskId": {
+              "type": "string"
+            },
+            "lastToolName": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "retryRequiredCount",
+            "unresolvedCount"
+          ],
+          "additionalProperties": false
+        },
         "deliverySkipped": {
           "type": "object",
           "properties": {

@@ -25,7 +25,11 @@ import { describe, it, expect, vi } from "vitest";
 import { TypedEventBus } from "@comis/core";
 import type { EventMap } from "@comis/core";
 
-import { attachTrajectoryToEventBus, TRAJECTORY_BRIDGE_MAPPING } from "./event-bus-bridge.js";
+import {
+  attachTrajectoryToEventBus,
+  createTrajectoryEventTypeFilter,
+  TRAJECTORY_BRIDGE_MAPPING,
+} from "./event-bus-bridge.js";
 import type { TrajectoryEventType, TrajectoryRecorder } from "./types.js";
 import { TRAJECTORY_EVENT_TYPES } from "./types.js";
 
@@ -38,6 +42,19 @@ interface CapturedCall {
   readonly data: unknown;
   readonly parentEntryId: string | undefined;
 }
+
+describe("trajectory event type filtering", () => {
+  it("matches documented trajectory names through the bridge mapping", () => {
+    const filter = createTrajectoryEventTypeFilter([
+      "background_task.notified",
+      "tool.result",
+    ]);
+
+    expect(filter?.("background_task:notified")).toBe(true);
+    expect(filter?.("tool:executed")).toBe(true);
+    expect(filter?.("tool:started")).toBe(false);
+  });
+});
 
 function createCaptureRecorder(filePath = "/tmp/x.jsonl"): TrajectoryRecorder & { calls: CapturedCall[] } {
   const calls: CapturedCall[] = [];
@@ -1208,9 +1225,10 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       toolName: "mcp__weather--weather_forecast",
       sessionKey: "k",
       notified: false,
-      reason: "live_turn_suppressed",
+      reason: "live_turn_consumed",
       traceId: null,
       timestamp: 1000,
+      trajectoryRecorded: false,
     },
     "scheduler:task_extraction_completed": {
       rootRunId: "root-task-extract-a", itemCount: 1, candidateCount: 1,
@@ -4509,5 +4527,31 @@ describe("attachTrajectoryToEventBus ownerSessionKey scoping", () => {
       toolName: "exec", toolCallId: "t-other", timestamp: 1, sessionKey: OTHER,
     });
     expect(recorder.calls).toHaveLength(1);
+  });
+});
+
+describe("attachTrajectoryToEventBus direct recovery admission", () => {
+  it("does not duplicate an acknowledged direct recovery trajectory event", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({
+      eventBus: bus,
+      recorder,
+      ownerSessionKey: "default:agent-a:echo:conversation-a:user_a",
+    });
+
+    bus.emit("background_task:notified", {
+      agentId: "agent-a",
+      taskId: "task-a",
+      toolName: "report",
+      sessionKey: "default:agent-a:echo:conversation-a:user_a",
+      notified: false,
+      reason: "recovery_retry_required",
+      traceId: null,
+      timestamp: 10,
+      trajectoryRecorded: true,
+    });
+
+    expect(recorder.calls).toHaveLength(0);
   });
 });

@@ -64,6 +64,7 @@
   },
   "devDependencies": {
     "@comis/observability-otel": "workspace:*",
+    "@earendil-works/pi-coding-agent": "0.80.10",
     "@types/better-sqlite3": "7.6.13",
     "typescript": "5.9.3",
     "vitest": "4.1.9"

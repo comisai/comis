@@ -64,19 +64,32 @@ function getClient(): Impit {
 /** Decode common HTML entities in extracted text. */
 function decodeHtmlEntities(text: string): string {
   return text
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&#x27;/g, "'")
     .replace(/&#x2F;/g, "/")
-    .replace(/&nbsp;/g, " ");
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
 }
 
 /** Strip all HTML tags from a string. */
 function stripHtmlTags(text: string): string {
-  return text.replace(/<[^>]*>/g, "");
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const start = text.indexOf("<", cursor);
+    if (start === -1) {
+      parts.push(text.slice(cursor));
+      break;
+    }
+    parts.push(text.slice(cursor, start));
+    const end = text.indexOf(">", start + 1);
+    if (end === -1) break;
+    cursor = end + 1;
+  }
+  return parts.join("");
 }
 
 /** Clean extracted text: strip tags, decode entities, normalize whitespace. */

@@ -91,6 +91,18 @@ describe("createSqliteOutwardSendLedger — begin + lookup", () => {
     if (!found.ok) return;
     expect(found.value).toBeUndefined();
   });
+
+  it("reclaims only a proven pre-send attempt", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+    await ledger.begin(makeBegin());
+    expect(await ledger.reclaimPreSend("run-A", 0)).toEqual({ ok: true, value: true });
+    expect(await ledger.lookup("run-A", 0)).toEqual({ ok: true, value: undefined });
+
+    await ledger.begin(makeBegin());
+    await ledger.markUnknown("run-A", 0);
+    expect(await ledger.reclaimPreSend("run-A", 0)).toEqual({ ok: true, value: false });
+    expect((await ledger.lookup("run-A", 0)).ok).toBe(true);
+  });
 });
 
 describe("createSqliteOutwardSendLedger — closed five-state lifecycle", () => {

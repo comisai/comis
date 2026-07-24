@@ -248,10 +248,12 @@ context" -- not a billing figure.
 ## Resumable runs
 
 A genuinely long pipeline should survive a daemon restart mid-run instead of
-starting over. That is opt-in and nested under the durability posture: with
+starting over. This is enabled by default and nested under the durability
+posture: with
 [`autonomy.durability.orchestrateResume`](/reference/config-yaml#autonomy-agents-autonomy)
-on (**off by default**, inside the already-off-by-default `autonomy.durability`
-block), an `orchestrate` run gains three durability affordances.
+on (the default, inside the default-on `autonomy.durability` block), an
+`orchestrate` run gains three durability affordances. Set either switch to
+`false` to opt out.
 
 - **Checkpoint / resume inside the script.** The in-jail SDK exposes
   `checkpoint(stateJson)` and `resume()`: a run persists a small progress blob (a
@@ -273,10 +275,11 @@ block), an `orchestrate` run gains three durability affordances.
   run is surfaced as an honest orphan (a closed-enum reason) rather than silently
   lost, and its leftover workspace artifacts are reclaimed.
 
-All of this is default-off: with `orchestrateResume` off, a timed-out run is killed
-and cleaned exactly as before, and no durable row is written. For debugging, an
+This is the default behavior. With `orchestrateResume` off, a timed-out run is
+killed and cleaned, and no resumable durable row is written. For debugging, an
 operator can deterministically re-run a durable run's pinned bytes against a
-separate replay socket with [`comis orchestrate replay <runId>`](/reference/cli#comis-orchestrate).
+separate replay socket with
+[`comis orchestrate replay <runId>`](/reference/cli#comis-orchestrate).
 
 ## 30-second progress fork
 

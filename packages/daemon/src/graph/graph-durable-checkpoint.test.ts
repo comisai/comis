@@ -153,7 +153,7 @@ describe("incompleteNodes", () => {
     expect(incompleteNodes(tree)).toEqual(["D"]);
   });
 
-  it("returns [] for a fully-completed graph (nothing to resume — markCompleted territory)", () => {
+  it("returns [] for a fully-completed graph with nothing to resume", () => {
     const tree = [
       { nodeId: "A", status: "completed" },
       { nodeId: "B", status: "completed" },

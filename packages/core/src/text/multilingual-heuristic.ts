@@ -33,7 +33,7 @@ export const EMBED_MULTILINGUAL = /multilingual|bge-m3|m3e|labse/i;
  * so the embedder literal above FALSE-NEGATIVES it. This pattern matches the
  * `bge-reranker-…m3` family (and the generic multilingual/bge-m3 hints).
  */
-export const RERANK_MULTILINGUAL = /multilingual|bge-reranker-v2-m3|reranker.*m3|bge-m3/i;
+export const RERANK_MULTILINGUAL = /multilingual|bge-reranker-v2-m3|reranker.{0,200}m3|bge-m3/i;
 
 /**
  * Resolve the advisory multilingual flag for a model id.

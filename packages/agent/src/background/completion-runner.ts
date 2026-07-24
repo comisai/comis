@@ -1,33 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Background completion runner: subscribes to background_task:completed and
- * background_task:failed events from the TypedEventBus and re-enters the
- * originating agent session with a formatted completion announcement.
- *
- * Per-session lock serialization is delegated to the existing session
- * manager (ComisSessionManager.withSession in packages/agent/src/session/).
- * The runner does NOT introduce its own queueing -- one turn per completion
- * event, ordering follows the existing per-session lock.
- *
- * Recursion bound: per-task incoming hop count + 1 must stay below
- * `maxBackgroundHops` (default 3). When the cap is hit, the runner emits
- * the fallback notification instead of triggering executor.execute().
- * The hop count is read from `task.origin.backgroundHopCount`
- * (populated by the originResolver).
- *
- * Latency-instrumentation hook: emits `background_task:reentered`
- * immediately before executor.execute(). Integration tests compute the delta
- * from `background_task:completed.timestamp` to this event for SLO tracking.
- *
- * Failure isolation: each handler is wrapped in suppressError so a single
- * completion's failure does not tear down the subscription.
- *
- * @module
- */
 
-import { randomUUID } from "node:crypto";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fromPromise, isSilentResponse, suppressError, tryCatch, type Result } from "@comis/shared";
+import { randomUUID } from "node:crypto";
+import { err, fromPromise, isSilentResponse, ok, suppressError, tryCatch, type Result } from "@comis/shared";
 import {
   createDeliveryOrigin,
   createResolvedRequestContext,
@@ -40,7 +15,6 @@ import {
   toSafeErrorLogString,
   type BackgroundTaskOrigin,
   type ComisLogger,
-  type ErrorKind,
   type NormalizedMessage,
   type RequestContext,
   type ResolvedRequestContextSeed,
@@ -51,28 +25,19 @@ import {
 } from "@comis/core";
 import type { AgentExecutor } from "../executor/types.js";
 import { formatCompletionAnnouncement } from "./completion-formatter.js";
-import type { BackgroundTaskManager, NotifyFn } from "./background-task-manager.js";
+import { createCompletionRecovery } from "./completion-recovery.js";
+import type { BackgroundTaskManager } from "./background-task-manager.js";
+import type {
+  BackgroundCompletionDeliveryInput,
+  BackgroundCompletionDeliveryOutcome,
+  BackgroundContinuationOutbox,
+  BackgroundFinalizedResultRecoveryInput,
+} from "./background-task-types.js";
 
-/** Public-facing handle on the runner returned by createBackgroundCompletionRunner. */
 export interface BackgroundCompletionRunner {
-  /** Unsubscribe from the event bus. Idempotent. Awaitable so callers can
-   *  ensure no in-flight handler outlives the daemon shutdown. */
   shutdown(): Promise<void>;
 }
 
-export interface BackgroundCompletionDeliveryError {
-  readonly errorKind: ErrorKind;
-  readonly message: string;
-}
-
-export interface BackgroundCompletionDeliveryInput {
-  readonly taskId: string;
-  readonly origin: BackgroundTaskOrigin;
-  readonly response: string;
-  readonly executionId: string;
-}
-
-/** Session-store dependency retained by daemon composition; it is not routing authority. */
 export interface RunnerSessionStore {
   loadByRef(scope: SessionQueryScope, conversationRef: BackgroundTaskOrigin["conversationRef"]): Result<unknown | undefined, SessionStoreError>;
 }
@@ -80,28 +45,43 @@ export interface RunnerSessionStore {
 export interface BackgroundCompletionRunnerDeps {
   eventBus: TypedEventBus;
   getExecutor: (agentId: string) => AgentExecutor;
-  /** Assemble the same agent-scoped tools available to an ordinary inbound turn. */
   assembleToolsForAgent?: (
     agentId: string,
     options?: { sessionKey?: SessionKey },
   ) => Promise<AgentTool[]>;
   sessionStore: RunnerSessionStore;
-  /**
-   * Includes `transitionDispatchState` in addition to `getTask`. fallbackForTask
-   * uses transitionDispatchState to persist `dispatchState = "notified"` BEFORE
-   * firing `fallbackNotifyFn`, so a daemon SIGKILL between persist and fire does
-   * NOT leak a duplicate notification on recovery (the at-most-once gate binds
-   * against on-disk state). The daemon-side wiring at
-   * setup-background-completion-runner.ts already passes a manager with
-   * both methods.
-   */
-  taskManager: Pick<BackgroundTaskManager, "getTask" | "transitionDispatchState">;
-  /** Deliver the finalized continuation through the exact persisted channel
-   *  authority. The runner owns execution; the composition root owns adapters. */
+  taskManager:
+    Pick<
+      BackgroundTaskManager,
+      "getTask"
+      | "persistContinuationOutbox"
+      | "persistCleanupPendingOutbox"
+      | "scheduleDispatchRetry"
+      | "commitDispatchState"
+      | "persistFinalizedResult"
+      | "recordRecoveryIncident"
+      | "scheduleStateRetry"
+    >;
+  recoverFinalizedResult(
+    input: BackgroundFinalizedResultRecoveryInput,
+  ): Promise<Result<{
+    response: string;
+    executionId: string;
+    cleanupRequired: boolean;
+  } | undefined, Error>>;
+  cleanupFinalizedSession(
+    input: Omit<BackgroundFinalizedResultRecoveryInput, "journalKey">,
+  ): Promise<Result<void, Error>>;
+  reconcileDelivery(
+    input: Omit<BackgroundCompletionDeliveryInput, "onSendStart">,
+  ): Promise<Result<BackgroundCompletionDeliveryOutcome, Error>>;
   deliverCompletion: (
     input: BackgroundCompletionDeliveryInput,
-  ) => Promise<Result<void, BackgroundCompletionDeliveryError>>;
-  fallbackNotifyFn: NotifyFn;
+  ) => Promise<BackgroundCompletionDeliveryOutcome>;
+  deliverFallback: (
+    input: BackgroundCompletionDeliveryInput,
+  ) => Promise<BackgroundCompletionDeliveryOutcome>;
+  deliveryProtection: BackgroundContinuationOutbox["deliveryProtection"];
   maxBackgroundHops: number;
   /**
    * LIVE-TURN oracle (mirrors CompletionDispatcherDeps.isTurnInFlight): true
@@ -115,13 +95,6 @@ export interface BackgroundCompletionRunnerDeps {
   logger: ComisLogger;
 }
 
-/**
- * Rebuild the request authority for a persisted completion without consulting
- * ambient AsyncLocalStorage. A completion can resume after the originating
- * request ended or while an unrelated request is active, so persisted routing
- * identity is the only valid source and the resumed turn always starts as a
- * guest.
- */
 function createReentryContext(
   origin: BackgroundTaskOrigin,
   parsedKey: SessionKey,
@@ -148,16 +121,70 @@ function createReentryContext(
   return createResolvedRequestContext(built.value);
 }
 
-/**
- * Wire the completion runner against an event bus + executor + session store.
- * Subscriptions are installed synchronously; call shutdown() to remove them.
- */
 export function createBackgroundCompletionRunner(
   deps: BackgroundCompletionRunnerDeps,
 ): BackgroundCompletionRunner {
   const log = deps.logger.child({ submodule: "background-completion-runner" });
   let stopped = false;
   let inflight: Promise<void> = Promise.resolve();
+
+  function emitRoutingOutcome(
+    taskId: string,
+    origin: BackgroundTaskOrigin,
+    toolName: string,
+    notified: boolean,
+    reason:
+      | "live_turn_consumed"
+      | "continuation_accepted"
+      | "fallback_accepted"
+      | "silent_consumed"
+      | "retry_scheduled"
+      | "permanent_parked"
+      | "uncertain_parked",
+  ): void {
+    const projected = conversationScopeToSessionKey(origin.turnScope.conversation);
+    emitObservationalEventSafely({ eventBus: deps.eventBus, logger: log }, "background_task:notified", {
+      agentId: origin.turnScope.conversation.agentId,
+      taskId,
+      toolName,
+      sessionKey: projected.ok ? formatSessionKey(projected.value) : origin.conversationRef,
+      notified,
+      reason,
+      traceId: origin.traceId,
+      timestamp: systemNowMs(),
+      trajectoryRecorded: false,
+    });
+  }
+
+  function commitState(
+    taskId: string,
+    next: Parameters<BackgroundTaskManager["commitDispatchState"]>[1],
+    expected: readonly Parameters<BackgroundTaskManager["commitDispatchState"]>[1][],
+  ): Result<boolean, Error> {
+    const committed = deps.taskManager.commitDispatchState(taskId, next, expected);
+    if (committed.ok) return committed;
+    log.warn(
+      {
+        taskId,
+        err: toSafeErrorLogString(committed.error),
+        hint: "Repair protected background-task storage before retrying the lifecycle transition",
+        errorKind: "resource" as const,
+      },
+      "Background completion state persistence failed",
+    );
+    return committed;
+  }
+
+  const recovery = createCompletionRecovery({
+    taskManager: deps.taskManager,
+    recoverFinalizedResult: deps.recoverFinalizedResult,
+    cleanupFinalizedSession: deps.cleanupFinalizedSession,
+    reconcileDelivery: deps.reconcileDelivery,
+    deliveryProtection: deps.deliveryProtection,
+    commitState,
+    emitRoutingOutcome,
+    deliverPersistedOutbox,
+  });
 
   const onCompleted = (data: { agentId: string; taskId: string; toolName: string; durationMs: number; origin: BackgroundTaskOrigin; timestamp: number }) => {
     if (stopped) return;
@@ -186,18 +213,16 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    // At-most-once: the dispatcher subscribed BEFORE this runner (see
-    // setup-background-completion-runner.ts) and already transitioned
-    // task.dispatchState. When state is "notified", the dispatcher fired
-    // the user-visible fallback; the runner stays out of the way to
-    // enforce single-owner notification routing (zero spurious outbound).
-    if (task.dispatchState === "notified") {
+    if (
+      task.dispatchState === "delivered"
+      || task.dispatchState === "parked_permanent"
+      || task.dispatchState === "parked_uncertain"
+      || task.dispatchState === "consumed_live"
+    ) {
       log.debug(
         {
           taskId,
           dispatchState: task.dispatchState,
-          // Include originating traceId so operator log streams stay
-          // continuous across the dispatcher / runner boundary.
           traceId: task.origin?.traceId ?? undefined,
           hint: "Dispatcher already fired fallback notification (at-most-once)",
         },
@@ -205,11 +230,70 @@ export function createBackgroundCompletionRunner(
       );
       return;
     }
+    if (task.dispatchState === "cleanup_pending") {
+      await recovery.finishCleanup(task.id, task.origin, task.toolName);
+      return;
+    }
+    if (task.dispatchState === "delivering" && task.continuationOutbox !== undefined) {
+      await recovery.reconcileDeliveryClaim(task.id, task.origin, task.continuationOutbox);
+      return;
+    }
+    if (task.dispatchState === "pre_send" && task.continuationOutbox !== undefined) {
+      await deliverPersistedOutbox(task.id, task.origin, task.continuationOutbox);
+      return;
+    }
+    if (
+      task.dispatchState === "ready_to_deliver"
+      && task.continuationOutbox !== undefined
+    ) {
+      await deliverPersistedOutbox(task.id, task.origin, task.continuationOutbox);
+      return;
+    }
+    if (
+      task.dispatchState === "execution_claimed"
+      || task.dispatchState === "executing"
+    ) {
+      await recovery.recoverClaimedTask(taskId, task.origin, task.toolName);
+      return;
+    }
+    const claim = commitState(taskId, "execution_claimed", ["pending"]);
+    if (!claim.ok) {
+      deps.taskManager.scheduleDispatchRetry(taskId);
+      emitRoutingOutcome(taskId, task.origin, task.toolName, false, "retry_scheduled");
+      return;
+    }
+    if (!claim.value) {
+      log.debug(
+        { taskId, dispatchState: task.dispatchState, hint: "Another completion attempt owns this task" },
+        "Background completion runner: retry claim not acquired",
+      );
+      return;
+    }
 
-    // origin is producer-required (background-task-manager promote()
-    // rejects missing-origin) so we read it directly.
     const origin = task.origin;
     const agentId = origin.turnScope.conversation.agentId;
+    if (task.notificationPolicy === "silent") {
+      const delivered = commitState(taskId, "delivered", ["execution_claimed"]);
+      if (!delivered.ok) {
+        recovery.scheduleStateRecovery(
+          taskId,
+          origin,
+          task.toolName,
+          "delivered",
+          ["execution_claimed"],
+        );
+      }
+      return;
+    }
+    if (task.notificationPolicy === "immediate") {
+      await fallbackForTask(
+        task.id,
+        agentId,
+        task.toolName,
+        `Background task "${task.toolName}" ${kind}.`,
+      );
+      return;
+    }
     const projectedSession = conversationScopeToSessionKey(origin.turnScope.conversation);
     if (!projectedSession.ok) {
       log.warn({
@@ -224,8 +308,6 @@ export function createBackgroundCompletionRunner(
     const parsedKey = projectedSession.value;
     const formattedSessionKey = formatSessionKey(parsedKey);
 
-    // Hop cap. Read incoming hop count from origin (schema field populated
-    // by the originResolver).
     const nextHopCount = (origin.backgroundHopCount ?? 0) + 1;
     if (nextHopCount >= deps.maxBackgroundHops) {
       log.info(
@@ -235,7 +317,6 @@ export function createBackgroundCompletionRunner(
           agentId,
           hopCount: nextHopCount,
           max: deps.maxBackgroundHops,
-          // traceId from origin keeps operator logs threaded.
           traceId: origin.traceId ?? undefined,
         },
         "Background completion: hop cap reached, falling back to user notification",
@@ -249,12 +330,19 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    // LIVE-TURN skip (when wired): the origin turn is STILL EXECUTING and owns
-    // consumption through one blocking background_tasks read_output call — a
-    // re-entry turn would only serialize a redundant continuation behind the
-    // live turn. The dispatcher's matching check already suppressed the
-    // fallback notice; the result stays readable if the live turn raced past it.
     if (deps.isTurnInFlight?.(formattedSessionKey) === true) {
+      const consumed = commitState(taskId, "consumed_live", ["execution_claimed"]);
+      if (consumed.ok && consumed.value) {
+        emitRoutingOutcome(taskId, origin, task.toolName, false, "live_turn_consumed");
+      } else if (!consumed.ok) {
+        recovery.scheduleStateRecovery(
+          taskId,
+          origin,
+          task.toolName,
+          "consumed_live",
+          ["execution_claimed"],
+        );
+      }
       log.debug(
         {
           taskId,
@@ -292,7 +380,7 @@ export function createBackgroundCompletionRunner(
 
     // Construct the synthetic NormalizedMessage (hop counter in metadata).
     const syntheticMsg: NormalizedMessage = {
-      id: randomUUID(),
+      id: task.continuationExecutionId,
       channelId: origin.deliveryOrigin.channelId,
       channelType: "background_task",
       senderId: "background-task-runner",
@@ -341,6 +429,7 @@ export function createBackgroundCompletionRunner(
           ? await fromPromise(deps.assembleToolsForAgent(agentId, { sessionKey: parsedKey }))
           : undefined;
         if (toolAssembly !== undefined && !toolAssembly.ok) return toolAssembly;
+        let finalizedOutbox: BackgroundContinuationOutbox | undefined;
         const execution = tryCatch(() => executor.value.execute(
           syntheticMsg,
           parsedKey,
@@ -352,10 +441,92 @@ export function createBackgroundCompletionRunner(
           {
             operationType: "interactive",
             responseLocalePolicy: origin.responseLocalePolicy,
+            finalizedResultJournalKey: task.continuationExecutionId,
+            onJournalFinalizedResult: async (finalized) => {
+              const persisted = deps.taskManager.persistFinalizedResult(
+                taskId,
+                {
+                  response: finalized.response,
+                  executionId: finalized.executionId,
+                  cleanupRequired: finalized.finishReason === "session_reset",
+                },
+                ["execution_claimed", "executing"],
+              );
+              if (!persisted.ok) return Promise.reject(persisted.error);
+            },
+            onProviderStart: () => {
+              const current = deps.taskManager.getTask(taskId);
+              if (current?.dispatchState === "executing") return ok(undefined);
+              const executing = commitState(taskId, "executing", ["execution_claimed"]);
+              return executing.ok && executing.value
+                ? ok(undefined)
+                : err(executing.ok
+                  ? new Error("Background continuation provider start claim was not acquired")
+                  : executing.error);
+            },
+            onFinalizedResult: async (finalized, phase) => {
+              const outbox: BackgroundContinuationOutbox = {
+                kind: "continuation",
+                response: finalized.response,
+                executionId: finalized.executionId,
+                idempotencyKey: `background-continuation:${task.continuationExecutionId}`,
+                deliveryProtection: deps.deliveryProtection,
+              };
+              if (phase === "cleanup_pending") {
+                const persisted = deps.taskManager.persistCleanupPendingOutbox(
+                  taskId,
+                  outbox,
+                  ["execution_claimed", "executing"],
+                );
+                if (!persisted.ok) return Promise.reject(persisted.error);
+                finalizedOutbox = outbox;
+                return;
+              }
+              const current = deps.taskManager.getTask(taskId);
+              if (current?.dispatchState === "cleanup_pending") {
+                if (isSilentResponse(finalized.response)) {
+                  const delivered = commitState(taskId, "delivered", ["cleanup_pending"]);
+                  if (!delivered.ok) return Promise.reject(delivered.error);
+                  if (!delivered.value) {
+                    return Promise.reject(new Error("Background continuation cleanup terminal state was not claimable"));
+                  }
+                  return;
+                }
+                const ready = commitState(taskId, "ready_to_deliver", ["cleanup_pending"]);
+                if (!ready.ok) return Promise.reject(ready.error);
+                if (!ready.value) {
+                  return Promise.reject(new Error("Background continuation cleanup handoff was not claimable"));
+                }
+                finalizedOutbox = outbox;
+                return;
+              }
+              if (isSilentResponse(finalized.response)) {
+                const delivered = commitState(
+                  taskId,
+                  "delivered",
+                  ["execution_claimed", "executing"],
+                );
+                if (!delivered.ok) return Promise.reject(delivered.error);
+                if (!delivered.value) {
+                  return Promise.reject(new Error("Background continuation terminal state was not claimable"));
+                }
+                return;
+              }
+              const persisted = deps.taskManager.persistContinuationOutbox(
+                taskId,
+                outbox,
+                ["execution_claimed", "executing"],
+              );
+              if (!persisted.ok) return Promise.reject(persisted.error);
+              finalizedOutbox = outbox;
+            },
           },
         ));
         if (!execution.ok) return execution;
-        return fromPromise(execution.value);
+        const settled = await fromPromise(execution.value);
+        return settled.ok
+          ? ok({ result: settled.value, finalizedOutbox })
+          : settled;
       },
     ));
     const scopedResult = scopedInvocation.ok
@@ -373,10 +544,24 @@ export function createBackgroundCompletionRunner(
         },
         "Background completion: executor.execute() rejected",
       );
+      const current = deps.taskManager.getTask(taskId);
+      if (
+        current?.dispatchState === "ready_to_deliver"
+        && current.continuationOutbox !== undefined
+      ) {
+        await deliverPersistedOutbox(taskId, origin, current.continuationOutbox);
+      } else if (current?.dispatchState === "cleanup_pending") {
+        await recovery.finishCleanup(taskId, origin, task.toolName);
+      } else if (
+        current?.dispatchState === "execution_claimed"
+        || current?.dispatchState === "executing"
+      ) {
+        await recovery.recoverClaimedTask(taskId, origin, task.toolName);
+      }
       return;
     }
 
-    const result = executionResult.value;
+    const result = executionResult.value.result;
     if (isSilentResponse(result.response)) {
       log.info(
         {
@@ -390,85 +575,197 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    const deliveryStartedAt = systemNowMs();
-    const deliveryAttempt = await fromPromise(deps.deliverCompletion({
-      taskId: task.id,
-      origin,
-      response: result.response,
-      executionId: result.executionId,
-    }));
-    const deliveryResult = deliveryAttempt.ok ? deliveryAttempt.value : deliveryAttempt;
-    const deliveryDurationMs = Math.max(0, systemNowMs() - deliveryStartedAt);
-    if (!deliveryResult.ok) {
-      const errorKind = "errorKind" in deliveryResult.error
-        ? deliveryResult.error.errorKind
-        : ("internal" as const);
+    const outbox = executionResult.value.finalizedOutbox
+      ?? deps.taskManager.getTask(taskId)?.continuationOutbox;
+    if (outbox === undefined) {
       log.warn(
         {
           taskId,
           agentId,
-          channelType: origin.deliveryOrigin.channelType,
-          durationMs: deliveryDurationMs,
-          err: toSafeErrorLogString(new Error(deliveryResult.error.message)),
-          traceId: reentryContext.value.traceId,
-          hint: "Inspect the exact originating channel adapter and delivery queue before retrying the completion",
-          errorKind,
+          hint: "Inspect the executor finalization hook before reconciling this continuation",
+          errorKind: "internal" as const,
         },
-        "Background completion delivery failed",
+        "Background completion finalized without a protected outbox",
+      );
+      const parked = commitState(taskId, "parked_uncertain", ["executing"]);
+      if (parked.ok && parked.value) {
+        emitRoutingOutcome(taskId, origin, task.toolName, false, "uncertain_parked");
+      }
+      return;
+    }
+    await deliverPersistedOutbox(taskId, origin, outbox);
+  }
+
+  async function deliverPersistedOutbox(
+    taskId: string,
+    origin: BackgroundTaskOrigin,
+    outbox: BackgroundContinuationOutbox,
+  ): Promise<void> {
+    const current = deps.taskManager.getTask(taskId);
+    const deliveryClaim = current?.dispatchState === "pre_send"
+      ? ok(true)
+      : commitState(taskId, "pre_send", ["ready_to_deliver"]);
+    if (!deliveryClaim.ok) {
+      deps.taskManager.scheduleDispatchRetry(taskId);
+      const task = deps.taskManager.getTask(taskId);
+      emitRoutingOutcome(
+        taskId,
+        origin,
+        task?.toolName ?? "background_task",
+        false,
+        "retry_scheduled",
       );
       return;
     }
-    log.info(
+    if (!deliveryClaim.value) {
+      return;
+    }
+    const deliveryStartedAt = systemNowMs();
+    const deliver = outbox.kind === "continuation"
+      ? deps.deliverCompletion
+      : deps.deliverFallback;
+    const attempted = await fromPromise(deliver({
+      taskId,
+      origin,
+      response: outbox.response,
+      executionId: outbox.executionId,
+      idempotencyKey: outbox.idempotencyKey,
+      onSendStart: () => {
+        const started = commitState(taskId, "delivering", ["pre_send"]);
+        return started.ok && started.value
+          ? ok(undefined)
+          : err(started.ok
+            ? new Error("Background delivery send-start claim was not acquired")
+            : started.error);
+      },
+    }));
+    const stateAfterAttempt = deps.taskManager.getTask(taskId)?.dispatchState;
+    const outcome: BackgroundCompletionDeliveryOutcome = attempted.ok
+      ? attempted.value
+      : stateAfterAttempt === "pre_send"
+        ? {
+            kind: "retryable_pre_send",
+            errorKind: "internal",
+            message: toSafeErrorLogString(attempted.error),
+          }
+        : {
+            kind: "uncertain",
+            errorKind: "internal",
+            message: toSafeErrorLogString(attempted.error),
+          };
+    const durationMs = Math.max(0, systemNowMs() - deliveryStartedAt);
+    if (outcome.kind === "accepted") {
+      const delivered = commitState(taskId, "delivered", ["delivering"]);
+      const task = deps.taskManager.getTask(taskId);
+      if (delivered.ok && delivered.value) {
+        emitRoutingOutcome(
+          taskId,
+          origin,
+          task?.toolName ?? "background_task",
+          true,
+          outbox.kind === "continuation" ? "continuation_accepted" : "fallback_accepted",
+        );
+      } else if (!delivered.ok) {
+        deps.taskManager.scheduleStateRetry(taskId, "delivered", ["delivering"]);
+        emitRoutingOutcome(
+          taskId,
+          origin,
+          task?.toolName ?? "background_task",
+          false,
+          "retry_scheduled",
+        );
+      }
+      log.info(
+        {
+          taskId,
+          channelType: origin.deliveryOrigin.channelType,
+          durationMs,
+          traceId: origin.traceId,
+        },
+        "Background completion delivered",
+      );
+      return;
+    }
+    if (outcome.kind === "retryable_pre_send") {
+      const retryState = deps.taskManager.getTask(taskId)?.dispatchState;
+      const retryable = retryState === "pre_send"
+        ? ok(true)
+        : commitState(taskId, "pre_send", ["delivering"]);
+      if (retryable.ok && retryable.value) {
+        deps.taskManager.scheduleDispatchRetry(taskId);
+        emitRoutingOutcome(taskId, origin, deps.taskManager.getTask(taskId)?.toolName ?? "background_task", false, "retry_scheduled");
+      } else if (!retryable.ok) {
+        deps.taskManager.scheduleStateRetry(taskId, "pre_send", ["delivering"]);
+        emitRoutingOutcome(taskId, origin, deps.taskManager.getTask(taskId)?.toolName ?? "background_task", false, "retry_scheduled");
+      }
+    } else if (outcome.kind === "permanent") {
+      const parked = commitState(taskId, "parked_permanent", ["delivering"]);
+      if (parked.ok && parked.value) {
+        emitRoutingOutcome(taskId, origin, deps.taskManager.getTask(taskId)?.toolName ?? "background_task", false, "permanent_parked");
+      } else if (!parked.ok) {
+        deps.taskManager.scheduleStateRetry(taskId, "parked_permanent", ["delivering"]);
+        emitRoutingOutcome(taskId, origin, deps.taskManager.getTask(taskId)?.toolName ?? "background_task", false, "retry_scheduled");
+      }
+    } else {
+      const parked = commitState(taskId, "parked_uncertain", ["delivering"]);
+      if (parked.ok && parked.value) {
+        emitRoutingOutcome(taskId, origin, deps.taskManager.getTask(taskId)?.toolName ?? "background_task", false, "uncertain_parked");
+      } else if (!parked.ok) {
+        deps.taskManager.scheduleStateRetry(taskId, "parked_uncertain", ["delivering"]);
+        emitRoutingOutcome(taskId, origin, deps.taskManager.getTask(taskId)?.toolName ?? "background_task", false, "retry_scheduled");
+      }
+    }
+    log.warn(
       {
         taskId,
-        agentId,
         channelType: origin.deliveryOrigin.channelType,
-        durationMs: deliveryDurationMs,
-        traceId: reentryContext.value.traceId,
+        durationMs,
+        deliveryOutcome: outcome.kind,
+        err: toSafeErrorLogString(new Error(outcome.message)),
+        traceId: origin.traceId,
+        hint: outcome.kind === "retryable_pre_send"
+          ? "Restore the originating channel adapter; the protected outbox will retry"
+          : "Reconcile the parked delivery before authorizing another outward send",
+        errorKind: outcome.errorKind,
       },
-      "Background completion delivered",
+      "Background completion delivery did not reach accepted state",
     );
   }
 
-  /**
-   * Two-phase commit:
-   *
-   * 1. transitionDispatchState(taskId, "notified") — synchronously persists
-   *    `dispatchState = "notified"` to disk (via persistTaskSync inside the
-   *    manager). This MUST run before fallbackNotifyFn so a SIGKILL between
-   *    persist and fire does NOT leak a duplicate on recovery: the at-most-
-   *    once gate at the top of handleEvent (which reads task.dispatchState)
-   *    sees "notified" and skips re-firing. Without this ordering, the gate
-   *    misses and the user receives the notification twice.
-   *
-   * 2. fallbackNotifyFn(...) — actually deliver the user-visible
-   *    notification. May reject (channel offline, rate-limited, etc.); the
-   *    failure is logged at WARN. The persisted state stays at "notified" —
-   *    the user did not see the notification, but the at-most-once contract
-   *    takes precedence over delivery completeness.
-   */
   async function fallbackForTask(taskId: string, agentId: string, toolName: string, message: string): Promise<void> {
-    // Phase 1: persist state. transitionDispatchState may return false if
-    // the task disappeared from the manager between handler entry and this
-    // call (e.g., explicit cleanup). In that case there is nothing to gate
-    // on; we still fire so the user sees the completion. The persist is
-    // synchronous so the on-disk state is updated before phase 2.
-    deps.taskManager.transitionDispatchState(taskId, "notified");
-
-    // Phase 2: fire user-visible notification.
-    try {
-      await deps.fallbackNotifyFn({
-        agentId,
-        message,
-        priority: "normal",
-        origin: "background_task",
-      });
-    } catch (err) {
+    const task = deps.taskManager.getTask(taskId);
+    if (!task) return;
+    const outbox: BackgroundContinuationOutbox = {
+      kind: "fallback",
+      response: message,
+      executionId: task.continuationExecutionId,
+      idempotencyKey: `background-fallback:${task.continuationExecutionId}`,
+      deliveryProtection: deps.deliveryProtection,
+    };
+    const persisted = deps.taskManager.persistContinuationOutbox(taskId, outbox, ["execution_claimed"]);
+    if (!persisted.ok) {
+      const pending = commitState(taskId, "pending", ["execution_claimed"]);
+      if (pending.ok && pending.value) {
+        deps.taskManager.scheduleDispatchRetry(taskId);
+        emitRoutingOutcome(taskId, task.origin, toolName, false, "retry_scheduled");
+      } else if (!pending.ok) {
+        deps.taskManager.scheduleDispatchRetry(taskId);
+        emitRoutingOutcome(taskId, task.origin, toolName, false, "retry_scheduled");
+      }
       log.warn(
-        { taskId, toolName, agentId, err, hint: "fallbackNotifyFn rejected; user will not see the completion notification for this task. dispatchState already persisted as \"notified\" — no duplicate on recovery.", errorKind: "internal" as const },
-        "Background completion: fallbackNotifyFn rejected (post-persist)",
+        {
+          taskId,
+          toolName,
+          agentId,
+          err: persisted.error.message,
+          hint: "Repair protected background-task storage; fallback persistence will retry before any send",
+          errorKind: "resource" as const,
+        },
+        "Background completion fallback outbox persistence failed",
       );
+      return;
     }
+    await deliverPersistedOutbox(taskId, task.origin, outbox);
   }
 
   return {

@@ -25,7 +25,9 @@ export function buildSignalAttachments(
 ): Attachment[] {
   if (!attachments || attachments.length === 0) return [];
 
-  const normalized = baseUrl.replace(/\/+$/, "");
+  let normalizedEnd = baseUrl.length;
+  while (normalizedEnd > 0 && baseUrl[normalizedEnd - 1] === "/") normalizedEnd--;
+  const normalized = baseUrl.slice(0, normalizedEnd);
 
   return attachments
     .filter((att) => att.id)

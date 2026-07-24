@@ -14,6 +14,7 @@
 
 import { formatSessionKey, toSafeErrorLogString } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { withPromptTimeout } from "../prompt-timeout.js";
 import { runContinuationTurn } from "../continuation-turn.js";
 import {
@@ -25,6 +26,7 @@ import {
 import { runPostBatchContinuation } from "../post-batch-continuation.js";
 import { runNarrateNudge } from "../narrate-nudge.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
+import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { TurnBudgetTracker } from "../../budget/turn-budget-tracker.js";
@@ -55,7 +57,17 @@ export async function escalateOutput(
 
   // Output escalation -- retry with higher output budget on max_tokens truncation.
   if (promptSucceeded && !skipPrompt && !escalationAttempted && !budgetTracker) {
-    escalationAttempted = await maybeEscalateOutput(params, messageText, promptImages);
+    const escalation = await maybeEscalateOutput(params, messageText, promptImages);
+    if (escalation.ok) {
+      escalationAttempted = escalation.value;
+    } else {
+      return {
+        promptSucceeded: false,
+        promptError: escalation.error,
+        escalationAttempted: false,
+        ghostCost,
+      };
+    }
   }
 
   if (promptSucceeded && !skipPrompt) {
@@ -84,7 +96,7 @@ async function maybeEscalateOutput(
   params: RunPromptParams,
   messageText: string,
   promptImages: ImageContent[] | undefined,
-): Promise<boolean> {
+): Promise<Result<boolean, Error>> {
   const { session, sessionKey, agentId, bridge, config, effectiveTimeout, deps } = params;
 
   const bridgeStopReason = bridge.getResult().lastStopReason;
@@ -96,31 +108,33 @@ async function maybeEscalateOutput(
     !escalationEnabled ||
     config.maxTokens !== undefined // only when not explicitly set by operator
   ) {
-    return false;
+    return ok(false);
   }
 
   const originalMaxTokens = session.agent.state.model?.maxTokens ?? 8192;
   const escalatedMaxTokens = escalationConfig?.escalatedMaxTokens ?? 32_768;
-
-  deps.logger.info(
-    {
+  const guardProviderDispatch = resolveProviderDispatchGuard(
+    params.executionOverrides?.onProviderStart,
+  );
+  const instrumented = tryCatch(() => {
+    deps.logger.info(
+      {
+        originalMaxTokens,
+        escalatedMaxTokens,
+        hint: "LLM hit max_tokens; retrying with escalated output budget",
+      },
+      "Output escalation triggered",
+    );
+    deps.eventBus.emit("execution:output_escalated", {
+      agentId: agentId ?? "default",
+      sessionKey: formatSessionKey(sessionKey),
       originalMaxTokens,
       escalatedMaxTokens,
-      hint: "LLM hit max_tokens; retrying with escalated output budget",
-    },
-    "Output escalation triggered",
-  );
-
-  // Emit escalation event for observability
-  deps.eventBus.emit("execution:output_escalated", {
-    agentId: agentId ?? "default",
-    sessionKey: formatSessionKey(sessionKey),
-    originalMaxTokens,
-    escalatedMaxTokens,
-    timestamp: deps.clock.now(),
+      timestamp: deps.clock.now(),
+    });
   });
+  if (!instrumented.ok) return err(instrumented.error);
 
-  // One-shot stream wrapper: inject escalated maxTokens into the next prompt call
   const originalStreamFn = session.agent.streamFn;
   let escalationUsed = false;
   session.agent.streamFn = (model, context, options) => {
@@ -133,6 +147,8 @@ async function maybeEscalateOutput(
   };
 
   try {
+    const admitted = guardProviderDispatch();
+    if (!admitted.ok) return err(admitted.error);
     await withPromptTimeout(
       session.prompt(messageText, {
         expandPromptTemplates: false,
@@ -143,12 +159,8 @@ async function maybeEscalateOutput(
       deps.timers,
     );
 
-    // Update response from escalated attempt
     const escalatedResponse = getVisibleAssistantText(session);
-    if (escalatedResponse) {
-      // Escalation response replaces original truncated response downstream
-      // (extractedResponse in the next block will pick this up)
-    }
+    if (escalatedResponse) void escalatedResponse;
   } catch (escalationError) {
     deps.logger.warn(
       {
@@ -159,11 +171,10 @@ async function maybeEscalateOutput(
       "Output escalation retry failed",
     );
   } finally {
-    // Restore original stream fn (one-shot wrapper should not persist)
     session.agent.streamFn = originalStreamFn;
   }
 
-  return true;
+  return ok(true);
 }
 
 /**
@@ -230,6 +241,7 @@ async function processSuccessPath(
       const continuationResult = await runContinuationTurn(
         session,
         "Please provide a visible response summarizing what you did.",
+        resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
       );
       if (continuationResult.ok) {
         const lateRecovered = getVisibleAssistantText(session);
@@ -355,6 +367,9 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
     logger: deps.logger,
     agentId,
     getVisibleAssistantText,
+    guardProviderDispatch: resolveProviderDispatchGuard(
+      params.executionOverrides?.onProviderStart,
+    ),
   });
   if (continuationResult.ok) {
     const v = continuationResult.value;
@@ -393,6 +408,9 @@ async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
     logger: deps.logger,
     agentId,
     getVisibleAssistantText,
+    guardProviderDispatch: resolveProviderDispatchGuard(
+      params.executionOverrides?.onProviderStart,
+    ),
   });
   if (outcome.recovered && outcome.response) {
     result.response = outcome.response;
@@ -433,7 +451,11 @@ async function runBudgetContinuation(
       "Budget continuation nudge",
     );
 
-    const continuationResult = await runContinuationTurn(session, budgetNudgeText);
+    const continuationResult = await runContinuationTurn(
+      session,
+      budgetNudgeText,
+      resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
+    );
     if (!continuationResult.ok) {
       deps.logger.warn(
         { err: toSafeErrorLogString(continuationResult.error), hint: "Budget continuation turn failed; preserving response collected so far", errorKind: "dependency" as ErrorKind },
@@ -454,7 +476,6 @@ async function runBudgetContinuation(
   }
 
   const lastDecisionReason = decision.reason;
-
   // Set finish reason based on tracker stop condition
   if (decision.reason === "budget_reached" || decision.reason === "diminishing_returns" || decision.reason === "max_continuations") {
     result.finishReason = "budget_exhausted";

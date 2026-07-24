@@ -675,11 +675,10 @@ export interface InfraEvents {
    * background task — the OBSERVABILITY signal for "did a raw
    * 'Background task "…" completed.' message fire, and was it correct?".
    *
-   * `notified:false, reason:"live_turn_suppressed"` is the HEALTHY post-fix
+   * `notified:false, reason:"live_turn_consumed"` is the healthy live-turn
    * shape (a task auto-backgrounded mid-turn is consumed by its own running
    * turn, so the notice is suppressed). `notified:true` means a user-visible
-   * notice DID fire (`no_session` = the origin session ended; `hop_cap` =
-   * recursion limit) — a `notified:true` with the origin turn demonstrably live
+   * notice DID fire — a `notified:true` with the origin turn demonstrably live
    * is the leak class this event exists to make diagnosable from
    * `comis explain` in one call (previously wire-grep-only). Content-free:
    * ids + closed-union reason + a boolean, never a message body.
@@ -693,10 +692,20 @@ export interface InfraEvents {
     /** true ⇒ a user-visible fallback notice fired; false ⇒ suppressed. */
     notified: boolean;
     /** Closed-union: why the dispatcher took the fallback/suppress path. */
-    reason: "no_session" | "hop_cap" | "live_turn_suppressed";
+    reason:
+      | "live_turn_consumed"
+      | "silent_consumed"
+      | "continuation_accepted"
+      | "fallback_accepted"
+      | "retry_scheduled"
+      | "permanent_parked"
+      | "uncertain_parked"
+      | "recovery_retry_required"
+      | "recovery_resolved";
     /** traceId from task.origin for operator log continuity (null when absent). */
     traceId: string | null;
     timestamp: number;
+    trajectoryRecorded: boolean;
   };
 
   /** Background completion runner is about to invoke executor.execute() on

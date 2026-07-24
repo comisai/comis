@@ -180,6 +180,42 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       }
       return;
     }
+    case "background_task.notified": {
+      const reason = asString(data.reason);
+      const taskId = asString(data.taskId);
+      if (taskId === undefined) return;
+      if (reason === "recovery_retry_required") {
+        const toolName = asString(data.toolName);
+        acc.backgroundRecoveryRetryCount += 1;
+        acc.backgroundRecoveryByTask.set(taskId, {
+          unresolved: true,
+          ...(toolName === undefined ? {} : { toolName }),
+        });
+        acc.backgroundRecoveryLastTaskId = taskId;
+        acc.backgroundRecoveryLastToolName = toolName;
+        return;
+      }
+      if (
+        reason === "live_turn_consumed"
+        || reason === "silent_consumed"
+        || reason === "continuation_accepted"
+        || reason === "fallback_accepted"
+        || reason === "permanent_parked"
+        || reason === "uncertain_parked"
+        || reason === "recovery_resolved"
+      ) {
+        const existing = acc.backgroundRecoveryByTask.get(taskId);
+        if (existing !== undefined) {
+          acc.backgroundRecoveryByTask.set(taskId, { ...existing, unresolved: false });
+          const unresolved = [...acc.backgroundRecoveryByTask.entries()]
+            .filter(([, entry]) => entry.unresolved);
+          const last = unresolved[unresolved.length - 1];
+          acc.backgroundRecoveryLastTaskId = last?.[0];
+          acc.backgroundRecoveryLastToolName = last?.[1].toolName;
+        }
+      }
+      return;
+    }
     case "tool.result": {
       if (!tool) return;
       // Dedupe by toolCallId — the live ctx_search counted twice when its
@@ -598,6 +634,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     videoOutcomeSeq: -1,
     voiceOutcomeSeq: -1,
     terminalDrivePromotedCount: 0,
+    backgroundRecoveryRetryCount: 0,
+    backgroundRecoveryByTask: new Map(),
   };
 
   for (const rec of records) {
@@ -819,6 +857,21 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             ...(acc.subagentKilledRuntimeMs !== undefined ? { runtimeMs: acc.subagentKilledRuntimeMs } : {}),
             ...(acc.subagentKilledIdleMs !== undefined ? { idleMs: acc.subagentKilledIdleMs } : {}),
             ...(acc.subagentKilledThresholdMs !== undefined ? { thresholdMs: acc.subagentKilledThresholdMs } : {}),
+          },
+        }
+      : {}),
+    ...(acc.backgroundRecoveryRetryCount > 0
+      ? {
+          backgroundRecovery: {
+            retryRequiredCount: acc.backgroundRecoveryRetryCount,
+            unresolvedCount: [...acc.backgroundRecoveryByTask.values()]
+              .filter((entry) => entry.unresolved).length,
+            ...(acc.backgroundRecoveryLastTaskId !== undefined
+              ? { lastTaskId: acc.backgroundRecoveryLastTaskId }
+              : {}),
+            ...(acc.backgroundRecoveryLastToolName !== undefined
+              ? { lastToolName: acc.backgroundRecoveryLastToolName }
+              : {}),
           },
         }
       : {}),

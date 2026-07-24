@@ -286,9 +286,11 @@ Approval gates, config patches, plugin lifecycle, hook execution, auth token rot
 | `approval:resolved` | requestId, approved, approvedBy, reason, resolvedAt |
 | `auth:token_rotated` | provider, profileName, expiresAtMs, timestamp |
 | `background_task:cancelled` | agentId, taskId, toolName, timestamp |
-| `background_task:completed` | agentId, taskId, toolName, durationMs, timestamp |
-| `background_task:failed` | agentId, taskId, toolName, error, durationMs, timestamp |
+| `background_task:completed` | agentId, taskId, toolName, durationMs, origin, timestamp |
+| `background_task:failed` | agentId, taskId, toolName, error, durationMs, origin, timestamp |
+| `background_task:notified` | agentId, taskId, toolName, sessionKey, notified, reason, traceId, timestamp, trajectoryRecorded |
 | `background_task:promoted` | agentId, taskId, toolName, timestamp |
+| `background_task:reentered` | taskId, agentId, sessionKey, hopCount, traceId, timestamp |
 | `config:patched` | section, key, patchedBy, timestamp |
 | `diagnostic:billing_snapshot` | providers, totalCost, timestamp |
 | `diagnostic:channel_health` | channels, timestamp |

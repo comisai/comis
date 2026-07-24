@@ -78,7 +78,10 @@ vi.mock("@comis/core", async (importOriginal) => {
   };
 });
 
-vi.mock("node:fs", () => ({ mkdirSync: vi.fn() }));
+vi.mock("node:fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs")>()),
+  mkdirSync: vi.fn(),
+}));
 
 vi.mock("../tool-capability-adapter.js", () => ({
   createToolCapabilityAdapter: vi.fn(() => ({ getCapabilities: vi.fn() })),

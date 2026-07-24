@@ -53,10 +53,11 @@
     "chokidar": "5.0.0",
     "diff": "8.0.4",
     "open": "10.2.0",
-    "sharp": "0.34.5",
+    "sharp": "0.35.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@aws-sdk/client-bedrock-runtime": "3.1048.0",
     "@comis/memory": "workspace:*",
     "@types/better-sqlite3": "7.6.13",
     "@types/proper-lockfile": "4.1.4",

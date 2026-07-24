@@ -179,11 +179,11 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     if (terminal) {
       const completion = await graphCompletions.run(gs);
       if (!completion.ok) return false;
-      const completed = await store.markCompleted(gs.graphId);
+      const completed = await store.terminalize(gs.graphId, "completed");
       if (!completed.ok) {
         deps.logger?.warn(
           { graphId: gs.graphId, rootRunId, err: toSafeErrorLogString(completed.error), hint: "Repair the durable authority store; graph completion remains parked and resumable", errorKind: "resource" as const },
-          "Graph durable markCompleted failed",
+          "Graph durable terminalize failed",
         );
         return false;
       }
