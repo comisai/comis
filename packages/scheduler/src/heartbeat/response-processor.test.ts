@@ -10,8 +10,11 @@ import {
 } from "./response-processor.js";
 
 describe("heartbeat response normalization", () => {
-  it("drops an unterminated HTML tag tail before classifying a heartbeat reply", () => {
-    expect(stripMarkup("HEARTBEAT_OK<script")).toBe("HEARTBEAT_OK");
+  it("preserves an unmatched angle bracket and its diagnostic tail", () => {
+    expect(stripMarkup("load < 80%; CRITICAL: disk failing")).toBe(
+      "load < 80%; CRITICAL: disk failing",
+    );
+    expect(stripMarkup("HEARTBEAT_OK<script")).toBe("HEARTBEAT_OK<script");
   });
 
   it("exposes a wrapped heartbeat token through bounded markup removal", () => {

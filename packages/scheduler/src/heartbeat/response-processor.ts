@@ -79,7 +79,10 @@ function stripHtmlTags(text: string): string {
     }
     parts.push(text.slice(cursor, start));
     const end = text.indexOf(">", start + 1);
-    if (end === -1) break;
+    if (end === -1) {
+      parts.push(text.slice(start));
+      break;
+    }
     cursor = end + 1;
   }
   return parts.join("");
