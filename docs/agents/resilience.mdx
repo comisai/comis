@@ -207,13 +207,14 @@ within a process lifetime is delivered **once** — the second enqueue is a no-o
 This prevents a fallback or retry from double-notifying the parent.
 
 The key is recorded only **after** a successful send, so a failed delivery is
-never suppressed — it remains eligible for retry. The delivered-key set is
-in-memory and resets on a daemon restart, so the documented floor is
-**at-least-once across a restart**: a delivery completed before the restart is
-already done, and re-delivery of a dead-lettered entry across a restart is
-bounded by the dead-letter queue's own per-entry retry cap and max age above.
-Exactly-once *across a restart* is not provided — and is not needed, since a
-duplicate delivery after a restart is harmless next to a lost completion.
+never suppressed — it remains eligible for retry. This in-memory set is the
+process-local batcher baseline. When autonomy durability is enabled, as it is by
+default for autonomy-bearing agents, sub-agent completion announcements also
+use the retained outward-operation ledger. A committed operation returns its
+prior receipt without another send; an ambiguous outcome is parked for operator
+reconciliation instead of replayed. [Durability & Resume](/agents/autonomy#durability-resume)
+owns that restart contract. With durability explicitly disabled, only the
+process-local deduplication and dead-letter behavior described here apply.
 
 The **failure notification** path (the static message sent when a sub-agent
 ends in error — a budget breach, watchdog timeout, ghost sweep, or degraded
@@ -227,9 +228,13 @@ A task promoted into the background persists its origin and execution identity
 under [`background-tasks/`](/operations/data-directory#background-tasks). When
 the task finishes, Comis durably records the finalized result and continuation
 outbox before attempting exact-origin delivery. The originating live turn can
-consume that result once with `background_tasks.read_output`; otherwise the
-completion runner re-enters the same conversation for a continuation turn or
-delivers a bounded fallback notice.
+consume that result once with `background_tasks.read_output`. Before returning
+either a completed result or a failed terminal outcome, the tool atomically
+commits `consumed_live` in the protected task record. If that claim cannot be
+persisted, or another delivery already owns the result, the read returns a
+conflict and no competing terminal notice is emitted. Otherwise the completion
+runner re-enters the same conversation for a continuation turn or delivers a
+bounded fallback notice.
 
 The persisted delivery lifecycle survives daemon restart. A delivery protected
 by the outward ledger retries only when the ledger proves the send was not

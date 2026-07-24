@@ -2,7 +2,7 @@
 // @allow-throw: platform-tool boundary; throws caught by AgentTool wrapper (returns AgentToolResult) — agent execution boundary catch.
 /**
  * Subagents lifecycle management tool: multi-action tool for listing,
- * killing, and steering running sub-agents.
+ * waiting for, killing, and steering running sub-agents.
  *
  * Supports 4 actions: list (default), wait, kill, steer.
  * Kill action is gated via action classifier.

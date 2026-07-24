@@ -408,6 +408,7 @@ function buildChannelManagerDeps(deps: {
       continuationTracker.track({
         agentId: defaultAgentId, channelType, channelId: msg.channelId,
         userId: msg.senderId, chatType,
+        // eslint-disable-next-line security/detect-object-injection -- defaultAgentId selects a key from the validated agent configuration map.
         resolvedLanguage: resolveContinuationLanguage(msg, agentsConfig[defaultAgentId]?.language),
         tenantId: container.config.tenantId, timestamp: Date.now(),
       });
@@ -1527,6 +1528,7 @@ async function bootFoundation(
   const { backgroundTaskManager } = setupBackgroundTasks({
     dataDir, config: BackgroundTasksConfigSchema.parse(container.config.agents[container.config.routing.defaultAgentId]?.backgroundTasks ?? {}),
     resolveConfigForAgent: (agentId) => BackgroundTasksConfigSchema.parse(
+      // eslint-disable-next-line security/detect-object-injection -- agentId selects a key from the validated agent configuration map.
       container.config.agents[agentId]?.backgroundTasks ?? {},
     ),
     eventBus: container.eventBus,
@@ -2283,6 +2285,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     taskManager: backgroundTaskManager, fallbackNotifyFn: bgNotifyFn,
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
     resolveMaxBackgroundHops: (agentId) => BackgroundTasksConfigSchema.parse(
+      // eslint-disable-next-line security/detect-object-injection -- agentId selects a key from the validated per-agent runtime map.
       agents[agentId]?.backgroundTasks ?? {},
     ).maxBackgroundHops,
     logger: daemonLogger,
@@ -2954,7 +2957,6 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   const instanceId = randomUUID().slice(0, 8);
 
   // Apply SDK logging defaults before constructing provider clients.
-  // eslint-disable-next-line no-restricted-syntax -- process.env access required before SecretManager is initialized; ANTHROPIC_LOG is the SDK-owned switch, not a comis credential.
   applyInspectDefaultsForLogging(process.env as Record<string, string | undefined>);
 
   // Probe native dependencies before subsystem initialization.

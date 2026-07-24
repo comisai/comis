@@ -1,83 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Sessions-domain RPC contracts. Mirrors the single daemon handler factory
- * file `packages/daemon/src/api/session-handlers.ts` that owns the
- * `SessionsApiDeps` cluster slice:
+ * Sessions-domain RPC contracts implemented by the handlers under
+ * `packages/daemon/src/api/session-handlers/`. These schemas are the
+ * authoritative wire surface and generate the client contracts.
  *
- *   - `session-handlers.ts`  (12 methods — session.* + agents.list)
- *
- * **Scope assignments** (mirror `setup-gateway-api.ts` registrations):
- *
- *   session-handlers.ts (mixed rpc + admin scope groups):
- *
- *   rpc (setup-gateway-api.ts:136-145 — "Bridge session/cron methods"):
- *   - `session.send`        (rpc — agent-to-agent messaging)
- *   - `session.spawn`       (rpc — sub-agent spawn)
- *   - `session.status`      (rpc — read-only health/token check)
- *   - `session.history`     (rpc — read-only transcript)
- *   - `session.search`      (rpc — read-only full-text search)
- *   - `session.run_status`  (rpc/admin — owner-scoped intrinsic registration,
- *                                  same pattern as scheduler.wake / delivery.queue.status;
- *                                  no explicit setup-gateway-api.ts entry)
- *
- *   admin (setup-gateway-api.ts:203-207 — "Agent management admin"):
- *   - `agents.list`         (admin — system read; OWNED BY session-handlers.ts:272
- *                                    — the handler ownership is in
- *                                    session-handlers.ts even though the name
- *                                    suggests agents.ts, so the contract lives here)
- *
- *   admin (setup-gateway-api.ts:213-215 — "Session management admin"):
- *   - `session.list`        (admin — system read)
- *   - `session.delete`      (admin — destructive)
- *   - `session.reset`       (admin — destructive, preserves identity metadata)
- *   - `session.export`      (admin — full transcript dump)
- *   - `session.compact`     (admin — destructive summarization)
- *
- * **Loose-record use** (escape hatch). The transcript / messages surface
- * in session.* responses carries arbitrary message
- * payloads (provider-specific shapes — Anthropic / OpenAI / Google
- * differ on tool_use blocks, image parts, audio parts, etc.). Pinning
- * the per-message shape would re-encode the entire provider matrix in
- * the contract — the contract layer carries loose records here:
- *
- *   - `session.history.response.messages` — array of `{ role, content, timestamp }`
- *     where `content` is `z.string()` (the handler already projects multi-part
- *     content arrays into a flat string per message — handler:600-654).
- *   - `session.export.response.messages` — array of LooseRecord (raw stored
- *     messages, NOT projected — used for full transcript archiving with
- *     provider-specific shapes preserved).
- *   - `session.delete.response.transcript.messages` — same as session.export.
- *   - `session.send.response` — LooseRecord at root (delegates to
- *     `crossSessionSender.send` whose return shape varies by mode
- *     fire-and-forget / wait / ping-pong).
- *   - `session.search.response.results[]` — tight modeled (snippet / score /
- *     timestamp), but per-message text projection during search is loose.
- *   - `session.list.response.sessions[].metadata` — LooseRecord (carries
- *     `parentSessionKey` + `_workspaceJsonlPath` + arbitrary user-set
- *     metadata).
- *
- * Modelling these tighter would re-encode the entire SessionData /
- * MessageContent / CrossSessionSender surface in the contract — pinning
- * the wire format across daemon restarts on every provider SDK update.
- *
- * **TIGHT modeling preferred for primitive-leaf response shapes.**
- * session.status (tokensUsed/stepsExecuted/maxSteps numerics + agentName/model
- * strings), session.delete (sessionKey/deleted flag + transcript.messageCount),
- * session.reset (sessionKey/reset/previousMessageCount), session.compact
- * (sessionKey/messageCount/estimatedTokens/compactionTriggered/instructions
- * nullable), session.run_status (closed bounded sub-agent lifecycle projection
- * + content-free telemetry), session.spawn (4 response
- * variants — async-running, async-queued, sync-success, timeout — see
- * per-contract JSDoc for variant union).
- *
- * **Allowlist compliance.** All schemas use the 12-shape allowlist:
- * z.object, z.string, z.number, z.boolean, z.literal, z.array, z.optional,
- * z.nullable, z.record (loose-record value-type — used in 8 distinct
- * field positions). No refinements (`.url()`, `.regex()`, `.refine`,
- * `.transform`).
- *
- * **Single-scope invariant.** Every contract in this file has exactly ONE
- * scope (scopes.length === 1). Verified by an inline test in sessions.test.ts.
+ * Session data operations identify their exact storage partition with
+ * `{ tenant_id, agent_id, conversation_ref }`; handlers must not infer a
+ * tenant or agent from a display session key. Loose records remain only where
+ * provider-specific message bodies or mode-specific responses cannot be
+ * modeled without duplicating their owning domain contracts.
  *
  * @module
  */
@@ -90,7 +21,7 @@ import {
 import { defineContract } from "./types.js";
 
 // ===========================================================================
-// session-handlers.ts (12 methods)
+// Sessions domain
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
@@ -99,7 +30,7 @@ import { defineContract } from "./types.js";
 
 /**
  * `session.status` — Per-agent runtime stats (model, agent name, token / cost
- * totals, step counter). Handler path: session-handlers.ts:254-270.
+ * totals, step counter). Handler: `session-handlers/session-read.ts`.
  *
  * Bespoke pre-Zod: none (handler defensively uses `_agentId ?? defaultAgentId`
  * and reads costTrackers / stepCounters maps with a fallback).
@@ -132,9 +63,8 @@ export const SessionStatusContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `agents.list` — Return the array of configured agent IDs. Owned by
- * session-handlers.ts:272-274 (NOT agent-handlers.ts despite the name).
- * Admin-scoped per setup-gateway-api.ts:203-207.
+ * `agents.list` — Return the array of configured agent IDs. Implemented by
+ * `session-handlers/session-read.ts` despite the method namespace. Admin-only.
  *
  * Bespoke pre-Zod: none.
  *
@@ -151,28 +81,24 @@ export const AgentsListContract = defineContract({
 });
 
 // ---------------------------------------------------------------------------
-// session.list (admin)
+// session.list (rpc)
 // ---------------------------------------------------------------------------
 
 /**
  * `session.list` — Aggregated session list across SQLite + JSONL + workspace
  * sources, with optional recency + kind filters and sandboxed sub-agent
- * visibility. Admin-scoped per setup-gateway-api.ts:213-215.
- * Handler path: session-handlers.ts:276-366.
+ * visibility. Agent-self RPC reads are scoped to the requested tenant and
+ * agent. Handler: `session-handlers/session-list.ts`.
  *
  * Bespoke pre-Zod: none.
  *
- * Request: `{ kind?, since_minutes? }`. The dispatcher injects
- * `_callerMetadata`, `_callerSessionKey`, `_tenantId` AFTER the contract
- * parse — those are NOT modeled here. The handler reads them from
- * rawParams BEFORE strip.
+ * Request: `{ tenant_id, agent_id, kind?, since_minutes? }`.
  *
  * Response: `{ sessions: SessionInfo[], total }`. Each `SessionInfo` is
- * tight-modeled (sessionKey / agentId / userId / channelId / kind / counts /
- * timestamps). Three known kinds are produced by the handler: `"sub-agent"`
- * (when metadata.parentSessionKey is set), `"group"` (when guildId is in
- * the session key), `"dm"` (otherwise). The contract preserves the string
- * shape rather than an enum to allow future kinds without contract churn.
+ * tight-modeled (conversationRef / agentId / kind / counts / timestamps).
+ * The handler derives `"sub-agent"` from parent metadata, `"group"` from a
+ * shared endpoint-conversation partition, and `"dm"` otherwise. The contract
+ * preserves the string shape rather than duplicating that domain classifier.
  */
 export const SessionListContract = defineContract({
   method: "session.list",
@@ -211,14 +137,12 @@ export const SessionListContract = defineContract({
  * scope filter (`user` / `assistant` / `tool` / `all`) and optional LLM
  * summarization of the top-5 matches. Recent-sessions mode when no query
  * is provided.
- * Handler path: session-handlers.ts:368-517.
+ * Handler: `session-handlers/session-list.ts`.
  *
  * Bespoke pre-Zod: none (handler defensively clamps `limit` to [1, 30]
  * for recent-mode and [1, 50] for search-mode).
  *
- * Request: `{ query?, scope?, limit?, summarize? }`. `_agentId` internal is
- * dispatcher-injected for caller-scoping (the handler filters sessions to
- * those whose key prefix matches caller's agentId).
+ * Request: `{ tenant_id, agent_id, query?, scope?, limit?, summarize? }`.
  *
  * Response: discriminated by `mode`:
  *   - `mode: "recent"` → `{ sessions: RecentSession[], total }` — recent
@@ -253,7 +177,7 @@ export const SessionSearchContract = defineContract({
  * `session.history` — Paginated transcript + computed stats (token counts,
  * tool call counts, attachment markers). Falls back to JSONL workspace
  * file when SQLite doesn't have the session.
- * Handler path: session-handlers.ts:519-709.
+ * Handler: `session-handlers/session-read.ts`.
  *
  * Bespoke pre-Zod (no admin-gate — read-only):
  *   - Missing session in SQLite + workspace JSONL fallback miss →
@@ -263,10 +187,10 @@ export const SessionSearchContract = defineContract({
  * Handler defaults offset=0, limit=20.
  *
  * Response: `{ session: SessionMeta, messages: Message[], total, offset,
- * limit, hasMore }`. `session` is tight-modeled per the handler's
- * computed-stats projection (handler:683-697). `messages` is tight-modeled
- * `{ role, content, timestamp }` (the multi-part content array is flattened
- * to a string + attachment markers per handler:600-654).
+ * limit, hasMore }`. `session` is tight-modeled to the handler's computed
+ * statistics projection. `messages` is tight-modeled as
+ * `{ role, content, timestamp, deliveryStatus? }`; the handler flattens
+ * multi-part content to a string with attachment markers.
  */
 export const SessionHistoryContract = defineContract({
   method: "session.history",
@@ -333,11 +257,10 @@ export const SessionHistoryContract = defineContract({
  *     `"Agent-to-agent messaging is disabled by policy. Enable
  *     security.agentToAgent.enabled in config."`
  *
- * Request: `{ session_key, text, mode?, timeout_ms?, max_turns?, agent_id? }`.
- * On an agent-origin call, `agent_id` is only an ownership assertion; the
- * handler resolves the execution agent from authoritative target metadata.
- * The dispatcher injects `_callerSessionKey`, `_callerChannelType`,
- * `_callerChannelId` — NOT declared in the contract here.
+ * Request: `{ tenant_id, agent_id, conversation_ref, text, mode?,
+ * timeout_ms?, max_turns? }`. Agent-origin calls additionally require an
+ * injected caller principal that agrees with request context; those internal
+ * fields are not part of this contract.
  *
  * Response: LooseRecord at root. The handler delegates to
  * `crossSessionSender.send` whose return shape varies by mode (sync
@@ -365,11 +288,11 @@ export const SessionSendContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `session.spawn` — Spawn a sub-agent run, either async (returns runId) or
- * sync (polls until complete or timeout). Carries spawn-packet fields
+ * `session.spawn` — Start a background sub-agent run and return its run ID
+ * immediately. Carries spawn-packet fields
  * (artifactRefs / objective / domainKnowledge / toolGroups /
  * includeParentHistory).
- * Handler path: session-handlers.ts:732-857.
+ * Handler: `session-handlers/session-mutate.ts`.
  *
  * Bespoke pre-Zod:
  *   - `!deps.securityConfig.agentToAgent?.enabled` →
@@ -382,12 +305,10 @@ export const SessionSendContract = defineContract({
  * child (auto-clean-if-unchanged + conservative orphan-sweep —
  * worktree-lifecycle.ts).
  *
- * Response has 4 variants discriminated by combination of fields:
- *   - sync-success: `{ sessionKey, response?, tokensUsed?, finishReason?,
- *     announced, taskDescription }`.
- *   - sync-timeout: `{ runId, async: true, note }`.
- *   - async-running: `{ runId, async: true }`.
- *   - async-queued: `{ runId, async: true, queued: true }`.
+ * The optional `async` request field is accepted, but there is no synchronous
+ * execution path. Response: `{ runId, async: true, inProgress: true,
+ * noteType: "background_running", queued?, deduped?, existingRunId?,
+ * dedupAgeMs? }`.
  *
  * LOOSE-RECORD: response is loose at root — tight discriminated-union
  * modeling would require pinning the per-variant disjoint fields, and the
@@ -431,7 +352,8 @@ export const SessionSpawnContract = defineContract({
  * `session.run_status` — Read a bounded, owner-authorized sub-agent run by runId,
  * including elapsed runtime, closed completion reason, and content-free
  * telemetry.
- * Handler path: session-handlers.ts:859-877.
+ * Handler: `session-handlers/session-read.ts` through the intrinsic status
+ * projection.
  *
  * Missing and non-owned ids share the same authorization denial.
  *
@@ -441,8 +363,8 @@ export const SessionSpawnContract = defineContract({
  * task text, display session keys, and free-form error fields never cross this
  * status surface.
  *
- * Intrinsic registration exposes both `rpc` and `admin`; the handler resolves
- * exact caller or operator authority before reading the run.
+ * The handler resolves exact caller or operator authority before reading the
+ * run and strips bounded content fields for agent-origin callers.
  */
 export const SessionRunStatusContract = defineContract({
   method: "session.run_status",
@@ -491,18 +413,14 @@ export const SessionRunStatusContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `session.delete` — Remove a session from SQLite, archive its transcript,
- * and clear approval-cache entries. Admin-only.
- * Handler path: session-handlers.ts:879-902.
+ * `session.delete` — Archive and remove a session from the contract-bearing
+ * store, clear approval and delivery-mirror state, and best-effort sever its
+ * LCD and runtime transcripts. Admin-only.
+ * Handler: `session-handlers/session-archive.ts`.
  *
- * Bespoke pre-Zod:
- *   - `_trustLevel !== "admin"` → `"Admin trust level required"`.
- *   - Missing `session_key` → `"Missing required parameter: session_key"`.
- *   - Unknown session → `"Session not found: <key>"`.
+ * Request: `{ tenant_id, agent_id, conversation_ref }`.
  *
- * Request: `{ session_key }`.
- *
- * Response: `{ sessionKey, deleted, transcript: { messages, metadata,
+ * Response: `{ conversationRef, deleted, transcript: { messages, metadata,
  * messageCount } }`. `transcript.messages` is loose-record-array
  * (raw stored messages preserved verbatim for archiving); `transcript.metadata`
  * is loose-record.
@@ -527,22 +445,17 @@ export const SessionDeleteContract = defineContract({
 });
 
 // ---------------------------------------------------------------------------
-// session.reset (admin)
+// session.reset (rpc)
 // ---------------------------------------------------------------------------
 
 /**
- * `session.reset` — Clear messages from a session while preserving its
- * identity metadata. Admin-only (registered admin scope per
- * setup-gateway-api.ts:213-215 — no in-handler admin check, the trust
- * gate is at the dispatcher).
- * Handler path: session-handlers.ts:904-920.
+ * `session.reset` — Clear working and runtime messages while preserving the
+ * conversation identity. Agent-reachable and constrained to the exact
+ * conversation partition. LCD history is intentionally left to
+ * `session.reset_conversation`. Handler: `session-handlers/session-archive.ts`.
  *
- * Bespoke pre-Zod:
- *   - Missing `session_key` → `"Missing required parameter: session_key"`.
- *   - Unknown session → `"Session not found: <key>"`.
- *
- * Request: `{ session_key }`.
- * Response: `{ sessionKey, reset, previousMessageCount }`. Tight numeric leaf.
+ * Request: `{ tenant_id, agent_id, conversation_ref }`.
+ * Response: `{ conversationRef, reset, previousMessageCount }`.
  */
 export const SessionResetContract = defineContract({
   method: "session.reset",
@@ -568,19 +481,13 @@ export const SessionResetContract = defineContract({
 
 /**
  * `session.export` — Full transcript dump including raw stored messages
- * and metadata. Admin-only (handler enforces admin trust check inline
- * AND registered admin-scope per setup-gateway-api.ts:213-215 —
- * defense-in-depth).
- * Handler path: session-handlers.ts:922-939.
+ * and metadata. Admin-only, with contract scope and an in-handler trust check
+ * providing defense in depth.
+ * Handler: `session-handlers/session-archive.ts`.
  *
- * Bespoke pre-Zod:
- *   - `_trustLevel !== "admin"` → `"Admin trust level required"`.
- *   - Missing `session_key` → `"Missing required parameter: session_key"`.
- *   - Unknown session → `"Session not found: <key>"`.
+ * Request: `{ tenant_id, agent_id, conversation_ref }`.
  *
- * Request: `{ session_key }`.
- *
- * Response: `{ sessionKey, messages, metadata, messageCount, createdAt,
+ * Response: `{ conversationRef, messages, metadata, messageCount, createdAt,
  * updatedAt }`. `messages` is loose-record-array (raw stored messages
  * preserved verbatim — provider-specific tool_use / image / audio shapes
  * pass through unchanged for archival fidelity). `metadata` is loose-record.
@@ -604,26 +511,18 @@ export const SessionExportContract = defineContract({
 });
 
 // ---------------------------------------------------------------------------
-// session.compact (admin)
+// session.compact (rpc)
 // ---------------------------------------------------------------------------
 
 /**
  * `session.compact` — Trigger session compaction (the actual summarization
  * is delegated; this handler only does the size accounting and returns the
- * planned operation). Admin-scoped per setup-gateway-api.ts:213-215.
- * Handler path: session-handlers.ts:941-965.
+ * planned operation). Agent-reachable and constrained to the exact conversation
+ * partition. Handler: `session-handlers/session-mutate.ts`.
  *
- * Bespoke pre-Zod:
- *   - Missing `session_key` AND no caller session → `"Missing required parameter:
- *     session_key"`.
- *   - Unknown session → `"Session not found: <key>"`.
+ * Request: `{ tenant_id, agent_id, conversation_ref, instructions? }`.
  *
- * Request: `{ session_key?, instructions? }`.
- * `session_key` is OPTIONAL — omit it (or pass `"self"`/`"current"`) to compact
- * the CALLER's OWN session, resolved from the dispatcher-injected
- * `_callerSessionKey`, so an agent never constructs/guesses its own key.
- *
- * Response: `{ sessionKey, messageCount, estimatedTokens, compactionTriggered,
+ * Response: `{ conversationRef, messageCount, estimatedTokens, compactionTriggered,
  * instructions: string | null }`. `compactionTriggered` is always `true`
  * (literal). `instructions` is z.nullable(z.string()) — handler returns
  * `instructions ?? null`.
@@ -654,11 +553,10 @@ export const SessionCompactContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `session.reset_conversation` — COMPLETE cross-mode forget for a session.
- * Clears BOTH the LCD lossless-store history AND the daemon sessionStore
- * working transcript (the JSONL-backed messages that feed `state.messages`
- * next turn). After this, a follow-up turn has NO prior context in both dag
- * mode (LCD empty) and pipeline mode (sessionStore empty → rehydrates empty).
+ * `session.reset_conversation` — Complete cross-mode forget for a session.
+ * Clears the delivery mirror, LCD lossless-store history, daemon sessionStore
+ * working transcript, and runtime session. After this, a follow-up turn has no
+ * prior context in either engine mode.
  *
  * A LCD-only clear would provide no forget guarantee in pipeline mode —
  * both stores must be wiped together. Handler path:
@@ -691,8 +589,9 @@ export const SessionCompactContract = defineContract({
  *   - A RAG-memory delete failure is non-fatal — the LCD/sessionStore reset is
  *     preserved and the failure degrades to a WARN.
  *
- * Request: `{ session_key, memory?, purge_derived? }`.
- * Response: `{ sessionKey, lcdRowsDeleted, sessionMessagesCleared, memoriesDeleted?, runtimeSessionDestroyed? }`.
+ * Request: `{ tenant_id, agent_id, conversation_ref, memory?, purge_derived? }`.
+ * Response: `{ conversationRef, lcdRowsDeleted, sessionMessagesCleared,
+ * memoriesDeleted?, resolvedAgentId?, runtimeSessionDestroyed? }`.
  *
  * Schema uses the 12-shape allowlist: z.object, z.string, z.number,
  * z.boolean, z.optional (ASVS V5 / contract policy).
@@ -730,23 +629,19 @@ export const SessionResetConversationContract = defineContract({
 // ===========================================================================
 
 /**
- * Tuple of every contract for the sessions umbrella (13 contracts spanning
- * the single `session-handlers.ts` factory file plus session-archive.ts).
- * The bidirectional 1:1 architecture test treats this as an unordered set;
- * the per-method order below mirrors `setup-gateway-api.ts` registration
- * order for documentation clarity (rpc group first, then admin group).
+ * Tuple of every sessions-domain contract. The bidirectional architecture test
+ * treats this as an unordered set; the order keeps status and messaging
+ * operations ahead of lifecycle and administrator operations.
  */
 export const SESSIONS_CONTRACTS = [
-  // rpc scope (session-handlers.ts — registered at setup-gateway-api.ts:136-145
-  // and intrinsic via rpc-dispatch for session.run_status)
+  // Agent-reachable RPC scope.
   SessionStatusContract,
   SessionSearchContract,
   SessionHistoryContract,
   SessionSendContract,
   SessionSpawnContract,
   SessionRunStatusContract,
-  // admin scope (session-handlers.ts — registered at setup-gateway-api.ts:213-215
-  // for session.* + setup-gateway-api.ts:203-207 for agents.list)
+  // Remaining lifecycle and administrator operations.
   AgentsListContract,
   SessionListContract,
   SessionDeleteContract,

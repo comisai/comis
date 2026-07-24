@@ -14,23 +14,27 @@ calls `sessions_spawn`.
 ## How it works
 
 The subagent context lifecycle is a pipeline that begins when the parent agent
-calls `sessions_spawn` and ends when the condensed result is injected back into
-the parent's conversation.
+calls `sessions_spawn`. The call returns a run ID immediately; the lifecycle ends
+when the terminal result is durably recorded and delivered to the immutable
+originating conversation. A parent can also await owned children with
+`subagents` action `wait` without polling.
 
 ```mermaid
 flowchart LR
-    A[Parent calls sessions_spawn] --> B[Spawn packet built]
-    B --> C[Limits checked]
-    C --> D[Sub-agent executes]
-    D --> E[Result condensed]
-    E --> F[Narrative cast]
-    F --> G[Injected into parent context]
+    A[Parent calls sessions_spawn] --> B[Run ID returned]
+    B --> C[Spawn packet built]
+    C --> D[Limits checked]
+    D --> E[Sub-agent executes]
+    E --> F[Result condensed]
+    F --> G[Terminal result recorded]
+    G --> H[Exact-origin delivery or wait result]
 ```
 
 Each stage has its own configuration options and graceful fallback behavior.
-If any stage encounters an error, the pipeline degrades safely rather than
-crashing -- the parent always receives a result, even if it is a structured
-error message.
+If execution or post-processing fails, the run retains a typed terminal reason
+and a bounded summary. Delivery uses the same durable operation identity for
+retries and uncertainty handling, so an acknowledged result is not followed by
+a contradictory timeout or failure notice.
 
 ## Worked example: parent spawns a research subagent
 
@@ -51,8 +55,20 @@ The parent invokes the `sessions_spawn` tool:
 }
 ```
 
-Comis builds a spawn packet (next section), runs the sub-agent in its own
-session, and returns a condensed result like this:
+Comis accepts the spawn and returns immediately:
+
+```json
+{
+  "runId": "research-quantum-2026-04",
+  "async": true,
+  "inProgress": true,
+  "noteType": "background_running"
+}
+```
+
+The sub-agent then runs in its own session. Its exact-origin completion
+announcement, or a `subagents` wait result, carries a condensed result like
+this:
 
 ```text
 [Subagent Result: research-quantum-2026-04]
@@ -71,8 +87,8 @@ Session: subagent:researcher:abc123
 ```
 
 Atlas then reads the bullet list back into its own context and writes the
-brief. The full unredacted research output is on disk if Atlas needs to look
-back at sources later.
+brief. A bounded result reference can provide authorized drill-down access when
+the full output was materialized.
 
 The key benefit: Atlas's main session never carries the raw web search
 transcript. It only carries the curated three-bullet summary, which keeps
@@ -194,6 +210,12 @@ agent to reference specific sub-agent outputs when coordinating multiple
 concurrent tasks. The metadata footer provides observability into cost, runtime,
 and condensation effectiveness.
 
+Failure announcements retain both the failed run status and its terminal
+classification. For example, an error-classified failed run is rendered as
+`Failed — Halted (error)` rather than being flattened to an unqualified
+`Failed`, so delivery does not erase the reason recorded by status and
+observability surfaces.
+
 ## Objective reinforcement
 
 When a sub-agent's conversation grows long enough to trigger the context
@@ -222,21 +244,23 @@ events regardless of which layer triggered them.
 The subagent context lifecycle provides two hooks for managing resources and
 emitting observability events:
 
-**`prepareSpawn`** -- Called before the sub-agent begins execution. Creates the
-disk directory for result storage (`~/.comis/subagent-results/{sessionKey}/`)
-and returns a rollback handle. If the spawn fails for any reason (limit
-rejection, configuration error), the rollback handle cleans up the created
-directory so no orphaned files are left behind.
+**`prepareSpawn`** -- Awaited before the sub-agent begins execution. The built-in
+hook emits the prepared lifecycle event but deliberately does not pre-create a
+result directory: the success and failure writers create their own directories
+when they persist output. A hook implementation may return a rollback handle;
+the runner invokes it if admission or execution preparation fails.
 
-**`onEnded`** -- Called after the sub-agent finishes and its result has been
-condensed and narrative-cast. Emits a `session:sub_agent_lifecycle_ended` event
-with the full lifecycle metadata (end reason, runtime, token counts,
-condensation level, disk path). Plugins and monitoring systems can subscribe to
-this event for observability.
+**`onEnded`** -- Invoked as a best-effort, fire-and-forget hook after the run has
+claimed its terminal state and handed any announcement to its governed delivery
+path. It emits a
+`session:sub_agent_lifecycle_ended` event with lifecycle metadata (end reason,
+runtime, token counts, condensation level, disk path). Its promise is not part
+of the active execution set, so a stalled hook cannot retain sub-agent
+concurrency capacity, keep a provider execution promise alive, or delay prompt
+shutdown. A rejection emits a WARN after the terminal outcome is already owned.
 
-Both hooks degrade gracefully: if a hook fails, the spawn proceeds with fallback
-behavior and a WARN-level log is emitted. Hooks never block or crash the
-sub-agent lifecycle.
+`prepareSpawn` is awaited because admission resources need a rollback handle;
+`onEnded` cannot change or contradict the terminal result.
 
 ## Configuration
 
@@ -255,6 +279,9 @@ security:
       # -- Spawn limits --
       maxSpawnDepth: 3             # max depth: parent -> child -> grandchild
       maxChildrenPerAgent: 5       # max concurrent active children per parent
+      maxRunTimeoutMs: 600000      # absolute watchdog ceiling
+      perStepTimeoutMs: 60000      # dynamic budget per requested step
+      stuckKillThresholdMs: 180000 # idle-progress health-monitor threshold
 
       # -- Result handling --
       maxResultTokens: 4000        # token threshold for condensation
@@ -304,20 +331,20 @@ The `subagents` tool's `steer` action redirects a sub-agent that is already runn
 
 ## End reasons
 
-When a sub-agent's lifecycle ends, one of six end reasons is recorded:
+When a sub-agent run reaches a terminal state, one of five completion reasons is
+returned by `session.run_status` and `subagent.wait`:
 
 | Reason | Description |
 |--------|-------------|
 | `completed` | The sub-agent finished its task normally |
 | `failed` | An unrecoverable error occurred during execution |
 | `killed` | The sub-agent was force-terminated. The kill is attributed via `killedBy` (`parent` \| `health_monitor` \| `operator` \| `system`) on the failure record, the `subagent:killed` event, and the run status the parent polls -- a daemon health-monitor stuck-kill (no observed tool/LLM progress past `stuckKillThresholdMs`) never reads as a parent kill, and it delivers an LLM-free failure notification to the announce channel |
-| `swept` | The sub-agent's result files were removed by the retention sweep after `resultRetentionMs` expired |
 | `watchdog_timeout` | The sub-agent exceeded its wall-clock timeout and was force-failed by the watchdog timer. See [Resilience](/agents/resilience#sub-agent-watchdog). |
 | `ghost_sweep` | The sub-agent was stuck in "running" state past the grace period and was force-failed by the periodic ghost sweep. See [Resilience](/agents/resilience#ghost-sweep). |
 
-The end reason is included in the `session:sub_agent_lifecycle_ended` event and
-in the narrative-cast metadata, giving the parent agent and operators full
-visibility into how each sub-agent run concluded.
+`swept` is reserved for result-file retention cleanup after `resultRetentionMs`;
+it is not a run-completion reason returned by those status surfaces. Terminal
+reasons are also included in lifecycle observability and narrative metadata.
 
 ## Related
 

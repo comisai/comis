@@ -139,22 +139,25 @@ The `gateway` tool is the Swiss Army knife for system management, with **11 acti
 
 ## background_tasks -- Long-Running Task Queue
 
-The `background_tasks` tool lets agents inspect and manage the daemon's background task queue -- the in-flight execution surface for spawned sub-agents, async pipelines, and long-running tool calls.
+The `background_tasks` tool lets agents inspect and manage the daemon's durable queue for eligible long-running tool calls that were automatically promoted out of a foreground turn. Spawned sub-agents use the `subagents` tool, while execution graphs use `pipeline`.
 
 | Action | Description |
 |--------|-------------|
 | `list` | List active background tasks with status, age, and task type |
 | `get` | Get full state of a single task by ID |
 | `cancel` | Cancel a running task (destructive; requires `_confirmed`) |
-| `read_output` | Wait for a running promoted tool call, then return its terminal output |
+| `read_output` | Wait for a running promoted tool call, then atomically claim and return its terminal output |
 
 Use `background_tasks` to inspect a promoted tool call, consume its eventual
 result with one `read_output` call, or cancel a runaway job. Do not poll
 `read_output`: when the task is still live, the call waits on the original
 execution and emits bounded progress heartbeats so prompt stall detection does
-not mistake a healthy long-running wait for an unresponsive turn. The tool is
-agent-scoped rather than admin-gated: every action is restricted to tasks owned
-by the calling agent.
+not mistake a healthy long-running wait for an unresponsive turn. Before a
+completed or failed result is returned, `read_output` durably claims delivery
+ownership; a persistence failure or competing delivery returns a conflict
+instead of permitting a contradictory terminal notice. The tool is agent-scoped
+rather than admin-gated: every action is restricted to tasks owned by the
+calling agent.
 
 ## mcp_manage -- MCP Server Lifecycle
 

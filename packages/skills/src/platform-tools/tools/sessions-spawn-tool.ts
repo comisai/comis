@@ -2,8 +2,8 @@
 /**
  * Sessions Spawn Tool: spawn a sub-agent session for background work.
  *
- * Delegates to the daemon-side session.spawn RPC method. Supports sync
- * (blocks until done) and async (returns runId immediately) modes.
+ * Delegates to the daemon-side async-only session.spawn RPC method, which
+ * returns a run ID immediately.
  * Spawn action is gated via createActionGate for action classification.
  *
  * @module

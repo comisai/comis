@@ -67,7 +67,7 @@ Every runtime change must pass this review before implementation and again durin
 - Chain by early-return: `if (!result.ok) return result;`. No `Result.map`/`flatMap` helpers exist. Use `tryCatch`/`fromPromise` only at boundaries with throwing APIs (Node fs, `new URL()`, third-party SDKs).
 - `err()` for unsupported/unsafe states — never silently succeed, never silently broaden permissions.
 - ERROR/WARN logs require `hint` (operator-actionable next step) and `errorKind`.
-- `errorKind` is the closed union from `LogFields.ErrorKind` in `@comis/core`: `config | network | auth | validation | precondition | timeout | resource | dependency | internal | platform` (10 members). Write literals as `"validation" as const`. Heuristic: bad input → `validation`; unmet precondition / guard → `precondition`; external API → `dependency`; chat platform → `platform`; bad config → `config`; assertion → `internal`.
+- `errorKind` is the closed union from `LogFields.ErrorKind` in `@comis/core`: `config | network | auth | validation | precondition | timeout | resource | dependency | internal | platform | sandbox_unavailable` (11 members). Write literals as `"validation" as const`. Heuristic: bad input → `validation`; unmet precondition / guard → `precondition`; external API → `dependency`; chat platform → `platform`; bad config → `config`; assertion → `internal`; no materializable OS sandbox jail → `sandbox_unavailable`.
 
 ### 2.2 Security (ESLint-enforced — violations fail CI; rules apply to `packages/*/src/**` only)
 - No `path.join()` — use `safePath(base, ...segments)` from `@comis/core/security`. `base` must be absolute; every dynamic segment (including filenames) goes through `safePath`. Compose: `safePath(safePath(dataDir, agentId), file)`.

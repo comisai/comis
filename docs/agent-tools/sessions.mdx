@@ -17,8 +17,8 @@ icon: "users"
 | `sessions_history` | Retrieve session history entries |
 | `sessions_list` | List all sessions for the current agent |
 | `sessions_send` | Send a message into another session in 3 modes: `fire-and-forget`, `wait`, `ping-pong` |
-| `sessions_spawn` | Create a sub-agent session with workspace isolation, artifact references, and an optional objective |
-| `subagents` | Manage running sub-agents (`list`, `kill`, `steer`) |
+| `sessions_spawn` | Start a background sub-agent with artifact references and an optional objective |
+| `subagents` | Manage sub-agents (`list`, `wait`, `kill`, `steer`) |
 | `memory_get` | Retrieve a memory entry by key |
 | `memory_manage` | Create, update, or delete memory entries (admin CRUD: stats, browse, delete, flush, export, pin, unpin) |
 | `memory_search` | Semantic search over agent memory (hybrid text + vector similarity) |
@@ -129,7 +129,7 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
   </Accordion>
 
   <Accordion title="sessions_spawn -- Spawn a sub-agent session">
-    Creates a new sub-agent session with structured context. The spawned agent runs in an isolated workspace with its own conversation history and receives a context packet containing the task, artifact references, domain knowledge, and an optional objective that survives compaction.
+    Starts a new sub-agent session with structured context. The spawned agent has its own conversation history and receives a context packet containing the task, artifact references, domain knowledge, and an optional objective that survives compaction.
 
     **Parameters:**
 
@@ -137,29 +137,27 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
     |-----------|------|----------|-------------|
     | `task` | string | Yes | Task description for the sub-agent |
     | `agent` | string | No | Target agent ID for cross-agent spawning (defaults to the current agent) |
-    | `async` | boolean | No | Spawn asynchronously, returns `runId` immediately (default: `false` -- waits for result) |
+    | `async` | boolean | No | Accepted for explicit asynchronous intent; every spawn runs in the background and returns `runId` immediately. |
     | `model` | string | No | Model override for the sub-agent |
     | `artifact_refs` | string[] | No | File paths for the sub-agent to reference in its workspace |
     | `tool_groups` | string[] | No | Tool group names for sub-agent tool filtering (e.g., `"coding"`, `"web"`) |
+    | `required_tools` | string[] | No | Tool names that must be reachable; spawn fails before execution if the child profile cannot reach one. |
     | `objective` | string | No | Objective statement that survives context compaction |
     | `include_parent_history` | `"none"` or `"summary"` | No | Include a condensed summary of the parent conversation (default: `"none"`) |
     | `domain_knowledge` | string[] | No | Domain knowledge entries to pass to the sub-agent |
     | `expected_outputs` | string[] | No | File paths to validate after sub-agent execution completes |
     | `max_steps` | integer | No | Maximum execution steps (floor of 30, default 50, capped at config default) |
-    | `announce_channel_type` | string | No | Channel type for result announcement |
-    | `announce_channel_id` | string | No | Channel ID for result announcement |
-
-    When `async` is `false` (the default), the parent agent blocks until the sub-agent completes and returns its result. When `async` is `true`, the sub-agent runs in the background and the parent continues working. Use `subagents` to check on background sub-agents.
+    `sessions_spawn` never blocks for the child result. It returns the run ID and a background-running marker immediately; a queued spawn additionally returns `queued: true`. The result is delivered to the immutable originating conversation, so the model-facing tool cannot select an announcement channel. Use `subagents` with `action: wait` to await owned children without polling.
 
     Sub-agent results are automatically condensed (if over the token threshold) and formatted with metadata tags before being returned to the parent. See [Subagent Context Lifecycle](/agents/subagent-lifecycle) for the full pipeline.
 
-    **Example -- Spawn a coding agent (sync):**
+    **Example -- Spawn a coding agent:**
     ```yaml
     task: "Fix the broken login form validation in src/auth/login.ts"
     agent: "coder"
     ```
 
-    **Example -- Spawn an async researcher:**
+    **Example -- Spawn a researcher with explicit async intent:**
     ```yaml
     task: "Find the top 10 competitors in the AI agent space and write a comparison."
     agent: "researcher"
@@ -176,28 +174,37 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
   </Accordion>
 
   <Accordion title="subagents -- Manage running sub-agents">
-    Manages sub-agents that were spawned with `sessions_spawn`. You can list running sub-agents, terminate them, or steer them with a new task.
+    Manages sub-agents that were spawned with `sessions_spawn`. You can list runs, wait for owned children, terminate a run, or steer it with a new task.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `action` | string | No | One of `list` (default), `kill`, `steer` |
+    | `action` | string | No | One of `list` (default), `wait`, `kill`, `steer` |
     | `target` | string | For kill/steer | Run ID of the target subagent |
     | `message` | string | For steer | The steering message for the subagent |
     | `recent_minutes` | integer | No | Include runs from the last N minutes (default 30, for `list`) |
+    | `run_ids` | string[] | No | Exact owned run IDs to wait for (1--32). Omit to wait for active direct children. |
+    | `timeout_ms` | integer | No | Wait deadline from 0 to 300000 ms. |
 
     **Actions:**
 
     | Action | What It Does |
     |--------|-------------|
     | `list` | Show all running sub-agents with their status and progress |
+    | `wait` | Await selected owned runs, or all active direct children when `run_ids` is omitted. Each result is `completed`, `denied_unknown`, `timeout`, or `cancelled`; terminal completions retain `completed`, `failed`, `killed`, `watchdog_timeout`, or `ghost_sweep` as the end reason. |
     | `kill` | Terminate a sub-agent by its run ID (discards its in-flight work) |
     | `steer` | Redirect a running sub-agent with a steering message. By default this kills the child and respawns it with the message as the new task; when [`security.agentToAgent.steerInject`](/reference/config-yaml#security) is enabled it instead **injects** the message into the running child at its next step boundary, preserving its transcript and progress. A steer never widens the child's tool set -- a denied tool stays denied. See [Steering a running sub-agent](/agents/subagent-lifecycle#steering-a-running-sub-agent). |
 
     **Example -- Check on sub-agents:**
     ```yaml
     action: list
+    ```
+
+    **Example -- Wait for direct children:**
+    ```yaml
+    action: wait
+    timeout_ms: 300000
     ```
 
     **Example -- Steer a running sub-agent:**
@@ -377,16 +384,15 @@ agent: "coder"
 Spawn multiple sub-agents to work on different parts of a problem simultaneously. Each sub-agent runs independently, and the parent collects results when they finish.
 
 ```yaml
-# Spawn three researchers in parallel (async: true for each)
-# Then use subagents list to check progress
-# Collect results when all three complete
+# Spawn three researchers; every call returns a run ID immediately
+# Then use subagents wait with those run IDs to collect terminal results
 ```
 
 ### When to use `sessions_spawn` vs. `pipeline`
 
 | Use this when... | Reach for | Why |
 |------------------|-----------|-----|
-| One specialist needs to run a single task | `sessions_spawn` | Simpler -- no graph definition needed; sub-agent runs in an isolated workspace and returns its result. |
+| One specialist needs to run a single task | `sessions_spawn` | Simpler -- no graph definition needed; the sub-agent runs in the background and delivers its result to the originating conversation. |
 | Several agents need to run in parallel and you want their results collected | `pipeline` (with `barrier_mode: all`) | Pipeline engine handles fan-out, fan-in, dependency ordering, and result interpolation via `{{nodeId.result}}`. |
 | You need debate, vote, refine, collaborate, or map-reduce coordination | `pipeline` (with `type_id: debate` / `vote` / etc.) | Built-in node type drivers do the multi-round logic for you. |
 | You need a human approval gate mid-flow | `pipeline` (with `type_id: approval-gate`) | The `approval-gate` driver pauses the graph and resumes on the user's decision. |
