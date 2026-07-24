@@ -18,7 +18,7 @@ The Message Center lets you interact with messages across all your connected cha
 - `channels.get(channel_type)` -- bot identity (used to label the operator attribution dialog)
 - `obs.channels.all` -- chat picker contents
 - `message.fetch(channel_type, channel_id, limit?)` -- recent messages when the channel supports native history
-- `session.list` and `session.history` -- stored-history fallback, matched through the session's authoritative endpoint metadata rather than its display key
+- `session.list` and `session.history` -- stored-history fallback, matched by complete endpoint identity (channel instance, conversation, thread, and kind) rather than a display key
 - `message.send`, `message.reply`, `message.react`, `message.edit`, `message.delete` -- compose and modify
 - `message.attach` -- URL-based attachment delivery
 - `discord.action`, `telegram.action`, `slack.action`, `whatsapp.action` -- platform-specific actions
@@ -34,7 +34,10 @@ At the top of the page, a breadcrumb trail shows navigation context (Channels > 
 - **Channel** -- pick which messaging platform to browse (Discord, Telegram, Slack, WhatsApp, etc.)
 - **Chat** -- pick which specific conversation/chat within that channel to view
 
-When you change the channel, the chat list updates to show available conversations for that platform.
+When you change the channel, the chat list updates to show available
+conversations for that platform. Conversations with the same platform ID under
+different accounts or threads remain distinct, and the selector labels their
+account and thread qualifiers.
 
 ### Message List
 

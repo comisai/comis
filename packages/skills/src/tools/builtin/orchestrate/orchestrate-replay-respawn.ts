@@ -225,7 +225,6 @@ export function createOrchestrateReplayRespawn(
         closeSeccompProfileFd(seccompFd);
       }
     } finally {
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- mkdtemp-created throwaway replay stage.
       rmSync(replayWorkspacePath, { recursive: true, force: true });
     }
   };

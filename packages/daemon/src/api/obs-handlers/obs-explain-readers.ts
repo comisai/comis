@@ -345,7 +345,7 @@ function resolveSessionFileAcrossWorkspaces(
  * fabricated path.
  *
  * @param dataDir - the `~/.comis` root (empty → the default `~/.comis`).
- * @param sessionKey - a formatted SessionKey (`tenant:user:channel[:peer:...]`).
+ * @param sessionKey - a formatted agent-scoped SessionKey.
  * @returns the absolute session `.jsonl` path, or `undefined` on a genuine miss
  *   (no artifacts) or an unparseable key.
  */

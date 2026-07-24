@@ -41,7 +41,7 @@ export interface ClassifiedSessionRef {
  * The `root-` prefix is the disambiguator for an autonomy run's rootRunId and is
  * checked FIRST — a synthetic in-process root is `root-session-<key>` and
  * contains a colon, yet must NOT route to sessionKey. Otherwise a sessionKey is
- * `tenant:user:channel[:...]` (has a colon) and a traceId is a UUID (no colon).
+ * an agent-scoped session key (has a colon) and a traceId is a UUID (no colon).
  *
  * @param ref - the raw `--session` argument.
  * @returns exactly one populated id field.

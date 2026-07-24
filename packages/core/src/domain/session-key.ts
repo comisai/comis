@@ -73,8 +73,8 @@ export function formatSessionKey(key: SessionKey): string {
  * segments inside channel or suffix values.
  *
  * Because the wire format is unescaped, a producer that embeds a colon in
- * tenantId, agentId, or userId cannot be inverted unambiguously. Such producers must keep
- * their structured identity outside those first two segments.
+ * tenantId, agentId, or userId cannot be inverted unambiguously. Such producers
+ * must keep their structured identity outside these required leading fields.
  *
  * @returns SessionKey if the format is valid, undefined otherwise
  */

@@ -826,7 +826,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
 {
   "jsonrpc": "2.0",
   "method": "obs.explain",
-  "params": { "sessionKey": "default:678314278:678314278:peer:678314278", "depth": "summary" },
+  "params": { "sessionKey": "default:agent:default:user_a:telegram:peer:user_a", "depth": "summary" },
   "id": 1
 }
 ```
@@ -835,7 +835,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
   "jsonrpc": "2.0",
   "result": {
     "schemaVersion": 1,
-    "sessionKey": "default:678314278:678314278:peer:678314278",
+    "sessionKey": "default:agent:default:user_a:telegram:peer:user_a",
     "outcome": { "endReason": "completed_with_tool_errors", "degraded": true, "severity": "degraded" },
     "cost": { "costUsd": 1.320669, "totalTokens": 735800, "cacheReadRatio": 0 },
     "timing": { "durationMs": 247740, "turnCount": 25 },
@@ -1129,11 +1129,16 @@ Get the current resource usage and configuration summary for the calling agent's
 
 Retrieve the conversation history for a session. Returns the raw message array stored in the session, including both user and assistant turns.
 
+In session responses, `ChannelEndpoint` is the complete exact routing identity:
+`{ channelType, channelInstanceId, conversationId, threadId?, conversationKind: "direct" | "shared" }`.
+It is projected from the conversation's authoritative scope and is omitted only
+when that scope is not endpoint-bound.
+
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
 | **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string, offset?: number, limit?: number }` |
-| **Returns** | `{ session: { key, agentId, channelType, endpoint?, messageCount, totalTokens, inputTokens, outputTokens, toolCalls, compactions, resetCount, createdAt, lastActiveAt, label? }, messages: Array<{ role, content, timestamp, deliveryStatus? }>, total, offset, limit, hasMore }`; `endpoint` is the authoritative `{ channelType, conversationId }` lookup identity when the session is endpoint-bound. |
+| **Returns** | `{ session: { key, agentId, channelType, endpoint?: ChannelEndpoint, messageCount, totalTokens, inputTokens, outputTokens, toolCalls, compactions, resetCount, createdAt, lastActiveAt, label? }, messages: Array<{ role, content, timestamp, deliveryStatus? }>, total, offset, limit, hasMore }` |
 
 ### `session.list`
 
@@ -1143,7 +1148,7 @@ List sessions in an exact tenant and agent partition, including sessions stored 
 |----------|-------|
 | **Scope** | `rpc` |
 | **Parameters** | `{ tenant_id: string, agent_id: string, kind?: "all" \| "sub-agent" \| "group" \| "dm", since_minutes?: number }` |
-| **Returns** | `{ sessions: Array<{ conversationRef, agentId, kind, messageCount, totalTokens, updatedAt, createdAt }>, total }` |
+| **Returns** | `{ sessions: Array<{ conversationRef, agentId, kind, endpoint?: ChannelEndpoint, messageCount, totalTokens, updatedAt, createdAt }>, total }` |
 
 <CodeGroup>
 ```json Request
@@ -1159,7 +1164,21 @@ List sessions in an exact tenant and agent partition, including sessions stored 
   "jsonrpc": "2.0",
   "result": {
     "sessions": [
-      { "conversationRef": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o", "agentId": "default", "kind": "dm", "messageCount": 42, "totalTokens": 21000, "updatedAt": 1773313498000, "createdAt": 1773100000000 }
+      {
+        "conversationRef": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o",
+        "agentId": "default",
+        "kind": "dm",
+        "endpoint": {
+          "channelType": "telegram",
+          "channelInstanceId": "primary",
+          "conversationId": "user_a",
+          "conversationKind": "direct"
+        },
+        "messageCount": 42,
+        "totalTokens": 21000,
+        "updatedAt": 1773313498000,
+        "createdAt": 1773100000000
+      }
     ],
     "total": 1
   },

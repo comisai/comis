@@ -388,9 +388,9 @@ export function groupCountRows(
     // The group key is string|number|null per buildGroupCountSchema; SQLite
     // never returns a value outside that range for our ALLOWED_GROUP_COLUMNS.
     const stringKey = key === null ? "" : String(key);
-    // eslint-disable-next-line security/detect-object-injection -- stringKey
-    // is bounded by ALLOWED_GROUP_COLUMNS-typed values (memory_type, trust_level,
-    // agent_id); no attacker control over the index.
+    // stringKey is bounded by ALLOWED_GROUP_COLUMNS-typed values
+    // (memory_type, trust_level, agent_id); no attacker controls the index.
+    // eslint-disable-next-line security/detect-object-injection -- bounded database enum value, not a user-selected property name.
     result[stringKey] = typeof row.count === "number" ? row.count : 0;
   }
   return result;

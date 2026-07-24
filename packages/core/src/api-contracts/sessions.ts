@@ -96,7 +96,8 @@ export const AgentsListContract = defineContract({
  * Request: `{ tenant_id, agent_id, kind?, since_minutes? }`.
  *
  * Response: `{ sessions: SessionInfo[], total }`. Each `SessionInfo` is
- * tight-modeled (conversationRef / agentId / kind / counts / timestamps).
+ * tight-modeled (conversationRef / agentId / kind / optional authoritative
+ * endpoint / counts / timestamps).
  * The handler derives `"sub-agent"` from parent metadata, `"group"` from a
  * shared endpoint-conversation partition, and `"dm"` otherwise. The contract
  * preserves the string shape rather than duplicating that domain classifier.

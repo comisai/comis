@@ -209,7 +209,7 @@ export async function extractSessionMessagesOffline(
  * artifacts exist, so a caller can warn instead of stat-failing a fabricated path.
  *
  * @param dataDir - the `~/.comis` root.
- * @param sessionKey - a formatted SessionKey (`tenant:user:channel[:peer:...]`).
+ * @param sessionKey - a formatted agent-scoped SessionKey.
  * @returns the absolute session `.jsonl` path, or `undefined` on a genuine miss.
  */
 export async function resolveSessionFileOffline(

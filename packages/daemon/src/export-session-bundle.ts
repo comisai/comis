@@ -25,7 +25,7 @@ export interface ExportSessionBundleDeps {
   readonly dataDir: string;
   /** The workspace dir the exporter derives `trace-exports/` from. */
   readonly workspaceDir: string;
-  /** A formatted SessionKey (`tenant:user:channel[:peer:...]`). */
+  /** A formatted agent-scoped SessionKey; see core/domain/session-key. */
   readonly sessionId: string;
   /**
    * Injectable exporter seam (defaults to the real `exportTrajectoryBundle`)

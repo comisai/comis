@@ -214,7 +214,6 @@ function objectPathIsPresent(obj: Record<string, unknown>, segments: string[]): 
   let cursor: unknown = obj;
   for (const seg of segments) {
     if (cursor === null || typeof cursor !== "object" || Array.isArray(cursor)) return false;
-    // eslint-disable-next-line security/detect-object-injection -- seg is a literal from OPERATOR_ONLY_AGENT_SUBPATHS, not user-controlled
     if (!(seg in (cursor as Record<string, unknown>))) return false;
     // eslint-disable-next-line security/detect-object-injection -- same
     cursor = (cursor as Record<string, unknown>)[seg];

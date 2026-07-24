@@ -1495,19 +1495,19 @@ Use `sessions reset` (not `sessions delete`) when you want the model to explicit
 comis sessions list
 
 # Inspect a specific session
-comis sessions inspect "default:user123:telegram"
+comis sessions inspect "default:agent:default:user123:telegram"
 
 # Delete a session
-comis sessions delete "default:user123:telegram" --yes
+comis sessions delete "default:agent:default:user123:telegram" --yes
 
 # Full conversation reset (clears LCD history + session transcript — irreversible, requires --yes)
-comis sessions reset "default:user123:telegram" --yes
+comis sessions reset "default:agent:default:user123:telegram" --yes
 
 # Also clear RAG memories for this session (the full-forget path — prints deleted count)
-comis sessions reset "default:user123:telegram" --memory --yes
+comis sessions reset "default:agent:default:user123:telegram" --memory --yes
 
 # Nuclear forget — also purge consolidated observations derived from this session
-comis sessions reset "default:user123:telegram" --memory --purge-derived --yes
+comis sessions reset "default:agent:default:user123:telegram" --memory --purge-derived --yes
 ```
 
 #### `sessions backup`
@@ -1633,7 +1633,7 @@ comis cost export --provider openai --model gpt-4o-mini
 
 Assemble an `IncidentReport` for a single agent session — a bounded, causal post-mortem (outcome, cost, per-tool stats, normalized failures, circuit-breaker timeline, large-result offloads, recall health — including degraded/failed recall lanes — session-wide activity-finalize tallies, and a deterministic likely root cause). The report is derived from log evidence only; no LLM is invoked, so the same session always yields the same verdict. Backed by `ObsExplainContract` (`obs.explain`).
 
-The positional argument is routed automatically by shape: a **`root-` run id** (an autonomy run's `rootRunId` — the synthetic in-process `root-session-<sessionKey>` or a real spawned-run lease id; checked **first** because a synthetic root contains `:` but must route as a run id, not a session key) is passed as `rootRunId`; otherwise a **session key** (`tenant:user:channel:ts`, contains `:`) is passed as `sessionKey`; otherwise a **trace ID** (a UUID, no `:`) is passed as `traceId`. The daemon canonicalizes a trace ID *or* a `rootRunId` to its session key first, so all three forms produce the identical report. A `rootRunId` is the **`comis system-health` → `comis explain` drill-down target**: paste the `worstRootRunId` that [`comis system-health`](#comis-system-health)'s autonomy block names straight in, and the report renders that run's `spawnTree` (an unresolvable id surfaces an honest `session_not_found`, never a clean-looking empty report).
+The positional argument is routed automatically by shape: a **`root-` run id** (an autonomy run's `rootRunId` — the synthetic in-process `root-session-<sessionKey>` or a real spawned-run lease id; checked **first** because a synthetic root contains `:` but must route as a run id, not a session key) is passed as `rootRunId`; otherwise a **session key** (the [current agent-scoped format](/agents/sessions#session-scope-key), containing `:`) is passed as `sessionKey`; otherwise a **trace ID** (a UUID, no `:`) is passed as `traceId`. The daemon canonicalizes a trace ID *or* a `rootRunId` to its session key first, so all three forms produce the identical report. A `rootRunId` is the **`comis system-health` → `comis explain` drill-down target**: paste the `worstRootRunId` that [`comis system-health`](#comis-system-health)'s autonomy block names straight in, and the report renders that run's `spawnTree` (an unresolvable id surfaces an honest `session_not_found`, never a clean-looking empty report).
 
 The live daemon resolves session artifacts across every configured agent
 workspace, preferring the workspace owned by the agent encoded in the session
@@ -1656,20 +1656,20 @@ When a scheduled job's [wake-gate](/agent-tools/scheduling#wake-gate-run-the-mod
 
 ```bash
 # Explain a session by session key
-comis explain "default:user123:telegram:1717000000"
+comis explain "default:agent:default:user123:telegram"
 
 # Explain by trace ID, with the uncapped (full) report
 comis explain 6ba7b810-9dad-11d1-80b4-00c04fd430c8 --depth full
 
 # Drill into an autonomy run by its rootRunId (the `comis system-health` worstRootRunId) —
 # resolves the run to its session and renders the run's spawn-tree
-comis explain "root-session-default:user123:telegram:1717000000"
+comis explain "root-session-default:agent:default:user123:telegram"
 
 # Machine-readable output (includes the spawnTree array for an autonomous run)
-comis explain "default:user123:telegram:1717000000" --format json
+comis explain "default:agent:default:user123:telegram" --format json
 
 # No daemon required — assemble from the local files
-comis explain "default:user123:telegram:1717000000" --offline
+comis explain "default:agent:default:user123:telegram" --offline
 ```
 
 Requires an admin-scoped gateway token (same as `comis trace`) — unless `--offline`. When the gateway is **unreachable** (daemon down / wrong port) the command automatically falls back to the offline assembly with a notice. When the gateway **rejects the token** it does NOT silently fall back — the daemon is demonstrably running, so the error names `COMIS_GATEWAY_TOKEN` (env var or `~/.comis/.env`) and suggests `--offline` as the explicit out.

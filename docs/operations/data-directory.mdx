@@ -428,16 +428,23 @@ Delivery that is proven permanent is parked as such; delivery whose outward
 outcome cannot be established is parked uncertain instead of being replayed
 blindly.
 
-Admission is not reported until the protected task record has completed its
-atomic write, rename, and applicable sync checks. Ordinary write, rename,
-file-sync, or directory-sync failures reject promotion and surface the
-persistence error to the foreground turn. If rejection happens after the
-rename, Comis restores the previously accepted record; for a new task, it
-syncs a non-recoverable placeholder before removing the file. Startup recovery
-therefore cannot adopt a task whose admission was rejected. The one narrower
-exception is Node's Permission Model reporting that its `fsync` API is disabled:
-after the write and rename succeed, Comis accepts the record as committed
-without `fsync`. Other persistence errors are never treated as that restriction.
+Admission is not reported until the protected task record has reached a
+classified persistence outcome after its atomic write, rename, and applicable
+sync or rollback checks. Open, write, file-sync, close, or rename failures
+before the live replacement reject promotion and surface the persistence error
+to the foreground turn. A non-permission-model directory-sync failure after the
+rename starts neutralization: Comis writes the previously accepted record -- or
+a schema-invalid tombstone for a new task -- to a synced sibling rollback file,
+atomically renames it over the live record, and syncs the parent directory. A new-task
+tombstone is then unlinked and the parent directory is synced again. A
+successfully rejected admission therefore leaves no task that startup recovery
+can adopt. If any rollback open, write, file-sync, close, rename, unlink, or
+directory-sync step cannot prove that neutralization, Comis retains the live
+task and reports `committed_durability_uncertain` instead of creating an
+unowned recoverable execution. The one narrower exception is Node's Permission
+Model reporting that its `fsync` API is disabled: after the write and rename
+succeed, Comis accepts the record as committed without `fsync`. Other
+persistence errors are never treated as that restriction.
 
 **Written by:** the daemon when background tasks are created or updated.
 **Safe to delete?** Only when no task is running and no completion remains

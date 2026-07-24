@@ -373,7 +373,6 @@ export interface DiagnosticQueryParams {
 }
 
 /** The ObservabilityStore interface. */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface ObservabilityStore extends CacheStatsQueriesSlice, CacheBreakQueriesSlice, PricingCoverageSlice {
   // Token usage
   insertTokenUsage(entry: TokenUsageRow): void;

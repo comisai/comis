@@ -60,7 +60,8 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
     | `kind` | string | No | Filter by session kind: `all` (default), `dm`, `group`, or `sub-agent` |
     | `since_minutes` | integer | No | Only sessions active within the last N minutes |
 
-    Returns session rows with opaque conversation references, agent assignments, kinds, counts, and timestamps.
+    Returns the [`session.list`](/reference/json-rpc#session-list) rows unchanged,
+    including the complete authoritative endpoint on endpoint-bound sessions.
   </Accordion>
 
   <Accordion title="sessions_history -- Browse conversation history">
