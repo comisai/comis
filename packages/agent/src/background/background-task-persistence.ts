@@ -106,7 +106,16 @@ export interface TaskRecoveryScan {
 
 export type AtomicTaskPersistenceOutcome =
   | { readonly kind: "committed" }
+  | { readonly kind: "committed_without_fsync"; readonly error: Error }
   | { readonly kind: "committed_durability_uncertain"; readonly error: Error };
+
+function isPermissionModelFsyncUnavailable(error: Error): boolean {
+  const code = "code" in error ? error.code : undefined;
+  return (
+    code === "ERR_ACCESS_DENIED" &&
+    error.message.includes("fsync API is disabled when Permission Model is enabled")
+  );
+}
 
 const defaultAtomicTaskPersistenceOps: AtomicTaskPersistenceOps = {
   open: openSync,
@@ -131,10 +140,15 @@ export function persistTaskAtomically(
   let fileDescriptor: number | undefined;
   let directoryDescriptor: number | undefined;
   let renamed = false;
+  let fsyncUnavailableError: Error | undefined;
   const written = tryCatch(() => {
     fileDescriptor = ops.open(tempPath, "wx", 0o600);
     ops.write(fileDescriptor, JSON.stringify(state, null, 2));
-    ops.sync(fileDescriptor);
+    const synced = tryCatch(() => ops.sync(fileDescriptor!));
+    if (!synced.ok) {
+      if (!isPermissionModelFsyncUnavailable(synced.error)) throw synced.error;
+      fsyncUnavailableError = synced.error;
+    }
     ops.close(fileDescriptor);
     fileDescriptor = undefined;
     ops.rename(tempPath, filePath);
@@ -152,6 +166,9 @@ export function persistTaskAtomically(
     }
     return err(written.error);
   }
+  if (fsyncUnavailableError !== undefined) {
+    return ok({ kind: "committed_without_fsync", error: fsyncUnavailableError });
+  }
   let durabilityError: Error | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
     const synced = tryCatch(() => {
@@ -161,6 +178,9 @@ export function persistTaskAtomically(
       directoryDescriptor = undefined;
     });
     if (synced.ok) return ok({ kind: "committed" });
+    if (isPermissionModelFsyncUnavailable(synced.error)) {
+      return ok({ kind: "committed_without_fsync", error: synced.error });
+    }
     durabilityError = synced.error;
     if (directoryDescriptor !== undefined) {
       tryCatch(() => ops.close(directoryDescriptor!));

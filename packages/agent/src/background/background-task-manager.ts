@@ -158,6 +158,16 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     outcome: import("./background-task-persistence.js").AtomicTaskPersistenceOutcome,
   ): void {
     if (outcome.kind === "committed") return;
+    if (outcome.kind === "committed_without_fsync") {
+      logger.debug(
+        {
+          taskId: task.id,
+          toolName: task.toolName,
+        },
+        "Background task state committed without fsync under Node Permission Model",
+      );
+      return;
+    }
     logger.warn(
       {
         taskId: task.id,
