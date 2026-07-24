@@ -1185,6 +1185,31 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       }
     });
 
+    it("repairs a missing terminal reason and reports an absent checkpoint", async () => {
+      expect(await store.terminalize("missing-terminal", "completed")).toEqual(
+        ok({ kind: "not_found" }),
+      );
+
+      const checkpointId = "completed-without-reason";
+      expect(
+        (
+          await store.upsertCheckpoint(
+            makeRecord({
+              checkpointId,
+              rootRunId: "root-completed-without-reason",
+              status: "completed",
+            }),
+          )
+        ).ok,
+      ).toBe(true);
+
+      expect(await store.terminalize(checkpointId, "ghost_sweep")).toEqual(
+        ok({ kind: "terminalized" }),
+      );
+      const stored = await store.getByCheckpoint(checkpointId);
+      expect(stored.ok && stored.value?.terminalReason).toBe("ghost_sweep");
+    });
+
     it("preserves the exact terminal reason and payload across late running upserts", async () => {
       const initial = makeRecord({
         checkpointId: "r-late-terminal",

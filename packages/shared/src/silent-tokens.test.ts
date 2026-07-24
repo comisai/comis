@@ -47,6 +47,7 @@ describe("silent-tokens module", () => {
     expect(mod.isSilentResponse("Hello")).toBe(false);
     expect(mod.isSilentResponse(undefined)).toBe(true);
     expect(mod.isSilentResponse("")).toBe(true);
+    expect(mod.isSilentResponse(" \n\t ")).toBe(true);
   });
 
   it("stripReplyTags removes <reply> wrappers and trims", async () => {
