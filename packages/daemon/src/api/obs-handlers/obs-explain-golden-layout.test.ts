@@ -53,6 +53,7 @@ import { taskEventToRow } from "../../observability/obs-scheduler-rows.js";
 // pins). sessionKeyToPath maps it to tenant="default", channel="678314278",
 // file="678314278~peer~678314278.jsonl".
 const SESSION_KEY = "default:agent:default:678314278:678314278:peer:678314278";
+const NAMED_AGENT_SESSION_KEY = "default:agent:worker:678314278:678314278:peer:678314278";
 const TASK_ROOT_RUN_ID = "root-task-check-244cd6a3-0a81-48b1-a4f1-2e24375a6b35";
 const TASK_CORRELATION_ID = "256bb57a-b6c3-46ba-88d3-459c7be29dfe";
 const TASK_SESSION_KEY = "default:agent:default:scheduler-task-check-default:scheduler:task-check:attempt-task-a:peer:scheduler-task-check-default";
@@ -85,6 +86,19 @@ function buildRealSessionFile(dataDir: string): string {
   fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
   // The session JSONL itself (message log) — empty is fine; the readers target
   // its trajectory/metadata siblings.
+  fs.writeFileSync(sessionFile, "", "utf-8");
+  return sessionFile;
+}
+
+function buildNamedAgentSessionFile(workspaceDir: string): string {
+  const sessionFile = sessionKeyToPath({
+    tenantId: "default",
+    agentId: "worker",
+    userId: "678314278",
+    channelId: "678314278",
+    peerId: "678314278",
+  }, path.join(workspaceDir, "sessions"));
+  fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
   fs.writeFileSync(sessionFile, "", "utf-8");
   return sessionFile;
 }
@@ -283,6 +297,36 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     // EXACT field-name regression this assertion forbids.
     expect(report.offloads[0]!.pointer).toBe("tool-results/call_abc.json");
     expect(report.offloads[0]!.pointer).not.toBe("<offloaded>");
+  });
+
+  it("assembles named-agent sessions from their configured workspace", async () => {
+    const dataDir = tmpDataDir();
+    const workspaceDir = path.join(dataDir, "custom-worker-workspace");
+    const sessionFile = buildNamedAgentSessionFile(workspaceDir);
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(runtimeFile, trajectoryLines(), "utf-8");
+    writeTrajectoryPointerFileBestEffort({
+      sessionFile,
+      sessionId: NAMED_AGENT_SESSION_KEY,
+      runtimeFile,
+    });
+    writeRealMetadata(sessionFile);
+    const reader = makeRealReader(
+      dataDir,
+      undefined,
+      new Map([["worker", workspaceDir]]),
+    );
+
+    const report = await assembleIncidentReportFromSources(
+      reader,
+      dataDir,
+      { sessionKey: NAMED_AGENT_SESSION_KEY, depth: "summary" },
+    );
+
+    expect(reader.resolveSessionFilePath?.(NAMED_AGENT_SESSION_KEY)).toBe(sessionFile);
+    expect(report.outcome.endReason).toBe("completed_with_tool_errors");
+    expect(report.toolStats.web_fetch?.failed).toBeGreaterThanOrEqual(1);
+    expect(report.offloads[0]?.pointer).toBe("tool-results/call_abc.json");
   });
 
   it("resolves a task-check root to its real origin session and folds durable delivery evidence", async () => {

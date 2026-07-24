@@ -173,6 +173,7 @@ export interface IncidentSourceReader {
    * key that resolved records). Soft-fails to `[]`.
    */
   listCandidateSessionKeys?(requestedKey: string): Promise<string[]>;
+  resolveSessionFilePath?(sessionKey: string): string | undefined;
 }
 
 /** Default data directory (lazy). Mirrors obs-trace.ts. */
@@ -298,6 +299,32 @@ function resolveSessionFile(sessionKey: string, sessionsBase: string): string | 
   return findSessionFileByPointerSessionId(sessionKey, sessionsBase);
 }
 
+function workspaceDirectoryCandidates(
+  base: string,
+  sessionKey: string,
+  workspaceDirs?: ReadonlyMap<string, string>,
+): string[] {
+  const candidates: string[] = [];
+  const parsed = parseFormattedSessionKey(sessionKey);
+  const ownedWorkspace = parsed === undefined ? undefined : workspaceDirs?.get(parsed.agentId);
+  if (ownedWorkspace !== undefined) candidates.push(ownedWorkspace);
+  candidates.push(safePath(base, "workspace"));
+  for (const workspaceDir of workspaceDirs?.values() ?? []) candidates.push(workspaceDir);
+  return [...new Set(candidates)];
+}
+
+function resolveSessionFileAcrossWorkspaces(
+  base: string,
+  sessionKey: string,
+  workspaceDirs?: ReadonlyMap<string, string>,
+): string | undefined {
+  for (const workspaceDir of workspaceDirectoryCandidates(base, sessionKey, workspaceDirs)) {
+    const resolved = resolveSessionFile(sessionKey, safePath(workspaceDir, "sessions"));
+    if (resolved !== undefined && sessionArtifactsExist(resolved)) return resolved;
+  }
+  return undefined;
+}
+
 /**
  * Public sessionKey → real session `.jsonl` resolver — the authoritative
  * pointer-discipline mapping, shared by the daemon `/export-trajectory` closure
@@ -322,14 +349,13 @@ function resolveSessionFile(sessionKey: string, sessionsBase: string): string | 
  * @returns the absolute session `.jsonl` path, or `undefined` on a genuine miss
  *   (no artifacts) or an unparseable key.
  */
-export function resolveSessionFilePath(dataDir: string, sessionKey: string): string | undefined {
+export function resolveSessionFilePath(
+  dataDir: string,
+  sessionKey: string,
+  workspaceDirs?: ReadonlyMap<string, string>,
+): string | undefined {
   const base = dataDir.length > 0 ? dataDir : defaultDataDir();
-  const sessionsBase = safePath(base, "workspace", "sessions");
-  const resolved = resolveSessionFile(sessionKey, sessionsBase);
-  // Convert the private resolver's soft-fail (fast path returned even on a miss)
-  // into an honest undefined — a path is returned ONLY when it exists on disk.
-  if (resolved === undefined || !sessionArtifactsExist(resolved)) return undefined;
-  return resolved;
+  return resolveSessionFileAcrossWorkspaces(base, sessionKey, workspaceDirs);
 }
 
 /** Cap on suggested candidate keys (a "did you mean …?" list, not a dump). */
@@ -378,9 +404,8 @@ export function rankCandidateSessionKeys(
  * tenant-scoped fast path can't be used), bounded by `MAX_POINTER_SCAN` total.
  * Soft-fails to `[]` (a missing base / unreadable dir never throws). Content-free.
  */
-function scanCandidateSessionKeys(dataDir: string, requested: string): string[] {
-  const base = dataDir.length > 0 ? dataDir : defaultDataDir();
-  const sessionsBase = safePath(base, "workspace", "sessions");
+function scanCandidateSessionKeys(workspaceDir: string, requested: string): string[] {
+  const sessionsBase = safePath(workspaceDir, "sessions");
   let tenants: fs.Dirent[];
   try {
     tenants = fs.readdirSync(sessionsBase, { withFileTypes: true });
@@ -580,18 +605,14 @@ function parseTaskCheckRow(
 export function makeRealReader(
   dataDir: string,
   obsStore?: ObservabilityStore,
+  workspaceDirs?: ReadonlyMap<string, string>,
 ): IncidentSourceReader {
   const base = dataDir.length > 0 ? dataDir : defaultDataDir();
-  // The writer's source of truth: sessions live under <workspaceDir>/sessions/,
-  // and the default-agent workspace is <dataDir>/workspace (resolveWorkspaceDir).
-  // Mirror that here (daemon.ts:570 uses the same default workspace base).
-  const workspaceDir = safePath(base, "workspace");
-  const sessionsBase = safePath(workspaceDir, "sessions");
   const logsDir = safePath(base, "logs");
 
   return {
     async readSessionRecords(sessionKey: string): Promise<Array<Record<string, unknown>>> {
-      const sessionFile = resolveSessionFile(sessionKey, sessionsBase);
+      const sessionFile = resolveSessionFileAcrossWorkspaces(base, sessionKey, workspaceDirs);
       if (sessionFile !== undefined) {
         return readJsonlBounded(resolveTrajectoryFile(sessionFile));
       }
@@ -600,11 +621,15 @@ export function makeRealReader(
       // falls through to its workspaceDir precedence rung. Mirror that exact
       // safe filename mapping so the evidence is discoverable without inventing
       // an ephemeral transcript or broadening the read outside this workspace.
-      const workspaceTrajectory = safePath(
-        workspaceDir,
-        `${safeTrajectorySessionFileName(sessionKey)}.trajectory.jsonl`,
-      );
-      return readJsonlBounded(workspaceTrajectory);
+      for (const workspaceDir of workspaceDirectoryCandidates(base, sessionKey, workspaceDirs)) {
+        const workspaceTrajectory = safePath(
+          workspaceDir,
+          `${safeTrajectorySessionFileName(sessionKey)}.trajectory.jsonl`,
+        );
+        const records = readJsonlBounded(workspaceTrajectory);
+        if (records.length > 0) return records;
+      }
+      return [];
     },
 
     async readCacheTraceRecords(sessionKey: string): Promise<Array<Record<string, unknown>>> {
@@ -615,7 +640,7 @@ export function makeRealReader(
     },
 
     async readSessionMetadata(sessionKey: string): Promise<Record<string, unknown> | null> {
-      const sessionFile = resolveSessionFile(sessionKey, sessionsBase);
+      const sessionFile = resolveSessionFileAcrossWorkspaces(base, sessionKey, workspaceDirs);
       if (sessionFile === undefined) return null; // Unparseable key — soft-fail.
       const file = resolveMetadataFile(sessionFile);
       let raw: string;
@@ -678,7 +703,12 @@ export function makeRealReader(
       return rows as unknown as Array<Record<string, unknown>>;
     },
     async listCandidateSessionKeys(requestedKey: string): Promise<string[]> {
-      return scanCandidateSessionKeys(base, requestedKey);
+      const candidates = workspaceDirectoryCandidates(base, requestedKey, workspaceDirs)
+        .flatMap((workspaceDir) => scanCandidateSessionKeys(workspaceDir, requestedKey));
+      return rankCandidateSessionKeys(requestedKey, candidates);
+    },
+    resolveSessionFilePath(sessionKey: string): string | undefined {
+      return resolveSessionFileAcrossWorkspaces(base, sessionKey, workspaceDirs);
     },
   };
 }

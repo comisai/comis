@@ -1526,6 +1526,9 @@ async function bootFoundation(
   // 6.5.1. Background task system (created before setupAgents)
   const { backgroundTaskManager } = setupBackgroundTasks({
     dataDir, config: BackgroundTasksConfigSchema.parse(container.config.agents[container.config.routing.defaultAgentId]?.backgroundTasks ?? {}),
+    resolveConfigForAgent: (agentId) => BackgroundTasksConfigSchema.parse(
+      container.config.agents[agentId]?.backgroundTasks ?? {},
+    ),
     eventBus: container.eventBus,
     logger: logLevelManager.getLogger("background-tasks"),
     clock,
@@ -2273,14 +2276,16 @@ async function bootChannels(boot: BootContext): Promise<void> {
   });
   sessionTrackerSlot.current = notificationContext.sessionTracker;
   bgNotifyRef.ref = notificationContext.notificationService;
-  const bgConfigForRunner = BackgroundTasksConfigSchema.parse(agents[defaultAgentId]?.backgroundTasks ?? {});
   const bgCompletionRunnerContext = setupBackgroundCompletionRunner({
     eventBus: container.eventBus, getExecutor: handle.getExecutor, sessionStore,
     resolveSessionManager: (agentId) => handle.piSessionAdapters.get(agentId),
     assembleToolsForAgent, adaptersByType, deliveryService,
     taskManager: backgroundTaskManager, fallbackNotifyFn: bgNotifyFn,
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
-    maxBackgroundHops: bgConfigForRunner.maxBackgroundHops, logger: daemonLogger,
+    resolveMaxBackgroundHops: (agentId) => BackgroundTasksConfigSchema.parse(
+      agents[agentId]?.backgroundTasks ?? {},
+    ).maxBackgroundHops,
+    logger: daemonLogger,
   });
   // eventBus.on("system:shutdown", () =>
   //   bgCompletionRunnerContext.runner.shutdown()) deleted — runner.shutdown
@@ -2575,6 +2580,7 @@ async function bootGateway(
     obsStore,
     clock: boot.clock,
     durableRuns: boot.durableRunStore,
+    workspaceDirs,
   });
 
   const { gatewayHandle, activeExecutions, getActiveConnectionCount, wsConnections } = await setupGateway({

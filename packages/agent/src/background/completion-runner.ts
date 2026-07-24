@@ -82,15 +82,7 @@ export interface BackgroundCompletionRunnerDeps {
     input: BackgroundCompletionDeliveryInput,
   ) => Promise<BackgroundCompletionDeliveryOutcome>;
   deliveryProtection: BackgroundContinuationOutbox["deliveryProtection"];
-  maxBackgroundHops: number;
-  /**
-   * LIVE-TURN oracle (mirrors CompletionDispatcherDeps.isTurnInFlight): true
-   * while the FORMATTED sessionKey has a turn currently executing. A task
-   * promoted mid-turn is consumed by its own still-running turn via the
-   * single blocking `background_tasks read_output` protocol, so a re-entry
-   * turn would serialize a redundant continuation behind the live turn. When
-   * absent, behavior is unchanged.
-   */
+  resolveMaxBackgroundHops(agentId: string): number;
   isTurnInFlight?: (formattedSessionKey: string) => boolean;
   logger: ComisLogger;
 }
@@ -256,6 +248,26 @@ export function createBackgroundCompletionRunner(
       await recovery.recoverClaimedTask(taskId, task.origin, task.toolName);
       return;
     }
+    const origin = task.origin;
+    const agentId = origin.turnScope.conversation.agentId;
+    const projectedLiveSession = conversationScopeToSessionKey(origin.turnScope.conversation);
+    if (
+      (task.notificationPolicy ?? "deferred") === "deferred"
+      && projectedLiveSession.ok
+      && deps.isTurnInFlight?.(formatSessionKey(projectedLiveSession.value)) === true
+    ) {
+      deps.taskManager.scheduleDispatchRetry(taskId);
+      log.debug(
+        {
+          taskId,
+          sessionKey: formatSessionKey(projectedLiveSession.value),
+          traceId: origin.traceId ?? undefined,
+          hint: "Origin turn is still in flight; awaiting an explicit result-consumption receipt",
+        },
+        "Background completion runner: live turn has not acknowledged consumption",
+      );
+      return;
+    }
     const claim = commitState(taskId, "execution_claimed", ["pending"]);
     if (!claim.ok) {
       deps.taskManager.scheduleDispatchRetry(taskId);
@@ -270,8 +282,6 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    const origin = task.origin;
-    const agentId = origin.turnScope.conversation.agentId;
     if (task.notificationPolicy === "silent") {
       const delivered = commitState(taskId, "delivered", ["execution_claimed"]);
       if (!delivered.ok) {
@@ -309,14 +319,15 @@ export function createBackgroundCompletionRunner(
     const formattedSessionKey = formatSessionKey(parsedKey);
 
     const nextHopCount = (origin.backgroundHopCount ?? 0) + 1;
-    if (nextHopCount >= deps.maxBackgroundHops) {
+    const maxBackgroundHops = deps.resolveMaxBackgroundHops(agentId);
+    if (nextHopCount >= maxBackgroundHops) {
       log.info(
         {
           taskId,
           toolName: task.toolName,
           agentId,
           hopCount: nextHopCount,
-          max: deps.maxBackgroundHops,
+          max: maxBackgroundHops,
           traceId: origin.traceId ?? undefined,
         },
         "Background completion: hop cap reached, falling back to user notification",
@@ -326,31 +337,6 @@ export function createBackgroundCompletionRunner(
         agentId,
         task.toolName,
         `Background task "${task.toolName}" completed but follow-up was skipped — recursion limit reached. Run again or check the result manually.`,
-      );
-      return;
-    }
-
-    if (deps.isTurnInFlight?.(formattedSessionKey) === true) {
-      const consumed = commitState(taskId, "consumed_live", ["execution_claimed"]);
-      if (consumed.ok && consumed.value) {
-        emitRoutingOutcome(taskId, origin, task.toolName, false, "live_turn_consumed");
-      } else if (!consumed.ok) {
-        recovery.scheduleStateRecovery(
-          taskId,
-          origin,
-          task.toolName,
-          "consumed_live",
-          ["execution_claimed"],
-        );
-      }
-      log.debug(
-        {
-          taskId,
-          sessionKey: formattedSessionKey,
-          traceId: origin.traceId ?? undefined,
-          hint: "Origin turn in flight — live turn owns consumption; no re-entry",
-        },
-        "Background completion runner: skipped (origin turn live)",
       );
       return;
     }

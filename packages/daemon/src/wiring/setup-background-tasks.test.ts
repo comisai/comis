@@ -139,9 +139,11 @@ function makeDeps(overrides: Partial<Parameters<typeof setupBackgroundTasks>[0]>
 } {
   const dataDir = overrides.dataDir ?? makeTempDataDir();
   const ownDataDir = overrides.dataDir === undefined;
+  const config = overrides.config ?? BackgroundTasksConfigSchema.parse({});
   const deps: Parameters<typeof setupBackgroundTasks>[0] = {
     dataDir,
-    config: BackgroundTasksConfigSchema.parse({}),
+    config,
+    resolveConfigForAgent: overrides.resolveConfigForAgent ?? (() => config),
     eventBus: createMockEventBus(),
     logger: createMockLogger(),
     clock: testClock,
@@ -221,11 +223,13 @@ describe("setupBackgroundTasks -- daemon wiring", () => {
     const fakeTimers = createFakeTimers();
     const { deps, cleanup } = makeDeps({ timers: fakeTimers });
     cleanups.push(cleanup);
+    const configured = BackgroundTasksConfigSchema.parse({
+      maxBackgroundDurationMs: 2_700_000,
+    });
     const configuredDeps = {
       ...deps,
-      config: BackgroundTasksConfigSchema.parse({
-        maxBackgroundDurationMs: 2_700_000,
-      }),
+      config: configured,
+      resolveConfigForAgent: () => configured,
     };
 
     const { backgroundTaskManager } = setupBackgroundTasks(configuredDeps);
@@ -240,6 +244,57 @@ describe("setupBackgroundTasks -- daemon wiring", () => {
     const timeoutEntries = fakeTimers.unrefRecord().filter((entry) => entry.kind === "timeout");
     expect(timeoutEntries).toHaveLength(1);
     expect(timeoutEntries[0]!.delay).toBe(2_700_000);
+  });
+
+  it("resolves concurrency and timeout limits from the promoted task agent", () => {
+    const fakeTimers = createFakeTimers();
+    const defaultConfig = BackgroundTasksConfigSchema.parse({
+      maxPerAgent: 5,
+      maxBackgroundDurationMs: 300_000,
+    });
+    const workerConfig = BackgroundTasksConfigSchema.parse({
+      maxPerAgent: 1,
+      maxBackgroundDurationMs: 900_000,
+    });
+    const { deps, cleanup } = makeDeps({
+      timers: fakeTimers,
+      config: defaultConfig,
+      resolveConfigForAgent: (agentId) => agentId === "worker" ? workerConfig : defaultConfig,
+    });
+    cleanups.push(cleanup);
+    const workerOrigin = {
+      ...TEST_ORIGIN,
+      turnScope: {
+        ...TEST_ORIGIN.turnScope,
+        conversation: {
+          ...TEST_ORIGIN.turnScope.conversation,
+          agentId: "worker",
+        },
+      },
+    };
+    const workerConversationRef = createConversationRef(workerOrigin.turnScope.conversation);
+    if (!workerConversationRef.ok) throw workerConversationRef.error;
+    workerOrigin.conversationRef = workerConversationRef.value;
+
+    const { backgroundTaskManager } = setupBackgroundTasks(deps);
+    const first = backgroundTaskManager.promote(
+      "slow_tool",
+      new Promise(() => {}),
+      new AbortController(),
+      workerOrigin,
+    );
+    const second = backgroundTaskManager.promote(
+      "second_tool",
+      new Promise(() => {}),
+      new AbortController(),
+      workerOrigin,
+    );
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(false);
+    const timeoutEntries = fakeTimers.unrefRecord().filter((entry) => entry.kind === "timeout");
+    expect(timeoutEntries).toHaveLength(1);
+    expect(timeoutEntries[0]!.delay).toBe(900_000);
   });
 
   it("shutdown handle cancels every scheduled timer via TimerHandle.cancel()", () => {

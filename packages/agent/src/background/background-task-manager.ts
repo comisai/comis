@@ -56,9 +56,9 @@ export interface BackgroundTaskManagerOpts {
   clock: ClockPort;
   /** Timer scheduling. Hard-timeout setTimeout uses .unref(). */
   timers: TimerPort;
-  maxPerAgent?: number;
+  maxPerAgent?: number | ((agentId: string) => number);
   maxTotal?: number;
-  maxBackgroundDurationMs?: number;
+  maxBackgroundDurationMs?: number | ((agentId: string) => number);
   persistenceOps?: AtomicTaskPersistenceOps;
   recoveryOps?: TaskRecoveryOps;
 }
@@ -96,6 +96,7 @@ export interface BackgroundTaskManager {
     next: BackgroundSessionState,
     expected?: readonly BackgroundSessionState[],
   ): Result<boolean, Error>;
+  acknowledgeLiveConsumption(taskId: string): Result<boolean, Error>;
   persistContinuationOutbox(
     taskId: string,
     outbox: BackgroundContinuationOutbox,
@@ -151,6 +152,12 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     dataDir,
     ...(persistenceOps !== undefined ? { persistenceOps } : {}),
   });
+  const resolveMaxPerAgent = typeof maxPerAgent === "function"
+    ? maxPerAgent
+    : () => maxPerAgent;
+  const resolveMaxBackgroundDurationMs = typeof maxBackgroundDurationMs === "function"
+    ? maxBackgroundDurationMs
+    : () => maxBackgroundDurationMs;
 
   function reportPersistenceOutcome(
     task: BackgroundTask,
@@ -278,8 +285,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       const acceptedOrigin = parsedOrigin.data;
       const agentId = acceptedOrigin.turnScope.conversation.agentId;
       const agentCurrent = perAgentCount.get(agentId) ?? 0;
-      if (agentCurrent >= maxPerAgent) {
-        return err(new Error(`Concurrency limit exceeded: agent ${agentId} has ${agentCurrent}/${maxPerAgent} tasks`));
+      const agentLimit = resolveMaxPerAgent(agentId);
+      if (agentCurrent >= agentLimit) {
+        return err(new Error(`Concurrency limit exceeded: agent ${agentId} has ${agentCurrent}/${agentLimit} tasks`));
       }
       if (totalCount >= maxTotal) {
         return err(new Error(`Concurrency limit exceeded: total ${totalCount}/${maxTotal} tasks`));
@@ -334,7 +342,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           ac.abort();
           manager.fail(taskId, new Error("Hard timeout exceeded"));
         }
-      }, maxBackgroundDurationMs);
+      }, resolveMaxBackgroundDurationMs(agentId));
       timer.unref();
       task._hardTimeoutTimer = timer;
 
@@ -604,6 +612,27 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       task.dispatchAttempts = dispatchAttempts;
       reportPersistenceOutcome(task, persisted.value);
       recoveryController.resolveTask(task);
+      return ok(true);
+    },
+
+    acknowledgeLiveConsumption(taskId) {
+      const task = tasks.get(taskId);
+      if (!task) return err(new Error(`Background task not found: ${taskId}`));
+      const incident = buildRecoveryIncident(task);
+      if (!incident.ok) return incident;
+      const committed = manager.commitDispatchState(taskId, "consumed_live", ["pending"]);
+      if (!committed.ok || !committed.value) return committed;
+      emitObservationalEventSafely({ eventBus, logger }, "background_task:notified", {
+        agentId: incident.value.agentId,
+        taskId,
+        toolName: incident.value.toolName,
+        sessionKey: incident.value.sessionKey,
+        notified: false,
+        reason: "live_turn_consumed",
+        traceId: task.origin.traceId,
+        timestamp: clock.now(),
+        trajectoryRecorded: false,
+      });
       return ok(true);
     },
 

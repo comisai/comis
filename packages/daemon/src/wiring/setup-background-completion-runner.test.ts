@@ -187,7 +187,7 @@ describe("setupBackgroundCompletionRunner", () => {
       sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: makeLogger(),
     });
     expect(ctx).toBeDefined();
@@ -204,7 +204,7 @@ describe("setupBackgroundCompletionRunner", () => {
       sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: makeLogger(),
     });
     await expect(ctx.runner.shutdown()).resolves.toBeUndefined();
@@ -219,7 +219,7 @@ describe("setupBackgroundCompletionRunner", () => {
       sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: makeLogger(),
     });
     await ctx.runner.shutdown();
@@ -293,7 +293,7 @@ describe("setupBackgroundCompletionRunner", () => {
       resolveSessionManager: vi.fn(() => undefined),
       taskManager: taskManager as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: makeLogger(),
     });
 
@@ -381,7 +381,7 @@ describe("setupBackgroundCompletionRunner", () => {
       resolveSessionManager: vi.fn(() => undefined),
       taskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: makeLogger(),
     });
     const completion = {
@@ -493,7 +493,7 @@ describe("setupBackgroundCompletionRunner", () => {
       taskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
       outwardLedger: outwardLedger as never,
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: makeLogger(),
     });
 
@@ -529,7 +529,7 @@ describe("setupBackgroundCompletionRunner", () => {
           commitDispatchState: vi.fn().mockReturnValue(ok(false)),
         } as unknown as import("@comis/agent").BackgroundTaskManager,
         fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
-        maxBackgroundHops: 3,
+        resolveMaxBackgroundHops: () => 3,
         logger: makeLogger(),
       });
 
@@ -554,7 +554,7 @@ describe("setupBackgroundCompletionRunner", () => {
           commitDispatchState: vi.fn().mockReturnValue(ok(false)),
         } as unknown as import("@comis/agent").BackgroundTaskManager,
         fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
-        maxBackgroundHops: 3,
+        resolveMaxBackgroundHops: () => 3,
         logger: makeLogger(),
       });
       expect(ctx.dispatcher).toBeDefined();
@@ -600,7 +600,7 @@ describe("setupBackgroundCompletionRunner", () => {
           scheduleDispatchRetry: vi.fn(),
         } as unknown as import("@comis/agent").BackgroundTaskManager,
         fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
-        maxBackgroundHops: 3,
+        resolveMaxBackgroundHops: () => 3,
         logger: makeLogger(),
       });
 

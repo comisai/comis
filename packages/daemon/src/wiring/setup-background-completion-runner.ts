@@ -73,8 +73,7 @@ export interface SetupBackgroundCompletionRunnerDeps {
   /** bgNotifyFn closure used when the originating session is gone. */
   fallbackNotifyFn: NotifyFn;
   outwardLedger?: OutwardSendLedgerPort;
-  /** From config.backgroundTasks.maxBackgroundHops (default 3). NOT config.workflow.*. */
-  maxBackgroundHops: number;
+  resolveMaxBackgroundHops(agentId: string): number;
   logger: ComisLogger;
 }
 
@@ -287,7 +286,6 @@ export function setupBackgroundCompletionRunner(
     sessionStore: deps.sessionStore,
     taskManager: deps.taskManager,
     fallbackNotifyFn: deps.fallbackNotifyFn,
-    maxBackgroundHops: deps.maxBackgroundHops,
     isTurnInFlight: (key) => turnFlight.isTurnInFlight(key),
     logger: deps.logger,
   });
@@ -316,7 +314,7 @@ export function setupBackgroundCompletionRunner(
     deliverCompletion: deliver,
     deliverFallback: deliver,
     deliveryProtection: deps.outwardLedger ? "ledger" : "none",
-    maxBackgroundHops: deps.maxBackgroundHops,
+    resolveMaxBackgroundHops: deps.resolveMaxBackgroundHops,
     isTurnInFlight: (key) => turnFlight.isTurnInFlight(key),
     logger: deps.logger,
   });

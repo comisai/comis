@@ -20,6 +20,7 @@ export interface BackgroundTasksContext {
 export interface SetupBackgroundTasksDeps {
   dataDir: string;
   config: BackgroundTasksConfig;
+  resolveConfigForAgent(agentId: string): BackgroundTasksConfig;
   eventBus: TypedEventBus;
   logger: ComisLogger;
   /** Wall-clock + monotonic time reads. */
@@ -50,9 +51,9 @@ export function setupBackgroundTasks(deps: SetupBackgroundTasksDeps): Background
     logger: deps.logger,
     clock: deps.clock,
     timers: deps.timers,
-    maxPerAgent: deps.config.maxPerAgent,
+    maxPerAgent: (agentId) => deps.resolveConfigForAgent(agentId).maxPerAgent,
     maxTotal: deps.config.maxTotal,
-    maxBackgroundDurationMs: deps.config.maxBackgroundDurationMs,
+    maxBackgroundDurationMs: (agentId) => deps.resolveConfigForAgent(agentId).maxBackgroundDurationMs,
   });
 
   // Startup recovery is deferred to daemon.ts (after the completion runner subscribes).

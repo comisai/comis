@@ -232,6 +232,31 @@ describe("BackgroundTaskManager", () => {
       );
     });
 
+    it("atomically acknowledges an explicitly read terminal result", () => {
+      const result = manager.promote(
+        "tool",
+        Promise.resolve("done"),
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+      if (!result.ok) return;
+      manager.complete(result.value, "done");
+
+      const acknowledged = manager.acknowledgeLiveConsumption(result.value);
+
+      expect(acknowledged).toEqual(ok(true));
+      expect(manager.getTask(result.value)?.dispatchState).toBe("consumed_live");
+      expect(loadTask(dataDir, "agent-1", result.value)?.dispatchState).toBe("consumed_live");
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "background_task:notified",
+        expect.objectContaining({
+          taskId: result.value,
+          reason: "live_turn_consumed",
+        }),
+      );
+      expect(manager.acknowledgeLiveConsumption(result.value)).toEqual(ok(false));
+    });
+
     it("retains running ownership when terminal persistence fails", () => {
       const result = manager.promote(
         "tool",

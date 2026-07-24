@@ -15,6 +15,7 @@ function createMockManager(overrides: Partial<BackgroundTaskManagerLike> = {}): 
     getTask: vi.fn(() => undefined),
     waitForTask: vi.fn(async () => err(new Error("no live task"))),
     getTasks: vi.fn(() => []),
+    acknowledgeLiveConsumption: vi.fn(() => ok(true)),
     ...overrides,
   };
 }
@@ -154,6 +155,23 @@ describe("background_tasks tool", () => {
       const text = (result as { content: Array<{ text: string }> }).content[0].text;
 
       expect(text).toContain('{"data":"hello"}');
+      expect(manager.acknowledgeLiveConsumption).toHaveBeenCalledWith("t1");
+    });
+
+    it("withholds terminal output when its consumption receipt cannot persist", async () => {
+      const task = {
+        id: "t1", origin: origin(), toolName: "web_fetch",
+        status: "completed" as const, startedAt: 1000, completedAt: 2000,
+        result: '{"data":"hello"}',
+      };
+      manager = createMockManager({
+        getTask: vi.fn(() => task),
+        acknowledgeLiveConsumption: vi.fn(() => err(new Error("storage unavailable"))),
+      });
+      const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
+
+      await expect(tool.execute("call-1", { action: "read_output", taskId: "t1" }))
+        .rejects.toThrow(/storage unavailable/i);
     });
 
     it("returns still running message for running task", async () => {
@@ -190,6 +208,7 @@ describe("background_tasks tool", () => {
         getTask: vi.fn(() => running),
         getTasks: vi.fn(() => [running]),
         waitForTask,
+        acknowledgeLiveConsumption: vi.fn(() => ok(true)),
       } as unknown as BackgroundTaskManagerLike;
       const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
 
@@ -224,6 +243,7 @@ describe("background_tasks tool", () => {
         getTask: vi.fn(() => running),
         getTasks: vi.fn(() => [running]),
         waitForTask,
+        acknowledgeLiveConsumption: vi.fn(() => ok(true)),
       } as unknown as BackgroundTaskManagerLike;
       const tool = createBackgroundTasksTool({
         manager,

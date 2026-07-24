@@ -2910,6 +2910,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               // Tool metadata plumbed from executor via bridge
               toolCallHistory: result.toolCallHistory,
             });
+            condensedResult = {
+              ...condensedResult,
+              result: {
+                ...condensedResult.result,
+                taskComplete: isSuccess,
+              },
+            };
 
             deps.eventBus.emit("session:sub_agent_result_condensed", {
               runId,
@@ -3146,7 +3153,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             // enriches the status label with errorContext (e.g., "Halted (PromptTimeout, retryable)")
             // which the NarrativeCaster would lose.
             let announcementText: string;
-            if (condensedResult && deps.narrativeCaster && result.finishReason !== "error") {
+            if (condensedResult && deps.narrativeCaster && isSuccess) {
               announcementText = deps.narrativeCaster.cast({
                 condensedResult,
                 task: params.task,
@@ -3163,10 +3170,18 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               // Legacy fallback: no condenser or no caster
               announcementText = buildAnnouncementMessage({
                 task: params.task,
-                status: "completed",
-                response: condensedResult
-                  ? `${condensedResult.result.summary}${fullResultLine}`
-                  : sanitizeAssistantResponse(result.response),
+                status: isSuccess ? "completed" : "failed",
+                ...(isSuccess
+                  ? {
+                      response: condensedResult
+                        ? `${condensedResult.result.summary}${fullResultLine}`
+                        : sanitizeAssistantResponse(result.response),
+                    }
+                  : {
+                      error: condensedResult
+                        ? `${condensedResult.result.summary}${fullResultLine}`
+                        : sanitizeAssistantResponse(result.response),
+                    }),
                 runtimeMs,
                 stepsExecuted: result.stepsExecuted,
                 tokensUsed: result.tokensUsed.total,
@@ -3246,29 +3261,28 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
         // Safety-net proxy stop — announceToParent's own finally block handles
         // the announcement-scoped typing. This catches edge cases where announcement was skipped.
-        emitProxyStop(run, runId, "completed");
+        emitProxyStop(run, runId, isSuccess ? "completed" : "failed");
 
         // Lifecycle hook - onEnded (success path, after condensation/casting/announcement)
         if (deps.lifecycleHooks) {
-          try {
-            await deps.lifecycleHooks.onEnded({
-              runId,
-              agentId: params.agentId,
-              parentSessionKey: params.callerSessionKey ?? "unknown",
-              childSessionKey: formattedKey,
-              endReason: "completed",
-              condensedResult: condensedResult ? { level: condensedResult.level, condensedTokens: condensedResult.condensedTokens } : undefined,
-              runtimeMs,
-              tokensUsed: result.tokensUsed.total,
-              cost: result.cost.total,
-            });
-          } catch (hookErr) {
+          const lifecycleHooks = deps.lifecycleHooks;
+          Promise.resolve().then(() => lifecycleHooks.onEnded({
+            runId,
+            agentId: params.agentId,
+            parentSessionKey: params.callerSessionKey ?? "unknown",
+            childSessionKey: formattedKey,
+            endReason: isSuccess ? "completed" : "failed",
+            condensedResult: condensedResult ? { level: condensedResult.level, condensedTokens: condensedResult.condensedTokens } : undefined,
+            runtimeMs,
+            tokensUsed: result.tokensUsed.total,
+            cost: result.cost.total,
+          })).catch((hookErr) => {
             deps.logger?.warn({
               runId, err: hookErr,
               hint: "onSubagentEnded hook failed; result already delivered",
               errorKind: "internal" as const,
             }, "Lifecycle hook onEnded failed");
-          }
+          });
         }
 
       } catch (error: unknown) {
@@ -3381,24 +3395,23 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
         // Lifecycle hook - onEnded (failure path)
         if (deps.lifecycleHooks && !admissionRejected) {
-          try {
-            await deps.lifecycleHooks.onEnded({
-              runId,
-              agentId: params.agentId,
-              parentSessionKey: params.callerSessionKey ?? "unknown",
-              childSessionKey: formattedKey,
-              endReason: "failed",
-              runtimeMs,
-              tokensUsed: 0,
-              cost: 0,
-            });
-          } catch (hookErr) {
+          const lifecycleHooks = deps.lifecycleHooks;
+          Promise.resolve().then(() => lifecycleHooks.onEnded({
+            runId,
+            agentId: params.agentId,
+            parentSessionKey: params.callerSessionKey ?? "unknown",
+            childSessionKey: formattedKey,
+            endReason: "failed",
+            runtimeMs,
+            tokensUsed: 0,
+            cost: 0,
+          })).catch((hookErr) => {
             deps.logger?.warn({
               runId, err: hookErr,
               hint: "onSubagentEnded hook failed in error path",
               errorKind: "internal" as const,
             }, "Lifecycle hook onEnded failed");
-          }
+          });
         }
       } finally {
         providerSettledRunIds.delete(runId);

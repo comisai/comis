@@ -35,11 +35,12 @@ export function buildObsMcpClientClosures(deps: {
   obsStore: SystemAssemblerDeps["obsStore"];
   clock: SystemAssemblerDeps["clock"];
   durableRuns: SystemAssemblerDeps["durableRuns"];
+  workspaceDirs: ReadonlyMap<string, string>;
 }): {
   obsExplainForMcpClient: (params: Record<string, unknown>) => Promise<unknown>;
   obsSystemHealthForMcpClient: (params: Record<string, unknown>) => Promise<unknown>;
 } {
-  const reader = makeRealReader(deps.dataDir, deps.obsStore);
+  const reader = makeRealReader(deps.dataDir, deps.obsStore, deps.workspaceDirs);
   const obsExplainForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
     const parsed = ObsExplainContract.request.parse(params);
     return assembleIncidentReportFromSources(reader, deps.dataDir, parsed);

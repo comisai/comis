@@ -49,6 +49,7 @@ export interface BackgroundTaskManagerLike {
   ): Promise<Result<TaskInfo, Error>>;
   getTasks(agentId: string): TaskInfo[];
   cancel(taskId: string): Result<void, Error>;
+  acknowledgeLiveConsumption(taskId: string): Result<boolean, Error>;
 }
 
 function taskAgentId(task: TaskInfo): string {
@@ -208,6 +209,19 @@ export function createBackgroundTasksTool(deps: {
               });
             }
             task = waited.value;
+          }
+          if (task.status === "completed" || task.status === "failed") {
+            const acknowledged = deps.manager.acknowledgeLiveConsumption(taskId!);
+            if (!acknowledged.ok) {
+              return throwToolError("conflict", acknowledged.error.message, {
+                hint: "Repair protected background-task storage before reading the result again",
+              });
+            }
+            if (!acknowledged.value) {
+              return throwToolError("conflict", `Background task result is already owned by another delivery: ${taskId}`, {
+                hint: "Continue from the delivered result instead of reading it again",
+              });
+            }
           }
           switch (task.status) {
             case "running":
