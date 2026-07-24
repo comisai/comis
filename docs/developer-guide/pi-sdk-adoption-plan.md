@@ -1,6 +1,6 @@
 # pi SDK capability adoption plan
 
-Status: reviewed assessment and sequencing plan. The 0.80.10 upgrade described in "Completed" is implemented on this branch, and the six "Adopt (worth it)" items are resolved — 1–4 landed test-first, 5–6 evaluated and declined with pinned rationale (see the per-item outcomes below). Remaining items are proposals that must land test-first with a concrete caller, per the [generic agent runtime redesign](./generic-agent-runtime-redesign.md) rules.
+Status: reviewed assessment and sequencing plan. The 0.80.10 upgrade described in "Completed" is implemented on this branch, and the six "Adopt (worth it)" items are resolved — 1–4 landed test-first, 5–6 evaluated and declined with pinned rationale (see the per-item outcomes below). Remaining items are proposals that must land test-first with a concrete caller, per the [generic agent architecture](./generic-agent-architecture.md) boundary rules.
 
 This document records the deep review of the pi SDK surface (`@earendil-works/pi-ai`, `pi-agent-core`, `pi-coding-agent`) against Comis's own subsystems: what the SDK now provides, where Comis duplicates it, and — for each area — whether moving onto the SDK is worth it. The standing bar: adopt SDK behavior only when an unrelated deployment gains something (less Comis-maintained code, better provider coverage, better cache behavior) without losing a Comis guarantee (security gating, multi-tenancy, multi-profile auth, observability, offline determinism).
 

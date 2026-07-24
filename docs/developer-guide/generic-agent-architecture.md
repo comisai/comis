@@ -2,8 +2,6 @@
 
 Comis is a security-first agent runtime. Runtime code owns orchestration, models, tools, memory, channels, scheduling, approvals, delivery, observability, security, typed prompt compilation, locale policy, and immutable workspace-policy loading. It does not own an application's industry, persona, vendor integrations, business rules, or default human language.
 
-The [generic agent runtime redesign implementation specification](./generic-agent-runtime-redesign.md) defines the target contracts, delivery workstreams, tests, and completion criteria for applying this boundary across the codebase.
-
 ## Trust hierarchy
 
 Model-visible instructions have an explicit source and precedence:
