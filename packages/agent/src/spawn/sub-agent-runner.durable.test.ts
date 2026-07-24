@@ -460,6 +460,63 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     expect(terminalize).toHaveBeenLastCalledWith(runId, "completed");
   });
 
+  it("commits delivered completion before a lifecycle hook can stall", async () => {
+    const store = createRecordingStore();
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const onEnded = vi.fn().mockReturnValue(new Promise(() => undefined));
+    const runner = createSubAgentRunner(createDeps({
+      durableRuns: store,
+      sendToChannel,
+      lifecycleHooks: {
+        prepareSpawn: vi.fn().mockResolvedValue(undefined),
+        onEnded,
+      },
+      config: {
+        ...createDeps().config,
+        subagentContext: { maxRunTimeoutMs: 500, perStepTimeoutMs: 500 },
+      },
+      executeAgent: vi.fn().mockResolvedValue({
+        response: "done",
+        tokensUsed: { total: 10 },
+        cost: { total: 0 },
+        finishReason: "stop",
+        stepsExecuted: 1,
+      }),
+    }));
+    const runId = runner.spawn({
+      task: "deliver before lifecycle hook",
+      agentId: "worker",
+      rootRunId: "root-delivery-owner",
+      workspacePolicyHash: POLICY_HASH,
+      announceChannelType: "test",
+      announceChannelId: "channel-a",
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(onEnded).toHaveBeenCalledOnce();
+    expect(runner.getRunStatus(runId)?.status).toBe("completed");
+    expect(store.completed).toContainEqual({
+      checkpointId: runId,
+      terminalReason: "completed",
+    });
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(runner.getRunStatus(runId)).toEqual(expect.objectContaining({
+      status: "completed",
+      completion: expect.objectContaining({ endReason: "completed" }),
+    }));
+    expect(sendToChannel).toHaveBeenCalledOnce();
+
+    const shutdown = runner.shutdown();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await shutdown;
+
+    expect(sendToChannel).toHaveBeenCalledOnce();
+  });
+
   it("shutdown drains an in-flight durable terminalization retry", async () => {
     const store = createRecordingStore();
     let resolveRetry!: (value: Result<{ kind: "terminalized" }, Error>) => void;
