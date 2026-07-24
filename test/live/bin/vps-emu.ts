@@ -70,7 +70,6 @@ const info = {
   groups: groups.map((g) => g.chatId),
 };
 writeFileSync("/tmp/comis-emu.json", JSON.stringify(info, null, 2));
-// eslint-disable-next-line no-console
 console.log("EMU_UP " + JSON.stringify(info));
 
 const stop = async (): Promise<void> => {

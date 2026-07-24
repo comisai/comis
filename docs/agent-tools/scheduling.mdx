@@ -281,7 +281,7 @@ Gated occurrences remain visible without exposing gathered content: a skipped oc
 
 The `heartbeat_manage` tool controls the agent's periodic heartbeat, which uses a separate clock from authored cron jobs. All four actions require admin trust. The [`heartbeat-minimal`](/skills/tool-policy) tool profile is opt-in and is never silently applied.
 
-Heartbeat response processing recognizes `HEARTBEAT_OK` as a soft acknowledgement. `show_ok` and `show_alerts` control visibility, `light_context` limits bootstrap context to `HEARTBEAT.md`, `ack_max_chars` bounds acknowledgement detection, and `response_prefix` removes a configured prefix before delivery. `alert_threshold` and `alert_cooldown_ms` govern heartbeat-source alerts; `stale_ms` bounds stuck-tick detection.
+Heartbeat response processing recognizes `HEARTBEAT_OK` as a soft acknowledgement and suppresses empty replies plus the shared `NO_REPLY` and `[SILENT]` markers. Plain text without the heartbeat token is an alert regardless of length; `ack_max_chars` applies only to residual text accompanying `HEARTBEAT_OK`. `show_ok` and `show_alerts` control visibility, `light_context` limits bootstrap context to `HEARTBEAT.md`, and `response_prefix` removes a configured prefix before classification and delivery. `alert_threshold` and `alert_cooldown_ms` govern heartbeat-source alerts; `stale_ms` bounds stuck-tick detection.
 
 ### Actions
 
@@ -397,7 +397,7 @@ Use `cron action: runs job_name: daily-research-summary limit: 5` to inspect exe
 - **Cron dependency suspension** -- only consecutive provider/dependency failures count toward `maxConsecutiveDependencyErrors`; reaching the configured limit pauses that cron job. Ordinary validation or agent-output failures do not consume this dependency-only budget.
 - **Heartbeat alerting** -- `alert_threshold` and `alert_cooldown_ms` are separate heartbeat-source alert controls; they do not suspend cron jobs.
 - **Delivery ambiguity** -- `runs` keeps computation `status` separate from `deliveryStatus`, including `partial` and `unknown`, so accepted platform delivery is never inferred from a completed turn.
-- **Heartbeat suppression** -- `HEARTBEAT_OK`, visibility settings, an empty response, or a missing target can legitimately produce no delivered heartbeat message while the execution remains observable.
+- **Heartbeat suppression** -- The [heartbeat response rules](#heartbeat-manage-agent-heartbeat), visibility settings, or a missing target can legitimately produce no delivered heartbeat message while the execution remains observable.
 
 ## Related
 

@@ -717,7 +717,6 @@ export function createSkillsController(
     getResolvedTools(): { included: string[]; denied: string[] } {
       if (!state.skillsConfig) return { included: [], denied: [] };
       const policy = state.skillsConfig.toolPolicy;
-      // eslint-disable-next-line security/detect-object-injection -- policy.profile from validated config schema
       const base = PROFILE_TOOLS[policy.profile] ?? [];
       const combined = new Set([...base, ...policy.allow]);
       const denied = new Set(policy.deny);
