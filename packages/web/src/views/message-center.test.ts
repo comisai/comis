@@ -42,7 +42,9 @@ function state(el: IcMessageCenter) {
     _sendText: string;
     _deleteTargetId: string;
     _selectedMessageId: string;
+    _loadChats(): Promise<void>;
     _refetchMessages(): Promise<void>;
+    _captureActionContext(): unknown;
   };
 }
 
@@ -471,6 +473,94 @@ describe("IcMessageCenter", () => {
     ]]);
     expect(current._messages.map((message) => message.text))
       .toEqual(["selected account and thread"]);
+  });
+
+  it("blocks native operations when complete endpoint identities collide", async () => {
+    const endpoints = {
+      "agent-a": {
+        channelType: "telegram",
+        channelInstanceId: "account-a",
+        conversationId: "shared-chat",
+        threadId: "thread-a",
+        conversationKind: "shared" as const,
+      },
+      "agent-b": {
+        channelType: "telegram",
+        channelInstanceId: "account-b",
+        conversationId: "shared-chat",
+        threadId: "thread-b",
+        conversationKind: "shared" as const,
+      },
+    };
+    const call = vi.fn((method: string, params?: Record<string, unknown>) => {
+      if (method === "obs.channels.all") {
+        return Promise.resolve({
+          channels: [{
+            channelId: "shared-chat",
+            channelType: "telegram",
+            messagesSent: 1,
+            messagesReceived: 1,
+            lastActiveAt: 1,
+          }],
+        });
+      }
+      if (method === "config.read") {
+        return Promise.resolve({ config: { tenantId: "tenant-a" }, sections: [] });
+      }
+      if (method === "agents.list") return Promise.resolve({ agents: ["agent-a", "agent-b"] });
+      if (method === "session.list") {
+        const agentId = String(params?.["agent_id"]) as keyof typeof endpoints;
+        return Promise.resolve({
+          sessions: [{
+            conversationRef: `conversation-${agentId}`,
+            agentId,
+            kind: "group",
+            endpoint: endpoints[agentId],
+            messageCount: 1,
+            totalTokens: 1,
+            updatedAt: 1,
+            createdAt: 1,
+          }],
+          total: 1,
+        });
+      }
+      if (method === "message.fetch") {
+        return Promise.resolve({ messages: [], channelId: "shared-chat" });
+      }
+      return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+    });
+    const el = await createElement({ channelType: "telegram" });
+    const current = state(el);
+    Object.assign(current, {
+      _loadState: "loaded",
+      _channelIsRunning: true,
+      _capabilities: { fetchHistory: true },
+      _hasLoaded: true,
+    });
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
+    await el.updateComplete;
+
+    await current._loadChats();
+
+    expect(current._chatList.map((chat) => chat.endpoint)).toEqual([
+      endpoints["agent-a"],
+      endpoints["agent-b"],
+    ]);
+    expect(call).toHaveBeenCalledWith("session.list", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
+    });
+    expect(call).toHaveBeenCalledWith("session.list", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-b",
+    });
+
+    current._selectedChatId = current._chatList[1]!.key!;
+    await current._refetchMessages();
+
+    expect(call.mock.calls.filter(([method]) => method === "message.fetch")).toHaveLength(0);
+    expect(current._messagesAreActionable).toBe(false);
+    expect(current._captureActionContext()).toBeNull();
   });
 
   it("does not let a stale zero-match request clear newer stored messages", async () => {

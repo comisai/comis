@@ -507,12 +507,10 @@ describe("IcChatConsole", () => {
     expect(rpc.call).toHaveBeenCalledWith("session.list", {
       tenant_id: "tenant-a",
       agent_id: "default",
-      kind: "dm",
     });
     expect(rpc.call).toHaveBeenCalledWith("session.list", {
       tenant_id: "tenant-a",
       agent_id: "agent2",
-      kind: "dm",
     });
     expect(rpc.call).toHaveBeenCalledWith("session.history", {
       tenant_id: "tenant-a",
@@ -562,6 +560,62 @@ describe("IcChatConsole", () => {
     expect((el as any)._activeSession).toBe(localKey);
     expect((el as any)._sessions.map((session: { key: string }) => session.key))
       .toContain(localKey);
+  });
+
+  it("releases a session loader invalidated by a created-session event", async () => {
+    const pendingList = deferred<Record<string, unknown>>();
+    let delayLists = false;
+    const rpc = createMockRpcClient();
+    (rpc.call as any).mockImplementation((method: string) => {
+      if (method === "session.list") {
+        return delayLists
+          ? pendingList.promise
+          : Promise.resolve({ sessions: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+    const el = await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: rpc,
+      apiClient: createMockApiClient(),
+      eventDispatcher: createMockEventDispatcher(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    delayLists = true;
+
+    const loading = (el as any)._loadSessions();
+    await Promise.resolve();
+    expect((el as any)._loading).toBe(true);
+
+    document.dispatchEvent(new CustomEvent("session:created", {
+      detail: {
+        sessionKey: "created-session",
+        agentId: "default",
+        channelType: "web",
+      },
+    }));
+    await el.updateComplete;
+
+    expect((el as any)._loading).toBe(false);
+    expect((el as any)._sessions.map((session: { key: string }) => session.key))
+      .toContain("created-session");
+
+    pendingList.resolve({
+      sessions: [{
+        conversationRef: "stale-session",
+        agentId: "default",
+        kind: "dm",
+        messageCount: 1,
+        totalTokens: 1,
+        updatedAt: 1,
+        createdAt: 1,
+      }],
+      total: 1,
+    });
+    await loading;
+
+    expect((el as any)._loading).toBe(false);
+    expect((el as any)._sessions.map((session: { key: string }) => session.key))
+      .toContain("created-session");
   });
 
   it("clears old agent rows before the replacement list resolves", async () => {

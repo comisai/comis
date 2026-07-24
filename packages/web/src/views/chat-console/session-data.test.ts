@@ -84,16 +84,18 @@ describe("chat session data", () => {
         if (method === "session.list") {
           const agentId = String(params?.["agent_id"]);
           return {
-            sessions: [{
-              conversationRef: `conversation-${agentId}`,
-              agentId,
-              kind: "dm",
-              messageCount: 1,
-              totalTokens: 2,
-              updatedAt: 2,
-              createdAt: 1,
-            }],
-            total: 1,
+            sessions: params?.["kind"] === undefined
+              ? [{
+                  conversationRef: `conversation-${agentId}`,
+                  agentId,
+                  kind: agentId === "agent-b" ? "group" : "dm",
+                  messageCount: 1,
+                  totalTokens: 2,
+                  updatedAt: 2,
+                  createdAt: 1,
+                }]
+              : [],
+            total: params?.["kind"] === undefined ? 1 : 0,
           };
         }
         throw new Error(`Unexpected method: ${method}`);
@@ -111,7 +113,7 @@ describe("chat session data", () => {
         tenantId: "tenant-a",
         agentId: "agent-b",
         conversationRef: "conversation-agent-b",
-        channelType: "dm",
+        channelType: "group",
         messageCount: 1,
         lastActivity: 2,
       }],
@@ -120,12 +122,10 @@ describe("chat session data", () => {
     expect(rpc.call).toHaveBeenCalledWith("session.list", {
       tenant_id: "tenant-a",
       agent_id: "agent-a",
-      kind: "dm",
     });
     expect(rpc.call).toHaveBeenCalledWith("session.list", {
       tenant_id: "tenant-a",
       agent_id: "agent-b",
-      kind: "dm",
     });
   });
 
