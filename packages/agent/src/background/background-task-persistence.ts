@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: background task persistence re-raise (line 147) inside try/catch wrapper; outer caller (executor) catches at PiExecutor boundary which is itself consumed by daemon RPC handlers.
+// @allow-throw: filesystem exceptions are re-raised only inside tryCatch so this persistence boundary can return them as Result errors.
 /**
  * File-based persistence for background tasks.
  *
@@ -198,10 +198,9 @@ export function persistTaskAtomically(
  * `0o700` and the file at `0o600` (file-mode invariants). `dataDir`
  * is passed as `confinedBaseDir` for the ancestor-symlink defense.
  *
- * Result errors are intentionally swallowed — this writer's contract is
- * best-effort persistence: a failure to persist must not propagate to the
- * caller (which already returned a placeholder to the agent). The
- * subsequent recovery scan will simply miss this task.
+ * This convenience writer is intentionally best-effort and provides no
+ * admission guarantee. Runtime admission uses `persistTaskAtomically` instead,
+ * so persistence failures surface before a background placeholder is returned.
  */
 export function persistTaskSync(dataDir: string, task: BackgroundTask | PersistedTaskState): void {
   const agentDir = safePath(dataDir, task.origin.turnScope.conversation.agentId);

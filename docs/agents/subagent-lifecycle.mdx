@@ -15,9 +15,9 @@ calls `sessions_spawn`.
 
 The subagent context lifecycle is a pipeline that begins when the parent agent
 calls `sessions_spawn`. The call returns a run ID immediately; the lifecycle ends
-when the terminal result is durably recorded and delivered to the immutable
-originating conversation. A parent can also await owned children with
-`subagents` action `wait` without polling.
+when the terminal result is durably recorded and its immutable-origin delivery
+reaches an accepted or explicitly recorded failure state. A parent can also
+await owned children with `subagents` action `wait` without polling.
 
 ```mermaid
 flowchart LR
@@ -27,7 +27,7 @@ flowchart LR
     D --> E[Sub-agent executes]
     E --> F[Result condensed]
     F --> G[Terminal result recorded]
-    G --> H[Exact-origin delivery or wait result]
+    G --> H[Exact-origin delivery, wait result, or durable failure state]
 ```
 
 Each stage has its own configuration options and graceful fallback behavior.

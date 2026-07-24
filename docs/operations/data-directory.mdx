@@ -428,6 +428,14 @@ Delivery that is proven permanent is parked as such; delivery whose outward
 outcome cannot be established is parked uncertain instead of being replayed
 blindly.
 
+Admission is not reported until the protected task record has completed its
+atomic write, rename, and applicable sync checks. Ordinary write, rename,
+file-sync, or directory-sync failures reject promotion and surface the
+persistence error to the foreground turn. The one narrower exception is Node's
+Permission Model reporting that its `fsync` API is disabled: after the write and
+rename succeed, Comis accepts the record as committed without `fsync`. Other
+persistence errors are never treated as that restriction.
+
 **Written by:** the daemon when background tasks are created or updated.
 **Safe to delete?** Only when no task is running and no completion remains
 undelivered or parked for reconciliation. Deleting an active record loses the

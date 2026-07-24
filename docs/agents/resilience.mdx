@@ -227,14 +227,20 @@ key. A node that ends in failure and is swept twice notifies the channel
 A task promoted into the background persists its origin and execution identity
 under [`background-tasks/`](/operations/data-directory#background-tasks). When
 the task finishes, Comis durably records the finalized result and continuation
-outbox before attempting exact-origin delivery. The originating live turn can
-consume that result once with `background_tasks.read_output`. Before returning
-either a completed result or a failed terminal outcome, the tool atomically
-commits `consumed_live` in the protected task record. If that claim cannot be
-persisted, or another delivery already owns the result, the read returns a
-conflict and no competing terminal notice is emitted. Otherwise the completion
-runner re-enters the same conversation for a continuation turn or delivers a
-bounded fallback notice.
+outbox before attempting exact-origin delivery. While the originating turn is
+still in flight, the completion runner defers re-entry on a bounded exponential
+schedule (1s, 2s, 4s, and so on, capped at 60s). This live-turn deferral count
+is separate from the persisted continuation-attempt count, so waiting for the
+turn does not consume delivery attempts.
+
+The originating live turn can consume the completed result with one blocking
+`background_tasks.read_output` call. A successful read becomes `consumed_live`
+only after its tool result crosses the session journal boundary at turn end. If
+session journaling does not complete or the protected receipt cannot be
+persisted, the pending result remains eligible for continuation delivery. If a
+delivery path already owns the result, that owner remains authoritative.
+Otherwise the completion runner re-enters the same conversation for a
+continuation turn or delivers a bounded fallback notice.
 
 The persisted delivery lifecycle survives daemon restart. A delivery protected
 by the outward ledger retries only when the ledger proves the send was not

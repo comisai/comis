@@ -143,21 +143,24 @@ The `background_tasks` tool lets agents inspect and manage the daemon's durable 
 
 | Action | Description |
 |--------|-------------|
-| `list` | List this agent's background tasks with status and timestamps |
+| `list` | List this conversation's background tasks with status and timestamps |
 | `get` | Get status metadata for a single task by ID |
 | `cancel` | Cancel a running task |
-| `read_output` | Wait for a running promoted tool call, then atomically claim and return its terminal output |
+| `read_output` | Wait for a running promoted tool call and return its terminal output for acknowledgement after successful session journaling |
 
 Use `background_tasks` to inspect a promoted tool call, consume its eventual
 result with one `read_output` call, or cancel a runaway job. Do not poll
 `read_output`: when the task is still live, the call waits on the original
 execution and emits bounded progress heartbeats so prompt stall detection does
-not mistake a healthy long-running wait for an unresponsive turn. Before a
-completed or failed result is returned, `read_output` durably claims delivery
-ownership; a persistence failure or competing delivery returns a conflict
-instead of permitting a contradictory terminal notice. The tool is agent-scoped
-rather than admin-gated: every action is restricted to tasks owned by the
-calling agent.
+not mistake a healthy long-running wait for an unresponsive turn. A successful
+`read_output` is acknowledged only after its tool result crosses the session
+journal boundary at turn end. If the journal or protected consumption receipt
+cannot be persisted, the pending result remains eligible for continuation
+delivery; an existing delivery owner remains authoritative.
+
+The tool is conversation-scoped rather than admin-gated. Every action requires
+an active request context matching both the owning agent and the exact
+originating conversation; tasks owned by another conversation are not exposed.
 
 ## mcp_manage -- MCP Server Lifecycle
 
