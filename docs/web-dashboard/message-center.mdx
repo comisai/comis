@@ -16,10 +16,12 @@ The Message Center lets you interact with messages across all your connected cha
 - `channels.list` -- channel picker contents
 - `channels.capabilities(channel_type)` -- determines which actions are available for the selected channel
 - `channels.get(channel_type)` -- bot identity (used to label the operator attribution dialog)
-- `messages.list(channel_type, chat_id, limit?)` -- recent messages
-- `messages.send`, `messages.reply`, `messages.react`, `messages.edit`, `messages.delete` -- compose and modify
-- `messages.sendAttachment` -- multipart upload
-- `discord_action`, `telegram_action`, `slack_action`, `whatsapp_action` -- platform-specific actions
+- `obs.channels.all` -- chat picker contents
+- `message.fetch(channel_type, channel_id, limit?)` -- recent messages when the channel supports native history
+- `session.list` and `session.history` -- stored-history fallback, matched through the session's authoritative endpoint metadata rather than its display key
+- `message.send`, `message.reply`, `message.react`, `message.edit`, `message.delete` -- compose and modify
+- `message.attach` -- URL-based attachment delivery
+- `discord.action`, `telegram.action`, `slack.action`, `whatsapp.action` -- platform-specific actions
 
 Every send/edit/delete action requires a confirmation dialog that explicitly attributes the action to the operator (not the agent), so the audit log records *who* did the action.
 
@@ -62,7 +64,7 @@ Below the message list, a compose area lets you send new messages to the current
 
 ### Attachment Form
 
-You can attach files to messages with support for four attachment types: image, file, audio, and video. Select the attachment type, choose a file, and send it to the current conversation.
+You can attach files to messages with support for four attachment types: image, file, audio, and video. Select the attachment type, enter the attachment URL and optional caption, and send it to the current conversation.
 
 ### Platform Actions
 

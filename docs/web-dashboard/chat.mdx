@@ -11,7 +11,7 @@ The Chat Console lets you talk to your agents directly from the browser. You can
 ## Routes
 
 - `/chat` -- opens the console without a selected session
-- `/chat/:conversationRef` -- opens directly to the stored conversation identified by its opaque conversation reference
+- `/chat/:conversationRef` -- opens directly to the matching stored conversation in the selected agent's authorized session list
 
 ## Backing API
 
@@ -28,14 +28,16 @@ The Chat Console is split into two main areas side by side.
 
 ### Session Sidebar
 
-On the left, the session sidebar lists all of your conversations. Each session shows its opaque conversation reference, the agent and channel it belongs to, and the last time it was active.
+On the left, the session sidebar lists conversations for the selected agent. Each session shows its label or shortened opaque conversation reference, channel kind, message count, and last activity.
 
 At the top of the sidebar you will find:
 
 - A **New Session** button (labelled "New") that creates a fresh session for the agent currently selected in the message area
-- A **search bar** ("Filter sessions...") that filters the visible session list by conversation reference, agent ID, or channel type as you type
+- A **search bar** ("Filter sessions...") that filters the visible session list by conversation reference or label as you type
 
 Click any session in the list to load its conversation in the message area.
+For a routed conversation reference, the message input remains disabled unless
+that reference resolves to an authorized tenant, agent, and conversation target.
 
 <Tip>
 For richer filtering -- by agent, channel, or content match across all sessions -- use the [Sessions](/web-dashboard/sessions-view) view instead. The chat console's sidebar is a quick filter, not a full session browser.
@@ -50,7 +52,7 @@ On the right, the message area shows the full conversation history for the selec
 - **System messages** appear centered with a distinct style
 - **Error messages** are highlighted in red so they stand out
 
-At the top of the message area, a header bar shows the conversation reference, the agent handling the conversation, and the channel type.
+At the top of the message area, a header bar lets you select the agent and shows the active conversation reference and message count.
 
 ### Tool Call Cards
 

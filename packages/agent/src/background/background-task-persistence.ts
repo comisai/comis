@@ -3,13 +3,12 @@
 /**
  * File-based persistence for background tasks.
  *
- * Uses synchronous file I/O via the `@comis/observability` fs-safe
- * substrate to ensure task state is persisted before returning a
- * placeholder to the caller. Every write goes through `writeRegularFile`
- * (file mode `0o600`) and every dir creation goes through
- * `ensureContainedDir` (dir mode `0o700`), honoring file-mode invariants
- * (files at `0o600`, dirs at `0o700`). `dataDir` is threaded as the `confinedBaseDir`
- * ancestor-symlink defense.
+ * Runtime admission uses a synchronous temp-file write, file sync, rename, and
+ * directory sync before returning a placeholder. The best-effort convenience
+ * writer uses `writeRegularFile`; both paths create directories through
+ * `ensureContainedDir` and preserve the `0o600` file / `0o700` directory mode
+ * invariants. `dataDir` is threaded as the `confinedBaseDir` ancestor-symlink
+ * defense.
  *
  * @module
  */
@@ -122,6 +121,7 @@ const defaultAtomicTaskPersistenceOps: AtomicTaskPersistenceOps = {
   open: openSync,
   read: (path) => {
     try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- caller supplies the confined safePath-derived task record path.
       return readFileSync(path, "utf-8");
     } catch (error: unknown) {
       if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
@@ -144,6 +144,7 @@ function readPriorTaskState(
   return tryCatch(() => {
     if (ops.read) return ops.read(filePath);
     try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- filePath is confined beneath the safePath-derived agent directory.
       return readFileSync(filePath, "utf-8");
     } catch (error: unknown) {
       if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
@@ -154,6 +155,13 @@ function readPriorTaskState(
   });
 }
 
+/**
+ * Make a post-rename admission rejection invisible to startup recovery.
+ *
+ * An existing accepted record is restored. A newly created record is first
+ * replaced with synced, schema-invalid content and then removed, so even a
+ * crash that preserves the directory entry cannot resurrect the rejected task.
+ */
 function rollbackRejectedTaskState(
   filePath: string,
   priorState: string | undefined,
@@ -270,6 +278,7 @@ export function persistTaskSync(dataDir: string, task: BackgroundTask | Persiste
 export function loadTask(dataDir: string, agentId: string, taskId: string): PersistedTaskState | undefined {
   const filePath = safePath(safePath(dataDir, agentId), `${taskId}.json`);
   try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath confines the dynamic identifiers to dataDir.
     const raw = readFileSync(filePath, "utf-8");
     return JSON.parse(raw) as PersistedTaskState;
   } catch {
@@ -284,7 +293,9 @@ export function recoverTasks(
   dataDir: string,
   ops: TaskRecoveryOps = {
     readdir: readdirSync,
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- callers pass dataDir or paths confined beneath it.
     stat: (path) => statSync(path),
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- callers pass task paths resolved through safePath.
     read: (path) => readFileSync(path, "utf-8"),
   },
 ): TaskRecoveryScan {
@@ -369,6 +380,7 @@ export function recoverTasks(
 export function removeTaskFile(dataDir: string, agentId: string, taskId: string): void {
   const filePath = safePath(safePath(dataDir, agentId), `${taskId}.json`);
   try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath confines the dynamic identifiers to dataDir.
     unlinkSync(filePath);
   } catch (e: unknown) {
     if (e && typeof e === "object" && "code" in e && (e as { code: string }).code !== "ENOENT") {
