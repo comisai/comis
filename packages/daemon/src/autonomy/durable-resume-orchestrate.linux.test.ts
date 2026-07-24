@@ -70,7 +70,10 @@ function makeBoundedAutonomy() {
   return { registerRoot: vi.fn(), leaseIdsForRoot: vi.fn(() => new Set<string>()) };
 }
 function makeLeaseManager(): LeaseManager {
-  return { mintLease: vi.fn(() => ({ leaseId: "lease-vps", bearer: "bearer-vps" })) } as unknown as LeaseManager;
+  return {
+    mintLease: vi.fn(() => ({ leaseId: "lease-vps", bearer: "bearer-vps" })),
+    revoke: vi.fn(() => ({ revoked: 1 })),
+  } as unknown as LeaseManager;
 }
 
 describe.skipIf(!RUN_LINUX)("orchestrate durable-resume boot-sweep recovery (restart-sim, Linux/VPS only)", () => {
