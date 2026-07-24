@@ -19,6 +19,11 @@ describe("heartbeat response normalization", () => {
     expect(stripMarkup("  plain text  ")).toBe("plain text");
   });
 
+  it("strips long runs of Markdown wrappers in linear passes", () => {
+    const wrappers = "*".repeat(10_000);
+    expect(stripMarkup(`${wrappers}HEARTBEAT_OK${wrappers}`)).toBe("HEARTBEAT_OK");
+  });
+
   it("recognizes only leading trailing or exact heartbeat tokens", () => {
     expect(stripHeartbeatToken("HEARTBEAT_OK!!!")).toEqual({ stripped: "", hadToken: true });
     expect(stripHeartbeatToken("HEARTBEAT_OK. All clear.")).toEqual({

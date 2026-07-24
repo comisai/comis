@@ -74,6 +74,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function trimSlackEmojiColons(emoji: string): string {
+  let start = 0;
+  while (emoji.charAt(start) === ":") start += 1;
+
+  let end = emoji.length;
+  while (end > start && emoji.charAt(end - 1) === ":") end -= 1;
+
+  return emoji.slice(start, end);
+}
+
 /** Extract the chat-message timestamp created when files.uploadV2 shares a file. */
 function findSlackPostedMessageId(result: unknown, channelId: string): unknown {
   if (!isRecord(result)) return undefined;
@@ -493,7 +503,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
     ): Promise<Result<void, Error>> {
       try {
         // Strip colons from Slack emoji short names (e.g. ":thumbsup:" -> "thumbsup")
-        const emojiName = emoji.replace(/^:+|:+$/g, "");
+        const emojiName = trimSlackEmojiColons(emoji);
         await app.client.reactions.add({
           channel: channelId,
           timestamp: messageId,
@@ -513,7 +523,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
     ): Promise<Result<void, Error>> {
       try {
         // Strip colons from Slack emoji short names (e.g. ":thumbsup:" -> "thumbsup")
-        const emojiName = emoji.replace(/^:+|:+$/g, "");
+        const emojiName = trimSlackEmojiColons(emoji);
         await app.client.reactions.remove({
           channel: channelId,
           timestamp: messageId,

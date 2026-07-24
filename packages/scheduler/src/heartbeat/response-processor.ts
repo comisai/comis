@@ -43,24 +43,29 @@ export interface ProcessHeartbeatInput {
 }
 
 // ---------------------------------------------------------------------------
-// Regex constants
-// ---------------------------------------------------------------------------
-
-/** Matches leading/trailing Markdown wrapper characters (backticks, bold, italic, strikethrough). */
-const MARKDOWN_WRAPPER_RE = /^[`*_~]+|[`*_~]+$/g;
-
-// ---------------------------------------------------------------------------
 // Pure functions
 // ---------------------------------------------------------------------------
+
+function isMarkdownWrapperCharacter(character: string): boolean {
+  return character === "`" || character === "*" || character === "_" || character === "~";
+}
+
+function stripMarkdownWrappers(text: string): string {
+  let start = 0;
+  while (start < text.length && isMarkdownWrapperCharacter(text.charAt(start))) start += 1;
+
+  let end = text.length;
+  while (end > start && isMarkdownWrapperCharacter(text.charAt(end - 1))) end -= 1;
+
+  return text.slice(start, end);
+}
 
 /**
  * Strip HTML tags and common Markdown wrappers to expose tokens.
  * Not a full parser -- just enough to find HEARTBEAT_OK in LLM output.
  */
 export function stripMarkup(text: string): string {
-  return stripHtmlTags(text)
-    .replace(MARKDOWN_WRAPPER_RE, "")
-    .trim();
+  return stripMarkdownWrappers(stripHtmlTags(text)).trim();
 }
 
 function stripHtmlTags(text: string): string {
