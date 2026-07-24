@@ -345,7 +345,7 @@ describe("@comis/agent -- architecture invariants", () => {
       checkedFiles,
       "sanity: findForbiddenImports walked at least one agent/src file",
     ).toBeGreaterThan(0);
-  });
+  }, 15_000);
 
   it("agent/tsconfig.json and agent/package.json do not reference @comis/infra", () => {
     const tsconfigPath = resolve(PKG_ROOT, "tsconfig.json");

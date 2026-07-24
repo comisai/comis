@@ -47,8 +47,25 @@ function isEffectivelyEmptyLine(line: string): boolean {
  * the caller must handle ENOENT separately.
  */
 export function isHeartbeatContentEffectivelyEmpty(content: string): boolean {
-  const withoutComments = content.replace(/<!--[\s\S]*?-->/g, "");
+  const withoutComments = stripHtmlComments(content);
   if (!withoutComments.trim()) return true;
   const lines = withoutComments.split("\n");
   return lines.every(isEffectivelyEmptyLine);
+}
+
+function stripHtmlComments(content: string): string {
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < content.length) {
+    const start = content.indexOf("<!--", cursor);
+    if (start === -1) {
+      parts.push(content.slice(cursor));
+      break;
+    }
+    parts.push(content.slice(cursor, start));
+    const end = content.indexOf("-->", start + 4);
+    if (end === -1) break;
+    cursor = end + 3;
+  }
+  return parts.join("");
 }

@@ -5,7 +5,8 @@
  * Exports named `setup()` and `teardown()` functions called by Vitest's
  * globalSetup lifecycle. Both call the same cleanup logic so that:
  * - setup() ensures tests start clean even if a previous run crashed
- * - teardown() removes artifacts after all tests complete
+ * - teardown() removes artifacts after all tests complete while preserving
+ *   the JSON report that the orchestrator consumes
  *
  * Cleanup targets:
  * 1. ~/.comis/*.db files with "test" in the name (+ WAL/SHM companions)
@@ -66,7 +67,7 @@ const TEST_CONFIG_DIR = resolve(__dirname, "../config");
  * Best-effort: never throws. All file operations are wrapped in try/catch
  * so cleanup cannot break the test run.
  */
-function cleanTestArtifacts(): void {
+function cleanTestArtifacts(removeResultsFile: boolean): void {
   // If ~/.comis does not exist, nothing to clean
   if (!existsSync(COMIS_DIR)) {
     return;
@@ -144,11 +145,14 @@ function cleanTestArtifacts(): void {
     // Best-effort: directory read may fail
   }
 
-  // 5. Clean up Vitest JSON results file
-  try {
-    unlinkSync(TEST_RESULTS_FILE);
-  } catch {
-    // File may not exist
+  // 5. Clean up a stale Vitest JSON results file before a run. The current
+  //    run's report must survive teardown so orchestrate.ts can consume it.
+  if (removeResultsFile) {
+    try {
+      unlinkSync(TEST_RESULTS_FILE);
+    } catch {
+      // File may not exist
+    }
   }
 
   // 6. Clean up nested config-history repo created by the test daemon
@@ -182,7 +186,7 @@ function cleanTestArtifacts(): void {
  * Cleans stale artifacts from previous runs (crash recovery).
  */
 export async function setup(): Promise<void> {
-  cleanTestArtifacts();
+  cleanTestArtifacts(true);
   // Pre-seed the shared embedding-model cache ONCE so per-fork daemon boots
   // hard-link it (via seedModelCache) instead of each downloading the ~146 MB
   // GGUF in parallel — the cause of the chronic CI "Hook timed out" failures.
@@ -194,5 +198,5 @@ export async function setup(): Promise<void> {
  * Removes artifacts generated during this test run.
  */
 export function teardown(): void {
-  cleanTestArtifacts();
+  cleanTestArtifacts(false);
 }

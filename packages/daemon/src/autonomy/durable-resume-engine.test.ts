@@ -1257,7 +1257,15 @@ describe("durable:orphaned / durable:resumed event payloads typed, content-free"
     expect(payload.checkpointId).toEqual(expect.stringMatching(/^resume-/));
     expect(payload.timestamp).toBe(9_999);
     expect(payload.rootRunId).toBe("root-resumed-ev");
-    expect(Object.keys(payload).sort()).toEqual(["checkpointId", "rootRunId", "timestamp"]);
+    expect(payload.sourceCheckpointId).toBe("checkpoint-resumed-ev");
+    expect(payload.sourceTerminalReason).toBe("superseded");
+    expect(Object.keys(payload).sort()).toEqual([
+      "checkpointId",
+      "rootRunId",
+      "sourceCheckpointId",
+      "sourceTerminalReason",
+      "timestamp",
+    ]);
   });
 });
 

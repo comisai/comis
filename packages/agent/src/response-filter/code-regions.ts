@@ -26,21 +26,54 @@ export function findCodeRegions(text: string): CodeRegion[] {
   const regions: CodeRegion[] = [];
 
   // Fenced code blocks: ```...``` or ~~~...~~~
-  const fencedRe = /(^|\n)(```|~~~)[^\n]*\n[\s\S]*?(?:\n\2(?:\n|$)|$)/g;
-  for (const match of text.matchAll(fencedRe)) {
-    const start = (match.index ?? 0) + match[1]!.length;
-    regions.push({ start, end: start + match[0].length - match[1]!.length });
+  let lineStart = 0;
+  while (lineStart < text.length) {
+    const lineEnd = text.indexOf("\n", lineStart);
+    if (lineEnd === -1) break;
+    const delimiter = text.startsWith("```", lineStart)
+      ? "```"
+      : text.startsWith("~~~", lineStart)
+        ? "~~~"
+        : undefined;
+    if (!delimiter) {
+      lineStart = lineEnd + 1;
+      continue;
+    }
+    let closeStart = lineEnd + 1;
+    let regionEnd = text.length;
+    while (closeStart <= text.length) {
+      const closeEnd = text.indexOf("\n", closeStart);
+      const candidateEnd = closeEnd === -1 ? text.length : closeEnd;
+      if (text.slice(closeStart, candidateEnd) === delimiter) {
+        regionEnd = closeEnd === -1 ? candidateEnd : closeEnd + 1;
+        break;
+      }
+      if (closeEnd === -1) break;
+      closeStart = closeEnd + 1;
+    }
+    regions.push({ start: lineStart, end: regionEnd });
+    lineStart = regionEnd;
   }
 
   // Inline code: `...` (not inside fenced blocks)
-  const inlineRe = /`+[^`]+`+/g;
-  for (const match of text.matchAll(inlineRe)) {
-    const start = match.index ?? 0;
-    const end = start + match[0].length;
+  let cursor = 0;
+  while (cursor < text.length) {
+    const start = text.indexOf("`", cursor);
+    if (start === -1) break;
+    let contentStart = start;
+    while (text[contentStart] === "`") contentStart++;
+    const close = text.indexOf("`", contentStart);
+    if (close === -1 || close === contentStart) {
+      cursor = contentStart;
+      continue;
+    }
+    let end = close;
+    while (text[end] === "`") end++;
     const insideFenced = regions.some((r) => start >= r.start && end <= r.end);
     if (!insideFenced) {
       regions.push({ start, end });
     }
+    cursor = end;
   }
 
   regions.sort((a, b) => a.start - b.start);

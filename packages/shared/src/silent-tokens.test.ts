@@ -58,6 +58,16 @@ describe("silent-tokens module", () => {
     expect(mod.stripReplyTags("  <reply>  X  </reply>  ")).toBe("X");
   });
 
+  it("stripReplyTags preserves similarly prefixed element names", async () => {
+    const mod = await loadSilentTokens();
+    expect(mod).toBeDefined();
+    if (!mod) return;
+
+    expect(mod.stripReplyTags("<replying>keep</replying>")).toBe(
+      "<replying>keep</replying>",
+    );
+  });
+
   it("exported token constants match canonical values", async () => {
     const mod = await loadSilentTokens();
     expect(mod).toBeDefined();

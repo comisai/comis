@@ -152,7 +152,11 @@ import { writeFile as fsWriteFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve as pathResolve } from "node:path";
 import { createExecGit } from "./config/exec-git.js";
-import { saveLastKnownGood, buildRollbackSuggestion, handleRestoreFlag } from "./config/last-known-good.js";
+import {
+  saveLastKnownGood,
+  buildRollbackSuggestion,
+  handleRestoreFlag,
+} from "./config/last-known-good.js";
 import { runConfigBootstrapAndEmitObserve } from "./config/bootstrap-observe.js";
 import {
   createRestartContinuationTracker,
@@ -163,6 +167,10 @@ import {
 import { setupSingleAgent, createLearnedSkillSurfaceRegistry } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
+import {
+  isDirectDaemonRun,
+  runDaemonEntrypoint,
+} from "./wiring/daemon-entrypoint.js";
 import { createSubagentActivityTracker, sweepStuckSubAgentRuns } from "./wiring/subagent-stuck-sweep.js"; // idle-based stuck sub-agent sweep (health tick)
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
 import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn } from "./wiring/main-helpers.js";
@@ -2925,19 +2933,9 @@ async function bootShutdown(
     container, logger, logLevelManager, tokenTracker,
     processMonitor, shutdownHandle, cronSchedulers, resetSchedulers,
     browserServices, heartbeatRunner, gatewayHandle, adapterRegistry: adaptersByType,
-    // Expose the orchestrator ChannelManager so integration tests can drive a
-    // real inbound turn through the daemon's REAL pipeline deps
-    // (channelManager.injectMessage). Undefined when no channels are configured
-    // at boot — see DaemonInstance.channelManager doc.
     channelManager,
-    // Expose the delivery-queue-side adapter map and the queue port itself so
-    // integration tests can register adapters that the recurring drainer sees
-    // and assert on queue depth.
     deliveryAdapters: channelAdaptersRef,
     deliveryQueue,
-    // Expose the background task manager so integration tests can promote
-    // synthetic tasks and call complete()/fail() to drive the completion
-    // runner pipeline without requiring a live LLM call.
     backgroundTaskManager,
     rpcCall, diagnosticCollector, billingEstimator,
     channelActivityTracker, deliveryTracer, approvalGate, channelHealthMonitor, sessionStoreBridge,
@@ -2949,28 +2947,16 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   const startupStartMs = Date.now();
   const instanceId = randomUUID().slice(0, 8);
 
-  // Anthropic SDK debug log lines route through console.debug -> util.inspect.
-  // Deepen inspect defaults BEFORE any code path that may construct an
-  // Anthropic client (skills/agent setup, prewarm, etc.) so the very first
-  // `[req] sending request` line shows the full body. Gated on ANTHROPIC_LOG
-  // so production runs are unaffected.
+  // Apply SDK logging defaults before constructing provider clients.
   // eslint-disable-next-line no-restricted-syntax -- process.env access required before SecretManager is initialized; ANTHROPIC_LOG is the SDK-owned switch, not a comis credential.
   applyInspectDefaultsForLogging(process.env as Record<string, string | undefined>);
 
-  // Preflight: probe native deps before any subsystem init so a missing
-  // better-sqlite3 'bindings' module fails fast with a clear repair hint
-  // instead of cascading into a systemd restart loop.
+  // Probe native dependencies before subsystem initialization.
   const exitFn = overrides.exit ?? ((code: number) => process.exit(code));
   await (overrides.preflightDoctor ?? ((fn) => runPreflightDoctor(fn)))(exitFn);
 
-  // The 4-handle chain collapsed into a single BootContext that the 5
-  // boot* helpers populate in sequence. main() owns the single `boot`
-  // variable; helpers mutate it via Object.assign.
   const boot: BootContext = createEmptyBootContext();
 
-  // Stage 1: foundation. Owns data-dir + secrets + bootstrap + logging +
-  // observability + memory + obs-persistence + context store + session
-  // mirroring + Gemini cache + background tasks + deferred refs.
   await bootFoundation(boot, { overrides, startupStartMs, instanceId });
 
   // Stages 2-5: wrapped so a failure in any post-foundation stage releases the
@@ -2997,47 +2983,13 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     throw e;
   }
 }
-// Only run when invoked directly (not imported).
-// Under pm2, process.argv[1] is ProcessContainerFork.js — detect via pm_id env var.
-const isDirectRun =
-  typeof process !== "undefined" &&
-  process.argv[1] &&
-  (process.argv[1].endsWith("daemon.js") ||
-    process.argv[1].endsWith("daemon.ts") ||
-    // eslint-disable-next-line no-restricted-syntax -- Trusted: checking pm2 runtime indicator
-    process.env["pm_id"] !== undefined);
-
-if (isDirectRun) {
-  // Handle --restore-last-good before startup
-  if (process.argv.includes("--restore-last-good")) {
-    // eslint-disable-next-line no-restricted-syntax -- process.env access needed for config path resolution
-    const rawPaths = process.env["COMIS_CONFIG_PATHS"];
-    const parsedPaths = parseConfigPaths(rawPaths);
-    const paths = (parsedPaths.length > 0 ? parsedPaths : DEFAULT_CONFIG_PATHS).filter((p) => existsSync(p));
-    handleRestoreFlag(paths, (code) => process.exit(code));
-  } else {
-    main().catch((error: unknown) => {
-      // Fatal error -- log to stderr and exit
-      const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`FATAL: ${message}\n`);
-
-      // Suggest rollback from last-known-good config
-      // eslint-disable-next-line no-restricted-syntax -- process.env access needed for config path resolution
-      const rawPaths = process.env["COMIS_CONFIG_PATHS"];
-      const parsedPaths = parseConfigPaths(rawPaths);
-      const paths = (parsedPaths.length > 0 ? parsedPaths : DEFAULT_CONFIG_PATHS).filter((p) => existsSync(p));
-      if (paths.length > 0) {
-        const suggestion = buildRollbackSuggestion(paths[paths.length - 1]!);
-        if (suggestion) {
-          process.stderr.write(`\n--- Last-known-good config available ---\n`);
-          process.stderr.write(`${suggestion.hint}\n`);
-          if (suggestion.diff) {
-            process.stderr.write(`\nChanges since last successful startup:\n${suggestion.diff}\n`);
-          }
-        }
-      }
-
-      process.exit(1);
-    });
-  }
+if (typeof process !== "undefined" && isDirectDaemonRun(process)) {
+  void runDaemonEntrypoint(process, {
+    defaultConfigPaths: DEFAULT_CONFIG_PATHS,
+    exists: existsSync,
+    parseConfigPaths,
+    handleRestoreFlag,
+    buildRollbackSuggestion,
+    main,
+  });
 }

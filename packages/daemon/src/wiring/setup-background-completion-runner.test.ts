@@ -352,7 +352,10 @@ describe("setupBackgroundCompletionRunner", () => {
         task.dispatchState = next;
         return ok(true);
       },
-      persistContinuationOutbox: (_taskId: string, outbox: import("@comis/agent").BackgroundContinuationOutbox) => {
+      persistContinuationOutbox: (
+        _taskId: string,
+        outbox: NonNullable<import("@comis/agent").BackgroundTask["continuationOutbox"]>,
+      ) => {
         task.continuationOutbox = outbox;
         task.dispatchState = "ready_to_deliver";
         return ok(undefined);
@@ -456,7 +459,10 @@ describe("setupBackgroundCompletionRunner", () => {
         task.dispatchState = next;
         return ok(true);
       },
-      persistContinuationOutbox: (_taskId: string, outbox: import("@comis/agent").BackgroundContinuationOutbox) => {
+      persistContinuationOutbox: (
+        _taskId: string,
+        outbox: NonNullable<import("@comis/agent").BackgroundTask["continuationOutbox"]>,
+      ) => {
         task.continuationOutbox = outbox;
         task.dispatchState = "ready_to_deliver";
         return ok(undefined);

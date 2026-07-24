@@ -10,7 +10,6 @@ import {
   type ClockPort,
   type TimerHandle,
   type TimerPort,
-  type SessionKey,
 } from "@comis/core";
 import {
   persistTaskAtomically,
@@ -27,6 +26,9 @@ import type {
   BackgroundSessionState,
   BackgroundTaskNotificationPolicy,
   BackgroundFinalizedResult,
+  BackgroundRecoveryIncidentInput,
+  BackgroundRecoveryRecorderDisposition,
+  BackgroundRecoveryRecorderFailure,
 } from "./background-task-types.js";
 import {
   BackgroundContinuationOutboxSchema,
@@ -116,31 +118,6 @@ export interface BackgroundTaskManager {
     next: BackgroundSessionState,
     expected: readonly BackgroundSessionState[],
   ): void;
-}
-
-export type BackgroundRecoveryRecorderDisposition = "accepted" | "suppressed";
-
-export type BackgroundRecoveryRecorderFailureKind =
-  | "session_adapter_unavailable"
-  | "protected_path_unavailable"
-  | "persisted_state_capacity"
-  | "persisted_state_invalid"
-  | "recorder_rejected";
-
-export interface BackgroundRecoveryRecorderFailure {
-  readonly kind: BackgroundRecoveryRecorderFailureKind;
-  readonly cause: Error;
-}
-
-export interface BackgroundRecoveryIncidentInput {
-  readonly agentId: string;
-  readonly taskId: string;
-  readonly toolName: string;
-  readonly sessionKey: string;
-  readonly projectedSessionKey: SessionKey;
-  readonly traceId: string | null;
-  readonly timestamp: number;
-  readonly reason: "recovery_retry_required" | "recovery_resolved";
 }
 
 const MAX_RESULT_CHARS = 102_400; // 100KB

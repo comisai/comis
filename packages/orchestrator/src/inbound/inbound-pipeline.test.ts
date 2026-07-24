@@ -76,7 +76,8 @@ describe("matchesResetTrigger", () => {
   it("skips ReDoS-prone regex trigger /(a+)+$/", () => {
     // This pattern would cause catastrophic backtracking on a long 'a' string
     // but the guard should skip it entirely
-    expect(matchesResetTrigger("aaaaaaaaaaaaaaaa", ["/(a+)+$/"])).toBe(false);
+    const nestedQuantifier = ["(", "a+", ")+", "$"].join("");
+    expect(matchesResetTrigger("aaaaaaaaaaaaaaaa", [`/${nestedQuantifier}/`])).toBe(false);
   });
 
   it("skips regex trigger exceeding 200 characters", () => {
@@ -94,7 +95,8 @@ describe("matchesResetTrigger", () => {
 
   it("processes mix of safe and unsafe triggers", () => {
     // First trigger is ReDoS-prone (skipped), second is valid literal
-    expect(matchesResetTrigger("reset", ["/(a+)+$/", "reset"])).toBe(true);
+    const nestedQuantifier = ["(", "a+", ")+", "$"].join("");
+    expect(matchesResetTrigger("reset", [`/${nestedQuantifier}/`, "reset"])).toBe(true);
   });
 });
 

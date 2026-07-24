@@ -15,7 +15,6 @@ import {
   toSafeErrorLogString,
   type BackgroundTaskOrigin,
   type ComisLogger,
-  type ErrorKind,
   type NormalizedMessage,
   type RequestContext,
   type ResolvedRequestContextSeed,
@@ -28,31 +27,15 @@ import type { AgentExecutor } from "../executor/types.js";
 import { formatCompletionAnnouncement } from "./completion-formatter.js";
 import { createCompletionRecovery } from "./completion-recovery.js";
 import type { BackgroundTaskManager } from "./background-task-manager.js";
-import type { BackgroundContinuationOutbox } from "./background-task-types.js";
+import type {
+  BackgroundCompletionDeliveryInput,
+  BackgroundCompletionDeliveryOutcome,
+  BackgroundContinuationOutbox,
+  BackgroundFinalizedResultRecoveryInput,
+} from "./background-task-types.js";
 
 export interface BackgroundCompletionRunner {
   shutdown(): Promise<void>;
-}
-
-export type BackgroundCompletionDeliveryOutcome =
-  | { readonly kind: "accepted" }
-  | { readonly kind: "retryable_pre_send"; readonly errorKind: ErrorKind; readonly message: string }
-  | { readonly kind: "permanent"; readonly errorKind: ErrorKind; readonly message: string }
-  | { readonly kind: "uncertain"; readonly errorKind: ErrorKind; readonly message: string };
-
-export interface BackgroundCompletionDeliveryInput {
-  readonly taskId: string;
-  readonly origin: BackgroundTaskOrigin;
-  readonly response: string;
-  readonly executionId: string;
-  readonly idempotencyKey: string;
-  readonly onSendStart: () => Result<void, Error>;
-}
-
-export interface BackgroundFinalizedResultRecoveryInput {
-  readonly agentId: string;
-  readonly sessionKey: SessionKey;
-  readonly journalKey: string;
 }
 
 export interface RunnerSessionStore {

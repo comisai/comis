@@ -681,7 +681,7 @@ describe("credentialsStep", () => {
 
     expect(globalThis.fetch).toHaveBeenCalledOnce();
     const fetchUrl = vi.mocked(globalThis.fetch).mock.calls[0][0] as string;
-    expect(fetchUrl.startsWith("https://api.anthropic.com")).toBe(true);
+    expect(new URL(fetchUrl).origin).toBe("https://api.anthropic.com");
     expect(fetchUrl).toContain("/v1/models");
   });
 

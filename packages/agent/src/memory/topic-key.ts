@@ -99,10 +99,25 @@ function stripUserSystemContext(text: string): string {
   if (endIdx === -1) return text;
   const afterContext = text.slice(endIdx + endMarker.length);
   // Strip the channel header `[telegram] 678314278 (9:34 AM):` — its time is volatile.
-  const channelHeaderMatch = afterContext.match(/\s*\[[\w-]+\]\s+\S+\s+\([^)]*\):\s*/);
-  if (channelHeaderMatch) {
-    const msgStart = afterContext.indexOf(channelHeaderMatch[0]) + channelHeaderMatch[0].length;
-    return afterContext.slice(msgStart).trim();
+  let cursor = 0;
+  while (cursor < afterContext.length && /\s/.test(afterContext[cursor]!)) cursor++;
+  if (afterContext[cursor] === "[") {
+    const channelEnd = afterContext.indexOf("]", cursor + 1);
+    const channel = channelEnd === -1 ? "" : afterContext.slice(cursor + 1, channelEnd);
+    if (channel && [...channel].every((character) => /[\w-]/.test(character))) {
+      cursor = channelEnd + 1;
+      while (cursor < afterContext.length && /\s/.test(afterContext[cursor]!)) cursor++;
+      while (cursor < afterContext.length && !/\s/.test(afterContext[cursor]!)) cursor++;
+      while (cursor < afterContext.length && /\s/.test(afterContext[cursor]!)) cursor++;
+      if (afterContext[cursor] === "(") {
+        const timeEnd = afterContext.indexOf("):", cursor + 1);
+        if (timeEnd !== -1) {
+          cursor = timeEnd + 2;
+          while (cursor < afterContext.length && /\s/.test(afterContext[cursor]!)) cursor++;
+          return afterContext.slice(cursor).trim();
+        }
+      }
+    }
   }
   return afterContext.trim();
 }

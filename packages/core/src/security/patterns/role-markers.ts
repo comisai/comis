@@ -21,10 +21,10 @@ export const INST_BRACKET = /\[INST\]/gi;
 export const SYSTEM_TAG = /<\/?system>/gi;
 
 /** external-content.ts only: system prompt/override/command */
-export const SYSTEM_COMMAND = /system\s*:?\s*(prompt|override|command)/gi;
+export const SYSTEM_COMMAND = /system[ \t]{0,20}:?[ \t]{0,20}(prompt|override|command)/gi;
 
 /** external-content.ts only: role boundary like ] \n [system]: */
-export const ROLE_BOUNDARY = /\]\s*\n\s*\[?(system|assistant|user)\]?:/gi;
+export const ROLE_BOUNDARY = /\][ \t]{0,20}\n[ \t]{0,20}\[?(system|assistant|user)\]?:/gi;
 
 /** All role/XML marker patterns. */
 export const ROLE_MARKER_PATTERNS: readonly RegExp[] = [

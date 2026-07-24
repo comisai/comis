@@ -50,7 +50,7 @@ export const AgentCapabilitySchema = z.enum(AGENT_CAPABILITIES);
 export const DurableRunStatusSchema = z.enum(["running", "orphaned", "completed", "revoked"]);
 
 export type DurableRunStatus = z.infer<typeof DurableRunStatusSchema>;
-export const DurableRunTerminalReasonSchema = z.enum([
+const DurableRunTerminalReasonSchema = z.enum([
   "completed",
   "failed",
   "killed",

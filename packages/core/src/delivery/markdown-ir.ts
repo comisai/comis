@@ -45,30 +45,91 @@ export interface MarkdownIR {
 // Inline span parser
 // ---------------------------------------------------------------------------
 
-/**
- * Regex for inline formatting tokens.
- *
- * Order matters — more specific patterns first:
- * 1. Inline code (backticks) — protect content from further parsing
- * 2. Bare http/https URL — protect `_` chars inside URLs from being
- *    consumed by the italic `_text_` alternative. Without this branch,
- *    a URL like `code_challenge_method=…` matches `_(.+?)_` and renders
- *    as `<i>challenge</i>method=…`, dropping every paired `_` from the
- *    surface form. OAuth providers then receive params with truncated
- *    names (`responsetype`, `redirecturi`, …) and return 400
- *    `redirect_uri must be a valid absolute URL`.
- *    Excludes `)` so URLs in parens (`(See https://x.com/)`) don't grab
- *    the trailing close-paren; we accept that legitimate URLs with `)`
- *    in their path (rare; Wikipedia is the canonical example) will be
- *    truncated at the first `)`.
- * 3. Links [text](url)
- * 4. Bold **text** or __text__. Underscore delimiters cannot occur inside
- *    alphanumeric words, matching Markdown delimiter-run rules.
- * 5. Strikethrough ~~text~~
- * 6. Italic *text* or _text_, with the same intraword restriction for `_`.
- */
-const INLINE_RE =
-  /`([^`]+)`|(https?:\/\/[^\s<>"'`)]+)|\[([^\]]+)\]\(([^)]+)\)|\*\*(.+?)\*\*|(?<![\p{L}\p{N}\p{M}])__(.+?)__(?![\p{L}\p{N}\p{M}])|~~(.+?)~~|\*(.+?)\*|(?<![\p{L}\p{N}\p{M}_])_(.+?)_(?![\p{L}\p{N}\p{M}_])/gu;
+interface InlineToken {
+  type: Exclude<MarkdownSpan["type"], "text">;
+  text: string;
+  end: number;
+  url?: string;
+}
+
+const WORD_CHARACTER = /[\p{L}\p{N}\p{M}]/u;
+
+function isWordCharacter(character: string | undefined): boolean {
+  return character !== undefined && WORD_CHARACTER.test(character);
+}
+
+function findDelimitedToken(
+  text: string,
+  start: number,
+  delimiter: string,
+  type: InlineToken["type"],
+): InlineToken | undefined {
+  const contentStart = start + delimiter.length;
+  const close = text.indexOf(delimiter, contentStart);
+  if (close <= contentStart) return undefined;
+  return { type, text: text.slice(contentStart, close), end: close + delimiter.length };
+}
+
+function findInlineToken(text: string, start: number): InlineToken | undefined {
+  if (text[start] === "`") {
+    return findDelimitedToken(text, start, "`", "code");
+  }
+
+  const isHttpUrl = text.startsWith("http://", start) || text.startsWith("https://", start);
+  if (isHttpUrl) {
+    let end = start;
+    while (end < text.length && !/\s|[<>"'`)]/.test(text[end]!)) end++;
+    const url = text.slice(start, end);
+    return { type: "link", text: url, url, end };
+  }
+
+  if (text[start] === "[") {
+    const textEnd = text.indexOf("](", start + 1);
+    if (textEnd > start + 1) {
+      const urlEnd = text.indexOf(")", textEnd + 2);
+      if (urlEnd > textEnd + 2) {
+        return {
+          type: "link",
+          text: text.slice(start + 1, textEnd),
+          url: text.slice(textEnd + 2, urlEnd),
+          end: urlEnd + 1,
+        };
+      }
+    }
+  }
+
+  if (text.startsWith("**", start)) {
+    return findDelimitedToken(text, start, "**", "bold");
+  }
+  if (
+    text.startsWith("__", start) &&
+    !isWordCharacter(text[start - 1])
+  ) {
+    const token = findDelimitedToken(text, start, "__", "bold");
+    if (token && !isWordCharacter(text[token.end])) return token;
+  }
+  if (text.startsWith("~~", start)) {
+    return findDelimitedToken(text, start, "~~", "strikethrough");
+  }
+  if (text[start] === "*") {
+    return findDelimitedToken(text, start, "*", "italic");
+  }
+  if (
+    text[start] === "_" &&
+    text[start - 1] !== "_" &&
+    !isWordCharacter(text[start - 1])
+  ) {
+    const token = findDelimitedToken(text, start, "_", "italic");
+    if (
+      token &&
+      text[token.end] !== "_" &&
+      !isWordCharacter(text[token.end])
+    ) {
+      return token;
+    }
+  }
+  return undefined;
+}
 
 /**
  * Parse inline Markdown formatting into typed spans with UTF-16 offsets.
@@ -80,12 +141,15 @@ export function parseInlineSpans(text: string): MarkdownSpan[] {
   const spans: MarkdownSpan[] = [];
   let lastIndex = 0;
   let plainOffset = 0;
+  let cursor = 0;
 
-  INLINE_RE.lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = INLINE_RE.exec(text)) !== null) {
-    const matchStart = match.index;
+  while (cursor < text.length) {
+    const token = findInlineToken(text, cursor);
+    if (!token) {
+      cursor++;
+      continue;
+    }
+    const matchStart = cursor;
 
     // Plain text before this match
     if (matchStart > lastIndex) {
@@ -99,95 +163,16 @@ export function parseInlineSpans(text: string): MarkdownSpan[] {
       plainOffset += plain.length;
     }
 
-    // Determine which capture group matched
-    if (match[1] !== undefined) {
-      // Inline code: `text`
-      const content = match[1];
-      spans.push({
-        type: "code",
-        text: content,
-        offset: plainOffset,
-        length: content.length,
-      });
-      plainOffset += content.length;
-    } else if (match[2] !== undefined) {
-      // Bare URL: pass through as a self-pointing link so the URL bytes
-      // (including every `_`) reach the renderer unmodified. See INLINE_RE
-      // docblock for the OAuth-URL corruption this closes.
-      const url = match[2];
-      spans.push({
-        type: "link",
-        text: url,
-        url,
-        offset: plainOffset,
-        length: url.length,
-      });
-      plainOffset += url.length;
-    } else if (match[3] !== undefined && match[4] !== undefined) {
-      // Link: [text](url)
-      const linkText = match[3];
-      const linkUrl = match[4];
-      spans.push({
-        type: "link",
-        text: linkText,
-        url: linkUrl,
-        offset: plainOffset,
-        length: linkText.length,
-      });
-      plainOffset += linkText.length;
-    } else if (match[5] !== undefined) {
-      // Bold: **text**
-      const content = match[5];
-      spans.push({
-        type: "bold",
-        text: content,
-        offset: plainOffset,
-        length: content.length,
-      });
-      plainOffset += content.length;
-    } else if (match[6] !== undefined) {
-      // Bold: __text__
-      const content = match[6];
-      spans.push({
-        type: "bold",
-        text: content,
-        offset: plainOffset,
-        length: content.length,
-      });
-      plainOffset += content.length;
-    } else if (match[7] !== undefined) {
-      // Strikethrough: ~~text~~
-      const content = match[7];
-      spans.push({
-        type: "strikethrough",
-        text: content,
-        offset: plainOffset,
-        length: content.length,
-      });
-      plainOffset += content.length;
-    } else if (match[8] !== undefined) {
-      // Italic: *text*
-      const content = match[8];
-      spans.push({
-        type: "italic",
-        text: content,
-        offset: plainOffset,
-        length: content.length,
-      });
-      plainOffset += content.length;
-    } else if (match[9] !== undefined) {
-      // Italic: _text_
-      const content = match[9];
-      spans.push({
-        type: "italic",
-        text: content,
-        offset: plainOffset,
-        length: content.length,
-      });
-      plainOffset += content.length;
-    }
-
-    lastIndex = matchStart + match[0].length;
+    spans.push({
+      type: token.type,
+      text: token.text,
+      ...(token.url === undefined ? {} : { url: token.url }),
+      offset: plainOffset,
+      length: token.text.length,
+    });
+    plainOffset += token.text.length;
+    lastIndex = token.end;
+    cursor = token.end;
   }
 
   // Trailing plain text
@@ -209,19 +194,32 @@ export function parseInlineSpans(text: string): MarkdownSpan[] {
 // ---------------------------------------------------------------------------
 
 /** Regex to detect a GFM table separator row (e.g., |---|---|). */
-const TABLE_SEP_RE = /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+function matchHeading(line: string): { depth: number; content: string } | undefined {
+  let depth = 0;
+  while (depth < 6 && line[depth] === "#") depth++;
+  if (depth === 0 || !/\s/.test(line[depth] ?? "")) return undefined;
+  const content = line.slice(depth).trimStart();
+  return content.length === 0 ? undefined : { depth, content };
+}
 
-/** Regex to detect a heading line (e.g., # Title). */
-const HEADING_RE = /^(#{1,6})\s+(.+)$/;
+function matchUnorderedListItem(line: string): string | undefined {
+  if ((line[0] !== "-" && line[0] !== "*") || !/\s/.test(line[1] ?? "")) return undefined;
+  const content = line.slice(2).trimStart();
+  return content.length === 0 ? undefined : content;
+}
 
-/** Regex to detect unordered list items. */
-const UNORDERED_LIST_RE = /^[-*]\s+(.+)$/;
+function matchOrderedListItem(line: string): string | undefined {
+  let cursor = 0;
+  while (cursor < line.length && line[cursor]! >= "0" && line[cursor]! <= "9") cursor++;
+  if (cursor === 0 || line[cursor] !== "." || !/\s/.test(line[cursor + 1] ?? "")) return undefined;
+  const content = line.slice(cursor + 2).trimStart();
+  return content.length === 0 ? undefined : content;
+}
 
-/** Regex to detect ordered list items. */
-const ORDERED_LIST_RE = /^\d+\.\s+(.+)$/;
-
-/** Regex to detect blockquote lines. */
-const BLOCKQUOTE_RE = /^>\s?(.*)$/;
+function matchBlockquote(line: string): string | undefined {
+  if (line[0] !== ">") return undefined;
+  return line[1] === " " ? line.slice(2) : line.slice(1);
+}
 
 /**
  * Check if a line is a list continuation line — indented text that continues
@@ -236,11 +234,11 @@ function isListContinuationLine(line: string): boolean {
   if (trimmed.length === 0) return false;
   // Block-level patterns terminate continuation
   if (detectFenceOpen(line) || detectFenceOpen(trimmed)) return false;
-  if (HEADING_RE.test(trimmed)) return false;
-  if (BLOCKQUOTE_RE.test(trimmed)) return false;
+  if (matchHeading(trimmed)) return false;
+  if (matchBlockquote(trimmed) !== undefined) return false;
   // Nested list item markers are NOT continuations — they'd start new items
-  if (UNORDERED_LIST_RE.test(trimmed)) return false;
-  if (ORDERED_LIST_RE.test(trimmed)) return false;
+  if (matchUnorderedListItem(trimmed)) return false;
+  if (matchOrderedListItem(trimmed)) return false;
   return true;
 }
 
@@ -263,7 +261,11 @@ function collectListItemContinuation(lines: string[], startIdx: number, firstLin
  * lines to see if the list continues with another item of the same type.
  * Returns the index of the next item line, or -1 if the list should end.
  */
-function peekPastBlanksForListItem(lines: string[], startIdx: number, itemRegex: RegExp): number {
+function peekPastBlanksForListItem(
+  lines: string[],
+  startIdx: number,
+  matchItem: (line: string) => string | undefined,
+): number {
   let j = startIdx;
   let blankCount = 0;
   while (j < lines.length && lines[j].trim().length === 0) {
@@ -271,7 +273,7 @@ function peekPastBlanksForListItem(lines: string[], startIdx: number, itemRegex:
     j++;
   }
   // Only skip blanks if there was at least one blank and the next line is a list item
-  if (blankCount > 0 && j < lines.length && itemRegex.test(lines[j])) {
+  if (blankCount > 0 && j < lines.length && matchItem(lines[j]) !== undefined) {
     return j;
   }
   return -1;
@@ -288,7 +290,16 @@ function parseTableRow(line: string): string[] {
 
 /** Check if a line is a table separator row. */
 function isTableSeparator(line: string): boolean {
-  return TABLE_SEP_RE.test(line.trim());
+  let trimmed = line.trim();
+  if (trimmed.startsWith("|")) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith("|")) trimmed = trimmed.slice(0, -1);
+  const cells = trimmed.split("|");
+  return cells.length > 0 && cells.every((cell) => {
+    let value = cell.trim();
+    if (value.startsWith(":")) value = value.slice(1);
+    if (value.endsWith(":")) value = value.slice(0, -1);
+    return value.length >= 3 && [...value].every((character) => character === "-");
+  });
 }
 
 /**
@@ -302,19 +313,14 @@ interface FenceState {
 
 function detectFenceOpen(line: string): { fence: FenceState; language?: string } | null {
   const trimmed = line.trimStart();
-  const backtickMatch = trimmed.match(/^(`{3,})(.*)/);
-  if (backtickMatch) {
-    const lang = backtickMatch[2].trim();
+  const char = trimmed[0];
+  if (char === "`" || char === "~") {
+    let count = 0;
+    while (trimmed[count] === char) count++;
+    if (count < 3) return null;
+    const lang = trimmed.slice(count).trim();
     return {
-      fence: { char: "`", count: backtickMatch[1].length },
-      language: lang || undefined,
-    };
-  }
-  const tildeMatch = trimmed.match(/^(~{3,})(.*)/);
-  if (tildeMatch) {
-    const lang = tildeMatch[2].trim();
-    return {
-      fence: { char: "~", count: tildeMatch[1].length },
+      fence: { char, count },
       language: lang || undefined,
     };
   }
@@ -323,9 +329,9 @@ function detectFenceOpen(line: string): { fence: FenceState; language?: string }
 
 function isFenceClose(line: string, openFence: FenceState): boolean {
   const trimmed = line.trimStart();
-  // Must use same character and at least same count
-  const re = new RegExp(`^\\${openFence.char}{${openFence.count},}\\s*$`);
-  return re.test(trimmed);
+  let count = 0;
+  while (trimmed[count] === openFence.char) count++;
+  return count >= openFence.count && trimmed.slice(count).trim() === "";
 }
 
 /**
@@ -374,14 +380,12 @@ export function parseMarkdownToIR(markdown: string): MarkdownIR {
     }
 
     // --- Heading ---
-    const headingMatch = line.match(HEADING_RE);
+    const headingMatch = matchHeading(line);
     if (headingMatch) {
-      const depth = headingMatch[1].length;
-      const content = headingMatch[2];
       blocks.push({
         type: "heading",
-        spans: parseInlineSpans(content),
-        depth,
+        spans: parseInlineSpans(headingMatch.content),
+        depth: headingMatch.depth,
       });
       i++;
       continue;
@@ -411,14 +415,14 @@ export function parseMarkdownToIR(markdown: string): MarkdownIR {
     }
 
     // --- Blockquote ---
-    const bqMatch = line.match(BLOCKQUOTE_RE);
-    if (bqMatch) {
-      const bqLines: string[] = [bqMatch[1]];
+    const bqMatch = matchBlockquote(line);
+    if (bqMatch !== undefined) {
+      const bqLines: string[] = [bqMatch];
       i++;
       while (i < lines.length) {
-        const nextBq = lines[i].match(BLOCKQUOTE_RE);
-        if (nextBq) {
-          bqLines.push(nextBq[1]);
+        const nextBq = matchBlockquote(lines[i]);
+        if (nextBq !== undefined) {
+          bqLines.push(nextBq);
           i++;
         } else {
           break;
@@ -434,11 +438,11 @@ export function parseMarkdownToIR(markdown: string): MarkdownIR {
     }
 
     // --- Unordered list ---
-    const ulMatch = line.match(UNORDERED_LIST_RE);
-    if (ulMatch) {
+    const ulMatch = matchUnorderedListItem(line);
+    if (ulMatch !== undefined) {
       const items: MarkdownBlock[] = [];
       // Collect first item + its continuation lines
-      const first = collectListItemContinuation(lines, i + 1, ulMatch[1]);
+      const first = collectListItemContinuation(lines, i + 1, ulMatch);
       items.push({
         type: "paragraph",
         spans: parseInlineSpans(first.text),
@@ -449,9 +453,9 @@ export function parseMarkdownToIR(markdown: string): MarkdownIR {
       while (true) {
         // Try to match consecutive list items
         while (i < lines.length) {
-          const nextUl = lines[i].match(UNORDERED_LIST_RE);
-          if (nextUl) {
-            const cont = collectListItemContinuation(lines, i + 1, nextUl[1]);
+          const nextUl = matchUnorderedListItem(lines[i]);
+          if (nextUl !== undefined) {
+            const cont = collectListItemContinuation(lines, i + 1, nextUl);
             items.push({
               type: "paragraph",
               spans: parseInlineSpans(cont.text),
@@ -462,7 +466,7 @@ export function parseMarkdownToIR(markdown: string): MarkdownIR {
           }
         }
         // Look ahead past blank lines for more list items (loose list)
-        const nextItemIdx = peekPastBlanksForListItem(lines, i, UNORDERED_LIST_RE);
+        const nextItemIdx = peekPastBlanksForListItem(lines, i, matchUnorderedListItem);
         if (nextItemIdx >= 0) {
           i = nextItemIdx;
           continue;
@@ -480,11 +484,11 @@ export function parseMarkdownToIR(markdown: string): MarkdownIR {
     }
 
     // --- Ordered list ---
-    const olMatch = line.match(ORDERED_LIST_RE);
-    if (olMatch) {
+    const olMatch = matchOrderedListItem(line);
+    if (olMatch !== undefined) {
       const items: MarkdownBlock[] = [];
       // Collect first item + its continuation lines
-      const first = collectListItemContinuation(lines, i + 1, olMatch[1]);
+      const first = collectListItemContinuation(lines, i + 1, olMatch);
       items.push({
         type: "paragraph",
         spans: parseInlineSpans(first.text),
@@ -495,9 +499,9 @@ export function parseMarkdownToIR(markdown: string): MarkdownIR {
       while (true) {
         // Try to match consecutive list items
         while (i < lines.length) {
-          const nextOl = lines[i].match(ORDERED_LIST_RE);
-          if (nextOl) {
-            const cont = collectListItemContinuation(lines, i + 1, nextOl[1]);
+          const nextOl = matchOrderedListItem(lines[i]);
+          if (nextOl !== undefined) {
+            const cont = collectListItemContinuation(lines, i + 1, nextOl);
             items.push({
               type: "paragraph",
               spans: parseInlineSpans(cont.text),
@@ -508,7 +512,7 @@ export function parseMarkdownToIR(markdown: string): MarkdownIR {
           }
         }
         // Look ahead past blank lines for more list items (loose list)
-        const nextItemIdx = peekPastBlanksForListItem(lines, i, ORDERED_LIST_RE);
+        const nextItemIdx = peekPastBlanksForListItem(lines, i, matchOrderedListItem);
         if (nextItemIdx >= 0) {
           i = nextItemIdx;
           continue;
@@ -544,10 +548,10 @@ export function parseMarkdownToIR(markdown: string): MarkdownIR {
 
       // Stop at special block starts
       if (detectFenceOpen(nextLine)) break;
-      if (HEADING_RE.test(nextLine)) break;
-      if (nextLine.match(BLOCKQUOTE_RE)) break;
-      if (nextLine.match(UNORDERED_LIST_RE)) break;
-      if (nextLine.match(ORDERED_LIST_RE)) break;
+      if (matchHeading(nextLine)) break;
+      if (matchBlockquote(nextLine) !== undefined) break;
+      if (matchUnorderedListItem(nextLine) !== undefined) break;
+      if (matchOrderedListItem(nextLine) !== undefined) break;
       // Stop if this + next form a table
       if (i + 1 < lines.length && nextLine.includes("|") && isTableSeparator(lines[i + 1])) break;
 

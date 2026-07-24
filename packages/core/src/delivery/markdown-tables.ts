@@ -10,8 +10,18 @@
  * @module
  */
 
-/** Regex to detect a GFM table separator row (e.g., |---|---|). */
-const TABLE_SEP_RE = /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+function isTableSeparator(line: string): boolean {
+  let trimmed = line.trim();
+  if (trimmed.startsWith("|")) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith("|")) trimmed = trimmed.slice(0, -1);
+  const cells = trimmed.split("|");
+  return cells.length > 0 && cells.every((cell) => {
+    let value = cell.trim();
+    if (value.startsWith(":")) value = value.slice(1);
+    if (value.endsWith(":")) value = value.slice(0, -1);
+    return value.length >= 3 && [...value].every((character) => character === "-");
+  });
+}
 
 /**
  * Convert GFM markdown tables in raw text to a more readable format.
@@ -50,7 +60,7 @@ export function convertMarkdownTables(text: string, mode: "bullets" | "code" | "
     if (
       i + 1 < lines.length &&
       line.includes("|") &&
-      TABLE_SEP_RE.test(lines[i + 1]!.trim())
+      isTableSeparator(lines[i + 1]!)
     ) {
       // Found a table: collect header, separator, and body rows
       const headerLine = line;
@@ -63,7 +73,7 @@ export function convertMarkdownTables(text: string, mode: "bullets" | "code" | "
       while (j < lines.length && lines[j]!.includes("|")) {
         // Stop if we hit another separator (nested table) or empty line
         const candidate = lines[j]!.trim();
-        if (!candidate || TABLE_SEP_RE.test(candidate)) break;
+        if (!candidate || isTableSeparator(candidate)) break;
         bodyRows.push(parsePipeCells(lines[j]!));
         j++;
       }

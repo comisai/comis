@@ -5,7 +5,13 @@
  * @module
  */
 
-import { BackgroundTaskOriginSchema, type BackgroundTaskOrigin, type TimerHandle } from "@comis/core";
+import {
+  BackgroundTaskOriginSchema,
+  type BackgroundTaskOrigin,
+  type ErrorKind,
+  type SessionKey,
+  type TimerHandle,
+} from "@comis/core";
 import { z } from "zod";
 export type { BackgroundTaskOrigin };
 
@@ -67,6 +73,52 @@ export const BackgroundFinalizedResultSchema = z.strictObject({
 
 export type BackgroundFinalizedResult = z.infer<typeof BackgroundFinalizedResultSchema>;
 
+export type BackgroundRecoveryRecorderDisposition = "accepted" | "suppressed";
+
+export type BackgroundRecoveryRecorderFailureKind =
+  | "session_adapter_unavailable"
+  | "protected_path_unavailable"
+  | "persisted_state_capacity"
+  | "persisted_state_invalid"
+  | "recorder_rejected";
+
+export interface BackgroundRecoveryRecorderFailure {
+  readonly kind: BackgroundRecoveryRecorderFailureKind;
+  readonly cause: Error;
+}
+
+export interface BackgroundRecoveryIncidentInput {
+  readonly agentId: string;
+  readonly taskId: string;
+  readonly toolName: string;
+  readonly sessionKey: string;
+  readonly projectedSessionKey: SessionKey;
+  readonly traceId: string | null;
+  readonly timestamp: number;
+  readonly reason: "recovery_retry_required" | "recovery_resolved";
+}
+
+export type BackgroundCompletionDeliveryOutcome =
+  | { readonly kind: "accepted" }
+  | { readonly kind: "retryable_pre_send"; readonly errorKind: ErrorKind; readonly message: string }
+  | { readonly kind: "permanent"; readonly errorKind: ErrorKind; readonly message: string }
+  | { readonly kind: "uncertain"; readonly errorKind: ErrorKind; readonly message: string };
+
+export interface BackgroundCompletionDeliveryInput {
+  readonly taskId: string;
+  readonly origin: BackgroundTaskOrigin;
+  readonly response: string;
+  readonly executionId: string;
+  readonly idempotencyKey: string;
+  readonly onSendStart: () => import("@comis/shared").Result<void, Error>;
+}
+
+export interface BackgroundFinalizedResultRecoveryInput {
+  readonly agentId: string;
+  readonly sessionKey: SessionKey;
+  readonly journalKey: string;
+}
+
 export const PersistedTaskStateSchema = z.strictObject({
   id: z.string().min(1).max(512),
   toolName: z.string().min(1).max(256),
@@ -84,6 +136,7 @@ export const PersistedTaskStateSchema = z.strictObject({
   finalizedResult: BackgroundFinalizedResultSchema.optional(),
 });
 
+// @optional-field-count: Lifecycle fields are conditional by task state; underscored fields exist only while execution or terminal persistence is in flight.
 export interface BackgroundTask {
   id: string;
   toolName: string;

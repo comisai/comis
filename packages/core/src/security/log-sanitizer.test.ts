@@ -75,6 +75,15 @@ describe("sanitizeLogString", () => {
       expect(result).not.toContain("supersecretpassword");
     });
 
+    it("redacts URL credentials longer than ordinary field limits", () => {
+      const password = "p".repeat(512);
+      const result = sanitizeLogString(
+        `Connecting to https://admin:${password}@api.example.com/v1`,
+      );
+      expect(result).toContain("://admin:[REDACTED]@");
+      expect(result).not.toContain(password);
+    });
+
     it("fully redacts mongodb connection strings", () => {
       const input = "mongodb://myuser:mypassword@mongo.host:27017";
       const result = sanitizeLogString(input);

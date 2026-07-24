@@ -45,7 +45,7 @@ export const SENDGRID_KEY = /\bSG\.[A-Za-z0-9_-]{20,}/g;
 export const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
 
 /** URL-embedded password: ://user:password@host */
-export const URL_PASSWORD = /:\/\/([^:]+):([^@]{3,})@/g;
+export const URL_PASSWORD = /:\/\/([^:@/\s]+):([^@\s]{3,})@/g;
 
 /** Generic hex secret (40+ chars) */
 export const HEX_SECRET_LONG = /\b[0-9a-f]{40,}\b/gi;

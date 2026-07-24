@@ -589,11 +589,10 @@ describe("processFailurePath — knob-named timeout diagnostics", () => {
     expect(result.finishReason).toBe("error");
   });
 
-  it("restores overflow recovery mutation when terminal admission changes before dispatch", async () => {
+  it("restores overflow recovery mutation when terminal admission denies retry dispatch", async () => {
     const { params } = makeFailureParams("c-overflow-terminal");
     const originalStreamFn = vi.fn();
     const prompt = vi.fn();
-    let admissionChecks = 0;
     const denial = new Error("execution terminalized");
     (params.session as unknown as {
       agent: { streamFn: unknown };
@@ -604,10 +603,7 @@ describe("processFailurePath — knob-named timeout diagnostics", () => {
       prompt: ReturnType<typeof vi.fn>;
     }).prompt = prompt;
     params.executionOverrides = {
-      onProviderStart: () => {
-        admissionChecks += 1;
-        return admissionChecks === 1 ? ok(undefined) : err(denial);
-      },
+      onProviderStart: () => err(denial),
     };
 
     const outcome = await processFailurePath(

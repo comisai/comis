@@ -6,14 +6,12 @@ import {
 import { isSilentResponse, ok, type Result } from "@comis/shared";
 import type { BackgroundTaskManager } from "./background-task-manager.js";
 import type {
-  BackgroundContinuationOutbox,
-  BackgroundSessionState,
-} from "./background-task-types.js";
-import type {
   BackgroundCompletionDeliveryInput,
   BackgroundCompletionDeliveryOutcome,
+  BackgroundContinuationOutbox,
   BackgroundFinalizedResultRecoveryInput,
-} from "./completion-runner.js";
+  BackgroundSessionState,
+} from "./background-task-types.js";
 
 type RecoveryTaskManager = Pick<
   BackgroundTaskManager,

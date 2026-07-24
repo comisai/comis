@@ -241,7 +241,7 @@ describe("Daemon Lifecycle", () => {
       const result = assertLogSequence(entries, [
         { msg: /Graceful shutdown initiated/ },
         { msg: "Cron scheduler stopped accepting work" },
-        { msg: "Component stopped", component: "cron-scheduler" },
+        { msg: "Component stopped", component: "governed-schedulers" },
         { msg: "Component stopped", component: "memory-database" },
         { msg: "Graceful shutdown complete" },
       ]);

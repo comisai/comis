@@ -424,6 +424,19 @@ describe("tool retry breaker", () => {
       expect(extractErrorTag(blockMsg)).toBe("permission_denied");
     });
 
+    it("unwraps an envelope followed by a line break", () => {
+      const innerEnvelope = JSON.stringify({
+        content: [{ type: "text", text: "[permission_denied] access denied" }],
+        details: {},
+      });
+      const blockMsg =
+        `Tool "exec" has failed 2 consecutive times with the same error: ` +
+        `"${innerEnvelope.replace(/"/g, '\\"')}".\n` +
+        "This tool appears to be unavailable.";
+
+      expect(extractErrorTag(blockMsg)).toBe("permission_denied");
+    });
+
     it("falls through unchanged on malformed/non-envelope input", () => {
       expect(extractErrorTag("{invalid json")).toBe("invalid_json");
       expect(extractErrorTag("plain error message")).toBe("plain_error_message");

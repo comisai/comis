@@ -158,10 +158,15 @@ describe("resilience E2E: subagent watchdog timeout and ghost sweep", () => {
 
   it("watchdog timeout fires and delivers failure notification", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    let settleExecution!: (value: unknown) => void;
 
     const deps = buildIntegrationDeps({
       // Never-resolving executeAgent to trigger watchdog
-      executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
+      executeAgent: vi.fn().mockReturnValue(
+        new Promise((resolve) => {
+          settleExecution = resolve;
+        }),
+      ),
     });
 
     // Subscribe to events BEFORE spawn
@@ -196,7 +201,9 @@ describe("resilience E2E: subagent watchdog timeout and ghost sweep", () => {
     const status = runner.getRunStatus(runId);
     expect(status).toBeDefined();
     expect(status!.status).toBe("failed");
-    expect(status!.error).toContain("timeout");
+    if (status?.status !== "failed") throw new Error("expected failed watchdog run");
+    expect(status.completion.endReason).toBe("watchdog_timeout");
+    expect(status.completion.summary).toContain("timeout");
 
     // Verify sendToChannel was called with canned failure text
     expect(deps.sendToChannel).toHaveBeenCalled();
@@ -218,6 +225,8 @@ describe("resilience E2E: subagent watchdog timeout and ghost sweep", () => {
       }),
       expect.stringContaining("watchdog"),
     );
+    settleExecution({ response: "", finishReason: "stop", stepsExecuted: 0 });
+    await vi.advanceTimersByTimeAsync(0);
   });
 
   // -------------------------------------------------------------------------
@@ -226,6 +235,7 @@ describe("resilience E2E: subagent watchdog timeout and ghost sweep", () => {
 
   it("ghost sweep detects and force-fails stale runs", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    let settleExecution!: (value: unknown) => void;
 
     // Use very large maxRunTimeoutMs so watchdog never fires within test window.
     // Then backdate startedAt so the ghost sweep sees the run as ancient.
@@ -233,7 +243,11 @@ describe("resilience E2E: subagent watchdog timeout and ghost sweep", () => {
     const LARGE_TIMEOUT_MS = 10_000_000;
 
     const deps = buildIntegrationDeps({
-      executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
+      executeAgent: vi.fn().mockReturnValue(
+        new Promise((resolve) => {
+          settleExecution = resolve;
+        }),
+      ),
       config: {
         enabled: true,
         maxPingPongTurns: 3,
@@ -300,7 +314,9 @@ describe("resilience E2E: subagent watchdog timeout and ghost sweep", () => {
     const status = runner.getRunStatus(runId);
     expect(status).toBeDefined();
     expect(status!.status).toBe("failed");
-    expect(status!.error).toContain("Ghost run");
+    if (status?.status !== "failed") throw new Error("expected failed ghost run");
+    expect(status.completion.endReason).toBe("ghost_sweep");
+    expect(status.completion.summary).toContain("Ghost run");
 
     // Verify sendToChannel was called (ghost sweep delivers failure notification)
     expect(deps.sendToChannel).toHaveBeenCalled();
@@ -320,5 +336,7 @@ describe("resilience E2E: subagent watchdog timeout and ghost sweep", () => {
       }),
       expect.stringContaining("Ghost"),
     );
+    settleExecution({ response: "", finishReason: "stop", stepsExecuted: 0 });
+    await vi.advanceTimersByTimeAsync(0);
   });
 });

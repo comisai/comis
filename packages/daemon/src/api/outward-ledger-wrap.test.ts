@@ -30,6 +30,7 @@ import {
   wrapOutwardSend,
   __setOutwardSendCrashHookForTest,
   OUTWARD_SEND_CRASH_SENTINEL,
+  OutwardSendPreSendError,
   type WrapOutwardSendArgs,
 } from "./outward-ledger-wrap.js";
 
@@ -344,7 +345,13 @@ describe("wrapOutwardSend", () => {
 
     const result = await wrapOutwardSend({ ledger, ...BASE, doSend, logger: makeLogger() });
 
-    expect(result).toEqual(err(markError));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected pre-send ledger failure");
+    expect(result.error).toBeInstanceOf(OutwardSendPreSendError);
+    expect(result.error).toMatchObject({
+      phase: "mark_unknown",
+      cause: markError,
+    });
     expect(doSend).not.toHaveBeenCalled();
     expect(calls).toEqual(["lookup", "begin", "markUnknown"]);
   });

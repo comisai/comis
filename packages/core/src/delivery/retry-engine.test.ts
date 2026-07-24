@@ -133,6 +133,10 @@ describe("classifySendError", () => {
 // ---------------------------------------------------------------------------
 
 describe("stripHtmlTags", () => {
+  it("drops an unterminated tag tail from plain-text fallback", () => {
+    expect(stripHtmlTags("safe<script")).toBe("safe");
+  });
+
   it("removes HTML tags and preserves text", () => {
     expect(stripHtmlTags("<b>bold</b> and <i>italic</i>"))
       .toBe("bold and italic");

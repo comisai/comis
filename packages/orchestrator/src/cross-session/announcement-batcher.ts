@@ -172,13 +172,11 @@ export function sanitizeForUser(text: string): string {
   const stripped = stripSystemPrefix(text);
 
   // Try to extract "Summary:" content
-  const summaryMatch = stripped.match(/(?:^|\n)Summary:\s*([\s\S]*?)(?=\n---|\n###|\n\[Subagent Result|$)/i);
-  let extracted = summaryMatch?.[1]?.trim();
+  let extracted = extractAnnouncementSection(stripped, "Summary:");
 
   // If no Summary found, try "Result:" content
   if (!extracted) {
-    const resultMatch = stripped.match(/(?:^|\n)Result:\s*([\s\S]*?)(?=\n---|\n###|\n\[Subagent Result|$)/i);
-    extracted = resultMatch?.[1]?.trim();
+    extracted = extractAnnouncementSection(stripped, "Result:");
   }
 
   // If neither found, return generic fallback
@@ -190,7 +188,7 @@ export function sanitizeForUser(text: string): string {
   let sanitized = extracted;
 
   // [Subagent Result: ...] markers
-  sanitized = sanitized.replace(/\[Subagent Result:[^\]]*\]/g, "");
+  sanitized = stripSubagentResultMarkers(sanitized);
 
   // Session keys (e.g., default:user1:channel:123)
   sanitized = sanitized.replace(/\b\w+:\w+:[a-z_-]+:\d+\b/g, "");
@@ -212,6 +210,42 @@ export function sanitizeForUser(text: string): string {
   sanitized = sanitized.replace(/\n{3,}/g, "\n\n").replace(/ {2,}/g, " ").trim();
 
   return sanitized || GENERIC_FALLBACK;
+}
+
+function extractAnnouncementSection(text: string, label: string): string | undefined {
+  const lower = text.toLowerCase();
+  const lowerLabel = label.toLowerCase();
+  let labelStart = lower.startsWith(lowerLabel) ? 0 : lower.indexOf(`\n${lowerLabel}`);
+  if (labelStart === -1) return undefined;
+  if (labelStart > 0) labelStart++;
+  let contentStart = labelStart + label.length;
+  while (contentStart < text.length && /\s/.test(text[contentStart]!)) contentStart++;
+  const terminators = ["\n---", "\n###", "\n[subagent result"];
+  let contentEnd = text.length;
+  for (const terminator of terminators) {
+    const found = lower.indexOf(terminator, contentStart);
+    if (found !== -1 && found < contentEnd) contentEnd = found;
+  }
+  const content = text.slice(contentStart, contentEnd).trim();
+  return content || undefined;
+}
+
+function stripSubagentResultMarkers(text: string): string {
+  const lower = text.toLowerCase();
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const start = lower.indexOf("[subagent result:", cursor);
+    if (start === -1) {
+      parts.push(text.slice(cursor));
+      break;
+    }
+    parts.push(text.slice(cursor, start));
+    const end = text.indexOf("]", start + 1);
+    if (end === -1) break;
+    cursor = end + 1;
+  }
+  return parts.join("");
 }
 
 function replaceAttachedFilePaths(

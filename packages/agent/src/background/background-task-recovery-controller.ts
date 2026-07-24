@@ -14,8 +14,8 @@ import type {
   BackgroundRecoveryRecorderFailure,
   BackgroundRecoveryRecorderFailureKind,
   BackgroundRecoveryRecorderDisposition,
-} from "./background-task-manager.js";
-import type { BackgroundTask } from "./background-task-types.js";
+  BackgroundTask,
+} from "./background-task-types.js";
 import type {
   AtomicTaskPersistenceOps,
   TaskRecoveryFailure,

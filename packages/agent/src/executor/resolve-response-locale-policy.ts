@@ -144,8 +144,50 @@ const FOREIGN_SCRIPT_MIN_SHARE = 0.15;
 const FOREIGN_SCRIPT_MIN_UNITS = 8;
 const LATIN_PROSE_MIN_SHARE = 0.2;
 const LATIN_PROSE_MIN_WORDS = 4;
-const PROTECTED_RESPONSE_SPANS = /```[\s\S]*?```|`[^`\n]+`|\[[^\]\n]*\]\([^)\n]+\)|https?:\/\/\S+|www\.\S+/giu;
 const LATIN_WORD = /\b[A-Za-z][A-Za-z'’]*\b/g;
+
+function withoutProtectedResponseSpans(text: string): string {
+  const lower = text.toLowerCase();
+  const parts: string[] = [];
+  let plainStart = 0;
+  let cursor = 0;
+  while (cursor < text.length) {
+    let end = -1;
+    if (text.startsWith("```", cursor)) {
+      const close = text.indexOf("```", cursor + 3);
+      if (close !== -1) end = close + 3;
+    } else if (text[cursor] === "`") {
+      const close = text.indexOf("`", cursor + 1);
+      if (close !== -1 && !text.slice(cursor + 1, close).includes("\n")) end = close + 1;
+    } else if (text[cursor] === "[") {
+      const labelEnd = text.indexOf("](", cursor + 1);
+      const close = labelEnd === -1 ? -1 : text.indexOf(")", labelEnd + 2);
+      if (
+        labelEnd !== -1 &&
+        close !== -1 &&
+        !text.slice(cursor + 1, close).includes("\n")
+      ) {
+        end = close + 1;
+      }
+    } else if (
+      lower.startsWith("http://", cursor) ||
+      lower.startsWith("https://", cursor) ||
+      lower.startsWith("www.", cursor)
+    ) {
+      end = cursor;
+      while (end < text.length && !/\s/.test(text[end]!)) end++;
+    }
+    if (end === -1) {
+      cursor++;
+      continue;
+    }
+    parts.push(text.slice(plainStart, cursor), " ");
+    plainStart = end;
+    cursor = end;
+  }
+  parts.push(text.slice(plainStart));
+  return parts.join("");
+}
 
 function scriptUnits(text: string, scriptClass: ScriptClass): number {
   let units = 0;
@@ -158,7 +200,7 @@ function scriptUnits(text: string, scriptClass: ScriptClass): number {
 }
 
 function latinProseWordCount(text: string): number {
-  const proseCandidate = text.replace(PROTECTED_RESPONSE_SPANS, " ");
+  const proseCandidate = withoutProtectedResponseSpans(text);
   const latinWords = proseCandidate.match(LATIN_WORD) ?? [];
   return latinWords.filter((word) => {
     if (word.length < 2) return false;
@@ -175,7 +217,7 @@ function substantialForeignScript(
   response: string,
   expectedClass: ScriptClass,
 ): ScriptClass | undefined {
-  const proseCandidate = response.replace(PROTECTED_RESPONSE_SPANS, " ");
+  const proseCandidate = withoutProtectedResponseSpans(response);
   const shares = scriptShares(proseCandidate);
   for (const [scriptClass, share] of shares) {
     if (

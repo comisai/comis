@@ -476,7 +476,6 @@ async function runBudgetContinuation(
   }
 
   const lastDecisionReason = decision.reason;
-
   // Set finish reason based on tracker stop condition
   if (decision.reason === "budget_reached" || decision.reason === "diminishing_returns" || decision.reason === "max_continuations") {
     result.finishReason = "budget_exhausted";

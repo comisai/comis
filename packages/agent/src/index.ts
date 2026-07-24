@@ -9,10 +9,8 @@ export { retainLastCompleteUserTurns } from "./session/bounded-session-history.j
 export { pruneAcknowledgedHeartbeatTurn } from "./session/acknowledged-heartbeat-turn.js";
 export { replaceContextStoreHistory } from "./session/context-history-replacement.js";
 export {
-  appendExecutionResultJournal,
   readExecutionResultJournal,
 } from "./session/execution-result-journal.js";
-export type { ExecutionResultJournalRecord } from "./session/execution-result-journal.js";
 
 // Step counter
 export { createStepCounter } from "./executor/step-counter.js";
@@ -475,13 +473,6 @@ export { createLifecycleHooks, deriveSubagentContextEngineConfig } from "./spawn
 export type { LifecycleHooksDeps } from "./spawn/index.js";
 export { createEphemeralComisSessionManager } from "./spawn/index.js";
 export { createSubAgentRunner, SUB_AGENT_SHUTDOWN_TIMEOUT_MS } from "./spawn/index.js";
-export {
-  SubAgentResumeDescriptorSchema,
-  hashSubAgentResumeDescriptor,
-  parseSubAgentResumeDescriptor,
-  validateSubAgentResumeAuthority,
-  type SubAgentResumeDescriptor,
-} from "./spawn/sub-agent-resume-descriptor.js";
 export type {
   SubAgentRunnerDeps,
   SubAgentRun,

@@ -27,16 +27,9 @@ import type { WorktreeRegistry } from "../setup-worktree-sweep.js";
 import { resolveGraphCacheRetention } from "./graph-cache-retention.js";
 import { maybePrepareWorktreeForSpawn } from "./worktree-spawn-run.js";
 export { resolveGraphCacheRetention } from "./graph-cache-retention.js";
-/** Minimum step budget for sub-agent spawns — prevents boot sequence from consuming all steps. */
+/** Minimum spawn budget so boot cannot consume every step. */
 export const MIN_SUB_AGENT_STEPS = 30;
-
-// ---------------------------------------------------------------------------
-// executeSubAgent builder
-// ---------------------------------------------------------------------------
-
-/**
- * Closure-captured deps for the executeSubAgent callback.
- */
+/** Closure-captured dependencies for executeSubAgent. */
 export interface ExecuteSubAgentDeps {
   container: AppContainer;
   sessionStore: Pick<SessionStorePort, "load" | "loadByRef">;
@@ -46,22 +39,12 @@ export interface ExecuteSubAgentDeps {
   getExecutor: (agentId: string) => { execute: (...args: any[]) => Promise<any> };
   fileLock: FileLockPort;
   logger?: ComisLogger;
-  /**
-   * The lifecycle GitExec the composition root binds (the real
-   * execFile-backed `createExecGit` adapted to `{ stdout, exitCode }`). Present
-   * ⇒ a child whose session metadata carries `worktree:true` runs in an isolated
-   * git worktree. **Absent ⇒ the worktree request is honestly ignored** (no git
-   * seam to create one) — a content-free WARN surfaces the skip rather than a
-   * silent no-op. Paired with {@link worktreeRegistry}; the daemon wires BOTH.
-   */
+  /** Git seam for isolated child worktrees; absence is reported and skips isolation. */
   worktreeGitExec?: GitExec;
-  /** The shared registry the boot/periodic orphan sweep reads. Paired with {@link worktreeGitExec}. */
+  /** Shared registry used by boot and periodic orphan sweeps. */
   worktreeRegistry?: WorktreeRegistry;
 }
-
-/**
- * The executeSubAgent callback signature accepted by createSubAgentRunner.
- */
+/** Callback signature accepted by createSubAgentRunner. */
 export type ExecuteSubAgentFn = (
   agentId: string,
   sessionKey: SessionKey,

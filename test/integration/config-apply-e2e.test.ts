@@ -147,7 +147,6 @@ describe("Config Apply Full Section Replacement", () => {
         value: {
           cron: {
             enabled: true,
-            maxConcurrentRuns: 3,
             defaultTimezone: "America/New_York",
           },
           heartbeat: {
@@ -170,7 +169,6 @@ describe("Config Apply Full Section Replacement", () => {
 
       // 4. Verify the YAML file on disk was updated (daemon would restart to pick up changes)
       const updatedContent = readFileSync(tmpConfigPath, "utf-8");
-      expect(updatedContent).toContain("maxConcurrentRuns: 3");
       expect(updatedContent).toContain("America/New_York");
       expect(updatedContent).toContain("intervalMs: 120000");
       expect(updatedContent).toContain("showOk: true");
@@ -268,7 +266,6 @@ describe("Config Apply Full Section Replacement", () => {
         value: {
           cron: {
             enabled: true,
-            maxConcurrentRuns: 2,
             defaultTimezone: "UTC",
           },
           heartbeat: {

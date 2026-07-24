@@ -70,9 +70,13 @@ describe("diagnostics.trajectory.eventTypes filter — end-to-end honor check", 
       "utf-8",
     );
     expect(setupAgentsSrc).toMatch(
-      /trajectoryConfig:\s*container\.config\.diagnostics\?\.trajectory/,
+      /trajectoryConfig:\s*resolveEffectiveTrajectoryConfig\(container\.config\)/,
     );
-    expect(setupAgentsSrc).toMatch(/eventTypes:\s*container\.config\.diagnostics\.trajectory\.eventTypes/);
+    const resolverSrc = fs.readFileSync(
+      path.join(repoRoot, "packages/daemon/src/wiring/trajectory-runtime-config.ts"),
+      "utf-8",
+    );
+    expect(resolverSrc).toMatch(/eventTypes:\s*trajectory\.eventTypes/);
   });
 
   it("pi-executor reads deps.trajectoryConfig.eventTypes and threads it into attachTrajectoryToEventBus as filter", () => {

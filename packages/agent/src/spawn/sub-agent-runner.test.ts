@@ -45,6 +45,7 @@ import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 import {
   attenuateCaps,
   AGENT_CAPABILITIES,
+  computeWorkspacePolicyCombinedHash,
   resolveWorkspaceDir,
   type AgentCapability,
   type AgentConfig,
@@ -194,7 +195,7 @@ describe("createSubAgentRunner", () => {
   // -----------------------------------------------------------------------
   // Spawn returns runId immediately
   // -----------------------------------------------------------------------
-  it("spawn returns runId immediately without awaiting executeAgent", () => {
+  it("spawn returns runId immediately without awaiting executeAgent", async () => {
     // Use a never-resolving promise to prove non-blocking
     let resolveExec!: (v: unknown) => void;
     vi.mocked(deps.executeAgent).mockReturnValue(
@@ -210,6 +211,7 @@ describe("createSubAgentRunner", () => {
 
     expect(typeof runId).toBe("string");
     expect(runId.length).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(0);
     // executeAgent called but not yet resolved
     expect(deps.executeAgent).toHaveBeenCalledTimes(1);
 
@@ -433,7 +435,7 @@ describe("createSubAgentRunner", () => {
   // -----------------------------------------------------------------------
   // Empty allowlist allows any agent
   // -----------------------------------------------------------------------
-  it("empty allowlist allows any agent", () => {
+  it("empty allowlist allows any agent", async () => {
     deps.config.allowAgents = [];
 
     const runner = createSubAgentRunner(deps);
@@ -445,6 +447,7 @@ describe("createSubAgentRunner", () => {
     });
 
     expect(typeof runId).toBe("string");
+    await vi.advanceTimersByTimeAsync(0);
     expect(deps.executeAgent).toHaveBeenCalledTimes(1);
   });
 
@@ -557,6 +560,7 @@ describe("createSubAgentRunner", () => {
       callerConversation,
     });
 
+    await vi.advanceTimersByTimeAsync(0);
     // Spawn event emitted immediately
     expect(deps.eventBus.emit).toHaveBeenCalledWith(
       "session:sub_agent_spawned",
@@ -1067,6 +1071,7 @@ describe("createSubAgentRunner", () => {
       callerSessionKey: "default:user1:channel1",
     });
 
+    await vi.advanceTimersByTimeAsync(0);
     // Spawn log emitted immediately
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ runId, agentId: "default" }),
@@ -1667,7 +1672,7 @@ describe("createSubAgentRunner", () => {
   // -----------------------------------------------------------------------
   // Spawn INFO log includes maxSteps and toolProfile
   // -----------------------------------------------------------------------
-  it("spawn INFO log includes maxSteps and toolProfile", () => {
+  it("spawn INFO log includes maxSteps and toolProfile", async () => {
     const logger = {
       info: vi.fn(),
       warn: vi.fn(),
@@ -1682,6 +1687,7 @@ describe("createSubAgentRunner", () => {
       agentId: "default",
     });
 
+    await vi.advanceTimersByTimeAsync(0);
     const spawnCall = logger.info.mock.calls.find(
       (call: [Record<string, unknown>, string]) => call[1] === "Sub-agent spawn initiated",
     );
@@ -1788,6 +1794,9 @@ describe("createSubAgentRunner", () => {
         parentCaps: [],
         onAssemblyAuthority: expect.any(Function),
       }),
+      expect.objectContaining({
+        onProviderStart: expect.any(Function),
+      }),
     );
   });
 
@@ -1837,13 +1846,16 @@ describe("createSubAgentRunner", () => {
         parentCaps: [],
         onAssemblyAuthority: expect.any(Function),
       }),
+      expect.objectContaining({
+        onProviderStart: expect.any(Function),
+      }),
     );
   });
 
   // -----------------------------------------------------------------------
   // Spawn log shows per-spawn maxSteps when provided
   // -----------------------------------------------------------------------
-  it("spawn INFO log shows per-spawn maxSteps when provided", () => {
+  it("spawn INFO log shows per-spawn maxSteps when provided", async () => {
     const logger = {
       info: vi.fn(),
       warn: vi.fn(),
@@ -1859,6 +1871,7 @@ describe("createSubAgentRunner", () => {
       max_steps: 20,
     });
 
+    await vi.advanceTimersByTimeAsync(0);
     const spawnCall = logger.info.mock.calls.find(
       (call: [Record<string, unknown>, string]) => call[1] === "Sub-agent spawn initiated",
     );
@@ -3039,7 +3052,7 @@ describe("createSubAgentRunner", () => {
   // Hash-dedup at spawn entry (duplicate spawn protection)
   // -----------------------------------------------------------------------
   describe("hash-dedup against in-flight runs", () => {
-    it("dedups same caller and task while first run is still in flight", () => {
+    it("dedups same caller and task while first run is still in flight", async () => {
       // First spawn never resolves -> first run stays "running" indefinitely
       vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
 
@@ -3050,6 +3063,7 @@ describe("createSubAgentRunner", () => {
         callerSessionKey: "tenant:user1:chan1",
       });
 
+      await vi.advanceTimersByTimeAsync(0);
       expect(runner.getRunStatus(runId1)?.status).toBe("running");
       expect(deps.executeAgent).toHaveBeenCalledTimes(1);
 
@@ -3073,7 +3087,7 @@ describe("createSubAgentRunner", () => {
       expect(runner.listRuns()).toHaveLength(1);
     });
 
-    it("does not dedup spawns with different task strings from same caller", () => {
+    it("does not dedup spawns with different task strings from same caller", async () => {
       vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
 
       const runner = createSubAgentRunner(deps);
@@ -3088,13 +3102,14 @@ describe("createSubAgentRunner", () => {
         callerSessionKey: "tenant:user1:chan1",
       });
 
+      await vi.advanceTimersByTimeAsync(0);
       expect(runId1).not.toBe(runId2);
       expect(deps.executeAgent).toHaveBeenCalledTimes(2);
       expect(runner.lastSpawnDedupInfo()).toBeUndefined();
       expect(runner.listRuns()).toHaveLength(2);
     });
 
-    it("does not dedup spawns across different caller session keys", () => {
+    it("does not dedup spawns across different caller session keys", async () => {
       vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
 
       const runner = createSubAgentRunner(deps);
@@ -3109,18 +3124,20 @@ describe("createSubAgentRunner", () => {
         callerSessionKey: "tenant:user2:chan2",
       });
 
+      await vi.advanceTimersByTimeAsync(0);
       expect(runId1).not.toBe(runId2);
       expect(deps.executeAgent).toHaveBeenCalledTimes(2);
       expect(runner.lastSpawnDedupInfo()).toBeUndefined();
     });
 
-    it("does not dedup when callerSessionKey is undefined for top-level spawn", () => {
+    it("does not dedup when callerSessionKey is undefined for top-level spawn", async () => {
       vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
 
       const runner = createSubAgentRunner(deps);
       const runId1 = runner.spawn({ task: "T", agentId: "A" });
       const runId2 = runner.spawn({ task: "T", agentId: "A" });
 
+      await vi.advanceTimersByTimeAsync(0);
       expect(runId1).not.toBe(runId2);
       expect(deps.executeAgent).toHaveBeenCalledTimes(2);
       expect(runner.lastSpawnDedupInfo()).toBeUndefined();
@@ -3143,6 +3160,7 @@ describe("createSubAgentRunner", () => {
         callerSessionKey: "K",
       });
 
+      await vi.advanceTimersByTimeAsync(0);
       expect(runId2).not.toBe(runId1);
       expect(deps.executeAgent).toHaveBeenCalledTimes(2);
       expect(runner.lastSpawnDedupInfo()).toBeUndefined();
@@ -5180,7 +5198,7 @@ describe("sandbox no-downgrade gate", () => {
   // -------------------------------------------------------------------------
   // Equal posture allowed
   // -------------------------------------------------------------------------
-  it("allows a spawn when child posture equals the parent", () => {
+  it("allows a spawn when child posture equals the parent", async () => {
     const resolvePosture = makePostureResolver({
       parent: { exec: "always" },
       "equal-child": { exec: "always" },
@@ -5199,6 +5217,7 @@ describe("sandbox no-downgrade gate", () => {
 
     expect(typeof runId).toBe("string");
     expect(runner.getRunStatus(runId)?.status).toBe("running");
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(deps.executeAgent).toHaveBeenCalledTimes(1);
   });
 
@@ -5750,6 +5769,11 @@ describe("coordinator-child attenuated lease + own jailed workspace (no escalati
         touchHeartbeat: vi.fn().mockResolvedValue({ ok: true }),
         terminalize: vi.fn().mockResolvedValue(ok({ kind: "terminalized" as const })),
       } as unknown as NonNullable<SubAgentRunnerDeps["durableRuns"]>;
+      deps.resolveWorkspacePolicySnapshot = async (agentId) => ok({
+        agentId,
+        sections: [],
+        combinedHash: computeWorkspacePolicyCombinedHash([]),
+      });
 
       const parent: AgentCapability[] = ["orch:spawn", "orch:read", "orch:graph"];
       const mintedChildLease = attenuateCaps(parent, ["orch:read", "orch:write"]); // ["orch:read"]
@@ -5763,6 +5787,7 @@ describe("coordinator-child attenuated lease + own jailed workspace (no escalati
         caps: mintedChildLease,
       });
 
+      await vi.advanceTimersByTimeAsync(0);
       await vi.advanceTimersByTimeAsync(0);
 
       expect(upsertCheckpoint).toHaveBeenCalled();
@@ -5930,7 +5955,7 @@ describe("killRun attribution + notification + trajectory teardown", () => {
     expect(text).toContain("rank all system drivers");
   });
 
-  it("closeTrajectory fires once when a killed execution settles (not at kill time)", async () => {
+  it("closeTrajectory fires once when a killed execution is terminalized", async () => {
     const localDeps = createMockDeps();
     localDeps.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
     let resolveExec: ((v: unknown) => void) | undefined;
@@ -5945,9 +5970,7 @@ describe("killRun attribution + notification + trajectory teardown", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     runner.killRun(runId, { killedBy: "health_monitor", reason: "stuck" });
-    // The recorder must survive until the in-flight execution settles so its
-    // final records (session.summary) still land.
-    expect(closeTrajectory).not.toHaveBeenCalled();
+    expect(closeTrajectory).toHaveBeenCalledTimes(1);
 
     resolveExec!({
       response: "late result",

@@ -9,7 +9,6 @@ export type {
   BackgroundTask,
   BackgroundTaskStatus,
   BackgroundSessionState,
-  BackgroundContinuationOutbox,
   PersistedTaskState,
 } from "./background-task-types.js";
 // `BackgroundTaskNotificationPolicy` is re-exported below as a runtime
@@ -35,6 +34,8 @@ export type {
   BackgroundRecoveryRecorderFailure,
   BackgroundRecoveryRecorderFailureKind,
   BackgroundRecoveryRecorderDisposition,
+} from "./background-task-types.js";
+export type {
   BackgroundTaskManager,
   BackgroundTaskManagerOpts,
   NotifyFn,
@@ -51,9 +52,11 @@ export { createBackgroundCompletionRunner } from "./completion-runner.js";
 export type {
   BackgroundCompletionRunner,
   BackgroundCompletionRunnerDeps,
-  BackgroundCompletionDeliveryOutcome,
   RunnerSessionStore,
 } from "./completion-runner.js";
+export type {
+  BackgroundCompletionDeliveryOutcome,
+} from "./background-task-types.js";
 export {
   createCompletionDispatcher,
   STATES,
