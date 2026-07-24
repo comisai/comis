@@ -1,3 +1,5 @@
+<!-- Keep the five required H2 headings below when automation updates a PR body. -->
+
 ## Description
 
 What does this PR do?
