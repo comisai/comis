@@ -25,7 +25,6 @@ import {
   resolveConfigSecretRefs,
   validateMemoryWrite,
   themeForName,
-  BackgroundTasksConfigSchema,
   writeMasterKeyIfAbsent,
   preReadStorageMode,
   systemNowMs,
@@ -173,7 +172,7 @@ import {
 } from "./wiring/daemon-entrypoint.js";
 import { createSubagentActivityTracker, sweepStuckSubAgentRuns } from "./wiring/subagent-stuck-sweep.js"; // idle-based stuck sub-agent sweep (health tick)
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig } from "./wiring/main-helpers.js";
 import { setupChannelLivenessMonitor } from "./wiring/setup-channel-liveness-monitor.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
@@ -1526,11 +1525,9 @@ async function bootFoundation(
 
   // 6.5.1. Background task system (created before setupAgents)
   const { backgroundTaskManager } = setupBackgroundTasks({
-    dataDir, config: BackgroundTasksConfigSchema.parse(container.config.agents[container.config.routing.defaultAgentId]?.backgroundTasks ?? {}),
-    resolveConfigForAgent: (agentId) => BackgroundTasksConfigSchema.parse(
-      // eslint-disable-next-line security/detect-object-injection -- agentId selects a key from the validated agent configuration map.
-      container.config.agents[agentId]?.backgroundTasks ?? {},
-    ),
+    dataDir,
+    config: resolveAgentBackgroundTasksConfig(container.config.agents, container.config.routing.defaultAgentId),
+    resolveConfigForAgent: (agentId) => resolveAgentBackgroundTasksConfig(container.config.agents, agentId),
     eventBus: container.eventBus,
     logger: logLevelManager.getLogger("background-tasks"),
     clock,
@@ -2284,10 +2281,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     assembleToolsForAgent, adaptersByType, deliveryService,
     taskManager: backgroundTaskManager, fallbackNotifyFn: bgNotifyFn,
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
-    resolveMaxBackgroundHops: (agentId) => BackgroundTasksConfigSchema.parse(
-      // eslint-disable-next-line security/detect-object-injection -- agentId selects a key from the validated per-agent runtime map.
-      agents[agentId]?.backgroundTasks ?? {},
-    ).maxBackgroundHops,
+    resolveMaxBackgroundHops: (agentId) => resolveAgentBackgroundTasksConfig(agents, agentId).maxBackgroundHops,
     logger: daemonLogger,
   });
   // eventBus.on("system:shutdown", () =>

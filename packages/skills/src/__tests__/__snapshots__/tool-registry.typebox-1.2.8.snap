@@ -3587,7 +3587,7 @@
           "type": "array"
         },
         "async": {
-          "description": "Spawn asynchronously, returns runId immediately (default: false)",
+          "description": "Optional explicit async intent; every spawn returns runId immediately",
           "type": "boolean"
         },
         "domain_knowledge": {
