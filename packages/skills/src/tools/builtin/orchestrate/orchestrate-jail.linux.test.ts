@@ -67,7 +67,7 @@ import {
 } from "@comis/infra";
 import { BwrapProvider } from "../sandbox/bwrap-provider.js";
 import { createOrchestrateTool, type OrchestrateResultStore } from "./orchestrate-tool.js";
-import { createResultRefStore } from "./result-ref-store.js";
+import { createResultRefStore, safeResultRunId } from "./result-ref-store.js";
 
 /** Linux + real bwrap gate (mirrors bwrap-cap-socket.linux.test.ts). */
 function canJailRun(): boolean {

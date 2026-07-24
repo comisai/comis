@@ -80,10 +80,20 @@ describe.skipIf(!RUN_LINUX)("orchestrate durable-resume boot-sweep recovery (res
   const AGENT = "agent-vps";
   const SCRIPT_REF = "orch-vps-1.ts";
   const CHECKPOINT_REF = "results/ckpt.json";
+  const endpoint = {
+    channelType: "test",
+    channelInstanceId: "durable-resume",
+    conversationId: "resume-vps",
+    conversationKind: "direct" as const,
+  };
   const conversationScope = {
     tenantId: "tenant-a",
     agentId: AGENT,
-    partition: { kind: "principal" as const, principalId: "user-a" },
+    partition: {
+      kind: "endpoint-conversation-principal" as const,
+      endpoint,
+      principalId: "user-a",
+    },
   };
   const conversationReference = createConversationRef(conversationScope);
   if (!conversationReference.ok) throw conversationReference.error;

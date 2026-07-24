@@ -26,11 +26,16 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { resolve, dirname } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestDaemon, type TestDaemonHandle } from "../support/daemon-harness.js";
+import { createFakeClock } from "../support/fake-clock.js";
+import { createFakeTimers } from "../support/fake-timers.js";
+import { createBackgroundTaskManager, loadTask } from "@comis/agent";
 import { EchoChannelAdapter } from "@comis/channels";
-import { createConversationRef } from "@comis/core";
+import { createConversationRef, TypedEventBus } from "@comis/core";
 import type { BackgroundTaskOrigin } from "@comis/core";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -505,6 +510,54 @@ describe("background-task completion re-triggers agent session (integration)", (
     },
     20_000,
   );
+});
+
+describe("background-task durable timeout integration", () => {
+  it("persists the configured hard-timeout terminal state before reporting failure", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-background-timeout-"));
+    try {
+      const clock = createFakeClock(1_000);
+      const timers = createFakeTimers(1_000);
+      const eventBus = new TypedEventBus();
+      const abortController = new AbortController();
+      const manager = createBackgroundTaskManager({
+        dataDir,
+        eventBus,
+        logger: {
+          info: () => undefined,
+          warn: () => undefined,
+          debug: () => undefined,
+        },
+        clock,
+        timers,
+        maxBackgroundDurationMs: 500,
+      });
+      const promoted = manager.promote(
+        "test_timeout",
+        new Promise(() => undefined),
+        abortController,
+        makeTestOrigin(),
+      );
+      expect(promoted.ok).toBe(true);
+      if (!promoted.ok) return;
+
+      clock.advance(500);
+      timers.advance(500);
+
+      const task = manager.getTask(promoted.value);
+      expect(task?.status).toBe("failed");
+      expect(task?.error).toBe("Hard timeout exceeded");
+      expect(abortController.signal.aborted).toBe(true);
+      expect(loadTask(dataDir, TEST_AGENT_ID, promoted.value)).toMatchObject({
+        id: promoted.value,
+        status: "failed",
+        error: "Hard timeout exceeded",
+        completedAt: 1_500,
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
