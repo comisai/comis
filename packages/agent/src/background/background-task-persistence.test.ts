@@ -102,7 +102,7 @@ describe("background-task-persistence", () => {
       },
     );
 
-    it("returns the directory fsync failure after bounded retries", () => {
+    it("restores the prior durable task when directory fsync fails", () => {
       const prior: PersistedTaskState = {
         id: "atomic-directory-task",
         toolName: "exec_command",
@@ -138,7 +138,49 @@ describe("background-task-persistence", () => {
       expect(attempted.ok).toBe(false);
       if (attempted.ok) return;
       expect(attempted.error.message).toBe("injected directory sync failure");
-      expect(loadTask(dataDir, "agent-a", prior.id)?.dispatchState).toBe("ready_to_deliver");
+      expect(loadTask(dataDir, "agent-a", prior.id)?.dispatchState).toBe("pending");
+    });
+
+    it("leaves no recoverable running task when directory fsync rejects admission", () => {
+      const running: PersistedTaskState = {
+        id: "atomic-admission-task",
+        toolName: "exec_command",
+        status: "running",
+        startedAt: 1,
+        origin: buildOrigin({ agentId: "agent-a" }),
+        continuationExecutionId: "execution-admission",
+        dispatchAttempts: 0,
+        dispatchState: "pending",
+      };
+      const directoryDescriptors = new Set<number>();
+      const attempted = persistTaskAtomically(
+        dataDir,
+        running,
+        {
+          open: (path, flags, mode) => {
+            const fd = openSync(path, flags, mode);
+            if (flags === "r") directoryDescriptors.add(fd);
+            return fd;
+          },
+          write: writeFileSync,
+          sync: (fd) => {
+            if (directoryDescriptors.has(fd)) throw new Error("injected directory sync failure");
+            fsyncSync(fd);
+          },
+          close: (fd) => {
+            directoryDescriptors.delete(fd);
+            closeSync(fd);
+          },
+          rename: renameSync,
+          unlink: unlinkSync,
+        },
+      );
+
+      expect(attempted.ok).toBe(false);
+      expect(loadTask(dataDir, "agent-a", running.id)).toBeUndefined();
+      expect(recoverTasks(dataDir).tasks).not.toContainEqual(
+        expect.objectContaining({ id: running.id }),
+      );
     });
 
     it("commits atomically when the Node permission model disables fsync", () => {

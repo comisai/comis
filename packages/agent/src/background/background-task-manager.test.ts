@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { createConversationRef, safePath, TypedEventBus } from "@comis/core";
 import { err, ok } from "@comis/shared";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
-import { loadTask, persistTaskSync } from "./background-task-persistence.js";
+import { loadTask, persistTaskSync, recoverTasks } from "./background-task-persistence.js";
 import type { BackgroundTaskOrigin, PersistedTaskState } from "./background-task-types.js";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
@@ -293,6 +293,7 @@ describe("BackgroundTaskManager", () => {
 
       expect(promoted.ok).toBe(false);
       expect(durabilityManager.getAllTasks()).toHaveLength(0);
+      expect(recoverTasks(dataDir).tasks).toHaveLength(0);
       expect(logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({ errorCode: "EIO" }),
         "Background task admission persistence failed",
