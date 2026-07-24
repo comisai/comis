@@ -393,6 +393,7 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
   function setupLeaseRun(
     caps: readonly AgentCapability[],
     store: OrchestrateResultStore = noopStore,
+    onRunMint?: (runId: string) => void,
   ): {
     leaseManager: LeaseManager;
     rootRunId: string;
@@ -430,6 +431,7 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
       // COMIS_CAP_LEASE (overriding the assembly bearer), SAME rootRunId, TTL
       // clamped to the run timeout — registerRoot intentionally NOT called (INV-7).
       mintRunLease: (runId, timeoutMs) => {
+        onRunMint?.(runId);
         const child = leaseManager.mintLease({
           agentId: LEASE_AGENT_ID,
           caps,
@@ -848,13 +850,17 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
     { timeout: 30_000 },
     async () => {
       server = await startCapServer(() => null);
-      // Three ~40 KB materialized ResultRefs the run produced (the counterfactual
-      // input); the REAL store enumerates results/ for the run aggregate.
-      for (let i = 0; i < 3; i++) {
-        writeFileSync(join(workspacePath, "results", `big-${i}.jsonl`), "x".repeat(40 * 1024));
-      }
       const store = createResultRefStore({ logger: makeLogger() });
-      const { runSummaries, tool } = setupLeaseRun(READ_CAPS, store);
+      const { runSummaries, tool } = setupLeaseRun(READ_CAPS, store, (runId) => {
+        // Three ~40 KB materialized ResultRefs the run produced (the
+        // counterfactual input); the REAL store enumerates this exact
+        // run-scoped results directory.
+        const runResultsPath = join(workspacePath, "results", safeResultRunId(runId));
+        mkdirSync(runResultsPath, { recursive: true });
+        for (let i = 0; i < 3; i++) {
+          writeFileSync(join(runResultsPath, `big-${i}.jsonl`), "x".repeat(40 * 1024));
+        }
+      });
 
       // A ~2 KB summary re-enters context; the 120 KB stays materialized on disk.
       await tool.execute("c", {

@@ -32,6 +32,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  createConversationRef,
   TypedEventBus,
   type ClockPort,
   type TimerPort,
@@ -79,6 +80,13 @@ describe.skipIf(!RUN_LINUX)("orchestrate durable-resume boot-sweep recovery (res
   const AGENT = "agent-vps";
   const SCRIPT_REF = "orch-vps-1.ts";
   const CHECKPOINT_REF = "results/ckpt.json";
+  const conversationScope = {
+    tenantId: "tenant-a",
+    agentId: AGENT,
+    partition: { kind: "principal" as const, principalId: "user-a" },
+  };
+  const conversationReference = createConversationRef(conversationScope);
+  if (!conversationReference.ok) throw conversationReference.error;
 
   beforeEach(async () => {
     ws = mkdtempSync(join(tmpdir(), "comis-resume-sim-"));
@@ -98,15 +106,17 @@ describe.skipIf(!RUN_LINUX)("orchestrate durable-resume boot-sweep recovery (res
     const r = await store.upsertCheckpoint({
       checkpointId: ROOT,
       rootRunId: ROOT,
+      tenantId: conversationScope.tenantId,
       agentId: AGENT,
-      sessionKey: "tenant-a:user-a:telegram:chat-a",
-      ownerTenantId: "tenant-a",
-      ownerUserId: "user-a",
+      conversationRef: conversationReference.value,
+      conversationScope,
+      principalId: "user-a",
       deliveryOrigin: null,
       spawnTree: [], // FLAT ⇒ the orchestrate arm (never resumeGraph)
       caps: [],
       leaseIds: [],
       budgetConsumed: 0,
+      rootBudget: { startedAtMs: testClock.now(), tokensConsumed: 0, usdConsumed: 0 },
       cronOrigin: null,
       trustLevel: "user",
       status: "running",

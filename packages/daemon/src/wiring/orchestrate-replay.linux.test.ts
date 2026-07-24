@@ -28,7 +28,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ComisLogger } from "@comis/core";
+import { createConversationRef, type ComisLogger } from "@comis/core";
 import { createSqliteDurableRunStore, ensureDurableRunTable } from "@comis/memory";
 import {
   createOrchestrateReplayRespawn,
@@ -67,6 +67,13 @@ describe.skipIf(!jailAvailable)("orchestrate.replay real jailed byte-identical r
   const ROOT = "orch-replay-vps-1";
   const BEARER = "ephemeral-replay-bearer";
   const SCRIPT_REF = "orch-replay-vps-1.ts";
+  const conversationScope = {
+    tenantId: "tenant-a",
+    agentId: "default",
+    partition: { kind: "principal" as const, principalId: "user-a" },
+  };
+  const conversationReference = createConversationRef(conversationScope);
+  if (!conversationReference.ok) throw conversationReference.error;
   // A DETERMINISTIC pinned script (no cap call) — its stdout is byte-identical on
   // every replay, which is the REPLAY-02 property the automated tier proves; the
   // recorded-cap-call serving is the operator's manual round-trip.
@@ -88,11 +95,28 @@ describe.skipIf(!jailAvailable)("orchestrate.replay real jailed byte-identical r
     ensureDurableRunTable(db);
     // eslint-disable-next-line no-restricted-syntax -- Linux/VPS integration gate.
     const store = createSqliteDurableRunStore(db as never);
-    await store.upsertCheckpoint({
-      rootRunId: ROOT, spawnTree: [], caps: [], leaseIds: [], budgetConsumed: 0,
-      cronOrigin: null, trustLevel: "user", stepIndex: -1, status: "running", lastHeartbeatAt: Date.now(),
-      scriptRef: SCRIPT_REF, checkpointRef: null,
+    const seeded = await store.upsertCheckpoint({
+      checkpointId: ROOT,
+      rootRunId: ROOT,
+      tenantId: conversationScope.tenantId,
+      agentId: conversationScope.agentId,
+      conversationRef: conversationReference.value,
+      conversationScope,
+      principalId: "user-a",
+      deliveryOrigin: null,
+      spawnTree: [],
+      caps: [],
+      leaseIds: [],
+      budgetConsumed: 0,
+      rootBudget: { startedAtMs: Date.now(), tokensConsumed: 0, usdConsumed: 0 },
+      cronOrigin: null,
+      trustLevel: "user",
+      status: "running",
+      lastHeartbeatAt: Date.now(),
+      scriptRef: SCRIPT_REF,
+      checkpointRef: null,
     });
+    if (!seeded.ok) throw seeded.error;
     socketPath = join(ws, "replay.sock");
     socket = createOrchestrateReplaySocket({
       recordingRootPath: recordingRoot,
@@ -125,10 +149,11 @@ describe.skipIf(!jailAvailable)("orchestrate.replay real jailed byte-identical r
     expect(childEnv.COMIS_ORCH_SOCKET).toBe(socketPath);
 
     const principal = {
-      agentId: "default",
-      sessionKey: "default:default:default",
-      ownerTenantId: "default",
-      ownerUserId: "default",
+      tenantId: conversationScope.tenantId,
+      agentId: conversationScope.agentId,
+      conversationRef: conversationReference.value,
+      conversationScope,
+      principalId: "user-a",
       deliveryOrigin: null,
       trustLevel: "user" as const,
       caps: [],
