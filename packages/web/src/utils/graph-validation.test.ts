@@ -202,7 +202,7 @@ describe("validateGraph", () => {
 
     it("returns warning for disconnected node (no edges, graph >1 node)", () => {
       const nodes = [makeNode("n1"), makeNode("n2")];
-      const edges = []; // no edges, both nodes disconnected
+      const edges: PipelineEdge[] = []; // no edges, both nodes disconnected
 
       const result = validateGraph(nodes, edges);
 

@@ -514,8 +514,8 @@ export class IcSessionDetail extends LitElement {
     try {
       const agentId = this._session.agentId;
       const [pipelineResult, dagResult] = await Promise.all([
-        rpc.call("obs.context.pipeline", { agentId, limit: 100 }),
-        rpc.call("obs.context.dag", { agentId, limit: 50 }),
+        rpc.call<PipelineSnapshot[]>("obs.context.pipeline", { agentId, limit: 100 }),
+        rpc.call<DagCompactionSnapshot[]>("obs.context.dag", { agentId, limit: 50 }),
       ]);
 
       const sessionKey = this._session.key;

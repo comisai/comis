@@ -3,6 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { RpcClient } from "../../api/rpc-client.js";
+import type { WebRpcMethodMap } from "../../api/contracts.generated.js";
 import type { PipelineListEntry, PipelineNode } from "../../api/types/index.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import "../../components/nav/ic-breadcrumb.js";
@@ -25,6 +26,13 @@ const STATUS_COLORS: Record<string, string> = {
   failed: "#ef4444",
   cancelled: "#f97316",
 };
+
+interface SavedGraphSummary {
+  id: string;
+  label: string;
+  nodeCount: number;
+  updatedAt: number;
+}
 
 /**
  * Format an epoch-ms timestamp as a relative time string.
@@ -417,8 +425,19 @@ export class IcPipelineList extends LitElement {
       const rpc = this.rpcClient;
       // Fire both independent RPC calls in parallel
       const [savedResult, executedResult] = await Promise.allSettled([
-        rpc.call("graph.list", { limit: 100 }),
-        rpc.call("graph.status", {}),
+        rpc.call<{ entries?: SavedGraphSummary[]; total?: number }>(
+          "graph.list",
+          { limit: 100 },
+        ),
+        rpc.call<{
+          graphs?: Array<{
+            graphId: string;
+            label?: string;
+            status: string;
+            startedAt?: number;
+            completedAt?: number;
+          }>;
+        }>("graph.status", {}),
       ]);
 
       // Source 1: server-saved named graphs
@@ -705,8 +724,8 @@ export class IcPipelineList extends LitElement {
       await this.rpcClient.call("graph.save", {
         id: newId,
         label: newLabel,
-        nodes,
-        edges,
+        nodes: nodes as unknown as WebRpcMethodMap["graph.save"]["params"]["nodes"],
+        edges: edges as unknown as WebRpcMethodMap["graph.save"]["params"]["edges"],
         settings: newSettings,
       });
       IcToast.show(`Duplicated as "${newLabel}"`, "success");

@@ -1188,7 +1188,10 @@ export class IcMemoryInspector extends LitElement {
   private async _handleExport(ids?: string[]): Promise<void> {
     if (!this.apiClient) return;
     try {
-      const jsonl = await this.apiClient.exportMemory(ids);
+      const jsonl = await this.apiClient.exportMemory(
+        { tenantId: this._tenantId, agentId: this._scopedAgentId() },
+        ids,
+      );
       const blob = new Blob([jsonl], { type: "application/jsonl" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

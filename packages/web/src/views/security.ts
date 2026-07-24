@@ -3,6 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { RpcClient } from "../api/rpc-client.js";
+import type { WebRpcMethodMap } from "../api/contracts.generated.js";
 import type { ApiClient } from "../api/api-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
@@ -39,6 +40,14 @@ interface SecurityConfig {
     defaultMode: string;
     timeoutMs: number;
   };
+}
+
+interface ProviderCacheStats {
+  providers: Array<{
+    provider: string;
+    cacheHitRate: number;
+  }>;
+  totalCacheSaved: number;
 }
 
 // Side-effect imports for sub-components
@@ -514,7 +523,7 @@ export class IcSecurityView extends LitElement {
   private async _loadProviderHealth(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const result = await this.rpcClient.call("agent.cacheStats");
+      const result = await this.rpcClient.call<ProviderCacheStats>("agent.cacheStats");
 
       const now = systemNowMs();
       const fiveMinAgo = now - 5 * 60 * 1000;
@@ -564,7 +573,10 @@ export class IcSecurityView extends LitElement {
     this._error = "";
 
     try {
-      const configResult = await this.rpcClient.call("config.read");
+      const configResult = await this.rpcClient.call<{
+        config: { security?: SecurityConfig };
+        sections: string[];
+      }>("config.read");
 
       this._securityConfig = configResult.config.security ?? {};
       this._loadState = "loaded";
@@ -582,7 +594,11 @@ export class IcSecurityView extends LitElement {
       const dotIdx = path.indexOf(".");
       const section = dotIdx > 0 ? path.slice(0, dotIdx) : path;
       const key = dotIdx > 0 ? path.slice(dotIdx + 1) : undefined;
-      await this.rpcClient.call("config.patch", { section, key, value });
+      await this.rpcClient.call("config.patch", {
+        section,
+        key,
+        value: value as WebRpcMethodMap["config.patch"]["params"]["value"],
+      });
       IcToast.show("Configuration updated", "success");
       return true;
     } catch (err) {

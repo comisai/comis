@@ -12,6 +12,7 @@ import type {
   ChatHistoryMessage,
   ChatSessionInfo,
 } from "./session-data.js";
+import type { PipelineSnapshot } from "../../api/types/index.js";
 
 export async function loadChatSessions(
   rpcClient: RpcClient,
@@ -95,9 +96,11 @@ export async function loadChatBudget(
   rpcClient: RpcClient,
   agentId: string,
 ): Promise<ChatBudget> {
-  const result = await rpcClient.call("obs.context.pipeline", { agentId, limit: 1 })
-    .catch(() => ({ snapshots: [] }));
-  const snapshot = result.snapshots?.[0];
+  const snapshots = await rpcClient.call<PipelineSnapshot[]>(
+    "obs.context.pipeline",
+    { agentId, limit: 1 },
+  ).catch(() => []);
+  const snapshot = snapshots[0];
   if (!snapshot) return { segments: [], total: 0 };
   const tokensLoaded = snapshot.tokensLoaded ?? 0;
   const tokensEvicted = snapshot.tokensEvicted ?? 0;

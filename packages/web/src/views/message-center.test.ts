@@ -981,7 +981,9 @@ describe("IcMessageCenter", () => {
       vi.fn(() => Promise.reject(new Error("not connected"))),
       "reconnecting",
     );
-    const secondCall = vi.fn(() => Promise.resolve({ channels: [], total: 0 }));
+    const secondCall = vi.fn((_method: string) =>
+      Promise.resolve({ channels: [], total: 0 })
+    );
     const secondRpc = createStatusRpcClient(secondCall, "connected");
     const el = await createElement({ rpcClient: firstRpc.client });
 
@@ -1169,7 +1171,7 @@ describe("IcMessageCenter", () => {
 
   it("loads once when an RPC replacement is queued across reattachment", async () => {
     const firstRpc = createStatusRpcClient(vi.fn(), "reconnecting");
-    const secondCall = vi.fn(() => Promise.resolve({ channels: [], total: 0 }));
+    const secondCall = vi.fn((_method: string) => Promise.resolve({ channels: [], total: 0 }));
     const secondRpc = createStatusRpcClient(secondCall, "connected");
     const el = await createElement({ rpcClient: firstRpc.client });
 

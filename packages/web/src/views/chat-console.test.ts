@@ -497,7 +497,7 @@ describe("IcChatConsole", () => {
       if (method === "session.history") {
         return params.conversation_ref === "conversation-a" ? historyA.promise : historyB.promise;
       }
-      if (method === "obs.context.pipeline") return Promise.resolve({ snapshots: [] });
+      if (method === "obs.context.pipeline") return Promise.resolve([]);
       if (method === "session.list") return Promise.resolve({ sessions: [], total: 0 });
       return Promise.resolve({});
     });
@@ -542,8 +542,8 @@ describe("IcChatConsole", () => {
   });
 
   it("keeps budget data bound to the target that initiated the request", async () => {
-    const budgetA = deferred<Record<string, unknown>>();
-    const budgetB = deferred<Record<string, unknown>>();
+    const budgetA = deferred<Array<Record<string, unknown>>>();
+    const budgetB = deferred<Array<Record<string, unknown>>>();
     const rpc = createMockRpcClient();
     (rpc.call as any).mockImplementation((method: string, params: Record<string, unknown>) => {
       if (method === "session.history") {
@@ -579,10 +579,10 @@ describe("IcChatConsole", () => {
     for (let update = 0; update < 3; update += 1) await Promise.resolve();
     (el as any)._selectSession("conversation-b");
     for (let update = 0; update < 3; update += 1) await Promise.resolve();
-    budgetB.resolve({ snapshots: [{ tokensLoaded: 20, budgetUtilization: 0.5 }] });
+    budgetB.resolve([{ tokensLoaded: 20, budgetUtilization: 0.5 }]);
     await budgetB.promise;
     await Promise.resolve();
-    budgetA.resolve({ snapshots: [{ tokensLoaded: 80, budgetUtilization: 1 }] });
+    budgetA.resolve([{ tokensLoaded: 80, budgetUtilization: 1 }]);
     await budgetA.promise;
     for (let update = 0; update < 3; update += 1) await Promise.resolve();
 
@@ -1076,7 +1076,7 @@ describe("IcChatConsole", () => {
           messages: [{ role: "assistant", content: "existing-b", timestamp: 1 }],
         });
       }
-      if (method === "obs.context.pipeline") return Promise.resolve({ snapshots: [] });
+      if (method === "obs.context.pipeline") return Promise.resolve([]);
       if (method === "session.list") return Promise.resolve({ sessions: [], total: 0 });
       return Promise.resolve({ params });
     });
@@ -1286,7 +1286,10 @@ describe("IcChatConsole", () => {
     (el as any)._inputValue = "";
     (el as any)._transcribing = true;
 
-    const result = await rpc.call("audio.transcribe", { audio: "base64", format: "webm" });
+    const result = await rpc.call("audio.transcribe", {
+      audio: "base64",
+      mimeType: "audio/webm",
+    });
     if (result?.text) {
       (el as any)._inputValue = result.text;
     }
@@ -2100,14 +2103,12 @@ describe("IcChatConsole", () => {
         return Promise.resolve({ messages: [{ id: "m1", role: "user", content: "hi", timestamp: Date.now() }] });
       }
       if (method === "obs.context.pipeline") {
-        return Promise.resolve({
-          snapshots: [{
-            tokensLoaded: 4000,
-            tokensEvicted: 500,
-            tokensMasked: 200,
-            budgetUtilization: 0.5,
-          }],
-        });
+        return Promise.resolve([{
+          tokensLoaded: 4000,
+          tokensEvicted: 500,
+          tokensMasked: 200,
+          budgetUtilization: 0.5,
+        }]);
       }
       return Promise.resolve([]);
     });

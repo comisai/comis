@@ -556,25 +556,25 @@ export class IcCronEditor extends LitElement {
   /* ---- Populate from job ---- */
 
   private _populateFromJob(job: CronJobInput): void {
+    const agentTurnJob = "sessionPolicy" in job ? job : undefined;
     this._id = job.id;
     this._name = job.name;
     this._agentId = job.agentId;
     this._paused = job.paused;
     this._payloadKind = job.payload.kind;
-    this._payloadText = job.payload.kind === "agent_turn" ? job.payload.message : job.payload.text;
-    this._agentModel = job.payload.kind === "agent_turn" ? job.payload.model ?? "" : "";
-    this._agentTimeoutSeconds = job.payload.kind === "agent_turn"
-      ? job.payload.timeoutSeconds ?? null
+    this._payloadText = "message" in job.payload ? job.payload.message : job.payload.text;
+    this._agentModel = agentTurnJob ? agentTurnJob.payload.model ?? "" : "";
+    this._agentTimeoutSeconds = agentTurnJob
+      ? agentTurnJob.payload.timeoutSeconds ?? null
       : null;
     this._heartbeatWakeMode = job.payload.kind === "heartbeat_event" ? job.payload.wakeMode : "now";
-    this._sessionStrategy = job.payload.kind === "agent_turn"
-      ? job.sessionPolicy.strategy
+    this._sessionStrategy = agentTurnJob
+      ? agentTurnJob.sessionPolicy.strategy
       : "fresh";
-    this._maxHistoryTurns = job.payload.kind === "agent_turn"
-      && job.sessionPolicy.strategy === "rolling"
-      ? job.sessionPolicy.maxHistoryTurns
+    this._maxHistoryTurns = agentTurnJob?.sessionPolicy.strategy === "rolling"
+      ? agentTurnJob.sessionPolicy.maxHistoryTurns
       : 3;
-    this._continuationMode = job.payload.kind === "agent_turn" ? job.continuationMode : "none";
+    this._continuationMode = agentTurnJob ? agentTurnJob.continuationMode : "none";
     this._scheduleKind = job.schedule.kind;
     this._cronExpr = job.schedule.kind === "cron" ? job.schedule.expr : "";
     this._timezone = "tz" in job.schedule ? job.schedule.tz ?? "UTC" : "UTC";
@@ -585,7 +585,7 @@ export class IcCronEditor extends LitElement {
     } else {
       this._deliveryMode = "none";
     }
-    const wakeGate = job.payload.kind === "agent_turn" ? job.wakeGate : undefined;
+    const wakeGate = agentTurnJob?.wakeGate;
     this._wakeGateScript = wakeGate?.script ?? "";
     this._wakeGateLanguage = wakeGate?.language ?? "js";
     this._wakeGateTimeoutSeconds = wakeGate?.timeoutSeconds ?? 30;

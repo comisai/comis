@@ -3,6 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { RpcClient } from "../../api/rpc-client.js";
+import type { WebRpcMethodMap } from "../../api/contracts.generated.js";
 import type { PipelineNode, PipelineEdge, GraphSettings, ValidationResult } from "../../api/types/index.js";
 import "../../components/nav/ic-breadcrumb.js";
 import type { BreadcrumbItem } from "../../components/nav/ic-breadcrumb.js";
@@ -723,7 +724,12 @@ export class IcPipelineBuilder extends LitElement {
 
     if (this.rpcClient) {
       try {
-        const serverGraph = await this.rpcClient.call("graph.load", { id: this.graphId });
+        const serverGraph = await this.rpcClient.call<{
+          label?: string;
+          nodes: Array<Record<string, unknown>>;
+          edges: PipelineEdge[];
+          settings: GraphSettings;
+        }>("graph.load", { id: this.graphId });
         if (serverGraph && this._graphState) {
           this._graphState.reset();
 
@@ -831,8 +837,8 @@ export class IcPipelineBuilder extends LitElement {
       await this.rpcClient.call("graph.save", {
         id: this._draftId,
         label: snap.settings.label,
-        nodes: snap.nodes,
-        edges: snap.edges,
+        nodes: [...snap.nodes] as unknown as WebRpcMethodMap["graph.save"]["params"]["nodes"],
+        edges: [...snap.edges] as unknown as WebRpcMethodMap["graph.save"]["params"]["edges"],
         settings: snap.settings,
       });
       this._graphState.markClean();

@@ -53,7 +53,7 @@ const MOCK_SKILLS = {
 };
 
 /** Creates a mock RPC client with configurable call responses. */
-function createMockRpcClient(callImpl?: (...args: unknown[]) => unknown): RpcClient {
+function createMockRpcClient(callImpl?: (...args: never[]) => unknown): RpcClient {
   return _createSharedMock(
     callImpl ??
       (async (method: string) => {

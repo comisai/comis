@@ -679,7 +679,9 @@ export class IcWorkspaceManager extends LitElement {
     this._error = "";
 
     try {
-      this._status = await this.rpcClient.call("workspace.status", { agentId: this.agentId });
+      this._status = await this.rpcClient.call<WorkspaceStatusDto>("workspace.status", {
+        agentId: this.agentId,
+      });
       this._loadState = "loaded";
     } catch (e) {
       this._error = e instanceof Error ? e.message : "Failed to load workspace status";

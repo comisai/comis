@@ -303,13 +303,13 @@ export class IcDiagnosticsView extends LitElement {
     const rpc = this.rpcClient;
 
     try {
-      const raw = await rpc.call("obs.diagnostics", {
+      const raw = await rpc.call<Record<string, unknown>>("obs.diagnostics", {
         sinceMs: this._sinceMs,
         limit: 500,
       });
 
       if (Array.isArray(raw)) {
-        this._events = raw;
+        this._events = raw as unknown as DiagnosticsEvent[];
         this._eventCounts = this._computeCounts(raw);
       } else {
         const events = Array.isArray(raw.events) ? raw.events as DiagnosticsEvent[] : [];

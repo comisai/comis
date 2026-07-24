@@ -3,6 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { RpcClient } from "../api/rpc-client.js";
+import type { WebRpcMethodMap } from "../api/contracts.generated.js";
 import type { ApiClient } from "../api/api-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
@@ -495,8 +496,13 @@ export class IcMcpManagement extends LitElement {
     const rpc = this.rpcClient;
     try {
       const [mcpResp, configResp] = await Promise.all([
-        rpc.call("mcp.list"),
-        rpc.call("config.read"),
+        rpc.call<{ servers: McpServerListEntry[]; total: number }>("mcp.list"),
+        rpc.call<{
+          config: {
+            integrations?: { mcp?: { servers?: McpServerEntry[] } };
+            security?: { storage?: "encrypted" | "file" | "env" };
+          };
+        }>("config.read"),
       ]);
       this._servers = mcpResp.servers ?? [];
       this._mcpConfig = (configResp.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
@@ -511,7 +517,9 @@ export class IcMcpManagement extends LitElement {
     if (!this.rpcClient) return;
     this._detailLoading = true;
     try {
-      const detail = await this.rpcClient.call("mcp.status", { server_name: name });
+      const detail = await this.rpcClient.call<McpServerDetail>("mcp.status", {
+        server_name: name,
+      });
       this._serverDetail = detail;
       this._expandedServer = name;
     } catch {
@@ -528,7 +536,11 @@ export class IcMcpManagement extends LitElement {
   private async _patchConfig(section: string, key: string, value: unknown): Promise<boolean> {
     if (!this.rpcClient) return false;
     try {
-      await this.rpcClient.call("config.patch", { section, key, value });
+      await this.rpcClient.call("config.patch", {
+        section,
+        key,
+        value: value as WebRpcMethodMap["config.patch"]["params"]["value"],
+      });
       return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to update configuration";
@@ -590,12 +602,24 @@ export class IcMcpManagement extends LitElement {
 
   private async _handleTest(name: string): Promise<void> {
     if (!this.rpcClient) return;
+    const server = this._mcpConfig.find((candidate) => candidate.name === name);
+    if (!server) {
+      IcToast.show(`Cannot test ${name}: configuration is unavailable`, "error");
+      return;
+    }
     try {
-      const result = await this.rpcClient.call("mcp.test", { name });
+      const sanitizedServer = this._stripRedactedEnv([server])[0]!;
+      const { enabled: _enabled, ...testParams } = sanitizedServer;
+      const result = await this.rpcClient.call<{
+        success: boolean;
+        toolCount?: number;
+        tools?: string[];
+        error?: string;
+      }>("mcp.test", testParams);
       if (result.success) {
         IcToast.show(`${name}: test passed`, "success");
       } else {
-        IcToast.show(`${name}: test failed${result.message ? " \u2014 " + result.message : ""}`, "error");
+        IcToast.show(`${name}: test failed${result.error ? " \u2014 " + result.error : ""}`, "error");
       }
     } catch {
       IcToast.show(`Failed to test ${name}`, "error");

@@ -210,7 +210,9 @@ describe("IcMemoryInspector", () => {
     }));
     const browseMemory = vi.fn().mockResolvedValue({ entries: page, total: 383 });
     const el = await createElement();
-    el.apiClient = createMockApiClient({ browseMemory } as Partial<ApiClient>);
+    el.apiClient = createMockApiClient({
+      browseMemory,
+    } as unknown as Partial<ApiClient>);
     await (el as any).updateComplete;
     // A resolved single-agent scope: browse is per (tenant, agent).
     priv(el)._tenantId = "acme";
@@ -251,7 +253,7 @@ describe("IcMemoryInspector", () => {
     }));
     const browseMemory = vi.fn().mockResolvedValue({ entries: page, total: 383 });
     const el = await createElement();
-    el.apiClient = createMockApiClient({ browseMemory } as Partial<ApiClient>);
+    el.apiClient = createMockApiClient({ browseMemory } as unknown as Partial<ApiClient>);
     await (el as any).updateComplete;
     priv(el)._tenantId = "acme";
     priv(el)._agents = ["default"];
@@ -617,7 +619,7 @@ describe("IcMemoryInspector", () => {
         : { entries: [{ id: "s1", content: "y", agentId: "sol", trustLevel: "learned", tags: [], createdAt: 300 }], total: 3 },
     );
     const el = await createElement();
-    el.apiClient = createMockApiClient({ browseMemory } as Partial<ApiClient>);
+    el.apiClient = createMockApiClient({ browseMemory } as unknown as Partial<ApiClient>);
     const p = priv(el);
     p._tenantId = "acme";
     p._agents = ["aria", "sol"];

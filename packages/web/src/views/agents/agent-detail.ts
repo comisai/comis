@@ -462,16 +462,22 @@ export class IcAgentDetail extends LitElement {
 
     try {
       // Load primary agent data first to unblock the skeleton
-      const raw = await rpc.call("agents.get", { agentId: this.agentId });
+      const raw = await rpc.call<{
+        agentId: string;
+        config: Record<string, unknown>;
+        suspended?: boolean;
+      }>("agents.get", { agentId: this.agentId });
       this._agent = this._mapToAgentDetail(raw);
       this._loadState = "loaded";
 
       // Enrich with billing, skills, and heartbeat in the background
       const aid = this.agentId;
       Promise.allSettled([
-        rpc.call("obs.billing.byAgent", { agentId: aid }),
-        rpc.call("skills.list", { agentId: aid }).then((r) => r.skills ?? []),
-        rpc.call("heartbeat.states", {}).then((r) => (r.agents ?? []).find(a => a.agentId === aid) ?? null),
+        rpc.call<AgentBilling>("obs.billing.byAgent", { agentId: aid }),
+        rpc.call<{ skills?: DiscoveredSkill[] }>("skills.list", { agentId: aid })
+          .then((r) => r.skills ?? []),
+        rpc.call<{ agents?: HeartbeatAgentStateDto[] }>("heartbeat.states", {})
+          .then((r) => (r.agents ?? []).find((a) => a.agentId === aid) ?? null),
       ]).then(([billing, skills, heartbeat]) => {
         this._billing = billing.status === "fulfilled" ? billing.value : null;
         this._skills = skills.status === "fulfilled" && Array.isArray(skills.value) ? skills.value : [];

@@ -731,7 +731,7 @@ export class IcObserveView extends LitElement {
       rpc.call("obs.delivery.stats", { sinceMs: 86_400_000 }),
       rpc.call("obs.delivery.stats", { sinceMs: deliveryWindowMs }),
       rpc.call("obs.billing.total"),
-      rpc.call("obs.billing.usage24h"),
+      rpc.call<TokenUsagePoint[]>("obs.billing.usage24h"),
       rpc.call("obs.billing.byProvider"),
       rpc.call("obs.diagnostics"),
       rpc.call("obs.delivery.recent", { sinceMs: 604_800_000, limit: 200 }),
@@ -831,7 +831,7 @@ export class IcObserveView extends LitElement {
       const agentIds: string[] = Array.isArray(agentListResult.value.agents) ? agentListResult.value.agents : [];
       if (agentIds.length > 0) {
         const details = await Promise.allSettled(
-          agentIds.map((id) => rpc.call("agents.get", { agentId: id })),
+          agentIds.map((id) => rpc.call<AgentHealthEntry>("agents.get", { agentId: id })),
         );
         this._agentHealth = details
           .filter((r): r is PromiseFulfilledResult<AgentHealthEntry> => r.status === "fulfilled")

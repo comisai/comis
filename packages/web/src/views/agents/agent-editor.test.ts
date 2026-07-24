@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { LitElement } from "lit";
 import type { IcAgentEditor } from "./agent-editor.js";
 import type { RpcClient } from "../../api/rpc-client.js";
 

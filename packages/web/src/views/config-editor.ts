@@ -3,6 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { RpcClient } from "../api/rpc-client.js";
+import type { WebRpcMethodMap } from "../api/contracts.generated.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 import type { ConfigHistoryEntry } from "../api/types/config-types.js";
 
@@ -290,7 +291,10 @@ export class IcConfigEditor extends LitElement {
     try {
       // Load config first (primary data for the editor)
       const rpc = this.rpcClient;
-      const configResult = await rpc.call("config.read");
+      const configResult = await rpc.call<{
+        config: Record<string, unknown>;
+        sections: string[];
+      }>("config.read");
 
       this._sections = configResult.sections;
       this._configData = configResult.config;
@@ -304,7 +308,7 @@ export class IcConfigEditor extends LitElement {
       this._dataLoaded = true;
 
       // Load schema in the background (enables validation/hints)
-      rpc.call("config.schema")
+      rpc.call<{ schema: Record<string, unknown>; sections: string[] }>("config.schema")
         .then((schemaResult) => {
           const rootSchema = schemaResult.schema as Record<string, unknown>;
           this._schemaData = (rootSchema.properties ?? rootSchema) as Record<string, SchemaProperty>;
@@ -491,7 +495,10 @@ export class IcConfigEditor extends LitElement {
       this._dirty = false;
 
       // Reload config data
-      const configResult = await rpc.call("config.read");
+      const configResult = await rpc.call<{
+        config: Record<string, unknown>;
+        sections: string[];
+      }>("config.read");
       this._configData = configResult.config;
       this._loadSectionState();
     } catch (err) {
@@ -512,7 +519,10 @@ export class IcConfigEditor extends LitElement {
     this._gatewayError = "";
 
     try {
-      const result = await this.rpcClient.call("config.read", { section: "gateway" });
+      const result = await this.rpcClient.call<Record<string, unknown>>(
+        "config.read",
+        { section: "gateway" },
+      );
       this._gatewayConfig = (result ?? {}) as GatewayConfig;
     } catch (err) {
       this._gatewayError = err instanceof Error ? err.message : "Failed to load gateway config";
@@ -525,7 +535,11 @@ export class IcConfigEditor extends LitElement {
     if (!this.rpcClient) return;
 
     try {
-      await this.rpcClient.call("config.patch", { section: "gateway", key, value });
+      await this.rpcClient.call("config.patch", {
+        section: "gateway",
+        key,
+        value: value as WebRpcMethodMap["config.patch"]["params"]["value"],
+      });
       // Optimistically update local state
       if (this._gatewayConfig) {
         this._gatewayConfig = { ...this._gatewayConfig, [key]: value } as GatewayConfig;

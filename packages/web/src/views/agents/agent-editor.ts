@@ -3,6 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { RpcClient } from "../../api/rpc-client.js";
+import type { WebRpcMethodMap } from "../../api/contracts.generated.js";
 import type { AgentDetail } from "../../api/types/index.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import { toYaml } from "../../utils/to-yaml.js";
@@ -520,7 +521,10 @@ export class IcAgentEditor extends LitElement {
   private async _loadModelCatalog(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const result = await this.rpcClient.call("models.list");
+      const result = await this.rpcClient.call<{
+        providers?: CatalogProvider[];
+        totalModels?: number;
+      }>("models.list");
       if (result.providers) {
         this._catalogProviders = result.providers;
       }
@@ -533,7 +537,10 @@ export class IcAgentEditor extends LitElement {
   async _loadTopLevelConfig(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const result = await this.rpcClient.call("config.read");
+      const result = await this.rpcClient.call<{
+        config: Record<string, unknown>;
+        sections: string[];
+      }>("config.read");
       const cfg = result.config;
       this._streamingConfig = (cfg.streaming as Record<string, unknown>) ?? {};
       this._deliveryQueueConfig = (cfg.deliveryQueue as Record<string, unknown>) ?? {};
@@ -554,7 +561,11 @@ export class IcAgentEditor extends LitElement {
       return;
     }
     try {
-      await this.rpcClient.call("config.patch", { section, key, value });
+      await this.rpcClient.call("config.patch", {
+        section,
+        key,
+        value: value as WebRpcMethodMap["config.patch"]["params"]["value"],
+      });
       // Update local state to reflect the change
       if (section === "streaming") this._streamingConfig = { ...this._streamingConfig, [key]: value };
       else if (section === "deliveryQueue") this._deliveryQueueConfig = { ...this._deliveryQueueConfig, [key]: value };
@@ -576,9 +587,10 @@ export class IcAgentEditor extends LitElement {
       return;
     }
     try {
-      const params: Record<string, string> = { level };
-      if (module) params.module = module;
-      await this.rpcClient.call("daemon.setLogLevel", params);
+      await this.rpcClient.call("daemon.setLogLevel", {
+        level,
+        ...(module === undefined ? {} : { module }),
+      });
       this._logLevelApplied = module ?? "__global__";
       IcToast.show(`Log level ${module ? `${module}: ` : ""}${level}`, "success");
       systemSetTimeout(() => { this._logLevelApplied = ""; }, 3000);

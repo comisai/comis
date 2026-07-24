@@ -680,7 +680,9 @@ export class IcChannelDetail extends LitElement {
 
     try {
       // Config is required
-      const config = await rpc.call("channels.get", { channel_type: this.channelType });
+      const config = await rpc.call<Record<string, unknown>>("channels.get", {
+        channel_type: this.channelType,
+      });
 
       this._config = config ?? {};
       // Determine enabled: explicit `enabled` field, or infer from status (running/connected = enabled)
@@ -692,14 +694,29 @@ export class IcChannelDetail extends LitElement {
 
       // Fire all optional data loads in parallel
       const [mediaResult, deliveryResult, activityResult, queueResult, capabilitiesResult] = await Promise.allSettled([
-        rpc.call("config.read", { section: "channels" }),
-        rpc.call("obs.delivery.recent", {
+        rpc.call<Record<string, Record<string, unknown>>>("config.read", {
+          section: "channels",
+        }),
+        rpc.call<{ deliveries: DeliveryTraceEntry[] }>("obs.delivery.recent", {
           channelType: this.channelType,
           limit: 10,
         }),
-        rpc.call("obs.channels.all"),
-        rpc.call("delivery.queue.status", { channel_type: this.channelType }),
-        rpc.call("channels.capabilities", { channel_type: this.channelType }),
+        rpc.call<{
+          channels: Array<{
+            channelId: string;
+            channelType: string;
+            lastActiveAt: number;
+            messagesSent: number;
+            messagesReceived: number;
+          }>;
+        }>("obs.channels.all"),
+        rpc.call<DeliveryQueueStatus>("delivery.queue.status", {
+          channel_type: this.channelType,
+        }),
+        rpc.call<{ channelType: string; features: PlatformCapabilities }>(
+          "channels.capabilities",
+          { channel_type: this.channelType },
+        ),
       ]);
 
       // Media processing config

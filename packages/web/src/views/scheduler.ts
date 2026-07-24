@@ -178,20 +178,20 @@ function jobToCronInput(job: Exclude<SchedulerCronJob, { source: "built_in" }>):
     schedule,
     paused: job.lifecycle.status === "paused",
   };
-  if (job.payload.kind === "heartbeat_event") {
-    return { ...common, payload: job.payload };
+  if ("sessionPolicy" in job) {
+    return {
+      ...common,
+      payload: job.payload,
+      sessionPolicy: job.sessionPolicy,
+      continuationMode: job.continuationMode,
+      ...(job.deliveryTarget === undefined ? {} : { deliveryTarget: job.deliveryTarget }),
+      ...(job.wakeGate === undefined ? {} : { wakeGate: job.wakeGate }),
+    };
   }
-  if (job.payload.kind === "delivery") {
+  if ("deliveryTarget" in job) {
     return { ...common, payload: job.payload, deliveryTarget: job.deliveryTarget };
   }
-  return {
-    ...common,
-    payload: job.payload,
-    sessionPolicy: job.sessionPolicy,
-    continuationMode: job.continuationMode,
-    ...(job.deliveryTarget === undefined ? {} : { deliveryTarget: job.deliveryTarget }),
-    ...(job.wakeGate === undefined ? {} : { wakeGate: job.wakeGate }),
-  };
+  return { ...common, payload: job.payload };
 }
 
 function decodeSchedulerCronJob(job: WebCronJob): SchedulerCronJob | null {
@@ -885,15 +885,18 @@ export class IcSchedulerView extends LitElement {
       },
       "scheduler:heartbeat_wake_admitted": (data) => {
         const event = data as HeartbeatWakeAdmittedEvent;
-        this._heartbeatWakeEvents = [{ phase: "admitted", ...event }, ...this._heartbeatWakeEvents].slice(0, 50);
+        const record: HeartbeatWakeLifecycleRecord = { phase: "admitted", ...event };
+        this._heartbeatWakeEvents = [record, ...this._heartbeatWakeEvents].slice(0, 50);
       },
       "scheduler:heartbeat_wake_deferred": (data) => {
         const event = data as HeartbeatWakeDeferredEvent;
-        this._heartbeatWakeEvents = [{ phase: "deferred", ...event }, ...this._heartbeatWakeEvents].slice(0, 50);
+        const record: HeartbeatWakeLifecycleRecord = { phase: "deferred", ...event };
+        this._heartbeatWakeEvents = [record, ...this._heartbeatWakeEvents].slice(0, 50);
       },
       "scheduler:heartbeat_wake_terminal": (data) => {
         const event = data as HeartbeatWakeTerminalEvent;
-        this._heartbeatWakeEvents = [{ phase: "terminal", ...event }, ...this._heartbeatWakeEvents].slice(0, 50);
+        const record: HeartbeatWakeLifecycleRecord = { phase: "terminal", ...event };
+        this._heartbeatWakeEvents = [record, ...this._heartbeatWakeEvents].slice(0, 50);
       },
       "scheduler:heartbeat_alert": (data) => {
         const d = data as { agentId?: string; consecutiveErrors?: number; classification?: string; reason?: string; backoffMs?: number; timestamp?: number };
@@ -1005,7 +1008,9 @@ export class IcSchedulerView extends LitElement {
   private async _loadHeartbeatStates(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const result = await this.rpcClient.call("heartbeat.states", {});
+      const result = await this.rpcClient.call<{
+        agents?: HeartbeatAgentCard[];
+      }>("heartbeat.states", {});
       this._heartbeatAgents = result?.agents ?? [];
     } catch {
       // heartbeat.states may not exist in older daemons -- silently ignore
@@ -1046,7 +1051,7 @@ export class IcSchedulerView extends LitElement {
 
     if (this._editingJob) {
       try {
-        const variantFields = jobData.payload.kind === "agent_turn"
+        const variantFields = "sessionPolicy" in jobData
           ? {
               sessionPolicy: jobData.sessionPolicy,
               continuationMode: jobData.continuationMode,
@@ -1055,7 +1060,7 @@ export class IcSchedulerView extends LitElement {
                 : { deliveryTarget: jobData.deliveryTarget }),
               ...(jobData.wakeGate === undefined ? {} : { wakeGate: jobData.wakeGate }),
             }
-          : jobData.payload.kind === "delivery"
+          : "deliveryTarget" in jobData
             ? { deliveryTarget: jobData.deliveryTarget }
             : {};
         await this.rpcClient.call("cron.update", {
@@ -1074,7 +1079,7 @@ export class IcSchedulerView extends LitElement {
       }
     } else {
       try {
-        const variantFields = jobData.payload.kind === "agent_turn"
+        const variantFields = "sessionPolicy" in jobData
           ? {
               sessionPolicy: jobData.sessionPolicy,
               continuationMode: jobData.continuationMode,
@@ -1085,7 +1090,7 @@ export class IcSchedulerView extends LitElement {
                 ? {}
                 : { wakeGate: jobData.wakeGate }),
             }
-          : jobData.payload.kind === "delivery"
+          : "deliveryTarget" in jobData
             ? { deliveryTarget: jobData.deliveryTarget }
             : {};
         await this.rpcClient.call("cron.add", {

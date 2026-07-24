@@ -82,17 +82,26 @@ describe("createApiClient — memory.delete via rpcCall path", () => {
 });
 
 describe("createApiClient — memory.export via rpcCall path", () => {
-  it("delegates exportMemory with no ids to rpcCall memory.export with empty params", async () => {
+  it("delegates exportMemory with explicit authority to memory.export", async () => {
     const rpc = makeRpc({ entries: [{ id: "id1", content: "one" }] });
-    const result = await createApiClient(BASE_URL, TOKEN, rpc).exportMemory();
-    expect(rpc).toHaveBeenCalledWith("memory.export", {});
+    const result = await createApiClient(BASE_URL, TOKEN, rpc).exportMemory(AUTHORITY);
+    expect(rpc).toHaveBeenCalledWith("memory.export", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
+    });
     expect(result).toBe('{"id":"id1","content":"one"}');
   });
 
   it("filters typed memory export results locally for selected ids", async () => {
     const rpc = makeRpc({ entries: [{ id: "id1" }, { id: "id2" }, { id: "id3" }] });
-    const result = await createApiClient(BASE_URL, TOKEN, rpc).exportMemory(["id1", "id2"]);
-    expect(rpc).toHaveBeenCalledWith("memory.export", {});
+    const result = await createApiClient(BASE_URL, TOKEN, rpc).exportMemory(
+      AUTHORITY,
+      ["id1", "id2"],
+    );
+    expect(rpc).toHaveBeenCalledWith("memory.export", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
+    });
     expect(result).toBe('{"id":"id1"}\n{"id":"id2"}');
   });
 });

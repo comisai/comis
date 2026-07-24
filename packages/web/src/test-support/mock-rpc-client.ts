@@ -8,7 +8,7 @@ import type { RpcClient } from "../api/rpc-client.js";
  * Tests customize via mockResolvedValue or callImpl.
  */
 export function createMockRpcClient(
-  callImpl?: (...args: unknown[]) => unknown,
+  callImpl?: (...args: never[]) => unknown,
   overrides?: Partial<RpcClient>,
 ): RpcClient {
   return {

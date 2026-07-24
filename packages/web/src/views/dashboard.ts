@@ -8,6 +8,7 @@ import type {
   ActivityEntry,
   DeliveryStats,
   GatewayStatus,
+  PipelineSnapshot,
 } from "../api/types/index.js";
 import { SSE_EVENT_TYPES } from "../api/types/index.js";
 import type { ApiClient, SseEventHandler } from "../api/api-client.js";
@@ -117,6 +118,11 @@ interface ContextSummary {
   budgetUtilization: number;
   totalEvictions: number;
   reReads: number;
+}
+
+interface BillingHourlyEntry {
+  hour: number;
+  tokens: number;
 }
 
 /**
@@ -770,15 +776,15 @@ export class IcDashboard extends LitElement {
       pipelineResult,
       sparklineTokenResult,
     ] = await Promise.allSettled([
-      rpc.call("gateway.status"),
+      rpc.call<GatewayStatus>("gateway.status"),
       rpc.call("obs.delivery.stats", { sinceMs: 86_400_000 }),
       rpc.call("obs.delivery.stats", { sinceMs: 172_800_000 }),
       rpc.call("obs.billing.total", { sinceMs: 86_400_000 }),
       rpc.call("obs.billing.total", { sinceMs: 172_800_000 }),
       listSessionsAcrossAgents(rpc),
-      rpc.call("mcp.list"),
-      rpc.call("obs.context.pipeline", { limit: 50 }),
-      rpc.call("obs.billing.usage24h"),
+      rpc.call<{ servers: Array<{ name: string; status: string }>; total: number }>("mcp.list"),
+      rpc.call<PipelineSnapshot[]>("obs.context.pipeline", { limit: 50 }),
+      rpc.call<Array<{ hour: number; tokens: number }>>("obs.billing.usage24h"),
     ]);
 
     // 1. Gateway status (system health)
@@ -898,7 +904,9 @@ export class IcDashboard extends LitElement {
 
     await Promise.allSettled([
       (async () => {
-        const usage24h = await this.rpcClient!.call("obs.billing.usage24h");
+        const usage24h = await this.rpcClient!.call<BillingHourlyEntry[]>(
+          "obs.billing.usage24h",
+        );
         this._tokenSparklineData = usage24h.map((d) => d.tokens);
       })(),
       this._loadCostSparkline(),

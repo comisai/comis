@@ -44,14 +44,12 @@ function makeRpc() {
         };
       }
       if (method === "obs.context.pipeline") {
-        return {
-          snapshots: [{
-            tokensLoaded: 60,
-            tokensEvicted: 10,
-            tokensMasked: 5,
-            budgetUtilization: 0.75,
-          }],
-        };
+        return [{
+          tokensLoaded: 60,
+          tokensEvicted: 10,
+          tokensMasked: 5,
+          budgetUtilization: 0.75,
+        }];
       }
       throw new Error(`Unexpected method: ${method}`);
     }) as never,

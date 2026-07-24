@@ -289,7 +289,10 @@ export function createBillingViewController(rpcClient: RpcClient): BillingViewCo
 
       const results = await Promise.allSettled(
         agentIds.map((id) =>
-          rpcClient.call("obs.billing.byAgent", { agentId: id, sinceMs }),
+          rpcClient.call<Record<string, unknown>>("obs.billing.byAgent", {
+            agentId: id,
+            sinceMs,
+          }),
         ),
       );
 
@@ -323,7 +326,7 @@ export function createBillingViewController(rpcClient: RpcClient): BillingViewCo
     async loadSessionLevel(sinceMs, agentId): Promise<BillingBySession[]> {
       if (!agentId) return [];
       try {
-        const raw = await rpcClient.call("obs.billing.bySession", {
+        const raw = await rpcClient.call<unknown>("obs.billing.bySession", {
           sessionKey: "all",
           agentId,
           sinceMs,

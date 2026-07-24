@@ -13,6 +13,7 @@
 
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import type { RpcClient } from "../api/rpc-client.js";
+import type { WebRpcMethodMap } from "../api/contracts.generated.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
@@ -134,6 +135,15 @@ export interface SkillsConfig {
     allowedSkills: string[];
     deniedSkills: string[];
   };
+}
+
+interface ConfigReadResult {
+  config: {
+    agents?: Record<string, { skills?: SkillsConfig }>;
+    routing?: { defaultAgentId?: string };
+    [key: string]: unknown;
+  };
+  sections: string[];
 }
 
 /** Shape of a discovered prompt skill from skills.list RPC */
@@ -318,7 +328,11 @@ export function createSkillsController(
       const dotIdx = path.indexOf(".");
       const section = dotIdx > 0 ? path.slice(0, dotIdx) : path;
       const key = dotIdx > 0 ? path.slice(dotIdx + 1) : undefined;
-      await rpcClient.call("config.patch", { section, key, value });
+      await rpcClient.call("config.patch", {
+        section,
+        key,
+        value: value as WebRpcMethodMap["config.patch"]["params"]["value"],
+      });
       IcToast.show("Configuration updated", "success");
       return true;
     } catch (err) {
@@ -366,7 +380,7 @@ export function createSkillsController(
     async loadData(): Promise<void> {
       _mutate({ loadState: "loading", error: "" });
       try {
-        const result = await rpcClient.call("config.read");
+        const result = await rpcClient.call<ConfigReadResult>("config.read");
         const agents = result.config?.agents;
         const agentIds = agents ? Object.keys(agents) : [];
         let targetAgentId = state.targetAgentId;

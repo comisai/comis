@@ -3,6 +3,8 @@ import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { RpcClient } from "../../api/rpc-client.js";
+import type { WebRpcMethodMap } from "../../api/contracts.generated.js";
+import { listSessionsAcrossAgents } from "../../api/session-scope.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import type { ApprovalRequest } from "../../components/domain/ic-approval-card.js";
 import { systemNowMs } from "@comis/core";
@@ -22,18 +24,29 @@ interface BackendApprovalRequest {
   toolName: string;
   action: string;
   params: Record<string, unknown>;
+  tenantId: string;
   agentId: string;
-  sessionKey: string;
+  conversationRef: string;
   trustLevel: string;
   createdAt: number;
   timeoutMs: number;
 }
 
+interface ApprovalAuthority {
+  tenantId: string;
+  agentId: string;
+  conversationRef: string;
+}
+
+interface ScopedApprovalRequest extends ApprovalRequest, ApprovalAuthority {}
+
 /** Map backend approval request fields to the frontend ApprovalRequest shape. */
-function mapBackendRequest(r: BackendApprovalRequest): ApprovalRequest {
+function mapBackendRequest(r: BackendApprovalRequest): ScopedApprovalRequest {
   return {
     id: r.requestId,
+    tenantId: r.tenantId,
     agentId: r.agentId,
+    conversationRef: r.conversationRef,
     action: r.action || r.toolName,
     classification: r.trustLevel === "admin" ? "low" : r.trustLevel === "user" ? "medium" : "high",
     context: JSON.stringify(r.params, null, 2),
@@ -304,7 +317,7 @@ export class IcApprovalQueue extends LitElement {
   @property({ attribute: false }) securityConfig: SecurityConfig = {};
   @property({ type: String }) activeSubTab: "rules" | "pending" = "pending";
 
-  @state() private _pendingApprovals: ApprovalRequest[] = [];
+  @state() private _pendingApprovals: ScopedApprovalRequest[] = [];
   @state() private _resolvedApprovals: ResolvedApproval[] = [];
   @state() private _approvalRules: { defaultMode: string; timeoutMs: number } = { defaultMode: "manual", timeoutMs: 0 };
 
@@ -325,8 +338,24 @@ export class IcApprovalQueue extends LitElement {
   private async _loadApprovals(): Promise<void> {
     if (!this.rpc) return;
     try {
-      const result = await this.rpc.call("admin.approval.pending");
-      this._pendingApprovals = (result.requests ?? []).map(mapBackendRequest);
+      const targets = await listSessionsAcrossAgents(this.rpc);
+      const results = await Promise.all(targets.map((target) =>
+        this.rpc.call<{ requests: BackendApprovalRequest[]; total: number }>(
+          "admin.approval.pending",
+          {
+            tenant_id: target.tenantId,
+            agent_id: target.agentId,
+            conversation_ref: target.conversationRef,
+          },
+        )
+      ));
+      const requests = new Map<string, ScopedApprovalRequest>();
+      for (const result of results) {
+        for (const request of result.requests) {
+          requests.set(request.requestId, mapBackendRequest(request));
+        }
+      }
+      this._pendingApprovals = [...requests.values()];
     } catch {
       // Silently ignore -- parent handles top-level error state
     }
@@ -360,15 +389,25 @@ export class IcApprovalQueue extends LitElement {
   private async _handleApprove(e: CustomEvent<{ id: string; reason: string }>): Promise<void> {
     if (!this.rpc) return;
     const { id, reason } = e.detail;
+    const request = this._pendingApprovals.find((approval) => approval.id === id);
+    if (!request) {
+      IcToast.show("Approval request is no longer pending", "error");
+      return;
+    }
     try {
-      await this.rpc.call("admin.approval.resolve", { requestId: id, approved: true, approvedBy: "operator", reason });
-      const request = this._pendingApprovals.find((a) => a.id === id);
+      await this.rpc.call("admin.approval.resolve", {
+        requestId: id,
+        tenant_id: request.tenantId,
+        agent_id: request.agentId,
+        conversation_ref: request.conversationRef,
+        approved: true,
+        approvedBy: "operator",
+        reason,
+      });
       this._pendingApprovals = this._pendingApprovals.filter((a) => a.id !== id);
-      if (request) {
-        const resolved: ResolvedApproval = { ...request, outcome: "approved", reason, resolvedAt: systemNowMs(), resolvedBy: "operator" };
-        this._resolvedApprovals = [resolved, ...this._resolvedApprovals];
-        saveHistory(this._resolvedApprovals);
-      }
+      const resolved: ResolvedApproval = { ...request, outcome: "approved", reason, resolvedAt: systemNowMs(), resolvedBy: "operator" };
+      this._resolvedApprovals = [resolved, ...this._resolvedApprovals];
+      saveHistory(this._resolvedApprovals);
       IcToast.show("Approval granted", "success");
       this.dispatchEvent(new CustomEvent("approvals-changed", { bubbles: true, composed: true }));
     } catch (err) {
@@ -379,15 +418,25 @@ export class IcApprovalQueue extends LitElement {
   private async _handleDeny(e: CustomEvent<{ id: string; reason: string }>): Promise<void> {
     if (!this.rpc) return;
     const { id, reason } = e.detail;
+    const request = this._pendingApprovals.find((approval) => approval.id === id);
+    if (!request) {
+      IcToast.show("Approval request is no longer pending", "error");
+      return;
+    }
     try {
-      await this.rpc.call("admin.approval.resolve", { requestId: id, approved: false, approvedBy: "operator", reason });
-      const request = this._pendingApprovals.find((a) => a.id === id);
+      await this.rpc.call("admin.approval.resolve", {
+        requestId: id,
+        tenant_id: request.tenantId,
+        agent_id: request.agentId,
+        conversation_ref: request.conversationRef,
+        approved: false,
+        approvedBy: "operator",
+        reason,
+      });
       this._pendingApprovals = this._pendingApprovals.filter((a) => a.id !== id);
-      if (request) {
-        const resolved: ResolvedApproval = { ...request, outcome: "denied", reason, resolvedAt: systemNowMs(), resolvedBy: "operator" };
-        this._resolvedApprovals = [resolved, ...this._resolvedApprovals];
-        saveHistory(this._resolvedApprovals);
-      }
+      const resolved: ResolvedApproval = { ...request, outcome: "denied", reason, resolvedAt: systemNowMs(), resolvedBy: "operator" };
+      this._resolvedApprovals = [resolved, ...this._resolvedApprovals];
+      saveHistory(this._resolvedApprovals);
       IcToast.show("Approval denied", "success");
       this.dispatchEvent(new CustomEvent("approvals-changed", { bubbles: true, composed: true }));
     } catch (err) {
@@ -398,25 +447,50 @@ export class IcApprovalQueue extends LitElement {
   private async _handleResolveAll(approved: boolean): Promise<void> {
     if (!this.rpc || this._pendingApprovals.length === 0) return;
     try {
-      const result = await this.rpc.call("admin.approval.resolveAll", {
-        approved,
-        approvedBy: "operator",
-        reason: approved ? "Bulk approved by operator" : "Bulk denied by operator",
-      });
-      for (const a of this._pendingApprovals) {
+      const pending = this._pendingApprovals;
+      const reason = approved ? "Bulk approved by operator" : "Bulk denied by operator";
+      const outcomes = await Promise.allSettled(pending.map((request) =>
+        this.rpc.call("admin.approval.resolve", {
+          requestId: request.id,
+          tenant_id: request.tenantId,
+          agent_id: request.agentId,
+          conversation_ref: request.conversationRef,
+          approved,
+          approvedBy: "operator",
+          reason,
+        })
+      ));
+      const unresolved: ScopedApprovalRequest[] = [];
+      let resolvedCount = 0;
+      for (const [index, outcome] of outcomes.entries()) {
+        const approval = pending[index];
+        if (!approval) continue;
+        if (outcome.status === "rejected") {
+          unresolved.push(approval);
+          continue;
+        }
+        resolvedCount += 1;
         const resolved: ResolvedApproval = {
-          ...a,
+          ...approval,
           outcome: approved ? "approved" : "denied",
-          reason: approved ? "Bulk approved by operator" : "Bulk denied by operator",
+          reason,
           resolvedAt: systemNowMs(),
           resolvedBy: "operator",
         };
         this._resolvedApprovals = [resolved, ...this._resolvedApprovals];
       }
-      this._pendingApprovals = [];
+      this._pendingApprovals = unresolved;
       saveHistory(this._resolvedApprovals);
-      IcToast.show(`${result.resolved} approval(s) ${approved ? "approved" : "denied"}`, "success");
-      this.dispatchEvent(new CustomEvent("approvals-changed", { bubbles: true, composed: true }));
+      const failedCount = outcomes.length - resolvedCount;
+      IcToast.show(
+        failedCount === 0
+          ? `${resolvedCount} approval(s) ${approved ? "approved" : "denied"}`
+          : `${resolvedCount} approval(s) resolved; ${failedCount} failed`,
+        failedCount === 0 ? "success" : "error",
+      );
+      if (resolvedCount > 0) {
+        this.dispatchEvent(new CustomEvent("approvals-changed", { bubbles: true, composed: true }));
+      }
     } catch (err) {
       IcToast.show(err instanceof Error ? err.message : "Bulk operation failed", "error");
     }
@@ -425,7 +499,21 @@ export class IcApprovalQueue extends LitElement {
   private async _handleClearDenialCache(): Promise<void> {
     if (!this.rpc) return;
     try {
-      await this.rpc.call("admin.approval.clearDenialCache", {});
+      const sessions = await listSessionsAcrossAgents(this.rpc);
+      const targets = new Map<string, ApprovalAuthority>();
+      for (const target of [...sessions, ...this._pendingApprovals]) {
+        targets.set(
+          JSON.stringify([target.tenantId, target.agentId, target.conversationRef]),
+          target,
+        );
+      }
+      await Promise.all([...targets.values()].map((target) =>
+        this.rpc.call("admin.approval.clearDenialCache", {
+          tenant_id: target.tenantId,
+          agent_id: target.agentId,
+          conversation_ref: target.conversationRef,
+        })
+      ));
       IcToast.show("Denial cache cleared", "success");
     } catch (err) {
       IcToast.show(err instanceof Error ? err.message : "Failed to clear denial cache", "error");
@@ -438,7 +526,11 @@ export class IcApprovalQueue extends LitElement {
       const dotIdx = path.indexOf(".");
       const section = dotIdx > 0 ? path.slice(0, dotIdx) : path;
       const key = dotIdx > 0 ? path.slice(dotIdx + 1) : undefined;
-      await this.rpc.call("config.patch", { section, key, value });
+      await this.rpc.call("config.patch", {
+        section,
+        key,
+        value: value as WebRpcMethodMap["config.patch"]["params"]["value"],
+      });
       IcToast.show("Configuration updated", "success");
       return true;
     } catch (err) {
@@ -475,7 +567,11 @@ export class IcApprovalQueue extends LitElement {
   private async _saveApprovalRules(): Promise<void> {
     if (!this.rpc) return;
     try {
-      await this.rpc.call("config.patch", { section: "security", key: "approvalRules", value: this._approvalRules });
+      await this.rpc.call("config.patch", {
+        section: "security",
+        key: "approvalRules",
+        value: this._approvalRules,
+      });
       IcToast.show("Approval rules updated", "success");
     } catch (err) {
       IcToast.show(err instanceof Error ? err.message : "Failed to update approval rules", "error");

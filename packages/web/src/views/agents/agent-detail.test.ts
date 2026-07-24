@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { LitElement } from "lit";
 import type { IcAgentDetail } from "./agent-detail.js";
 import { formatTokens } from "./agent-detail.js";
 import type { RpcClient } from "../../api/rpc-client.js";
@@ -77,7 +78,7 @@ const mockHeartbeat: { agents: HeartbeatAgentStateDto[] } = {
 
 /** Agent-detail-specific mock that routes RPC methods to test data. */
 function createMockRpcClient(
-  callImpl?: (...args: unknown[]) => unknown,
+  callImpl?: (...args: never[]) => unknown,
   overrides?: Partial<RpcClient>,
 ): RpcClient {
   return _createSharedMock(

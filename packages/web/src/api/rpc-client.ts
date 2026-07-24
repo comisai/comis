@@ -24,6 +24,10 @@ export type RpcCallArgs<M extends MethodName> =
   Record<never, never> extends WebRpcMethodMap[M]["params"]
     ? [params?: WebRpcMethodMap[M]["params"]]
     : [params: WebRpcMethodMap[M]["params"]];
+
+/** Use the generated response unless a boundary supplies a narrower DTO. */
+export type RpcCallResult<M extends MethodName, Override> =
+  [Override] extends [never] ? WebRpcMethodMap[M]["result"] : Override;
 /** Pending RPC request tracker */
 interface PendingRequest {
   readonly resolve: (value: unknown) => void;
@@ -61,10 +65,10 @@ export interface RpcClient {
    * Method names, request params, and result types come from the generated
    * contract map. The transport's raw string dispatch stays module-private.
    */
-  call<M extends MethodName>(
+  call<Override = never, M extends MethodName = MethodName>(
     method: M,
     ...args: RpcCallArgs<M>
-  ): Promise<WebRpcMethodMap[M]["result"]>;
+  ): Promise<RpcCallResult<M, Override>>;
   /** Subscribe to connection status changes. Returns an unsubscribe function. */
   onStatusChange(handler: (status: ConnectionStatus) => void): () => void;
   /** Subscribe to server-pushed notifications (method present, no id). Returns an unsubscribe function. */
@@ -234,7 +238,7 @@ export function createRpcClient(): RpcClient {
         console.debug("[rpc] notification received:", response.method);
         for (const handler of notificationHandlers) {
           try {
-            handler(response.method, (response as Record<string, unknown>).params);
+            handler(response.method, (response as unknown as Record<string, unknown>).params);
           } catch (err) {
             console.warn("[rpc] notification handler error:", err);
           }
@@ -344,10 +348,10 @@ export function createRpcClient(): RpcClient {
       }
     },
 
-    call<M extends MethodName>(
+    call<Override = never, M extends MethodName = MethodName>(
       method: M,
       ...args: RpcCallArgs<M>
-    ): Promise<WebRpcMethodMap[M]["result"]> {
+    ): Promise<RpcCallResult<M, Override>> {
       const params = args[0] ?? {};
       if (isDevValidationActive() && !validateRequest(method, params)) {
         return Promise.reject(new Error(`Invalid RPC request for ${method}`));
@@ -356,7 +360,7 @@ export function createRpcClient(): RpcClient {
         if (isDevValidationActive() && !validateResponse(method, raw)) {
           return Promise.reject(new Error(`Invalid RPC response for ${method}`));
         }
-        return raw as WebRpcMethodMap[M]["result"];
+        return raw as RpcCallResult<M, Override>;
       });
     },
 

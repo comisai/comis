@@ -62,13 +62,11 @@ export interface MemoryAuthority {
 }
 
 /** Parameters for browsing memory entries */
-export interface BrowseMemoryParams {
-  readonly tenantId?: string;
+export interface BrowseMemoryParams extends MemoryAuthority {
   readonly offset?: number;
   readonly limit?: number;
   readonly type?: string;
   readonly trust?: string;
-  readonly agentId?: string;
   readonly from?: number;
   readonly to?: number;
 }
@@ -109,7 +107,7 @@ export interface ApiClient {
   /** Delete multiple memory entries within an explicit tenant/agent scope */
   deleteMemoryBulk(ids: string[], authority: MemoryAuthority): Promise<{ deleted: number }>;
   /** Export memory entries as JSONL string */
-  exportMemory(ids?: string[]): Promise<string>;
+  exportMemory(authority: MemoryAuthority, ids?: string[]): Promise<string>;
 
   // --- Session management methods ---
 
@@ -278,8 +276,8 @@ export function createApiClient(
     ): Promise<{ entries: MemoryEntry[]; total: number }> {
       if (rpcCall && params.from === undefined && params.to === undefined) {
         const result = await rpcCall("memory.browse", {
-          ...(params.tenantId !== undefined ? { tenant_id: params.tenantId } : {}),
-          ...(params.agentId !== undefined ? { agent_id: params.agentId } : {}),
+          tenant_id: params.tenantId,
+          agent_id: params.agentId,
           ...(params.offset !== undefined ? { offset: params.offset } : {}),
           ...(params.limit !== undefined ? { limit: params.limit } : {}),
           ...(params.type !== undefined ? { memory_type: params.type } : {}),
@@ -332,9 +330,12 @@ export function createApiClient(
       });
     },
 
-    async exportMemory(ids?: string[]): Promise<string> {
+    async exportMemory(authority: MemoryAuthority, ids?: string[]): Promise<string> {
       if (rpcCall) {
-        const result = await rpcCall("memory.export", {});
+        const result = await rpcCall("memory.export", {
+          tenant_id: authority.tenantId,
+          agent_id: authority.agentId,
+        });
         const selected = ids === undefined
           ? result.entries
           : result.entries.filter((entry) => ids.includes(String(entry.id)));
@@ -342,7 +343,7 @@ export function createApiClient(
       }
       return fetchText("/api/memory/export", {
         method: "POST",
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ ids, tenant: authority.tenantId, agent: authority.agentId }),
       });
     },
 

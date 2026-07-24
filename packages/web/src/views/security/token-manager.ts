@@ -240,7 +240,7 @@ export class IcTokenManager extends LitElement {
     if (!this.rpc) return;
     try {
       const result = await this.rpc.call("tokens.rotate", { id: tokenId });
-      this._newSecretDisplay = result.secret;
+      this._newSecretDisplay = result.newSecret;
       IcToast.show(`Token "${tokenId}" rotated -- new secret shown below`, "success");
       this.dispatchEvent(new CustomEvent("tokens-changed", { bubbles: true, composed: true }));
     } catch (err) {

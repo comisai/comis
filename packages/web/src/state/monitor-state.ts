@@ -213,7 +213,7 @@ export function createMonitorState(): MonitorState {
   /** Perform a single poll */
   async function poll(rpcClient: RpcClient, gId: string): Promise<void> {
     try {
-      const response = await rpcClient.call(
+      const response = await rpcClient.call<GraphStatusResponse>(
         "graph.status",
         { graphId: gId },
       );

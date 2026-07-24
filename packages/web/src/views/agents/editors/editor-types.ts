@@ -19,7 +19,7 @@ export interface FieldChangeDetail {
 export interface CatalogProvider {
   name: string;
   modelCount: number;
-  models: Array<{ modelId: string; displayName: string }>;
+  models: Array<{ modelId: string; displayName: string; maxTokens?: number }>;
 }
 
 /** Built-in tool names for the Skills section checkboxes (matches BuiltinToolsSchema). */

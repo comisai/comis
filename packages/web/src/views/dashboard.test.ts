@@ -10,7 +10,7 @@ import { IcDashboard, formatUptime, formatNumber, formatTokens } from "./dashboa
 import { createMockRpcClient as createBaseMockRpcClient } from "../test-support/mock-rpc-client.js";
 
 function createMockRpcClient(
-  callImpl?: (...args: unknown[]) => unknown,
+  callImpl?: (...args: never[]) => unknown,
   overrides?: Partial<RpcClient>,
 ): RpcClient {
   const client = createBaseMockRpcClient(callImpl, overrides);

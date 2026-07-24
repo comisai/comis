@@ -516,9 +516,14 @@ export class IcMessageCenter extends LitElement {
       // (rpcClient guarded above at the function entry)
       const rpc = this.rpcClient;
       const [listResult, capResult, configResult] = await Promise.allSettled([
-        rpc.call("channels.list").then((r) => r?.channels ?? []),
-        rpc.call("channels.capabilities", { channel_type: channel }).then((r) => r?.features ?? null),
-        rpc.call("channels.get", { channel_type: channel }).then((r) => r ?? null),
+        rpc.call<{ channels: ChannelListEntry[]; total: number }>("channels.list")
+          .then((r) => r.channels ?? []),
+        rpc.call<{ channelType: string; features: PlatformCapabilities }>(
+          "channels.capabilities",
+          { channel_type: channel },
+        ).then((r) => r.features ?? null),
+        rpc.call<Record<string, unknown>>("channels.get", { channel_type: channel })
+          .then((r) => r ?? null),
       ]);
       if (!this._isCurrentChannel(revision, channel)) return;
 
@@ -601,7 +606,15 @@ export class IcMessageCenter extends LitElement {
     if (!this.rpcClient || !channel) return;
 
     try {
-      const obsResult = await this.rpcClient.call("obs.channels.all");
+      const obsResult = await this.rpcClient.call<{
+        channels: Array<{
+          channelId: string;
+          channelType: string;
+          messagesSent: number;
+          messagesReceived: number;
+          lastActiveAt: number;
+        }>;
+      }>("obs.channels.all");
       if (!this._isCurrentChannel(revision, channel)) return;
       const channels = obsResult?.channels ?? [];
       const chatMap = new Map<string, string>(); // chatId -> label
@@ -648,7 +661,10 @@ export class IcMessageCenter extends LitElement {
     // Path 1: Platform supports native fetchHistory - use message.fetch as before
     if (this._capabilities?.fetchHistory) {
       try {
-        const fetchResult = await this.rpcClient.call("message.fetch", {
+        const fetchResult = await this.rpcClient.call<{
+          messages: FetchedMessage[];
+          channelId: string;
+        }>("message.fetch", {
           channel_type: channel,
           channel_id: selectedChatId || channel,
           limit: 50,

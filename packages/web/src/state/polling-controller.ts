@@ -25,6 +25,11 @@ export interface BadgeCounts {
   sessionEntries: Array<{ conversationRef: string; agentId: string }>;
 }
 
+type PollingControllerHost = Pick<
+  ReactiveControllerHost,
+  "addController" | "requestUpdate"
+>;
+
 /**
  * ReactiveController that polls the daemon for badge counts
  * on a regular interval.
@@ -39,7 +44,7 @@ export interface BadgeCounts {
  * ```
  */
 export class PollingController implements ReactiveController {
-  private readonly _host: ReactiveControllerHost;
+  private readonly _host: PollingControllerHost;
   private readonly _rpcClient: RpcClient;
   private readonly _onData: (data: BadgeCounts) => void;
   private readonly _intervalMs: number;
@@ -52,7 +57,7 @@ export class PollingController implements ReactiveController {
   }
 
   constructor(
-    host: ReactiveControllerHost,
+    host: PollingControllerHost,
     rpcClient: RpcClient,
     onData: (data: BadgeCounts) => void,
     intervalMs = 30_000,

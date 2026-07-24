@@ -10,53 +10,55 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import type { IcSubAgentsView } from "./subagents.js";
+import type { IcSubagentsView } from "./subagents.js";
 import "./subagents.js";
 
+type IcSubAgentsView = IcSubagentsView;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function priv(el: IcSubAgentsView): any {
+function priv(el: IcSubagentsView): any {
   return el as unknown as Record<string, unknown>;
 }
 
 describe("IcSubAgentsView pure helpers", () => {
-  let el: IcSubAgentsView;
+  let el: IcSubagentsView;
   afterEach(() => {
     if (el?.isConnected) el.remove();
   });
 
   it("_truncate returns the original string unchanged when shorter than the max length", () => {
-    el = document.createElement("ic-subagents-view") as IcSubAgentsView;
+    el = document.createElement("ic-subagents-view") as IcSubagentsView;
     expect(priv(el)._truncate("hello", 10)).toBe("hello");
   });
 
   it("_truncate appends the horizontal ellipsis character when string exceeds the max length", () => {
-    el = document.createElement("ic-subagents-view") as IcSubAgentsView;
+    el = document.createElement("ic-subagents-view") as IcSubagentsView;
     const out = priv(el)._truncate("hello-world", 5);
     expect(out).toBe("hello…");
   });
 
   it("_statusColor returns 'blue' for the running status branch", () => {
-    el = document.createElement("ic-subagents-view") as IcSubAgentsView;
+    el = document.createElement("ic-subagents-view") as IcSubagentsView;
     expect(priv(el)._statusColor("running")).toBe("blue");
   });
 
   it("_statusColor returns 'green' for the completed status branch", () => {
-    el = document.createElement("ic-subagents-view") as IcSubAgentsView;
+    el = document.createElement("ic-subagents-view") as IcSubagentsView;
     expect(priv(el)._statusColor("completed")).toBe("green");
   });
 
   it("_statusColor returns 'red' for the failed status branch", () => {
-    el = document.createElement("ic-subagents-view") as IcSubAgentsView;
+    el = document.createElement("ic-subagents-view") as IcSubagentsView;
     expect(priv(el)._statusColor("failed")).toBe("red");
   });
 
   it("_statusColor returns 'yellow' for the queued status branch", () => {
-    el = document.createElement("ic-subagents-view") as IcSubAgentsView;
+    el = document.createElement("ic-subagents-view") as IcSubagentsView;
     expect(priv(el)._statusColor("queued")).toBe("yellow");
   });
 
   it("_statusColor returns 'default' for any unknown status value falling to the default branch", () => {
-    el = document.createElement("ic-subagents-view") as IcSubAgentsView;
+    el = document.createElement("ic-subagents-view") as IcSubagentsView;
     expect(priv(el)._statusColor("unrecognized-state")).toBe("default");
   });
 

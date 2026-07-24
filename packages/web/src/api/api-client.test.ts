@@ -419,7 +419,7 @@ describe("createApiClient", () => {
       const rpcClient = createApiClient(BASE_URL, TOKEN, rpcCall);
 
       const result = await rpcClient.listSessions({ tenantId: "tenant-a", agentId: "a" });
-      const item = result[0]! as Record<string, unknown>;
+      const item = result[0]! as unknown as Record<string, unknown>;
       expect(item).not.toHaveProperty("inputTokens");
       expect(item).not.toHaveProperty("outputTokens");
       expect(item).not.toHaveProperty("toolCalls");

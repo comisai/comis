@@ -104,7 +104,10 @@ describe("PollingController", () => {
     const call = rpc.call.bind(rpc);
     rpc.call = (async (method: string, params?: unknown) => {
       methods.push(method);
-      return call(method, params);
+      return (call as unknown as (
+        rpcMethod: string,
+        rpcParams?: unknown,
+      ) => Promise<unknown>)(method, params);
     }) as RpcClient["call"];
 
     const { host } = makeHost();

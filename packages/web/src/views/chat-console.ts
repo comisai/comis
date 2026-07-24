@@ -777,7 +777,7 @@ export class IcChatConsole extends LitElement {
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
       const result = await this.rpcClient.call(
         "audio.transcribe",
-        { audio: btoa(binary), format: "webm" },
+        { audio: btoa(binary), mimeType: blob.type || "audio/webm" },
       );
       const text = result?.text ?? "";
       if (text) this._inputValue += (this._inputValue ? " " : "") + text;

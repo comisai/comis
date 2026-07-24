@@ -357,7 +357,10 @@ export class IcContextEngineView extends LitElement {
 
     // Load pipeline data first (primary content)
     try {
-      const pipelineResult = await rpc.call("obs.context.pipeline", filterParams);
+      const pipelineResult = await rpc.call<PipelineSnapshot[]>(
+        "obs.context.pipeline",
+        filterParams,
+      );
       this._pipelines = Array.isArray(pipelineResult) ? pipelineResult : [];
     } catch {
       this._pipelines = [];
@@ -372,7 +375,7 @@ export class IcContextEngineView extends LitElement {
 
     // Load DAG compactions and agents list in the background
     Promise.allSettled([
-      rpc.call("obs.context.dag", filterParams),
+      rpc.call<DagCompactionSnapshot[]>("obs.context.dag", filterParams),
       rpc.call("agents.list"),
     ]).then(([dagResult, agentsResult]) => {
       this._dagCompactions = dagResult.status === "fulfilled" && Array.isArray(dagResult.value)

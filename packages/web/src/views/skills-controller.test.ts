@@ -27,7 +27,7 @@ const MOCK_CONFIG = {
         skills: {
           discoveryPaths: ["./skills"],
           builtinTools: { read: true, write: true, edit: true, grep: true, find: true, ls: true, exec: true, process: true, webSearch: false, webFetch: false, browser: false },
-          toolPolicy: { profile: "full", allow: [], deny: [] },
+          toolPolicy: { profile: "full", allow: [] as string[], deny: [] as string[] },
           promptSkills: { maxBodyLength: 20000, enableDynamicContext: false, maxAutoInject: 3, allowedSkills: [], deniedSkills: [] },
         },
       },

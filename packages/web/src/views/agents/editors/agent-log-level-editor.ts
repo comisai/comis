@@ -23,7 +23,7 @@ const MODULE_PRESETS = [
 
 export interface LogLevelChangeDetail {
   module?: string;
-  level: string;
+  level: (typeof LOG_LEVELS)[number];
 }
 
 @customElement("ic-agent-log-level-editor")
@@ -133,8 +133,8 @@ export class IcAgentLogLevelEditor extends LitElement {
   @property({ attribute: false }) rpcClient: RpcClient | null = null;
   @property() applied = "";
 
-  @state() private _levels: Record<string, string> = {};
-  @state() private _globalLevel = "info";
+  @state() private _levels: Record<string, LogLevelChangeDetail["level"]> = {};
+  @state() private _globalLevel: LogLevelChangeDetail["level"] = "info";
   @state() private _applied: Record<string, boolean> = {};
 
   override willUpdate(changed: Map<string | number | symbol, unknown>): void {
@@ -146,7 +146,10 @@ export class IcAgentLogLevelEditor extends LitElement {
     }
   }
 
-  private _emitLogLevel(module: string | undefined, level: string): void {
+  private _emitLogLevel(
+    module: string | undefined,
+    level: LogLevelChangeDetail["level"],
+  ): void {
     const detail: LogLevelChangeDetail = { level };
     if (module) detail.module = module;
     this.dispatchEvent(
@@ -178,7 +181,9 @@ export class IcAgentLogLevelEditor extends LitElement {
         <select
           class="level-select"
           .value=${this._globalLevel}
-          @change=${(e: Event) => { this._globalLevel = (e.target as HTMLSelectElement).value; }}
+          @change=${(e: Event) => {
+            this._globalLevel = (e.target as HTMLSelectElement).value as LogLevelChangeDetail["level"];
+          }}
         >
           ${LOG_LEVELS.map((lvl) => html`
             <option value=${lvl} ?selected=${this._globalLevel === lvl}>${lvl}</option>
@@ -201,7 +206,10 @@ export class IcAgentLogLevelEditor extends LitElement {
                 class="level-select"
                 .value=${level}
                 @change=${(e: Event) => {
-                  this._levels = { ...this._levels, [mod]: (e.target as HTMLSelectElement).value };
+                  this._levels = {
+                    ...this._levels,
+                    [mod]: (e.target as HTMLSelectElement).value as LogLevelChangeDetail["level"],
+                  };
                 }}
               >
                 ${LOG_LEVELS.map((lvl) => html`

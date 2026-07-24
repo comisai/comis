@@ -354,7 +354,7 @@ export class IcMediaTestView extends LitElement {
   private async _loadProviders(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const res = await this.rpcClient.call("media.providers");
+      const res = await this.rpcClient.call<MediaProvidersInfo>("media.providers");
       this._providers = res;
     } catch {
       // media.providers handler may not exist -- degrade gracefully
