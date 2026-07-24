@@ -11,6 +11,7 @@ import {
   loadChatSessions,
   resolveActiveSessionTarget,
   resolveTransportSessionKey,
+  sendChatMessage,
   type ChatSessionInfo,
 } from "./session-data.js";
 
@@ -35,7 +36,7 @@ function makeRpc() {
       }
       if (method === "session.history") {
         return {
-          session: { key: "tenant-a:user_a:web:chat-a" },
+          session: { key: "tenant-a:agent:agent-a:user_a:web:chat-a" },
           messages: [
             { role: "user", content: "Hello", timestamp: 1 },
             { role: "assistant", content: "Done NO_REPLY", timestamp: 2 },
@@ -83,27 +84,43 @@ describe("chat session data", () => {
       agentId: "agent-a",
       conversationRef: "conversation-a",
     });
-    expect(result.sessionKey).toBe("tenant-a:user_a:web:chat-a");
     expect(result.messages.map((message) => message.content)).toEqual(["Hello", "Done"]);
   });
 
-  it("resolves transport and storage identities independently", () => {
+  it("does not convert stored display identity into transport authority", () => {
     const sessions: ChatSessionInfo[] = [{
       key: "conversation-a",
       agentId: "agent-a",
       tenantId: "tenant-a",
       conversationRef: "conversation-a",
-      sessionKey: "tenant-a:user_a:web:chat-a",
       channelType: "dm",
       messageCount: 2,
       lastActivity: 20,
     }];
     expect(resolveTransportSessionKey(sessions, "conversation-a"))
-      .toBe("tenant-a:user_a:web:chat-a");
+      .toBe("");
     expect(resolveActiveSessionTarget(sessions, "conversation-a")).toEqual({
       tenantId: "tenant-a",
       agentId: "agent-a",
       conversationRef: "conversation-a",
+    });
+  });
+
+  it("sends stored chat messages through explicit conversation authority", async () => {
+    const rpc = makeRpc();
+    (rpc.call as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ response: "Stored reply" });
+
+    await expect(sendChatMessage(rpc, {
+      tenantId: "tenant-a",
+      agentId: "agent-a",
+      conversationRef: "conversation-a",
+    }, "Continue")).resolves.toBe("Stored reply");
+    expect(rpc.call).toHaveBeenLastCalledWith("session.send", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
+      conversation_ref: "conversation-a",
+      text: "Continue",
+      mode: "wait",
     });
   });
 

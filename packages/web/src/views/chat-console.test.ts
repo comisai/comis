@@ -84,6 +84,26 @@ function createMockEventDispatcher(): EventDispatcher {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function activateLocalSession(el: IcChatConsole, key = "test-session"): void {
+  (el as any)._sessions = [{
+    key,
+    sessionKey: key,
+    agentId: "default",
+    channelType: "web",
+    messageCount: 0,
+    lastActivity: 0,
+  }];
+  (el as any)._activeSession = key;
+}
+
 async function createElement<T extends HTMLElement>(
   tag: string,
   props?: Record<string, unknown>,
@@ -469,6 +489,111 @@ describe("IcChatConsole", () => {
     expect((el as any)._activeSession).toBe("target-key");
   });
 
+  it("keeps history and loading state bound to the latest session selection", async () => {
+    const historyA = deferred<Record<string, unknown>>();
+    const historyB = deferred<Record<string, unknown>>();
+    const rpc = createMockRpcClient();
+    (rpc.call as any).mockImplementation((method: string, params: Record<string, unknown>) => {
+      if (method === "session.history") {
+        return params.conversation_ref === "conversation-a" ? historyA.promise : historyB.promise;
+      }
+      if (method === "obs.context.pipeline") return Promise.resolve({ snapshots: [] });
+      if (method === "session.list") return Promise.resolve({ sessions: [], total: 0 });
+      return Promise.resolve({});
+    });
+    const el = await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: rpc,
+      apiClient: createMockApiClient(),
+      eventDispatcher: createMockEventDispatcher(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    (el as any)._sessions = [
+      {
+        key: "conversation-a", tenantId: "tenant-a", agentId: "agent-a",
+        conversationRef: "conversation-a", channelType: "dm", messageCount: 1, lastActivity: 2,
+      },
+      {
+        key: "conversation-b", tenantId: "tenant-a", agentId: "agent-b",
+        conversationRef: "conversation-b", channelType: "dm", messageCount: 1, lastActivity: 1,
+      },
+    ];
+
+    (el as any)._selectSession("conversation-a");
+    await Promise.resolve();
+    (el as any)._selectSession("conversation-b");
+    await Promise.resolve();
+    historyB.resolve({
+      session: { key: "tenant-a:agent:agent-b:user_b:telegram:chat-b" },
+      messages: [{ role: "assistant", content: "reply-b", timestamp: 2 }],
+    });
+    await historyB.promise;
+    await Promise.resolve();
+    historyA.resolve({
+      session: { key: "tenant-a:agent:agent-a:user_a:telegram:chat-a" },
+      messages: [{ role: "assistant", content: "reply-a", timestamp: 1 }],
+    });
+    await historyA.promise;
+    for (let update = 0; update < 3; update += 1) await Promise.resolve();
+
+    expect((el as any)._activeSession).toBe("conversation-b");
+    expect((el as any)._messages.map((message: { content: string }) => message.content))
+      .toEqual(["reply-b"]);
+    expect((el as any)._loading).toBe(false);
+  });
+
+  it("keeps budget data bound to the target that initiated the request", async () => {
+    const budgetA = deferred<Record<string, unknown>>();
+    const budgetB = deferred<Record<string, unknown>>();
+    const rpc = createMockRpcClient();
+    (rpc.call as any).mockImplementation((method: string, params: Record<string, unknown>) => {
+      if (method === "session.history") {
+        return Promise.resolve({
+          session: { key: `tenant-a:agent:${String(params.agent_id)}:user_a:telegram:chat` },
+          messages: [],
+        });
+      }
+      if (method === "obs.context.pipeline") {
+        return params.agentId === "agent-a" ? budgetA.promise : budgetB.promise;
+      }
+      if (method === "session.list") return Promise.resolve({ sessions: [], total: 0 });
+      return Promise.resolve({});
+    });
+    const el = await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: rpc,
+      apiClient: createMockApiClient(),
+      eventDispatcher: createMockEventDispatcher(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    (el as any)._sessions = [
+      {
+        key: "conversation-a", tenantId: "tenant-a", agentId: "agent-a",
+        conversationRef: "conversation-a", channelType: "dm", messageCount: 0, lastActivity: 2,
+      },
+      {
+        key: "conversation-b", tenantId: "tenant-a", agentId: "agent-b",
+        conversationRef: "conversation-b", channelType: "dm", messageCount: 0, lastActivity: 1,
+      },
+    ];
+
+    (el as any)._selectSession("conversation-a");
+    for (let update = 0; update < 3; update += 1) await Promise.resolve();
+    (el as any)._selectSession("conversation-b");
+    for (let update = 0; update < 3; update += 1) await Promise.resolve();
+    budgetB.resolve({ snapshots: [{ tokensLoaded: 20, budgetUtilization: 0.5 }] });
+    await budgetB.promise;
+    await Promise.resolve();
+    budgetA.resolve({ snapshots: [{ tokensLoaded: 80, budgetUtilization: 1 }] });
+    await budgetA.promise;
+    for (let update = 0; update < 3; update += 1) await Promise.resolve();
+
+    expect((el as any)._activeSession).toBe("conversation-b");
+    expect((el as any)._budgetSegments).toEqual([
+      { label: "Loaded", tokens: 20, color: "var(--ic-accent)" },
+      { label: "Available", tokens: 20, color: "var(--ic-surface-2)" },
+    ]);
+    expect((el as any)._budgetTotal).toBe(40);
+  });
+
   it("has 2-column layout (sidebar + conversation)", async () => {
     const el = await createElement<IcChatConsole>("ic-chat-console", {
       rpcClient: createMockRpcClient(),
@@ -717,7 +842,7 @@ describe("IcChatConsole", () => {
       apiClient: createMockApiClient(),
       eventDispatcher: createMockEventDispatcher(),
     });
-    (el as any)._activeSession = "tenant-a:user_a:active-chat";
+    activateLocalSession(el, "tenant-a:user_a:active-chat");
     (el as any)._messages = [];
 
     notificationHandler?.("notification.attachment", {
@@ -774,7 +899,7 @@ describe("IcChatConsole", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     // Set up active session and input
-    (el as any)._activeSession = "test-session";
+    activateLocalSession(el);
     (el as any)._loading = false;
     (el as any)._inputValue = "Hello world";
     (el as any)._messages = [{ id: "m1", role: "user", content: "Hi", timestamp: Date.now() }];
@@ -800,7 +925,7 @@ describe("IcChatConsole", () => {
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    (el as any)._activeSession = "test-session";
+    activateLocalSession(el);
     (el as any)._loading = false;
     (el as any)._inputValue = "Hello";
     (el as any)._messages = [{ id: "m1", role: "user", content: "Hi", timestamp: Date.now() }];
@@ -824,7 +949,7 @@ describe("IcChatConsole", () => {
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    (el as any)._activeSession = "test-session";
+    activateLocalSession(el);
     (el as any)._loading = false;
     (el as any)._inputValue = "";
     (el as any)._messages = [{ id: "m1", role: "user", content: "Hi", timestamp: Date.now() }];
@@ -843,7 +968,7 @@ describe("IcChatConsole", () => {
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    (el as any)._activeSession = "test-session";
+    activateLocalSession(el);
     (el as any)._loading = false;
     (el as any)._inputValue = "Hello";
     (el as any)._messages = [{ id: "m1", role: "user", content: "Hi", timestamp: Date.now() }];
@@ -863,7 +988,7 @@ describe("IcChatConsole", () => {
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    (el as any)._activeSession = "test-session";
+    activateLocalSession(el);
     (el as any)._loading = false;
     (el as any)._inputValue = "Hello";
     (el as any)._messages = [{ id: "m1", role: "user", content: "Hi", timestamp: Date.now() }];
@@ -874,6 +999,118 @@ describe("IcChatConsole", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(api.chat).toHaveBeenCalledWith("Hello", "default", "test-session");
+  });
+
+  it("disables sending while a routed conversation target is unresolved", async () => {
+    const api = createMockApiClient();
+    const el = await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: createMockRpcClient(),
+      apiClient: api,
+      eventDispatcher: createMockEventDispatcher(),
+      conversationRef: "missing-conversation",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    (el as any)._loading = false;
+    (el as any)._inputValue = "Do not fork this conversation";
+    await (el as any).updateComplete;
+
+    const textarea = el.shadowRoot?.querySelector(".input-textarea") as HTMLTextAreaElement;
+    const sendButton = el.shadowRoot?.querySelector(".send-btn") as HTMLButtonElement;
+    expect(textarea.disabled).toBe(true);
+    expect(sendButton.disabled).toBe(true);
+    await (el as any)._sendMessage();
+    expect(api.chat).not.toHaveBeenCalled();
+    expect((el as any)._activeSession).toBe("");
+  });
+
+  it("continues a stored conversation through scoped session authority", async () => {
+    const rpc = createMockRpcClient();
+    (rpc.call as any).mockImplementation((method: string) => {
+      if (method === "session.send") return Promise.resolve({ response: "Stored response" });
+      if (method === "session.list") return Promise.resolve({ sessions: [], total: 0 });
+      return Promise.resolve({});
+    });
+    const api = createMockApiClient();
+    const el = await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: rpc,
+      apiClient: api,
+      eventDispatcher: createMockEventDispatcher(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    (el as any)._sessions = [{
+      key: "conversation-a",
+      tenantId: "tenant-a",
+      agentId: "agent-a",
+      conversationRef: "conversation-a",
+      channelType: "dm",
+      messageCount: 1,
+      lastActivity: 1,
+    }];
+    (el as any)._activeSession = "conversation-a";
+    (el as any)._inputValue = "Continue";
+
+    await (el as any)._sendMessage();
+
+    expect(rpc.call).toHaveBeenCalledWith("session.send", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
+      conversation_ref: "conversation-a",
+      text: "Continue",
+      mode: "wait",
+    });
+    expect(api.chat).not.toHaveBeenCalled();
+    expect((el as any)._messages).toEqual([
+      expect.objectContaining({ role: "user", content: "Continue" }),
+      expect.objectContaining({ role: "assistant", content: "Stored response" }),
+    ]);
+  });
+
+  it("does not append a delayed stored reply to a newly selected conversation", async () => {
+    const delayedReply = deferred<Record<string, unknown>>();
+    const rpc = createMockRpcClient();
+    (rpc.call as any).mockImplementation((method: string, params: Record<string, unknown>) => {
+      if (method === "session.send") return delayedReply.promise;
+      if (method === "session.history") {
+        return Promise.resolve({
+          session: { key: "tenant-a:agent:agent-b:user_b:telegram:chat-b" },
+          messages: [{ role: "assistant", content: "existing-b", timestamp: 1 }],
+        });
+      }
+      if (method === "obs.context.pipeline") return Promise.resolve({ snapshots: [] });
+      if (method === "session.list") return Promise.resolve({ sessions: [], total: 0 });
+      return Promise.resolve({ params });
+    });
+    const el = await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: rpc,
+      apiClient: createMockApiClient(),
+      eventDispatcher: createMockEventDispatcher(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    (el as any)._sessions = [
+      {
+        key: "conversation-a", tenantId: "tenant-a", agentId: "agent-a",
+        conversationRef: "conversation-a", channelType: "dm", messageCount: 0, lastActivity: 2,
+      },
+      {
+        key: "conversation-b", tenantId: "tenant-a", agentId: "agent-b",
+        conversationRef: "conversation-b", channelType: "dm", messageCount: 1, lastActivity: 1,
+      },
+    ];
+    (el as any)._activeSession = "conversation-a";
+    (el as any)._inputValue = "Continue A";
+
+    const send = (el as any)._sendMessage();
+    await Promise.resolve();
+    (el as any)._selectSession("conversation-b");
+    for (let update = 0; update < 3; update += 1) await Promise.resolve();
+    delayedReply.resolve({ response: "late-a" });
+    await send;
+    for (let update = 0; update < 3; update += 1) await Promise.resolve();
+
+    expect((el as any)._activeSession).toBe("conversation-b");
+    expect((el as any)._messages.map((message: { content: string }) => message.content))
+      .toEqual(["existing-b"]);
+    expect((el as any)._sending).toBe(false);
   });
 
   it("user message appears optimistically in messages list after send", async () => {
@@ -887,7 +1124,7 @@ describe("IcChatConsole", () => {
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    (el as any)._activeSession = "test-session";
+    activateLocalSession(el);
     (el as any)._loading = false;
     (el as any)._inputValue = "Optimistic message";
     (el as any)._messages = [];
@@ -914,7 +1151,7 @@ describe("IcChatConsole", () => {
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    (el as any)._activeSession = "test-session";
+    activateLocalSession(el);
     (el as any)._loading = false;
     (el as any)._inputValue = "test message";
     (el as any)._messages = [];
@@ -936,7 +1173,7 @@ describe("IcChatConsole", () => {
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    (el as any)._activeSession = "test-session";
+    activateLocalSession(el);
     (el as any)._loading = false;
     (el as any)._inputValue = "test";
     (el as any)._messages = [];
@@ -1496,7 +1733,7 @@ describe("IcChatConsole", () => {
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    (el as any)._activeSession = "test-session";
+    activateLocalSession(el);
     (el as any)._streaming = true;
     (el as any)._streamingContent = "Hello from assistant";
     (el as any)._streamBuffer = "Hello from assistant";
@@ -1659,7 +1896,7 @@ describe("IcChatConsole", () => {
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    (el as any)._activeSession = "test-session";
+    activateLocalSession(el);
     (el as any)._streaming = true;
     (el as any)._streamBuffer = "";
     (el as any)._streamingContent = "";
