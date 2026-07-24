@@ -9,7 +9,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import { jsonResult } from "../tool-helpers.js";
 
 import type { RpcCall } from "./memory-search-tool.js";
@@ -17,6 +17,8 @@ import type { RpcCall } from "./memory-search-tool.js";
 // ── Parameter Schema ────────────────────────────────────────────────
 
 const SessionStatusParams = Type.Object({});
+
+type SessionStatusParamsType = Static<typeof SessionStatusParams>;
 
 // ── Factory ─────────────────────────────────────────────────────────
 
@@ -36,7 +38,7 @@ export function createSessionStatusTool(rpcCall: RpcCall): AgentTool<typeof Sess
 
     async execute(
       _toolCallId: string,
-      _params: Record<string, unknown>,
+      _params: SessionStatusParamsType,
     ): Promise<AgentToolResult<unknown>> {
       try {
         const result = await rpcCall("session.status", {});
