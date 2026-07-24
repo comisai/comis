@@ -1743,11 +1743,20 @@ describe("orchestrate-tool", () => {
       "file:///w/run.ts:5\n  const lines = content.trim().split('\\n');\n" +
       "TypeError: content.trim is not a function\n    at file:///w/run.ts:5:28";
     const spawnFn: OrchestrateSpawnFn = () => makeFakeChild("", 1, stderr);
-    const { deps } = makeDeps({ spawnFn });
+    const warn = vi.fn();
+    const logger: ComisLogger = { ...makeLogger(), warn, child: () => logger };
+    const { deps } = makeDeps({ spawnFn, logger });
     const tool = createOrchestrateTool(deps);
 
     await expect(tool.execute("c", { script: "1", language: "ts" })).rejects.toThrow(
       /content\.trim is not a function/,
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "internal",
+        hint: expect.stringMatching(/inspect stderrTail.*correct.*retry/i),
+      }),
+      "orchestrate jailed child exited non-zero",
     );
   });
 
