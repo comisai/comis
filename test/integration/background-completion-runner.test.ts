@@ -25,8 +25,8 @@
  * @module
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,6 +37,13 @@ import { createBackgroundTaskManager, loadTask } from "@comis/agent";
 import { EchoChannelAdapter } from "@comis/channels";
 import { createConversationRef, TypedEventBus } from "@comis/core";
 import type { BackgroundTaskOrigin } from "@comis/core";
+import { ok } from "@comis/shared";
+import { createCompletionRecovery } from "../../packages/agent/dist/background/completion-recovery.js";
+import {
+  persistBackgroundRecoveryAuthority,
+  recoverBackgroundRecoveryAuthorities,
+  removeBackgroundRecoveryAuthority,
+} from "../../packages/agent/dist/background/background-recovery-authority.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -553,6 +560,363 @@ describe("background-task durable timeout integration", () => {
         status: "failed",
         error: "Hard timeout exceeded",
         completedAt: 1_500,
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("background-task compiled durable recovery integration", () => {
+  function makeRecoveryDeps(
+    task: Record<string, unknown>,
+    overrides: Record<string, unknown> = {},
+  ) {
+    return {
+      taskManager: {
+        getTask: vi.fn(() => task),
+        persistContinuationOutbox: vi.fn(() => ok(true)),
+        persistCleanupPendingOutbox: vi.fn(() => ok(true)),
+        persistFinalizedResult: vi.fn(() => ok(true)),
+        scheduleDispatchRetry: vi.fn(),
+        scheduleStateRetry: vi.fn(),
+        recordRecoveryIncident: vi.fn(() => ok(undefined)),
+      },
+      recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
+      cleanupFinalizedSession: vi.fn().mockResolvedValue(ok(undefined)),
+      reconcileDelivery: vi.fn(),
+      deliveryProtection: "ledger" as const,
+      commitState: vi.fn(() => ok(true)),
+      emitRoutingOutcome: vi.fn(),
+      deliverPersistedOutbox: vi.fn().mockResolvedValue(undefined),
+      ...overrides,
+    };
+  }
+
+  it("recovers a finalized continuation from the protected journal and delivers its persisted outbox", async () => {
+    const origin = makeTestOrigin();
+    const task = {
+      id: "task-recovered",
+      toolName: "report",
+      status: "completed",
+      origin,
+      continuationExecutionId: "execution-recovered",
+      dispatchState: "executing",
+    };
+    const recovered = {
+      response: "Recovered continuation",
+      executionId: "execution-recovered",
+      cleanupRequired: false,
+    };
+    const deps = makeRecoveryDeps(task, {
+      recoverFinalizedResult: vi.fn().mockResolvedValue(ok(recovered)),
+    });
+    const recovery = createCompletionRecovery(deps as never);
+
+    await recovery.recoverClaimedTask(task.id, origin, task.toolName);
+
+    expect(deps.taskManager.persistContinuationOutbox).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({
+        kind: "continuation",
+        response: recovered.response,
+        executionId: recovered.executionId,
+        idempotencyKey: "background-continuation:execution-recovered",
+        deliveryProtection: "ledger",
+      }),
+      ["executing"],
+    );
+    expect(deps.deliverPersistedOutbox).toHaveBeenCalledWith(
+      task.id,
+      origin,
+      expect.objectContaining({ response: recovered.response }),
+    );
+  });
+
+  it("finishes protected-session cleanup before making the recovered continuation deliverable", async () => {
+    const origin = makeTestOrigin();
+    const task: Record<string, unknown> = {
+      id: "task-cleanup",
+      toolName: "report",
+      status: "completed",
+      origin,
+      continuationExecutionId: "execution-cleanup",
+      dispatchState: "executing",
+    };
+    const recovered = {
+      response: "Recovered after cleanup",
+      executionId: "execution-cleanup",
+      cleanupRequired: true,
+    };
+    const persistCleanupPendingOutbox = vi.fn(
+      (_taskId: string, outbox: unknown) => {
+        task.dispatchState = "cleanup_pending";
+        task.continuationOutbox = outbox;
+        return ok(true);
+      },
+    );
+    const deps = makeRecoveryDeps(task, {
+      recoverFinalizedResult: vi.fn().mockResolvedValue(ok(recovered)),
+    });
+    deps.taskManager.persistCleanupPendingOutbox = persistCleanupPendingOutbox;
+    const recovery = createCompletionRecovery(deps as never);
+
+    await recovery.recoverClaimedTask(
+      task.id as string,
+      origin,
+      task.toolName as string,
+    );
+
+    expect(deps.cleanupFinalizedSession).toHaveBeenCalledWith({
+      agentId: TEST_AGENT_ID,
+      sessionKey: {
+        tenantId: "test",
+        agentId: TEST_AGENT_ID,
+        channelId: "echo:test-instance:bg-completion-test",
+        userId: "test-user",
+        peerId: "test-user",
+      },
+    });
+    expect(deps.commitState).toHaveBeenCalledWith(
+      task.id,
+      "ready_to_deliver",
+      ["cleanup_pending"],
+    );
+    expect(deps.deliverPersistedOutbox).toHaveBeenCalledWith(
+      task.id,
+      origin,
+      expect.objectContaining({ response: recovered.response }),
+    );
+  });
+
+  it("reconciles an accepted delivery claim into the durable delivered state", async () => {
+    const origin = makeTestOrigin();
+    const task = {
+      id: "task-delivering",
+      toolName: "report",
+      status: "completed",
+      origin,
+      continuationExecutionId: "execution-delivering",
+      dispatchState: "delivering",
+    };
+    const deps = makeRecoveryDeps(task, {
+      reconcileDelivery: vi.fn().mockResolvedValue(ok({ kind: "accepted" })),
+    });
+    const recovery = createCompletionRecovery(deps as never);
+    const outbox = {
+      kind: "continuation" as const,
+      response: "Delivered continuation",
+      executionId: "execution-delivering",
+      idempotencyKey: "background-continuation:execution-delivering",
+      deliveryProtection: "ledger" as const,
+    };
+
+    await recovery.reconcileDeliveryClaim(task.id, origin, outbox);
+
+    expect(deps.reconcileDelivery).toHaveBeenCalledWith({
+      taskId: task.id,
+      origin,
+      response: outbox.response,
+      executionId: outbox.executionId,
+      idempotencyKey: outbox.idempotencyKey,
+    });
+    expect(deps.commitState).toHaveBeenCalledWith(
+      task.id,
+      "delivered",
+      ["delivering"],
+    );
+    expect(deps.emitRoutingOutcome).toHaveBeenCalledWith(
+      task.id,
+      origin,
+      task.toolName,
+      true,
+      "continuation_accepted",
+    );
+  });
+
+  it("resets an unstarted claimed continuation so durable dispatch can retry it", async () => {
+    const origin = makeTestOrigin();
+    const task = {
+      id: "task-unstarted",
+      toolName: "report",
+      status: "completed",
+      origin,
+      continuationExecutionId: "execution-unstarted",
+      dispatchState: "execution_claimed",
+    };
+    const deps = makeRecoveryDeps(task);
+    const recovery = createCompletionRecovery(deps as never);
+
+    await recovery.recoverClaimedTask(task.id, origin, task.toolName);
+
+    expect(deps.commitState).toHaveBeenCalledWith(
+      task.id,
+      "pending",
+      ["execution_claimed"],
+    );
+    expect(deps.taskManager.scheduleDispatchRetry).toHaveBeenCalledWith(task.id);
+    expect(deps.emitRoutingOutcome).toHaveBeenCalledWith(
+      task.id,
+      origin,
+      task.toolName,
+      false,
+      "retry_scheduled",
+    );
+  });
+
+  it("consumes a silent continuation after cleanup without sending a user message", async () => {
+    const origin = makeTestOrigin();
+    const task = {
+      id: "task-silent",
+      toolName: "report",
+      status: "completed",
+      origin,
+      continuationExecutionId: "execution-silent",
+      dispatchState: "cleanup_pending",
+      continuationOutbox: {
+        kind: "continuation",
+        response: "NO_REPLY",
+        executionId: "execution-silent",
+        idempotencyKey: "background-continuation:execution-silent",
+        deliveryProtection: "ledger",
+      },
+    };
+    const deps = makeRecoveryDeps(task);
+    const recovery = createCompletionRecovery(deps as never);
+
+    await recovery.finishCleanup(task.id, origin, task.toolName);
+
+    expect(deps.cleanupFinalizedSession).toHaveBeenCalledOnce();
+    expect(deps.commitState).toHaveBeenCalledWith(
+      task.id,
+      "delivered",
+      ["cleanup_pending"],
+    );
+    expect(deps.deliverPersistedOutbox).not.toHaveBeenCalled();
+  });
+
+  it("returns a retryable pre-send delivery claim to its durable retry state", async () => {
+    const origin = makeTestOrigin();
+    const task = {
+      id: "task-retryable",
+      toolName: "report",
+      status: "completed",
+      origin,
+      continuationExecutionId: "execution-retryable",
+      dispatchState: "delivering",
+    };
+    const deps = makeRecoveryDeps(task, {
+      reconcileDelivery: vi.fn().mockResolvedValue(ok({
+        kind: "retryable_pre_send",
+        errorKind: "resource",
+        message: "delivery queue busy",
+      })),
+    });
+    const recovery = createCompletionRecovery(deps as never);
+    const outbox = {
+      kind: "continuation" as const,
+      response: "Retry this continuation",
+      executionId: "execution-retryable",
+      idempotencyKey: "background-continuation:execution-retryable",
+      deliveryProtection: "ledger" as const,
+    };
+
+    await recovery.reconcileDeliveryClaim(task.id, origin, outbox);
+
+    expect(deps.commitState).toHaveBeenCalledWith(
+      task.id,
+      "pre_send",
+      ["delivering"],
+    );
+    expect(deps.taskManager.recordRecoveryIncident).toHaveBeenCalledWith(task.id);
+    expect(deps.taskManager.scheduleDispatchRetry).toHaveBeenCalledWith(task.id);
+  });
+
+  it("parks a permanent delivery rejection and records its terminal routing reason", async () => {
+    const origin = makeTestOrigin();
+    const task = {
+      id: "task-permanent",
+      toolName: "report",
+      status: "completed",
+      origin,
+      continuationExecutionId: "execution-permanent",
+      dispatchState: "delivering",
+    };
+    const deps = makeRecoveryDeps(task, {
+      reconcileDelivery: vi.fn().mockResolvedValue(ok({
+        kind: "permanent",
+        errorKind: "validation",
+        message: "destination rejected",
+      })),
+    });
+    const recovery = createCompletionRecovery(deps as never);
+    const outbox = {
+      kind: "fallback" as const,
+      response: "Fallback completion",
+      executionId: "execution-permanent",
+      idempotencyKey: "background-continuation:execution-permanent",
+      deliveryProtection: "ledger" as const,
+    };
+
+    await recovery.reconcileDeliveryClaim(task.id, origin, outbox);
+
+    expect(deps.commitState).toHaveBeenCalledWith(
+      task.id,
+      "parked_permanent",
+      ["delivering"],
+    );
+    expect(deps.emitRoutingOutcome).toHaveBeenCalledWith(
+      task.id,
+      origin,
+      task.toolName,
+      false,
+      "permanent_parked",
+    );
+  });
+
+  it("round-trips protected recovery authority through the compiled restart store", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-recovery-authority-"));
+    const authority = {
+      agentId: TEST_AGENT_ID,
+      taskId: "task-authority",
+      toolName: "report",
+      sessionKey: TEST_SESSION_KEY,
+      projectedSessionKey: {
+        tenantId: "test",
+        agentId: TEST_AGENT_ID,
+        channelId: "echo:test-instance:bg-completion-test",
+        userId: "test-user",
+        peerId: "test-user",
+      },
+      traceId: null,
+      timestamp: 1_000,
+      source: "scan" as const,
+      requiredDisposition: "accepted" as const,
+      resolutionRequested: false,
+    };
+    try {
+      const persisted = persistBackgroundRecoveryAuthority(dataDir, authority);
+      const recovered = recoverBackgroundRecoveryAuthorities(dataDir);
+      const incidentDir = join(
+        dataDir,
+        TEST_AGENT_ID,
+        ".recovery-incidents",
+      );
+
+      expect(persisted).toEqual({ ok: true, value: { kind: "committed" } });
+      expect(recovered).toEqual({ ok: true, value: [authority] });
+      expect(statSync(incidentDir).mode & 0o777).toBe(0o700);
+      expect(
+        statSync(join(incidentDir, readdirSync(incidentDir)[0]!)).mode & 0o777,
+      ).toBe(0o600);
+
+      expect(removeBackgroundRecoveryAuthority(dataDir, authority)).toEqual({
+        ok: true,
+        value: undefined,
+      });
+      expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
+        ok: true,
+        value: [],
       });
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
