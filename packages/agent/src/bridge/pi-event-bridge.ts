@@ -37,7 +37,7 @@ import {
 import type { SessionTrajectoryHandleRegistry } from "@comis/observability";
 import { buildTraceMetadata } from "@comis/observability";
 import type { ComisLogger, SpendConfig } from "@comis/core";
-import { suppressError } from "@comis/shared";
+import { suppressError, type Result } from "@comis/shared";
 import { randomUUID } from "node:crypto";
 import { resolveModelPricing } from "@comis/core";
 import { getCacheProviderInfo } from "../executor/cache-usage-helpers.js";
@@ -369,6 +369,9 @@ export interface PiEventBridgeDeps {
   providerHealth?: ProviderHealthMonitor;
   /** Called when a tool reports progress or completes -- used to reset prompt stall timeout. */
   onToolActivity?: () => void;
+  /** Atomically records a successful background-task read after its tool result
+   * has crossed the session journal boundary at `turn_end`. */
+  acknowledgeBackgroundTaskConsumption?: (taskId: string) => Result<boolean, Error>;
   /** Returns current model ID for per-turn pricing resolution. Updated on manual /model switch. */
   getCurrentModel?: () => string;
   /**
@@ -684,6 +687,7 @@ function parseEmbeddedJsonObject(text: string): Record<string, unknown> | undefi
 export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResult {
   // Internal accumulation state (managed by bridge-metrics module)
   const m = createBridgeMetrics();
+  const pendingBackgroundTaskConsumptions = new Set<string>();
 
   // One-shot SDK-breakdown notice. Fires exactly once per
   // daemon process — the latch is module-scoped so multiple bridge
@@ -1078,6 +1082,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // them into the tool:executed `params` field below.
           const rawArgsForParams = m.toolRawArgs.get(endEvent.toolCallId);
           m.toolRawArgs.delete(endEvent.toolCallId);
+
+          if (
+            toolSuccess
+            && endEvent.toolName === "background_tasks"
+            && (rawArgsForParams as { action?: unknown } | undefined)?.action === "read_output"
+          ) {
+            const taskId = (rawArgsForParams as { taskId?: unknown }).taskId;
+            if (typeof taskId === "string" && taskId.length > 0) {
+              pendingBackgroundTaskConsumptions.add(taskId);
+            }
+          }
 
           let errorText: string | undefined;
           // resultBytes/resultDigest replace the raw body with a count + a
@@ -1679,6 +1694,22 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // -----------------------------------------------------------------
         case "turn_end": {
           m.llmCallCount++;
+
+          const taskConsumptions = [...pendingBackgroundTaskConsumptions];
+          pendingBackgroundTaskConsumptions.clear();
+          for (const taskId of taskConsumptions) {
+            const acknowledged = deps.acknowledgeBackgroundTaskConsumption?.(taskId);
+            if (acknowledged && !acknowledged.ok) {
+              deps.logger.warn(
+                {
+                  taskId,
+                  errorKind: "resource" as const,
+                  hint: "Repair protected background-task storage; the pending result remains eligible for continuation delivery",
+                },
+                "Background task consumption receipt could not be recorded",
+              );
+            }
+          }
 
           const turnEvent = event as { message: unknown };
           const assistantMsg = turnEvent.message as AssistantMessage | undefined;

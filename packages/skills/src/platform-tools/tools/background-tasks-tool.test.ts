@@ -24,7 +24,6 @@ function createMockManager(overrides: Partial<BackgroundTaskManagerLike> = {}): 
     getTask: vi.fn(() => undefined),
     waitForTask: vi.fn(async () => err(new Error("no live task"))),
     getTasks: vi.fn(() => []),
-    acknowledgeLiveConsumption: vi.fn(() => ok(true)),
     ...overrides,
   };
 }
@@ -172,7 +171,11 @@ describe("background_tasks tool", () => {
         id: "t1", origin: origin("other-agent"), toolName: "web_fetch",
         status: "running" as const, startedAt: 1000,
       };
-      manager = createMockManager({ getTask: vi.fn(() => task) });
+      const acknowledgeLiveConsumption = vi.fn(() => ok(true));
+      manager = {
+        ...createMockManager({ getTask: vi.fn(() => task) }),
+        acknowledgeLiveConsumption,
+      } as BackgroundTaskManagerLike;
       const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
 
       await expect(tool.execute("call-1", { action: "get", taskId: "t1" }))
@@ -237,14 +240,18 @@ describe("background_tasks tool", () => {
         status: "completed" as const, startedAt: 1000, completedAt: 2000,
         result: '{"data":"hello"}',
       };
-      manager = createMockManager({ getTask: vi.fn(() => task) });
+      const acknowledgeLiveConsumption = vi.fn(() => ok(true));
+      manager = {
+        ...createMockManager({ getTask: vi.fn(() => task) }),
+        acknowledgeLiveConsumption,
+      } as BackgroundTaskManagerLike;
       const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
 
       const result = await tool.execute("call-1", { action: "read_output", taskId: "t1" });
       const text = (result as { content: Array<{ text: string }> }).content[0].text;
 
       expect(text).toContain('{"data":"hello"}');
-      expect(manager.acknowledgeLiveConsumption).not.toHaveBeenCalled();
+      expect(acknowledgeLiveConsumption).not.toHaveBeenCalled();
     });
 
     it("returns terminal output before the executor records its durable consumption receipt", async () => {
@@ -253,16 +260,17 @@ describe("background_tasks tool", () => {
         status: "completed" as const, startedAt: 1000, completedAt: 2000,
         result: '{"data":"hello"}',
       };
-      manager = createMockManager({
-        getTask: vi.fn(() => task),
-        acknowledgeLiveConsumption: vi.fn(() => err(new Error("storage unavailable"))),
-      });
+      const acknowledgeLiveConsumption = vi.fn(() => err(new Error("storage unavailable")));
+      manager = {
+        ...createMockManager({ getTask: vi.fn(() => task) }),
+        acknowledgeLiveConsumption,
+      } as BackgroundTaskManagerLike;
       const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
 
       const result = await tool.execute("call-1", { action: "read_output", taskId: "t1" });
 
       expect((result as { content: Array<{ text: string }> }).content[0].text).toContain("hello");
-      expect(manager.acknowledgeLiveConsumption).not.toHaveBeenCalled();
+      expect(acknowledgeLiveConsumption).not.toHaveBeenCalled();
     });
 
     it("returns still running message for running task", async () => {
@@ -299,7 +307,6 @@ describe("background_tasks tool", () => {
         getTask: vi.fn(() => running),
         getTasks: vi.fn(() => [running]),
         waitForTask,
-        acknowledgeLiveConsumption: vi.fn(() => ok(true)),
       } as unknown as BackgroundTaskManagerLike;
       const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
 
@@ -334,7 +341,6 @@ describe("background_tasks tool", () => {
         getTask: vi.fn(() => running),
         getTasks: vi.fn(() => [running]),
         waitForTask,
-        acknowledgeLiveConsumption: vi.fn(() => ok(true)),
       } as unknown as BackgroundTaskManagerLike;
       const tool = createBackgroundTasksTool({
         manager,

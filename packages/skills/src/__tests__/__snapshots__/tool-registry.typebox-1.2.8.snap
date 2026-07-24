@@ -691,7 +691,7 @@
               "type": "string"
             }
           ],
-          "description": "Task management action. list: show all tasks for this agent. get: get task details by ID. cancel: cancel a running task. read_output: wait for a running task and read its completed output."
+          "description": "Task management action. list: show all tasks for this conversation. get: get task details by ID. cancel: cancel a running task. read_output: wait for a running task and read its completed output."
         },
         "taskId": {
           "description": "Task ID. Required for get, cancel, and read_output actions.",
