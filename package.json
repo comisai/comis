@@ -116,7 +116,7 @@
   },
   "pnpm": {
     "overrides": {
-      "tar": ">=7.5.7",
+      "tar": "7.5.22",
       "typebox": "1.2.8",
       "protobufjs": ">=8.6.6",
       "@protobufjs/utf8": ">=1.1.1",
