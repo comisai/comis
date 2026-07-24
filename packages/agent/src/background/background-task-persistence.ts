@@ -67,6 +67,7 @@ export function toPersistedState(task: BackgroundTask | PersistedTaskState): Per
 
 export interface AtomicTaskPersistenceOps {
   open(path: string, flags: string, mode?: number): number;
+  read?(path: string): string | undefined;
   write(fd: number, content: string): void;
   sync(fd: number): void;
   close(fd: number): void;
@@ -119,12 +120,59 @@ function isPermissionModelFsyncUnavailable(error: Error): boolean {
 
 const defaultAtomicTaskPersistenceOps: AtomicTaskPersistenceOps = {
   open: openSync,
+  read: (path) => {
+    try {
+      return readFileSync(path, "utf-8");
+    } catch (error: unknown) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return undefined;
+      }
+      throw error;
+    }
+  },
   write: writeFileSync,
   sync: fsyncSync,
   close: closeSync,
   rename: renameSync,
   unlink: unlinkSync,
 };
+
+function readPriorTaskState(
+  filePath: string,
+  ops: AtomicTaskPersistenceOps,
+): Result<string | undefined, Error> {
+  return tryCatch(() => {
+    if (ops.read) return ops.read(filePath);
+    try {
+      return readFileSync(filePath, "utf-8");
+    } catch (error: unknown) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return undefined;
+      }
+      throw error;
+    }
+  });
+}
+
+function rollbackRejectedTaskState(
+  filePath: string,
+  priorState: string | undefined,
+  ops: AtomicTaskPersistenceOps,
+): Result<void, Error> {
+  let rollbackDescriptor: number | undefined;
+  const restored = tryCatch(() => {
+    rollbackDescriptor = ops.open(filePath, "w", 0o600);
+    ops.write(rollbackDescriptor, priorState ?? "{}");
+    ops.sync(rollbackDescriptor);
+    ops.close(rollbackDescriptor);
+    rollbackDescriptor = undefined;
+    if (priorState === undefined) ops.unlink(filePath);
+  });
+  if (!restored.ok && rollbackDescriptor !== undefined) {
+    tryCatch(() => ops.close(rollbackDescriptor!));
+  }
+  return restored;
+}
 
 export function persistTaskAtomically(
   dataDir: string,
@@ -136,6 +184,8 @@ export function persistTaskAtomically(
   if (!ensured.ok) return err(ensured.error);
   const filePath = safePath(agentDir, `${task.id}.json`);
   const tempPath = safePath(agentDir, `.${task.id}.${randomUUID()}.tmp`);
+  const priorState = readPriorTaskState(filePath, ops);
+  if (!priorState.ok) return priorState;
   const state = toPersistedState(task);
   let fileDescriptor: number | undefined;
   let directoryDescriptor: number | undefined;
@@ -187,6 +237,8 @@ export function persistTaskAtomically(
       directoryDescriptor = undefined;
     }
   }
+  const rolledBack = rollbackRejectedTaskState(filePath, priorState.value, ops);
+  if (!rolledBack.ok) return rolledBack;
   return err(directorySyncError ?? new Error("Background task directory durability was not confirmed"));
 }
 
