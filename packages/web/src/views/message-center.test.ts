@@ -311,9 +311,15 @@ describe("IcMessageCenter", () => {
         case "session.history":
           return Promise.resolve({
             session: {
-              key: "tenant-a:user_a:chat-1",
+              key: "tenant-a:agent:agent-a:user_a:telegram:chat-1",
               agentId: "agent-a",
-              channelType: "telegram",
+              channelType: "dm",
+              endpoint: {
+                channelType: "telegram",
+                channelInstanceId: "telegram-account",
+                conversationId: "chat-1",
+                conversationKind: "direct",
+              },
               messageCount: 1,
               totalTokens: 2,
               inputTokens: 1,

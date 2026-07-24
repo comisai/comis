@@ -294,12 +294,18 @@ describe("SessionHistoryContract", () => {
     expect(() => SessionHistoryContract.request.parse({})).toThrow();
   });
 
-  it("accepts response with full session + messages shape", () => {
-    expect(SessionHistoryContract.response.parse({
+  it("preserves authoritative endpoint metadata in the history response", () => {
+    const parsed = SessionHistoryContract.response.parse({
       session: {
-        key: "tenant:user:channel",
+        key: "tenant:agent:default:user:channel",
         agentId: "default",
         channelType: "dm",
+        endpoint: {
+          channelType: "telegram",
+          channelInstanceId: "telegram-account",
+          conversationId: "chat-a",
+          conversationKind: "direct",
+        },
         messageCount: 4,
         totalTokens: 1234,
         inputTokens: 500,
@@ -318,7 +324,13 @@ describe("SessionHistoryContract", () => {
       offset: 0,
       limit: 20,
       hasMore: false,
-    })).toBeDefined();
+    });
+    expect(parsed.session.endpoint).toEqual({
+      channelType: "telegram",
+      channelInstanceId: "telegram-account",
+      conversationId: "chat-a",
+      conversationKind: "direct",
+    });
   });
 
   it("accepts session.label optional field", () => {
