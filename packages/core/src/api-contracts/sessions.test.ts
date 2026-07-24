@@ -230,6 +230,13 @@ describe("SessionListContract", () => {
           conversationRef: "conversation-ref-1",
           agentId: "default",
           kind: "dm",
+          endpoint: {
+            channelType: "telegram",
+            channelInstanceId: "account-a",
+            conversationId: "chat-a",
+            threadId: "thread-a",
+            conversationKind: "direct",
+          },
           messageCount: 3,
           totalTokens: 1500,
           updatedAt: 1715000000000,
@@ -302,7 +309,10 @@ describe("SessionHistoryContract", () => {
         channelType: "dm",
         endpoint: {
           channelType: "telegram",
+          channelInstanceId: "account-a",
           conversationId: "chat-a",
+          threadId: "thread-a",
+          conversationKind: "direct",
         },
         messageCount: 4,
         totalTokens: 1234,
@@ -325,7 +335,10 @@ describe("SessionHistoryContract", () => {
     });
     expect(parsed.session.endpoint).toEqual({
       channelType: "telegram",
+      channelInstanceId: "account-a",
       conversationId: "chat-a",
+      threadId: "thread-a",
+      conversationKind: "direct",
     });
   });
 

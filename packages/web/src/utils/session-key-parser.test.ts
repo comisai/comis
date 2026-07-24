@@ -8,22 +8,21 @@ import {
 } from "./session-key-parser.js";
 
 describe("parseSessionKeyString", () => {
-  // The browser parser does not recognize the legacy `agent:<agentId>:`
-  // prefix; it mirrors the daemon parser/emitter, which never emits it.
-
-  it("parses a basic 3-part key", () => {
-    const result = parseSessionKeyString("myTenant:user123:discord");
+  it("parses the current agent-scoped key", () => {
+    const result = parseSessionKeyString("myTenant:agent:bot-a:user123:discord");
     expect(result).toEqual({
       tenantId: "myTenant",
+      agentId: "bot-a",
       userId: "user123",
       channelId: "discord",
     });
   });
 
   it("parses a key with optional peer segment", () => {
-    const result = parseSessionKeyString("myTenant:user123:telegram:peer:chat456");
+    const result = parseSessionKeyString("myTenant:agent:bot-a:user123:telegram:peer:chat456");
     expect(result).toEqual({
       tenantId: "myTenant",
+      agentId: "bot-a",
       userId: "user123",
       channelId: "telegram",
       peerId: "chat456",
@@ -31,9 +30,10 @@ describe("parseSessionKeyString", () => {
   });
 
   it("parses a key with optional guild segment", () => {
-    const result = parseSessionKeyString("myTenant:user123:discord:guild:server789");
+    const result = parseSessionKeyString("myTenant:agent:bot-a:user123:discord:guild:server789");
     expect(result).toEqual({
       tenantId: "myTenant",
+      agentId: "bot-a",
       userId: "user123",
       channelId: "discord",
       guildId: "server789",
@@ -41,21 +41,23 @@ describe("parseSessionKeyString", () => {
   });
 
   it("parses a key with optional thread segment", () => {
-    const result = parseSessionKeyString("myTenant:user123:slack:thread:t001");
+    const result = parseSessionKeyString("myTenant:agent:bot-a:user123:slack:thread:t001");
     expect(result).toEqual({
       tenantId: "myTenant",
+      agentId: "bot-a",
       userId: "user123",
       channelId: "slack",
       threadId: "t001",
     });
   });
 
-  it("parses a key with all optional segments (no agent prefix)", () => {
+  it("parses a key with all optional segments", () => {
     const result = parseSessionKeyString(
-      "myTenant:user123:telegram:peer:chat456:guild:g789:thread:t001",
+      "myTenant:agent:bot-a:user123:telegram:peer:chat456:guild:g789:thread:t001",
     );
     expect(result).toEqual({
       tenantId: "myTenant",
+      agentId: "bot-a",
       userId: "user123",
       channelId: "telegram",
       peerId: "chat456",
@@ -68,7 +70,7 @@ describe("parseSessionKeyString", () => {
     expect(parseSessionKeyString("")).toBeUndefined();
   });
 
-  it("returns undefined for invalid input (too few parts)", () => {
+  it("returns undefined for invalid input with too few parts", () => {
     expect(parseSessionKeyString("only:two")).toBeUndefined();
   });
 
@@ -79,37 +81,46 @@ describe("parseSessionKeyString", () => {
     expect(parseSessionKeyString(undefined as any)).toBeUndefined();
   });
 
-  it("treats a stray `agent:` prefix as ordinary tenant/user/channel parts", () => {
-    // The `agent:` prefix is no longer special-cased — the parser simply
-    // consumes the first three colon-separated parts as
-    // tenantId / userId / channelId.
-    const result = parseSessionKeyString("agent:bot:ten:usr:ch");
-    expect(result).toEqual({
-      tenantId: "agent",
-      userId: "bot",
-      channelId: "ten",
+  it("preserves colon-bearing channel and suffix values", () => {
+    expect(parseSessionKeyString(
+      "tenant:agent:bot:user:channel:region:peer:p:part:guild:g:part:thread:t:part",
+    )).toEqual({
+      tenantId: "tenant",
+      agentId: "bot",
+      userId: "user",
+      channelId: "channel:region",
+      peerId: "p:part",
+      guildId: "g:part",
+      threadId: "t:part",
     });
+  });
+
+  it("rejects missing markers and unordered suffixes", () => {
+    expect(parseSessionKeyString("tenant:user:channel")).toBeUndefined();
+    expect(parseSessionKeyString("tenant:agent:bot:user:channel:thread:t:peer:p"))
+      .toBeUndefined();
+    expect(parseSessionKeyString("tenant:agent:bot:user:peer:p")).toBeUndefined();
   });
 });
 
 describe("formatSessionDisplayName", () => {
   it("returns userId directly when 16 chars or less", () => {
-    const key: ParsedSessionKey = { tenantId: "t", userId: "short_user", channelId: "ch" };
+    const key: ParsedSessionKey = { tenantId: "t", agentId: "a", userId: "short_user", channelId: "ch" };
     expect(formatSessionDisplayName(key)).toBe("short_user");
   });
 
   it("returns userId directly when exactly 16 chars", () => {
-    const key: ParsedSessionKey = { tenantId: "t", userId: "1234567890123456", channelId: "ch" };
+    const key: ParsedSessionKey = { tenantId: "t", agentId: "a", userId: "1234567890123456", channelId: "ch" };
     expect(formatSessionDisplayName(key)).toBe("1234567890123456");
   });
 
   it("truncates userId to 14 chars + '...' when longer than 16", () => {
-    const key: ParsedSessionKey = { tenantId: "t", userId: "12345678901234567", channelId: "ch" };
+    const key: ParsedSessionKey = { tenantId: "t", agentId: "a", userId: "12345678901234567", channelId: "ch" };
     expect(formatSessionDisplayName(key)).toBe("12345678901234...");
   });
 
   it("truncates very long userId", () => {
-    const key: ParsedSessionKey = { tenantId: "t", userId: "a".repeat(50), channelId: "ch" };
+    const key: ParsedSessionKey = { tenantId: "t", agentId: "a", userId: "a".repeat(50), channelId: "ch" };
     const result = formatSessionDisplayName(key);
     expect(result).toBe("a".repeat(14) + "...");
     expect(result.length).toBe(17);

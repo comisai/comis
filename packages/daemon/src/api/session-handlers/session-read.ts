@@ -309,10 +309,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
         ...(partition.kind === "endpoint-conversation"
           || partition.kind === "endpoint-conversation-principal"
           ? {
-              endpoint: {
-                channelType: partition.endpoint.channelType,
-                conversationId: partition.endpoint.conversationId,
-              },
+              endpoint: partition.endpoint,
             }
           : {}),
         messageCount: sourceMessages.length,

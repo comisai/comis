@@ -4,7 +4,12 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import { listSessionsAcrossAgents } from "../api/session-scope.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
-import type { ConnectionStatus, FetchedMessage, PlatformCapabilities } from "../api/types/index.js";
+import type {
+  ConnectionStatus,
+  FetchedMessage,
+  PlatformCapabilities,
+  SessionChannelEndpoint,
+} from "../api/types/index.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 
@@ -38,6 +43,34 @@ interface MessageActionContext {
   rpcClient: RpcClient;
   channel: string;
   chatId: string;
+}
+
+interface ChatListEntry {
+  readonly key: string;
+  readonly chatId: string;
+  readonly label: string;
+  readonly endpoint?: SessionChannelEndpoint;
+}
+
+function endpointSelectionKey(endpoint: SessionChannelEndpoint): string {
+  return JSON.stringify([
+    endpoint.channelType,
+    endpoint.channelInstanceId,
+    endpoint.conversationId,
+    endpoint.threadId ?? null,
+    endpoint.conversationKind,
+  ]);
+}
+
+function endpointsEqual(
+  left: SessionChannelEndpoint,
+  right: SessionChannelEndpoint,
+): boolean {
+  return left.channelType === right.channelType
+    && left.channelInstanceId === right.channelInstanceId
+    && left.conversationId === right.conversationId
+    && left.threadId === right.threadId
+    && left.conversationKind === right.conversationKind;
 }
 
 /** Attachment type options for message.attach RPC. */
@@ -298,7 +331,7 @@ export class IcMessageCenter extends LitElement {
   @state() private _showAttachForm = false;
 
   // Chat picker state
-  @state() private _chatList: Array<{ chatId: string; label: string }> = [];
+  @state() private _chatList: ChatListEntry[] = [];
   @state() private _selectedChatId = "";
 
   // Platform action state
@@ -399,7 +432,7 @@ export class IcMessageCenter extends LitElement {
       revision: this._actionContextRevision,
       rpcClient: this.rpcClient,
       channel: this._effectiveChannel,
-      chatId: this._selectedChatId || this._effectiveChannel,
+      chatId: this._selectedConversationId() || this._effectiveChannel,
     };
   }
 
@@ -408,7 +441,7 @@ export class IcMessageCenter extends LitElement {
       && context.revision === this._actionContextRevision
       && context.rpcClient === this.rpcClient
       && context.channel === this._effectiveChannel
-      && context.chatId === (this._selectedChatId || this._effectiveChannel);
+      && context.chatId === (this._selectedConversationId() || this._effectiveChannel);
   }
 
   override updated(changedProperties: Map<string, unknown>): void {
@@ -606,17 +639,25 @@ export class IcMessageCenter extends LitElement {
     if (!this.rpcClient || !channel) return;
 
     try {
-      const obsResult = await this.rpcClient.call<{
-        channels: Array<{
-          channelId: string;
-          channelType: string;
-          messagesSent: number;
-          messagesReceived: number;
-          lastActiveAt: number;
-        }>;
-      }>("obs.channels.all");
+      const rpcClient = this.rpcClient;
+      const [obsOutcome, sessionsOutcome] = await Promise.allSettled([
+        rpcClient.call<{
+          channels: Array<{
+            channelId: string;
+            channelType: string;
+            messagesSent: number;
+            messagesReceived: number;
+            lastActiveAt: number;
+          }>;
+        }>("obs.channels.all"),
+        this._capabilities?.fetchHistory
+          ? Promise.resolve([])
+          : listSessionsAcrossAgents(rpcClient),
+      ]);
       if (!this._isCurrentChannel(revision, channel)) return;
-      const channels = obsResult?.channels ?? [];
+      const channels = obsOutcome.status === "fulfilled"
+        ? obsOutcome.value.channels ?? []
+        : [];
       const chatMap = new Map<string, string>(); // chatId -> label
 
       // Filter for the current channel type and extract chat IDs
@@ -627,15 +668,39 @@ export class IcMessageCenter extends LitElement {
         chatMap.set(ch.channelId, `${ch.channelId} (${msgs} msgs)`);
       }
 
-      // Build deduplicated chat list sorted by most recent
-      this._chatList = Array.from(chatMap.entries()).map(([chatId, label]) => ({
-        chatId,
-        label,
-      }));
+      const endpointChats = new Map<string, ChatListEntry>();
+      if (sessionsOutcome.status === "fulfilled") {
+        for (const session of sessionsOutcome.value) {
+          const endpoint = session.endpoint;
+          if (!endpoint || endpoint.channelType !== channel) continue;
+          const key = endpointSelectionKey(endpoint);
+          const qualifiers = [endpoint.channelInstanceId, endpoint.threadId]
+            .filter((value): value is string => value !== undefined)
+            .join(" / ");
+          endpointChats.set(key, {
+            key,
+            chatId: endpoint.conversationId,
+            label: qualifiers
+              ? `${endpoint.conversationId} (${qualifiers})`
+              : endpoint.conversationId,
+            endpoint,
+          });
+        }
+      }
 
-      // Auto-select first chat if none selected
-      if (this._chatList.length > 0 && !this._selectedChatId) {
-        this._selectedChatId = this._chatList[0].chatId;
+      this._chatList = endpointChats.size > 0
+        ? [...endpointChats.values()]
+        : Array.from(chatMap.entries()).map(([chatId, label]) => ({
+            key: chatId,
+            chatId,
+            label,
+          }));
+
+      if (
+        this._chatList.length > 0
+        && !this._chatList.some((chat) => (chat.key ?? chat.chatId) === this._selectedChatId)
+      ) {
+        this._selectedChatId = this._chatList[0].key ?? this._chatList[0].chatId;
       }
     } catch {
       if (!this._isCurrentChannel(revision, channel)) return;
@@ -654,7 +719,11 @@ export class IcMessageCenter extends LitElement {
     channel = this._effectiveChannel,
   ): Promise<void> {
     const requestRevision = ++this._messageRequestRevision;
-    const selectedChatId = this._selectedChatId;
+    const selectedChatKey = this._selectedChatId;
+    const selectedChat = this._chatList.find(
+      (chat) => (chat.key ?? chat.chatId) === selectedChatKey,
+    );
+    const selectedChatId = selectedChat?.chatId ?? selectedChatKey;
     if (!this.rpcClient || !channel) return;
     const rpcClient = this.rpcClient;
 
@@ -669,7 +738,7 @@ export class IcMessageCenter extends LitElement {
           channel_id: selectedChatId || channel,
           limit: 50,
         });
-        if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
+        if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
         const messages = fetchResult?.messages ?? [];
         this._messages = messages;
         this._messagesAreActionable = true;
@@ -680,7 +749,7 @@ export class IcMessageCenter extends LitElement {
           this._selectedMessageId = "";
         }
       } catch {
-        if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
+        if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
         // Non-fatal
       }
       return;
@@ -689,28 +758,20 @@ export class IcMessageCenter extends LitElement {
     // Path 2: No fetchHistory - fall back to stored session data
     try {
       const sessions = await listSessionsAcrossAgents(rpcClient);
-      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
-      const chatId = selectedChatId;
-      const recent = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 50);
-      const probed = await Promise.allSettled(recent.map(async (session) => {
-        const history = await rpcClient.call("session.history", {
-          tenant_id: session.tenantId,
-          agent_id: session.agentId,
-          conversation_ref: session.conversationRef,
-          limit: 1,
-        });
-        return { session, history };
-      }));
-      const matching = chatId
-        ? probed.flatMap((outcome) => {
-          if (outcome.status !== "fulfilled") return [];
-          const endpoint = outcome.value.history.session.endpoint;
-          return endpoint?.channelType === channel && endpoint.conversationId === chatId
-            ? [outcome.value]
-            : [];
-        })
+      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
+      const endpointCandidates = selectedChatId
+        ? sessions.filter((session) => session.endpoint?.channelType === channel
+          && session.endpoint.conversationId === selectedChatId)
         : [];
+      const selectedEndpoint = selectedChat?.endpoint;
+      const matching = selectedEndpoint
+        ? endpointCandidates.filter((session) => session.endpoint !== undefined
+          && endpointsEqual(session.endpoint, selectedEndpoint))
+        : endpointCandidates.length === 1
+          ? endpointCandidates
+          : [];
 
+      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
       if (matching.length === 0) {
         this._messages = [];
         this._messagesAreActionable = false;
@@ -719,17 +780,17 @@ export class IcMessageCenter extends LitElement {
       }
 
       // Pick most recently updated session
-      matching.sort((a, b) => b.session.updatedAt - a.session.updatedAt);
+      matching.sort((a, b) => b.updatedAt - a.updatedAt);
       const bestSession = matching[0];
       if (!bestSession) return;
 
       const histResult = await rpcClient.call("session.history", {
-        tenant_id: bestSession.session.tenantId,
-        agent_id: bestSession.session.agentId,
-        conversation_ref: bestSession.session.conversationRef,
+        tenant_id: bestSession.tenantId,
+        agent_id: bestSession.agentId,
+        conversation_ref: bestSession.conversationRef,
         limit: 50,
       });
-      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
+      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
       const histMessages = histResult?.messages ?? [];
 
       // Map session history messages to FetchedMessage shape
@@ -742,7 +803,7 @@ export class IcMessageCenter extends LitElement {
       this._messagesAreActionable = false;
       this._selectedMessageId = "";
     } catch {
-      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
+      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
       // Non-fatal - leave messages empty
       this._messages = [];
       this._messagesAreActionable = false;
@@ -754,11 +815,18 @@ export class IcMessageCenter extends LitElement {
     channelRevision: number,
     requestRevision: number,
     channel: string,
-    selectedChatId: string,
+    selectedChatKey: string,
   ): boolean {
     return this._isCurrentChannel(channelRevision, channel)
       && requestRevision === this._messageRequestRevision
-      && selectedChatId === this._selectedChatId;
+      && selectedChatKey === this._selectedChatId;
+  }
+
+  private _selectedConversationId(): string {
+    return this._chatList.find(
+      (chat) => (chat.key ?? chat.chatId) === this._selectedChatId,
+    )?.chatId
+      ?? this._selectedChatId;
   }
 
   // -------------------------------------------------------------------------
@@ -1279,7 +1347,10 @@ export class IcMessageCenter extends LitElement {
             ${this._chatList.length === 0
               ? html`<option value="">No chats found</option>`
               : this._chatList.map(
-                  (ch) => html`<option value=${ch.chatId} ?selected=${ch.chatId === this._selectedChatId}>${ch.label}</option>`,
+                  (ch) => {
+                    const key = ch.key ?? ch.chatId;
+                    return html`<option value=${key} ?selected=${key === this._selectedChatId}>${ch.label}</option>`;
+                  },
                 )}
           </select>
         </div>

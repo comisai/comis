@@ -21,6 +21,13 @@ function scopeSessionRpcClient(rpcClient: RpcClient): RpcClient {
       return { agents: ["default", "agent-default", "agent2", "myagent", "bot1", "agent1"] };
     }
     const result = await (call as (method: string, params: Record<string, unknown>) => Promise<unknown>)(method, params);
+    if (method === "session.list" && result !== null && typeof result === "object") {
+      const listed = result as { sessions?: Array<{ agentId?: string }>; total?: number };
+      const sessions = (listed.sessions ?? []).filter(
+        (session) => session.agentId === params["agent_id"],
+      );
+      return { ...listed, sessions, total: sessions.length };
+    }
     if (method !== "session.history" || result === null || typeof result !== "object") {
       return result;
     }
@@ -231,7 +238,7 @@ describe("IcChatConsole", () => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
           { conversationRef: "session-abc", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
-          { conversationRef: "session-def", agentId: "agent2", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
+          { conversationRef: "session-def", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       return Promise.resolve([]);
@@ -464,12 +471,16 @@ describe("IcChatConsole", () => {
 
   it("conversationRef prop pre-selects the matching session", async () => {
     const rpc = createMockRpcClient();
-    (rpc.call as any).mockImplementation((method: string) => {
+    (rpc.call as any).mockImplementation((method: string, params: Record<string, unknown>) => {
       if (method === "session.list") {
-        return Promise.resolve({ sessions: [
-          { conversationRef: "s1", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
-          { conversationRef: "target-key", agentId: "agent2", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
-        ] });
+        const agentId = String(params.agent_id);
+        return Promise.resolve({
+          sessions: agentId === "agent2"
+            ? [{ conversationRef: "target-key", agentId: "agent2", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() }]
+            : agentId === "default"
+              ? [{ conversationRef: "s1", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() }]
+              : [],
+        });
       }
       if (method === "session.history") {
         return Promise.resolve({ messages: [] });
@@ -479,7 +490,12 @@ describe("IcChatConsole", () => {
 
     const el = await createElement<IcChatConsole>("ic-chat-console", {
       rpcClient: rpc,
-      apiClient: createMockApiClient(),
+      apiClient: createMockApiClient({
+        getAgents: vi.fn().mockResolvedValue([
+          { id: "default", name: "Default", model: "model-a" },
+          { id: "agent2", name: "Agent 2", model: "model-b" },
+        ]),
+      }),
       eventDispatcher: createMockEventDispatcher(),
       conversationRef: "target-key",
     });
@@ -487,6 +503,93 @@ describe("IcChatConsole", () => {
     await (el as any).updateComplete;
 
     expect((el as any)._activeSession).toBe("target-key");
+    expect((el as any)._selectedAgent).toBe("agent2");
+    expect(rpc.call).toHaveBeenCalledWith("session.list", {
+      tenant_id: "tenant-a",
+      agent_id: "default",
+      kind: "dm",
+    });
+    expect(rpc.call).toHaveBeenCalledWith("session.list", {
+      tenant_id: "tenant-a",
+      agent_id: "agent2",
+      kind: "dm",
+    });
+    expect(rpc.call).toHaveBeenCalledWith("session.history", {
+      tenant_id: "tenant-a",
+      agent_id: "agent2",
+      conversation_ref: "target-key",
+    });
+  });
+
+  it("does not let a pending list remove a newer local session", async () => {
+    const pendingList = deferred<Record<string, unknown>>();
+    let delayLists = false;
+    const rpc = createMockRpcClient();
+    (rpc.call as any).mockImplementation((method: string) => {
+      if (method === "session.list") {
+        return delayLists
+          ? pendingList.promise
+          : Promise.resolve({ sessions: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+    const el = await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: rpc,
+      apiClient: createMockApiClient(),
+      eventDispatcher: createMockEventDispatcher(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    delayLists = true;
+
+    const loading = (el as any)._loadSessions();
+    await Promise.resolve();
+    (el as any)._createNewSession();
+    const localKey = (el as any)._activeSession;
+    pendingList.resolve({
+      sessions: [{
+        conversationRef: "remote-session",
+        agentId: "default",
+        kind: "dm",
+        messageCount: 1,
+        totalTokens: 1,
+        updatedAt: 1,
+        createdAt: 1,
+      }],
+      total: 1,
+    });
+    await loading;
+
+    expect((el as any)._activeSession).toBe(localKey);
+    expect((el as any)._sessions.map((session: { key: string }) => session.key))
+      .toContain(localKey);
+  });
+
+  it("clears old agent rows before the replacement list resolves", async () => {
+    const pendingList = deferred<Record<string, unknown>>();
+    const rpc = createMockRpcClient();
+    (rpc.call as any).mockImplementation((method: string) => {
+      if (method === "session.list") return pendingList.promise;
+      return Promise.resolve({});
+    });
+    const el = await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: rpc,
+      apiClient: createMockApiClient(),
+      eventDispatcher: createMockEventDispatcher(),
+    });
+    (el as any)._sessions = [{
+      key: "old-session",
+      tenantId: "tenant-a",
+      agentId: "default",
+      conversationRef: "old-session",
+      channelType: "dm",
+      messageCount: 1,
+      lastActivity: 1,
+    }];
+
+    (el as any)._handleAgentChange({ target: { value: "agent2" } } as unknown as Event);
+
+    expect((el as any)._sessions).toEqual([]);
+    pendingList.resolve({ sessions: [], total: 0 });
   });
 
   it("keeps history and loading state bound to the latest session selection", async () => {
@@ -612,7 +715,7 @@ describe("IcChatConsole", () => {
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { conversationRef: "tenant1:bob:telegram", agentId: "myagent", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
+          { conversationRef: "tenant1:bob:telegram", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       return Promise.resolve([]);
@@ -842,11 +945,11 @@ describe("IcChatConsole", () => {
       apiClient: createMockApiClient(),
       eventDispatcher: createMockEventDispatcher(),
     });
-    activateLocalSession(el, "tenant-a:user_a:active-chat");
+    activateLocalSession(el, "web:agent:agent-a:user_a:active-chat:thread:local");
     (el as any)._messages = [];
 
     notificationHandler?.("notification.attachment", {
-      sessionKey: "tenant-a:user_a:other-chat",
+      sessionKey: "web:agent:agent-a:user_a:other-chat",
       channelId: "other-chat",
       url: "/media/other.png",
       type: "image",
@@ -856,7 +959,7 @@ describe("IcChatConsole", () => {
     expect((el as any)._messages).toHaveLength(0);
 
     notificationHandler?.("notification.attachment", {
-      sessionKey: "tenant-a:other-user:active-chat",
+      sessionKey: "web:agent:agent-a:other-user:active-chat",
       channelId: "active-chat",
       url: "/media/wrong-user.png",
       type: "image",
@@ -866,7 +969,7 @@ describe("IcChatConsole", () => {
     expect((el as any)._messages).toHaveLength(0);
 
     notificationHandler?.("notification.attachment", {
-      sessionKey: "tenant-b:user_a:active-chat",
+      sessionKey: "tenant-b:agent:agent-a:user_a:active-chat",
       channelId: "active-chat",
       url: "/media/wrong-tenant.png",
       type: "image",
@@ -876,7 +979,17 @@ describe("IcChatConsole", () => {
     expect((el as any)._messages).toHaveLength(0);
 
     notificationHandler?.("notification.attachment", {
-      sessionKey: "tenant-a:user_a:active-chat",
+      sessionKey: "web:agent:agent-b:user_a:active-chat",
+      channelId: "active-chat",
+      url: "/media/wrong-agent.png",
+      type: "image",
+      mimeType: "image/png",
+      fileName: "wrong-agent.png",
+    });
+    expect((el as any)._messages).toHaveLength(0);
+
+    notificationHandler?.("notification.attachment", {
+      sessionKey: "web:agent:agent-a:user_a:active-chat:thread:remote",
       channelId: "active-chat",
       url: "/media/active.png",
       type: "image",
@@ -1047,6 +1160,7 @@ describe("IcChatConsole", () => {
       lastActivity: 1,
     }];
     (el as any)._activeSession = "conversation-a";
+    (el as any)._selectedAgent = "agent-a";
     (el as any)._inputValue = "Continue";
 
     await (el as any)._sendMessage();
@@ -1097,6 +1211,7 @@ describe("IcChatConsole", () => {
       },
     ];
     (el as any)._activeSession = "conversation-a";
+    (el as any)._selectedAgent = "agent-a";
     (el as any)._inputValue = "Continue A";
 
     const send = (el as any)._sendMessage();
@@ -1111,6 +1226,56 @@ describe("IcChatConsole", () => {
     expect((el as any)._messages.map((message: { content: string }) => message.content))
       .toEqual(["existing-b"]);
     expect((el as any)._sending).toBe(false);
+  });
+
+  it("lets only the owning send request release pending state", async () => {
+    const replyA = deferred<Record<string, unknown>>();
+    const replyB = deferred<Record<string, unknown>>();
+    const rpc = createMockRpcClient();
+    (rpc.call as any).mockImplementation((method: string, params: Record<string, unknown>) => {
+      if (method === "session.send") {
+        return params.conversation_ref === "conversation-a" ? replyA.promise : replyB.promise;
+      }
+      if (method === "session.history") return Promise.resolve({ messages: [] });
+      if (method === "obs.context.pipeline") return Promise.resolve([]);
+      if (method === "session.list") return Promise.resolve({ sessions: [], total: 0 });
+      return Promise.resolve({});
+    });
+    const el = await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: rpc,
+      apiClient: createMockApiClient(),
+      eventDispatcher: createMockEventDispatcher(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    (el as any)._sessions = [
+      {
+        key: "conversation-a", tenantId: "tenant-a", agentId: "agent-a",
+        conversationRef: "conversation-a", channelType: "dm", messageCount: 0, lastActivity: 2,
+      },
+      {
+        key: "conversation-b", tenantId: "tenant-a", agentId: "agent-b",
+        conversationRef: "conversation-b", channelType: "dm", messageCount: 0, lastActivity: 1,
+      },
+    ];
+    (el as any)._selectedAgent = "agent-a";
+    (el as any)._activeSession = "conversation-a";
+    (el as any)._inputValue = "Message A";
+    const sendA = (el as any)._sendMessage();
+    await Promise.resolve();
+    (el as any)._selectSession("conversation-b");
+    (el as any)._inputValue = "Message B";
+    const sendB = (el as any)._sendMessage();
+    await Promise.resolve();
+
+    replyA.resolve({ response: "Reply A" });
+    await sendA;
+    expect((el as any)._sending).toBe(true);
+
+    replyB.resolve({ response: "Reply B" });
+    await sendB;
+    expect((el as any)._sending).toBe(false);
+    expect((el as any)._messages.map((message: { content: string }) => message.content))
+      .toEqual(["Message B", "Reply B"]);
   });
 
   it("user message appears optimistically in messages list after send", async () => {

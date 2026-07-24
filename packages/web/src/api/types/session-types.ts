@@ -6,11 +6,18 @@
  * data from the session management RPC endpoints.
  */
 
+import type { WebRpcMethodMap } from "../contracts.generated.js";
+
+export type SessionChannelEndpoint = NonNullable<
+  WebRpcMethodMap["session.list"]["result"]["sessions"][number]["endpoint"]
+>;
+
 /** Session info from session.status RPC */
 export interface SessionInfo {
   readonly key: string;
   readonly agentId: string;
   readonly channelType: string;
+  readonly endpoint?: SessionChannelEndpoint;
   readonly messageCount: number;
   readonly totalTokens: number;
   readonly inputTokens: number;
@@ -33,6 +40,7 @@ export interface SessionListItem {
   readonly conversationRef: string;
   readonly agentId: string;
   readonly kind: string;
+  readonly endpoint?: SessionChannelEndpoint;
   readonly messageCount: number;
   readonly totalTokens: number;
   readonly updatedAt: number;

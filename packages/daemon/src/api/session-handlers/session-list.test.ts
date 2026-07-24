@@ -9,7 +9,17 @@ function scope(agentId: string): ConversationScope {
   return {
     tenantId: "tenant_a",
     agentId,
-    partition: { kind: "principal", principalId: `principal-${agentId}` },
+    partition: {
+      kind: "endpoint-conversation-principal",
+      principalId: `principal-${agentId}`,
+      endpoint: {
+        channelType: "telegram",
+        channelInstanceId: `account-${agentId}`,
+        conversationId: `conversation-${agentId}`,
+        threadId: `thread-${agentId}`,
+        conversationKind: "direct",
+      },
+    },
   };
 }
 
@@ -61,13 +71,20 @@ function makeDeps(): SessionHandlerDeps {
 describe("session list explicit authority", () => {
   it("lists only sessions inside the requested tenant and agent scope", async () => {
     const handlers = bindSessionListHandlers(makeDeps());
+    const expectedScope = scope("agent_a");
     const result = await handlers["session.list"]!({ tenant_id: "tenant_a", agent_id: "agent_a" }) as {
-      sessions: Array<{ conversationRef: string; agentId: string }>;
+      sessions: Array<{ conversationRef: string; agentId: string; endpoint?: unknown }>;
       total: number;
     };
 
     expect(result.sessions).toEqual([
-      expect.objectContaining({ conversationRef: reference(scope("agent_a")), agentId: "agent_a" }),
+      expect.objectContaining({
+        conversationRef: reference(expectedScope),
+        agentId: "agent_a",
+        endpoint: expectedScope.partition.kind === "endpoint-conversation-principal"
+          ? expectedScope.partition.endpoint
+          : undefined,
+      }),
     ]);
     expect(result.total).toBe(1);
   });

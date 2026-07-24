@@ -2,7 +2,9 @@
 import type { ApiClient } from "../../api/api-client.js";
 import type { RpcClient } from "../../api/rpc-client.js";
 import {
+  listSessionsAcrossAgents,
   resolveSessionAuthorities,
+  type ScopedSessionListItem,
   type SessionTarget,
 } from "../../api/session-scope.js";
 import { stripSilentTokens, stripUserSystemContext } from "../../utils/message-content.js";
@@ -13,6 +15,18 @@ import type {
   ChatSessionInfo,
 } from "./session-data.js";
 import type { PipelineSnapshot } from "../../api/types/index.js";
+
+function toChatSession(session: ScopedSessionListItem): ChatSessionInfo {
+  return {
+    key: session.conversationRef,
+    agentId: session.agentId,
+    tenantId: session.tenantId,
+    conversationRef: session.conversationRef,
+    channelType: session.kind,
+    messageCount: session.messageCount,
+    lastActivity: session.updatedAt,
+  };
+}
 
 export async function loadChatSessions(
   rpcClient: RpcClient,
@@ -26,15 +40,38 @@ export async function loadChatSessions(
     agent_id: authority.agentId,
     kind: "dm",
   });
-  return result.sessions.map((session) => ({
-    key: session.conversationRef,
-    agentId: session.agentId,
+  return result.sessions.map((session) => toChatSession({
+    ...session,
     tenantId: authority.tenantId,
-    conversationRef: session.conversationRef,
-    channelType: session.kind,
-    messageCount: session.messageCount,
-    lastActivity: session.updatedAt,
   }));
+}
+
+export async function loadChatSessionSelection(
+  rpcClient: RpcClient,
+  selectedAgent: string,
+  conversationRef: string,
+): Promise<{
+  readonly selectedAgent: string;
+  readonly sessions: ChatSessionInfo[];
+  readonly routeResolved: boolean;
+}> {
+  if (!conversationRef) {
+    return {
+      selectedAgent,
+      sessions: await loadChatSessions(rpcClient, selectedAgent),
+      routeResolved: true,
+    };
+  }
+  const sessions = await listSessionsAcrossAgents(rpcClient, { kind: "dm" });
+  const routed = sessions.find((session) => session.conversationRef === conversationRef);
+  if (!routed) return { selectedAgent, sessions: [], routeResolved: false };
+  return {
+    selectedAgent: routed.agentId,
+    sessions: sessions
+      .filter((session) => session.tenantId === routed.tenantId && session.agentId === routed.agentId)
+      .map(toChatSession),
+    routeResolved: true,
+  };
 }
 
 export async function loadChatHistory(

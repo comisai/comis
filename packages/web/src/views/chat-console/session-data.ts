@@ -5,6 +5,7 @@ export {
   loadChatAgents,
   loadChatBudget,
   loadChatHistory,
+  loadChatSessionSelection,
   loadChatSessions,
   sendChatMessage,
 } from "./session-data-controller.js";
@@ -40,7 +41,7 @@ export interface ChatBudget {
 }
 
 export function createLocalChatSession(agentId: string, now: number): ChatSessionInfo {
-  const sessionKey = `web:${agentId}:${crypto.randomUUID()}`;
+  const sessionKey = `web:agent:${agentId}:${agentId}:${crypto.randomUUID()}`;
   return {
     key: sessionKey,
     sessionKey,

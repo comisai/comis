@@ -155,6 +155,23 @@ function readPriorTaskState(
   });
 }
 
+function syncTaskDirectory(
+  directoryPath: string,
+  ops: AtomicTaskPersistenceOps,
+): Result<void, Error> {
+  let directoryDescriptor: number | undefined;
+  const synced = tryCatch(() => {
+    directoryDescriptor = ops.open(directoryPath, "r");
+    ops.sync(directoryDescriptor);
+    ops.close(directoryDescriptor);
+    directoryDescriptor = undefined;
+  });
+  if (!synced.ok && directoryDescriptor !== undefined) {
+    tryCatch(() => ops.close(directoryDescriptor!));
+  }
+  return synced;
+}
+
 /**
  * Make a post-rename admission rejection invisible to startup recovery.
  *
@@ -163,23 +180,38 @@ function readPriorTaskState(
  * crash that preserves the directory entry cannot resurrect the rejected task.
  */
 function rollbackRejectedTaskState(
+  agentDir: string,
   filePath: string,
+  rollbackPath: string,
   priorState: string | undefined,
   ops: AtomicTaskPersistenceOps,
 ): Result<void, Error> {
   let rollbackDescriptor: number | undefined;
+  let renamed = false;
   const restored = tryCatch(() => {
-    rollbackDescriptor = ops.open(filePath, "w", 0o600);
+    rollbackDescriptor = ops.open(rollbackPath, "wx", 0o600);
     ops.write(rollbackDescriptor, priorState ?? "{}");
     ops.sync(rollbackDescriptor);
     ops.close(rollbackDescriptor);
     rollbackDescriptor = undefined;
-    if (priorState === undefined) ops.unlink(filePath);
+    ops.rename(rollbackPath, filePath);
+    renamed = true;
   });
   if (!restored.ok && rollbackDescriptor !== undefined) {
     tryCatch(() => ops.close(rollbackDescriptor!));
   }
-  return restored;
+  if (!restored.ok) {
+    if (!renamed) tryCatch(() => ops.unlink(rollbackPath));
+    return restored;
+  }
+
+  const replacementSynced = syncTaskDirectory(agentDir, ops);
+  if (!replacementSynced.ok) return replacementSynced;
+  if (priorState !== undefined) return ok(undefined);
+
+  const removed = tryCatch(() => ops.unlink(filePath));
+  if (!removed.ok) return removed;
+  return syncTaskDirectory(agentDir, ops);
 }
 
 export function persistTaskAtomically(
@@ -192,11 +224,11 @@ export function persistTaskAtomically(
   if (!ensured.ok) return err(ensured.error);
   const filePath = safePath(agentDir, `${task.id}.json`);
   const tempPath = safePath(agentDir, `.${task.id}.${randomUUID()}.tmp`);
+  const rollbackPath = safePath(agentDir, `.${task.id}.${randomUUID()}.rollback.tmp`);
   const priorState = readPriorTaskState(filePath, ops);
   if (!priorState.ok) return priorState;
   const state = toPersistedState(task);
   let fileDescriptor: number | undefined;
-  let directoryDescriptor: number | undefined;
   let renamed = false;
   let fsyncUnavailableError: Error | undefined;
   const written = tryCatch(() => {
@@ -216,9 +248,6 @@ export function persistTaskAtomically(
     if (fileDescriptor !== undefined) {
       tryCatch(() => ops.close(fileDescriptor!));
     }
-    if (directoryDescriptor !== undefined) {
-      tryCatch(() => ops.close(directoryDescriptor!));
-    }
     if (!renamed) {
       tryCatch(() => ops.unlink(tempPath));
     }
@@ -229,24 +258,23 @@ export function persistTaskAtomically(
   }
   let directorySyncError: Error | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const synced = tryCatch(() => {
-      directoryDescriptor = ops.open(agentDir, "r");
-      ops.sync(directoryDescriptor);
-      ops.close(directoryDescriptor);
-      directoryDescriptor = undefined;
-    });
+    const synced = syncTaskDirectory(agentDir, ops);
     if (synced.ok) return ok({ kind: "committed" });
     if (isPermissionModelFsyncUnavailable(synced.error)) {
       return ok({ kind: "committed_without_fsync", error: synced.error });
     }
     directorySyncError = synced.error;
-    if (directoryDescriptor !== undefined) {
-      tryCatch(() => ops.close(directoryDescriptor!));
-      directoryDescriptor = undefined;
-    }
   }
-  const rolledBack = rollbackRejectedTaskState(filePath, priorState.value, ops);
-  if (!rolledBack.ok) return rolledBack;
+  const rolledBack = rollbackRejectedTaskState(
+    agentDir,
+    filePath,
+    rollbackPath,
+    priorState.value,
+    ops,
+  );
+  if (!rolledBack.ok) {
+    return ok({ kind: "committed_durability_uncertain", error: rolledBack.error });
+  }
   return err(directorySyncError ?? new Error("Background task directory durability was not confirmed"));
 }
 

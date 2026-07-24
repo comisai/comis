@@ -10,7 +10,7 @@ import "./session-detail.js";
 import { createMockRpcClient } from "../test-support/mock-rpc-client.js";
 
 const testSession: SessionInfo = {
-  key: "default:user123:telegram",
+  key: "default:agent:mybot:user123:telegram",
   agentId: "mybot",
   channelType: "telegram",
   messageCount: 47,
@@ -36,7 +36,7 @@ const testMessages: SessionMessage[] = [
 const testPipelineSnapshots: PipelineSnapshot[] = [
   {
     agentId: "mybot",
-    sessionKey: "default:user123:telegram",
+    sessionKey: "default:agent:mybot:user123:telegram",
     tokensLoaded: 5000,
     tokensEvicted: 1000,
     tokensMasked: 200,

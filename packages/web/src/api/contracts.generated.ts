@@ -14013,14 +14013,31 @@ export const CONTRACTS = {
                   "type": "string",
                   "minLength": 1
                 },
+                "channelInstanceId": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "conversationId": {
                   "type": "string",
                   "minLength": 1
+                },
+                "threadId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "conversationKind": {
+                  "type": "string",
+                  "enum": [
+                    "direct",
+                    "shared"
+                  ]
                 }
               },
               "required": [
                 "channelType",
-                "conversationId"
+                "channelInstanceId",
+                "conversationId",
+                "conversationKind"
               ],
               "additionalProperties": false
             },
@@ -14169,6 +14186,41 @@ export const CONTRACTS = {
               },
               "kind": {
                 "type": "string"
+              },
+              "endpoint": {
+                "type": "object",
+                "properties": {
+                  "channelType": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "channelInstanceId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "conversationId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "threadId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "conversationKind": {
+                    "type": "string",
+                    "enum": [
+                      "direct",
+                      "shared"
+                    ]
+                  }
+                },
+                "required": [
+                  "channelType",
+                  "channelInstanceId",
+                  "conversationId",
+                  "conversationKind"
+                ],
+                "additionalProperties": false
               },
               "messageCount": {
                 "type": "number"

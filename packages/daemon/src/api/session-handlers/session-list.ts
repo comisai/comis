@@ -86,6 +86,12 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
           conversationRef: session.conversationRef,
           agentId: session.agentId,
           kind: sessionKind(session),
+          ...(
+            session.conversationScope.partition.kind === "endpoint-conversation"
+            || session.conversationScope.partition.kind === "endpoint-conversation-principal"
+              ? { endpoint: session.conversationScope.partition.endpoint }
+              : {}
+          ),
           messageCount: session.messageCount,
           totalTokens: session.messageCount * 500,
           updatedAt: session.updatedAt,

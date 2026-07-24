@@ -24,6 +24,7 @@ import {
   recoverTasks,
   removeTaskFile,
   TASK_DIR_NAME,
+  type AtomicTaskPersistenceOps,
 } from "./background-task-persistence.js";
 import type { BackgroundTaskOrigin, PersistedTaskState } from "./background-task-types.js";
 
@@ -42,6 +43,104 @@ function buildOrigin(overrides: Partial<BackgroundTaskOrigin> & { agentId?: stri
     backgroundHopCount: 0,
     ...Object.fromEntries(Object.entries(overrides).filter(([key]) => key !== "agentId")),
   };
+}
+
+type RollbackFailurePhase =
+  | "open"
+  | "write"
+  | "sync"
+  | "close"
+  | "rename"
+  | "replacement-directory-open"
+  | "replacement-directory-sync"
+  | "unlink"
+  | "removal-directory-open"
+  | "removal-directory-sync";
+
+function buildRollbackFaultOps(phase: RollbackFailurePhase): {
+  ops: AtomicTaskPersistenceOps;
+  opened: Array<{ path: string; flags: string }>;
+} {
+  const descriptorPaths = new Map<number, string>();
+  const opened: Array<{ path: string; flags: string }> = [];
+  let directorySyncCount = 0;
+  let directoryOpenCount = 0;
+  let rollbackOpenCount = 0;
+  let injected = false;
+  const shouldInject = (candidate: RollbackFailurePhase): boolean => {
+    if (injected || phase !== candidate) return false;
+    injected = true;
+    return true;
+  };
+  const isRollbackPath = (path: string): boolean => path.endsWith(".rollback.tmp");
+  const ops: AtomicTaskPersistenceOps = {
+    open: (path, flags, mode) => {
+      opened.push({ path, flags });
+      if (flags === "wx") {
+        rollbackOpenCount += 1;
+        if (rollbackOpenCount === 2 && shouldInject("open")) {
+          throw new Error("injected rollback open failure");
+        }
+      }
+      if (flags === "r") {
+        directoryOpenCount += 1;
+        if (directoryOpenCount === 3 && shouldInject("replacement-directory-open")) {
+          throw new Error("injected replacement directory open failure");
+        }
+        if (directoryOpenCount === 4 && shouldInject("removal-directory-open")) {
+          throw new Error("injected removal directory open failure");
+        }
+      }
+      const fd = openSync(path, flags, mode);
+      descriptorPaths.set(fd, path);
+      return fd;
+    },
+    write: (fd, content) => {
+      const path = descriptorPaths.get(fd) ?? "";
+      if (isRollbackPath(path) && shouldInject("write")) {
+        throw new Error("injected rollback write failure");
+      }
+      writeFileSync(fd, content);
+    },
+    sync: (fd) => {
+      const path = descriptorPaths.get(fd) ?? "";
+      if (isRollbackPath(path) && shouldInject("sync")) {
+        throw new Error("injected rollback sync failure");
+      }
+      if (!path.endsWith(".tmp") && !path.endsWith(".json")) {
+        directorySyncCount += 1;
+        if (directorySyncCount <= 2) throw new Error("injected admission directory sync failure");
+        if (directorySyncCount === 3 && shouldInject("replacement-directory-sync")) {
+          throw new Error("injected replacement directory sync failure");
+        }
+        if (directorySyncCount === 4 && shouldInject("removal-directory-sync")) {
+          throw new Error("injected removal directory sync failure");
+        }
+      }
+      fsyncSync(fd);
+    },
+    close: (fd) => {
+      const path = descriptorPaths.get(fd) ?? "";
+      if (isRollbackPath(path) && shouldInject("close")) {
+        throw new Error("injected rollback close failure");
+      }
+      descriptorPaths.delete(fd);
+      closeSync(fd);
+    },
+    rename: (from, to) => {
+      if (isRollbackPath(from) && shouldInject("rename")) {
+        throw new Error("injected rollback rename failure");
+      }
+      renameSync(from, to);
+    },
+    unlink: (path) => {
+      if (path.endsWith(".json") && shouldInject("unlink")) {
+        throw new Error("injected rollback unlink failure");
+      }
+      unlinkSync(path);
+    },
+  };
+  return { ops, opened };
 }
 
 describe("background-task-persistence", () => {
@@ -116,6 +215,7 @@ describe("background-task-persistence", () => {
       };
       persistTaskSync(dataDir, prior);
       const directoryDescriptors = new Set<number>();
+      let directorySyncCount = 0;
       const attempted = persistTaskAtomically(
         dataDir,
         { ...prior, dispatchState: "ready_to_deliver" },
@@ -127,7 +227,10 @@ describe("background-task-persistence", () => {
           },
           write: writeFileSync,
           sync: (fd) => {
-            if (directoryDescriptors.has(fd)) throw new Error("injected directory sync failure");
+            if (directoryDescriptors.has(fd)) {
+              directorySyncCount += 1;
+              if (directorySyncCount <= 2) throw new Error("injected directory sync failure");
+            }
             fsyncSync(fd);
           },
           close: closeSync,
@@ -153,6 +256,7 @@ describe("background-task-persistence", () => {
         dispatchState: "pending",
       };
       const directoryDescriptors = new Set<number>();
+      let directorySyncCount = 0;
       const attempted = persistTaskAtomically(
         dataDir,
         running,
@@ -164,7 +268,10 @@ describe("background-task-persistence", () => {
           },
           write: writeFileSync,
           sync: (fd) => {
-            if (directoryDescriptors.has(fd)) throw new Error("injected directory sync failure");
+            if (directoryDescriptors.has(fd)) {
+              directorySyncCount += 1;
+              if (directorySyncCount <= 2) throw new Error("injected directory sync failure");
+            }
             fsyncSync(fd);
           },
           close: (fd) => {
@@ -182,6 +289,79 @@ describe("background-task-persistence", () => {
         expect.objectContaining({ id: running.id }),
       );
     });
+
+    it.each([
+      "open",
+      "write",
+      "sync",
+      "close",
+      "rename",
+      "replacement-directory-open",
+      "replacement-directory-sync",
+    ] as const)(
+      "retains ownership authority when prior-record rollback %s fails",
+      (phase) => {
+        const prior: PersistedTaskState = {
+          id: "prior-rollback-task",
+          toolName: "exec_command",
+          status: "completed",
+          startedAt: 1,
+          completedAt: 2,
+          origin: buildOrigin({ agentId: "agent-a" }),
+          continuationExecutionId: "prior-rollback-task",
+          dispatchAttempts: 0,
+          dispatchState: "pending",
+        };
+        persistTaskSync(dataDir, prior);
+        const fault = buildRollbackFaultOps(phase);
+
+        const attempted = persistTaskAtomically(
+          dataDir,
+          { ...prior, status: "running", completedAt: undefined },
+          fault.ops,
+        );
+
+        expect(attempted.ok).toBe(true);
+        if (!attempted.ok) return;
+        expect(attempted.value.kind).toBe("committed_durability_uncertain");
+        expect(fault.opened).not.toContainEqual(expect.objectContaining({ flags: "w" }));
+      },
+    );
+
+    it.each([
+      "open",
+      "write",
+      "sync",
+      "close",
+      "rename",
+      "replacement-directory-open",
+      "replacement-directory-sync",
+      "unlink",
+      "removal-directory-open",
+      "removal-directory-sync",
+    ] as const)(
+      "retains ownership authority when new-record rollback %s fails",
+      (phase) => {
+        const running: PersistedTaskState = {
+          id: "new-rollback-task",
+          toolName: "exec_command",
+          status: "running",
+          startedAt: 1,
+          origin: buildOrigin({ agentId: "agent-a" }),
+          continuationExecutionId: "new-rollback-task",
+          dispatchAttempts: 0,
+          dispatchState: "pending",
+        };
+        const fault = buildRollbackFaultOps(phase);
+
+        const attempted = persistTaskAtomically(dataDir, running, fault.ops);
+
+        expect(attempted.ok).toBe(true);
+        if (!attempted.ok) return;
+        expect(attempted.value.kind).toBe("committed_durability_uncertain");
+        expect(fault.opened).not.toContainEqual(expect.objectContaining({ flags: "w" }));
+      },
+    );
 
     it("commits atomically when the Node permission model disables fsync", () => {
       const prior: PersistedTaskState = {
