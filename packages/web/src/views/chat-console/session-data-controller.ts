@@ -62,7 +62,7 @@ export async function loadChatSessionSelection(
       routeResolved: true,
     };
   }
-  const sessions = await listSessionsAcrossAgents(rpcClient, { kind: "dm" });
+  const sessions = await listSessionsAcrossAgents(rpcClient);
   const routed = sessions.find((session) => session.conversationRef === conversationRef);
   if (!routed) return { selectedAgent, sessions: [], routeResolved: false };
   return {

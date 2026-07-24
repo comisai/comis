@@ -427,7 +427,11 @@ export class IcMessageCenter extends LitElement {
   }
 
   private _captureActionContext(): MessageActionContext | null {
-    if (!this.rpcClient || !this._effectiveChannel) return null;
+    if (
+      !this.rpcClient
+      || !this._effectiveChannel
+      || this._selectedEndpointIsAmbiguous()
+    ) return null;
     return {
       revision: this._actionContextRevision,
       rpcClient: this.rpcClient,
@@ -628,10 +632,7 @@ export class IcMessageCenter extends LitElement {
   // Chat picker data
   // -------------------------------------------------------------------------
 
-  /**
-   * Load available chat IDs for the current channel type from obs.channels.all
-   * (channel activity tracker) which tracks actual chat IDs the bot has interacted with.
-   */
+  /** Load endpoint-authoritative chats for the current channel type. */
   private async _loadChats(
     revision = this._channelRevision,
     channel = this._effectiveChannel,
@@ -650,9 +651,7 @@ export class IcMessageCenter extends LitElement {
             lastActiveAt: number;
           }>;
         }>("obs.channels.all"),
-        this._capabilities?.fetchHistory
-          ? Promise.resolve([])
-          : listSessionsAcrossAgents(rpcClient),
+        listSessionsAcrossAgents(rpcClient),
       ]);
       if (!this._isCurrentChannel(revision, channel)) return;
       const channels = obsOutcome.status === "fulfilled"
@@ -677,24 +676,19 @@ export class IcMessageCenter extends LitElement {
           const qualifiers = [endpoint.channelInstanceId, endpoint.threadId]
             .filter((value): value is string => value !== undefined)
             .join(" / ");
+          const activityLabel = chatMap.get(endpoint.conversationId);
           endpointChats.set(key, {
             key,
             chatId: endpoint.conversationId,
             label: qualifiers
               ? `${endpoint.conversationId} (${qualifiers})`
-              : endpoint.conversationId,
+              : activityLabel ?? endpoint.conversationId,
             endpoint,
           });
         }
       }
 
-      this._chatList = endpointChats.size > 0
-        ? [...endpointChats.values()]
-        : Array.from(chatMap.entries()).map(([chatId, label]) => ({
-            key: chatId,
-            chatId,
-            label,
-          }));
+      this._chatList = [...endpointChats.values()];
 
       if (
         this._chatList.length > 0
@@ -727,8 +721,14 @@ export class IcMessageCenter extends LitElement {
     if (!this.rpcClient || !channel) return;
     const rpcClient = this.rpcClient;
 
-    // Path 1: Platform supports native fetchHistory - use message.fetch as before
+    // Path 1: Native history is safe only when the endpoint coordinate is unambiguous.
     if (this._capabilities?.fetchHistory) {
+      if (this._selectedEndpointIsAmbiguous()) {
+        this._messages = [];
+        this._messagesAreActionable = false;
+        this._selectedMessageId = "";
+        return;
+      }
       try {
         const fetchResult = await this.rpcClient.call<{
           messages: FetchedMessage[];
@@ -829,6 +829,20 @@ export class IcMessageCenter extends LitElement {
       ?? this._selectedChatId;
   }
 
+  private _selectedEndpointIsAmbiguous(): boolean {
+    const selected = this._chatList.find(
+      (chat) => (chat.key ?? chat.chatId) === this._selectedChatId,
+    );
+    const selectedEndpoint = selected?.endpoint;
+    if (!selectedEndpoint) return false;
+    return this._chatList.some((chat) =>
+      chat.endpoint !== undefined
+      && chat.endpoint.channelType === selectedEndpoint.channelType
+      && chat.endpoint.conversationId === selectedEndpoint.conversationId
+      && !endpointsEqual(chat.endpoint, selectedEndpoint)
+    );
+  }
+
   // -------------------------------------------------------------------------
   // Actions
   // -------------------------------------------------------------------------
@@ -858,7 +872,11 @@ export class IcMessageCenter extends LitElement {
   }
 
   private _handleSendClick(): void {
-    if (this._mutationPending || !this._sendText.trim()) return;
+    if (
+      this._mutationPending
+      || this._selectedEndpointIsAmbiguous()
+      || !this._sendText.trim()
+    ) return;
     this._showSendConfirm = true;
   }
 
@@ -1522,6 +1540,7 @@ export class IcMessageCenter extends LitElement {
 
   private _renderSendForm() {
     const attachSupported = this._capabilities?.attachments === true;
+    const endpointAmbiguous = this._selectedEndpointIsAmbiguous();
 
     return html`
       <div class="section">
@@ -1533,13 +1552,13 @@ export class IcMessageCenter extends LitElement {
             .value=${this._sendText}
             @input=${(e: InputEvent) => { this._sendText = (e.target as HTMLTextAreaElement).value; }}
             @keydown=${this._handleKeydown}
-            ?disabled=${this._mutationPending}
+            ?disabled=${this._mutationPending || endpointAmbiguous}
             rows="2"
           ></textarea>
           <button
             class="btn btn-primary"
             @click=${this._handleSendClick}
-            ?disabled=${this._mutationPending || !this._sendText.trim()}
+            ?disabled=${this._mutationPending || endpointAmbiguous || !this._sendText.trim()}
           >
             ${this._actionPending ? "Sending..." : "Send"}
           </button>
@@ -1548,7 +1567,7 @@ export class IcMessageCenter extends LitElement {
               <button
                 class="btn-sm btn-sm-ghost"
                 @click=${this._toggleAttachForm}
-                ?disabled=${this._mutationPending}
+                ?disabled=${this._mutationPending || endpointAmbiguous}
                 title="Attach File"
               >
                 ${this._showAttachForm ? "Close Attach" : "Attach File"}
@@ -1626,6 +1645,7 @@ export class IcMessageCenter extends LitElement {
     if (!groups) return nothing;
 
     const platformLabel = this._effectiveChannel.charAt(0).toUpperCase() + this._effectiveChannel.slice(1);
+    const endpointAmbiguous = this._selectedEndpointIsAmbiguous();
 
     return html`
       <div class="platform-actions">
@@ -1648,13 +1668,13 @@ export class IcMessageCenter extends LitElement {
                     placeholder=${action.needsInput}
                     .value=${this._actionInputs[inputKey] ?? ""}
                     @input=${(e: InputEvent) => this._handleActionInputChange(inputKey, (e.target as HTMLInputElement).value)}
-                    ?disabled=${this._mutationPending}
+                    ?disabled=${this._mutationPending || endpointAmbiguous}
                   />
                 ` : nothing}
                 <button
                   class="btn-sm btn-sm-ghost"
                   @click=${() => void this._handlePlatformAction(action)}
-                  ?disabled=${this._mutationPending || needsMessageAndMissing}
+                  ?disabled=${this._mutationPending || endpointAmbiguous || needsMessageAndMissing}
                   title=${needsMessageAndMissing ? "Select a message first" : action.label}
                 >
                   ${action.label}

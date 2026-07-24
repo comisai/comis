@@ -260,6 +260,7 @@ export class IcChatConsole extends LitElement {
   @state() private _budgetSegments: Array<{ label: string; tokens: number; color: string }> = [];
   @state() private _budgetTotal = 0;
   private _sessionLoadRevision = 0;
+  private _sessionListLoadingRevision: number | undefined;
   private _activeSessionRevision = 0;
   private _historyRequestRevision = 0;
   private _budgetRequestRevision = 0;
@@ -361,7 +362,12 @@ export class IcChatConsole extends LitElement {
     this._onDocEvent("message:received", appendIfActive);
     this._onDocEvent("message:sent", appendIfActive);
     this._onDocEvent("session:created", (data) => {
+      const invalidatedRevision = this._sessionLoadRevision;
       this._sessionLoadRevision += 1;
+      if (this._sessionListLoadingRevision === invalidatedRevision) {
+        this._sessionListLoadingRevision = undefined;
+        this._loading = false;
+      }
       const session: ChatSessionInfo = {
         key: String(data.sessionKey ?? ""),
         agentId: String(data.agentId ?? "unknown"),
@@ -483,6 +489,7 @@ export class IcChatConsole extends LitElement {
 
   private async _loadSessions(): Promise<void> {
     if (!this.rpcClient) {
+      this._sessionListLoadingRevision = undefined;
       this._loading = false;
       return;
     }
@@ -493,6 +500,7 @@ export class IcChatConsole extends LitElement {
       selectedAgent: this._selectedAgent,
       conversationRef: this.conversationRef,
     };
+    this._sessionListLoadingRevision = request.revision;
     this._loading = true;
     try {
       const selection = await loadChatSessionSelection(
@@ -503,6 +511,7 @@ export class IcChatConsole extends LitElement {
       if (!this._isCurrentSessionListRequest(request)) return;
       this._selectedAgent = selection.selectedAgent;
       this._sessions = selection.sessions;
+      this._sessionListLoadingRevision = undefined;
       this._loading = false;
       if (request.conversationRef && selection.routeResolved) {
         const match = this._sessions.find((session) => session.key === request.conversationRef);
@@ -514,6 +523,7 @@ export class IcChatConsole extends LitElement {
     } catch {
       if (!this._isCurrentSessionListRequest(request)) return;
       this._sessions = [];
+      this._sessionListLoadingRevision = undefined;
       this._loading = false;
     }
   }
@@ -537,6 +547,7 @@ export class IcChatConsole extends LitElement {
       selectedAgent: this._selectedAgent,
       target,
     };
+    this._sessionListLoadingRevision = undefined;
     this._loading = true;
     try {
       const result = await loadChatHistory(request.rpcClient, request.target);
@@ -605,6 +616,7 @@ export class IcChatConsole extends LitElement {
 
   private _activateSession(key: string): void {
     this._activeSessionRevision += 1;
+    this._sessionListLoadingRevision = undefined;
     this._activeSession = key;
     this._messages = [];
     this._budgetSegments = [];
