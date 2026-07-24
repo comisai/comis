@@ -38,30 +38,30 @@ export function buildAnnouncementMessage(params: {
     budget_exceeded: { label: "Halted (budget exceeded)", verb: "halted (budget exceeded)" },
     error: { label: "Halted (error)", verb: "halted (error)" },
   };
+  const mapped = params.finishReason ? finishReasonMap[params.finishReason] : undefined;
+  let terminalLabel = mapped?.label;
+  let terminalVerb = mapped?.verb;
+  if (params.finishReason === "error" && params.errorContext) {
+    const retryHint = params.errorContext.retryable ? ", retryable" : "";
+    const toolHint = params.errorContext.failingTool ? ` on ${params.errorContext.failingTool}` : "";
+    terminalLabel = `Halted (${params.errorContext.errorType}${toolHint}${retryHint})`;
+    terminalVerb = `halted (${params.errorContext.errorType.toLowerCase()})`;
+  }
 
   let statusLabel: string;
   let announcementVerb: string;
   if (params.status === "failed") {
-    statusLabel = "Failed";
-    announcementVerb = "failed";
+    statusLabel = terminalLabel ? `Failed — ${terminalLabel}` : "Failed";
+    announcementVerb = terminalVerb ?? "failed";
+  } else if (terminalLabel && terminalVerb) {
+    statusLabel = terminalLabel;
+    announcementVerb = terminalVerb;
+  } else if (params.finishReason && params.finishReason !== "stop" && params.finishReason !== "end_turn") {
+    statusLabel = `Completed (${params.finishReason})`;
+    announcementVerb = "completed with warnings";
   } else {
-    const mapped = params.finishReason ? finishReasonMap[params.finishReason] : undefined;
-    if (mapped) {
-      statusLabel = mapped.label;
-      announcementVerb = mapped.verb;
-      if (params.finishReason === "error" && params.errorContext) {
-        const retryHint = params.errorContext.retryable ? ", retryable" : "";
-        const toolHint = params.errorContext.failingTool ? ` on ${params.errorContext.failingTool}` : "";
-        statusLabel = `Halted (${params.errorContext.errorType}${toolHint}${retryHint})`;
-        announcementVerb = `halted (${params.errorContext.errorType.toLowerCase()})`;
-      }
-    } else if (params.finishReason && params.finishReason !== "stop" && params.finishReason !== "end_turn") {
-      statusLabel = `Completed (${params.finishReason})`;
-      announcementVerb = "completed with warnings";
-    } else {
-      statusLabel = "Success";
-      announcementVerb = "completed";
-    }
+    statusLabel = "Success";
+    announcementVerb = "completed";
   }
 
   const resultText = params.status === "completed"
