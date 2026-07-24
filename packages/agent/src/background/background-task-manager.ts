@@ -140,6 +140,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
   const tasks = new Map<string, BackgroundTask>();
   const terminalSignals = new Map<string, { promise: Promise<void>; resolve: () => void }>();
   const dispatchRetryTimers = new Map<string, TimerHandle>();
+  const dispatchRetryDeferrals = new Map<string, number>();
   const terminalRetryTimers = new Map<string, TimerHandle>();
   const stateRetryTimers = new Map<string, TimerHandle>();
   const perAgentCount = new Map<string, number>();
@@ -158,6 +159,12 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
   const resolveMaxBackgroundDurationMs = typeof maxBackgroundDurationMs === "function"
     ? maxBackgroundDurationMs
     : () => maxBackgroundDurationMs;
+
+  function clearDispatchRetry(taskId: string): void {
+    dispatchRetryTimers.get(taskId)?.cancel();
+    dispatchRetryTimers.delete(taskId);
+    dispatchRetryDeferrals.delete(taskId);
+  }
 
   function reportPersistenceOutcome(
     task: BackgroundTask,
@@ -256,6 +263,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     terminalSignals.get(task.id)?.resolve();
     task._hardTimeoutTimer?.cancel();
     decrementCounters(task);
+    if (isClosedBackgroundTask(task)) clearDispatchRetry(task.id);
     recoveryController.resolveTask(task);
     reportPersistenceOutcome(task, persisted.value);
     return ok(undefined);
@@ -610,6 +618,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       if (!persisted.ok) return persisted;
       task.dispatchState = next;
       task.dispatchAttempts = dispatchAttempts;
+      if (isClosedBackgroundTask(task)) clearDispatchRetry(taskId);
       reportPersistenceOutcome(task, persisted.value);
       recoveryController.resolveTask(task);
       return ok(true);
@@ -721,7 +730,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         )
         || dispatchRetryTimers.has(taskId)
       ) return;
-      const delayMs = Math.min(60_000, 1_000 * (2 ** Math.min(task.dispatchAttempts, 6)));
+      const deferrals = dispatchRetryDeferrals.get(taskId) ?? 0;
+      const delayMs = Math.min(60_000, 1_000 * (2 ** Math.min(deferrals, 6)));
+      dispatchRetryDeferrals.set(taskId, deferrals + 1);
       const retry = timers.setTimeout(() => {
         dispatchRetryTimers.delete(taskId);
         const current = tasks.get(taskId);
@@ -818,8 +829,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         if (isClosedBackgroundTask(task) && (task.completedAt ?? task.startedAt) < cutoff) {
           tasks.delete(taskId);
           terminalSignals.delete(taskId);
-          dispatchRetryTimers.get(taskId)?.cancel();
-          dispatchRetryTimers.delete(taskId);
+          clearDispatchRetry(taskId);
           terminalRetryTimers.get(taskId)?.cancel();
           terminalRetryTimers.delete(taskId);
           stateRetryTimers.get(taskId)?.cancel();
