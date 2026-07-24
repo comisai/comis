@@ -11,12 +11,13 @@ The Chat Console lets you talk to your agents directly from the browser. You can
 ## Routes
 
 - `/chat` -- opens the console without a selected session
-- `/chat/:sessionKey` -- opens directly to a specific session (e.g., `chat/web:default:abc-123`)
+- `/chat/:conversationRef` -- opens directly to the stored conversation identified by its opaque conversation reference
 
 ## Backing API
 
-- `POST /api/chat` -- sends a new message; body is JSON `{ message, agentId?, sessionKey?, locale? }` (`locale` is a canonical BCP-47 tag; see the [HTTP gateway reference](/reference/http-gateway))
-- `GET /api/chat/history` -- loads message history for a session
+- `POST /api/chat` -- sends messages for console-created web conversations; body is JSON `{ message, agentId?, sessionKey?, locale? }` (`locale` is a canonical BCP-47 tag; see the [HTTP gateway reference](/reference/http-gateway))
+- `session.list` and `session.history` -- resolve and load stored conversations through explicit tenant, agent, and conversation-reference authority
+- `session.send` -- continues a selected stored conversation through the same scoped authority
 - SSE events on the dashboard's event stream drive the streaming response (token-by-token append, tool call status updates, completion)
 
 All requests carry the gateway token as a `Bearer` header (read from `sessionStorage.comis_token`).
@@ -27,12 +28,12 @@ The Chat Console is split into two main areas side by side.
 
 ### Session Sidebar
 
-On the left, the session sidebar lists all of your conversations. Each session shows the session key, the agent and channel it belongs to, and the last time it was active.
+On the left, the session sidebar lists all of your conversations. Each session shows its opaque conversation reference, the agent and channel it belongs to, and the last time it was active.
 
 At the top of the sidebar you will find:
 
 - A **New Session** button (labelled "New") that creates a fresh session for the agent currently selected in the message area
-- A **search bar** ("Filter sessions...") that filters the visible session list by session key, agent ID, or channel type as you type
+- A **search bar** ("Filter sessions...") that filters the visible session list by conversation reference, agent ID, or channel type as you type
 
 Click any session in the list to load its conversation in the message area.
 
@@ -49,7 +50,7 @@ On the right, the message area shows the full conversation history for the selec
 - **System messages** appear centered with a distinct style
 - **Error messages** are highlighted in red so they stand out
 
-At the top of the message area, a header bar shows the session key, the agent handling the conversation, and the channel type.
+At the top of the message area, a header bar shows the conversation reference, the agent handling the conversation, and the channel type.
 
 ### Tool Call Cards
 
@@ -81,14 +82,14 @@ At the bottom of the screen, a text input lets you type messages to your agent. 
 </Steps>
 
 <Tip>
-The chat console always uses the `web` channel for sessions it creates. To converse with an agent over a real platform (Telegram, Discord, etc.), send a message from that platform — the daemon will create the session there.
+The chat console uses the `web` channel for sessions it creates. Selecting an existing platform conversation resumes only that authorized stored target; its human-readable session key is never reused as transport identity.
 </Tip>
 
 ## During a Conversation
 
 Once you send a message, the agent starts working on a response. Here is what to expect:
 
-- **Live streaming** -- The agent's response appears word by word as it is generated, so you do not have to wait for the entire reply before you start reading.
+- **Live streaming** -- Responses for console-created web conversations appear word by word. A stored-conversation continuation appears after its scoped session request completes.
 - **Formatted responses** -- Agent messages render with full formatting support including bold text, bullet lists, code blocks, and links.
 - **Tool activity** -- If the agent calls tools during its response, you will see tool call cards appear in the conversation stream. These show what the agent is doing behind the scenes.
 - **Errors** -- If something goes wrong during the response, an error message appears in red with details about what happened.

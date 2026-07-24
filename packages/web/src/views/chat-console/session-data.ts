@@ -6,6 +6,7 @@ export {
   loadChatBudget,
   loadChatHistory,
   loadChatSessions,
+  sendChatMessage,
 } from "./session-data-controller.js";
 
 export interface ChatSessionInfo {
@@ -67,7 +68,7 @@ export function resolveTransportSessionKey(
   activeSession: string,
 ): string {
   const session = sessions.find((candidate) => candidate.key === activeSession);
-  return session?.sessionKey ?? (session?.conversationRef ? "" : activeSession);
+  return session?.sessionKey ?? "";
 }
 
 export function resolveActiveSessionTarget(

@@ -39,7 +39,7 @@ export async function loadChatSessions(
 export async function loadChatHistory(
   rpcClient: RpcClient,
   target: SessionTarget,
-): Promise<{ sessionKey: string; messages: ChatHistoryMessage[] }> {
+): Promise<{ messages: ChatHistoryMessage[] }> {
   const result = await rpcClient.call("session.history", {
     tenant_id: target.tenantId,
     agent_id: target.agentId,
@@ -62,7 +62,22 @@ export async function loadChatHistory(
       timestamp: message.timestamp,
     }))
     .filter((message) => message.content !== "" || message.role !== "assistant");
-  return { sessionKey: result.session.key, messages };
+  return { messages };
+}
+
+export async function sendChatMessage(
+  rpcClient: RpcClient,
+  target: SessionTarget,
+  text: string,
+): Promise<string> {
+  const result = await rpcClient.call("session.send", {
+    tenant_id: target.tenantId,
+    agent_id: target.agentId,
+    conversation_ref: target.conversationRef,
+    text,
+    mode: "wait",
+  });
+  return typeof result["response"] === "string" ? result["response"] : "";
 }
 
 export async function loadChatAgents(apiClient: ApiClient): Promise<ChatAgentOption[]> {
