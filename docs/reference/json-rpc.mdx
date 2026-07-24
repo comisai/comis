@@ -1133,7 +1133,7 @@ Retrieve the conversation history for a session. Returns the raw message array s
 |----------|-------|
 | **Scope** | `rpc` |
 | **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string, offset?: number, limit?: number }` |
-| **Returns** | `{ session: { key, agentId, channelType, messageCount, totalTokens, inputTokens, outputTokens, toolCalls, compactions, resetCount, createdAt, lastActiveAt, label? }, messages: Array<{ role, content, timestamp, deliveryStatus? }>, total, offset, limit, hasMore }` |
+| **Returns** | `{ session: { key, agentId, channelType, endpoint?, messageCount, totalTokens, inputTokens, outputTokens, toolCalls, compactions, resetCount, createdAt, lastActiveAt, label? }, messages: Array<{ role, content, timestamp, deliveryStatus? }>, total, offset, limit, hasMore }`; `endpoint` is the authoritative `{ channelType, conversationId }` lookup identity when the session is endpoint-bound. |
 
 ### `session.list`
 

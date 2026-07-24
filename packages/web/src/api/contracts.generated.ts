@@ -14006,6 +14006,24 @@ export const CONTRACTS = {
             "channelType": {
               "type": "string"
             },
+            "endpoint": {
+              "type": "object",
+              "properties": {
+                "channelType": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "conversationId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "channelType",
+                "conversationId"
+              ],
+              "additionalProperties": false
+            },
             "messageCount": {
               "type": "number"
             },

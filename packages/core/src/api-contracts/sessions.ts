@@ -13,6 +13,7 @@
  * @module
  */
 import { z } from "zod";
+import { ChannelEndpointSchema } from "../domain/conversation-scope.js";
 import {
   SubagentFailureCompletionSchema,
   SubagentRunTelemetrySchema,
@@ -206,6 +207,10 @@ export const SessionHistoryContract = defineContract({
       key: z.string(),
       agentId: z.string(),
       channelType: z.string(),
+      endpoint: ChannelEndpointSchema.pick({
+        channelType: true,
+        conversationId: true,
+      }).optional(),
       messageCount: z.number(),
       totalTokens: z.number(),
       inputTokens: z.number(),

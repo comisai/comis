@@ -3,7 +3,6 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import { listSessionsAcrossAgents } from "../api/session-scope.js";
-import { parseSessionKeyString } from "../utils/session-key-parser.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import type { ConnectionStatus, FetchedMessage, PlatformCapabilities } from "../api/types/index.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
@@ -689,8 +688,10 @@ export class IcMessageCenter extends LitElement {
       const matching = chatId
         ? probed.flatMap((outcome) => {
           if (outcome.status !== "fulfilled") return [];
-          const parsed = parseSessionKeyString(outcome.value.history.session.key);
-          return parsed?.channelId === chatId ? [outcome.value] : [];
+          const endpoint = outcome.value.history.session.endpoint;
+          return endpoint?.channelType === channel && endpoint.conversationId === chatId
+            ? [outcome.value]
+            : [];
         })
         : [];
 

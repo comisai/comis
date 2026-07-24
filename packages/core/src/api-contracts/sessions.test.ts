@@ -302,9 +302,7 @@ describe("SessionHistoryContract", () => {
         channelType: "dm",
         endpoint: {
           channelType: "telegram",
-          channelInstanceId: "telegram-account",
           conversationId: "chat-a",
-          conversationKind: "direct",
         },
         messageCount: 4,
         totalTokens: 1234,
@@ -327,9 +325,7 @@ describe("SessionHistoryContract", () => {
     });
     expect(parsed.session.endpoint).toEqual({
       channelType: "telegram",
-      channelInstanceId: "telegram-account",
       conversationId: "chat-a",
-      conversationKind: "direct",
     });
   });
 

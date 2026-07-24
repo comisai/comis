@@ -316,9 +316,7 @@ describe("IcMessageCenter", () => {
               channelType: "dm",
               endpoint: {
                 channelType: "telegram",
-                channelInstanceId: "telegram-account",
                 conversationId: "chat-1",
-                conversationKind: "direct",
               },
               messageCount: 1,
               totalTokens: 2,

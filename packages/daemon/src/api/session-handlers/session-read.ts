@@ -306,6 +306,15 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
         key: sessionKey,
         agentId,
         channelType,
+        ...(partition.kind === "endpoint-conversation"
+          || partition.kind === "endpoint-conversation-principal"
+          ? {
+              endpoint: {
+                channelType: partition.endpoint.channelType,
+                conversationId: partition.endpoint.conversationId,
+              },
+            }
+          : {}),
         messageCount: sourceMessages.length,
         totalTokens,
         inputTokens,

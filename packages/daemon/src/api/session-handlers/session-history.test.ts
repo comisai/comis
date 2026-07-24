@@ -557,9 +557,7 @@ describe("session.history LCD transcript recovery", () => {
       lastActiveAt: updatedAt,
       endpoint: {
         channelType: "telegram",
-        channelInstanceId: "telegram-account",
         conversationId: "chan-A",
-        conversationKind: "direct",
       },
     });
     expect(deps.logger.info).toHaveBeenCalledWith(
