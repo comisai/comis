@@ -579,6 +579,7 @@ function runJailedChild(
           {
             runId: ctx.runId,
             errorKind: "internal" as const,
+            hint: "Inspect stderrTail, correct the jailed script or referenced capability/tool name, then retry the orchestrate call.",
             exitCode: code,
             stderrTail: tail ? tail.slice(-512) : undefined,
           },
