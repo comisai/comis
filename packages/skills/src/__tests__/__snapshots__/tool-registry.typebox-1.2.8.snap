@@ -3374,6 +3374,10 @@
     "category": "session",
     "schema": {
       "properties": {
+        "agent_id": {
+          "description": "Agent that owns the sessions",
+          "type": "string"
+        },
         "limit": {
           "description": "Maximum results to return (default: 10, max: 30)",
           "maximum": 30,
@@ -3391,8 +3395,16 @@
         "summarize": {
           "description": "Summarize matched sessions using LLM (default: true when query provided)",
           "type": "boolean"
+        },
+        "tenant_id": {
+          "description": "Tenant that owns the sessions",
+          "type": "string"
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "type": "object"
     },
     "conditional": false
@@ -3401,12 +3413,7 @@
     "name": "session_status",
     "category": "session",
     "schema": {
-      "properties": {
-        "model": {
-          "description": "Optional model override for this session",
-          "type": "string"
-        }
-      },
+      "properties": {},
       "type": "object"
     },
     "conditional": false
@@ -3451,6 +3458,10 @@
     "category": "session",
     "schema": {
       "properties": {
+        "agent_id": {
+          "description": "Agent that owns the sessions",
+          "type": "string"
+        },
         "kind": {
           "anyOf": [
             {
@@ -3475,8 +3486,16 @@
         "since_minutes": {
           "description": "Only sessions active within N minutes",
           "type": "integer"
+        },
+        "tenant_id": {
+          "description": "Tenant that owns the sessions",
+          "type": "string"
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "type": "object"
     },
     "conditional": false
@@ -3507,17 +3526,28 @@
           ],
           "description": "Session management action. Valid values: delete (archive and remove session), reset (clear messages, keep identity), export (download transcript as JSON), compact (reduce token usage)"
         },
+        "agent_id": {
+          "description": "Agent that owns the target conversation",
+          "type": "string"
+        },
+        "conversation_ref": {
+          "description": "Opaque durable reference of the target conversation",
+          "type": "string"
+        },
         "instructions": {
           "description": "Optional instructions for compaction guidance (only used with compact action)",
           "type": "string"
         },
-        "session_key": {
-          "description": "The formatted session key (e.g., tenant:user:channel). For the COMPACT action you may OMIT this (or pass \"self\") to compact YOUR OWN current session — you do not need to construct or guess your session key. delete/reset/export still require an explicit key.",
+        "tenant_id": {
+          "description": "Tenant that owns the target conversation",
           "type": "string"
         }
       },
       "required": [
-        "action"
+        "action",
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
       ],
       "type": "object"
     },

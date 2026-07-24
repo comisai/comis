@@ -58,6 +58,41 @@ const testPipelineSnapshots: PipelineSnapshot[] = [
   },
 ];
 
+const conversationRef = "conversation-a";
+const sessionTarget = {
+  tenantId: "tenant-a",
+  agentId: "mybot",
+  conversationRef,
+} as const;
+
+function createSessionRpcClient(
+  fallback?: (method: string, params: Record<string, unknown>) => unknown,
+): RpcClient {
+  return createMockRpcClient(undefined, {
+    call: vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (method === "config.read") {
+        return { config: { tenantId: sessionTarget.tenantId }, sections: [] };
+      }
+      if (method === "agents.list") return { agents: [sessionTarget.agentId] };
+      if (method === "session.list") {
+        return {
+          sessions: [{
+            conversationRef,
+            agentId: sessionTarget.agentId,
+            kind: "dm",
+            messageCount: testSession.messageCount,
+            totalTokens: testSession.totalTokens,
+            updatedAt: testSession.lastActiveAt,
+            createdAt: testSession.createdAt,
+          }],
+          total: 1,
+        };
+      }
+      return fallback?.(method, params) ?? {};
+    }) as RpcClient["call"],
+  });
+}
+
 function createMockApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     getAgents: vi.fn().mockResolvedValue([]),
@@ -92,6 +127,9 @@ async function createElement<T extends HTMLElement>(
   const el = document.createElement(tag) as T;
   if (props) {
     Object.assign(el, props);
+    if (tag === "ic-session-detail" && props["apiClient"] && props["conversationRef"] && !props["rpcClient"]) {
+      Object.assign(el, { rpcClient: createSessionRpcClient() });
+    }
   }
   document.body.appendChild(el);
   await (el as any).updateComplete;
@@ -108,48 +146,45 @@ describe("IcSessionDetail", () => {
     expect(el.shadowRoot).toBeTruthy();
   });
 
-  it("loads session detail on mount when apiClient and sessionKey set", async () => {
+  it("loads session detail on mount when the scoped target resolves", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
-    expect(api.getSessionDetail).toHaveBeenCalledWith("default:user123:telegram");
+    expect(api.getSessionDetail).toHaveBeenCalledWith(sessionTarget);
   });
 
-  it("has an incident drill control that navigates to the Incident view keyed on the sessionKey", async () => {
+  it("has an incident drill control keyed on the formatted session key", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
 
-    // Find the drill control (a button surfacing the incident drill).
     const drill = Array.from(el.shadowRoot?.querySelectorAll("button") ?? []).find((b) =>
       (b.textContent ?? "").toLowerCase().includes("incident"),
     );
     expect(drill).toBeTruthy();
 
-    // Clicking it navigates to the incident route carrying a valid obs.explain
-    // ref (the sessionKey), so the drill-down resolves to a real IncidentReport.
     window.location.hash = "#/sessions/default:user123:telegram";
     drill!.click();
     await el.updateComplete;
 
     expect(window.location.hash).toContain("observe/incident");
     expect(window.location.hash).toContain("ref=");
-    expect(decodeURIComponent(window.location.hash)).toContain("default:user123:telegram");
+    expect(decodeURIComponent(window.location.hash)).toContain(testSession.key);
   });
 
   it("renders three tab buttons (Conversation, Context State, Metrics)", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -166,7 +201,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -182,7 +217,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -199,7 +234,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -215,7 +250,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -230,7 +265,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -245,7 +280,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -256,14 +291,12 @@ describe("IcSessionDetail", () => {
   });
 
   it("clicking Context State tab triggers _loadContextData", async () => {
-    const rpc = createMockRpcClient(undefined, {
-      call: vi.fn().mockResolvedValue(testPipelineSnapshots),
-    });
+    const rpc = createSessionRpcClient(() => testPipelineSnapshots);
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
       rpcClient: rpc,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -281,18 +314,16 @@ describe("IcSessionDetail", () => {
   });
 
   it("budget segment bar renders in Context State tab with pipeline data", async () => {
-    const rpc = createMockRpcClient(undefined, {
-      call: vi.fn().mockImplementation((method: string) => {
+    const rpc = createSessionRpcClient((method: string) => {
         if (method === "obs.context.pipeline") return Promise.resolve(testPipelineSnapshots);
         if (method === "obs.context.dag") return Promise.resolve([]);
         return Promise.resolve([]);
-      }),
     });
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
       rpcClient: rpc,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -309,18 +340,16 @@ describe("IcSessionDetail", () => {
   });
 
   it("layer waterfall renders when pipeline snapshot selected", async () => {
-    const rpc = createMockRpcClient(undefined, {
-      call: vi.fn().mockImplementation((method: string) => {
+    const rpc = createSessionRpcClient((method: string) => {
         if (method === "obs.context.pipeline") return Promise.resolve(testPipelineSnapshots);
         if (method === "obs.context.dag") return Promise.resolve([]);
         return Promise.resolve([]);
-      }),
     });
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
       rpcClient: rpc,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -341,7 +370,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -358,35 +387,35 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
 
     (el as any)._confirmAction = "reset";
     await (el as any)._handleConfirm();
-    expect(api.resetSession).toHaveBeenCalledWith("default:user123:telegram");
+    expect(api.resetSession).toHaveBeenCalledWith(sessionTarget);
   });
 
   it("compact button calls compactSession after confirm", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
 
     (el as any)._confirmAction = "compact";
     await (el as any)._handleConfirm();
-    expect(api.compactSession).toHaveBeenCalledWith("default:user123:telegram");
+    expect(api.compactSession).toHaveBeenCalledWith(sessionTarget);
   });
 
   it("delete button calls deleteSession after confirm with danger variant", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -398,18 +427,16 @@ describe("IcSessionDetail", () => {
     expect((dialog as any)?.variant).toBe("danger");
 
     await (el as any)._handleConfirm();
-    expect(api.deleteSession).toHaveBeenCalledWith("default:user123:telegram");
+    expect(api.deleteSession).toHaveBeenCalledWith(sessionTarget);
   });
 
   it("clicking Metrics tab triggers _loadMetricsData", async () => {
-    const rpc = createMockRpcClient(undefined, {
-      call: vi.fn().mockResolvedValue({ totalTokens: 5000, totalCost: 0.25, callCount: 10 }),
-    });
+    const rpc = createSessionRpcClient(() => ({ totalTokens: 5000, totalCost: 0.25, callCount: 10 }));
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
       rpcClient: rpc,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -423,14 +450,14 @@ describe("IcSessionDetail", () => {
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
 
-    expect(rpc.call).toHaveBeenCalledWith("obs.billing.bySession", expect.objectContaining({ sessionKey: "default:user123:telegram" }));
+    expect(rpc.call).toHaveBeenCalledWith("obs.billing.bySession", expect.objectContaining({ sessionKey: testSession.key }));
   });
 
   it("metrics tab renders stat cards with session data", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -455,14 +482,12 @@ describe("IcSessionDetail", () => {
   });
 
   it("cost formatted as currency in metrics tab", async () => {
-    const rpc = createMockRpcClient(undefined, {
-      call: vi.fn().mockResolvedValue({ totalTokens: 5000, totalCost: 1.5, callCount: 10 }),
-    });
+    const rpc = createSessionRpcClient(() => ({ totalTokens: 5000, totalCost: 1.5, callCount: 10 }));
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
       rpcClient: rpc,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -486,7 +511,7 @@ describe("IcSessionDetail", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {
       apiClient: api,
-      sessionKey: "default:user123:telegram",
+      conversationRef: "conversation-a",
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;

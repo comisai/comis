@@ -45,17 +45,10 @@ export const DEFAULT_RPC_HANDLERS: Record<string, unknown> = {
     avgLatencyMs: 150,
   },
   "config.read": {
-    sections: {},
+    config: { tenantId: "tenant-a" },
+    sections: [],
   },
-  "agents.list": [
-    {
-      id: "agent-default",
-      name: "TestAgent",
-      status: "active",
-      provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
-    },
-  ],
+  "agents.list": { agents: ["agent-default"] },
   "gateway.status": {
     uptime: 86400,
     memoryUsage: 0.65,

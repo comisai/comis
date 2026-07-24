@@ -37,7 +37,7 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
 
 <AccordionGroup>
   <Accordion title="session_status -- View current session">
-    Shows the current session's status including the agent ID, model, token usage, and duration.
+    Shows the current session's agent name, model, token and cost totals, and step usage.
 
     **Parameters:**
 
@@ -49,16 +49,18 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
   </Accordion>
 
   <Accordion title="sessions_list -- List active sessions">
-    Lists all active sessions for the current agent, with optional filters by session kind and recency.
+    Lists active sessions for the specified tenant and agent, with optional filters by session kind and recency.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
+    | `tenant_id` | string | Yes | Tenant that owns the sessions. |
+    | `agent_id` | string | Yes | Agent whose sessions should be listed. |
     | `kind` | string | No | Filter by session kind: `all` (default), `dm`, `group`, or `sub-agent` |
     | `since_minutes` | integer | No | Only sessions active within the last N minutes |
 
-    Returns a list of sessions with their session keys, agent assignments, channels, and last activity timestamps.
+    Returns session rows with opaque conversation references, agent assignments, kinds, counts, and timestamps.
   </Accordion>
 
   <Accordion title="sessions_history -- Browse conversation history">
@@ -82,6 +84,8 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
+    | `tenant_id` | string | Yes | Tenant that owns the sessions. |
+    | `agent_id` | string | Yes | Agent whose session history should be searched. |
     | `query` | string | No | Search query -- keywords, phrases, or boolean expressions. Omit for recent-session metadata. |
     | `scope` | string | No | Filter by message role: `all` (default), `user`, `assistant`, or `tool` |
     | `summarize` | boolean | No | Summarize matched sessions using LLM (default: true when `query` provided) |
@@ -99,7 +103,9 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `session_key` | string | Yes | Target session key (use `sessions_list` to discover keys) |
+    | `tenant_id` | string | Yes | Tenant that owns the target conversation. |
+    | `agent_id` | string | Yes | Agent that owns the target conversation. |
+    | `conversation_ref` | string | Yes | Opaque durable reference returned by `sessions_list`. |
     | `text` | string | Yes | The message to send |
     | `mode` | string | No | How to handle the response: `fire-and-forget` (default), `wait`, or `ping-pong` |
     | `timeout_ms` | integer | No | Wait timeout in ms (for `wait` and `ping-pong` modes) |
@@ -115,14 +121,18 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
 
     **Example -- Delegate a task and wait:**
     ```yaml
-    session_key: "default:678314278~peer~678314278"
+    tenant_id: "default"
+    agent_id: "researcher"
+    conversation_ref: "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o"
     text: "Research the latest quarterly earnings for ACME Corp and summarize."
     mode: "wait"
     ```
 
     **Example -- Send a notification:**
     ```yaml
-    session_key: "default:ops-bot~peer~ops-bot"
+    tenant_id: "default"
+    agent_id: "ops-bot"
+    conversation_ref: "cv_DsMcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4q"
     text: "Deployment to staging completed successfully."
     mode: "fire-and-forget"
     ```

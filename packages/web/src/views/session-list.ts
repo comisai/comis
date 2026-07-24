@@ -7,6 +7,12 @@ import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import type { SessionListItem } from "../api/types/index.js";
+import {
+  resolveSessionAuthorities,
+  type ScopedSessionListItem,
+  type SessionAuthority,
+  type SessionTarget,
+} from "../api/session-scope.js";
 import { computeSessionStatus } from "../utils/session-key-parser.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
@@ -184,18 +190,19 @@ export class IcSessionListView extends LitElement {
   private _sse: SseController | null = null;
   private _reloadDebounce: ReturnType<typeof setTimeout> | null = null;
 
-  @state() private _sessions: SessionListItem[] = [];
-  @state() private _filteredSessions: SessionListItem[] = [];
+  @state() private _sessions: ScopedSessionListItem[] = [];
+  @state() private _filteredSessions: ScopedSessionListItem[] = [];
   @state() private _loading = false;
   @state() private _error = "";
   @state() private _searchQuery = "";
   @state() private _agentFilter = "";
-  @state() private _channelFilter = "";
+  @state() private _kindFilter = "";
   @state() private _statusFilter: "" | "active" | "idle" | "expired" = "";
   @state() private _selectedKeys: string[] = [];
   @state() private _showConfirm = false;
   @state() private _confirmAction = "";
   @state() private _configuredAgentIds: string[] = [];
+  private _authorities: SessionAuthority[] = [];
 
   /** Debounce timer for search RPC calls. */
   private _searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -212,9 +219,12 @@ export class IcSessionListView extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>): void {
-    if (changed.has("apiClient") && this.apiClient) {
+    if (
+      (changed.has("apiClient") || changed.has("rpcClient"))
+      && this.apiClient
+      && this.rpcClient
+    ) {
       this._loadSessions();
-      this._loadConfiguredAgents();
     }
     if (changed.has("eventDispatcher") && this.eventDispatcher && !this._sse) {
       this._initSse();
@@ -246,11 +256,19 @@ export class IcSessionListView extends LitElement {
   }
 
   private async _loadSessions(): Promise<void> {
-    if (!this.apiClient) return;
+    if (!this.apiClient || !this.rpcClient) return;
+    const apiClient = this.apiClient;
+    const rpcClient = this.rpcClient;
     this._loading = true;
     this._error = "";
     try {
-      this._sessions = await this.apiClient.listSessions();
+      this._authorities = await resolveSessionAuthorities(rpcClient);
+      this._configuredAgentIds = this._authorities.map((authority) => authority.agentId);
+      const results = await Promise.all(this._authorities.map(async (authority) => {
+        const sessions = await apiClient.listSessions(authority);
+        return sessions.map((session) => ({ ...session, tenantId: authority.tenantId }));
+      }));
+      this._sessions = results.flat();
       this._applyFilters();
     } catch {
       this._error = "Failed to load sessions. Please try again.";
@@ -264,14 +282,15 @@ export class IcSessionListView extends LitElement {
 
     if (this._searchQuery) {
       // If RPC search provided keys, filter to those keys
-      if (this._searchResultKeys) {
-        filtered = filtered.filter((s) => this._searchResultKeys!.has(s.sessionKey));
+      const searchResultKeys = this._searchResultKeys;
+      if (searchResultKeys) {
+        filtered = filtered.filter((s) => searchResultKeys.has(s.conversationRef));
       } else {
-        // Client-side fallback: text match on key/agent/channel
+        // Client-side fallback: text match on reference, agent, or kind
         const q = this._searchQuery.toLowerCase();
         filtered = filtered.filter(
           (s) =>
-            s.sessionKey.toLowerCase().includes(q) ||
+            s.conversationRef.toLowerCase().includes(q) ||
             s.agentId.toLowerCase().includes(q) ||
             s.kind.toLowerCase().includes(q),
         );
@@ -282,8 +301,8 @@ export class IcSessionListView extends LitElement {
       filtered = filtered.filter((s) => s.agentId === this._agentFilter);
     }
 
-    if (this._channelFilter) {
-      filtered = filtered.filter((s) => s.kind === this._channelFilter);
+    if (this._kindFilter) {
+      filtered = filtered.filter((s) => s.kind === this._kindFilter);
     }
 
     if (this._statusFilter) {
@@ -303,19 +322,9 @@ export class IcSessionListView extends LitElement {
     return [...agents].sort();
   }
 
-  private async _loadConfiguredAgents(): Promise<void> {
-    if (!this.apiClient) return;
-    try {
-      const agents = await this.apiClient.getAgents();
-      this._configuredAgentIds = agents.map((a) => a.id);
-    } catch {
-      // Non-critical - fall back to session-derived agents
-    }
-  }
-
-  private _getUniqueChannels(): string[] {
-    const channels = new Set(this._sessions.map((s) => s.kind));
-    return [...channels].sort();
+  private _getUniqueKinds(): string[] {
+    const kinds = new Set(this._sessions.map((s) => s.kind));
+    return [...kinds].sort();
   }
 
   private _handleSearch(e: CustomEvent<string>): void {
@@ -348,12 +357,26 @@ export class IcSessionListView extends LitElement {
 
   private async _performRpcSearch(query: string): Promise<void> {
     if (!this.rpcClient) return;
+    const rpcClient = this.rpcClient;
     try {
-      const results = await this.rpcClient.call(
-        "session.search",
-        { query, limit: 50 },
-      );
-      this._searchResultKeys = new Set(results.map((r) => r.sessionKey));
+      const responses = await Promise.all(this._authorities.map((authority) =>
+        rpcClient.call("session.search", {
+          tenant_id: authority.tenantId,
+          agent_id: authority.agentId,
+          query,
+          limit: 50,
+        })
+      ));
+      const refs = responses.flatMap((response) => {
+        const results = response["results"];
+        if (!Array.isArray(results)) return [];
+        return results.flatMap((result) => {
+          if (result === null || typeof result !== "object") return [];
+          const conversationRef = (result as Record<string, unknown>)["conversationRef"];
+          return typeof conversationRef === "string" ? [conversationRef] : [];
+        });
+      });
+      this._searchResultKeys = new Set(refs);
     } catch {
       // RPC failed -- fall back to client-side filtering
       this._searchResultKeys = null;
@@ -366,8 +389,8 @@ export class IcSessionListView extends LitElement {
     this._applyFilters();
   }
 
-  private _handleChannelFilter(e: Event): void {
-    this._channelFilter = (e.target as HTMLSelectElement).value;
+  private _handleKindFilter(e: Event): void {
+    this._kindFilter = (e.target as HTMLSelectElement).value;
     this._applyFilters();
   }
 
@@ -378,11 +401,22 @@ export class IcSessionListView extends LitElement {
 
   private _handleSessionClick(e: CustomEvent<SessionListItem>): void {
     const session = e.detail;
-    window.location.hash = `#/sessions/${session.sessionKey}`;
+    window.location.hash = `#/sessions/${session.conversationRef}`;
   }
 
   private _handleSelectionChange(e: CustomEvent<string[]>): void {
     this._selectedKeys = e.detail;
+  }
+
+  private _selectedTargets(): SessionTarget[] {
+    const selected = new Set(this._selectedKeys);
+    return this._sessions
+      .filter((session) => selected.has(session.conversationRef))
+      .map((session) => ({
+        tenantId: session.tenantId,
+        agentId: session.agentId,
+        conversationRef: session.conversationRef,
+      }));
   }
 
   private _showBulkConfirm(action: string): void {
@@ -401,10 +435,10 @@ export class IcSessionListView extends LitElement {
 
     try {
       if (this._confirmAction === "reset") {
-        await this.apiClient.resetSessionsBulk(this._selectedKeys);
+        await this.apiClient.resetSessionsBulk(this._selectedTargets());
         IcToast.show(`${this._selectedKeys.length} sessions reset`, "success");
       } else if (this._confirmAction === "delete") {
-        await this.apiClient.deleteSessionsBulk(this._selectedKeys);
+        await this.apiClient.deleteSessionsBulk(this._selectedTargets());
         IcToast.show(`${this._selectedKeys.length} sessions deleted`, "success");
       }
       this._selectedKeys = [];
@@ -419,7 +453,7 @@ export class IcSessionListView extends LitElement {
     if (!this.apiClient || this._selectedKeys.length === 0) return;
 
     try {
-      const data = await this.apiClient.exportSessionsBulk(this._selectedKeys);
+      const data = await this.apiClient.exportSessionsBulk(this._selectedTargets());
       const blob = new Blob([data], { type: "application/jsonl" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -441,11 +475,11 @@ export class IcSessionListView extends LitElement {
     </select>`;
   }
 
-  private _renderChannelSelect() {
-    const channels = this._getUniqueChannels();
-    return html`<select class="filter-select" .value=${this._channelFilter} @change=${this._handleChannelFilter} aria-label="Filter by channel">
-      <option value="">All Channels</option>
-      ${channels.map((c) => html`<option .value=${c}>${c}</option>`)}
+  private _renderKindSelect() {
+    const kinds = this._getUniqueKinds();
+    return html`<select class="filter-select" .value=${this._kindFilter} @change=${this._handleKindFilter} aria-label="Filter by kind">
+      <option value="">All Kinds</option>
+      ${kinds.map((kind) => html`<option .value=${kind}>${kind}</option>`)}
     </select>`;
   }
 
@@ -467,7 +501,7 @@ export class IcSessionListView extends LitElement {
           @search=${this._handleSearch}
         ></ic-search-input>
         ${this._renderAgentSelect()}
-        ${this._renderChannelSelect()}
+        ${this._renderKindSelect()}
         ${this._renderStatusSelect()}
       </div>
     `;

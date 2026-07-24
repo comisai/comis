@@ -171,7 +171,9 @@ describe("IcMessageCenter", () => {
         case "channels.capabilities": return capabilities.promise;
         case "channels.get": return channelConfig.promise;
         case "obs.channels.all": return Promise.resolve({ channels: [] });
-        case "session.list": return Promise.resolve({ sessions: [] });
+        case "config.read": return Promise.resolve({ config: { tenantId: "tenant-a" }, sections: [] });
+        case "agents.list": return Promise.resolve({ agents: ["agent-a"] });
+        case "session.list": return Promise.resolve({ sessions: [], total: 0 });
         default: return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
       }
     });
@@ -291,12 +293,37 @@ describe("IcMessageCenter", () => {
   it("keeps stored session history read-only without platform message identifiers", async () => {
     const call = vi.fn((method: string) => {
       switch (method) {
+        case "config.read": return Promise.resolve({ config: { tenantId: "tenant-a" }, sections: [] });
+        case "agents.list": return Promise.resolve({ agents: ["agent-a"] });
         case "session.list":
           return Promise.resolve({
-            sessions: [{ sessionKey: "session-1", channelId: "chat-1", updatedAt: 1 }],
+            sessions: [{
+              conversationRef: "conversation-a",
+              agentId: "agent-a",
+              kind: "dm",
+              messageCount: 1,
+              totalTokens: 2,
+              updatedAt: 1,
+              createdAt: 1,
+            }],
+            total: 1,
           });
         case "session.history":
           return Promise.resolve({
+            session: {
+              key: "tenant-a:user_a:chat-1",
+              agentId: "agent-a",
+              channelType: "telegram",
+              messageCount: 1,
+              totalTokens: 2,
+              inputTokens: 1,
+              outputTokens: 1,
+              toolCalls: 0,
+              compactions: 0,
+              resetCount: 0,
+              createdAt: 1,
+              lastActiveAt: 1,
+            },
             messages: [{ role: "user", content: "stored message", timestamp: 1 }],
             total: 1,
           });
@@ -322,6 +349,17 @@ describe("IcMessageCenter", () => {
     await el.updateComplete;
     await current._refetchMessages();
     await el.updateComplete;
+
+    expect(call).toHaveBeenCalledWith("session.list", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
+    });
+    expect(call).toHaveBeenCalledWith("session.history", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
+      conversation_ref: "conversation-a",
+      limit: 50,
+    });
 
     const messageRow = el.shadowRoot?.querySelector<HTMLElement>(".msg-row");
     expect(messageRow).not.toBeNull();
@@ -641,8 +679,10 @@ describe("IcMessageCenter", () => {
           return Promise.resolve({ botName: "test-bot" });
         case "obs.channels.all":
           return Promise.resolve({ channels: [] });
+        case "config.read": return Promise.resolve({ config: { tenantId: "tenant-a" }, sections: [] });
+        case "agents.list": return Promise.resolve({ agents: ["agent-a"] });
         case "session.list":
-          return Promise.resolve({ sessions: [] });
+          return Promise.resolve({ sessions: [], total: 0 });
         default:
           return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
       }
@@ -671,8 +711,10 @@ describe("IcMessageCenter", () => {
           return Promise.resolve({ botName: "test-bot" });
         case "obs.channels.all":
           return Promise.resolve({ channels: [] });
+        case "config.read": return Promise.resolve({ config: { tenantId: "tenant-a" }, sections: [] });
+        case "agents.list": return Promise.resolve({ agents: ["agent-a"] });
         case "session.list":
-          return Promise.resolve({ sessions: [] });
+          return Promise.resolve({ sessions: [], total: 0 });
         default:
           return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
       }
@@ -708,8 +750,10 @@ describe("IcMessageCenter", () => {
           return Promise.resolve({ botName: "test-bot" });
         case "obs.channels.all":
           return Promise.resolve({ channels: [] });
+        case "config.read": return Promise.resolve({ config: { tenantId: "tenant-a" }, sections: [] });
+        case "agents.list": return Promise.resolve({ agents: ["agent-a"] });
         case "session.list":
-          return Promise.resolve({ sessions: [] });
+          return Promise.resolve({ sessions: [], total: 0 });
         default:
           return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
       }
@@ -719,10 +763,8 @@ describe("IcMessageCenter", () => {
 
     expect(call).not.toHaveBeenCalled();
     rpc.setStatus("connected");
-    for (let update = 0; update < 5; update += 1) {
-      await Promise.resolve();
-      await el.updateComplete;
-    }
+    await vi.waitFor(() => expect(state(el)._loadState).toBe("loaded"));
+    await el.updateComplete;
 
     expect(call).toHaveBeenCalledWith("channels.list");
     expect(state(el)._channelIsRunning).toBe(true);
@@ -758,8 +800,10 @@ describe("IcMessageCenter", () => {
           return Promise.resolve({ botName: "test-bot" });
         case "obs.channels.all":
           return Promise.resolve({ channels: [] });
+        case "config.read": return Promise.resolve({ config: { tenantId: "tenant-a" }, sections: [] });
+        case "agents.list": return Promise.resolve({ agents: ["agent-a"] });
         case "session.list":
-          return Promise.resolve({ sessions: [] });
+          return Promise.resolve({ sessions: [], total: 0 });
         default:
           return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
       }
@@ -802,8 +846,10 @@ describe("IcMessageCenter", () => {
           return Promise.resolve({ botName: "test-bot" });
         case "obs.channels.all":
           return Promise.resolve({ channels: [] });
+        case "config.read": return Promise.resolve({ config: { tenantId: "tenant-a" }, sections: [] });
+        case "agents.list": return Promise.resolve({ agents: ["agent-a"] });
         case "session.list":
-          return Promise.resolve({ sessions: [] });
+          return Promise.resolve({ sessions: [], total: 0 });
         default:
           return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
       }
@@ -968,7 +1014,9 @@ describe("IcMessageCenter", () => {
     const call = vi.fn((method: string) => {
       methods.push(method);
       if (method === "message.send") return send.promise;
-      if (method === "session.list") return Promise.resolve({ sessions: [] });
+      if (method === "config.read") return Promise.resolve({ config: { tenantId: "tenant-a" }, sections: [] });
+      if (method === "agents.list") return Promise.resolve({ agents: ["agent-a"] });
+      if (method === "session.list") return Promise.resolve({ sessions: [], total: 0 });
       return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
     });
     const el = await createElement({ channelType: "telegram" });

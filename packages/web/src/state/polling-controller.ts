@@ -12,6 +12,7 @@
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import type { RpcClient } from "../api/rpc-client.js";
 import { systemClearInterval, systemSetInterval } from "@comis/core";
+import { listSessionsAcrossAgents } from "../api/session-scope.js";
 
 /** Badge count data returned by polling. */
 export interface BadgeCounts {
@@ -21,7 +22,7 @@ export interface BadgeCounts {
   /** Raw agent IDs for command palette search. */
   agentIds: string[];
   /** Raw session entries for command palette search. */
-  sessionEntries: Array<{ sessionKey: string; agentId: string }>;
+  sessionEntries: Array<{ conversationRef: string; agentId: string }>;
 }
 
 /**
@@ -78,19 +79,19 @@ export class PollingController implements ReactiveController {
 
   private async _poll(): Promise<void> {
     try {
-      const [agentResult, channelResult, sessionResult] = await Promise.all([
+      const [agentResult, channelResult, sessions] = await Promise.all([
         this._rpcClient.call("agents.list", {}),
         this._rpcClient.call("channels.list", {}),
-        this._rpcClient.call("session.list", {}),
+        listSessionsAcrossAgents(this._rpcClient),
       ]);
 
       this._lastError = null;
       this._onData({
         agents: agentResult.agents.length,
         channels: channelResult.channels.length,
-        sessions: sessionResult.total,
+        sessions: sessions.length,
         agentIds: agentResult.agents,
-        sessionEntries: sessionResult.sessions?.slice(0, 20) ?? [],
+        sessionEntries: sessions.slice(0, 20),
       });
       this._host.requestUpdate();
     } catch (cause) {

@@ -7,7 +7,46 @@ import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 import "./dashboard.js";
 import { IcDashboard, formatUptime, formatNumber, formatTokens } from "./dashboard.js";
-import { createMockRpcClient } from "../test-support/mock-rpc-client.js";
+import { createMockRpcClient as createBaseMockRpcClient } from "../test-support/mock-rpc-client.js";
+
+function createMockRpcClient(
+  callImpl?: (...args: unknown[]) => unknown,
+  overrides?: Partial<RpcClient>,
+): RpcClient {
+  const client = createBaseMockRpcClient(callImpl, overrides);
+  const call = client.call.bind(client) as unknown as (
+    method: string,
+    params?: Record<string, unknown>,
+  ) => Promise<unknown>;
+  const scopedCall = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === "config.read") {
+      return { config: { tenantId: "tenant-a" }, sections: [] };
+    }
+    if (method === "agents.list") return { agents: ["agent-a"] };
+    const result = await call(method, params);
+    if (method !== "session.list") return result;
+    const record = result !== null && typeof result === "object"
+      ? result as Record<string, unknown>
+      : {};
+    if (Array.isArray(record["sessions"])) return result;
+    const total = typeof record["total"] === "number" ? record["total"] : 0;
+    return {
+      ...record,
+      sessions: Array.from({ length: total }, (_, index) => ({
+        conversationRef: `conversation-${index}`,
+        agentId: "agent-a",
+        kind: "dm",
+        messageCount: 0,
+        totalTokens: 0,
+        updatedAt: 0,
+        createdAt: 0,
+      })),
+      total,
+    };
+  });
+  Object.assign(client, { call: scopedCall as RpcClient["call"] });
+  return client;
+}
 
 function createMockApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
@@ -387,7 +426,7 @@ describe("IcDashboard", () => {
       expect(
         rpcCalls.filter(([method]) => method === "obs.billing.byAgent"),
       ).toEqual([["obs.billing.byAgent", { agentId: "agent-alpha" }]]);
-      expect(rpcCalls).toHaveLength(17);
+      expect(rpcCalls).toHaveLength(19);
     });
 
     it("rpcClient.call invoked for gateway.status", async () => {
@@ -493,7 +532,10 @@ describe("IcDashboard", () => {
 
       await priv(el)._loadRpcData();
 
-      expect(mockRpc.call).toHaveBeenCalledWith("session.list", {});
+      expect(mockRpc.call).toHaveBeenCalledWith("session.list", {
+        tenant_id: "tenant-a",
+        agent_id: "agent-a",
+      });
     });
 
     it("rpcClient.call invoked for mcp.list", async () => {

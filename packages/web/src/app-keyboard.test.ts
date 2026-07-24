@@ -435,9 +435,9 @@ describe("IcApp._renderView happy-path after view-load completes", () => {
     expect(() => priv(el)._renderView()).not.toThrow();
   });
 
-  it("renders the chat-console view template after loading with routeParams.sessionKey", () => {
+  it("renders the chat-console view template with a conversation reference", () => {
     preload("ic-chat-console");
-    priv(el)._routeParams = { sessionKey: "agent:a:t:u:c" };
+    priv(el)._routeParams = { conversationRef: "conversation-a" };
     expect(() => priv(el)._renderView()).not.toThrow();
   });
 
@@ -453,9 +453,9 @@ describe("IcApp._renderView happy-path after view-load completes", () => {
     expect(() => priv(el)._renderView()).not.toThrow();
   });
 
-  it("renders the session-detail view template with routeParams.key forwarded", () => {
+  it("renders the session-detail view template with its conversation reference", () => {
     preload("ic-session-detail");
-    priv(el)._routeParams = { key: "session-k1" };
+    priv(el)._routeParams = { conversationRef: "session-k1" };
     expect(() => priv(el)._renderView()).not.toThrow();
   });
 

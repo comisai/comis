@@ -2,6 +2,8 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { RpcClient } from "../api/rpc-client.js";
+import { listSessionsAcrossAgents } from "../api/session-scope.js";
+import { parseSessionKeyString } from "../utils/session-key-parser.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import type { ConnectionStatus, FetchedMessage, PlatformCapabilities } from "../api/types/index.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
@@ -642,6 +644,7 @@ export class IcMessageCenter extends LitElement {
     const requestRevision = ++this._messageRequestRevision;
     const selectedChatId = this._selectedChatId;
     if (!this.rpcClient || !channel) return;
+    const rpcClient = this.rpcClient;
 
     // Path 1: Platform supports native fetchHistory - use message.fetch as before
     if (this._capabilities?.fetchHistory) {
@@ -670,13 +673,25 @@ export class IcMessageCenter extends LitElement {
 
     // Path 2: No fetchHistory - fall back to stored session data
     try {
-      const sessionsResult = await this.rpcClient.call("session.list", { kind: "all" });
+      const sessions = await listSessionsAcrossAgents(rpcClient);
       if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
-      const sessions = sessionsResult?.sessions ?? [];
-      // Filter to sessions whose channelId matches the currently selected chat
       const chatId = selectedChatId;
+      const recent = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 50);
+      const probed = await Promise.allSettled(recent.map(async (session) => {
+        const history = await rpcClient.call("session.history", {
+          tenant_id: session.tenantId,
+          agent_id: session.agentId,
+          conversation_ref: session.conversationRef,
+          limit: 1,
+        });
+        return { session, history };
+      }));
       const matching = chatId
-        ? sessions.filter((s) => s.channelId === chatId)
+        ? probed.flatMap((outcome) => {
+          if (outcome.status !== "fulfilled") return [];
+          const parsed = parseSessionKeyString(outcome.value.history.session.key);
+          return parsed?.channelId === chatId ? [outcome.value] : [];
+        })
         : [];
 
       if (matching.length === 0) {
@@ -687,12 +702,14 @@ export class IcMessageCenter extends LitElement {
       }
 
       // Pick most recently updated session
-      matching.sort((a, b) => b.updatedAt - a.updatedAt);
-      const bestSession = matching[0]!;
+      matching.sort((a, b) => b.session.updatedAt - a.session.updatedAt);
+      const bestSession = matching[0];
+      if (!bestSession) return;
 
-      // Fetch conversation history from session store
-      const histResult = await this.rpcClient.call("session.history", {
-        session_key: bestSession.sessionKey,
+      const histResult = await rpcClient.call("session.history", {
+        tenant_id: bestSession.session.tenantId,
+        agent_id: bestSession.session.agentId,
+        conversation_ref: bestSession.session.conversationRef,
         limit: 50,
       });
       if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;

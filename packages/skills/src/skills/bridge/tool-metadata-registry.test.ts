@@ -1045,7 +1045,7 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
     ["tokens_manage",    ["list", "create", "revoke", "rotate"], 3],
     ["providers_manage", ["list", "get", "create", "update", "delete", "enable", "disable"], 3],
     ["channels_manage",  ["list", "get", "enable", "disable", "restart", "configure"], 4],
-    ["sessions_manage",  ["delete", "reset", "export", "compact"], 3],
+    ["sessions_manage",  ["delete", "reset", "export", "compact"], 5],
     ["skills_manage",    ["list", "import", "delete", "create", "update"], 6],
     ["memory_manage",    ["stats", "browse", "delete", "flush", "export", "pin", "unpin"], 11],
     ["models_manage",    ["list", "test", "list_providers"], 3],

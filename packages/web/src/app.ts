@@ -537,7 +537,7 @@ export class IcApp extends LitElement implements AppHost {
           .apiClient=${this._apiClient}
           .rpcClient=${this._rpcClient}
           .eventDispatcher=${this._eventDispatcher}
-          .sessionKey=${this._routeParams["sessionKey"] ?? ""}
+          .conversationRef=${this._routeParams["conversationRef"] ?? ""}
           .authToken=${this._token}
         ></ic-chat-console>`;
       case "ic-memory-inspector":
@@ -590,7 +590,7 @@ export class IcApp extends LitElement implements AppHost {
       case "ic-session-list-view":
         return html`<ic-session-list-view .apiClient=${this._apiClient} .rpcClient=${this._rpcClient} .eventDispatcher=${this._eventDispatcher}></ic-session-list-view>`;
       case "ic-session-detail":
-        return html`<ic-session-detail .apiClient=${this._apiClient} .rpcClient=${this._rpcClient} .sessionKey=${this._routeParams.key ?? ""}></ic-session-detail>`;
+        return html`<ic-session-detail .apiClient=${this._apiClient} .rpcClient=${this._rpcClient} .conversationRef=${this._routeParams["conversationRef"] ?? ""}></ic-session-detail>`;
       case "ic-subagents-view":
         return html`<ic-subagents-view .rpcClient=${this._rpcClient} .apiClient=${this._apiClient} .eventDispatcher=${this._eventDispatcher}></ic-subagents-view>`;
       case "ic-security-view":

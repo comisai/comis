@@ -228,10 +228,10 @@ Supervisor tools can make significant changes to your system. They are intended 
     - **delete** -- Permanently remove a session and its history
     - **reset** -- Clear a session's conversation history while keeping the session active
     - **export** -- Export a session's conversation data
-    - **compact** -- Compress a session's history to reduce storage. The
-      `session_key` is **optional** for this action: omit it (or pass `"self"`)
-      to compact your own current session — you do not need to construct or guess
-      your session key (`delete`/`reset`/`export` still require an explicit key).
+    - **compact** -- Compress a session's history to reduce storage
+
+    Every action requires `tenant_id`, `agent_id`, and the opaque
+    `conversation_ref` returned by `sessions_list`.
   </Accordion>
 
   <Accordion title="memory_manage -- Memory lifecycle" icon="brain">

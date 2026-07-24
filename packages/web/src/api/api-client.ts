@@ -21,6 +21,7 @@ import type {
   SessionMessage,
 } from "./types/index.js";
 import type { RpcClient } from "./rpc-client.js";
+import type { SessionAuthority, SessionTarget } from "./session-scope.js";
 /** Memory search result (api-client local -- not shared with other modules) */
 export interface MemorySearchResult {
   readonly id: string;
@@ -73,10 +74,9 @@ export interface BrowseMemoryParams {
 }
 
 /** Parameters for listing sessions */
-export interface ListSessionsParams {
-  readonly agentId?: string;
-  readonly channelType?: string;
-  readonly search?: string;
+export interface ListSessionsParams extends SessionAuthority {
+  readonly kind?: string;
+  readonly sinceMinutes?: number;
 }
 
 /**
@@ -114,23 +114,23 @@ export interface ApiClient {
   // --- Session management methods ---
 
   /** List all sessions */
-  listSessions(params?: ListSessionsParams): Promise<SessionListItem[]>;
+  listSessions(params: ListSessionsParams): Promise<SessionListItem[]>;
   /** Get session detail with history */
-  getSessionDetail(key: string): Promise<{ session: SessionInfo; messages: SessionMessage[] }>;
+  getSessionDetail(target: SessionTarget): Promise<{ session: SessionInfo; messages: SessionMessage[] }>;
   /** Reset a session */
-  resetSession(key: string): Promise<void>;
+  resetSession(target: SessionTarget): Promise<void>;
   /** Compact a session */
-  compactSession(key: string): Promise<void>;
+  compactSession(target: SessionTarget): Promise<void>;
   /** Delete a session */
-  deleteSession(key: string): Promise<void>;
+  deleteSession(target: SessionTarget): Promise<void>;
   /** Export session as JSONL */
-  exportSession(key: string): Promise<string>;
+  exportSession(target: SessionTarget): Promise<string>;
   /** Bulk reset sessions */
-  resetSessionsBulk(keys: string[]): Promise<{ reset: number }>;
+  resetSessionsBulk(targets: SessionTarget[]): Promise<{ reset: number }>;
   /** Bulk export sessions */
-  exportSessionsBulk(keys: string[]): Promise<string>;
+  exportSessionsBulk(targets: SessionTarget[]): Promise<string>;
   /** Bulk delete sessions */
-  deleteSessionsBulk(keys: string[]): Promise<{ deleted: number }>;
+  deleteSessionsBulk(targets: SessionTarget[]): Promise<{ deleted: number }>;
 }
 
 /**
@@ -348,101 +348,157 @@ export function createApiClient(
 
     // --- Session management methods ---
 
-    async listSessions(params?: ListSessionsParams): Promise<SessionListItem[]> {
-      if (rpcCall && params === undefined) {
-        const result = await rpcCall("session.list", {});
+    async listSessions(params: ListSessionsParams): Promise<SessionListItem[]> {
+      if (rpcCall) {
+        const result = await rpcCall("session.list", {
+          tenant_id: params.tenantId,
+          agent_id: params.agentId,
+          ...(params.kind !== undefined ? { kind: params.kind } : {}),
+          ...(params.sinceMinutes !== undefined
+            ? { since_minutes: params.sinceMinutes }
+            : {}),
+        });
         return result.sessions;
       }
       const qs = new URLSearchParams();
-      if (params?.agentId) qs.set("agentId", params.agentId);
-      if (params?.channelType) qs.set("channelType", params.channelType);
-      if (params?.search) qs.set("search", params.search);
+      qs.set("tenantId", params.tenantId);
+      qs.set("agentId", params.agentId);
+      if (params.kind) qs.set("kind", params.kind);
+      if (params.sinceMinutes !== undefined) qs.set("sinceMinutes", String(params.sinceMinutes));
       const query = qs.toString();
-      return fetchJson<SessionListItem[]>(`/api/sessions${query ? `?${query}` : ""}`);
+      return fetchJson<SessionListItem[]>(`/api/sessions?${query}`);
     },
 
     async getSessionDetail(
-      key: string,
+      target: SessionTarget,
     ): Promise<{ session: SessionInfo; messages: SessionMessage[] }> {
       if (rpcCall) {
-        return rpcCall("session.history", { session_key: key }) as Promise<{
+        return rpcCall("session.history", {
+          tenant_id: target.tenantId,
+          agent_id: target.agentId,
+          conversation_ref: target.conversationRef,
+        }) as Promise<{
           session: SessionInfo;
           messages: SessionMessage[];
         }>;
       }
+      const qs = new URLSearchParams({ tenantId: target.tenantId, agentId: target.agentId });
       return fetchJson<{ session: SessionInfo; messages: SessionMessage[] }>(
-        `/api/sessions/${encodeURIComponent(key)}`,
+        `/api/sessions/${encodeURIComponent(target.conversationRef)}?${qs.toString()}`,
       );
     },
 
-    async resetSession(key: string): Promise<void> {
+    async resetSession(target: SessionTarget): Promise<void> {
       if (rpcCall) {
-        await rpcCall("session.reset", { session_key: key });
+        await rpcCall("session.reset", {
+          tenant_id: target.tenantId,
+          agent_id: target.agentId,
+          conversation_ref: target.conversationRef,
+        });
         return;
       }
-      await fetchJson(`/api/sessions/${encodeURIComponent(key)}/reset`, { method: "POST" });
+      const qs = new URLSearchParams({ tenantId: target.tenantId, agentId: target.agentId });
+      await fetchJson(
+        `/api/sessions/${encodeURIComponent(target.conversationRef)}/reset?${qs.toString()}`,
+        { method: "POST" },
+      );
     },
 
-    async compactSession(key: string): Promise<void> {
+    async compactSession(target: SessionTarget): Promise<void> {
       if (rpcCall) {
-        await rpcCall("session.compact", { session_key: key });
+        await rpcCall("session.compact", {
+          tenant_id: target.tenantId,
+          agent_id: target.agentId,
+          conversation_ref: target.conversationRef,
+        });
         return;
       }
-      await fetchJson(`/api/sessions/${encodeURIComponent(key)}/compact`, { method: "POST" });
+      const qs = new URLSearchParams({ tenantId: target.tenantId, agentId: target.agentId });
+      await fetchJson(
+        `/api/sessions/${encodeURIComponent(target.conversationRef)}/compact?${qs.toString()}`,
+        { method: "POST" },
+      );
     },
 
-    async deleteSession(key: string): Promise<void> {
+    async deleteSession(target: SessionTarget): Promise<void> {
       if (rpcCall) {
-        await rpcCall("session.delete", { session_key: key });
+        await rpcCall("session.delete", {
+          tenant_id: target.tenantId,
+          agent_id: target.agentId,
+          conversation_ref: target.conversationRef,
+        });
         return;
       }
-      await fetchJson(`/api/sessions/${encodeURIComponent(key)}`, { method: "DELETE" });
+      const qs = new URLSearchParams({ tenantId: target.tenantId, agentId: target.agentId });
+      await fetchJson(
+        `/api/sessions/${encodeURIComponent(target.conversationRef)}?${qs.toString()}`,
+        { method: "DELETE" },
+      );
     },
 
-    async exportSession(key: string): Promise<string> {
+    async exportSession(target: SessionTarget): Promise<string> {
       if (rpcCall) {
-        const result = await rpcCall("session.export", { session_key: key });
+        const result = await rpcCall("session.export", {
+          tenant_id: target.tenantId,
+          agent_id: target.agentId,
+          conversation_ref: target.conversationRef,
+        });
         return JSON.stringify(result, null, 2);
       }
-      return fetchText(`/api/sessions/${encodeURIComponent(key)}/export`);
+      const qs = new URLSearchParams({ tenantId: target.tenantId, agentId: target.agentId });
+      return fetchText(
+        `/api/sessions/${encodeURIComponent(target.conversationRef)}/export?${qs.toString()}`,
+      );
     },
 
-    async resetSessionsBulk(keys: string[]): Promise<{ reset: number }> {
+    async resetSessionsBulk(targets: SessionTarget[]): Promise<{ reset: number }> {
       if (rpcCall) {
         const results = await Promise.all(
-          keys.map((sessionKey) => rpcCall("session.reset", { session_key: sessionKey })),
+          targets.map((target) => rpcCall("session.reset", {
+            tenant_id: target.tenantId,
+            agent_id: target.agentId,
+            conversation_ref: target.conversationRef,
+          })),
         );
         return { reset: results.length };
       }
       return fetchJson<{ reset: number }>("/api/sessions/bulk-reset", {
         method: "POST",
-        body: JSON.stringify({ keys }),
+        body: JSON.stringify({ targets }),
       });
     },
 
-    async exportSessionsBulk(keys: string[]): Promise<string> {
+    async exportSessionsBulk(targets: SessionTarget[]): Promise<string> {
       if (rpcCall) {
         const results = await Promise.all(
-          keys.map((sessionKey) => rpcCall("session.export", { session_key: sessionKey })),
+          targets.map((target) => rpcCall("session.export", {
+            tenant_id: target.tenantId,
+            agent_id: target.agentId,
+            conversation_ref: target.conversationRef,
+          })),
         );
         return results.map((result) => JSON.stringify(result)).join("\n");
       }
       return fetchText("/api/sessions/bulk-export", {
         method: "POST",
-        body: JSON.stringify({ keys }),
+        body: JSON.stringify({ targets }),
       });
     },
 
-    async deleteSessionsBulk(keys: string[]): Promise<{ deleted: number }> {
+    async deleteSessionsBulk(targets: SessionTarget[]): Promise<{ deleted: number }> {
       if (rpcCall) {
         const results = await Promise.all(
-          keys.map((sessionKey) => rpcCall("session.delete", { session_key: sessionKey })),
+          targets.map((target) => rpcCall("session.delete", {
+            tenant_id: target.tenantId,
+            agent_id: target.agentId,
+            conversation_ref: target.conversationRef,
+          })),
         );
         return { deleted: results.length };
       }
       return fetchJson<{ deleted: number }>("/api/sessions/bulk-delete", {
         method: "POST",
-        body: JSON.stringify({ keys }),
+        body: JSON.stringify({ targets }),
       });
     },
   };

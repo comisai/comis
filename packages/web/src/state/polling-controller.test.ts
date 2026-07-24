@@ -43,14 +43,28 @@ function makeRpc(responses: {
   throwOn?: string;
 }): RpcClient {
   return {
-    async call<T>(method: string): Promise<T> {
+    async call<T>(method: string, params?: Record<string, unknown>): Promise<T> {
       if (responses.throwOn === method) {
         throw new Error("rpc failure");
       }
       if (method === "agents.list") return (responses.agentList ?? { agents: [] }) as T;
       if (method === "channels.list") return (responses.channelList ?? { channels: [] }) as T;
-      if (method === "session.list")
-        return (responses.sessionList ?? { sessions: [], total: 0 }) as T;
+      if (method === "config.read") return { config: { tenantId: "tenant-a" } } as T;
+      if (method === "session.list") {
+        const result = responses.sessionList ?? { sessions: [], total: 0 };
+        if (result !== null && typeof result === "object") {
+          const sessions = (result as { sessions?: unknown[] }).sessions;
+          if (Array.isArray(sessions) && typeof params?.["agent_id"] === "string") {
+            const scoped = sessions.filter((session) => (
+              session !== null
+              && typeof session === "object"
+              && (session as { agentId?: unknown }).agentId === params["agent_id"]
+            ));
+            return { ...(result as object), sessions: scoped, total: scoped.length } as T;
+          }
+        }
+        return result as T;
+      }
       throw new Error(`unexpected method: ${method}`);
     },
   } as unknown as RpcClient;
@@ -97,7 +111,12 @@ describe("PollingController", () => {
     new PollingController(host, rpc, () => {}).hostConnected();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(methods).toEqual(["agents.list", "channels.list", "session.list"]);
+    expect(methods).toEqual([
+      "agents.list",
+      "channels.list",
+      "config.read",
+      "agents.list",
+    ]);
     expect(methods.every((method) => Object.hasOwn(CONTRACTS, method))).toBe(true);
   });
 
@@ -130,7 +149,18 @@ describe("PollingController", () => {
       makeRpc({
         agentList: { agents: ["a1", "a2"] },
         channelList: { channels: [{}, {}, {}] },
-        sessionList: { sessions: [], total: 5 },
+        sessionList: {
+          sessions: Array.from({ length: 5 }, (_, index) => ({
+            conversationRef: `cv-${index}`,
+            agentId: "a1",
+            kind: "dm",
+            messageCount: 1,
+            totalTokens: 10,
+            updatedAt: 20,
+            createdAt: 10,
+          })),
+          total: 5,
+        },
       }),
       onData,
     );
@@ -160,7 +190,7 @@ describe("PollingController", () => {
 
   it("truncates session entries to the first 20 to bound command-palette payload size", async () => {
     const sessions = Array.from({ length: 50 }, (_, i) => ({
-      sessionKey: `s${i}`,
+      conversationRef: `s${i}`,
       agentId: "a",
     }));
     const { host } = makeHost();
@@ -168,7 +198,7 @@ describe("PollingController", () => {
     new PollingController(
       host,
       makeRpc({
-        agentList: { agents: [] },
+        agentList: { agents: ["a"] },
         channelList: { channels: [] },
         sessionList: { sessions, total: sessions.length },
       }),
@@ -176,16 +206,16 @@ describe("PollingController", () => {
     ).hostConnected();
     await new Promise((r) => setTimeout(r, 0));
     expect(onData.mock.calls[0]![0].sessionEntries).toHaveLength(20);
-    expect(onData.mock.calls[0]![0].sessionEntries[0].sessionKey).toBe("s0");
+    expect(onData.mock.calls[0]![0].sessionEntries[0].conversationRef).toBe("s0");
   });
 
-  it("defaults sessionEntries to empty array when session.list omits the sessions field", async () => {
+  it("returns an empty session entry list for an empty scoped response", async () => {
     const { host } = makeHost();
     const onData = vi.fn();
     new PollingController(
       host,
       makeRpc({
-        sessionList: { total: 0 },
+        sessionList: { sessions: [], total: 0 },
       }),
       onData,
     ).hostConnected();

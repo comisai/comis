@@ -12,6 +12,8 @@ function parseResult(result: { content: Array<{ type: string; text?: string }> }
 }
 
 describe("sessions_list tool", () => {
+  const authority = { tenant_id: "tenant-a", agent_id: "agent-a" } as const;
+
   it("delegates to rpcCall('session.list') with kind and since_minutes", async () => {
     const mockRpcCall: RpcCall = vi.fn(async (method, _params) => {
       if (method === "session.list") {
@@ -22,6 +24,7 @@ describe("sessions_list tool", () => {
 
     const tool = createSessionsListTool(mockRpcCall);
     const result = await tool.execute("call-1", {
+      ...authority,
       kind: "dm",
       since_minutes: 60,
     } as never);
@@ -30,6 +33,7 @@ describe("sessions_list tool", () => {
     expect(parsed.sessions).toHaveLength(0);
     expect(parsed.total).toBe(0);
     expect(mockRpcCall).toHaveBeenCalledWith("session.list", {
+      ...authority,
       kind: "dm",
       since_minutes: 60,
     });
@@ -39,21 +43,22 @@ describe("sessions_list tool", () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({ sessions: [], total: 0 }));
 
     const tool = createSessionsListTool(mockRpcCall);
-    await tool.execute("call-2", {} as never);
+    await tool.execute("call-2", authority as never);
 
     expect(mockRpcCall).toHaveBeenCalledWith("session.list", {
+      ...authority,
       kind: "all",
       since_minutes: undefined,
     });
   });
 
-  it("throws on RPC error", async () => {
+  it("propagates session list RPC failures", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => {
       throw new Error("connection lost");
     });
 
     const tool = createSessionsListTool(mockRpcCall);
 
-    await expect(tool.execute("call-3", {} as never)).rejects.toThrow("connection lost");
+    await expect(tool.execute("call-3", authority as never)).rejects.toThrow("connection lost");
   });
 });

@@ -7,9 +7,10 @@ function createMockRpcCall() {
     if (method === "session.status") {
       return {
         model: "claude-sonnet-4-5-20250929",
-        tokensUsed: { prompt: 1500, completion: 500, total: 2000 },
-        sessionDurationMs: 120000,
+        agentName: "agent-a",
+        tokensUsed: { totalTokens: 2000, totalCost: 0.02 },
         stepsExecuted: 3,
+        maxSteps: 10,
       };
     }
     return { stub: true, method, params: _params };
@@ -26,9 +27,10 @@ describe("session_status tool", () => {
     expect(rpcCall).toHaveBeenCalledWith("session.status", {});
     expect(result.details).toEqual({
       model: "claude-sonnet-4-5-20250929",
-      tokensUsed: { prompt: 1500, completion: 500, total: 2000 },
-      sessionDurationMs: 120000,
+      agentName: "agent-a",
+      tokensUsed: { totalTokens: 2000, totalCost: 0.02 },
       stepsExecuted: 3,
+      maxSteps: 10,
     });
   });
 

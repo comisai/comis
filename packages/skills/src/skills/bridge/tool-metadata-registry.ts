@@ -337,12 +337,12 @@ export function registerAllToolMetadata(): void {
 
   registerToolMetadata("sessions_manage", {
     validActions: ["delete", "reset", "export", "compact"],
-    validKeys: ["action", "session_key", "instructions"],
+    validKeys: ["action", "tenant_id", "agent_id", "conversation_ref", "instructions"],
     requiredByAction: {
-      delete:  ["session_key"],
-      reset:   ["session_key"],
-      export:  ["session_key"],
-      compact: ["session_key"],
+      delete:  ["tenant_id", "agent_id", "conversation_ref"],
+      reset:   ["tenant_id", "agent_id", "conversation_ref"],
+      export:  ["tenant_id", "agent_id", "conversation_ref"],
+      compact: ["tenant_id", "agent_id", "conversation_ref"],
     },
   });
 

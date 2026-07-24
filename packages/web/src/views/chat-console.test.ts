@@ -9,6 +9,45 @@ import type { EventDispatcher } from "../state/event-dispatcher.js";
 import "./chat-console.js";
 import { createMockRpcClient } from "../test-support/mock-rpc-client.js";
 
+const sessionAuthority = { tenantId: "tenant-a", agentId: "default" } as const;
+
+function scopeSessionRpcClient(rpcClient: RpcClient): RpcClient {
+  const call = rpcClient.call.bind(rpcClient);
+  const scopedCall = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
+    if (method === "config.read") {
+      return { config: { tenantId: sessionAuthority.tenantId }, sections: [] };
+    }
+    if (method === "agents.list") {
+      return { agents: ["default", "agent-default", "agent2", "myagent", "bot1", "agent1"] };
+    }
+    const result = await (call as (method: string, params: Record<string, unknown>) => Promise<unknown>)(method, params);
+    if (method !== "session.history" || result === null || typeof result !== "object") {
+      return result;
+    }
+    const history = result as Record<string, unknown>;
+    if (history["session"] !== undefined) return result;
+    return {
+      ...history,
+      session: {
+        key: String(params["conversation_ref"] ?? ""),
+        agentId: String(params["agent_id"] ?? "default"),
+        channelType: "web",
+        messageCount: Array.isArray(history["messages"]) ? history["messages"].length : 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        toolCalls: 0,
+        compactions: 0,
+        resetCount: 0,
+        createdAt: 0,
+        lastActiveAt: 0,
+      },
+    };
+  });
+  Object.assign(rpcClient, { call: scopedCall as RpcClient["call"] });
+  return rpcClient;
+}
+
 function createMockApiClient(overrides?: Partial<ApiClient>): ApiClient {
   return {
     getAgents: vi.fn().mockResolvedValue([{ id: "default", name: "Default", provider: "anthropic", model: "claude", status: "active" }]),
@@ -51,6 +90,9 @@ async function createElement<T extends HTMLElement>(
 ): Promise<T> {
   const el = document.createElement(tag) as T;
   if (props) {
+    if (tag === "ic-chat-console" && props["rpcClient"]) {
+      scopeSessionRpcClient(props["rpcClient"] as RpcClient);
+    }
     Object.assign(el, props);
   }
   document.body.appendChild(el);
@@ -119,7 +161,11 @@ describe("IcChatConsole", () => {
     });
     // Wait for async RPC call
     await new Promise((r) => setTimeout(r, 10));
-    expect(rpc.call).toHaveBeenCalledWith("session.list", { kind: "dm" });
+    expect(rpc.call).toHaveBeenCalledWith("session.list", {
+      tenant_id: sessionAuthority.tenantId,
+      agent_id: sessionAuthority.agentId,
+      kind: "dm",
+    });
   });
 
   it("calls apiClient.getAgents() on connectedCallback", async () => {
@@ -133,13 +179,39 @@ describe("IcChatConsole", () => {
     expect(api.getAgents).toHaveBeenCalled();
   });
 
+  it("reloads sessions when the configured default agent has a different id", async () => {
+    const rpc = createMockRpcClient();
+    (rpc.call as any).mockImplementation((method: string) => {
+      if (method === "session.list") return Promise.resolve({ sessions: [], total: 0 });
+      return Promise.resolve({});
+    });
+    const api = createMockApiClient({
+      getAgents: vi.fn().mockResolvedValue([
+        { id: "agent-default", name: "Default", provider: "anthropic", model: "claude", status: "active" },
+      ]),
+    });
+
+    await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: rpc,
+      apiClient: api,
+      eventDispatcher: createMockEventDispatcher(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(rpc.call).toHaveBeenCalledWith("session.list", {
+      tenant_id: sessionAuthority.tenantId,
+      agent_id: "agent-default",
+      kind: "dm",
+    });
+  });
+
   it("renders session items from RPC response", async () => {
     const rpc = createMockRpcClient();
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "session-abc", agentId: "default", channelId: "web", kind: "dm", updatedAt: Date.now() },
-          { sessionKey: "session-def", agentId: "agent2", channelId: "telegram", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "session-abc", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
+          { conversationRef: "session-def", agentId: "agent2", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       return Promise.resolve([]);
@@ -162,7 +234,7 @@ describe("IcChatConsole", () => {
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "session-abc", agentId: "default", channelId: "web", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "session-abc", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       if (method === "session.history") {
@@ -183,7 +255,11 @@ describe("IcChatConsole", () => {
     item?.click();
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(rpc.call).toHaveBeenCalledWith("session.history", { session_key: "session-abc" });
+    expect(rpc.call).toHaveBeenCalledWith("session.history", {
+      tenant_id: sessionAuthority.tenantId,
+      agent_id: sessionAuthority.agentId,
+      conversation_ref: "session-abc",
+    });
   });
 
   it("search input filters session list", async () => {
@@ -191,8 +267,8 @@ describe("IcChatConsole", () => {
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "alpha-111", agentId: "default", channelId: "web", kind: "dm", updatedAt: Date.now() },
-          { sessionKey: "beta-222", agentId: "default", channelId: "web", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "alpha-111", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
+          { conversationRef: "beta-222", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       return Promise.resolve([]);
@@ -253,7 +329,7 @@ describe("IcChatConsole", () => {
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "session-1", agentId: "default", channelId: "web", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "session-1", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       if (method === "session.history") {
@@ -300,7 +376,7 @@ describe("IcChatConsole", () => {
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "s1", agentId: "default", channelId: "web", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "s1", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       if (method === "session.history") {
@@ -318,7 +394,7 @@ describe("IcChatConsole", () => {
       rpcClient: rpc,
       apiClient: createMockApiClient(),
       eventDispatcher: createMockEventDispatcher(),
-      sessionKey: "s1",
+      conversationRef: "s1",
     });
     await new Promise((r) => setTimeout(r, 100));
     await (el as any).updateComplete;
@@ -327,12 +403,12 @@ describe("IcChatConsole", () => {
     expect(messages?.length).toBe(2);
   });
 
-  it("renders ic-tool-call elements for messages with tool calls", async () => {
+  it("projects session history through the authoritative message contract", async () => {
     const rpc = createMockRpcClient();
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "s1", agentId: "default", channelId: "web", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "s1", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       if (method === "session.history") {
@@ -357,22 +433,22 @@ describe("IcChatConsole", () => {
       rpcClient: rpc,
       apiClient: createMockApiClient(),
       eventDispatcher: createMockEventDispatcher(),
-      sessionKey: "s1",
+      conversationRef: "s1",
     });
     await new Promise((r) => setTimeout(r, 100));
     await (el as any).updateComplete;
 
-    const toolCalls = rendererQueryAll(el, "ic-tool-call");
-    expect(toolCalls?.length).toBe(1);
+    expect(rendererQueryAll(el, "ic-chat-message")?.length).toBe(1);
+    expect(rendererQueryAll(el, "ic-tool-call")?.length).toBe(0);
   });
 
-  it("sessionKey prop pre-selects the matching session", async () => {
+  it("conversationRef prop pre-selects the matching session", async () => {
     const rpc = createMockRpcClient();
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "s1", agentId: "default", channelId: "web", kind: "dm", updatedAt: Date.now() },
-          { sessionKey: "target-key", agentId: "agent2", channelId: "web", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "s1", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
+          { conversationRef: "target-key", agentId: "agent2", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       if (method === "session.history") {
@@ -385,7 +461,7 @@ describe("IcChatConsole", () => {
       rpcClient: rpc,
       apiClient: createMockApiClient(),
       eventDispatcher: createMockEventDispatcher(),
-      sessionKey: "target-key",
+      conversationRef: "target-key",
     });
     await new Promise((r) => setTimeout(r, 100));
     await (el as any).updateComplete;
@@ -411,7 +487,7 @@ describe("IcChatConsole", () => {
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "tenant1:bob:telegram", agentId: "myagent", channelId: "telegram", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "tenant1:bob:telegram", agentId: "myagent", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       return Promise.resolve([]);
@@ -428,16 +504,13 @@ describe("IcChatConsole", () => {
     const item = sidebarQuery(el, ".session-item");
     expect(item).toBeTruthy();
 
-    // Check parsed display name (userId = "bob")
     const key = item?.querySelector(".session-key");
-    expect(key?.textContent).toBe("bob");
+    expect(key?.textContent).toBe("tenant1:bob:…");
 
-    // Check channel tag (parsed channelId = "telegram")
     const tag = item?.querySelector("ic-tag");
     expect(tag).toBeTruthy();
-    expect(tag?.textContent).toBe("telegram");
+    expect(tag?.textContent).toBe("dm");
 
-    // Check message count (session.list doesn't include messageCount; defaults to 0)
     const count = item?.querySelector(".msg-count");
     expect(count?.textContent).toBe("0");
   });
@@ -447,7 +520,7 @@ describe("IcChatConsole", () => {
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "s1", agentId: "default", channelId: "web", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "s1", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       if (method === "session.history") {
@@ -495,7 +568,7 @@ describe("IcChatConsole", () => {
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "s1", agentId: "default", channelId: "web", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "s1", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       if (method === "session.history") {
@@ -508,7 +581,7 @@ describe("IcChatConsole", () => {
       rpcClient: rpc,
       apiClient: createMockApiClient(),
       eventDispatcher: createMockEventDispatcher(),
-      sessionKey: "s1",
+      conversationRef: "s1",
     });
 
     // Wait for session.list + session.history async RPCs to complete
@@ -1456,12 +1529,12 @@ describe("IcChatConsole", () => {
 
   /* ==================== Friendly Display Names ==================== */
 
-  it("sidebar session items show parsed display names for parseable keys", async () => {
+  it("sidebar session items render opaque conversation references", async () => {
     const rpc = createMockRpcClient();
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "myTenant:user123:telegram", agentId: "default", channelId: "telegram", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "myTenant:user123:telegram", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       return Promise.resolve([]);
@@ -1476,17 +1549,15 @@ describe("IcChatConsole", () => {
     await (el as any).updateComplete;
 
     const keyLabel = sidebarQuery(el, ".session-key");
-    // parseSessionKeyString extracts userId = "user123"
-    // formatSessionDisplayName returns "user123"
-    expect(keyLabel?.textContent).toBe("user123");
+    expect(keyLabel?.textContent).toBe("myTenant:use…");
   });
 
-  it("sidebar session items fall back to truncated key for unparseable keys", async () => {
+  it("sidebar session items preserve short conversation references", async () => {
     const rpc = createMockRpcClient();
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "ab", agentId: "default", channelId: "web", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "ab", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       return Promise.resolve([]);
@@ -1504,12 +1575,12 @@ describe("IcChatConsole", () => {
     expect(keyLabel?.textContent).toBe("ab");
   });
 
-  it("conversation header shows parsed display name when session active", async () => {
+  it("conversation header renders the opaque active conversation reference", async () => {
     const rpc = createMockRpcClient();
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "tenant1:alice:telegram", agentId: "bot1", channelId: "telegram", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "tenant1:alice:telegram", agentId: "bot1", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       if (method === "session.history") {
@@ -1522,13 +1593,13 @@ describe("IcChatConsole", () => {
       rpcClient: rpc,
       apiClient: createMockApiClient(),
       eventDispatcher: createMockEventDispatcher(),
-      sessionKey: "tenant1:alice:telegram",
+      conversationRef: "tenant1:alice:telegram",
     });
     await new Promise((r) => setTimeout(r, 200));
     await (el as any).updateComplete;
 
     const infoKey = el.shadowRoot?.querySelector(".session-info-key");
-    expect(infoKey?.textContent).toBe("alice");
+    expect(infoKey?.textContent).toBe("tenant1:alic…");
   });
 
   /* ==================== Typewriter Streaming ==================== */
@@ -1640,9 +1711,22 @@ describe("IcChatConsole", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     (el as any)._activeSession = "test-compact-session";
+    (el as any)._sessions = [{
+      key: "test-compact-session",
+      tenantId: sessionAuthority.tenantId,
+      agentId: sessionAuthority.agentId,
+      conversationRef: "test-compact-session",
+      channelType: "dm",
+      messageCount: 0,
+      lastActivity: 0,
+    }];
     await (el as any)._executeSlashCommand("/compact");
 
-    expect(rpc.call).toHaveBeenCalledWith("session.compact", { session_key: "test-compact-session" });
+    expect(rpc.call).toHaveBeenCalledWith("session.compact", {
+      tenant_id: sessionAuthority.tenantId,
+      agent_id: sessionAuthority.agentId,
+      conversation_ref: "test-compact-session",
+    });
   });
 
   /* ==================== Tool Call Cards ==================== */
@@ -1652,7 +1736,7 @@ describe("IcChatConsole", () => {
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "s1", agentId: "default", channelId: "web", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "s1", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       if (method === "session.history") {
@@ -1670,7 +1754,7 @@ describe("IcChatConsole", () => {
       rpcClient: rpc,
       apiClient: createMockApiClient(),
       eventDispatcher: createMockEventDispatcher(),
-      sessionKey: "s1",
+      conversationRef: "s1",
     });
     await new Promise((r) => setTimeout(r, 100));
     await (el as any).updateComplete;
@@ -1683,12 +1767,12 @@ describe("IcChatConsole", () => {
     expect(chatMessages?.length).toBe(1);
   });
 
-  it("assistant messages with toolCalls render ic-tool-call after message", async () => {
+  it("does not invent assistant tool calls absent from session history", async () => {
     const rpc = createMockRpcClient();
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "s1", agentId: "default", channelId: "web", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "s1", agentId: "default", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       if (method === "session.history") {
@@ -1714,13 +1798,13 @@ describe("IcChatConsole", () => {
       rpcClient: rpc,
       apiClient: createMockApiClient(),
       eventDispatcher: createMockEventDispatcher(),
-      sessionKey: "s1",
+      conversationRef: "s1",
     });
     await new Promise((r) => setTimeout(r, 100));
     await (el as any).updateComplete;
 
-    const toolCalls = rendererQueryAll(el, "ic-tool-call");
-    expect(toolCalls?.length).toBe(2);
+    expect(rendererQueryAll(el, "ic-chat-message")?.length).toBe(1);
+    expect(rendererQueryAll(el, "ic-tool-call")?.length).toBe(0);
   });
 
   /* ==================== Budget Bar ==================== */
@@ -1772,7 +1856,7 @@ describe("IcChatConsole", () => {
     (rpc.call as any).mockImplementation((method: string) => {
       if (method === "session.list") {
         return Promise.resolve({ sessions: [
-          { sessionKey: "s1", agentId: "agent1", channelId: "web", kind: "dm", updatedAt: Date.now() },
+          { conversationRef: "s1", agentId: "agent1", kind: "dm", messageCount: 0, totalTokens: 0, updatedAt: Date.now(), createdAt: Date.now() },
         ] });
       }
       if (method === "session.history") {
@@ -1795,7 +1879,7 @@ describe("IcChatConsole", () => {
       rpcClient: rpc,
       apiClient: createMockApiClient(),
       eventDispatcher: createMockEventDispatcher(),
-      sessionKey: "s1",
+      conversationRef: "s1",
     });
     await new Promise((r) => setTimeout(r, 200));
     await (el as any).updateComplete;

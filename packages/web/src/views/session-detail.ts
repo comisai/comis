@@ -4,6 +4,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { ApiClient } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
+import { resolveSessionTarget, type SessionTarget } from "../api/session-scope.js";
 import type {
   SessionInfo,
   SessionMessage,
@@ -64,7 +65,7 @@ function formatCost(cost: number): string {
  * Session detail view showing conversation, context state, and metrics
  * in a 3-tab layout.
  *
- * Route: `#/sessions/:key`
+ * Route: `#/sessions/:conversationRef`
  *
  * Features:
  * - Breadcrumb navigation back to session list
@@ -431,8 +432,8 @@ export class IcSessionDetail extends LitElement {
   /** RPC client for obs.context.pipeline and billing RPC calls. */
   @property({ attribute: false }) rpcClient: RpcClient | null = null;
 
-  /** Session key from route params. */
-  @property() sessionKey = "";
+  /** Conversation reference from route params. */
+  @property() conversationRef = "";
 
   @state() private _session: SessionInfo | null = null;
   @state() private _messages: SessionMessage[] = [];
@@ -440,6 +441,8 @@ export class IcSessionDetail extends LitElement {
   @state() private _error = "";
   @state() private _showConfirm = false;
   @state() private _confirmAction = "";
+  private _target: SessionTarget | null = null;
+  private _loadRevision = 0;
 
   // Tab state
   @state() private _activeTab: SessionTab = "conversation";
@@ -458,26 +461,35 @@ export class IcSessionDetail extends LitElement {
 
   override updated(changed: Map<string, unknown>): void {
     if (
-      (changed.has("apiClient") || changed.has("sessionKey")) &&
+      (changed.has("apiClient") || changed.has("rpcClient") || changed.has("conversationRef")) &&
       this.apiClient &&
-      this.sessionKey
+      this.rpcClient &&
+      this.conversationRef
     ) {
       this._loadSession();
     }
   }
 
   private async _loadSession(): Promise<void> {
-    if (!this.apiClient || !this.sessionKey) return;
+    if (!this.apiClient || !this.rpcClient || !this.conversationRef) return;
+    const revision = ++this._loadRevision;
     this._loading = true;
     this._error = "";
+    this._target = null;
+    this._session = null;
+    this._messages = [];
     try {
-      const result = await this.apiClient.getSessionDetail(this.sessionKey);
+      const target = await resolveSessionTarget(this.rpcClient, this.conversationRef);
+      const result = await this.apiClient.getSessionDetail(target);
+      if (revision !== this._loadRevision) return;
+      this._target = target;
       this._session = result.session;
       this._messages = result.messages;
     } catch {
+      if (revision !== this._loadRevision) return;
       this._error = "Failed to load session. Please try again.";
     } finally {
-      this._loading = false;
+      if (revision === this._loadRevision) this._loading = false;
     }
   }
 
@@ -506,15 +518,15 @@ export class IcSessionDetail extends LitElement {
         rpc.call("obs.context.dag", { agentId, limit: 50 }),
       ]);
 
-      // Client-side filter by sessionKey
+      const sessionKey = this._session.key;
       const snapshots = Array.isArray(pipelineResult) ? pipelineResult : [];
       this._pipelineSnapshots = snapshots.filter(
-        (s) => s.sessionKey === this.sessionKey,
+        (s) => s.sessionKey === sessionKey,
       );
 
       const dags = Array.isArray(dagResult) ? dagResult : [];
       this._dagCompactions = dags.filter(
-        (d) => d.sessionKey === this.sessionKey,
+        (d) => d.sessionKey === sessionKey,
       );
 
       // Auto-select latest
@@ -532,7 +544,7 @@ export class IcSessionDetail extends LitElement {
   /* ---- Metrics data loading ---- */
 
   private async _loadMetricsData(): Promise<void> {
-    if (!this.rpcClient) {
+    if (!this.rpcClient || !this._session) {
       this._metricsLoaded = true;
       return;
     }
@@ -540,7 +552,7 @@ export class IcSessionDetail extends LitElement {
     try {
       const result = await this.rpcClient.call(
         "obs.billing.bySession",
-        { sessionKey: this.sessionKey },
+        { sessionKey: this._session.key },
       );
       this._sessionBilling = result ?? null;
     } catch {
@@ -568,19 +580,19 @@ export class IcSessionDetail extends LitElement {
 
   private async _handleConfirm(): Promise<void> {
     this._showConfirm = false;
-    if (!this.apiClient) return;
+    if (!this.apiClient || !this._target) return;
 
     try {
       if (this._confirmAction === "reset") {
-        await this.apiClient.resetSession(this.sessionKey);
+        await this.apiClient.resetSession(this._target);
         IcToast.show("Session reset", "success");
         await this._loadSession();
       } else if (this._confirmAction === "compact") {
-        await this.apiClient.compactSession(this.sessionKey);
+        await this.apiClient.compactSession(this._target);
         IcToast.show("Session compacted", "success");
         await this._loadSession();
       } else if (this._confirmAction === "delete") {
-        await this.apiClient.deleteSession(this.sessionKey);
+        await this.apiClient.deleteSession(this._target);
         IcToast.show("Session deleted", "success");
         window.location.hash = "#/sessions";
       }
@@ -592,25 +604,25 @@ export class IcSessionDetail extends LitElement {
 
   /**
    * Drill to the native Incident view: the deterministic `obs.explain`
-   * IncidentReport keyed on this session's `sessionKey` (a valid obs.explain
-   * ref). Navigates via the hash router — no RPC on this view (the
+   * IncidentReport keyed on this session's formatted session key. Navigates via
+   * the hash router — no RPC on this view (the
    * `obs.explain` call lives on `ic-incident-view`).
    */
   private _explainIncident(): void {
-    if (!this.sessionKey) return;
-    window.location.hash = `#/observe/incident?ref=${encodeURIComponent(this.sessionKey)}`;
+    if (!this._session) return;
+    window.location.hash = `#/observe/incident?ref=${encodeURIComponent(this._session.key)}`;
   }
 
   private async _handleExport(): Promise<void> {
-    if (!this.apiClient) return;
+    if (!this.apiClient || !this._target) return;
 
     try {
-      const data = await this.apiClient.exportSession(this.sessionKey);
+      const data = await this.apiClient.exportSession(this._target);
       const blob = new Blob([data], { type: "application/jsonl" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `session-${this.sessionKey}.jsonl`;
+      a.download = `session-${this.conversationRef}.jsonl`;
       a.click();
       URL.revokeObjectURL(url);
       IcToast.show("Session exported", "success");
@@ -627,9 +639,10 @@ export class IcSessionDetail extends LitElement {
   }
 
   private _getBreadcrumbLabel(): string {
-    const parsed = parseSessionKeyString(this.sessionKey);
+    const sessionKey = this._session?.key ?? this.conversationRef;
+    const parsed = parseSessionKeyString(sessionKey);
     if (parsed) return formatSessionDisplayName(parsed);
-    return this._truncateKey(this.sessionKey);
+    return this._truncateKey(sessionKey);
   }
 
   private _isCompactionBoundary(msg: SessionMessage): boolean {

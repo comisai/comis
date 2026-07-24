@@ -3,11 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { sharedStyles } from "../../styles/shared.js";
 import type { SessionListItem } from "../../api/types/index.js";
-import {
-  parseSessionKeyString,
-  formatSessionDisplayName,
-  computeSessionStatus,
-} from "../../utils/session-key-parser.js";
+import { computeSessionStatus } from "../../utils/session-key-parser.js";
 
 // Side-effect imports to register child custom elements
 import "../data/ic-tag.js";
@@ -21,10 +17,9 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 /**
- * Session row component with human-readable key display.
+ * Session row component with a bounded conversation reference display.
  *
- * Parses the raw session key into a user-friendly label with channel
- * and agent tags, status indicator, message count, and relative time.
+ * Shows kind and agent tags, status, message count, and relative time.
  *
  * @fires session-click - CustomEvent<SessionListItem> when the row is clicked
  *
@@ -119,28 +114,22 @@ export class IcSessionRow extends LitElement {
     if (!this.session) return nothing;
 
     const s = this.session;
-    const parsed = parseSessionKeyString(s.sessionKey);
-    const displayName = parsed
-      ? formatSessionDisplayName(parsed)
-      : s.sessionKey.length > 15
-        ? s.sessionKey.slice(0, 12) + "..."
-        : s.sessionKey;
+    const displayName = s.conversationRef.length > 15
+      ? s.conversationRef.slice(0, 12) + "..."
+      : s.conversationRef;
 
     const status = computeSessionStatus(s.updatedAt);
     const statusColor = STATUS_COLORS[status] ?? STATUS_COLORS.expired;
-    const channelLabel = parsed?.channelId ?? s.kind;
-    // Session keys do not carry an `agent:<agentId>:` prefix, so we read
-    // the agent label only from the session row's own `agentId` field
-    // (carried in the API response).
+    const kindLabel = s.kind;
     const agentLabel = s.agentId;
 
     return html`
       <div class="row" @click=${this._handleClick} role="button" tabindex="0" aria-label="Session ${displayName}">
         <div class="status-dot" style="background: ${statusColor}" title="${status}"></div>
         <div class="info">
-          <div class="display-name" title="${s.sessionKey}">${displayName}</div>
+          <div class="display-name" title="${s.conversationRef}">${displayName}</div>
           <div class="tags">
-            <ic-tag variant=${s.kind}>${channelLabel}</ic-tag>
+            <ic-tag variant=${s.kind}>${kindLabel}</ic-tag>
             ${agentLabel ? html`<ic-tag>${agentLabel}</ic-tag>` : nothing}
           </div>
         </div>

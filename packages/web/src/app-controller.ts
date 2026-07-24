@@ -190,7 +190,7 @@ export function createAppController(
         host._sessionCount = data.sessions;
         host._agentList = data.agentIds.map((id) => ({ id }));
         host._sessionList = data.sessionEntries.map((s) => ({
-          key: s.sessionKey,
+          key: s.conversationRef,
           agentId: s.agentId,
         }));
       },

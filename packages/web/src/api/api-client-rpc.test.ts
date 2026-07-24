@@ -25,6 +25,8 @@ import { createApiClient, type RpcCallFn } from "./api-client.js";
 
 const BASE_URL = "http://localhost:3000";
 const TOKEN = "test-rpc-bearer-token";
+const AUTHORITY = { tenantId: "tenant-a", agentId: "agent-a" } as const;
+const TARGET = { ...AUTHORITY, conversationRef: "cv-a" } as const;
 
 function makeRpc<T>(result: T): RpcCallFn {
   return vi.fn(async () => result) as unknown as RpcCallFn;
@@ -96,40 +98,38 @@ describe("createApiClient — memory.export via rpcCall path", () => {
 });
 
 describe("createApiClient — session.list via rpcCall path", () => {
-  it("delegates listSessions to rpcCall session.list with the params object even when empty", async () => {
+  it("delegates listSessions with explicit tenant and agent authority", async () => {
     const rpc = makeRpc({ sessions: [], total: 0 });
-    await createApiClient(BASE_URL, TOKEN, rpc).listSessions();
-    expect(rpc).toHaveBeenCalledWith("session.list", {});
-  });
-
-  it("uses the HTTP filter surface when typed session.list cannot represent filters", async () => {
-    const rpc = makeRpc({ sessions: [], total: 0 });
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => [] }));
-    vi.stubGlobal("fetch", fetchMock);
-    await createApiClient(BASE_URL, TOKEN, rpc).listSessions({
-      agentId: "alpha",
-      channelType: "telegram",
-      search: "foo",
+    await createApiClient(BASE_URL, TOKEN, rpc).listSessions(AUTHORITY);
+    expect(rpc).toHaveBeenCalledWith("session.list", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
     });
-    expect(rpc).not.toHaveBeenCalled();
-    expect(fetchMock.mock.calls[0]?.[0]).toContain(
-      "/api/sessions?agentId=alpha&channelType=telegram&search=foo",
-    );
-    vi.unstubAllGlobals();
   });
 
-  it("passes through SessionListItem rows verbatim from the contract response (no aliasing)", async () => {
-    // Tight pass-through — the wrapper does NOT alias raw.key → sessionKey
-    // or compute agentId from the session-key prefix. The daemon-side handler is the
-    // trust boundary; the client returns result.sessions unchanged.
+  it("passes contract-supported session filters through RPC", async () => {
+    const rpc = makeRpc({ sessions: [], total: 0 });
+    await createApiClient(BASE_URL, TOKEN, rpc).listSessions({
+      tenantId: "tenant-a",
+      agentId: "alpha",
+      kind: "dm",
+      sinceMinutes: 60,
+    });
+    expect(rpc).toHaveBeenCalledWith("session.list", {
+      tenant_id: "tenant-a",
+      agent_id: "alpha",
+      kind: "dm",
+      since_minutes: 60,
+    });
+  });
+
+  it("returns session list rows from the contract response", async () => {
     const rpc = makeRpc({
       sessions: [
         {
-          sessionKey: "agent:alpha:tenant:user:channel",
+          conversationRef: "cv-alpha",
           agentId: "alpha",
-          userId: "user",
-          channelId: "channel",
-          kind: "slack",
+          kind: "dm",
           messageCount: 4,
           totalTokens: 100,
           updatedAt: 1000,
@@ -138,77 +138,104 @@ describe("createApiClient — session.list via rpcCall path", () => {
       ],
       total: 1,
     });
-    const sessions = await createApiClient(BASE_URL, TOKEN, rpc).listSessions();
+    const sessions = await createApiClient(BASE_URL, TOKEN, rpc).listSessions(AUTHORITY);
     expect(sessions[0]?.agentId).toBe("alpha");
-    expect(sessions[0]?.kind).toBe("slack");
+    expect(sessions[0]?.kind).toBe("dm");
     expect(sessions[0]?.messageCount).toBe(4);
-    expect(sessions[0]?.sessionKey).toBe("agent:alpha:tenant:user:channel");
-    expect(sessions[0]?.userId).toBe("user");
-    expect(sessions[0]?.channelId).toBe("channel");
+    expect(sessions[0]?.conversationRef).toBe("cv-alpha");
   });
 });
 
 describe("createApiClient — session.history via rpcCall path", () => {
-  it("delegates getSessionDetail to rpcCall session.history with session_key param", async () => {
+  it("delegates getSessionDetail with the exact conversation authority", async () => {
     const rpc = makeRpc({ session: { key: "k1" }, messages: [] });
-    await createApiClient(BASE_URL, TOKEN, rpc).getSessionDetail("k1");
-    expect(rpc).toHaveBeenCalledWith("session.history", { session_key: "k1" });
+    await createApiClient(BASE_URL, TOKEN, rpc).getSessionDetail(TARGET);
+    expect(rpc).toHaveBeenCalledWith("session.history", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
+      conversation_ref: "cv-a",
+    });
   });
 });
 
 describe("createApiClient — session.reset via rpcCall path", () => {
-  it("delegates single resetSession to rpcCall session.reset with session_key param", async () => {
+  it("delegates single resetSession with an explicit conversation target", async () => {
     const rpc = makeRpc(undefined);
-    await createApiClient(BASE_URL, TOKEN, rpc).resetSession("k2");
-    expect(rpc).toHaveBeenCalledWith("session.reset", { session_key: "k2" });
+    await createApiClient(BASE_URL, TOKEN, rpc).resetSession(TARGET);
+    expect(rpc).toHaveBeenCalledWith("session.reset", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
+      conversation_ref: "cv-a",
+    });
   });
 
   it("delegates bulk resets as contract-valid point calls", async () => {
     const rpc = makeRpc({ reset: true });
-    const r = await createApiClient(BASE_URL, TOKEN, rpc).resetSessionsBulk(["a", "b"]);
-    expect(rpc).toHaveBeenNthCalledWith(1, "session.reset", { session_key: "a" });
-    expect(rpc).toHaveBeenNthCalledWith(2, "session.reset", { session_key: "b" });
+    const targets = [TARGET, { ...TARGET, conversationRef: "cv-b" }];
+    const r = await createApiClient(BASE_URL, TOKEN, rpc).resetSessionsBulk(targets);
+    expect(rpc).toHaveBeenNthCalledWith(1, "session.reset", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-a",
+    });
+    expect(rpc).toHaveBeenNthCalledWith(2, "session.reset", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-b",
+    });
     expect(r.reset).toBe(2);
   });
 });
 
 describe("createApiClient — session.compact via rpcCall path", () => {
-  it("delegates compactSession to rpcCall session.compact with session_key param", async () => {
+  it("delegates compactSession with an explicit conversation target", async () => {
     const rpc = makeRpc(undefined);
-    await createApiClient(BASE_URL, TOKEN, rpc).compactSession("k3");
-    expect(rpc).toHaveBeenCalledWith("session.compact", { session_key: "k3" });
+    await createApiClient(BASE_URL, TOKEN, rpc).compactSession(TARGET);
+    expect(rpc).toHaveBeenCalledWith("session.compact", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-a",
+    });
   });
 });
 
 describe("createApiClient — session.delete via rpcCall path", () => {
-  it("delegates single deleteSession to rpcCall session.delete with session_key param", async () => {
+  it("delegates single deleteSession with an explicit conversation target", async () => {
     const rpc = makeRpc(undefined);
-    await createApiClient(BASE_URL, TOKEN, rpc).deleteSession("k4");
-    expect(rpc).toHaveBeenCalledWith("session.delete", { session_key: "k4" });
+    await createApiClient(BASE_URL, TOKEN, rpc).deleteSession(TARGET);
+    expect(rpc).toHaveBeenCalledWith("session.delete", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-a",
+    });
   });
 
   it("delegates bulk deletes as contract-valid point calls", async () => {
     const rpc = makeRpc({ deleted: true });
-    const r = await createApiClient(BASE_URL, TOKEN, rpc).deleteSessionsBulk(["x", "y"]);
-    expect(rpc).toHaveBeenNthCalledWith(1, "session.delete", { session_key: "x" });
-    expect(rpc).toHaveBeenNthCalledWith(2, "session.delete", { session_key: "y" });
+    const targets = [TARGET, { ...TARGET, conversationRef: "cv-b" }];
+    const r = await createApiClient(BASE_URL, TOKEN, rpc).deleteSessionsBulk(targets);
+    expect(rpc).toHaveBeenNthCalledWith(1, "session.delete", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-a",
+    });
+    expect(rpc).toHaveBeenNthCalledWith(2, "session.delete", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-b",
+    });
     expect(r.deleted).toBe(2);
   });
 });
 
 describe("createApiClient — session.export via rpcCall path", () => {
-  it("delegates single exportSession to rpcCall session.export with session_key param", async () => {
-    const rpc = makeRpc({ sessionKey: "k5", messages: [] });
-    const r = await createApiClient(BASE_URL, TOKEN, rpc).exportSession("k5");
-    expect(rpc).toHaveBeenCalledWith("session.export", { session_key: "k5" });
-    expect(JSON.parse(r)).toEqual({ sessionKey: "k5", messages: [] });
+  it("delegates single exportSession with an explicit conversation target", async () => {
+    const rpc = makeRpc({ conversationRef: "cv-a", messages: [] });
+    const r = await createApiClient(BASE_URL, TOKEN, rpc).exportSession(TARGET);
+    expect(rpc).toHaveBeenCalledWith("session.export", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-a",
+    });
+    expect(JSON.parse(r)).toEqual({ conversationRef: "cv-a", messages: [] });
   });
 
   it("delegates bulk exports as contract-valid point calls", async () => {
     const rpc = makeRpc({ messages: [] });
-    const r = await createApiClient(BASE_URL, TOKEN, rpc).exportSessionsBulk(["a", "b"]);
-    expect(rpc).toHaveBeenNthCalledWith(1, "session.export", { session_key: "a" });
-    expect(rpc).toHaveBeenNthCalledWith(2, "session.export", { session_key: "b" });
+    const targets = [TARGET, { ...TARGET, conversationRef: "cv-b" }];
+    const r = await createApiClient(BASE_URL, TOKEN, rpc).exportSessionsBulk(targets);
+    expect(rpc).toHaveBeenNthCalledWith(1, "session.export", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-a",
+    });
+    expect(rpc).toHaveBeenNthCalledWith(2, "session.export", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-b",
+    });
     expect(r.split("\n")).toHaveLength(2);
   });
 });

@@ -51,7 +51,7 @@ The most common end-to-end flow: open a connection, ping for liveness, kick off 
   <Step title="Inspect or list the session">
     `session.list` enumerates active sessions; `session.history` reads the full message log for one session.
     ```json
-    {"jsonrpc":"2.0","method":"session.list","id":3}
+    {"jsonrpc":"2.0","method":"session.list","params":{"tenant_id":"default","agent_id":"default"},"id":3}
     ```
   </Step>
   <Step title="Clean up when done">

@@ -12,6 +12,7 @@ import type {
 import { SSE_EVENT_TYPES } from "../api/types/index.js";
 import type { ApiClient, SseEventHandler } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
+import { listSessionsAcrossAgents } from "../api/session-scope.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { systemClearInterval, systemClearTimeout, systemSetInterval, systemSetTimeout } from "@comis/core";
@@ -774,7 +775,7 @@ export class IcDashboard extends LitElement {
       rpc.call("obs.delivery.stats", { sinceMs: 172_800_000 }),
       rpc.call("obs.billing.total", { sinceMs: 86_400_000 }),
       rpc.call("obs.billing.total", { sinceMs: 172_800_000 }),
-      rpc.call("session.list", {}),
+      listSessionsAcrossAgents(rpc),
       rpc.call("mcp.list"),
       rpc.call("obs.context.pipeline", { limit: 50 }),
       rpc.call("obs.billing.usage24h"),
@@ -823,7 +824,7 @@ export class IcDashboard extends LitElement {
 
     // 4. Session count
     if (sessionResult.status === "fulfilled") {
-      this._sessionCount = Number((sessionResult.value as Record<string, unknown>).total ?? 0);
+      this._sessionCount = sessionResult.value.length;
     }
 
     // 5. MCP status

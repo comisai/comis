@@ -35,7 +35,7 @@ const AGENT_LIST_AGENTS = [
 /** RPC handlers extended with agent list data and actions */
 const AGENT_LIST_RPC_HANDLERS: Record<string, unknown> = {
   ...DEFAULT_RPC_HANDLERS,
-  "agents.list": AGENT_LIST_AGENTS,
+  "agents.list": { agents: AGENT_LIST_AGENTS.map((agent) => agent.id) },
   "agents.suspend": { success: true },
   "agents.resume": { success: true },
   "agents.delete": { success: true },
