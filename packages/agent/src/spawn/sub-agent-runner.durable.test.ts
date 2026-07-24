@@ -428,6 +428,80 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     expect(store.checkpoints.length).toBe(before);
   });
 
+  it("retries failed terminalization until the durable reason commits", async () => {
+    const store = createRecordingStore();
+    const terminalize = vi.fn()
+      .mockResolvedValueOnce(err(new Error("storage unavailable")))
+      .mockResolvedValueOnce(ok({ kind: "terminalized" as const }));
+    store.terminalize = terminalize;
+    const runner = createSubAgentRunner(createDeps({
+      durableRuns: store,
+      durability: { keepAliveMs: 1_000, staleHeartbeatMs: 4_000 },
+      executeAgent: vi.fn().mockResolvedValue({
+        response: "done",
+        tokensUsed: { total: 10 },
+        cost: { total: 0 },
+        finishReason: "stop",
+        stepsExecuted: 1,
+      }),
+    }));
+    const runId = runner.spawn({
+      task: "quick task",
+      agentId: "worker",
+      rootRunId: "root-terminal-retry",
+      workspacePolicyHash: POLICY_HASH,
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(terminalize).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(terminalize).toHaveBeenCalledTimes(2);
+    expect(terminalize).toHaveBeenLastCalledWith(runId, "completed");
+  });
+
+  it("shutdown drains an in-flight durable terminalization retry", async () => {
+    const store = createRecordingStore();
+    let resolveRetry!: (value: Result<{ kind: "terminalized" }, Error>) => void;
+    const terminalize = vi.fn()
+      .mockResolvedValueOnce(err(new Error("storage unavailable")))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveRetry = resolve;
+      }));
+    store.terminalize = terminalize;
+    const runner = createSubAgentRunner(createDeps({
+      durableRuns: store,
+      executeAgent: vi.fn().mockResolvedValue({
+        response: "done",
+        tokensUsed: { total: 10 },
+        cost: { total: 0 },
+        finishReason: "stop",
+        stepsExecuted: 1,
+      }),
+    }));
+    runner.spawn({
+      task: "quick task",
+      agentId: "worker",
+      rootRunId: "root-terminal-drain",
+      workspacePolicyHash: POLICY_HASH,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    let shutdownResolved = false;
+    const shutdown = runner.shutdown().then(() => {
+      shutdownResolved = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(terminalize).toHaveBeenCalledTimes(2);
+    expect(shutdownResolved).toBe(false);
+
+    resolveRetry(ok({ kind: "terminalized" }));
+    await vi.advanceTimersByTimeAsync(0);
+    await shutdown;
+    expect(shutdownResolved).toBe(true);
+  });
+
   it("watchdog immediately closes durable resources when execution ignores abort", async () => {
     const store = createRecordingStore();
     const closeTrajectory = vi.fn(async () => undefined);

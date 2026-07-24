@@ -938,7 +938,7 @@ describe("createSubAgentRunner", () => {
     expect(deps.batcher.enqueue).not.toHaveBeenCalled();
   });
 
-  it("shutdown suppresses a late success without reversing its completed event", async () => {
+  it("shutdown terminalizes stalled post-processing before suppressing late success", async () => {
     let releaseMemory!: (value: { ok: boolean }) => void;
     deps.memoryAdapter = {
       store: vi.fn().mockReturnValue(new Promise((resolve) => {
@@ -981,7 +981,13 @@ describe("createSubAgentRunner", () => {
       (call) => call[0] === "session:sub_agent_completed",
     );
     expect(completionEvents).toHaveLength(1);
-    expect(completionEvents[0]?.[1]).toEqual(expect.objectContaining({ success: true }));
+    expect(completionEvents[0]?.[1]).toEqual(expect.objectContaining({ success: false }));
+    expect(runner.listRuns()).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        completion: expect.objectContaining({ endReason: "killed" }),
+      }),
+    ]);
     expect(deps.sendGovernedAnnouncement).toHaveBeenCalledOnce();
     expect(deps.batcher.enqueue).not.toHaveBeenCalled();
 
@@ -2833,6 +2839,46 @@ describe("createSubAgentRunner", () => {
         "session:sub_agent_completed",
         expect.objectContaining({ success: false }),
       );
+    });
+
+    it("watchdog retains timeout authority after provider settlement", async () => {
+      deps.config.subagentContext = {
+        maxRunTimeoutMs: 500,
+        perStepTimeoutMs: 500,
+      } as typeof deps.config.subagentContext;
+      let releaseMemory!: (value: { ok: boolean }) => void;
+      deps.memoryAdapter = {
+        store: vi.fn().mockReturnValue(new Promise((resolve) => {
+          releaseMemory = resolve;
+        })),
+      };
+
+      const runner = createSubAgentRunner(deps);
+      const runId = runner.spawn({
+        task: "persist and deliver result",
+        agentId: "default",
+        announceChannelType: "test",
+        announceChannelId: "ch1",
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(deps.memoryAdapter.store).toHaveBeenCalledOnce();
+      expect(runner.getRunStatus(runId)?.status).toBe("running");
+
+      await vi.advanceTimersByTimeAsync(500);
+
+      const timedOut = runner.getRunStatus(runId);
+      expect(timedOut?.status).toBe("failed");
+      if (timedOut?.status !== "failed") throw new Error("expected failed run");
+      expect(timedOut.completion.endReason).toBe("watchdog_timeout");
+      expect(deps.sendToChannel).toHaveBeenCalledOnce();
+
+      releaseMemory({ ok: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.getRunStatus(runId)).toBe(timedOut);
+      expect(vi.mocked(deps.eventBus.emit).mock.calls.filter(
+        ([event]) => event === "session:sub_agent_completed",
+      )).toHaveLength(1);
     });
 
     it("watchdog is not triggered when run completes before timeout", async () => {

@@ -98,6 +98,7 @@ import {
 export const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
 const SHUTDOWN_ACTIVE_GRACE_MS = 30_000;
 const SHUTDOWN_NOTICE_GRACE_MS = 5_000;
+const DURABLE_TERMINAL_RETRY_MS = 1_000;
 /**
  * Maximum caller-side guard for a sub-agent runner shutdown. The runner owns
  * the active-run drain and governed-notice grace, with a final bounded margin
@@ -823,6 +824,16 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     resolve(result: Result<void, Error>): void;
     settled: boolean;
   }
+  interface PendingDurableTerminalization {
+    readonly run: SubAgentRun;
+    readonly terminalReason: DurableRunTerminalReason;
+    readonly startedAtMs: number;
+    readonly completion: Promise<void>;
+    readonly resolve: () => void;
+    attempts: number;
+    inFlight: boolean;
+    retryHandle?: TimerHandle;
+  }
   const completionDeferreds = new Map<string, CompletionDeferred>();
   const startDeferreds = new Map<string, StartDeferred>();
   const durableResumeHandshakeRunIds = new Set<string>();
@@ -835,6 +846,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const trajectoryClosedRunIds = new Set<string>();
   const watchdogTimers = new Map<string, TimerHandle>();
   const failureNotificationPromises = new Set<Promise<void>>();
+  const pendingDurableTerminalizations = new Map<string, PendingDurableTerminalization>();
+  const durableTerminalizationPromises = new Set<Promise<void>>();
   let acceptingSpawns = true;
   let spawnPaused = false;
   let shutdownPromise: Promise<void> | undefined;
@@ -1213,13 +1226,111 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return ok(undefined);
   }
 
-  /**
-   * Terminal seam: mark the run completed + clear its keep-alive
-   * heartbeat. Fires on EVERY terminal settle of a started run (completion,
-   * failure, kill/ghost/watchdog — the underlying executeAgent promise still
-   * settles), so the interval is reclaimed and the durable record stops being
-   * resumable. Inert + idempotent when no store / no timer. Never throws.
-   */
+  function scheduleDurableTerminalizationRetry(
+    pending: PendingDurableTerminalization,
+  ): void {
+    if (
+      pendingDurableTerminalizations.get(pending.run.runId) !== pending
+      || pending.retryHandle
+    ) return;
+    const handle = timers.setTimeout(() => {
+      pending.retryHandle = undefined;
+      void attemptDurableTerminalization(pending);
+    }, DURABLE_TERMINAL_RETRY_MS);
+    handle.unref();
+    pending.retryHandle = handle;
+  }
+
+  async function attemptDurableTerminalization(
+    pending: PendingDurableTerminalization,
+  ): Promise<void> {
+    if (
+      pending.inFlight
+      || pendingDurableTerminalizations.get(pending.run.runId) !== pending
+    ) return;
+    pending.retryHandle?.cancel();
+    pending.retryHandle = undefined;
+    pending.inFlight = true;
+    pending.attempts += 1;
+    const store = deps.durableRuns;
+    const invoked = store
+      ? await fromPromise(store.terminalize(pending.run.runId, pending.terminalReason))
+      : ok(ok({ kind: "not_found" as const }));
+    pending.inFlight = false;
+    if (pendingDurableTerminalizations.get(pending.run.runId) !== pending) return;
+    const result = invoked.ok ? invoked.value : err(invoked.error);
+    if (result.ok) {
+      pendingDurableTerminalizations.delete(pending.run.runId);
+      pending.resolve();
+      if (pending.attempts > 1) {
+        deps.logger?.info(
+          {
+            runId: pending.run.runId,
+            rootRunId: pending.run.rootRunId,
+            attempts: pending.attempts,
+            durationMs: clock.now() - pending.startedAtMs,
+          },
+          "Durable checkpoint terminalization recovered",
+        );
+      }
+      return;
+    }
+    if (pending.attempts === 1) {
+      deps.logger?.warn(
+        {
+          runId: pending.run.runId,
+          rootRunId: pending.run.rootRunId,
+          err: toSafeErrorLogString(result.error),
+          hint: "Repair durable-run storage; terminalization will retry and shutdown will drain pending attempts",
+          errorKind: "resource" as const,
+        },
+        "Durable checkpoint terminalization failed",
+      );
+    } else {
+      deps.logger?.debug(
+        {
+          runId: pending.run.runId,
+          rootRunId: pending.run.rootRunId,
+          attempts: pending.attempts,
+        },
+        "Durable checkpoint terminalization retry remains pending",
+      );
+    }
+    scheduleDurableTerminalizationRetry(pending);
+  }
+
+  function retainDurableTerminalization(
+    run: SubAgentRun,
+    terminalReason: DurableRunTerminalReason,
+  ): void {
+    if (!deps.durableRuns || pendingDurableTerminalizations.has(run.runId)) return;
+    let resolveCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const pending: PendingDurableTerminalization = {
+      run,
+      terminalReason,
+      startedAtMs: clock.now(),
+      completion,
+      resolve: resolveCompletion,
+      attempts: 0,
+      inFlight: false,
+    };
+    pendingDurableTerminalizations.set(run.runId, pending);
+    durableTerminalizationPromises.add(completion);
+    void completion.then(() => durableTerminalizationPromises.delete(completion));
+    void attemptDurableTerminalization(pending);
+  }
+
+  function retryPendingDurableTerminalizations(): void {
+    for (const pending of pendingDurableTerminalizations.values()) {
+      pending.retryHandle?.cancel();
+      pending.retryHandle = undefined;
+      void attemptDurableTerminalization(pending);
+    }
+  }
+
   function finishDurableCheckpoint(
     run: SubAgentRun,
     terminalReason: DurableRunTerminalReason,
@@ -1230,21 +1341,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       handle.cancel();
       heartbeatTimers.delete(run.runId);
     }
-    const store = deps.durableRuns;
-    if (!store) return;
-    suppressError(
-      store
-        .terminalize(run.runId, terminalReason)
-        .then((r) => {
-          if (!r.ok) {
-            deps.logger?.warn(
-              { rootRunId: run.rootRunId, err: r.error, hint: "Retry durable terminalization before resuming this checkpoint", errorKind: "internal" as const },
-              "Durable checkpoint terminalization failed",
-            );
-          }
-        }),
-      "durable terminalization",
-    );
+    retainDurableTerminalization(run, terminalReason);
   }
 
   function closeTrajectoryOnce(run: SubAgentRun): void {
@@ -2889,7 +2986,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }
         }
 
-        const completedAt = clock.now();
         const completionSummary = condensedResult?.result.summary ?? result.response;
         const telemetry: SubAgentRunTelemetry = {
           tokensUsedTotal: result.tokensUsed.total,
@@ -2899,36 +2995,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           cacheReadTokens: cacheRead,
           cacheWriteTokens: cacheWrite,
         };
-        if (isSuccess) {
-          terminalizeRun(runId, {
-            endReason: "completed",
-            completedAtMs: completedAt,
-            summary: completionSummary,
-            ...(materializedRef ? { resultRef: materializedRef } : {}),
-          }, telemetry);
-        } else {
-          terminalizeRun(runId, {
-            endReason: "failed",
-            completedAtMs: completedAt,
-            errorKind: classifyCompletionErrorKind(
-              result.finishReason,
-              result.terminalErrorKind,
-            ),
-            summary: completionSummary || result.errorContext?.originalError,
-            ...(materializedRef ? { resultRef: materializedRef } : {}),
-          }, telemetry);
-        }
-
-        // The runner-owned completion deferred resolves in terminalizeRun()
-        // before any lifecycle notification becomes observable.
-        deps.eventBus.emit("session:sub_agent_completed", {
-          runId, agentId: params.agentId, success: isSuccess,
-          runtimeMs, tokensUsed: result.tokensUsed.total,
-          cost: result.cost.total, timestamp: completedAt,
-          cacheReadTokens: cacheRead,
-          cacheWriteTokens: cacheWrite,
-        });
-
         // Post-execution output validation (best-effort, never blocks)
         let validationResults: ValidationResult[] | undefined;
         if (params.expected_outputs && params.expected_outputs.length > 0) {
@@ -3147,6 +3213,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }, "Sub-agent announcement skipped: no announce channel");
         }
 
+        if (deliverySuppressedRunIds.has(runId)) return;
         // Safety-net proxy stop — announceToParent's own finally block handles
         // the announcement-scoped typing. This catches edge cases where announcement was skipped.
         emitProxyStop(run, runId, "completed");
@@ -3173,6 +3240,39 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             }, "Lifecycle hook onEnded failed");
           }
         }
+
+        if (deliverySuppressedRunIds.has(runId)) return;
+        const completedAt = clock.now();
+        if (isSuccess) {
+          terminalizeRun(runId, {
+            endReason: "completed",
+            completedAtMs: completedAt,
+            summary: completionSummary,
+            ...(materializedRef ? { resultRef: materializedRef } : {}),
+          }, telemetry);
+        } else {
+          terminalizeRun(runId, {
+            endReason: "failed",
+            completedAtMs: completedAt,
+            errorKind: classifyCompletionErrorKind(
+              result.finishReason,
+              result.terminalErrorKind,
+            ),
+            summary: completionSummary || result.errorContext?.originalError,
+            ...(materializedRef ? { resultRef: materializedRef } : {}),
+          }, telemetry);
+        }
+        deps.eventBus.emit("session:sub_agent_completed", {
+          runId,
+          agentId: params.agentId,
+          success: isSuccess,
+          runtimeMs: completedAt - run.startedAt,
+          tokensUsed: result.tokensUsed.total,
+          cost: result.cost.total,
+          timestamp: completedAt,
+          cacheReadTokens: cacheRead,
+          cacheWriteTokens: cacheWrite,
+        });
       } catch (error: unknown) {
         // Guard: if already killed, skip error handling logic
         if (deliverySuppressedRunIds.has(runId)) return;
@@ -3323,11 +3423,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       : maxRunMs;
 
     const watchdogTimer = timers.setTimeout(() => {
-      // Provider settlement transfers ownership to bounded post-processing;
-      // the provider watchdog must not manufacture a competing terminal while
-      // condensation/materialization is attaching the completion projection.
       const authoritativeRun = runs.get(runId);
-      if (authoritativeRun?.status !== "running" || providerSettledRunIds.has(runId)) return;
+      if (authoritativeRun?.status !== "running") return;
 
       const completedAt = clock.now();
       const runtimeMs = completedAt - run.startedAt;
@@ -3816,6 +3913,25 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         if (!run) continue;
         if (providerSettledRunIds.has(runId)) {
           deliverySuppressedRunIds.add(runId);
+          if (run.status === "running") {
+            const completedAtMs = clock.now();
+            terminalizeRun(runId, {
+              endReason: "killed",
+              completedAtMs,
+              errorKind: "timeout",
+              summary: "Post-processing stopped during daemon shutdown",
+            });
+            forceTerminalCleanup(run, "killed");
+            deps.eventBus.emit("session:sub_agent_completed", {
+              runId,
+              agentId: run.agentId,
+              success: false,
+              runtimeMs: Math.max(0, completedAtMs - run.startedAt),
+              tokensUsed: 0,
+              cost: 0,
+              timestamp: completedAtMs,
+            });
+          }
           if (run.announceChannelType && run.announceChannelId) {
             trackFailureNotification(deliverFailureNotification({
               channelType: run.announceChannelType,
@@ -3860,10 +3976,17 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       );
     }
 
-    const noticesSettled = await waitForTrackedPromises(
-      failureNotificationPromises,
-      SHUTDOWN_NOTICE_GRACE_MS,
-    );
+    retryPendingDurableTerminalizations();
+    const [noticesSettled, terminalizationsSettled] = await Promise.all([
+      waitForTrackedPromises(
+        failureNotificationPromises,
+        SHUTDOWN_NOTICE_GRACE_MS,
+      ),
+      waitForTrackedPromises(
+        durableTerminalizationPromises,
+        SHUTDOWN_NOTICE_GRACE_MS,
+      ),
+    ]);
     if (!noticesSettled) {
       deps.logger?.warn(
         {
@@ -3872,6 +3995,16 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           hint: "Inspect the outward ledger; timed-out governed notices remain retained for recovery",
         },
         "Sub-agent shutdown notice grace expired",
+      );
+    }
+    if (!terminalizationsSettled) {
+      deps.logger?.warn(
+        {
+          terminalizationCount: pendingDurableTerminalizations.size,
+          errorKind: "timeout" as const,
+          hint: "Repair durable-run storage before restart; pending terminal reasons could remain resumable",
+        },
+        "Sub-agent durable terminalization drain expired",
       );
     }
 
