@@ -57,9 +57,9 @@ export interface BackgroundTaskManagerOpts {
   clock: ClockPort;
   /** Timer scheduling. Hard-timeout setTimeout uses .unref(). */
   timers: TimerPort;
-  maxPerAgent?: number;
+  maxPerAgent?: number | ((agentId: string) => number);
   maxTotal?: number;
-  maxBackgroundDurationMs?: number;
+  maxBackgroundDurationMs?: number | ((agentId: string) => number);
   persistenceOps?: AtomicTaskPersistenceOps;
   recoveryOps?: TaskRecoveryOps;
 }
@@ -97,6 +97,7 @@ export interface BackgroundTaskManager {
     next: BackgroundSessionState,
     expected?: readonly BackgroundSessionState[],
   ): Result<boolean, Error>;
+  acknowledgeLiveConsumption(taskId: string): Result<boolean, Error>;
   persistContinuationOutbox(
     taskId: string,
     outbox: BackgroundContinuationOutbox,
@@ -140,6 +141,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
   const tasks = new Map<string, BackgroundTask>();
   const terminalSignals = new Map<string, { promise: Promise<void>; resolve: () => void }>();
   const dispatchRetryTimers = new Map<string, TimerHandle>();
+  const dispatchRetryDeferrals = new Map<string, number>();
   const terminalRetryTimers = new Map<string, TimerHandle>();
   const stateRetryTimers = new Map<string, TimerHandle>();
   const perAgentCount = new Map<string, number>();
@@ -152,6 +154,18 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     dataDir,
     ...(persistenceOps !== undefined ? { persistenceOps } : {}),
   });
+  const resolveMaxPerAgent = typeof maxPerAgent === "function"
+    ? maxPerAgent
+    : () => maxPerAgent;
+  const resolveMaxBackgroundDurationMs = typeof maxBackgroundDurationMs === "function"
+    ? maxBackgroundDurationMs
+    : () => maxBackgroundDurationMs;
+
+  function clearDispatchRetry(taskId: string): void {
+    dispatchRetryTimers.get(taskId)?.cancel();
+    dispatchRetryTimers.delete(taskId);
+    dispatchRetryDeferrals.delete(taskId);
+  }
 
   function reportPersistenceOutcome(
     task: BackgroundTask,
@@ -260,6 +274,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     terminalSignals.get(task.id)?.resolve();
     task._hardTimeoutTimer?.cancel();
     decrementCounters(task);
+    if (isClosedBackgroundTask(task)) clearDispatchRetry(task.id);
     recoveryController.resolveTask(task);
     reportPersistenceOutcome(task, persisted.value);
     return ok(undefined);
@@ -289,8 +304,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       const acceptedOrigin = parsedOrigin.data;
       const agentId = acceptedOrigin.turnScope.conversation.agentId;
       const agentCurrent = perAgentCount.get(agentId) ?? 0;
-      if (agentCurrent >= maxPerAgent) {
-        return err(new Error(`Concurrency limit exceeded: agent ${agentId} has ${agentCurrent}/${maxPerAgent} tasks`));
+      const agentLimit = resolveMaxPerAgent(agentId);
+      if (agentCurrent >= agentLimit) {
+        return err(new Error(`Concurrency limit exceeded: agent ${agentId} has ${agentCurrent}/${agentLimit} tasks`));
       }
       if (totalCount >= maxTotal) {
         return err(new Error(`Concurrency limit exceeded: total ${totalCount}/${maxTotal} tasks`));
@@ -351,7 +367,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           ac.abort();
           manager.fail(taskId, new Error("Hard timeout exceeded"));
         }
-      }, maxBackgroundDurationMs);
+      }, resolveMaxBackgroundDurationMs(agentId));
       timer.unref();
       task._hardTimeoutTimer = timer;
 
@@ -619,8 +635,30 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       if (!persisted.ok) return persisted;
       task.dispatchState = next;
       task.dispatchAttempts = dispatchAttempts;
+      if (isClosedBackgroundTask(task)) clearDispatchRetry(taskId);
       reportPersistenceOutcome(task, persisted.value);
       recoveryController.resolveTask(task);
+      return ok(true);
+    },
+
+    acknowledgeLiveConsumption(taskId) {
+      const task = tasks.get(taskId);
+      if (!task) return err(new Error(`Background task not found: ${taskId}`));
+      const incident = buildRecoveryIncident(task);
+      if (!incident.ok) return incident;
+      const committed = manager.commitDispatchState(taskId, "consumed_live", ["pending"]);
+      if (!committed.ok || !committed.value) return committed;
+      emitObservationalEventSafely({ eventBus, logger }, "background_task:notified", {
+        agentId: incident.value.agentId,
+        taskId,
+        toolName: incident.value.toolName,
+        sessionKey: incident.value.sessionKey,
+        notified: false,
+        reason: "live_turn_consumed",
+        traceId: task.origin.traceId,
+        timestamp: clock.now(),
+        trajectoryRecorded: false,
+      });
       return ok(true);
     },
 
@@ -709,7 +747,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         )
         || dispatchRetryTimers.has(taskId)
       ) return;
-      const delayMs = Math.min(60_000, 1_000 * (2 ** Math.min(task.dispatchAttempts, 6)));
+      const deferrals = dispatchRetryDeferrals.get(taskId) ?? 0;
+      const delayMs = Math.min(60_000, 1_000 * (2 ** Math.min(deferrals, 6)));
+      dispatchRetryDeferrals.set(taskId, deferrals + 1);
       const retry = timers.setTimeout(() => {
         dispatchRetryTimers.delete(taskId);
         const current = tasks.get(taskId);
@@ -806,8 +846,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         if (isClosedBackgroundTask(task) && (task.completedAt ?? task.startedAt) < cutoff) {
           tasks.delete(taskId);
           terminalSignals.delete(taskId);
-          dispatchRetryTimers.get(taskId)?.cancel();
-          dispatchRetryTimers.delete(taskId);
+          clearDispatchRetry(taskId);
           terminalRetryTimers.get(taskId)?.cancel();
           terminalRetryTimers.delete(taskId);
           stateRetryTimers.get(taskId)?.cancel();

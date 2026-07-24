@@ -2,15 +2,15 @@
 
 **Generated:** 2026-05-15
 **Status:** FINAL
-**Interface source:** `packages/agent/src/spawn/sub-agent-runner.ts` SubAgentRunnerDeps (27-field interface)
+**Interface source:** `packages/agent/src/spawn/sub-agent-runner.ts` SubAgentRunnerDeps (31-field interface)
 **Construction site:** `packages/daemon/src/wiring/setup-cross-session/setup-cross-session-runtime.ts` (single site — `createSubAgentRunner({`)
-**Field count:** 27 (7 required + 20 optional + 0 stale-fallback)
+**Field count:** 31 (8 required + 23 optional + 0 stale-fallback)
 
 This audit lives co-located with the agent package; `files: ["dist"]` in `packages/agent/package.json` excludes it from the npm tarball.
 
 ## Audit Result
 
-The audit enumerates all 21 fields of `SubAgentRunnerDeps`. Every required field appears in every production construction call; every optional field has a real production absent-mode code path (either an `if (deps.X)` guard or a `deps.X?.method()` chain whose absent-branch falls through to a no-op).
+The audit enumerates all 31 fields of `SubAgentRunnerDeps`. Every required field appears in every production construction call; every optional field has a real production absent-mode code path (either an `if (deps.X)` guard or a `deps.X?.method()` chain whose absent-branch falls through to a no-op).
 
 The architecture-test invariants enforced by `packages/agent/src/__tests__/architecture.test.ts` hold: bidirectional set equality between this table and `SubAgentRunnerDeps`; every classification is `required` or `optional`; classification matches the interface's `?` marker; every row has a non-empty evidence-link cell.
 
@@ -59,7 +59,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Summary
 
-- **Final count:** 27 (7 required + 20 optional)
+- **Final count:** 31 (8 required + 23 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 
@@ -68,4 +68,4 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 - This is the FINAL audit. Every `when-absent` cell has a real description; no deferred placeholder cells remain.
 - The CI architecture test in `packages/agent/src/__tests__/architecture.test.ts` parses this file row-by-row and asserts (1) bidirectional set equality between audit fields and `SubAgentRunnerDeps` fields, (2) every classification cell is `required` or `optional` (never the third "stale-fallback" value), (3) classification matches the interface's optional/required marker, (4) every row has a non-empty `evidence-link`. The parser depends on the table format above — DO NOT introduce nested tables, multi-line cells, or column reordering.
 - Evidence-link line numbers point at the current `packages/agent/src/spawn/sub-agent-runner.ts` layout. The audit-coverage test does not parse the line-number portion of each evidence link, so future incidental shifts (e.g., a comment edit on line 90) do not invalidate the audit until a field is added or removed; the table covers schema, not exact line addresses.
-- The architecture test asserts the interface body's actual field count via bidirectional set equality. The current 21-field shape includes clock + timers as port-typed dependencies.
+- The architecture test asserts the interface body's actual field count via bidirectional set equality. The current 31-field shape includes clock + timers as port-typed dependencies.

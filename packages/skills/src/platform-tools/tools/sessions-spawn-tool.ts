@@ -2,8 +2,8 @@
 /**
  * Sessions Spawn Tool: spawn a sub-agent session for background work.
  *
- * Delegates to the daemon-side session.spawn RPC method. Supports sync
- * (blocks until done) and async (returns runId immediately) modes.
+ * Delegates to the daemon-side async-only session.spawn RPC method, which
+ * returns a run ID immediately.
  * Spawn action is gated via createActionGate for action classification.
  *
  * @module
@@ -24,7 +24,7 @@ import type { RpcCall } from "./cron-tool.js";
 const SessionsSpawnParams = Type.Object({
   task: Type.String({ description: "Task description for the sub-agent" }),
   async: Type.Optional(
-    Type.Boolean({ description: "Spawn asynchronously, returns runId immediately (default: false)" }),
+    Type.Boolean({ description: "Optional explicit async intent; every spawn returns runId immediately" }),
   ),
   agent: Type.Optional(
     Type.String({ description: "Target agent ID for cross-agent spawning" }),
@@ -88,7 +88,7 @@ export function createSessionsSpawnTool(rpcCall: RpcCall): AgentTool<typeof Sess
       name: "sessions_spawn",
       label: "Sessions Spawn",
       description:
-        "Spawn sub-agent session for background work. Supports sync and async modes.",
+        "Start a background sub-agent and return its run ID immediately.",
       parameters: SessionsSpawnParams,
       rpcMethod: "session.spawn",
       preExecute(p) {

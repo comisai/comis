@@ -371,7 +371,8 @@ export async function assembleIncidentReportFromSources(
   let sessionSourcePath: string | undefined;
   if (sessionKey !== "" && taskCheck === null) {
     try {
-      sessionSourcePath = resolveSessionFilePath(dataDir, sessionKey);
+      sessionSourcePath = reader.resolveSessionFilePath?.(sessionKey)
+        ?? resolveSessionFilePath(dataDir, sessionKey);
     } catch {
       sessionSourcePath = undefined;
     }
@@ -493,10 +494,13 @@ function aggregateAuditByKind(
  *   `deps.dataDir` (defaulting to `~/.comis`) backed by `deps.obsStore`.
  */
 export function bindObsExplainHandlers(
-  deps: ObsHandlerDeps & { incidentReader?: IncidentSourceReader },
+  deps: ObsHandlerDeps & {
+    incidentReader?: IncidentSourceReader;
+    workspaceDirs?: ReadonlyMap<string, string>;
+  },
 ): Record<string, RpcHandler> {
   const dataDir = deps.dataDir ?? defaultDataDir();
-  const reader = deps.incidentReader ?? makeRealReader(dataDir, deps.obsStore);
+  const reader = deps.incidentReader ?? makeRealReader(dataDir, deps.obsStore, deps.workspaceDirs);
 
   return {
     [ObsExplainContract.method]: async (rawParams) => {

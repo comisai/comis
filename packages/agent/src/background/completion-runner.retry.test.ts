@@ -130,7 +130,7 @@ describe("background completion retry lifecycle", () => {
       deliverCompletion,
       deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "none",
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: {
         child: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }),
       } as never,
@@ -210,7 +210,7 @@ describe("background completion retry lifecycle", () => {
       deliverCompletion,
       deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "none",
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: {
         child: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }),
       } as never,
@@ -336,7 +336,7 @@ describe("background completion retry lifecycle", () => {
       deliverCompletion,
       deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "none",
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: {
         child: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }),
       } as never,
@@ -430,7 +430,7 @@ describe("background completion retry lifecycle", () => {
       deliverCompletion,
       deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "ledger",
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: {
         child: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }),
       } as never,
@@ -508,7 +508,7 @@ describe("background completion retry lifecycle", () => {
       deliverCompletion,
       deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "ledger",
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: {
         child: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }),
       } as never,
@@ -604,7 +604,7 @@ describe("background completion retry lifecycle", () => {
       deliverCompletion,
       deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "ledger",
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: {
         child: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }),
       } as never,
@@ -688,7 +688,7 @@ describe("background completion retry lifecycle", () => {
       deliverCompletion: vi.fn(),
       deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "ledger",
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: {
         child: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }),
       } as never,
@@ -761,7 +761,7 @@ describe("background completion retry lifecycle", () => {
       deliverCompletion: vi.fn(),
       deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "ledger",
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: {
         child: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }),
       } as never,
@@ -863,7 +863,7 @@ describe("background completion retry lifecycle", () => {
       deliverCompletion,
       deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "ledger",
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: {
         child: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }),
       } as never,
@@ -945,7 +945,7 @@ describe("background completion retry lifecycle", () => {
       deliverCompletion,
       deliverFallback: vi.fn(acceptDelivery),
       deliveryProtection: "ledger",
-      maxBackgroundHops: 3,
+      resolveMaxBackgroundHops: () => 3,
       logger: {
         child: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }),
       } as never,

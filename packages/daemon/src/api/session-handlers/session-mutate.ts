@@ -5,7 +5,7 @@
  *
  * Handlers that route or trigger work on behalf of a session:
  *   - session.send: cross-session message routing (fire-and-forget / wait / ping-pong)
- *   - session.spawn: spawn a sub-agent (async or sync awaited)
+ *   - session.spawn: start a background sub-agent and return its run ID
  *   - session.compact: trigger compaction for an existing session
  *
  * @module

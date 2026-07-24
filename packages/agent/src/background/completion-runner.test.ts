@@ -177,6 +177,7 @@ describe("createBackgroundCompletionRunner", () => {
         ? { kind: "accepted" as const }
         : { kind: "retryable_pre_send" as const, errorKind: "resource" as const, message: started.error.message };
     }),
+    resolveMaxBackgroundHops: (agentId: string) => number = () => maxBackgroundHops,
   ) {
     return createBackgroundCompletionRunner({
       eventBus,
@@ -201,7 +202,7 @@ describe("createBackgroundCompletionRunner", () => {
         return { kind: "accepted" };
       },
       deliveryProtection: "ledger",
-      maxBackgroundHops,
+      resolveMaxBackgroundHops,
       ...(isTurnInFlight ? { isTurnInFlight } : {}),
       ...(assembleToolsForAgent ? { assembleToolsForAgent } : {}),
       deliverCompletion,
@@ -209,10 +210,7 @@ describe("createBackgroundCompletionRunner", () => {
     });
   }
 
-  it("LIVE-TURN skip: origin turn in flight → NO re-entry turn (the live turn owns consumption)", async () => {
-    // Mirrors the dispatcher's suppression (live incident: an auto-backgrounded
-    // MCP call completed mid-turn; the live turn consumed it via background_tasks).
-    // A re-entry now would serialize a redundant continuation behind the live turn.
+  it("keeps a live-turn completion pending until explicit consumption", async () => {
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);
     const runner = build(3, (key) => key === originSessionKey(task.origin));
@@ -224,20 +222,16 @@ describe("createBackgroundCompletionRunner", () => {
     await new Promise((r) => setImmediate(r));
     expect(executor.execute).not.toHaveBeenCalled();
     expect(fallbackNotifyFn).not.toHaveBeenCalled();
+    expect(task.dispatchState).toBe("pending");
+    expect(taskManager.scheduleDispatchRetry).toHaveBeenCalledWith(task.id);
     await runner.shutdown();
   });
 
-  it("retries a failed live-turn consumption commit without re-entry", async () => {
+  it("delivers a pending completion after its origin turn ends", async () => {
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);
-    commitDispatchState.mockImplementation((_taskId, next, expected) => {
-      const current = task.dispatchState ?? "pending";
-      if (expected && !expected.includes(current)) return ok(false);
-      if (next === "consumed_live") return err(new Error("storage unavailable"));
-      task.dispatchState = next;
-      return ok(true);
-    });
-    const runner = build(3, () => true);
+    let turnInFlight = true;
+    const runner = build(3, () => turnInFlight);
 
     eventBus.emit("background_task:completed", {
       agentId: task.origin.turnScope.conversation.agentId,
@@ -249,13 +243,22 @@ describe("createBackgroundCompletionRunner", () => {
     });
     await new Promise((resolve) => setImmediate(resolve));
 
-    expect(taskManager.scheduleStateRetry).toHaveBeenCalledWith(
-      task.id,
-      "consumed_live",
-      ["execution_claimed"],
-    );
-    expect(taskManager.recordRecoveryIncident).toHaveBeenCalledWith(task.id);
     expect(executor.execute).not.toHaveBeenCalled();
+    expect(task.dispatchState).toBe("pending");
+
+    turnInFlight = false;
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 2,
+      origin: task.origin,
+      timestamp: 4,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(executor.execute).toHaveBeenCalledOnce();
     await runner.shutdown();
   });
 
@@ -747,9 +750,10 @@ describe("createBackgroundCompletionRunner", () => {
     // Seed task.origin with backgroundHopCount = maxBackgroundHops - 1 so
     // the increment lands at the cap. With maxBackgroundHops = 3 and
     // incoming = 2, nextHopCount = 3 = cap -> fallback fires.
-    const task = buildTask({ origin: buildOrigin({ backgroundHopCount: 2 }) });
+    const task = buildTask({ origin: buildOrigin({ agentId: "worker", backgroundHopCount: 2 }) });
     taskManager.getTask.mockReturnValue(task);
-    const runner = build(3);
+    const resolveMaxBackgroundHops = vi.fn((agentId: string) => agentId === "worker" ? 3 : 9);
+    const runner = build(3, undefined, undefined, undefined, resolveMaxBackgroundHops);
     eventBus.emit("background_task:completed", {
       agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
@@ -757,6 +761,7 @@ describe("createBackgroundCompletionRunner", () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     expect(executor.execute).not.toHaveBeenCalled();
+    expect(resolveMaxBackgroundHops).toHaveBeenCalledWith("worker");
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
     const opts = fallbackNotifyFn.mock.calls[0]![0]!;
     expect(opts.message).toContain("recursion limit reached");
@@ -1014,7 +1019,7 @@ describe("trace continuity sub-tests", () => {
         return { kind: "accepted" };
       },
       deliveryProtection: "ledger",
-      maxBackgroundHops,
+      resolveMaxBackgroundHops: () => maxBackgroundHops,
       logger,
     });
   }

@@ -511,7 +511,7 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     expect(sendToChannel).toHaveBeenCalledOnce();
 
     const shutdown = runner.shutdown();
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(0);
     await shutdown;
 
     expect(sendToChannel).toHaveBeenCalledOnce();

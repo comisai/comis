@@ -3529,6 +3529,23 @@ describe("abort wiring in spawn", () => {
 
   // completion with max_steps includes abort in announcement
   it("completion with max_steps includes abort in announcement", async () => {
+    const onEnded = vi.fn().mockResolvedValue(undefined);
+    const cast = vi.fn().mockReturnValue("contradictory completed announcement");
+    deps.lifecycleHooks = {
+      prepareSpawn: vi.fn().mockResolvedValue(undefined),
+      onEnded,
+    };
+    deps.resultCondenser = {
+      condense: vi.fn().mockResolvedValue({
+        level: 1,
+        result: { taskComplete: true, summary: "partial summary", conclusions: [] },
+        originalTokens: 100,
+        condensedTokens: 20,
+        compressionRatio: 5,
+        diskPath: "/tmp/partial.json",
+      }),
+    };
+    deps.narrativeCaster = { cast };
     vi.mocked(deps.executeAgent).mockResolvedValue({
       response: "partial output",
       tokensUsed: { total: 3000 },
@@ -3550,12 +3567,20 @@ describe("abort wiring in spawn", () => {
     expect(deps.sendToChannel).toHaveBeenCalledTimes(1);
     const text = vi.mocked(deps.sendToChannel).mock.calls[0]![2];
     expect(text).toContain("Abort: step_limit");
+    expect(text).toContain("Status: Failed");
+    expect(text).not.toContain("Status: Completed");
+    expect(cast).not.toHaveBeenCalled();
+    expect(onEnded).toHaveBeenCalledWith(expect.objectContaining({ endReason: "failed" }));
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "session:sub_agent_result_condensed",
+      expect.objectContaining({ taskComplete: false }),
+    );
     expect(runner.getRunStatus(runId)).toMatchObject({
       status: "failed",
       completion: {
         endReason: "failed",
         errorKind: "resource",
-        summary: "partial output",
+        summary: "partial summary",
       },
       telemetry: { finishReason: "max_steps" },
     });

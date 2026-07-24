@@ -691,7 +691,7 @@
               "type": "string"
             }
           ],
-          "description": "Task management action. list: show all tasks for this agent. get: get task details by ID. cancel: cancel a running task. read_output: wait for a running task and read its completed output."
+          "description": "Task management action. list: show all tasks for this conversation. get: get task details by ID. cancel: cancel a running task. read_output: wait for a running task and read its completed output."
         },
         "taskId": {
           "description": "Task ID. Required for get, cancel, and read_output actions.",
@@ -3528,6 +3528,14 @@
     "category": "session",
     "schema": {
       "properties": {
+        "agent_id": {
+          "description": "Agent that owns the target conversation",
+          "type": "string"
+        },
+        "conversation_ref": {
+          "description": "Opaque durable reference of the target conversation",
+          "type": "string"
+        },
         "max_turns": {
           "description": "Max ping-pong turns 0-5 (for ping-pong mode)",
           "type": "integer"
@@ -3549,8 +3557,8 @@
           ],
           "description": "Send mode (default: fire-and-forget). Valid values: fire-and-forget (send without waiting), wait (block for response), ping-pong (multi-turn exchange)"
         },
-        "session_key": {
-          "description": "Target session key to send the message to",
+        "tenant_id": {
+          "description": "Tenant that owns the target conversation",
           "type": "string"
         },
         "text": {
@@ -3563,7 +3571,9 @@
         }
       },
       "required": [
-        "session_key",
+        "tenant_id",
+        "agent_id",
+        "conversation_ref",
         "text"
       ],
       "type": "object"
@@ -3587,7 +3597,7 @@
           "type": "array"
         },
         "async": {
-          "description": "Spawn asynchronously, returns runId immediately (default: false)",
+          "description": "Optional explicit async intent; every spawn returns runId immediately",
           "type": "boolean"
         },
         "domain_knowledge": {

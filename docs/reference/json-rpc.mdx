@@ -6,9 +6,9 @@ icon: "code"
 
 **What this is for:** every JSON-RPC method the daemon exposes — what to send, what comes back, and which scope you need. **Who it's for:** developers building CLIs, dashboards, or external integrations against the Comis gateway.
 
-Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 170 methods across 41 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, autonomy live-control (lease-revoke / run-kill / autonomy-evict), platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
+Complete reference for the JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports, covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, cross-channel messaging, sub-agent lifecycle, autonomy controls, platform actions, notifications, secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
 
-Method count is sourced from `packages/core/src/api-contracts/` contract files (167 unique method strings across 39 namespaces). The 29 handler-factory modules in `packages/daemon/src/api/rpc-dispatch.ts` implement these contracts. Some older handler files may use additional direct-keyed methods not yet covered by the contracts layer; 167 represents the formally declared public API surface.
+The authoritative method set is `API_CONTRACTS_ORDERED` in `packages/core/src/api-contracts/`. Gateway registration is derived from that registry, and the bidirectional architecture check prevents handler/contract drift; this reference therefore avoids a hand-maintained global method count.
 
 ## Session-creation walkthrough
 
@@ -55,12 +55,16 @@ The most common end-to-end flow: open a connection, ping for liveness, kick off 
     ```
   </Step>
   <Step title="Clean up when done">
-    Use `session.delete` (admin) to remove a session. The session entry plus its memory entries are dropped.
+    Use `session.delete` (admin) to archive and remove the exact conversation partition. RAG memories are not deleted by this method; use `session.reset_conversation` with `memory: true` for that separate destructive operation.
     ```json
     {
       "jsonrpc": "2.0",
       "method": "session.delete",
-      "params": { "key": "default:alice:cli" },
+      "params": {
+        "tenant_id": "default",
+        "agent_id": "default",
+        "conversation_ref": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o"
+      },
       "id": 4
     }
     ```
@@ -772,8 +776,9 @@ An `outcome.endReason` of **`background_pending`** means the foreground turn
 deliberately ended after promoting work; the terminal user outcome belongs to
 the durable background completion and exact-origin delivery lifecycle.
 `likelyRootCause.code` is `background_pending` and its steps point to the
-`background_task:promoted` → `background_task:completed` →
-`background_task:reentered` trajectory. If protected restart recovery could not
+`background_task:promoted` → `background_task:completed` → either
+`background_task:notified` (including `live_turn_consumed` and fallback routes)
+or `background_task:reentered`. If protected restart recovery could not
 durably reset a task transition, the higher-priority
 `background_recovery_retry_required` verdict points to the retained
 reconciliation authority and the
@@ -1068,7 +1073,7 @@ These methods permanently delete observability data. The web console requires ty
 
 </Accordion>
 
-<Accordion title="session (11 methods)">
+<Accordion title="session (12 methods)">
 
 Session management for agent conversations. Client-facing methods use `rpc` scope; administrative operations use `admin` scope.
 
@@ -1080,11 +1085,11 @@ Session management for agent conversations. Client-facing methods use `rpc` scop
 | `session.history` | `rpc` | Get session conversation history |
 | `session.search` | `rpc` | Search session content by query |
 | `session.run_status` | `rpc` | Get live status of a specific sub-agent run |
-| `session.list` | `admin` | List all active sessions |
+| `session.list` | `rpc` | List sessions in an exact tenant and agent scope |
 | `session.delete` | `admin` | Delete a session |
-| `session.reset` | `admin` | Reset all sessions |
+| `session.reset` | `rpc` | Reset one exact conversation while preserving identity |
 | `session.export` | `admin` | Export session data |
-| `session.compact` | `admin` | Compact session history |
+| `session.compact` | `rpc` | Compact one exact conversation |
 | `session.reset_conversation` | `admin` | Complete cross-mode conversation reset (LCD history + working session transcript + pi runtime session) |
 
 ### `session.status`
@@ -1128,24 +1133,24 @@ Retrieve the conversation history for a session. Returns the raw message array s
 |----------|-------|
 | **Scope** | `rpc` |
 | **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string, offset?: number, limit?: number }` |
-| **Returns** | `{ messages: Array<{ role: string, content: string, timestamp?: number }> }` |
+| **Returns** | `{ session: { key, agentId, channelType, messageCount, totalTokens, inputTokens, outputTokens, toolCalls, compactions, resetCount, createdAt, lastActiveAt, label? }, messages: Array<{ role, content, timestamp, deliveryStatus? }>, total, offset, limit, hasMore }` |
 
 ### `session.list`
 
-List all sessions the daemon knows about, including sessions stored in SQLite, JSONL transcript files, and workspace session files. Optionally filter by recency or session kind.
+List sessions in an exact tenant and agent partition, including sessions stored in SQLite, JSONL transcript files, and workspace session files. Optionally filter by recency or session kind.
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ kind?: "all" \| "sub-agent" \| "group" \| "dm", since_minutes?: number }` |
-| **Returns** | `{ sessions: Array<{ sessionKey, agentId, messageCount, updatedAt, metadata }> }` |
+| **Scope** | `rpc` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, kind?: "all" \| "sub-agent" \| "group" \| "dm", since_minutes?: number }` |
+| **Returns** | `{ sessions: Array<{ conversationRef, agentId, kind, messageCount, totalTokens, updatedAt, createdAt }>, total }` |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "session.list",
-  "params": { "kind": "dm", "since_minutes": 60 },
+  "params": { "tenant_id": "default", "agent_id": "default", "kind": "dm", "since_minutes": 60 },
   "id": 1
 }
 ```
@@ -1154,8 +1159,9 @@ List all sessions the daemon knows about, including sessions stored in SQLite, J
   "jsonrpc": "2.0",
   "result": {
     "sessions": [
-      { "sessionKey": "telegram:user123:chat456", "agentId": "default", "messageCount": 42, "updatedAt": 1773313498000 }
-    ]
+      { "conversationRef": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o", "agentId": "default", "kind": "dm", "messageCount": 42, "totalTokens": 21000, "updatedAt": 1773313498000, "createdAt": 1773100000000 }
+    ],
+    "total": 1
   },
   "id": 1
 }
@@ -1164,39 +1170,43 @@ List all sessions the daemon knows about, including sessions stored in SQLite, J
 
 ### `session.send`
 
+Send text to an exact durable conversation under the agent-to-agent policy and principal-isolation gates. Agent-origin calls are confined to the caller's tenant and principal and may target only the same agent or an exact delegated child.
+
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ key: string, message: string, agentId?: string }` |
-| **Returns** | Agent response |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string, text: string, mode?: "fire-and-forget" \| "wait" \| "ping-pong", timeout_ms?: number, max_turns?: number }` |
+| **Returns** | Mode-specific delivery object: immediate delivery state for `fire-and-forget`, or the bounded target response for `wait` and `ping-pong`. |
 
 ### `session.spawn`
 
+Start a background sub-agent and return its run ID immediately. The optional `async` field is accepted but does not select a synchronous path. Agent-origin calls bind result delivery to the immutable requester origin; only an authenticated control-plane caller without an agent principal may provide both announcement-route fields explicitly.
+
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ parentKey: string, task: string, agentId?: string }` |
-| **Returns** | Spawned session info |
+| **Parameters** | `{ task: string, agent?: string, async?: boolean, max_steps?: number, model?: string, expected_outputs?: string[], artifact_refs?: string[], objective?: string, domain_knowledge?: string[], tool_groups?: string[], required_tools?: string[], include_parent_history?: "none" \| "summary", announce_channel_type?: string, announce_channel_id?: string, worktree?: boolean }` |
+| **Returns** | `{ runId, async: true, inProgress: true, noteType: "background_running", queued?, deduped?, existingRunId?, dedupAgeMs? }` |
 
 ### `session.delete`
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ session_key: string }` |
-| **Returns** | `{ sessionKey: string, deleted: true, transcript: object }` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string }` |
+| **Returns** | `{ conversationRef: string, deleted: true, transcript: { messages, metadata, messageCount } }` |
 
-The parameter name is `session_key` (snake_case) — the handler rejects requests that pass `key` instead. The deleted session's transcript is returned in the response so you have a final copy.
+The deleted session's transcript is returned in the response so the caller has a final copy. This operation also clears the conversation's working, LCD, runtime, approval-cache, and delivery-mirror state on a best-effort basis; it does not delete RAG memories.
 
 ### `session.reset`
 
-Clear all messages in a session while preserving the session's metadata (identity, channel association). Useful for giving an agent a clean slate without fully deleting the session record. Also clears any cached approval decisions for the session.
+Clear the working and runtime transcripts while preserving the conversation identity. It also clears cached approval decisions and pending delivery-mirror rows. LCD durable history is not cleared; use `session.reset_conversation` when every prompt-bearing layer must be forgotten.
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ session_key: string }` |
-| **Returns** | `{ sessionKey: string, reset: true, previousMessageCount: number }` |
+| **Scope** | `rpc` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string }` |
+| **Returns** | `{ conversationRef: string, reset: true, previousMessageCount: number }` |
 
 ### `session.export`
 
@@ -1205,15 +1215,19 @@ Export a session's full message history and metadata as a JSON object. Useful fo
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ session_key: string }` |
-| **Returns** | `{ sessionKey, messages, metadata, messageCount, createdAt, updatedAt }` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string }` |
+| **Returns** | `{ conversationRef, messages, metadata, messageCount, createdAt, updatedAt }` |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "session.export",
-  "params": { "session_key": "telegram:user123:chat456" },
+  "params": {
+    "tenant_id": "default",
+    "agent_id": "default",
+    "conversation_ref": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o"
+  },
   "id": 1
 }
 ```
@@ -1221,7 +1235,7 @@ Export a session's full message history and metadata as a JSON object. Useful fo
 {
   "jsonrpc": "2.0",
   "result": {
-    "sessionKey": "telegram:user123:chat456",
+    "conversationRef": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o",
     "messageCount": 42,
     "createdAt": 1773100000000,
     "updatedAt": 1773313498000,
@@ -1235,13 +1249,15 @@ Export a session's full message history and metadata as a JSON object. Useful fo
 
 ### `session.run_status`
 
-Get the live status of a specific sub-agent run by its run ID. Returns timing, the task description, the current status, and — once complete — the response text and token usage.
+Get the owner-authorized, content-bounded status of a sub-agent run. Raw task text, provider output, display session keys, and free-form errors never cross this surface.
+
+Agent callers receive only `endReason`, `completedAtMs`, and failure `errorKind` inside `completion`. An authorized administrator may additionally receive the bounded `summary` and `resultRef` retained on the run.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
 | **Parameters** | `{ run_id: string }` |
-| **Returns** | `{ runId, status, agentId, task, sessionKey, startedAt, completedAt?, runtimeMs, response?, tokensUsed?, cost?, error? }` |
+| **Returns** | Closed union: `queued` carries `queuedAt`; `running` carries `startedAt`; `completed` carries a success `completion` and content-free `telemetry`; `failed` carries a failure `completion` and optional telemetry. |
 
 <CodeGroup>
 ```json Request
@@ -1259,11 +1275,20 @@ Get the live status of a specific sub-agent run by its run ID. Returns timing, t
     "runId": "run_abc123",
     "status": "completed",
     "agentId": "researcher",
-    "task": "Summarize recent papers on quantum error correction",
     "startedAt": 1773313450000,
-    "completedAt": 1773313498000,
     "runtimeMs": 48000,
-    "response": "Here is a summary of recent papers..."
+    "completion": {
+      "endReason": "completed",
+      "completedAtMs": 1773313498000
+    },
+    "telemetry": {
+      "tokensUsedTotal": 6200,
+      "costTotal": 0.0186,
+      "finishReason": "stop",
+      "stepsExecuted": 4,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0
+    }
   },
   "id": 1
 }
@@ -1275,31 +1300,35 @@ Get the live status of a specific sub-agent run by its run ID. Returns timing, t
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ query: string, limit?: number }` |
-| **Returns** | `Array<{ sessionKey: string, agentId: string, channelType: string, snippet: string, score: number, timestamp: number }>` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, query?: string, scope?: "all" \| "user" \| "assistant" \| "tool", summarize?: boolean, limit?: number }` |
+| **Returns** | With no query: `{ mode: "recent", sessions, total }`. With a query: `{ mode: "search", results: Array<{ conversationRef, agentId, channelType, snippet, rawSnippet?, summary?, score, timestamp }>, total }`. |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "session.search",
-  "params": { "query": "deployment instructions", "limit": 5 },
+  "params": { "tenant_id": "default", "agent_id": "default", "query": "deployment instructions", "limit": 5 },
   "id": 1
 }
 ```
 ```json Response
 {
   "jsonrpc": "2.0",
-  "result": [
-    {
-      "sessionKey": "telegram:user123:chat456",
-      "agentId": "default",
-      "channelType": "telegram",
-      "snippet": "...deploy using pm2 for production...",
-      "score": 0.87,
-      "timestamp": 1773313498000
-    }
-  ],
+  "result": {
+    "mode": "search",
+    "results": [
+      {
+        "conversationRef": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o",
+        "agentId": "default",
+        "channelType": "dm",
+        "snippet": "...deploy using the production service...",
+        "score": 1,
+        "timestamp": 1773313498000
+      }
+    ],
+    "total": 1
+  },
   "id": 1
 }
 ```
@@ -1309,23 +1338,23 @@ Get the live status of a specific sub-agent run by its run ID. Returns timing, t
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ key: string }` |
-| **Returns** | Compaction result |
+| **Scope** | `rpc` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string, instructions?: string }` |
+| **Returns** | `{ conversationRef, messageCount, estimatedTokens, compactionTriggered: true, instructions: string \| null }` |
 
 ### `session.reset_conversation`
 
-Complete cross-mode conversation reset. Clears **all three** transcript layers: the LCD durable history, the daemon sessionStore working transcript, and the pi runtime session. **Destructive and irreversible.** Admin-scoped — requires an admin token.
+Complete cross-mode conversation reset. Clears **all four prompt-bearing layers**: the delivery mirror, LCD durable history, daemon sessionStore working transcript, and pi runtime session. **Destructive and irreversible.** Admin-scoped — requires an admin token.
 
-This is the correct explicit forget command. Unlike `session.delete` (which only removes the session record), this operation ensures the model starts with a clean slate in **both engine modes**: the LCD store is empty (dag mode), the sessionStore messages are empty, and the runtime session transcript is destroyed. The runtime layer matters: without it, the surviving runtime JSONL is re-ingested wholesale on the next turn (LCD epoch rebase) and the "forgotten" conversation resurrects.
+This is the explicit forget command when the session identity should remain addressable. Unlike `session.reset`, it also clears the LCD store used by dag mode; `memory: true` additionally removes source memories. The runtime layer matters: without it, the surviving runtime JSONL is re-ingested wholesale on the next turn (LCD epoch rebase) and the "forgotten" conversation resurrects.
 
 The operation is serialized against live LCD ingest (safe to call while the daemon is running). Returns count-only — no message content is returned or logged. Best-effort on each layer: absent sessionStore entry or zero LCD rows is not an error.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ session_key: string, memory?: boolean, purge_derived?: boolean }` — `memory` defaults to `false`; when `true`, the conversation's RAG memories are also deleted by `source_session_key` (both paired-conversation **and** LCD-distilled episodic memories) for the agent + tenant scope, and the deleted sources are unlinked from consolidated observations (orphan observation → deleted; multi-source observation → kept with the reference removed). `purge_derived` (default `false`, only meaningful with `memory: true`) escalates to deleting **every** observation derived from this session, even those corroborated by other sessions. |
-| **Returns** | `{ sessionKey: string, lcdRowsDeleted: number, sessionMessagesCleared: number, memoriesDeleted?: number, runtimeSessionDestroyed?: boolean }` — `memoriesDeleted` is the count of deleted RAG memory rows when `memory: true` and a memory store is wired. It is **omitted** (`undefined`) only when `memory` was not requested, or when the daemon has no memory store wired (the LCD + session transcript are still cleared). `runtimeSessionDestroyed` reports whether the pi runtime session was destroyed; `false` means that layer was unavailable and the conversation may resurrect on the next turn (a WARN with the consequence is logged). |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string, memory?: boolean, purge_derived?: boolean }` — `memory` defaults to `false`; when `true`, the conversation's RAG memories are also deleted by source conversation (both paired-conversation **and** LCD-distilled episodic memories) for the exact agent + tenant scope, and the deleted sources are unlinked from consolidated observations (orphan observation → deleted; multi-source observation → kept with the reference removed). `purge_derived` (default `false`, only meaningful with `memory: true`) escalates to deleting **every** observation derived from this session, even those corroborated by other sessions. |
+| **Returns** | `{ conversationRef: string, lcdRowsDeleted: number, sessionMessagesCleared: number, memoriesDeleted?: number, resolvedAgentId?: string, runtimeSessionDestroyed?: boolean }` — `memoriesDeleted` is the count of deleted RAG memory rows when `memory: true` and a memory store is wired. It is **omitted** (`undefined`) only when `memory` was not requested, or when the daemon has no memory store wired (the LCD + session transcript are still cleared). `runtimeSessionDestroyed` reports whether the pi runtime session was destroyed; `false` means that layer was unavailable and the conversation may resurrect on the next turn (a WARN with the consequence is logged). |
 
 <CodeGroup>
 ```json Request
@@ -1333,7 +1362,9 @@ The operation is serialized against live LCD ingest (safe to call while the daem
   "jsonrpc": "2.0",
   "method": "session.reset_conversation",
   "params": {
-    "session_key": "default:user123:telegram",
+    "tenant_id": "default",
+    "agent_id": "default",
+    "conversation_ref": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o",
     "memory": true
   },
   "id": 1
@@ -1343,7 +1374,7 @@ The operation is serialized against live LCD ingest (safe to call while the daem
 {
   "jsonrpc": "2.0",
   "result": {
-    "sessionKey": "default:user123:telegram",
+    "conversationRef": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o",
     "lcdRowsDeleted": 42,
     "sessionMessagesCleared": 18,
     "memoriesDeleted": 5,

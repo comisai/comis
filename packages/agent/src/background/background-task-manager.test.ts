@@ -284,6 +284,31 @@ describe("BackgroundTaskManager", () => {
       );
     });
 
+    it("atomically acknowledges an explicitly read terminal result", () => {
+      const result = manager.promote(
+        "tool",
+        Promise.resolve("done"),
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+      if (!result.ok) return;
+      manager.complete(result.value, "done");
+
+      const acknowledged = manager.acknowledgeLiveConsumption(result.value);
+
+      expect(acknowledged).toEqual(ok(true));
+      expect(manager.getTask(result.value)?.dispatchState).toBe("consumed_live");
+      expect(loadTask(dataDir, "agent-1", result.value)?.dispatchState).toBe("consumed_live");
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "background_task:notified",
+        expect.objectContaining({
+          taskId: result.value,
+          reason: "live_turn_consumed",
+        }),
+      );
+      expect(manager.acknowledgeLiveConsumption(result.value)).toEqual(ok(false));
+    });
+
     it("retains running ownership when terminal persistence fails", () => {
       const result = manager.promote(
         "tool",
@@ -530,6 +555,47 @@ describe("BackgroundTaskManager", () => {
         expect(task!.status).toBe("failed");
         expect(task!.error).toContain("Hard timeout exceeded");
         expect(ac.signal.aborted).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe("dispatch retry backoff", () => {
+    it("backs off repeated pending delivery retries independently of execution attempts", async () => {
+      vi.useFakeTimers();
+      try {
+        const promoted = manager.promote(
+          "slow_report",
+          new Promise(() => {}),
+          new AbortController(),
+          buildOrigin({ agentId: "agent-1" }),
+        );
+        expect(promoted.ok).toBe(true);
+        if (!promoted.ok) return;
+        expect(manager.complete(promoted.value, { report: "ready" }).ok).toBe(true);
+        vi.mocked(eventBus.emit).mockClear();
+
+        manager.scheduleDispatchRetry(promoted.value);
+        await vi.advanceTimersByTimeAsync(1_001);
+        expect(eventBus.emit).toHaveBeenCalledWith(
+          "background_task:completed",
+          expect.objectContaining({ taskId: promoted.value }),
+        );
+
+        vi.mocked(eventBus.emit).mockClear();
+        manager.scheduleDispatchRetry(promoted.value);
+        await vi.advanceTimersByTimeAsync(1_001);
+        expect(eventBus.emit).not.toHaveBeenCalledWith(
+          "background_task:completed",
+          expect.anything(),
+        );
+
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(eventBus.emit).toHaveBeenCalledWith(
+          "background_task:completed",
+          expect.objectContaining({ taskId: promoted.value }),
+        );
       } finally {
         vi.useRealTimers();
       }

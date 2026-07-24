@@ -25,7 +25,6 @@ import {
   resolveConfigSecretRefs,
   validateMemoryWrite,
   themeForName,
-  BackgroundTasksConfigSchema,
   writeMasterKeyIfAbsent,
   preReadStorageMode,
   systemNowMs,
@@ -173,7 +172,7 @@ import {
 } from "./wiring/daemon-entrypoint.js";
 import { createSubagentActivityTracker, sweepStuckSubAgentRuns } from "./wiring/subagent-stuck-sweep.js"; // idle-based stuck sub-agent sweep (health tick)
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig } from "./wiring/main-helpers.js";
 import { setupChannelLivenessMonitor } from "./wiring/setup-channel-liveness-monitor.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
@@ -408,6 +407,7 @@ function buildChannelManagerDeps(deps: {
       continuationTracker.track({
         agentId: defaultAgentId, channelType, channelId: msg.channelId,
         userId: msg.senderId, chatType,
+        // eslint-disable-next-line security/detect-object-injection -- defaultAgentId selects a key from the validated agent configuration map.
         resolvedLanguage: resolveContinuationLanguage(msg, agentsConfig[defaultAgentId]?.language),
         tenantId: container.config.tenantId, timestamp: Date.now(),
       });
@@ -1525,7 +1525,9 @@ async function bootFoundation(
 
   // 6.5.1. Background task system (created before setupAgents)
   const { backgroundTaskManager } = setupBackgroundTasks({
-    dataDir, config: BackgroundTasksConfigSchema.parse(container.config.agents[container.config.routing.defaultAgentId]?.backgroundTasks ?? {}),
+    dataDir,
+    config: resolveAgentBackgroundTasksConfig(container.config.agents, container.config.routing.defaultAgentId),
+    resolveConfigForAgent: (agentId) => resolveAgentBackgroundTasksConfig(container.config.agents, agentId),
     eventBus: container.eventBus,
     logger: logLevelManager.getLogger("background-tasks"),
     clock,
@@ -2273,14 +2275,14 @@ async function bootChannels(boot: BootContext): Promise<void> {
   });
   sessionTrackerSlot.current = notificationContext.sessionTracker;
   bgNotifyRef.ref = notificationContext.notificationService;
-  const bgConfigForRunner = BackgroundTasksConfigSchema.parse(agents[defaultAgentId]?.backgroundTasks ?? {});
   const bgCompletionRunnerContext = setupBackgroundCompletionRunner({
     eventBus: container.eventBus, getExecutor: handle.getExecutor, sessionStore,
     resolveSessionManager: (agentId) => handle.piSessionAdapters.get(agentId),
     assembleToolsForAgent, adaptersByType, deliveryService,
     taskManager: backgroundTaskManager, fallbackNotifyFn: bgNotifyFn,
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
-    maxBackgroundHops: bgConfigForRunner.maxBackgroundHops, logger: daemonLogger,
+    resolveMaxBackgroundHops: (agentId) => resolveAgentBackgroundTasksConfig(agents, agentId).maxBackgroundHops,
+    logger: daemonLogger,
   });
   // eventBus.on("system:shutdown", () =>
   //   bgCompletionRunnerContext.runner.shutdown()) deleted — runner.shutdown
@@ -2575,6 +2577,7 @@ async function bootGateway(
     obsStore,
     clock: boot.clock,
     durableRuns: boot.durableRunStore,
+    workspaceDirs,
   });
 
   const { gatewayHandle, activeExecutions, getActiveConnectionCount, wsConnections } = await setupGateway({
@@ -2948,7 +2951,6 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   const instanceId = randomUUID().slice(0, 8);
 
   // Apply SDK logging defaults before constructing provider clients.
-  // eslint-disable-next-line no-restricted-syntax -- process.env access required before SecretManager is initialized; ANTHROPIC_LOG is the SDK-owned switch, not a comis credential.
   applyInspectDefaultsForLogging(process.env as Record<string, string | undefined>);
 
   // Probe native dependencies before subsystem initialization.

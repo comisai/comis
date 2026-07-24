@@ -3,8 +3,8 @@
  * Lifecycle hooks for subagent spawn preparation and completion.
  *
  * Provides two best-effort hooks:
- * - `prepareSpawn()`: Creates a disk directory for the subagent run, emits
- *   a spawn-prepared event, and returns a rollback handle for cleanup.
+ * - `prepareSpawn()`: Emits a spawn-prepared event. Result writers create
+ *   directories only when they persist output, avoiding orphan directories.
  * - `onEnded()`: Emits a lifecycle-ended event with end reason, runtime,
  *   tokens, cost, and condensation level. Supplements (does not replace)
  *   the inline condensation/casting/announcement pipeline.
@@ -49,10 +49,8 @@ export interface LifecycleHooksDeps {
 export function createLifecycleHooks(deps: LifecycleHooksDeps) {
   return {
     /**
-     * Prepare a disk directory for the subagent run and emit a spawn-prepared event.
-     *
-     * Returns a rollback handle for cleaning up the directory on spawn failure,
-     * or `undefined` if preparation fails (belt defense).
+     * Emit a spawn-prepared event. Returns `undefined`; output writers own
+     * directory creation at persistence time.
      */
     async prepareSpawn(params: {
       runId: string;

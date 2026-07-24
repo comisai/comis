@@ -6,8 +6,17 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createBackgroundTasksTool, type BackgroundTaskManagerLike } from "./background-tasks-tool.js";
+import {
+  createBackgroundTasksTool as createBackgroundTasksToolRaw,
+  type BackgroundTaskManagerLike,
+} from "./background-tasks-tool.js";
 import { ok, err } from "@comis/shared";
+import {
+  createConversationRef,
+  createDeliveryOrigin,
+  runWithContext,
+  type RequestContext,
+} from "@comis/core";
 
 function createMockManager(overrides: Partial<BackgroundTaskManagerLike> = {}): BackgroundTaskManagerLike {
   return {
@@ -21,11 +30,65 @@ function createMockManager(overrides: Partial<BackgroundTaskManagerLike> = {}): 
 
 const AGENT_ID = "agent-1";
 
-function origin(agentId = AGENT_ID) {
+function origin(
+  agentId = AGENT_ID,
+  principalId = "user_a",
+) {
+  const conversation = {
+    tenantId: "default",
+    agentId,
+    partition: { kind: "principal" as const, principalId },
+  };
+  const conversationRef = createConversationRef(conversation);
+  if (!conversationRef.ok) throw conversationRef.error;
   return {
     turnScope: {
-      conversation: { agentId },
+      conversation,
     },
+    conversationRef: conversationRef.value,
+  };
+}
+
+function makeContext(principalId = "user_a"): RequestContext {
+  return {
+    tenantId: "default",
+    userId: principalId,
+    agentId: AGENT_ID,
+    sessionKey: `default:agent:${AGENT_ID}:${principalId}`,
+    turnScope: {
+      conversation: {
+        tenantId: "default",
+        agentId: AGENT_ID,
+        partition: { kind: "principal", principalId },
+      },
+      principal: { principalId },
+      endpoint: {
+        channelType: "echo",
+        channelInstanceId: "test-instance",
+        conversationId: principalId,
+        conversationKind: "direct",
+      },
+    },
+    traceId: "40000000-0000-4000-8000-000000000004",
+    startedAt: 1,
+    trustLevel: "user",
+    channelType: "echo",
+    deliveryOrigin: createDeliveryOrigin({
+      tenantId: "default",
+      userId: principalId,
+      channelType: "echo",
+      channelId: principalId,
+    }),
+  };
+}
+
+function createBackgroundTasksTool(
+  deps: Parameters<typeof createBackgroundTasksToolRaw>[0],
+): ReturnType<typeof createBackgroundTasksToolRaw> {
+  const tool = createBackgroundTasksToolRaw(deps);
+  return {
+    ...tool,
+    execute: (...args) => runWithContext(makeContext(), () => tool.execute(...args)),
   };
 }
 
@@ -52,6 +115,20 @@ describe("background_tasks tool", () => {
       expect(parsed[0]).toMatchObject({ id: "t1", toolName: "web_fetch", status: "running" });
       expect(parsed[1]).toMatchObject({ id: "t2", toolName: "exec", status: "completed" });
       expect(manager.getTasks).toHaveBeenCalledWith(AGENT_ID);
+    });
+
+    it("omits tasks owned by another conversation using the same agent", async () => {
+      const tasks = [
+        { id: "owned", origin: origin(), toolName: "web_fetch", status: "running" as const, startedAt: 1000 },
+        { id: "private", origin: origin(AGENT_ID, "user_b"), toolName: "exec", status: "completed" as const, startedAt: 2000 },
+      ];
+      manager = createMockManager({ getTasks: vi.fn(() => tasks) });
+      const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
+
+      const result = await tool.execute("call-1", { action: "list" });
+      const parsed = JSON.parse((result as { content: Array<{ text: string }> }).content[0].text);
+
+      expect(parsed.map((task: { id: string }) => task.id)).toEqual(["owned"]);
     });
 
     it("returns empty array when no tasks", async () => {
@@ -93,6 +170,22 @@ describe("background_tasks tool", () => {
       const task = {
         id: "t1", origin: origin("other-agent"), toolName: "web_fetch",
         status: "running" as const, startedAt: 1000,
+      };
+      const acknowledgeLiveConsumption = vi.fn(() => ok(true));
+      manager = {
+        ...createMockManager({ getTask: vi.fn(() => task) }),
+        acknowledgeLiveConsumption,
+      } as BackgroundTaskManagerLike;
+      const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
+
+      await expect(tool.execute("call-1", { action: "get", taskId: "t1" }))
+        .rejects.toThrow(/not found/i);
+    });
+
+    it("returns not found when task belongs to another conversation using the same agent", async () => {
+      const task = {
+        id: "t1", origin: origin(AGENT_ID, "user_b"), toolName: "web_fetch",
+        status: "completed" as const, startedAt: 1000, completedAt: 2000,
       };
       manager = createMockManager({ getTask: vi.fn(() => task) });
       const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
@@ -147,13 +240,37 @@ describe("background_tasks tool", () => {
         status: "completed" as const, startedAt: 1000, completedAt: 2000,
         result: '{"data":"hello"}',
       };
-      manager = createMockManager({ getTask: vi.fn(() => task) });
+      const acknowledgeLiveConsumption = vi.fn(() => ok(true));
+      manager = {
+        ...createMockManager({ getTask: vi.fn(() => task) }),
+        acknowledgeLiveConsumption,
+      } as BackgroundTaskManagerLike;
       const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
 
       const result = await tool.execute("call-1", { action: "read_output", taskId: "t1" });
       const text = (result as { content: Array<{ text: string }> }).content[0].text;
 
       expect(text).toContain('{"data":"hello"}');
+      expect(acknowledgeLiveConsumption).not.toHaveBeenCalled();
+    });
+
+    it("returns terminal output before the executor records its durable consumption receipt", async () => {
+      const task = {
+        id: "t1", origin: origin(), toolName: "web_fetch",
+        status: "completed" as const, startedAt: 1000, completedAt: 2000,
+        result: '{"data":"hello"}',
+      };
+      const acknowledgeLiveConsumption = vi.fn(() => err(new Error("storage unavailable")));
+      manager = {
+        ...createMockManager({ getTask: vi.fn(() => task) }),
+        acknowledgeLiveConsumption,
+      } as BackgroundTaskManagerLike;
+      const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
+
+      const result = await tool.execute("call-1", { action: "read_output", taskId: "t1" });
+
+      expect((result as { content: Array<{ text: string }> }).content[0].text).toContain("hello");
+      expect(acknowledgeLiveConsumption).not.toHaveBeenCalled();
     });
 
     it("returns still running message for running task", async () => {

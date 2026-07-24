@@ -432,19 +432,21 @@ See [Resilience](/agents/resilience) for how prompt timeouts fit into the full r
 #### Background Tasks (agents.*.backgroundTasks)
 
 Controls automatic promotion of long-running tool calls into the daemon's
-durable background-task manager. The manager is shared across agents, so
-`maxTotal` is a daemon-wide ceiling while `maxPerAgent` is enforced separately
-for each agent.
+durable background-task manager. The manager is shared across agents. Every
+field except `maxTotal` resolves from the task owner's agent configuration.
+`maxTotal` is the daemon-wide ceiling and resolves once from the agent selected
+by `routing.defaultAgentId`; setting it on another agent does not change the
+shared cap.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `true` | Enable automatic background promotion. |
 | `autoBackgroundMs` | `number` | `10000` | Promote an eligible tool call after this many milliseconds. |
-| `maxPerAgent` | `number` | `5` | Maximum concurrent background tasks for one agent. |
-| `maxTotal` | `number` | `20` | Maximum concurrent background tasks across the shared manager. |
-| `maxBackgroundDurationMs` | `number` | `300000` | Hard runtime limit for a background task. When it expires, the task is aborted and finalized as failed. |
+| `maxPerAgent` | `number` | `5` | Maximum concurrent background tasks for this agent. |
+| `maxTotal` | `number` | `20` | Maximum concurrent background tasks across the shared manager. Only the `routing.defaultAgentId` agent's value supplies this daemon-wide cap. |
+| `maxBackgroundDurationMs` | `number` | `300000` | Per-owner-agent hard runtime limit for a background task. When it expires, the task is aborted and finalized as failed. |
 | `excludeTools` | `string[]` | `[]` | Additional tool names that must never be auto-promoted. |
-| `maxBackgroundHops` | `number` | `3` | Maximum continuation re-entry depth, preventing a completion turn from creating an unbounded background chain. |
+| `maxBackgroundHops` | `number` | `3` | Per-owner-agent continuation re-entry depth, preventing a completion turn from creating an unbounded background chain. |
 
 #### RAG (agents.*.rag)
 

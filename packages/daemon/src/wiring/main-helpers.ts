@@ -14,6 +14,7 @@ import {
   resolveMultilingual,
   EMBED_MULTILINGUAL,
   RERANK_MULTILINGUAL,
+  BackgroundTasksConfigSchema,
 } from "@comis/core";
 import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort, RootRunIdResolver, ComisLogger, TypedEventBus } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
@@ -69,6 +70,14 @@ export interface BoundedAutonomyWiring {
   rootRunIdIndex: Map<string, string>;
   resolveRootRunId: RootRunIdResolver;
   sharedLeaseManager: LeaseManager;
+}
+
+export function resolveAgentBackgroundTasksConfig(
+  agents: BootContext["container"]["config"]["agents"],
+  agentId: string,
+) {
+  // eslint-disable-next-line security/detect-object-injection -- agentId selects a key from the validated agent configuration map.
+  return BackgroundTasksConfigSchema.parse(agents[agentId]?.backgroundTasks ?? {});
 }
 
 /** Build the {@link BoundedAutonomyWiring} late-bind seam (see the interface doc). */

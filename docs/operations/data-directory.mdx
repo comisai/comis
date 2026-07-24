@@ -420,8 +420,10 @@ execution loop. Each task lives at
 and files are owner-only (`0600`).
 
 The record preserves the originating conversation, terminal result, continuation
-execution id, retry count, and delivery/outbox state. A completed task can
-therefore resume exact-origin continuation delivery after a daemon restart.
+execution id, retry count, and atomic delivery-ownership/outbox state. A
+completed task can therefore resume exact-origin continuation delivery after a
+daemon restart without allowing live consumption and a fallback continuation to
+both own the same result.
 Delivery that is proven permanent is parked as such; delivery whose outward
 outcome cannot be established is parked uncertain instead of being replayed
 blindly.

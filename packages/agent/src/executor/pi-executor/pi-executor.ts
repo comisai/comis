@@ -2132,6 +2132,9 @@ async function runSessionLocked(
     providerHealth: deps.providerHealth,
     // Tool progress and completion both reset the prompt stall budget.
     onToolActivity: () => { currentResetTimer?.(); },
+    acknowledgeBackgroundTaskConsumption: deps.backgroundTaskManager !== undefined
+      ? (taskId: string) => deps.backgroundTaskManager?.acknowledgeLiveConsumption(taskId) ?? ok(false)
+      : undefined,
     // When the configured model is unregistered, pi
     // falls back to its own default model object (e.g. gemini-*); record the
     // CONFIGURED model so token_usage/cost are not mislabeled. See observedModelId.
