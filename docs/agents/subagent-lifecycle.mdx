@@ -47,7 +47,7 @@ The parent invokes the `sessions_spawn` tool:
 ```json
 {
   "tool": "sessions_spawn",
-  "agent_id": "researcher",
+  "agent": "researcher",
   "task": "Search the web and summarize the three biggest quantum-computing breakthroughs of the last 12 months. Return a Markdown bullet list with sources.",
   "objective": "Provide background facts for a 500-word brief.",
   "artifact_refs": [],
@@ -82,7 +82,7 @@ Condensation: Level 1 (passthrough)
 ---
 Runtime: 18.4s | Steps: 4 | Tokens: 6200 | Cost: $0.0186
 Condensation: Level 1 | Original: 6200 tokens | Ratio: 1.00
-Full result: ~/.comis/subagent-results/{session}/{runId}.json
+Full result: ~/.comis/subagent-results/{tenantId}/{runId}.json
 Session: subagent:researcher:abc123
 ```
 
@@ -169,8 +169,8 @@ Level 3 is a last-resort fallback that ensures the parent always receives
 something, even when LLM condensation is unavailable.
 
 <Info>
-  Regardless of condensation level, the full result is always written to disk at
-  `~/.comis/subagent-results/{sessionKey}/{runId}.json`. Results are retained
+  Regardless of condensation level, the full result is written to disk at
+  `~/.comis/subagent-results/{tenantId}/{runId}.json`. Results are retained
   for 24 hours by default (configurable via `resultRetentionMs`), after which
   they are automatically swept.
 </Info>
@@ -201,7 +201,7 @@ File Paths:
 ---
 Runtime: 12.3s | Steps: 5 | Tokens: 4500 | Cost: $0.0135
 Condensation: Level 2 | Original: 15000 tokens | Ratio: 0.30
-Full result: ~/.comis/subagent-results/{session}/{runId}.json
+Full result: ~/.comis/subagent-results/{tenantId}/{runId}.json
 Session: {sessionKey}
 ```
 
@@ -254,7 +254,7 @@ the runner invokes it if admission or execution preparation fails.
 claimed its terminal state and handed any announcement to its governed delivery
 path. It emits a
 `session:sub_agent_lifecycle_ended` event with lifecycle metadata (end reason,
-runtime, token counts, condensation level, disk path). Its promise is not part
+runtime, token counts, and condensation level). Its promise is not part
 of the active execution set, so a stalled hook cannot retain sub-agent
 concurrency capacity, keep a provider execution promise alive, or delay prompt
 shutdown. A rejection emits a WARN after the terminal outcome is already owned.
@@ -350,7 +350,7 @@ reasons are also included in lifecycle observability and narrative metadata.
 
 <CardGroup cols={2}>
   <Card title="Sessions Tool Reference" icon="terminal" href="/agent-tools/sessions">
-    Parameters and usage for sessions_spawn, sessions_kill, and other session tools.
+    Parameters and usage for sessions_spawn, subagents kill, and other session tools.
   </Card>
   <Card title="Compaction" icon="compress" href="/agents/compaction">
     How the context engine manages conversation length, including the compaction

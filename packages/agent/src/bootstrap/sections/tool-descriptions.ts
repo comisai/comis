@@ -75,7 +75,7 @@ export const TOOL_SUMMARIES: Record<string, string> = {
   sessions_history: "Fetch another session's conversation history",
   sessions_send: "Send message to another session",
   sessions_spawn: "Spawn sub-agent for background work",
-  subagents: "List, steer, or kill sub-agents",
+  subagents: "List, wait for, steer, or kill sub-agents",
   pipeline: "Execute multi-node DAG workflow pipelines",
   session_status: "Show agent status and usage",
   session_search: "Search full session transcript history",
@@ -149,8 +149,8 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   sessions_history: "Fetch conversation history for another session or sub-agent.",
   // Confusable pair: sessions_send / message
   sessions_send: "Send message to another session. For chat channel messages, use message.",
-  sessions_spawn: "Spawn a sub-agent session for background work (sync or async).",
-  subagents: "List, steer, or kill sub-agent runs for this session.",
+  sessions_spawn: "Start a background sub-agent and return its run ID immediately.",
+  subagents: "List, wait for, steer, or kill sub-agent runs for this session.",
   pipeline: "Define, execute, monitor, and cancel multi-node DAG execution graphs.",
   session_status: "Show agent status card: usage, model, steps. Optional per-session model override.",
   // Confusable pair: session_search / memory_search
@@ -622,7 +622,7 @@ You MUST delegate tasks to a sub-agent when the work matches ANY of these criter
 - **Time-intensive operations**: Any task where tool execution alone will take >30 seconds
 
 ### How to Delegate
-1. Use \`sessions_spawn\` with \`async=true\` and a **goal-oriented** task description
+1. Use \`sessions_spawn\` with a **goal-oriented** task description; every spawn runs in the background
 2. Describe WHAT to accomplish, not HOW -- the sub-agent has its own skills and will read SKILL.md itself
 3. Do NOT copy-paste skill instructions, shell commands, or step-by-step procedures into the task
 4. Include user context the sub-agent needs (e.g., desired style, dimensions, topic) but not tool instructions
@@ -635,7 +635,7 @@ When a task has independent subtasks, spawn multiple sub-agents in parallel:
 - Call \`sessions_spawn\` multiple times in the SAME response (parallel tool calls)
 - Each sub-agent gets a focused, self-contained task description
 - All sub-agents run concurrently and announce results independently
-- Use \`subagents\` (action="list") to check progress of all running sub-agents
+- Use \`subagents\` (action="wait") to collect owned results without polling; use action="list" only for a status snapshot
 
 ### Do NOT Delegate
 - Quick lookups, single-file reads, simple questions, status checks

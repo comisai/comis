@@ -13,8 +13,8 @@
  *    or no model is available. Uses SDK `truncateHead()`/`truncateTail()` to
  *    preserve the beginning and end of the result.
  *
- * Full results are always persisted to disk at
- * `{dataDir}/subagent-results/{sanitizedSessionKey}/{runId}.json` regardless
+ * Full results are persisted to the tenant-scoped path
+ * `{dataDir}/subagent-results/{tenantId}/{runId}.json` regardless
  * of condensation level. Post-condensation validation checks that
  * file paths from the original result appear in the condensed output.
  *
@@ -207,8 +207,7 @@ async function condenseInternal(params: CondenseParams, deps: ResultCondenserDep
 
   const originalTokens = estimateTokens(fullResult);
 
-  // Compute disk path eagerly.
-  // Simplified directory naming for new runs: {tenantId}/{runId}.json
+  // Compute the tenant-scoped disk path eagerly.
   const diskPath = safePath(deps.dataDir, "subagent-results", params.tenantId, `${runId}.json`);
 
   // Determine condensation level.

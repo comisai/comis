@@ -24,7 +24,7 @@ import type { RpcCall } from "./cron-tool.js";
 const SessionsSpawnParams = Type.Object({
   task: Type.String({ description: "Task description for the sub-agent" }),
   async: Type.Optional(
-    Type.Boolean({ description: "Spawn asynchronously, returns runId immediately (default: false)" }),
+    Type.Boolean({ description: "Optional explicit async intent; every spawn returns runId immediately" }),
   ),
   agent: Type.Optional(
     Type.String({ description: "Target agent ID for cross-agent spawning" }),
@@ -88,7 +88,7 @@ export function createSessionsSpawnTool(rpcCall: RpcCall): AgentTool<typeof Sess
       name: "sessions_spawn",
       label: "Sessions Spawn",
       description:
-        "Spawn sub-agent session for background work. Supports sync and async modes.",
+        "Start a background sub-agent and return its run ID immediately.",
       parameters: SessionsSpawnParams,
       rpcMethod: "session.spawn",
       preExecute(p) {

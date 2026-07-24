@@ -143,9 +143,9 @@ The `background_tasks` tool lets agents inspect and manage the daemon's durable 
 
 | Action | Description |
 |--------|-------------|
-| `list` | List active background tasks with status, age, and task type |
-| `get` | Get full state of a single task by ID |
-| `cancel` | Cancel a running task (destructive; requires `_confirmed`) |
+| `list` | List this agent's background tasks with status and timestamps |
+| `get` | Get status metadata for a single task by ID |
+| `cancel` | Cancel a running task |
 | `read_output` | Wait for a running promoted tool call, then atomically claim and return its terminal output |
 
 Use `background_tasks` to inspect a promoted tool call, consume its eventual
