@@ -509,6 +509,47 @@ describe("BackgroundTaskManager", () => {
     });
   });
 
+  describe("dispatch retry backoff", () => {
+    it("backs off repeated pending delivery retries independently of execution attempts", async () => {
+      vi.useFakeTimers();
+      try {
+        const promoted = manager.promote(
+          "slow_report",
+          new Promise(() => {}),
+          new AbortController(),
+          buildOrigin({ agentId: "agent-1" }),
+        );
+        expect(promoted.ok).toBe(true);
+        if (!promoted.ok) return;
+        expect(manager.complete(promoted.value, { report: "ready" }).ok).toBe(true);
+        vi.mocked(eventBus.emit).mockClear();
+
+        manager.scheduleDispatchRetry(promoted.value);
+        await vi.advanceTimersByTimeAsync(1_001);
+        expect(eventBus.emit).toHaveBeenCalledWith(
+          "background_task:completed",
+          expect.objectContaining({ taskId: promoted.value }),
+        );
+
+        vi.mocked(eventBus.emit).mockClear();
+        manager.scheduleDispatchRetry(promoted.value);
+        await vi.advanceTimersByTimeAsync(1_001);
+        expect(eventBus.emit).not.toHaveBeenCalledWith(
+          "background_task:completed",
+          expect.anything(),
+        );
+
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(eventBus.emit).toHaveBeenCalledWith(
+          "background_task:completed",
+          expect.objectContaining({ taskId: promoted.value }),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   describe("recoverOnStartup", () => {
     it("recovers running tasks and emits failed events", () => {
       // Pre-persist a "running" task to disk (with origin, as required)
