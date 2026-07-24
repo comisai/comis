@@ -976,6 +976,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         };
     }
     runs.set(runId, terminal);
+    watchdogTimers.get(runId)?.cancel();
+    watchdogTimers.delete(runId);
+    finishDurableCheckpoint(terminal, completion.endReason);
     startDeferreds.get(runId)?.resolve(
       err(new Error(`Sub-agent provider did not start: ${completion.endReason}`)),
     );
@@ -1354,16 +1357,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     );
   }
 
-  function forceTerminalCleanup(
-    run: SubAgentRun,
-    terminalReason: Exclude<DurableRunTerminalReason, "completed" | "failed">,
-  ): void {
+  function forceTerminalCleanup(run: SubAgentRun): void {
     if (forcedTerminalRunIds.has(run.runId)) return;
     forcedTerminalRunIds.add(run.runId);
-    durableTerminalReasons.set(run.runId, terminalReason);
     watchdogTimers.get(run.runId)?.cancel();
     watchdogTimers.delete(run.runId);
-    finishDurableCheckpoint(run, terminalReason);
     stopProgressFork(run);
     closeTrajectoryOnce(run);
   }
@@ -1710,7 +1708,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         errorKind: "timeout",
         summary: errorMessage,
       });
-      forceTerminalCleanup(run, "ghost_sweep");
+      forceTerminalCleanup(run);
 
       // Persist failure record
       if (deps.dataDir) {
@@ -3214,34 +3212,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }
 
         if (deliverySuppressedRunIds.has(runId)) return;
-        // Safety-net proxy stop — announceToParent's own finally block handles
-        // the announcement-scoped typing. This catches edge cases where announcement was skipped.
-        emitProxyStop(run, runId, "completed");
-
-        // Lifecycle hook - onEnded (success path, after condensation/casting/announcement)
-        if (deps.lifecycleHooks) {
-          try {
-            await deps.lifecycleHooks.onEnded({
-              runId,
-              agentId: params.agentId,
-              parentSessionKey: params.callerSessionKey ?? "unknown",
-              childSessionKey: formattedKey,
-              endReason: "completed",
-              condensedResult: condensedResult ? { level: condensedResult.level, condensedTokens: condensedResult.condensedTokens } : undefined,
-              runtimeMs,
-              tokensUsed: result.tokensUsed.total,
-              cost: result.cost.total,
-            });
-          } catch (hookErr) {
-            deps.logger?.warn({
-              runId, err: hookErr,
-              hint: "onSubagentEnded hook failed; result already delivered",
-              errorKind: "internal" as const,
-            }, "Lifecycle hook onEnded failed");
-          }
-        }
-
-        if (deliverySuppressedRunIds.has(runId)) return;
         const completedAt = clock.now();
         if (isSuccess) {
           terminalizeRun(runId, {
@@ -3273,6 +3243,34 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           cacheReadTokens: cacheRead,
           cacheWriteTokens: cacheWrite,
         });
+
+        // Safety-net proxy stop — announceToParent's own finally block handles
+        // the announcement-scoped typing. This catches edge cases where announcement was skipped.
+        emitProxyStop(run, runId, "completed");
+
+        // Lifecycle hook - onEnded (success path, after condensation/casting/announcement)
+        if (deps.lifecycleHooks) {
+          try {
+            await deps.lifecycleHooks.onEnded({
+              runId,
+              agentId: params.agentId,
+              parentSessionKey: params.callerSessionKey ?? "unknown",
+              childSessionKey: formattedKey,
+              endReason: "completed",
+              condensedResult: condensedResult ? { level: condensedResult.level, condensedTokens: condensedResult.condensedTokens } : undefined,
+              runtimeMs,
+              tokensUsed: result.tokensUsed.total,
+              cost: result.cost.total,
+            });
+          } catch (hookErr) {
+            deps.logger?.warn({
+              runId, err: hookErr,
+              hint: "onSubagentEnded hook failed; result already delivered",
+              errorKind: "internal" as const,
+            }, "Lifecycle hook onEnded failed");
+          }
+        }
+
       } catch (error: unknown) {
         // Guard: if already killed, skip error handling logic
         if (deliverySuppressedRunIds.has(runId)) return;
@@ -3437,7 +3435,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         errorKind: "timeout",
         summary: errorMessage,
       });
-      forceTerminalCleanup(run, "watchdog_timeout");
+      forceTerminalCleanup(run);
 
       deps.logger?.error({
         runId, agentId: run.agentId,
@@ -3545,13 +3543,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       // executeAgent promise still settles here), so a long-running tree's slots
       // are reclaimed rather than monotonically leaking.
       releaseCeilingSlotOnce(run);
-      // The SAME universal terminal seam — mark the
-      // durable record completed + clear its keep-alive heartbeat (no leaked
-      // interval). Inert + idempotent when no durable store is wired.
-      const terminalRun = runs.get(runId);
-      if (!forcedTerminalRunIds.has(runId) && terminalRun && terminalRun.status !== "running" && terminalRun.status !== "queued") {
-        finishDurableCheckpoint(run, terminalRun.completion.endReason);
-      }
       // Stop the read-only progress fork on the same universal terminal
       // seam so it never outlives the child (no leaked timer).
       stopProgressFork(run);
@@ -3687,7 +3678,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       errorKind: killedBy === "health_monitor" ? "timeout" : "precondition",
       summary: errorMessage,
     });
-    forceTerminalCleanup(run, "killed");
+    forceTerminalCleanup(run);
 
     // Persist failure record for killed runs (fire-and-forget, belt-defense)
     if (deps.dataDir) {
@@ -3912,6 +3903,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         const run = runs.get(runId);
         if (!run) continue;
         if (providerSettledRunIds.has(runId)) {
+          if (run.status === "completed" || run.status === "failed") continue;
           deliverySuppressedRunIds.add(runId);
           if (run.status === "running") {
             const completedAtMs = clock.now();
@@ -3921,7 +3913,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               errorKind: "timeout",
               summary: "Post-processing stopped during daemon shutdown",
             });
-            forceTerminalCleanup(run, "killed");
+            forceTerminalCleanup(run);
             deps.eventBus.emit("session:sub_agent_completed", {
               runId,
               agentId: run.agentId,
