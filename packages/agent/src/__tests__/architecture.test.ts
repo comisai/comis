@@ -366,6 +366,22 @@ describe("@comis/agent -- architecture invariants", () => {
     ).toBe(false);
   });
 
+  it("installed sharp exposes declarations through its package exports", () => {
+    const sharpPackagePath = resolve(PKG_ROOT, "node_modules/sharp/package.json");
+    const sharpPackage = JSON.parse(readFileSync(sharpPackagePath, "utf8")) as {
+      exports?: {
+        "."?: {
+          types?: string;
+        };
+      };
+    };
+
+    expect(
+      sharpPackage.exports?.["."]?.types,
+      "sharp must export its bundled declarations so TypeScript NodeNext resolution does not depend on ancestor node_modules",
+    ).toBe("./lib/index.d.ts");
+  });
+
   // ---------------------------------------------------------------------------
   // Agent has zero memory production imports.
   //
