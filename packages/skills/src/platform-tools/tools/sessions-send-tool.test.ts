@@ -90,7 +90,7 @@ describe("sessions_send tool", () => {
     expect(mockRpcCall).not.toHaveBeenCalled();
   });
 
-  it("throws on RPC error", async () => {
+  it("propagates an RPC dispatch error", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => {
       throw new Error("network failure");
     });
