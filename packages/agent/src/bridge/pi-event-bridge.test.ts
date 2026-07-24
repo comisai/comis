@@ -590,6 +590,27 @@ describe("createPiEventBridge", () => {
   // -------------------------------------------------------------------------
 
   describe("tool_execution_end", () => {
+    it("records successful background output consumption only after the turn journal boundary", () => {
+      const acknowledgeBackgroundTaskConsumption = vi.fn(() => ok(true));
+      const { listener } = createPiEventBridge(createMockDeps({
+        acknowledgeBackgroundTaskConsumption,
+      } as Partial<PiEventBridgeDeps>));
+
+      listener({
+        type: "tool_execution_start",
+        toolName: "background_tasks",
+        toolCallId: "tc-background-read",
+        args: { action: "read_output", taskId: "task-1" },
+      } as any);
+      listener(makeToolExecutionEndEvent("background_tasks", "tc-background-read", false) as any);
+
+      expect(acknowledgeBackgroundTaskConsumption).not.toHaveBeenCalled();
+
+      listener(makeTurnEndEvent() as any);
+
+      expect(acknowledgeBackgroundTaskConsumption).toHaveBeenCalledWith("task-1");
+    });
+
     it("retains successful message delivery identity across the final assistant turn", () => {
       const bridge = createPiEventBridge(deps);
       bridge.listener({
