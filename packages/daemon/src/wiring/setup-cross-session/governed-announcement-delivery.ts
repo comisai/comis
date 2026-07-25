@@ -9,6 +9,7 @@ import {
   systemNowMs,
   type AttachmentPayload,
   type AttachmentSendReceipt,
+  type ChannelEndpoint,
   type ComisLogger,
   type DeliverToChannelOptions,
   type DeliveryService,
@@ -56,6 +57,39 @@ interface AnnouncementDeliveryDeps {
 }
 
 type AnnouncementDeliveryOptions = Omit<DeliverToChannelOptions, "completionMode">;
+type ConversationPartition = import("@comis/core").ConversationLocator["conversationScope"]["partition"];
+
+function endpointsEqual(left: ChannelEndpoint, right: ChannelEndpoint): boolean {
+  return left.channelType === right.channelType
+    && left.channelInstanceId === right.channelInstanceId
+    && left.conversationId === right.conversationId
+    && left.threadId === right.threadId
+    && left.conversationKind === right.conversationKind;
+}
+
+function partitionMatchesEndpoint(
+  partition: ConversationPartition,
+  endpoint: ChannelEndpoint,
+): boolean {
+  switch (partition.kind) {
+    case "agent":
+    case "principal":
+      return endpoint.conversationKind === "direct";
+    case "channel-principal":
+      return endpoint.conversationKind === "direct"
+        && partition.channelType === endpoint.channelType;
+    case "endpoint-conversation":
+      return endpoint.conversationKind === "shared"
+        && endpointsEqual(partition.endpoint, endpoint);
+    case "endpoint-conversation-principal":
+      return endpoint.conversationKind === "direct"
+        && endpointsEqual(partition.endpoint, endpoint);
+    default: {
+      const _exhaustive: never = partition;
+      return _exhaustive;
+    }
+  }
+}
 
 export interface AnnouncementDelivery {
   sendToChannelWithReceipt(
@@ -149,11 +183,19 @@ export function createAnnouncementDelivery(
     channelId: string,
     text: string,
     attachment: GovernedAnnouncementAttachment,
+    destinationEndpoint: ChannelEndpoint,
     options?: AnnouncementDeliveryOptions,
   ): Promise<Result<AnnouncementPlatformSendOutcome, Error>> => {
     const startedAt = systemNowMs();
     const adapter = deps.adaptersByType.get(channelType);
-    if (!adapter?.sendAttachment) {
+    if (
+      !adapter?.sendAttachment
+      || adapter.channelType !== destinationEndpoint.channelType
+      || adapter.channelId !== destinationEndpoint.channelInstanceId
+      || channelType !== destinationEndpoint.channelType
+      || channelId !== destinationEndpoint.conversationId
+      || options?.threadId !== destinationEndpoint.threadId
+    ) {
       deps.logger?.warn({
         channelType,
         channelId,
@@ -258,10 +300,16 @@ export function createAnnouncementDelivery(
         : undefined;
     if (
       callerScope.agentId !== request.agentId
+      || !partitionMatchesEndpoint(callerPartition, destinationEndpoint)
       || (partitionChannelType !== undefined && partitionChannelType !== destinationEndpoint.channelType)
       || destinationEndpoint.channelType !== request.channelType
       || destinationEndpoint.conversationId !== request.channelId
       || destinationEndpoint.threadId !== request.options?.threadId
+      || (request.attachment !== undefined
+        && (
+          deps.adaptersByType.get(request.channelType)?.channelType !== destinationEndpoint.channelType
+          || deps.adaptersByType.get(request.channelType)?.channelId !== destinationEndpoint.channelInstanceId
+        ))
     ) {
       deps.logger?.error(
         {
@@ -342,7 +390,14 @@ export function createAnnouncementDelivery(
       ledger: outwardLedger,
       sendToPlatform: (channelType, channelId, text, options, attachment) =>
         attachment
-          ? sendAttachmentToChannelWithReceipt(channelType, channelId, text, attachment, options)
+          ? sendAttachmentToChannelWithReceipt(
+              channelType,
+              channelId,
+              text,
+              attachment,
+              destinationEndpoint,
+              options,
+            )
           : sendToChannelWithReceipt(channelType, channelId, text, {
               ...options,
               authority: deliveryAuthority,

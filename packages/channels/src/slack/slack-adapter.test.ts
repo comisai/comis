@@ -28,6 +28,7 @@ const mockConversationsKick = vi.fn();
 const mockConversationsInfo = vi.fn();
 const mockConversationsMembers = vi.fn();
 const mockConversationsHistory = vi.fn();
+const mockConversationsReplies = vi.fn();
 const mockBookmarksAdd = vi.fn();
 const mockReactionsAdd = vi.fn();
 const mockFilesUploadV2 = vi.fn();
@@ -65,6 +66,7 @@ vi.mock("@slack/bolt", () => ({
           info: mockConversationsInfo,
           members: mockConversationsMembers,
           history: mockConversationsHistory,
+          replies: mockConversationsReplies,
         },
         bookmarks: {
           add: mockBookmarksAdd,
@@ -449,6 +451,26 @@ describe("createSlackAdapter", () => {
       expect(mockPostMessage).toHaveBeenCalledWith({
         channel: "C123",
         text: "Reply text",
+        thread_ts: "1699999999.000000",
+      });
+    });
+
+    it("prefers the authoritative threadId over a child reply target", async () => {
+      vi.mocked(validateSlackCredentials).mockResolvedValue(
+        ok({ userId: "U1", teamId: "T1", botId: "B1" }),
+      );
+      mockPostMessage.mockResolvedValue({ ok: true, ts: "1700000002.000000" });
+
+      const adapter = createSlackAdapter(makeDeps());
+      await adapter.start();
+      await adapter.sendMessage("C123", "Thread reply", {
+        threadId: "1699999999.000000",
+        replyTo: "1700000001.000000",
+      });
+
+      expect(mockPostMessage).toHaveBeenCalledWith({
+        channel: "C123",
+        text: "Thread reply",
         thread_ts: "1699999999.000000",
       });
     });

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { resolveNotificationChannel, type ChannelResolverDeps } from "./channel-resolver.js";
 
 function endpoint(channelType: string, conversationId: string) {
@@ -131,20 +131,46 @@ describe("resolveNotificationChannel", () => {
     });
   });
 
-  it("preserves a caller-supplied complete destination endpoint", () => {
-    const selectedEndpoint = {
+  it("resolves a caller-supplied destination from tracked endpoint authority", () => {
+    const trackedEndpoint = {
       ...endpoint("telegram", "chat-123"),
       threadId: "thread-a",
       conversationKind: "shared" as const,
     };
-    const result = resolveNotificationChannel(makeDeps(), {
+    const findSessionEndpoint = vi.fn(() => trackedEndpoint);
+    const result = resolveNotificationChannel(makeDeps({ findSessionEndpoint }), {
       agentId: "a1",
       channelType: "telegram",
       channelId: "chat-123",
-      destinationEndpoint: selectedEndpoint,
+      destinationEndpoint: { ...trackedEndpoint },
     });
 
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.endpoint).toEqual(selectedEndpoint);
+    if (result.ok) expect(result.value.endpoint).toBe(trackedEndpoint);
+    expect(findSessionEndpoint).toHaveBeenCalledWith("a1", "telegram", "chat-123");
+  });
+
+  it.each([
+    ["channel instance", { channelInstanceId: "caller-minted-account" }],
+    ["conversation", { conversationId: "caller-minted-chat" }],
+    ["thread", { threadId: "caller-minted-thread" }],
+    ["conversation kind", { conversationKind: "direct" as const }],
+  ])("rejects caller-minted %s authority", (_field, override) => {
+    const trackedEndpoint = {
+      ...endpoint("telegram", "chat-123"),
+      threadId: "thread-a",
+      conversationKind: "shared" as const,
+    };
+    const result = resolveNotificationChannel(makeDeps({
+      findSessionEndpoint: () => trackedEndpoint,
+    }), {
+      agentId: "a1",
+      destinationEndpoint: { ...trackedEndpoint, ...override },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: { reason: "no_channel", attempted: ["destination_endpoint"] },
+    });
   });
 });

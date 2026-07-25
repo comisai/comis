@@ -30,6 +30,7 @@ export interface HandleExportTrajectoryDeps {
   sessionKey: SessionKey;
   agentId: string;
   adapter: DeliveryAdapter;
+  deliveryOptions: DeliverToChannelOptions;
   deliveryService: {
     deliverToChannel: (
       adapter: DeliveryAdapter,
@@ -59,7 +60,15 @@ export interface HandleExportTrajectoryDeps {
 export async function handleExportTrajectory(
   deps: HandleExportTrajectoryDeps,
 ): Promise<{ action: "handled" }> {
-  const { msg, sessionKey, adapter, deliveryService, exportSessionBundle, logger } = deps;
+  const {
+    msg,
+    sessionKey,
+    adapter,
+    deliveryOptions,
+    deliveryService,
+    exportSessionBundle,
+    logger,
+  } = deps;
 
   // ---- Owner gate ----
   // Pattern from inbound-gate.ts:189.
@@ -69,7 +78,7 @@ export async function handleExportTrajectory(
       adapter,
       msg.channelId,
       "Access denied: /export-trajectory is owner-only.",
-      { completionMode: "deferred_retry", skipChunking: true },
+      deliveryOptions,
     );
     return { action: "handled" };
   }
@@ -86,7 +95,7 @@ export async function handleExportTrajectory(
       adapter,
       msg.channelId,
       "Bundle sent to owner DM.",
-      { completionMode: "deferred_retry", skipChunking: true },
+      deliveryOptions,
     );
   }
 
@@ -106,7 +115,7 @@ export async function handleExportTrajectory(
       adapter,
       msg.channelId,
       `Bundle export failed: ${reason}`,
-      { completionMode: "deferred_retry", skipChunking: true },
+      deliveryOptions,
     );
     return { action: "handled" };
   }
@@ -125,10 +134,7 @@ export async function handleExportTrajectory(
     await adapter.sendMessage(msg.senderId, message);
   } else {
     // DM context: inline reply is safe — it goes only to the owner.
-    await deliveryService.deliverToChannel(adapter, msg.channelId, message, {
-      completionMode: "deferred_retry",
-      skipChunking: true,
-    });
+    await deliveryService.deliverToChannel(adapter, msg.channelId, message, deliveryOptions);
   }
 
   return { action: "handled" };

@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { NormalizedMessage, SessionKey } from "@comis/core";
+import type { DeliverToChannelOptions, NormalizedMessage, SessionKey } from "@comis/core";
 import { handleExportTrajectory } from "./export-trajectory.js";
 import { parseSlashCommand } from "./command-parser.js";
 
@@ -70,6 +70,26 @@ function makeDeliveryService() {
   return { deliverToChannel: vi.fn(async () => undefined) };
 }
 
+function makeDeliveryOptions(): DeliverToChannelOptions {
+  return {
+    completionMode: "deferred_retry",
+    authority: {
+      tenantId: "default",
+      agentId: "a",
+      conversationRef: `cv_${"a".repeat(43)}` as never,
+    },
+    destinationEndpoint: {
+      channelType: "telegram",
+      channelInstanceId: "adapter-1",
+      conversationId: "chat-1",
+      threadId: "owner-thread",
+      conversationKind: "direct",
+    },
+    threadId: "owner-thread",
+    skipChunking: true,
+  };
+}
+
 function makeLogger() {
   return { error: vi.fn(), info: vi.fn() } as unknown as {
     error: (obj: unknown, msg?: string) => void;
@@ -97,6 +117,7 @@ describe("handleExportTrajectory", () => {
       agentId: "a",
       adapter,
       deliveryService,
+      deliveryOptions: makeDeliveryOptions(),
       exportSessionBundle,
       logger: makeLogger(),
     });
@@ -126,6 +147,7 @@ describe("handleExportTrajectory", () => {
       agentId: "a",
       adapter,
       deliveryService,
+      deliveryOptions: makeDeliveryOptions(),
       exportSessionBundle,
       logger: makeLogger(),
     });
@@ -158,6 +180,7 @@ describe("handleExportTrajectory", () => {
       agentId: "a",
       adapter,
       deliveryService,
+      deliveryOptions: makeDeliveryOptions(),
       exportSessionBundle,
       logger: makeLogger(),
     });
@@ -196,6 +219,7 @@ describe("handleExportTrajectory", () => {
       agentId: "a",
       adapter,
       deliveryService,
+      deliveryOptions: makeDeliveryOptions(),
       exportSessionBundle,
       logger: makeLogger(),
     });
@@ -224,6 +248,7 @@ describe("handleExportTrajectory", () => {
       agentId: "a",
       adapter,
       deliveryService,
+      deliveryOptions: makeDeliveryOptions(),
       exportSessionBundle,
       logger: makeLogger(),
     });

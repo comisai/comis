@@ -43,6 +43,14 @@ export interface ResolveChannelOpts {
   primaryChannel?: { channelType: string; channelId: string };
 }
 
+function endpointsEqual(left: ChannelEndpoint, right: ChannelEndpoint): boolean {
+  return left.channelType === right.channelType
+    && left.channelInstanceId === right.channelInstanceId
+    && left.conversationId === right.conversationId
+    && left.threadId === right.threadId
+    && left.conversationKind === right.conversationKind;
+}
+
 export function resolveNotificationChannel(
   deps: ChannelResolverDeps,
   opts: ResolveChannelOpts,
@@ -50,9 +58,16 @@ export function resolveNotificationChannel(
   const attempted: string[] = [];
 
   if (opts.destinationEndpoint !== undefined) {
-    const endpoint = opts.destinationEndpoint;
+    const claimedEndpoint = opts.destinationEndpoint;
+    const endpoint = deps.findSessionEndpoint(
+      opts.agentId,
+      claimedEndpoint.channelType,
+      claimedEndpoint.conversationId,
+    );
     if (
-      !deps.activeAdapterTypes.has(endpoint.channelType)
+      endpoint === undefined
+      || !endpointsEqual(endpoint, claimedEndpoint)
+      || !deps.activeAdapterTypes.has(endpoint.channelType)
       || (opts.channelType !== undefined && opts.channelType !== endpoint.channelType)
       || (opts.channelId !== undefined && opts.channelId !== endpoint.conversationId)
     ) {

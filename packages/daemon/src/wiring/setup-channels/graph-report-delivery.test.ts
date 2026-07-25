@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rename, rm, stat, symlink, writeFile } from "
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { ok, type Result } from "@comis/shared";
-import type { ChannelPort, DeliveryAttempt } from "@comis/core";
+import type { ChannelPort, DeliverToChannelOptions, DeliveryAttempt, DeliveryService } from "@comis/core";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createGraphReportRequestHandler } from "./graph-report-delivery.js";
 
@@ -47,6 +47,49 @@ function makeAdapter(withAttachment: boolean): ChannelPort {
   return adapter as unknown as ChannelPort;
 }
 
+function makeDeliveryService(): DeliveryService {
+  return {
+    deliverToChannel: vi.fn(async () => ok({
+      chunks: [{
+        status: "accepted" as const,
+        messageId: "message-1",
+        charCount: 10,
+        retried: false,
+      }],
+      totalChars: 10,
+      platform: {
+        status: "accepted" as const,
+        deliveredChunks: 1,
+        settledAtMs: 1,
+        lastMessageId: "message-1",
+      },
+      queueDisposition: "settled" as const,
+    })),
+    drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
+  };
+}
+
+function routeOptions(overrides: Partial<DeliverToChannelOptions> = {}): DeliverToChannelOptions {
+  return {
+    completionMode: "deferred_retry",
+    authority: {
+      tenantId: "tenant-a",
+      agentId: "agent-1",
+      conversationRef: `cv_${"a".repeat(43)}` as never,
+    },
+    destinationEndpoint: {
+      channelType: "telegram",
+      channelInstanceId: "bot-1",
+      conversationId: "chat-1",
+      threadId: "topic-1",
+      conversationKind: "shared",
+    },
+    threadId: "topic-1",
+    skipChunking: true,
+    ...overrides,
+  };
+}
+
 async function makeReport(outputPath?: string): Promise<{ root: string; graphDir: string }> {
   const root = await mkdtemp(resolve(tmpdir(), "comis-graph-report-"));
   roots.push(root);
@@ -69,9 +112,14 @@ describe("graph report delivery", () => {
   it("uploads the owner-selected regular report file as an attachment", async () => {
     const { root } = await makeReport();
     const adapter = makeAdapter(true);
-    const handler = createGraphReportRequestHandler({ dataDir: root, clock: createFakeClock(1), logger: makeLogger() });
+    const handler = createGraphReportRequestHandler({
+      dataDir: root,
+      clock: createFakeClock(1),
+      logger: makeLogger(),
+      deliveryService: makeDeliveryService(),
+    });
 
-    await handler(GRAPH_ID, "telegram", "chat-1", adapter, "topic-1");
+    await handler(GRAPH_ID, "telegram", "chat-1", adapter, routeOptions());
 
     expect(adapter.sendAttachment).toHaveBeenCalledWith(
       "chat-1",
@@ -80,22 +128,35 @@ describe("graph report delivery", () => {
         url: expect.stringContaining(resolve(root, "graph-report-deliveries")),
         mimeType: "text/markdown",
       }),
-      { extra: { threadId: "topic-1" } },
+      { threadId: "topic-1" },
     );
   });
 
   it("never exposes the host file path when the channel cannot upload attachments", async () => {
     const { root, graphDir } = await makeReport();
     const adapter = makeAdapter(false);
-    const handler = createGraphReportRequestHandler({ dataDir: root, clock: createFakeClock(1), logger: makeLogger() });
+    const deliveryService = makeDeliveryService();
+    const handler = createGraphReportRequestHandler({
+      dataDir: root,
+      clock: createFakeClock(1),
+      logger: makeLogger(),
+      deliveryService,
+    });
 
-    await handler(GRAPH_ID, "irc", "chat-1", adapter);
+    await handler(GRAPH_ID, "telegram", "chat-1", adapter, routeOptions());
 
-    expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
-    const text = vi.mocked(adapter.sendMessage).mock.calls[0]?.[1];
+    expect(deliveryService.deliverToChannel).toHaveBeenCalledTimes(1);
+    const text = vi.mocked(deliveryService.deliverToChannel).mock.calls[0]?.[2];
     expect(text).toMatch(/attachment delivery is not supported/i);
     expect(text).not.toContain(root);
     expect(text).not.toContain(graphDir);
+    expect(deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      adapter,
+      "chat-1",
+      expect.any(String),
+      routeOptions(),
+    );
+    expect(adapter.sendMessage).not.toHaveBeenCalled();
   });
 
   it("refuses a symlinked report instead of uploading its target", async () => {
@@ -106,15 +167,22 @@ describe("graph report delivery", () => {
     const { root } = await makeReport(outside);
     const adapter = makeAdapter(true);
     const logger = makeLogger();
-    const handler = createGraphReportRequestHandler({ dataDir: root, clock: createFakeClock(1), logger });
+    const deliveryService = makeDeliveryService();
+    const handler = createGraphReportRequestHandler({
+      dataDir: root,
+      clock: createFakeClock(1),
+      logger,
+      deliveryService,
+    });
 
-    await handler(GRAPH_ID, "telegram", "chat-1", adapter);
+    await handler(GRAPH_ID, "telegram", "chat-1", adapter, routeOptions());
 
     expect(adapter.sendAttachment).not.toHaveBeenCalled();
-    expect(adapter.sendMessage).toHaveBeenCalledWith(
+    expect(deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      adapter,
       "chat-1",
       expect.stringMatching(/not available/i),
-      undefined,
+      routeOptions(),
     );
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ errorKind: "validation", hint: expect.any(String) }),
@@ -145,13 +213,40 @@ describe("graph report delivery", () => {
       dataDir: root,
       clock: createFakeClock(1),
       logger: makeLogger(),
+      deliveryService: makeDeliveryService(),
     });
 
-    await handler(GRAPH_ID, "telegram", "chat-1", adapter);
+    await handler(GRAPH_ID, "telegram", "chat-1", adapter, routeOptions());
 
     expect(deliveredPath).not.toBe(reportPath);
     expect(deliveredPath).not.toContain(graphDir);
     expect(uploaded).toBe("# Final report\n");
     expect(deliveredMode).toBe(0o400);
+  });
+
+  it("rejects an endpoint-mismatched report route before platform delivery", async () => {
+    const { root } = await makeReport();
+    const adapter = makeAdapter(true);
+    const deliveryService = makeDeliveryService();
+    const handler = createGraphReportRequestHandler({
+      dataDir: root,
+      clock: createFakeClock(1),
+      logger: makeLogger(),
+      deliveryService,
+    });
+
+    await handler(GRAPH_ID, "telegram", "chat-1", adapter, routeOptions({
+      destinationEndpoint: {
+        channelType: "telegram",
+        channelInstanceId: "other-bot",
+        conversationId: "chat-1",
+        threadId: "topic-1",
+        conversationKind: "shared",
+      },
+    }));
+
+    expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
+    expect(adapter.sendMessage).not.toHaveBeenCalled();
+    expect(adapter.sendAttachment).not.toHaveBeenCalled();
   });
 });

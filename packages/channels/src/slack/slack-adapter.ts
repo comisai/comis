@@ -436,12 +436,13 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
           deps.logger.debug({ channelType: "slack", buttonsRendered: options.buttons.length }, "Rich buttons rendered");
         }
 
+        const threadTs = options?.threadId ?? options?.replyTo;
         const result = await app.client.chat.postMessage({
           channel: channelId,
           text, // Pre-formatted mrkdwn from pipeline (notification/accessibility fallback)
           ...(blocks.length > 0 ? { blocks } : {}),
-          ...(options?.replyTo ? { thread_ts: options.replyTo } : {}),
-          ...(options?.threadReply && options?.replyTo ? { reply_broadcast: false } : {}),
+          ...(threadTs ? { thread_ts: threadTs } : {}),
+          ...(options?.threadReply && threadTs ? { reply_broadcast: false } : {}),
         });
         const messageId = String(result.ts ?? "");
         _lastMessageAt = systemNowMs();
@@ -560,11 +561,17 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
       options?: FetchMessagesOptions,
     ): Promise<Result<FetchedMessage[], Error>> {
       try {
-        const result = await app.client.conversations.history({
+        const pagination = {
           channel: channelId,
           limit: options?.limit ?? 20,
           ...(options?.before ? { latest: options.before } : {}),
-        });
+        };
+        const result = options?.threadId === undefined
+          ? await app.client.conversations.history(pagination)
+          : await app.client.conversations.replies({
+              ...pagination,
+              ts: options.threadId,
+            });
 
         const mapped: FetchedMessage[] = (result.messages ?? []).map(
           (m: { ts?: string; user?: string; bot_id?: string; text?: string }) => ({
@@ -586,7 +593,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
       channelId: string,
       attachment: AttachmentPayload,
        
-      _options?: SendMessageOptions,
+      options?: SendMessageOptions,
     ): Promise<Result<AttachmentSendReceipt, Error>> {
       // Voice send bookend logging
       const isVoice = !!attachment.isVoiceNote;
@@ -607,6 +614,9 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
           file: attachment.url,
           filename,
           initial_comment: attachment.caption,
+          ...((options?.threadId ?? options?.replyTo) === undefined
+            ? {}
+            : { thread_ts: options?.threadId ?? options?.replyTo }),
         });
         const receipt = createAttachmentSendReceipt(
           findSlackPostedMessageId(result, channelId),

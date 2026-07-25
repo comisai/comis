@@ -112,6 +112,24 @@ const turnConversationRef = createConversationRef(TURN_SCOPE.conversation);
 if (!turnConversationRef.ok) throw turnConversationRef.error;
 const TURN_CONVERSATION_REF = turnConversationRef.value;
 
+function expectedDeliveryOptions(
+  turnScope: ResolvedTurnScope,
+  conversationRef: typeof TURN_CONVERSATION_REF,
+  skipChunking = false,
+) {
+  return {
+    completionMode: "deferred_retry" as const,
+    authority: {
+      tenantId: turnScope.conversation.tenantId,
+      agentId: turnScope.conversation.agentId,
+      conversationRef,
+    },
+    destinationEndpoint: turnScope.endpoint,
+    ...(turnScope.endpoint.threadId === undefined ? {} : { threadId: turnScope.endpoint.threadId }),
+    ...(skipChunking ? { skipChunking: true } : {}),
+  };
+}
+
 function makeFakeDeliveryService(): DeliveryService {
   return {
     deliverToChannel: vi.fn(async () =>
@@ -403,7 +421,7 @@ describe("evaluateInboundGate button-callback intercept", () => {
   it("delivers an owner-validated graph report only after the signed router resolves it", async () => {
     const callbackData = "v1.details.abc123XYZ789.deadbeefdeadbeef";
     const onGraphReportRequest = vi.fn(async () => undefined);
-    const { router } = makeFakeRouter({
+    const { router, route } = makeFakeRouter({
       kind: "graph_report_requested",
       graphId: "11111111-2222-4333-8444-555555555555",
     });
@@ -439,7 +457,7 @@ describe("evaluateInboundGate button-callback intercept", () => {
       deps,
       adapter,
       msg,
-      makeSessionKey({ threadId: "owner-topic" }),
+      makeSessionKey(),
       "agent-1",
       ownerThreadScope,
       ownerThreadRef.value,
@@ -452,8 +470,13 @@ describe("evaluateInboundGate button-callback intercept", () => {
       "telegram",
       "chat-1",
       adapter,
-      "owner-topic",
+      expectedDeliveryOptions(ownerThreadScope, ownerThreadRef.value, true),
     );
+    expect(route).toHaveBeenCalledWith(expect.objectContaining({
+      channelType: "telegram",
+      channelKey: "chat-1",
+      threadId: "owner-topic",
+    }));
     expect(deps.deliveryService.deliverToChannel).not.toHaveBeenCalled();
   });
 

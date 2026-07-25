@@ -353,6 +353,7 @@ export async function buildAndStartChannelManager(
         dataDir,
         clock: deps.clock,
         logger: channelsLogger,
+        deliveryService,
       }),
       approvalGate: deps.approvalGate,
       // Signed button-callback verifier (inbound-gate.ts), via pipelineDeps = deps.

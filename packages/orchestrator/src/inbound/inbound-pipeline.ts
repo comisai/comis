@@ -17,7 +17,7 @@ import type { CommandQueue } from "../queue/command-queue.js";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 // Relative path used because orchestrator cannot import its own published name.
 import type { InteractiveCallbackRouter } from "../approval/index.js";
-import type { ApprovalGate, ChannelPort, ClockPort, ConversationRef, DeliveryQueuePort, DmScopeConfig, EventMap, LocalizationPort, NormalizedMessage, PrincipalResolverPort, RequestContext, ResolvedTurnScope, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
+import type { ApprovalGate, ChannelPort, ClockPort, ConversationRef, DeliverToChannelOptions, DeliveryQueuePort, DmScopeConfig, EventMap, LocalizationPort, NormalizedMessage, PrincipalResolverPort, RequestContext, ResolvedTurnScope, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 // The orchestrator imports ONLY the @comis/core activity port + ctx type
 // (never the observability impl — hexagonal boundary). The
 // ActivityTurnCoordinator is a local execution type.
@@ -149,7 +149,7 @@ export interface InboundPipelineDeps {
     channelType: string,
     channelId: string,
     adapter: ChannelPort,
-    threadId?: string,
+    options: DeliverToChannelOptions,
   ) => Promise<void>;
   /** Handle general slash commands via command handler. Returns CommandResult or undefined if not a command. */
   handleSlashCommand?: (text: string, sessionKey: SessionKey, agentId: string) => Promise<{ handled: boolean; response?: string; directives?: Record<string, unknown>; cleanedText?: string } | undefined>;

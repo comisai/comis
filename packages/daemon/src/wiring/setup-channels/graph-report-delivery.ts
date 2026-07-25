@@ -3,8 +3,8 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, unlink, type FileHandle } from "node:fs/promises";
-import type { ChannelPort, ClockPort, ComisLogger } from "@comis/core";
-import { safePath, sanitizeLogString } from "@comis/core";
+import type { ChannelPort, ClockPort, ComisLogger, DeliverToChannelOptions, DeliveryService } from "@comis/core";
+import { ChannelEndpointSchema, ConversationRefSchema, safePath, sanitizeLogString } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 
 const GRAPH_ID_RE = /^[a-f0-9-]{8,64}$/i;
@@ -125,6 +125,7 @@ export interface GraphReportDeliveryDeps {
   dataDir: string;
   clock: ClockPort;
   logger: ComisLogger;
+  deliveryService: DeliveryService;
 }
 
 export type GraphReportRequestHandler = (
@@ -132,12 +133,8 @@ export type GraphReportRequestHandler = (
   channelType: string,
   channelId: string,
   adapter: ChannelPort,
-  threadId?: string,
+  options: DeliverToChannelOptions,
 ) => Promise<void>;
-
-function messageOptions(threadId: string | undefined): { extra: { threadId: string } } | undefined {
-  return threadId === undefined ? undefined : { extra: { threadId } };
-}
 
 /** Build the post-authentication report handler used by the inbound callback gate. */
 export function createGraphReportRequestHandler(
@@ -146,14 +143,15 @@ export function createGraphReportRequestHandler(
   const sendUnavailable = async (
     adapter: ChannelPort,
     channelId: string,
-    threadId: string | undefined,
+    options: DeliverToChannelOptions,
   ): Promise<void> => {
-    const sent = await adapter.sendMessage(
+    const sent = await deps.deliveryService.deliverToChannel(
+      adapter,
       channelId,
       "Report not available.",
-      messageOptions(threadId),
+      options,
     );
-    if (!sent.ok) {
+    if (!sent.ok || sent.value.platform.status !== "accepted") {
       deps.logger.warn({
         channelType: adapter.channelType,
         channelId,
@@ -163,8 +161,30 @@ export function createGraphReportRequestHandler(
     }
   };
 
-  return async (graphId, channelType, channelId, adapter, threadId): Promise<void> => {
+  return async (graphId, channelType, channelId, adapter, options): Promise<void> => {
     const startedAt = deps.clock.now();
+    const endpoint = ChannelEndpointSchema.safeParse(options.destinationEndpoint);
+    const conversationRef = ConversationRefSchema.safeParse(options.authority?.conversationRef);
+    if (
+      !endpoint.success
+      || options.authority === undefined
+      || options.authority.tenantId.length === 0
+      || options.authority.agentId.length === 0
+      || !conversationRef.success
+      || endpoint.data.channelType !== channelType
+      || endpoint.data.channelType !== adapter.channelType
+      || endpoint.data.channelInstanceId !== adapter.channelId
+      || endpoint.data.conversationId !== channelId
+      || endpoint.data.threadId !== options.threadId
+    ) {
+      deps.logger.warn({
+        graphId,
+        channelType,
+        errorKind: "precondition" as const,
+        hint: "Retry from the authenticated report callback with its exact captured channel endpoint",
+      }, "Graph report delivery route rejected");
+      return;
+    }
     if (!GRAPH_ID_RE.test(graphId)) {
       deps.logger.warn({
         graphId,
@@ -195,7 +215,7 @@ export function createGraphReportRequestHandler(
         errorKind: "validation" as const,
         hint: "Verify the graph run directory is an owner-controlled regular directory",
       }, "Graph report directory unavailable");
-      await sendUnavailable(adapter, channelId, threadId);
+      await sendUnavailable(adapter, channelId, options);
       return;
     }
 
@@ -207,7 +227,7 @@ export function createGraphReportRequestHandler(
         errorKind: "resource" as const,
         hint: "Check graph run directory permissions and retry the report request",
       }, "Graph report directory could not be read");
-      await sendUnavailable(adapter, channelId, threadId);
+      await sendUnavailable(adapter, channelId, options);
       return;
     }
 
@@ -282,19 +302,20 @@ export function createGraphReportRequestHandler(
         errorKind: "validation" as const,
         hint: "Verify the completed graph produced a regular Markdown output file within the report size limit",
       }, "Graph report output unavailable");
-      await sendUnavailable(adapter, channelId, threadId);
+      await sendUnavailable(adapter, channelId, options);
       return;
     }
 
     const nodeId = selected.name.replace(/-output\.md$/, "");
     const caption = `Full report — ${nodeId} (graph ${graphId.slice(0, 8)})`;
     if (typeof adapter.sendAttachment !== "function") {
-      const sent = await adapter.sendMessage(
+      const sent = await deps.deliveryService.deliverToChannel(
+        adapter,
         channelId,
         `${caption}\nAttachment delivery is not supported on this channel.`,
-        messageOptions(threadId),
+        options,
       );
-      if (!sent.ok) {
+      if (!sent.ok || sent.value.platform.status !== "accepted") {
         deps.logger.warn({
           graphId,
           channelType,
@@ -314,7 +335,7 @@ export function createGraphReportRequestHandler(
         errorKind: "validation" as const,
         hint: "Retry only after verifying the graph output is a stable regular file owned by this run",
       }, "Graph report source changed before delivery");
-      await sendUnavailable(adapter, channelId, threadId);
+      await sendUnavailable(adapter, channelId, options);
       return;
     }
     const snapshot = await writeOwnerOnlySnapshot(deps.dataDir, reportContent.value);
@@ -325,7 +346,7 @@ export function createGraphReportRequestHandler(
         errorKind: "resource" as const,
         hint: "Check data directory permissions and free space before requesting the report again",
       }, "Graph report snapshot could not be created");
-      await sendUnavailable(adapter, channelId, threadId);
+      await sendUnavailable(adapter, channelId, options);
       return;
     }
 
@@ -338,7 +359,7 @@ export function createGraphReportRequestHandler(
         mimeType: "text/markdown",
         caption,
       },
-      messageOptions(threadId),
+      endpoint.data.threadId === undefined ? undefined : { threadId: endpoint.data.threadId },
     ));
     const cleaned = await fromPromise(unlink(snapshot.value));
     if (!cleaned.ok) {

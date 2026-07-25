@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { ChannelPort, ConversationRef, NormalizedMessage, ResolvedTurnScope, SessionKey, AutoReplyEngineConfig } from "@comis/core";
+import type { AutoReplyEngineConfig, ChannelPort, ConversationRef, DeliverToChannelOptions, NormalizedMessage, ResolvedTurnScope, SessionKey } from "@comis/core";
 import { emitObservationalEventSafely, formatSessionKey, systemNowMs } from "@comis/core";
 // Command parsers/matchers live inside this orchestrator package; use local
 // relative imports so the gate does not pull them via @comis/agent.
@@ -82,6 +82,24 @@ export type GateDecision =
   | { action: "handled" }
   | { action: "skip" };
 
+function inboundDeliveryOptions(
+  turnScope: ResolvedTurnScope,
+  conversationRef: ConversationRef,
+  options: Pick<DeliverToChannelOptions, "skipChunking"> = {},
+): DeliverToChannelOptions {
+  return {
+    completionMode: "deferred_retry",
+    authority: {
+      tenantId: turnScope.conversation.tenantId,
+      agentId: turnScope.conversation.agentId,
+      conversationRef,
+    },
+    destinationEndpoint: turnScope.endpoint,
+    ...(turnScope.endpoint.threadId === undefined ? {} : { threadId: turnScope.endpoint.threadId }),
+    ...options,
+  };
+}
+
 /** Route a signed platform callback after principal resolution but before chat activation policy. */
 async function routeInteractiveCallback(
   deps: GateDeps,
@@ -100,9 +118,9 @@ async function routeInteractiveCallback(
 
   const routed = await deps.interactiveCallbackRouter.route({
     tenantId: sessionKey.tenantId,
-    channelType: adapter.channelType,
-    channelKey: msg.channelId,
-    ...(sessionKey.threadId === undefined ? {} : { threadId: sessionKey.threadId }),
+    channelType: turnScope.endpoint.channelType,
+    channelKey: turnScope.endpoint.conversationId,
+    ...(turnScope.endpoint.threadId === undefined ? {} : { threadId: turnScope.endpoint.threadId }),
     agentId,
     conversationRef,
     resolvingPrincipalId: turnScope.principal.principalId,
@@ -119,17 +137,17 @@ async function routeInteractiveCallback(
       if (deps.onGraphReportRequest) {
         await deps.onGraphReportRequest(
           resolution.graphId,
-          adapter.channelType,
-          msg.channelId,
+          turnScope.endpoint.channelType,
+          turnScope.endpoint.conversationId,
           adapter,
-          sessionKey.threadId,
+          inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
         );
         break;
       }
       await deps.deliveryService.deliverToChannel(
         adapter, msg.channelId,
         localized(deps, msg, "error.report_unavailable"),
-        { completionMode: "deferred_retry", skipChunking: true },
+        inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
       );
       break;
     case "malformed":
@@ -140,7 +158,7 @@ async function routeInteractiveCallback(
       await deps.deliveryService.deliverToChannel(
         adapter, msg.channelId,
         localized(deps, msg, "error.callback_invalid"),
-        { completionMode: "deferred_retry", skipChunking: true },
+        inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
       );
       break;
   }
@@ -315,12 +333,17 @@ export async function evaluateInboundGate(
           changedBy: msg.senderId,
           timestamp: systemNowMs(),
         });
-        await deps.deliveryService.deliverToChannel(adapter, msg.channelId, `Send policy override set to: ${arg}`, { completionMode: "deferred_retry", skipChunking: true });
+        await deps.deliveryService.deliverToChannel(
+          adapter,
+          msg.channelId,
+          `Send policy override set to: ${arg}`,
+          inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
+        );
       } else {
         await deps.deliveryService.deliverToChannel(
           adapter, msg.channelId,
           "Only the session owner can change send policy overrides.",
-          { completionMode: "deferred_retry", skipChunking: true },
+          inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
         );
       }
       return { action: "handled" }; // Do not route to agent
@@ -351,9 +374,12 @@ export async function evaluateInboundGate(
     if (configParsed.found && configParsed.command === "config") {
       const response = await deps.handleConfigCommand(configParsed.args, adapter.channelType);
       if (response) {
-        await deps.deliveryService.deliverToChannel(adapter, msg.channelId, response, {
-          completionMode: "deferred_retry",
-        });
+        await deps.deliveryService.deliverToChannel(
+          adapter,
+          msg.channelId,
+          response,
+          inboundDeliveryOptions(turnScope, conversationRef),
+        );
         return { action: "handled" }; // Do not route to agent
       }
     }
@@ -383,7 +409,12 @@ export async function evaluateInboundGate(
             { agentId, sessionKey: formattedKey },
             "Execution aborted by /stop command",
           );
-          await deps.deliveryService.deliverToChannel(adapter, msg.channelId, "Execution stopped.", { completionMode: "deferred_retry", skipChunking: true });
+          await deps.deliveryService.deliverToChannel(
+            adapter,
+            msg.channelId,
+            "Execution stopped.",
+            inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
+          );
         } catch (abortError) {
           deps.logger.warn(
             {
@@ -394,10 +425,20 @@ export async function evaluateInboundGate(
             },
             "Stop command abort failed",
           );
-          await deps.deliveryService.deliverToChannel(adapter, msg.channelId, "Could not stop execution (may have already completed).", { completionMode: "deferred_retry", skipChunking: true });
+          await deps.deliveryService.deliverToChannel(
+            adapter,
+            msg.channelId,
+            "Could not stop execution (may have already completed).",
+            inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
+          );
         }
       } else {
-        await deps.deliveryService.deliverToChannel(adapter, msg.channelId, "No active execution to stop.", { completionMode: "deferred_retry", skipChunking: true });
+        await deps.deliveryService.deliverToChannel(
+          adapter,
+          msg.channelId,
+          "No active execution to stop.",
+          inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
+        );
       }
       return { action: "handled" }; // Do not route to agent
     }
@@ -426,6 +467,7 @@ export async function evaluateInboundGate(
       agentId,
       adapter,
       deliveryService: deps.deliveryService,
+      deliveryOptions: inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
       exportSessionBundle: deps.exportSessionBundle,
       logger: deps.logger,
     });
@@ -439,7 +481,7 @@ export async function evaluateInboundGate(
       adapter,
       msg.channelId,
       localized(deps, msg, "help.commands"),
-      { completionMode: "deferred_retry", skipChunking: true },
+      inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
     );
     return { action: "handled" };
   }
@@ -450,7 +492,12 @@ export async function evaluateInboundGate(
       if (cmdResult.handled) {
         // Fully handled commands: send response and return (skip executor)
         if (cmdResult.response) {
-          await deps.deliveryService.deliverToChannel(adapter, msg.channelId, cmdResult.response, { completionMode: "deferred_retry", skipChunking: true });
+          await deps.deliveryService.deliverToChannel(
+            adapter,
+            msg.channelId,
+            cmdResult.response,
+            inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
+          );
         }
         return { action: "handled" };
       }
@@ -491,7 +538,7 @@ export async function evaluateInboundGate(
       adapter,
       msg.channelId,
       localized(deps, msg, "session.reset"),
-      { completionMode: "deferred_retry", skipChunking: true },
+      inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
     );
     return { action: "handled" }; // Do not route to agent
   }
@@ -526,9 +573,9 @@ async function handleApprovalCommand(
   const formattedKey = formatSessionKey(sessionKey);
   const callbackPrincipal: InboundCallback = {
     tenantId: sessionKey.tenantId,
-    channelType: adapter.channelType,
-    channelKey: msg.channelId,
-    ...(sessionKey.threadId === undefined ? {} : { threadId: sessionKey.threadId }),
+    channelType: turnScope.endpoint.channelType,
+    channelKey: turnScope.endpoint.conversationId,
+    ...(turnScope.endpoint.threadId === undefined ? {} : { threadId: turnScope.endpoint.threadId }),
     agentId,
     conversationRef,
     resolvingPrincipalId: turnScope.principal.principalId,
@@ -553,7 +600,12 @@ async function handleApprovalCommand(
     const matches = ownedPending();
 
     if (matches.length === 0) {
-      await deps.deliveryService.deliverToChannel(adapter, msg.channelId, localized(deps, msg, "approval.none_pending"), { completionMode: "deferred_retry", skipChunking: true });
+      await deps.deliveryService.deliverToChannel(
+        adapter,
+        msg.channelId,
+        localized(deps, msg, "approval.none_pending"),
+        inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
+      );
     } else if (matches.length === 1) {
       const approvedBy = `chat:${msg.senderId}`;
       gate.resolveApproval(matches[0].requestId, isApprove, approvedBy);
@@ -564,7 +616,7 @@ async function handleApprovalCommand(
           action: matches[0].toolName ?? matches[0].action,
           id: matches[0].shortId,
         }),
-        { completionMode: "deferred_retry", skipChunking: true },
+        inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
       );
     } else {
       const lines = matches.map(
@@ -577,7 +629,7 @@ async function handleApprovalCommand(
           command: cmd,
           choices: lines.join("\n"),
         }),
-        { completionMode: "deferred_retry", skipChunking: true },
+        inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
       );
     }
     return true;
@@ -600,7 +652,12 @@ async function handleApprovalCommand(
       const matches = ownedPending();
 
       if (matches.length === 0) {
-        await deps.deliveryService.deliverToChannel(adapter, msg.channelId, localized(deps, msg, "approval.none_pending_resolve"), { completionMode: "deferred_retry", skipChunking: true });
+        await deps.deliveryService.deliverToChannel(
+          adapter,
+          msg.channelId,
+          localized(deps, msg, "approval.none_pending_resolve"),
+          inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
+        );
       } else {
         for (const req of matches) {
           gate.resolveApproval(req.requestId, isApprove, approvedBy);
@@ -611,7 +668,7 @@ async function handleApprovalCommand(
             outcome: isApprove ? "approved" : "denied",
             count: matches.length,
           }),
-          { completionMode: "deferred_retry", skipChunking: true },
+          inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
         );
       }
     } else {
@@ -625,7 +682,7 @@ async function handleApprovalCommand(
         await deps.deliveryService.deliverToChannel(
           adapter, msg.channelId,
           localized(deps, msg, "approval.not_found", { id: arg }),
-          { completionMode: "deferred_retry", skipChunking: true },
+          inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
         );
       } else {
         gate.resolveApproval(match.requestId, isApprove, approvedBy);
@@ -636,7 +693,7 @@ async function handleApprovalCommand(
             action: match.toolName ?? match.action,
             id: match.shortId,
           }),
-          { completionMode: "deferred_retry", skipChunking: true },
+          inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
         );
       }
     }

@@ -25,7 +25,7 @@ import type { SessionLifecycle } from "@comis/agent";
 import type { CommandQueue } from "./queue/command-queue.js";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { InteractiveCallbackRouter } from "./approval/index.js";
-import type { ApprovalGate, ChannelPort, ClockPort, DeliveryQueuePort, DmScopeConfig, EventMap, LocalizationPort, NormalizedMessage, NormalizedReaction, PrincipalResolverPort, RequestContext, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
+import type { ApprovalGate, ChannelPort, ClockPort, DeliverToChannelOptions, DeliveryQueuePort, DmScopeConfig, EventMap, LocalizationPort, NormalizedMessage, NormalizedReaction, PrincipalResolverPort, RequestContext, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 // Orchestrator imports ONLY the @comis/core activity port + ctx type
 // (never the observability impl — hexagonal boundary). The
 // ActivityTurnCoordinator is a local execution type.
@@ -241,7 +241,7 @@ export interface ChannelManagerDeps {
   /** When true, lifecycle reactor handles queued/thinking reactions -- skip ack reaction in inbound pipeline. */
   lifecycleReactionsEnabled?: boolean;
   /** Deliver a graph report only after the inbound signed-callback router validates its owner. */
-  onGraphReportRequest?: (graphId: string, channelType: string, channelId: string, adapter: ChannelPort, threadId?: string) => Promise<void>;
+  onGraphReportRequest?: (graphId: string, channelType: string, channelId: string, adapter: ChannelPort, options: DeliverToChannelOptions) => Promise<void>;
   /** Response prefix config for template-based prefix/suffix on agent responses. */
   responsePrefixConfig?: { template: string; position: "prepend" | "append" };
   /** Template context builder for response prefix variables. */

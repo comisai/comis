@@ -23,6 +23,7 @@ const mockChatDelete = vi.fn();
 const mockReactionsAdd = vi.fn();
 const mockReactionsRemove = vi.fn();
 const mockConversationsHistory = vi.fn();
+const mockConversationsReplies = vi.fn();
 const mockFilesUploadV2 = vi.fn();
 let lastAppConfig: Record<string, unknown> = {};
 
@@ -51,6 +52,7 @@ vi.mock("@slack/bolt", () => ({
         },
         conversations: {
           history: mockConversationsHistory,
+          replies: mockConversationsReplies,
         },
         files: {
           uploadV2: mockFilesUploadV2,
@@ -423,6 +425,29 @@ describe("createSlackAdapter fetchMessages", () => {
     );
   });
 
+  it("fetches an authoritative thread through conversations.replies", async () => {
+    const adapter = createSlackAdapter(makeDeps());
+    await adapter.start();
+    mockConversationsReplies.mockResolvedValue({
+      messages: [{ ts: "1700000010.000200", user: "U1", text: "thread reply" }],
+    });
+
+    const result = await adapter.fetchMessages("C123", {
+      limit: 25,
+      before: "1700000050.000000",
+      threadId: "1699999999.000000",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(mockConversationsReplies).toHaveBeenCalledWith({
+      channel: "C123",
+      ts: "1699999999.000000",
+      limit: 25,
+      latest: "1700000050.000000",
+    });
+    expect(mockConversationsHistory).not.toHaveBeenCalled();
+  });
+
   it("uses default limit=20 when not specified", async () => {
     const adapter = createSlackAdapter(makeDeps());
     await adapter.start();
@@ -523,6 +548,25 @@ describe("createSlackAdapter sendAttachment", () => {
     expect(result).toEqual(ok({
       kind: "tracked",
       messageId: "1712345678.000150",
+    }));
+  });
+
+  it("uploads attachments into the authoritative Slack thread", async () => {
+    const adapter = createSlackAdapter(makeDeps());
+    await adapter.start();
+    mockFilesUploadV2.mockResolvedValue(
+      makeUploadResponse("C123", "1712345678.000175", "F-THREAD"),
+    );
+
+    await adapter.sendAttachment("C123", {
+      url: "https://example.com/threaded.png",
+      type: "image",
+      mimeType: "image/png",
+    }, { threadId: "1699999999.000000" });
+
+    expect(mockFilesUploadV2).toHaveBeenCalledWith(expect.objectContaining({
+      channel_id: "C123",
+      thread_ts: "1699999999.000000",
     }));
   });
 

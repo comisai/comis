@@ -93,6 +93,24 @@ const turnConversationRef = createConversationRef(TURN_SCOPE.conversation);
 if (!turnConversationRef.ok) throw turnConversationRef.error;
 const TURN_CONVERSATION_REF = turnConversationRef.value;
 
+function expectedDeliveryOptions(
+  turnScope: ResolvedTurnScope,
+  conversationRef: typeof TURN_CONVERSATION_REF,
+  skipChunking = false,
+) {
+  return {
+    completionMode: "deferred_retry" as const,
+    authority: {
+      tenantId: turnScope.conversation.tenantId,
+      agentId: turnScope.conversation.agentId,
+      conversationRef,
+    },
+    destinationEndpoint: turnScope.endpoint,
+    ...(turnScope.endpoint.threadId === undefined ? {} : { threadId: turnScope.endpoint.threadId }),
+    ...(skipChunking ? { skipChunking: true } : {}),
+  };
+}
+
 function makeFakeDeliveryService(): DeliveryService {
   return {
     deliverToChannel: vi.fn(async () =>
@@ -298,14 +316,29 @@ describe("evaluateInboundGate /config command interception", () => {
     const adapter = makeAdapter();
     const msg = makeMsg({ text: "/config view" });
 
+    const endpoint = { ...TURN_ENDPOINT, threadId: "owner-thread" };
+    const turnScope: ResolvedTurnScope = {
+      ...TURN_SCOPE,
+      endpoint,
+      conversation: {
+        ...TURN_SCOPE.conversation,
+        partition: {
+          kind: "endpoint-conversation-principal",
+          endpoint,
+          principalId: TURN_SCOPE.principal.principalId,
+        },
+      },
+    };
+    const conversationRef = createConversationRef(turnScope.conversation);
+    if (!conversationRef.ok) throw conversationRef.error;
     const result = await evaluateInboundGate(
       deps,
       adapter,
       msg,
       makeSessionKey(),
       "agent-1",
-      TURN_SCOPE,
-      TURN_CONVERSATION_REF,
+      turnScope,
+      conversationRef.value,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -316,7 +349,7 @@ describe("evaluateInboundGate /config command interception", () => {
       adapter,
       "chat-1",
       "config view response",
-      { completionMode: "deferred_retry" },
+      expectedDeliveryOptions(turnScope, conversationRef.value),
     );
   });
 
