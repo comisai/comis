@@ -291,8 +291,8 @@ export interface ChannelManagerDeps {
   getAllowFrom?: (channelType: string) => string[];
   /**
    * Bundle export DI for the /export-trajectory slash command. When present,
-   * inbound-gate.ts special-cases /export-trajectory with owner-gate + DM
-   * routing before the generic handleSlashCommand block. When absent,
+   * inbound-gate.ts special-cases /export-trajectory with an owner gate and
+   * direct-message-only delivery before the generic handleSlashCommand block. When absent,
    * /export-trajectory falls through to generic slash command handling (no-op).
    * Injected by daemon wiring via ChannelManagerBuildDeps.
    */

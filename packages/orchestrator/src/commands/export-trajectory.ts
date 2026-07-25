@@ -2,15 +2,13 @@
 /**
  * /export-trajectory slash command handler.
  *
- * Owner-gated bundle export with DM-vs-group routing:
- *   DM context  -> inline reply with bundle path + privacy reminder
- *   Group chat  -> inline ack "Bundle sent to owner DM" + DM to owner with path
+ * Owner-gated bundle export from an authenticated direct-message endpoint.
  *
  * Dispatched from inbound-gate.ts BEFORE the generic handleSlashCommand
  * block, because the handler needs:
- *   - msg.senderId        (for owner gate + DM target chat ID)
+ *   - msg.senderId        (for the owner gate)
  *   - isGroupMessage(msg) (for routing decision)
- *   - adapter             (for DM sendMessage)
+ *   - adapter             (for durable source-endpoint delivery)
  *
  * None of these are exposed through handleSlashCommand(text, sessionKey, agentId).
  *
@@ -83,20 +81,16 @@ export async function handleExportTrajectory(
     return { action: "handled" };
   }
 
-  // ---- Determine routing ----
+  // ---- Require an authenticated direct-message endpoint ----
   const isGroup = isGroupMessage(msg);
-
-  // ---- Group: send the ack FIRST, then export ----
-  // The ack fires before the await so group members see a prompt response
-  // even if the export takes several seconds.
-  // CRITICAL: the ack MUST NOT contain the bundle path (STRIDE mitigation).
   if (isGroup) {
     await deliveryService.deliverToChannel(
       adapter,
       msg.channelId,
-      "Bundle sent to owner DM.",
+      "For privacy, /export-trajectory is available only in a direct message with the bot.",
       deliveryOptions,
     );
+    return { action: "handled" };
   }
 
   // ---- Derive sessionId from SessionKey ----
@@ -128,14 +122,7 @@ export async function handleExportTrajectory(
     "This bundle contains session data — treat as sensitive. " +
     "Contains session transcript and tool outputs.";
 
-  if (isGroup) {
-    // CRITICAL: Path goes ONLY to the DM — NEVER inline in the group.
-    // msg.senderId is the Telegram user ID = DM chat ID.
-    await adapter.sendMessage(msg.senderId, message);
-  } else {
-    // DM context: inline reply is safe — it goes only to the owner.
-    await deliveryService.deliverToChannel(adapter, msg.channelId, message, deliveryOptions);
-  }
+  await deliveryService.deliverToChannel(adapter, msg.channelId, message, deliveryOptions);
 
   return { action: "handled" };
 }

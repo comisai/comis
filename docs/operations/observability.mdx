@@ -302,7 +302,7 @@ When a user reports an issue, the operator workflow is:
 2. `comis trace export <sessionId>` to produce a self-contained bundle directory.
 3. Share the bundle with the diagnosing engineer.
 
-Users can also trigger export via the `/export-trajectory` slash command in a direct message (or in a group channel, where the result is DM'd to the owner).
+Users can also trigger export via the `/export-trajectory` slash command in an authenticated direct message. Group invocations are rejected before a bundle is created.
 
 <Warning>
 **Privacy:** bundle contents reflect the raw session and runtime trajectory at export time. Redaction applies platform-aware patterns (Telegram chat IDs, JWTs, AWS keys, URL userinfo, basic-auth, cookie headers, emails), substitutes paths, and omits identified PII fields — but redaction is heuristic. Always treat exported bundles as containing sensitive content; share only with authorized engineers, prefer DM/secure channels, and delete after triage.

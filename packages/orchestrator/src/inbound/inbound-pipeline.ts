@@ -169,7 +169,7 @@ export interface InboundPipelineDeps {
   dedupDetector?: DedupDetector;
   /**
    * Bundle export DI for the /export-trajectory slash command.
-   * When present, inbound-gate.ts handles /export-trajectory with owner-gate + DM routing.
+   * When present, inbound-gate.ts handles /export-trajectory with an owner gate and direct-message-only delivery.
    * When absent, /export-trajectory falls through to generic handleSlashCommand (no-op).
    * Injected by daemon wiring (packages/daemon/src/wiring/).
    */

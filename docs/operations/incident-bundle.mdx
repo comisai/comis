@@ -11,8 +11,7 @@ a secure channel.
 There are two ways to export a bundle:
 
 1. **Operator (CLI):** `comis trace export <sessionId>` from a terminal on the host.
-2. **End-user / owner (slash command):** `/export-trajectory` in a Telegram DM with the bot (or in
-   a group — the bundle path is DM'd to the owner, never posted to the group).
+2. **End-user / owner (slash command):** `/export-trajectory` in a Telegram DM with the bot.
 
 <Info>
 The `comis` CLI is not installed on PATH by default. Use `node packages/cli/dist/cli.js trace ...`
@@ -236,10 +235,9 @@ When the owner types `/export-trajectory` in a direct message with the bot:
 
 When the owner types `/export-trajectory` in a group chat:
 
-1. The bot replies in the source group thread: `"Bundle sent to owner DM."`
-2. The bot sends the bundle path to the owner's personal DM.
-3. **The bundle path never appears in the group thread.** This is an enforced invariant — the
-   bundle path is routed exclusively to the owner's DM, not to `deliverToChannel`.
+1. The bot replies in the source group thread that export is available only in a direct message.
+2. No bundle is created and no direct-message destination is inferred from the group sender ID.
+3. The owner can open an authenticated DM with the bot and run the command there.
 
 <Warning>
 Owner gate is enforced at the slash-command handler. A non-owner invocation is rejected with an

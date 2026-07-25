@@ -449,9 +449,9 @@ export async function evaluateInboundGate(
   //
   // Handled BEFORE the generic handleSlashCommand block because:
   //   1. handleSlashCommand(text, sessionKey, agentId) is synchronous-shaped
-  //      and cannot carry the async DM side-effect to the owner.
+  //      and cannot carry the asynchronous export side effect.
   //   2. The handler needs direct access to msg + adapter for owner-gate
-  //      (msg.senderId === sessionKey.userId) and DM routing (adapter.sendMessage).
+  //      and authenticated source-endpoint delivery.
   //
   // "export-trajectory" is also in KNOWN_COMMANDS so parseSlashCommand
   // returns found:true — the text NEVER reaches the LLM.
