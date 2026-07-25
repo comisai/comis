@@ -11,15 +11,15 @@ through as ordinary message text.
 
 | Command | Behavior |
 |---|---|
-| `/think [off|minimal|low|medium|high|xhigh]` | Sets the reasoning level for the execution; without a level it uses `high` |
+| `/think [off\|minimal\|low\|medium\|high\|xhigh]` | Sets the reasoning level for the execution; without a level it uses `high` |
 | `/context` | Shows available bootstrap-file and tool-schema context information |
 | `/status` | Shows session, message, token, context, and budget information when available |
 | `/usage` | Shows recorded usage by provider and model |
-| `/config [show [section]|set &lt;section.key&gt; &lt;value&gt;|history]` | Reads or changes runtime configuration; requires admin trust |
-| `/model [status|list|cycle|next|prev|previous|&lt;provider&gt;/&lt;model&gt;]` | Inspects or changes the session model |
+| `/config [show [section]\|set &lt;section.key&gt; &lt;value&gt;\|history]` | Reads or changes runtime configuration; requires admin trust |
+| `/model [status\|list\|cycle\|next\|prev\|previous\|&lt;provider&gt;/&lt;model&gt;]` | Inspects or changes the session model |
 | `/new [provider/model]` | Destroys the current conversation and creates a new session |
 | `/reset` | Clears the current conversation state |
-| `/compact [verbose|-v] [instructions]` | Requests context compaction |
+| `/compact [verbose\|-v] [instructions]` | Requests context compaction |
 | `/export [path]` | Requests an HTML session export |
 | `/export-trajectory` | Sends an owner-gated trajectory bundle for the current direct-message session |
 | `/stop` | Aborts the active execution, if one exists |
@@ -48,9 +48,9 @@ These commands are handled before the general command dispatcher:
 
 | Command | Availability |
 |---|---|
-| `/approve [short-id|all]` | Resolves a pending approval when the approval gate is enabled and wired |
-| `/deny [short-id|all]` | Denies a pending approval under the same conditions |
-| `/send on|off|inherit` | Lets the session owner override the runtime send policy for that session |
+| `/approve [short-id\|all]` | Resolves a pending approval when the approval gate is enabled and wired |
+| `/deny [short-id\|all]` | Denies a pending approval under the same conditions |
+| `/send on\|off\|inherit` | Lets the session owner override the runtime send policy for that session |
 
 Approvals are disabled by default. Enable and configure them before relying on
 `/approve` or `/deny`; see [Approvals](/security/approvals).
