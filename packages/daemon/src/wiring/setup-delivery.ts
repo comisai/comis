@@ -40,7 +40,7 @@ import type { PluginRegistry } from "@comis/core";
 // Delivery Queue
 // ===========================================================================
 
-const DELIVERY_ADAPTER_UNAVAILABLE_ERROR = "delivery adapter unavailable";
+const DELIVERY_ENDPOINT_MISMATCH_ERROR = "delivery endpoint unavailable";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -263,8 +263,74 @@ export async function drainDeliveryQueue(deps: {
       break;
     }
 
-    // pendingEntries() is only a snapshot. Compare-and-swap ownership before
-    // touching the platform so concurrent drainers cannot send the same row.
+    let options: Record<string, unknown> = {};
+    try {
+      options = JSON.parse(entry.optionsJson) as Record<string, unknown>;
+    } catch {
+      // Invalid JSON -- send without options
+    }
+
+    const adapter = channelAdapters.get(entry.channelType);
+    const optionThreadId = typeof options.threadId === "string"
+      ? options.threadId
+      : undefined;
+    const endpointMatches = adapter !== undefined
+      && entry.destinationEndpoint.channelType === entry.channelType
+      && entry.destinationEndpoint.channelInstanceId === adapter.channelId
+      && entry.destinationEndpoint.conversationId === entry.channelId
+      && entry.destinationEndpoint.threadId === optionThreadId;
+
+    if (!endpointMatches) {
+      const claimResult = await deliveryQueue.claim(entry.id);
+      if (!claimResult.ok) {
+        logger.warn(
+          {
+            entryId: entry.id,
+            channelType: entry.channelType,
+            hint: "Restore delivery queue storage; the endpoint-mismatched row remains pending and was not sent",
+            errorKind: "internal" as const,
+          },
+          "Delivery queue could not claim an endpoint-mismatched row",
+        );
+        continue;
+      }
+      if (!claimResult.value) continue;
+      attempted++;
+      const failResult = await deliveryQueue.fail(entry.id, DELIVERY_ENDPOINT_MISMATCH_ERROR);
+      if (failResult.ok) {
+        emitObservationalEventSafely({ eventBus, logger }, "delivery:failed", {
+          entryId: entry.id,
+          channelId: entry.channelId,
+          channelType: entry.channelType,
+          error: DELIVERY_ENDPOINT_MISMATCH_ERROR,
+          reason: "permanent_error",
+          timestamp: systemNowMs(),
+        });
+        logger.warn(
+          {
+            entryId: entry.id,
+            channelType: entry.channelType,
+            hint: "Restore the adapter instance named by the queued destination endpoint or create a new authorized delivery",
+            errorKind: "precondition" as const,
+          },
+          "Delivery queue parked a row whose destination endpoint is unavailable",
+        );
+      } else {
+        logger.warn(
+          {
+            entryId: entry.id,
+            channelType: entry.channelType,
+            err: toSafeErrorLogString(failResult.error),
+            hint: "Restore delivery queue storage; the claimed endpoint-mismatched row could not be parked",
+            errorKind: "internal" as const,
+          },
+          "Delivery queue could not park an endpoint-mismatched row",
+        );
+      }
+      failed++;
+      continue;
+    }
+
     const claimResult = await deliveryQueue.claim(entry.id);
     if (!claimResult.ok) {
       logger.warn(
@@ -281,31 +347,6 @@ export async function drainDeliveryQueue(deps: {
     if (!claimResult.value) continue;
 
     attempted++;
-
-    const adapter = channelAdapters.get(entry.channelType);
-    if (!adapter) {
-      const error = DELIVERY_ADAPTER_UNAVAILABLE_ERROR;
-      const failResult = await deliveryQueue.fail(entry.id, error);
-      if (failResult.ok) {
-        emitObservationalEventSafely({ eventBus, logger }, "delivery:failed", {
-          entryId: entry.id,
-          channelId: entry.channelId,
-          channelType: entry.channelType,
-          error,
-          reason: "permanent_error",
-          timestamp: systemNowMs(),
-        });
-      }
-      failed++;
-      continue;
-    }
-
-    let options: Record<string, unknown> = {};
-    try {
-      options = JSON.parse(entry.optionsJson) as Record<string, unknown>;
-    } catch {
-      // Invalid JSON -- send without options
-    }
 
     // Promise.resolve().then(...) captures both a synchronous SDK throw and a
     // rejected send promise at the platform boundary.

@@ -30,12 +30,13 @@ export type DeliveryStrategy = "all-or-abort" | "best-effort";
 
 /** Minimal adapter interface required by deliverToChannel. */
 export interface DeliveryAdapter {
+  readonly channelId: string;
+  readonly channelType: string;
   sendMessage(
     channelId: string,
     text: string,
     options?: SendMessageOptions,
   ): Promise<Result<string, Error>>;
-  channelType: string;
 }
 
 // -------------------------------------------------------------------------

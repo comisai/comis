@@ -24,7 +24,12 @@ import {
   stripInternalFields,
   systemNowMs,
 } from "@comis/core";
-import type { DeliveryQueueEntry, DeliveryQueuePort } from "@comis/core";
+import type {
+  ChannelEndpoint,
+  ConversationRef,
+  DeliveryQueueEntry,
+  DeliveryQueuePort,
+} from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type SessionHandlerDeps } from "./session-helpers.js";
 import { AuthorizationError, PreconditionError } from "../errors.js";
@@ -101,15 +106,6 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 20;
 
-      // Snapshot the DeliveryQueuePort once per request and build the join
-      // keyset BEFORE the message loop. The key is (channelId, text) -- the
-      // queue exposes channelType + channelId + tenantId + text; we only need
-      // channelId + text because two queue entries from different channel
-      // adapters with the same channelId would be a deployment conflict the
-      // operator must avoid. The sessionKey itself carries channelId at
-      // parts[2] (after tenant + userId); we extract it once below.
-      const pendingKeySet = await loadPendingKeySet(deps.deliveryQueue);
-
       const loaded = deps.sessionStore.loadByRef(authority, parsedRef.data);
       if (!loaded.ok) throw loaded.error;
       const data = loaded.value;
@@ -137,14 +133,11 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       const isShared = (partition.kind === "endpoint-conversation" || partition.kind === "endpoint-conversation-principal")
         && partition.endpoint.conversationKind === "shared";
       const channelType = isSubAgent ? "sub-agent" : isShared ? "group" : "dm";
-      // ChannelId for the deliveryStatus join. The DeliveryQueueEntry carries
-      // channelType + channelId + text; we match on (channelId, text) below
-      // because two queue entries for distinct channel adapters with the same
-      // channelId is a deployment conflict operators avoid by construction.
-      const sessionChannelId = partition.kind === "endpoint-conversation"
+      const sessionEndpoint = partition.kind === "endpoint-conversation"
         || partition.kind === "endpoint-conversation-principal"
-        ? partition.endpoint.conversationId
-        : projected.value.channelId;
+        ? partition.endpoint
+        : undefined;
+      const pendingKeySet = await loadPendingKeySet(deps.deliveryQueue);
 
       // Pre-scan: resolve gateway attachment tool calls so we can inject
       // <!-- attachment:... --> markers into displayable assistant messages.
@@ -264,14 +257,19 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
         if (text) {
           // DeliveryStatus computation. Inbound user messages were received
           // from the channel -- always confirmed. Outbound assistant messages
-          // are confirmed unless the delivery queue still has a
-          // pending/in_flight/failed entry for this text on the session's
-          // channelId (queue's `pendingEntries()` returns only NON-delivered,
-          // NON-expired rows scheduled <= now).
+          // are confirmed unless the delivery queue still has an unconfirmed
+          // entry for this text under the same delivery authority and endpoint.
           const deliveryStatus: "confirmed" | "pending" =
             role === "user"
               ? "confirmed"
-              : pendingKeySet.has(makePendingKey(sessionChannelId, text))
+              : sessionEndpoint !== undefined
+                && pendingKeySet.has(makePendingKey({
+                  tenantId: authority.tenantId,
+                  agentId: authority.agentId,
+                  conversationRef: parsedRef.data,
+                  destinationEndpoint: sessionEndpoint,
+                  text,
+                }))
                 ? "pending"
                 : "confirmed";
           messages.push({
@@ -414,20 +412,30 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
 // DeliveryStatus join helpers
 // ---------------------------------------------------------------------------
 
-/** Stable join key: `${channelId}::${text}`. The double-colon separator is
- *  safe because channelId is provider-supplied (no colons in practice for
- *  Telegram/Discord/Slack chat IDs); even if it ever included one, the
- *  worst-case is a missed match (some outbound message reported as
- *  confirmed when it is actually pending) -- safer fail-mode than the
- *  reverse. */
-function makePendingKey(channelId: string, text: string): string {
-  return `${channelId}::${text}`;
+function makePendingKey(input: {
+  tenantId: string;
+  agentId: string;
+  conversationRef: ConversationRef;
+  destinationEndpoint: ChannelEndpoint;
+  text: string;
+}): string {
+  return JSON.stringify([
+    input.tenantId,
+    input.agentId,
+    input.conversationRef,
+    input.destinationEndpoint.channelType,
+    input.destinationEndpoint.channelInstanceId,
+    input.destinationEndpoint.conversationId,
+    input.destinationEndpoint.threadId ?? null,
+    input.destinationEndpoint.conversationKind,
+    input.text,
+  ]);
 }
 
 /**
  * Snapshot the DeliveryQueuePort's NOT-yet-delivered entries (pending /
  * in_flight / failed / expired) once per request and return a Set keyed by
- * `(channelId, text)`.
+ * the complete delivery authority, endpoint, and text.
  *
  * Uses `unconfirmedEntries()`, NOT `pendingEntries()`: the latter is
  * drainer-scoped (status='pending' AND scheduled_at<=now) and hides in_flight
@@ -443,9 +451,6 @@ function makePendingKey(channelId: string, text: string): string {
  *     session.history call -- the join is a defense-in-depth signal, not
  *     a correctness requirement of session.history itself).
  *
- * Note: if no message-id link exists, an indirect match (channelId + text)
- * is used; this limitation is documented so a future version can revisit if
- * a stable message id is added.
  */
 async function loadPendingKeySet(
   queue: DeliveryQueuePort | undefined,
@@ -455,7 +460,13 @@ async function loadPendingKeySet(
   if (!r.ok) return new Set();
   const set = new Set<string>();
   for (const entry of r.value as readonly DeliveryQueueEntry[]) {
-    set.add(makePendingKey(entry.channelId, entry.text));
+    set.add(makePendingKey({
+      tenantId: entry.tenantId,
+      agentId: entry.agentId,
+      conversationRef: entry.conversationRef,
+      destinationEndpoint: entry.destinationEndpoint,
+      text: entry.text,
+    }));
   }
   return set;
 }

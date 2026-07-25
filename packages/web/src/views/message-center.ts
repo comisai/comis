@@ -43,6 +43,7 @@ interface MessageActionContext {
   rpcClient: RpcClient;
   channel: string;
   chatId: string;
+  endpoint: SessionChannelEndpoint;
 }
 
 interface ChatListEntry {
@@ -427,25 +428,29 @@ export class IcMessageCenter extends LitElement {
   }
 
   private _captureActionContext(): MessageActionContext | null {
+    const endpoint = this._selectedEndpoint();
     if (
       !this.rpcClient
       || !this._effectiveChannel
-      || this._selectedEndpointCannotUseNativeRpc()
+      || endpoint === undefined
     ) return null;
     return {
       revision: this._actionContextRevision,
       rpcClient: this.rpcClient,
       channel: this._effectiveChannel,
-      chatId: this._selectedConversationId() || this._effectiveChannel,
+      chatId: endpoint.conversationId,
+      endpoint,
     };
   }
 
   private _isCurrentActionContext(context: MessageActionContext): boolean {
+    const endpoint = this._selectedEndpoint();
     return this.isConnected
       && context.revision === this._actionContextRevision
       && context.rpcClient === this.rpcClient
       && context.channel === this._effectiveChannel
-      && context.chatId === (this._selectedConversationId() || this._effectiveChannel);
+      && endpoint !== undefined
+      && endpointsEqual(context.endpoint, endpoint);
   }
 
   override updated(changedProperties: Map<string, unknown>): void {
@@ -601,7 +606,7 @@ export class IcMessageCenter extends LitElement {
       await this._loadChats(revision, channel);
       if (!this._isCurrentChannel(revision, channel)) return;
 
-      // Endpoint-backed selections require the scoped session-history path.
+      // Every history path is scoped by the selected endpoint.
       await this._refetchMessages(revision, channel);
       if (!this._isCurrentChannel(revision, channel)) return;
 
@@ -698,7 +703,8 @@ export class IcMessageCenter extends LitElement {
       }
     } catch {
       if (!this._isCurrentChannel(revision, channel)) return;
-      // Non-fatal -- chat list simply stays empty
+      this._chatList = [];
+      this._selectedChatId = "";
     }
   }
 
@@ -706,11 +712,6 @@ export class IcMessageCenter extends LitElement {
   // Re-fetch messages helper
   // -------------------------------------------------------------------------
 
-  /**
-   * Re-fetch messages without dropping endpoint authority. Native history is
-   * used only when the selected target has no endpoint qualifiers; otherwise
-   * the exact endpoint is resolved through session.list + session.history.
-   */
   private async _refetchMessages(
     revision = this._channelRevision,
     channel = this._effectiveChannel,
@@ -723,18 +724,23 @@ export class IcMessageCenter extends LitElement {
     const selectedChatId = selectedChat?.chatId ?? selectedChatKey;
     if (!this.rpcClient || !channel) return;
     const rpcClient = this.rpcClient;
+    const selectedEndpoint = this._selectedEndpoint();
+    this._messagesAreActionable = false;
+    if (selectedEndpoint === undefined) {
+      this._messages = [];
+      this._selectedMessageId = "";
+      return;
+    }
 
-    if (
-      this._capabilities?.fetchHistory
-      && !this._selectedEndpointCannotUseNativeRpc()
-    ) {
+    if (this._capabilities?.fetchHistory) {
       try {
         const fetchResult = await this.rpcClient.call<{
           messages: FetchedMessage[];
           channelId: string;
         }>("message.fetch", {
           channel_type: channel,
-          channel_id: selectedChatId || channel,
+          channel_id: selectedEndpoint.conversationId,
+          endpoint: selectedEndpoint,
           limit: 50,
         });
         if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
@@ -749,12 +755,13 @@ export class IcMessageCenter extends LitElement {
         }
       } catch {
         if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
-        // Non-fatal
+        this._messages = [];
+        this._messagesAreActionable = false;
+        this._selectedMessageId = "";
       }
       return;
     }
 
-    // Endpoint-bound or non-native history: resolve exact stored session data.
     try {
       const sessions = await listSessionsAcrossAgents(rpcClient);
       if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
@@ -762,13 +769,8 @@ export class IcMessageCenter extends LitElement {
         ? sessions.filter((session) => session.endpoint?.channelType === channel
           && session.endpoint.conversationId === selectedChatId)
         : [];
-      const selectedEndpoint = selectedChat?.endpoint;
-      const matching = selectedEndpoint
-        ? endpointCandidates.filter((session) => session.endpoint !== undefined
-          && endpointsEqual(session.endpoint, selectedEndpoint))
-        : endpointCandidates.length === 1
-          ? endpointCandidates
-          : [];
+      const matching = endpointCandidates.filter((session) => session.endpoint !== undefined
+        && endpointsEqual(session.endpoint, selectedEndpoint));
 
       if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
       if (matching.length === 0) {
@@ -821,18 +823,15 @@ export class IcMessageCenter extends LitElement {
       && selectedChatKey === this._selectedChatId;
   }
 
-  private _selectedConversationId(): string {
-    return this._chatList.find(
+  private _selectedEndpoint(): SessionChannelEndpoint | undefined {
+    const endpoint = this._chatList.find(
       (chat) => (chat.key ?? chat.chatId) === this._selectedChatId,
-    )?.chatId
-      ?? this._selectedChatId;
+    )?.endpoint;
+    return endpoint?.channelType === this._effectiveChannel ? endpoint : undefined;
   }
 
-  private _selectedEndpointCannotUseNativeRpc(): boolean {
-    const selected = this._chatList.find(
-      (chat) => (chat.key ?? chat.chatId) === this._selectedChatId,
-    );
-    return selected?.endpoint !== undefined;
+  private _selectedEndpointMissing(): boolean {
+    return this._selectedEndpoint() === undefined;
   }
 
   // -------------------------------------------------------------------------
@@ -866,7 +865,7 @@ export class IcMessageCenter extends LitElement {
   private _handleSendClick(): void {
     if (
       this._mutationPending
-      || this._selectedEndpointCannotUseNativeRpc()
+      || this._selectedEndpointMissing()
       || !this._sendText.trim()
     ) return;
     this._showSendConfirm = true;
@@ -884,6 +883,7 @@ export class IcMessageCenter extends LitElement {
       await context.rpcClient.call("message.send", {
         channel_type: context.channel,
         channel_id: context.chatId,
+        endpoint: context.endpoint,
         text,
       });
       if (!this._isCurrentActionContext(context)) return;
@@ -949,6 +949,7 @@ export class IcMessageCenter extends LitElement {
       await context.rpcClient.call("message.reply", {
         channel_type: context.channel,
         channel_id: context.chatId,
+        endpoint: context.endpoint,
         text,
         message_id: messageId,
       });
@@ -1011,6 +1012,7 @@ export class IcMessageCenter extends LitElement {
       await context.rpcClient.call("message.edit", {
         channel_type: context.channel,
         channel_id: context.chatId,
+        endpoint: context.endpoint,
         message_id: messageId,
         text,
       });
@@ -1058,6 +1060,7 @@ export class IcMessageCenter extends LitElement {
       await context.rpcClient.call("message.delete", {
         channel_type: context.channel,
         channel_id: context.chatId,
+        endpoint: context.endpoint,
         message_id: messageId,
       });
       if (!this._isCurrentActionContext(context)) return;
@@ -1110,6 +1113,7 @@ export class IcMessageCenter extends LitElement {
       await context.rpcClient.call("message.react", {
         channel_type: context.channel,
         channel_id: context.chatId,
+        endpoint: context.endpoint,
         message_id: messageId,
         emoji,
       });
@@ -1179,6 +1183,7 @@ export class IcMessageCenter extends LitElement {
       await context.rpcClient.call("message.attach", {
         channel_type: context.channel,
         channel_id: context.chatId,
+        endpoint: context.endpoint,
         attachment_url: attachmentUrl,
         attachment_type: attachmentType,
         caption,
@@ -1222,7 +1227,10 @@ export class IcMessageCenter extends LitElement {
     if (!context) return;
 
     // Build params
-    const params: Record<string, unknown> = { action: platformAction.action };
+    const params: Record<string, unknown> = {
+      action: platformAction.action,
+      endpoint: context.endpoint,
+    };
 
     // Add channel/chat/group identifier based on platform
     if (context.channel === "telegram") {
@@ -1423,7 +1431,7 @@ export class IcMessageCenter extends LitElement {
 
     // Sort by timestamp ascending (oldest first)
     const sorted = [...this._messages].sort((a, b) => a.timestamp - b.timestamp);
-    const canReply = this._messagesAreActionable;
+    const canReply = this._messagesAreActionable && !this._selectedEndpointMissing();
     const canEdit = canReply && this._capabilities?.editMessages === true;
     const canDelete = canReply && this._capabilities?.deleteMessages === true;
     const canReact = canReply && this._capabilities?.reactions === true;
@@ -1532,7 +1540,7 @@ export class IcMessageCenter extends LitElement {
 
   private _renderSendForm() {
     const attachSupported = this._capabilities?.attachments === true;
-    const endpointAmbiguous = this._selectedEndpointCannotUseNativeRpc();
+    const endpointMissing = this._selectedEndpointMissing();
 
     return html`
       <div class="section">
@@ -1544,13 +1552,13 @@ export class IcMessageCenter extends LitElement {
             .value=${this._sendText}
             @input=${(e: InputEvent) => { this._sendText = (e.target as HTMLTextAreaElement).value; }}
             @keydown=${this._handleKeydown}
-            ?disabled=${this._mutationPending || endpointAmbiguous}
+            ?disabled=${this._mutationPending || endpointMissing}
             rows="2"
           ></textarea>
           <button
             class="btn btn-primary"
             @click=${this._handleSendClick}
-            ?disabled=${this._mutationPending || endpointAmbiguous || !this._sendText.trim()}
+            ?disabled=${this._mutationPending || endpointMissing || !this._sendText.trim()}
           >
             ${this._actionPending ? "Sending..." : "Send"}
           </button>
@@ -1559,7 +1567,7 @@ export class IcMessageCenter extends LitElement {
               <button
                 class="btn-sm btn-sm-ghost"
                 @click=${this._toggleAttachForm}
-                ?disabled=${this._mutationPending || endpointAmbiguous}
+                ?disabled=${this._mutationPending || endpointMissing}
                 title="Attach File"
               >
                 ${this._showAttachForm ? "Close Attach" : "Attach File"}
@@ -1637,7 +1645,7 @@ export class IcMessageCenter extends LitElement {
     if (!groups) return nothing;
 
     const platformLabel = this._effectiveChannel.charAt(0).toUpperCase() + this._effectiveChannel.slice(1);
-    const endpointAmbiguous = this._selectedEndpointCannotUseNativeRpc();
+    const endpointMissing = this._selectedEndpointMissing();
 
     return html`
       <div class="platform-actions">
@@ -1660,13 +1668,13 @@ export class IcMessageCenter extends LitElement {
                     placeholder=${action.needsInput}
                     .value=${this._actionInputs[inputKey] ?? ""}
                     @input=${(e: InputEvent) => this._handleActionInputChange(inputKey, (e.target as HTMLInputElement).value)}
-                    ?disabled=${this._mutationPending || endpointAmbiguous}
+                    ?disabled=${this._mutationPending || endpointMissing}
                   />
                 ` : nothing}
                 <button
                   class="btn-sm btn-sm-ghost"
                   @click=${() => void this._handlePlatformAction(action)}
-                  ?disabled=${this._mutationPending || endpointAmbiguous || needsMessageAndMissing}
+                  ?disabled=${this._mutationPending || endpointMissing || needsMessageAndMissing}
                   title=${needsMessageAndMissing ? "Select a message first" : action.label}
                 >
                   ${action.label}

@@ -28,6 +28,7 @@ import {
 import type { PreparedCompletionAttachment } from "./completion-attachment.js";
 
 interface AnnouncementChannelAdapter {
+  readonly channelId: string;
   channelType: string;
   sendMessage(
     channelId: string,

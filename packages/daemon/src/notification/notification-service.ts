@@ -49,15 +49,9 @@ export interface NotificationServiceDeps {
   notificationConfigs: ReadonlyMap<string, NotificationConfig>;
   defaultConfig: NotificationConfig;
   channelResolverDeps: ChannelResolverDeps;
-  /** The tenant every minted notification authority is bound to. */
+  /** The tenant every notification authority is bound to. */
   tenantId: string;
-  /**
-   * Resolve a channel type to its registered adapter's instance id
-   * (`ChannelPort.channelId`) — the same identity ingress stamps as
-   * `channelInstanceId`, so an outbound destination endpoint stays injective and
-   * consistent with the inbound turn. Returns undefined when no adapter is
-   * registered for the type (the mint falls back to the resolved channel id).
-   */
+  /** Resolve a channel type to its registered adapter's instance id. */
   resolveChannelInstanceId: (channelType: string) => string | undefined;
   logger: {
     info(obj: Record<string, unknown>, msg: string): void;
@@ -86,6 +80,7 @@ export interface NotificationDestinationOpts {
   agentId: string;
   channelType?: string;
   channelId?: string;
+  destinationEndpoint?: ChannelEndpoint;
 }
 
 /** The notification service interface returned by the factory. */
@@ -97,7 +92,12 @@ export interface NotificationService {
    * Runs the SAME channel-resolution chain notifyUser cross-checks at send
    * time, so the minted claim always matches the live resolution.
    */
-  resolveDestination(opts: { agentId: string; channelType?: string; channelId?: string }): Result<NotificationDestination, Error>;
+  resolveDestination(opts: {
+    agentId: string;
+    channelType?: string;
+    channelId?: string;
+    destinationEndpoint?: ChannelEndpoint;
+  }): Result<NotificationDestination, Error>;
 }
 
 /**
@@ -106,10 +106,7 @@ export interface NotificationService {
  * resolution chain (via {@link resolveNotificationChannel}) exactly as
  * `notifyUser` does, then:
  *
- *   - destinationEndpoint carries the REAL destination: the resolved
- *     (channelType, channelId) with the resolved adapter's instance id as
- *     `channelInstanceId` — the same identity ingress stamps — so outbound and
- *     inbound stay injective/consistent.
+ *   - destinationEndpoint carries the complete resolved channel identity.
  *   - authority is minted through the CANONICAL internal-boundary mechanism
  *     ({@link resolveInternalTurnIdentity}, `originKind: "control-plane"`) the
  *     schedulers/heartbeat/durable-resume paths use. It is deliberately NOT the
@@ -130,6 +127,7 @@ export function resolveNotificationDestination(
     agentId: opts.agentId,
     channelType: opts.channelType,
     channelId: opts.channelId,
+    destinationEndpoint: opts.destinationEndpoint,
     primaryChannel: config.primaryChannel,
   });
   if (!channelResult.ok) {
@@ -141,15 +139,14 @@ export function resolveNotificationDestination(
       ),
     );
   }
-  const { channelType, channelId } = channelResult.value;
-  const destinationEndpoint: ChannelEndpoint = {
-    channelType,
-    // The resolved adapter's instance identity (matches ingress); fall back to
-    // the resolved channel id when no adapter is registered for the type.
-    channelInstanceId: deps.resolveChannelInstanceId(channelType) ?? channelId,
-    conversationId: channelId,
-    conversationKind: "direct",
-  };
+  const { channelType, channelId, endpoint: destinationEndpoint } = channelResult.value;
+  const channelInstanceId = deps.resolveChannelInstanceId(channelType);
+  if (
+    channelInstanceId === undefined
+    || channelInstanceId !== destinationEndpoint.channelInstanceId
+  ) {
+    return err(new Error("Notification destination adapter instance is unavailable"));
+  }
   const identity = resolveInternalTurnIdentity({
     tenantId: opts.tenantId,
     agentId: opts.agentId,
@@ -223,7 +220,12 @@ export function createNotificationService(deps: NotificationServiceDeps): Notifi
   });
 
   return {
-    resolveDestination(opts: { agentId: string; channelType?: string; channelId?: string }): Result<NotificationDestination, Error> {
+    resolveDestination(opts: {
+      agentId: string;
+      channelType?: string;
+      channelId?: string;
+      destinationEndpoint?: ChannelEndpoint;
+    }): Result<NotificationDestination, Error> {
       return resolveNotificationDestination(
         {
           channelResolverDeps: deps.channelResolverDeps,
@@ -231,7 +233,13 @@ export function createNotificationService(deps: NotificationServiceDeps): Notifi
           defaultConfig: deps.defaultConfig,
           resolveChannelInstanceId: deps.resolveChannelInstanceId,
         },
-        { tenantId: deps.tenantId, agentId: opts.agentId, channelType: opts.channelType, channelId: opts.channelId },
+        {
+          tenantId: deps.tenantId,
+          agentId: opts.agentId,
+          channelType: opts.channelType,
+          channelId: opts.channelId,
+          destinationEndpoint: opts.destinationEndpoint,
+        },
       );
     },
     async notifyUser(opts: NotifyUserOptions): Promise<Result<string, Error>> {
@@ -259,6 +267,7 @@ export function createNotificationService(deps: NotificationServiceDeps): Notifi
         agentId: opts.agentId,
         channelType: opts.channelType,
         channelId: opts.channelId,
+        destinationEndpoint: opts.destinationEndpoint,
         primaryChannel: config.primaryChannel,
       });
 
@@ -283,10 +292,16 @@ export function createNotificationService(deps: NotificationServiceDeps): Notifi
         );
       }
 
-      const { channelType, channelId } = channelResult.value;
+      const { channelType, channelId, endpoint } = channelResult.value;
+      const channelInstanceId = deps.resolveChannelInstanceId(channelType);
       if (
-        opts.destinationEndpoint.channelType !== channelType
-        || opts.destinationEndpoint.conversationId !== channelId
+        opts.destinationEndpoint.channelType !== endpoint.channelType
+        || opts.destinationEndpoint.channelInstanceId !== endpoint.channelInstanceId
+        || opts.destinationEndpoint.conversationId !== endpoint.conversationId
+        || opts.destinationEndpoint.threadId !== endpoint.threadId
+        || opts.destinationEndpoint.conversationKind !== endpoint.conversationKind
+        || channelInstanceId === undefined
+        || channelInstanceId !== endpoint.channelInstanceId
       ) {
         deps.logger.warn({
           agentId: opts.agentId,
@@ -379,7 +394,13 @@ export function createNotificationService(deps: NotificationServiceDeps): Notifi
         createdAt: now,
         scheduledAt,
         expireAt: now + HOUR_MS,
-        optionsJson: JSON.stringify({ origin: "notification", chainDepth: config.maxChainDepth }),
+        optionsJson: JSON.stringify({
+          origin: "notification",
+          chainDepth: config.maxChainDepth,
+          ...(opts.destinationEndpoint.threadId === undefined
+            ? {}
+            : { threadId: opts.destinationEndpoint.threadId }),
+        }),
         traceId: null,
       };
 

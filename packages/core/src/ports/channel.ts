@@ -336,6 +336,8 @@ export interface FetchMessagesOptions {
   limit?: number;
   /** Fetch messages before this message ID (for pagination) */
   before?: string;
+  /** Restrict history to the selected endpoint thread when supported. */
+  threadId?: string;
 }
 
 /**

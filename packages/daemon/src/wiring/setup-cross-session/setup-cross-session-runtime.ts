@@ -113,7 +113,7 @@ export function setupCrossSession(deps: {
   assembleToolsForAgent: (agentId: string, options?: import("../setup-tools.js").AssembleToolsOptions) => Promise<any[]>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentExecutor.execute has complex signature crossing package boundaries
   getExecutor: (agentId: string) => { execute: (...args: any[]) => Promise<ExecutionResult> };
-  adaptersByType: Map<string, { sendMessage(channelId: string, text: string, options?: import("@comis/core").SendMessageOptions): Promise<import("@comis/shared").Result<string, Error>>; channelType: string; platformAction?(action: string, params: Record<string, unknown>): Promise<import("@comis/shared").Result<unknown, Error>> }>;
+  adaptersByType: Map<string, { readonly channelId: string; sendMessage(channelId: string, text: string, options?: import("@comis/core").SendMessageOptions): Promise<import("@comis/shared").Result<string, Error>>; channelType: string; platformAction?(action: string, params: Record<string, unknown>): Promise<import("@comis/shared").Result<unknown, Error>> }>;
   /** Optional structured logger for cross-session subsystem. */
   logger?: ComisLogger;
   /** Optional memory adapter for persisting sub-agent completion summaries. */

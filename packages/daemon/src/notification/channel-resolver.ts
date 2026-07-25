@@ -11,26 +11,35 @@
  */
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
+import type { ChannelEndpoint } from "@comis/core";
 
 export interface ResolvedChannel {
   channelType: string;
   channelId: string;
+  endpoint: ChannelEndpoint;
   resolution: "explicit" | "platform_match" | "primary_channel" | "recent_session";
 }
 
 export interface ChannelResolverDeps {
   /** Set of active adapter channel types (e.g., "telegram", "discord"). */
   activeAdapterTypes: ReadonlySet<string>;
-  /** Lookup most recent session for agent on a specific platform. Returns channelId or undefined. */
-  getRecentSessionChannel: (agentId: string, channelType: string) => string | undefined;
-  /** Lookup most recent session for agent across all platforms. Returns {channelType, channelId} or undefined. */
-  getMostRecentSession: (agentId: string) => { channelType: string; channelId: string } | undefined;
+  getRecentSessionEndpoint: (
+    agentId: string,
+    channelType: string,
+  ) => ChannelEndpoint | undefined;
+  getMostRecentSessionEndpoint: (agentId: string) => ChannelEndpoint | undefined;
+  findSessionEndpoint: (
+    agentId: string,
+    channelType: string,
+    conversationId: string,
+  ) => ChannelEndpoint | undefined;
 }
 
 export interface ResolveChannelOpts {
   agentId: string;
   channelType?: string;
   channelId?: string;
+  destinationEndpoint?: ChannelEndpoint;
   primaryChannel?: { channelType: string; channelId: string };
 }
 
@@ -40,35 +49,75 @@ export function resolveNotificationChannel(
 ): Result<ResolvedChannel, { reason: "no_channel"; attempted: string[] }> {
   const attempted: string[] = [];
 
-  // Level 1: Explicit channel
+  if (opts.destinationEndpoint !== undefined) {
+    const endpoint = opts.destinationEndpoint;
+    if (
+      !deps.activeAdapterTypes.has(endpoint.channelType)
+      || (opts.channelType !== undefined && opts.channelType !== endpoint.channelType)
+      || (opts.channelId !== undefined && opts.channelId !== endpoint.conversationId)
+    ) {
+      return err({ reason: "no_channel" as const, attempted: ["destination_endpoint"] });
+    }
+    return ok({
+      channelType: endpoint.channelType,
+      channelId: endpoint.conversationId,
+      endpoint,
+      resolution: "explicit",
+    });
+  }
+
   if (opts.channelType && opts.channelId) {
-    return ok({ channelType: opts.channelType, channelId: opts.channelId, resolution: "explicit" });
+    const endpoint = deps.findSessionEndpoint(opts.agentId, opts.channelType, opts.channelId);
+    if (endpoint && deps.activeAdapterTypes.has(endpoint.channelType)) {
+      return ok({
+        channelType: endpoint.channelType,
+        channelId: endpoint.conversationId,
+        endpoint,
+        resolution: "explicit",
+      });
+    }
+    return err({ reason: "no_channel" as const, attempted: ["explicit_endpoint"] });
   }
   attempted.push("explicit");
 
-  // Level 2: Platform match (channelType provided, look up channelId from sessions)
   if (opts.channelType && deps.activeAdapterTypes.has(opts.channelType)) {
-    const channelId = deps.getRecentSessionChannel(opts.agentId, opts.channelType);
-    if (channelId) {
-      return ok({ channelType: opts.channelType, channelId, resolution: "platform_match" });
+    const endpoint = deps.getRecentSessionEndpoint(opts.agentId, opts.channelType);
+    if (endpoint) {
+      return ok({
+        channelType: endpoint.channelType,
+        channelId: endpoint.conversationId,
+        endpoint,
+        resolution: "platform_match",
+      });
     }
   }
   attempted.push("platform_match");
 
-  // Level 3: Primary channel from config
   if (opts.primaryChannel) {
-    return ok({
-      channelType: opts.primaryChannel.channelType,
-      channelId: opts.primaryChannel.channelId,
-      resolution: "primary_channel",
-    });
+    const endpoint = deps.findSessionEndpoint(
+      opts.agentId,
+      opts.primaryChannel.channelType,
+      opts.primaryChannel.channelId,
+    );
+    if (endpoint && deps.activeAdapterTypes.has(endpoint.channelType)) {
+      return ok({
+        channelType: endpoint.channelType,
+        channelId: endpoint.conversationId,
+        endpoint,
+        resolution: "primary_channel",
+      });
+    }
   }
   attempted.push("primary_channel");
 
-  // Level 4: Most recent session
-  const recent = deps.getMostRecentSession(opts.agentId);
-  if (recent) {
-    return ok({ channelType: recent.channelType, channelId: recent.channelId, resolution: "recent_session" });
+  const recent = deps.getMostRecentSessionEndpoint(opts.agentId);
+  if (recent && deps.activeAdapterTypes.has(recent.channelType)) {
+    return ok({
+      channelType: recent.channelType,
+      channelId: recent.conversationId,
+      endpoint: recent,
+      resolution: "recent_session",
+    });
   }
   attempted.push("recent_session");
 

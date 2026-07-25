@@ -125,6 +125,7 @@ function resolveDeliveryPersistenceScope(
     destinationEndpoint === undefined
     && turnEndpoint !== undefined
     && turnEndpoint.channelType === adapter.channelType
+    && turnEndpoint.channelInstanceId === adapter.channelId
     && turnEndpoint.conversationId === channelId
     && turnEndpoint.threadId === options?.threadId
   ) {
@@ -134,6 +135,7 @@ function resolveDeliveryPersistenceScope(
   if (
     !parsedEndpoint.success
     || parsedEndpoint.data.channelType !== adapter.channelType
+    || parsedEndpoint.data.channelInstanceId !== adapter.channelId
     || parsedEndpoint.data.conversationId !== channelId
     || parsedEndpoint.data.threadId !== options?.threadId
   ) {
@@ -301,6 +303,19 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         // --- 1. EARLY RETURN: empty text ---
         if (!text || !text.trim()) {
           return err(new DeliveryNotAttemptedError("empty_text"));
+        }
+
+        if (options.destinationEndpoint !== undefined) {
+          const destination = ChannelEndpointSchema.safeParse(options.destinationEndpoint);
+          if (
+            !destination.success
+            || destination.data.channelType !== adapter.channelType
+            || destination.data.channelInstanceId !== adapter.channelId
+            || destination.data.conversationId !== channelId
+            || destination.data.threadId !== options.threadId
+          ) {
+            return err(new Error("Delivery destination endpoint does not match the selected adapter"));
+          }
         }
 
         // --- 1b. HOOKS: before_delivery ---

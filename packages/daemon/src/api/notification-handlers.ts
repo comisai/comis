@@ -105,6 +105,9 @@ export function createNotificationHandlers(
         agentId,
         channelType: params.channel_type,
         channelId: params.channel_id,
+        ...(params.destination_endpoint === undefined
+          ? {}
+          : { destinationEndpoint: params.destination_endpoint }),
       });
       if (!destination.ok) {
         const result = { success: false, error: destination.error.message };
@@ -118,9 +121,9 @@ export function createNotificationHandlers(
         priority: params.priority ?? "normal",
         channelType: params.channel_type,
         channelId: params.channel_id,
+        destinationEndpoint: destination.value.destinationEndpoint,
         origin: params.origin ?? "tool",
         authority: destination.value.authority,
-        destinationEndpoint: destination.value.destinationEndpoint,
       });
 
       if (!sendResult.ok) {

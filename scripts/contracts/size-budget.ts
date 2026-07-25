@@ -3,7 +3,7 @@
  * Bundle-size measurement for `packages/web/src/api/contracts.generated.ts`.
  *
  * Budget:
- *   - 184 KB minified  (`BUDGET_MINIFIED_BYTES`)
+ *   - 187 KB minified  (`BUDGET_MINIFIED_BYTES`)
  *   - 38 KB  gzipped   (`BUDGET_GZIPPED_BYTES`)
  *
  * Measurement architecture:
@@ -24,14 +24,14 @@ import { transformSync } from "esbuild";
 import { gzipSync } from "node:zlib";
 
 /**
- * Budget: 184 KB minified.
+ * Budget: 187 KB minified.
  *
  * This cap permits bounded additive RPC-schema growth while keeping accidental
  * validator expansion visible in CI. Raise it only for reviewed contract
  * additions after confirming that the independently enforced gzipped wire-size
  * budget still has ample headroom.
  */
-export const BUDGET_MINIFIED_BYTES = 184_000;
+export const BUDGET_MINIFIED_BYTES = 187_000;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;

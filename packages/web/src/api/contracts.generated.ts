@@ -9256,6 +9256,41 @@ export const CONTRACTS = {
         "channel_id": {
           "type": "string"
         },
+        "endpoint": {
+          "type": "object",
+          "properties": {
+            "channelType": {
+              "type": "string",
+              "minLength": 1
+            },
+            "channelInstanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "threadId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationKind": {
+              "type": "string",
+              "enum": [
+                "direct",
+                "shared"
+              ]
+            }
+          },
+          "required": [
+            "channelType",
+            "channelInstanceId",
+            "conversationId",
+            "conversationKind"
+          ],
+          "additionalProperties": false
+        },
         "attachment_url": {
           "type": "string"
         },
@@ -9348,6 +9383,41 @@ export const CONTRACTS = {
         "channel_id": {
           "type": "string"
         },
+        "endpoint": {
+          "type": "object",
+          "properties": {
+            "channelType": {
+              "type": "string",
+              "minLength": 1
+            },
+            "channelInstanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "threadId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationKind": {
+              "type": "string",
+              "enum": [
+                "direct",
+                "shared"
+              ]
+            }
+          },
+          "required": [
+            "channelType",
+            "channelInstanceId",
+            "conversationId",
+            "conversationKind"
+          ],
+          "additionalProperties": false
+        },
         "message_id": {
           "type": "string"
         }
@@ -9395,6 +9465,41 @@ export const CONTRACTS = {
         },
         "channel_id": {
           "type": "string"
+        },
+        "endpoint": {
+          "type": "object",
+          "properties": {
+            "channelType": {
+              "type": "string",
+              "minLength": 1
+            },
+            "channelInstanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "threadId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationKind": {
+              "type": "string",
+              "enum": [
+                "direct",
+                "shared"
+              ]
+            }
+          },
+          "required": [
+            "channelType",
+            "channelInstanceId",
+            "conversationId",
+            "conversationKind"
+          ],
+          "additionalProperties": false
         },
         "message_id": {
           "type": "string"
@@ -9448,6 +9553,41 @@ export const CONTRACTS = {
         "channel_id": {
           "type": "string"
         },
+        "endpoint": {
+          "type": "object",
+          "properties": {
+            "channelType": {
+              "type": "string",
+              "minLength": 1
+            },
+            "channelInstanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "threadId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationKind": {
+              "type": "string",
+              "enum": [
+                "direct",
+                "shared"
+              ]
+            }
+          },
+          "required": [
+            "channelType",
+            "channelInstanceId",
+            "conversationId",
+            "conversationKind"
+          ],
+          "additionalProperties": false
+        },
         "limit": {
           "type": "number"
         },
@@ -9499,6 +9639,41 @@ export const CONTRACTS = {
         },
         "channel_id": {
           "type": "string"
+        },
+        "endpoint": {
+          "type": "object",
+          "properties": {
+            "channelType": {
+              "type": "string",
+              "minLength": 1
+            },
+            "channelInstanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "threadId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationKind": {
+              "type": "string",
+              "enum": [
+                "direct",
+                "shared"
+              ]
+            }
+          },
+          "required": [
+            "channelType",
+            "channelInstanceId",
+            "conversationId",
+            "conversationKind"
+          ],
+          "additionalProperties": false
         },
         "message_id": {
           "type": "string"
@@ -9555,6 +9730,41 @@ export const CONTRACTS = {
         },
         "channel_id": {
           "type": "string"
+        },
+        "endpoint": {
+          "type": "object",
+          "properties": {
+            "channelType": {
+              "type": "string",
+              "minLength": 1
+            },
+            "channelInstanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "threadId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationKind": {
+              "type": "string",
+              "enum": [
+                "direct",
+                "shared"
+              ]
+            }
+          },
+          "required": [
+            "channelType",
+            "channelInstanceId",
+            "conversationId",
+            "conversationKind"
+          ],
+          "additionalProperties": false
         },
         "message_id": {
           "type": "string"
@@ -9638,6 +9848,41 @@ export const CONTRACTS = {
         },
         "channel_id": {
           "type": "string"
+        },
+        "endpoint": {
+          "type": "object",
+          "properties": {
+            "channelType": {
+              "type": "string",
+              "minLength": 1
+            },
+            "channelInstanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "threadId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationKind": {
+              "type": "string",
+              "enum": [
+                "direct",
+                "shared"
+              ]
+            }
+          },
+          "required": [
+            "channelType",
+            "channelInstanceId",
+            "conversationId",
+            "conversationKind"
+          ],
+          "additionalProperties": false
         },
         "text": {
           "type": "string"
@@ -9857,6 +10102,41 @@ export const CONTRACTS = {
         },
         "channel_id": {
           "type": "string"
+        },
+        "destination_endpoint": {
+          "type": "object",
+          "properties": {
+            "channelType": {
+              "type": "string",
+              "minLength": 1
+            },
+            "channelInstanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "threadId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversationKind": {
+              "type": "string",
+              "enum": [
+                "direct",
+                "shared"
+              ]
+            }
+          },
+          "required": [
+            "channelType",
+            "channelInstanceId",
+            "conversationId",
+            "conversationKind"
+          ],
+          "additionalProperties": false
         },
         "origin": {
           "type": "string"

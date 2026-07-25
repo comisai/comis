@@ -15,7 +15,7 @@
  * @module
  */
 
-import type { ChannelPluginPort } from "@comis/core";
+import type { ChannelEndpoint, ChannelPluginPort, ChannelPort } from "@comis/core";
 import type { RichButton, RichCard, RichEffect } from "@comis/core";
 import {
   safePath,
@@ -39,6 +39,7 @@ import {
   systemNowMs,
   tryGetContext,
   resolvePlatformDeliveryResult,
+  ChannelEndpointSchema,
 } from "@comis/core";
 import { err, ok } from "@comis/shared";
 import { stat } from "node:fs/promises";
@@ -94,6 +95,71 @@ function resolveMessageId(
 }
 
 type InboundMessageIdResolver = NonNullable<MessageHandlerDeps["inboundMessageIdResolver"]>;
+
+function endpointsEqual(left: ChannelEndpoint, right: ChannelEndpoint): boolean {
+  return left.channelType === right.channelType
+    && left.channelInstanceId === right.channelInstanceId
+    && left.conversationId === right.conversationId
+    && left.threadId === right.threadId
+    && left.conversationKind === right.conversationKind;
+}
+
+function requireEndpointAuthority(
+  rawParams: Record<string, unknown>,
+  adapter: ChannelPort,
+  channelId: string,
+): ChannelEndpoint {
+  const explicitEndpoint = rawParams.endpoint;
+  const contextEndpoint = tryGetContext()?.turnScope?.endpoint;
+  const endpoint = ChannelEndpointSchema.safeParse(explicitEndpoint ?? contextEndpoint);
+  const requestedChannelType = typeof rawParams.channel_type === "string"
+    ? rawParams.channel_type
+    : adapter.channelType;
+  if (
+    !endpoint.success
+    || requestedChannelType !== adapter.channelType
+    || endpoint.data.channelType !== adapter.channelType
+    || endpoint.data.channelInstanceId !== adapter.channelId
+    || endpoint.data.conversationId !== channelId
+  ) {
+    throw new Error("Message operation requires an exact endpoint for the selected adapter");
+  }
+  if (
+    explicitEndpoint !== undefined
+    && contextEndpoint !== undefined
+    && !endpointsEqual(endpoint.data, contextEndpoint)
+  ) {
+    throw new Error("Message operation endpoint conflicts with the authenticated turn");
+  }
+  return endpoint.data;
+}
+
+function requireGatewayEndpointAuthority(
+  rawParams: Record<string, unknown>,
+  channelId: string,
+): ChannelEndpoint {
+  const explicitEndpoint = rawParams.endpoint;
+  const contextEndpoint = tryGetContext()?.turnScope?.endpoint;
+  const endpoint = ChannelEndpointSchema.safeParse(explicitEndpoint ?? contextEndpoint);
+  const displayId = endpoint.success
+    ? `${endpoint.data.channelType}:${endpoint.data.channelInstanceId}:${endpoint.data.conversationId}`
+    : undefined;
+  if (
+    !endpoint.success
+    || endpoint.data.channelType !== "gateway"
+    || (endpoint.data.conversationId !== channelId && displayId !== channelId)
+  ) {
+    throw new Error("Gateway message operation requires an exact selected endpoint");
+  }
+  if (
+    explicitEndpoint !== undefined
+    && contextEndpoint !== undefined
+    && !endpointsEqual(endpoint.data, contextEndpoint)
+  ) {
+    throw new Error("Gateway message endpoint conflicts with the authenticated turn");
+  }
+  return endpoint.data;
+}
 
 // ---------------------------------------------------------------------------
 // Capability guard — maps RPC methods to ChannelCapability feature flags.
@@ -242,6 +308,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageSendContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
       const extra: Record<string, unknown> = {
         ...(rawParams.buttons ? { buttons: rawParams.buttons as RichButton[][] } : {}),
         ...(rawParams.cards ? { cards: rawParams.cards as RichCard[] } : {}),
@@ -267,6 +334,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         doSend: async () => {
           const dr = await deps.deliveryService.deliverToChannel(adapter, channelId, text, {
             completionMode: "settled",
+            destinationEndpoint: endpoint,
+            threadId: endpoint.threadId,
             extra: Object.keys(extra).length > 0 ? extra : undefined,
             origin: "rpc:message.send",
           });
@@ -304,6 +373,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageReplyContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
       const extra: Record<string, unknown> = {
         ...(rawParams.buttons ? { buttons: rawParams.buttons as RichButton[][] } : {}),
         ...(rawParams.cards ? { cards: rawParams.cards as RichCard[] } : {}),
@@ -326,7 +396,9 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         doSend: async () => {
           const dr = await deps.deliveryService.deliverToChannel(adapter, channelId, text, {
             completionMode: "settled",
+            destinationEndpoint: endpoint,
             replyTo: messageId,
+            threadId: endpoint.threadId,
             extra: Object.keys(extra).length > 0 ? extra : undefined,
             origin: "rpc:message.reply",
           });
@@ -370,6 +442,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageReactContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      requireEndpointAuthority(rawParams, adapter, channelId);
       const reactToMessage = requireMethod(adapter, "reactToMessage", adapter.reactToMessage);
       // Wrap the EXISTING reactToMessage with the ledger. A reaction sends an
       // emoji (not free text), so the emoji is the digest input. The real target
@@ -415,9 +488,12 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageEditContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
       const editMessage = requireMethod(adapter, "editMessage", adapter.editMessage);
       const formatted = formatForChannel(text, channelType);
-      const editResult = await editMessage(channelId, messageId, formatted);
+      const editResult = endpoint.threadId === undefined
+        ? await editMessage(channelId, messageId, formatted)
+        : await editMessage(channelId, messageId, formatted, { threadId: endpoint.threadId });
       if (!editResult.ok) throw editResult.error;
       const result = { edited: true as const, channelId, messageId };
       if (IS_DEV) MessageEditContract.response.parse(result);
@@ -437,6 +513,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageDeleteContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      requireEndpointAuthority(rawParams, adapter, channelId);
       const deleteMessage = requireMethod(adapter, "deleteMessage", adapter.deleteMessage);
       const delResult = await deleteMessage(channelId, messageId);
       if (!delResult.ok) throw delResult.error;
@@ -457,8 +534,13 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageFetchContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
       const fetchMessages = requireMethod(adapter, "fetchMessages", adapter.fetchMessages);
-      const fetchResult = await fetchMessages(channelId, { limit, before });
+      const fetchResult = await fetchMessages(channelId, {
+        limit,
+        before,
+        threadId: endpoint.threadId,
+      });
       if (!fetchResult.ok) throw fetchResult.error;
       const result = { messages: fetchResult.value as unknown as Record<string, unknown>[], channelId };
       if (IS_DEV) MessageFetchContract.response.parse(result);
@@ -522,6 +604,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       // Gateway is a transport layer, not a ChannelPort adapter.
       // Serve the file via /media/:id and push a WebSocket notification.
       if (channelType === "gateway") {
+        requireGatewayEndpointAuthority(rawParams, channelId);
         if (!deps.wsConnections || !deps.mediaDir) {
           throw new Error("Gateway attachment support requires wsConnections and mediaDir");
         }
@@ -604,14 +687,18 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
 
       // Non-gateway channel types use the adapter
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
       const sendAttachment = requireMethod(adapter, "sendAttachment", adapter.sendAttachment);
-      const attachResult = await sendAttachment(channelId, {
+      const attachment = {
         type: (rawParams.attachment_type as "image" | "file" | "audio" | "video") ?? "file",
         url: attachmentUrl,
         mimeType: rawParams.mime_type as string | undefined,
         fileName: rawParams.file_name as string | undefined,
         caption: rawParams.caption as string | undefined,
-      });
+      };
+      const attachResult = endpoint.threadId === undefined
+        ? await sendAttachment(channelId, attachment)
+        : await sendAttachment(channelId, attachment, { threadId: endpoint.threadId });
       if (!attachResult.ok) throw attachResult.error;
       const result = { receipt: attachResult.value, channelId };
       if (IS_DEV) MessageAttachContract.response.parse(result);
@@ -626,6 +713,11 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       DiscordActionContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const channelId = rawParams.channel_id as string | undefined;
+      if (channelId === undefined) {
+        throw new Error("Discord action requires a selected channel endpoint");
+      }
+      requireEndpointAuthority(rawParams, adapter, channelId);
       if (rawParams.channel_id) {
         authorizeChannelAccess(
           rawParams._callerChannelId as string | undefined,
@@ -648,6 +740,11 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       TelegramActionContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const channelId = rawParams.chat_id as string | undefined;
+      if (channelId === undefined) {
+        throw new Error("Telegram action requires a selected channel endpoint");
+      }
+      requireEndpointAuthority(rawParams, adapter, channelId);
       if (rawParams.chat_id) {
         authorizeChannelAccess(
           rawParams._callerChannelId as string | undefined,
@@ -670,6 +767,11 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       SlackActionContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const channelId = rawParams.channel_id as string | undefined;
+      if (channelId === undefined) {
+        throw new Error("Slack action requires a selected channel endpoint");
+      }
+      requireEndpointAuthority(rawParams, adapter, channelId);
       if (rawParams.channel_id) {
         authorizeChannelAccess(
           rawParams._callerChannelId as string | undefined,
@@ -692,6 +794,11 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       WhatsappActionContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const channelId = rawParams.group_jid as string | undefined;
+      if (channelId === undefined) {
+        throw new Error("WhatsApp action requires a selected channel endpoint");
+      }
+      requireEndpointAuthority(rawParams, adapter, channelId);
       if (rawParams.group_jid) {
         authorizeChannelAccess(
           rawParams._callerChannelId as string | undefined,

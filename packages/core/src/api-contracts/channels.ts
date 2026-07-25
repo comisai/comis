@@ -74,6 +74,7 @@
  */
 import { z } from "zod";
 import { defineContract } from "./types.js";
+import { ChannelEndpointSchema } from "../domain/conversation-scope.js";
 
 // ===========================================================================
 // --- channel-handlers.ts ---
@@ -368,6 +369,7 @@ export const MessageSendContract = defineContract({
   request: z.object({
     channel_type: z.string(),
     channel_id: z.string(),
+    endpoint: ChannelEndpointSchema.optional(),
     text: z.string(),
     buttons: z.array(z.array(z.record(z.string(), z.unknown()))).optional(),
     cards: z.array(z.record(z.string(), z.unknown())).optional(),
@@ -406,6 +408,7 @@ export const MessageReplyContract = defineContract({
   request: z.object({
     channel_type: z.string(),
     channel_id: z.string(),
+    endpoint: ChannelEndpointSchema.optional(),
     message_id: z.string(),
     text: z.string(),
     buttons: z.array(z.array(z.record(z.string(), z.unknown()))).optional(),
@@ -441,6 +444,7 @@ export const MessageReactContract = defineContract({
   request: z.object({
     channel_type: z.string(),
     channel_id: z.string(),
+    endpoint: ChannelEndpointSchema.optional(),
     message_id: z.string(),
     emoji: z.string(),
   }),
@@ -478,6 +482,7 @@ export const MessageEditContract = defineContract({
   request: z.object({
     channel_type: z.string(),
     channel_id: z.string(),
+    endpoint: ChannelEndpointSchema.optional(),
     message_id: z.string(),
     text: z.string(),
   }),
@@ -507,6 +512,7 @@ export const MessageDeleteContract = defineContract({
   request: z.object({
     channel_type: z.string(),
     channel_id: z.string(),
+    endpoint: ChannelEndpointSchema.optional(),
     message_id: z.string(),
   }),
   response: z.object({
@@ -539,6 +545,7 @@ export const MessageFetchContract = defineContract({
   request: z.object({
     channel_type: z.string(),
     channel_id: z.string(),
+    endpoint: ChannelEndpointSchema.optional(),
     limit: z.number().optional(),
     before: z.string().optional(),
   }),
@@ -579,6 +586,7 @@ export const MessageAttachContract = defineContract({
   request: z.object({
     channel_type: z.string(),
     channel_id: z.string(),
+    endpoint: ChannelEndpointSchema.optional(),
     attachment_url: z.string(),
     attachment_type: z.enum(["image", "file", "audio", "video"]).optional(),
     mime_type: z.string().optional(),

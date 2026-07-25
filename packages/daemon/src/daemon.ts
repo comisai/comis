@@ -32,6 +32,7 @@ import {
   type PerAgentConfig,
   type WrapExternalContentOptions,
   verifyWorkspacePolicySnapshot,
+  tryGetContext,
   type WorkspacePolicySnapshot,
 } from "@comis/core";
 // Runtime adapter factories are constructed at this composition root.
@@ -415,7 +416,12 @@ function buildChannelManagerDeps(deps: {
     },
     onMessageProcessed: (msg, channelType) => {
       continuationTracker.complete({ channelType, channelId: msg.channelId, userId: msg.senderId });
-      getSessionTracker()?.recordActivity(defaultAgentId, channelType, msg.channelId);
+      const requestContext = tryGetContext();
+      const endpoint = requestContext?.turnScope?.endpoint;
+      const agentId = requestContext?.agentId;
+      if (endpoint !== undefined && agentId !== undefined) {
+        getSessionTracker()?.recordActivity(agentId, endpoint);
+      }
     },
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
     piSessionAdapters, costTrackers, deliveryQueue,

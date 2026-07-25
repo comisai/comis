@@ -65,10 +65,12 @@ export function setupNotifications(deps: SetupNotificationDeps): NotificationCon
 
   const channelResolverDeps: ChannelResolverDeps = {
     activeAdapterTypes: deps.activeAdapterTypes,
-    getRecentSessionChannel: (agentId, channelType) =>
+    getRecentSessionEndpoint: (agentId, channelType) =>
       sessionTracker.getRecentForPlatform(agentId, channelType),
-    getMostRecentSession: (agentId) =>
+    getMostRecentSessionEndpoint: (agentId) =>
       sessionTracker.getMostRecent(agentId),
+    findSessionEndpoint: (agentId, channelType, conversationId) =>
+      sessionTracker.findEndpoint(agentId, channelType, conversationId),
   };
 
   const notificationService = createNotificationService({
