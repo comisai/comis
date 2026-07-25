@@ -401,7 +401,7 @@ function createMinimalDeps(overrides: Record<string, any> = {}) {
       })),
     })),
     adaptersByType: new Map([
-      ["telegram", { channelType: "telegram", sendMessage: vi.fn(async () => ({ ok: true, value: "mock-msg-id" })), platformAction: vi.fn(async () => ({ ok: true, value: undefined })) }],
+      ["telegram", { channelId: "telegram-primary", channelType: "telegram", sendMessage: vi.fn(async () => ({ ok: true, value: "mock-msg-id" })), platformAction: vi.fn(async () => ({ ok: true, value: undefined })) }],
     ]),
     logger: createMockLogger() as any,
     // DeliveryService is required on the setupCrossSession deps shape. Wired
@@ -2369,6 +2369,7 @@ describe("setupCrossSession", () => {
           },
           adaptersByType: new Map([
             ["telegram", {
+              channelId: "telegram-primary",
               channelType: "telegram",
               sendMessage: vi.fn(async () => ({ ok: true, value: "mock-msg-id" })),
               platformAction: vi.fn(async () => ({ ok: true, value: undefined })),

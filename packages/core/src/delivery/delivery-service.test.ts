@@ -89,7 +89,7 @@ function makeAdapter(
     .mockResolvedValue(ok("msg-1")),
   channelType = "echo",
 ): DeliveryAdapter {
-  return { sendMessage, channelType };
+  return { channelId: "test-instance", sendMessage, channelType };
 }
 
 function makeDeps(
@@ -149,7 +149,7 @@ function deliver(
       };
   const destinationEndpoint: ChannelEndpoint = {
     channelType: adapter.channelType,
-    channelInstanceId: "test-instance",
+    channelInstanceId: adapter.channelId,
     conversationId: channelId,
     ...(options.threadId === undefined ? {} : { threadId: options.threadId }),
     conversationKind: "direct",
@@ -315,6 +315,7 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
 
 function createMockAdapter(channelType = "telegram"): DeliveryAdapter & { sendMessage: ReturnType<typeof vi.fn> } {
   return {
+    channelId: "test-instance",
     channelType,
     sendMessage: vi.fn().mockResolvedValue(ok("msg-id-123")),
   };
@@ -1136,15 +1137,40 @@ describe("DeliveryService — full pipeline behavior", () => {
         },
       });
 
-      expect(adapter.sendMessage).toHaveBeenCalledOnce();
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
       expect(queue.enqueueInFlight).not.toHaveBeenCalled();
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.error).toMatchObject({
-          name: "DeliveryQueueTransitionError",
-          failures: [{ transition: "enqueue_in_flight", deliveryId: null }],
-        });
+        expect(result.error.message).toContain("does not match");
       }
+    });
+
+    it("rejects a destination snapshot for another adapter instance before side effects", async () => {
+      const adapter = createMockAdapter("telegram");
+      const hookRunner = makeNoopHookRunner({
+        runBeforeDelivery: vi.fn().mockResolvedValue(undefined),
+      });
+      const service = createDeliveryService(makeDeps({
+        deliveryQueue: queue,
+        eventBus,
+        hookRunner,
+      }));
+
+      const result = await service.deliverToChannel(adapter, "chat-1", "Hello", {
+        completionMode: "settled",
+        authority: TEST_DELIVERY_AUTHORITY,
+        destinationEndpoint: {
+          channelType: "telegram",
+          channelInstanceId: "another-account",
+          conversationId: "chat-1",
+          conversationKind: "direct",
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(hookRunner.runBeforeDelivery).not.toHaveBeenCalled();
+      expect(queue.enqueueInFlight).not.toHaveBeenCalled();
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
     });
 
     it("calls enqueueInFlight before send and ack after successful send", async () => {
@@ -2148,6 +2174,7 @@ describe("DeliveryService — full pipeline behavior", () => {
     function createFailingAdapter(failOnCalls: number[]): DeliveryAdapter & { sendMessage: ReturnType<typeof vi.fn> } {
       let callCount = 0;
       return {
+        channelId: "test-instance",
         channelType: "discord",
         sendMessage: vi.fn().mockImplementation(async (): Promise<Result<string, Error>> => {
           const idx = callCount++;
@@ -2288,6 +2315,7 @@ describe("DeliveryService — full pipeline behavior", () => {
     function makeServiceWithControllableAdapter() {
       const pending: Array<(v: Result<string, Error>) => void> = [];
       const adapter: DeliveryAdapter = {
+        channelId: "test-instance",
         channelType: "telegram",
         sendMessage: vi.fn().mockImplementation(
           () =>

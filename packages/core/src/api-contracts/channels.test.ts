@@ -459,6 +459,38 @@ describe("MessageSendContract", () => {
     ).not.toThrow();
   });
 
+  it("accepts complete selected endpoint authority", () => {
+    expect(() =>
+      MessageSendContract.request.parse({
+        channel_type: "telegram",
+        channel_id: "123",
+        endpoint: {
+          channelType: "telegram",
+          channelInstanceId: "account-a",
+          conversationId: "123",
+          threadId: "thread-a",
+          conversationKind: "shared",
+        },
+        text: "hello",
+      })
+    ).not.toThrow();
+  });
+
+  it("rejects incomplete selected endpoint authority", () => {
+    expect(() =>
+      MessageSendContract.request.parse({
+        channel_type: "telegram",
+        channel_id: "123",
+        endpoint: {
+          channelType: "telegram",
+          conversationId: "123",
+          conversationKind: "direct",
+        },
+        text: "hello",
+      })
+    ).toThrow();
+  });
+
   it("rejects request without text", () => {
     expect(() =>
       MessageSendContract.request.parse({

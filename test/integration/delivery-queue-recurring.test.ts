@@ -73,6 +73,12 @@ async function sendNotification(
 }
 
 describe("continuous delivery-queue drainer (integration)", () => {
+  const echoEndpoint = {
+    channelType: "echo",
+    channelInstanceId: "delivery-recurring-test",
+    conversationId: "delivery-recurring-test",
+    conversationKind: "direct",
+  };
   let handle: TestDaemonHandle;
   let echoAdapter: EchoChannelAdapter;
   // Monotonic id sequence so each WebSocket request has a unique id (avoids
@@ -134,6 +140,7 @@ describe("continuous delivery-queue drainer (integration)", () => {
           message: "post-startup delivery",
           channel_type: "echo",
           channel_id: "delivery-recurring-test",
+          destination_endpoint: echoEndpoint,
           origin: "test",
         },
         nextRpcId++,
@@ -171,6 +178,7 @@ describe("continuous delivery-queue drainer (integration)", () => {
           message: "depth check",
           channel_type: "echo",
           channel_id: "delivery-recurring-test",
+          destination_endpoint: echoEndpoint,
           origin: "test",
         },
         nextRpcId++,
@@ -254,6 +262,7 @@ describe("continuous delivery-queue drainer (integration)", () => {
               message: `throughput msg ${i}`,
               channel_type: "echo",
               channel_id: "delivery-recurring-test",
+              destination_endpoint: echoEndpoint,
               origin: `throughput-${i}`,
               _agentId: `throughput-agent-${i}`,
             },

@@ -88,6 +88,7 @@ describe("delivery queue conservative replay safety", () => {
 
     const sentTexts: string[] = [];
     const adapter: DeliveryAdapter = {
+      channelId: "telegram-test",
       channelType: "telegram",
       sendMessage: vi.fn(async (_channelId, text) => {
         sentTexts.push(text);
@@ -123,6 +124,7 @@ describe("delivery queue conservative replay safety", () => {
     const eventBus = createMockEventBus() as unknown as TypedEventBus;
     const queue = makeBarrierQueue(createSqliteDeliveryQueue(db, eventBus));
     const adapter: DeliveryAdapter = {
+      channelId: "telegram-test",
       channelType: "telegram",
       sendMessage: vi.fn(async () => ok("platform-message")),
     };
@@ -152,6 +154,7 @@ describe("delivery queue conservative replay safety", () => {
     const eventBus = createMockEventBus() as unknown as TypedEventBus;
     const queue = createSqliteDeliveryQueue(db, eventBus);
     const adapter: DeliveryAdapter = {
+      channelId: "telegram-test",
       channelType: "telegram",
       sendMessage: vi.fn(async () => err(new Error("network response lost"))),
     };
@@ -193,6 +196,7 @@ describe("delivery queue conservative replay safety", () => {
     const eventBus = createMockEventBus() as unknown as TypedEventBus;
     const queue = createSqliteDeliveryQueue(db, eventBus);
     const adapter: DeliveryAdapter = {
+      channelId: "telegram-test",
       channelType: "telegram",
       sendMessage: vi.fn(async () => {
         throw new Error("Bearer secret-value");
@@ -230,6 +234,7 @@ describe("delivery queue conservative replay safety", () => {
       ack: vi.fn(async () => err(new Error("Bearer secret-value"))),
     };
     const adapter: DeliveryAdapter = {
+      channelId: "telegram-test",
       channelType: "telegram",
       sendMessage: vi.fn(async () => ok("platform-receipt")),
     };
@@ -273,6 +278,7 @@ describe("delivery queue conservative replay safety", () => {
     eventBus.on("notification:delivered", laterListener);
     const queue = createSqliteDeliveryQueue(db, eventBus);
     const adapter: DeliveryAdapter = {
+      channelId: "telegram-test",
       channelType: "telegram",
       sendMessage: vi.fn(async () => ok("platform-receipt")),
     };

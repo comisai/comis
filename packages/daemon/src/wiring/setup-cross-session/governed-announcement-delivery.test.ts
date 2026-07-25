@@ -126,6 +126,7 @@ describe("completion announcement delivery wiring", () => {
       queueDisposition: "settled" as const,
     }));
     const adapter = {
+      channelId: "telegram-primary",
       channelType: "telegram",
       sendMessage: vi.fn(async () => ok("telegram-message-1")),
     };
@@ -175,6 +176,7 @@ describe("completion announcement delivery wiring", () => {
     const caller = makeChannelPrincipalCaller();
     const delivery = createAnnouncementDelivery({
       adaptersByType: new Map([["telegram", {
+        channelId: "telegram-primary",
         channelType: "telegram",
         sendMessage: vi.fn(async () => ok("unexpected-message")),
       }]]),
@@ -225,6 +227,7 @@ describe("completion announcement delivery wiring", () => {
     }));
     const delivery = createAnnouncementDelivery({
       adaptersByType: new Map([["telegram", {
+        channelId: "telegram-primary",
         channelType: "telegram",
         sendMessage: vi.fn(async () => ok("text-message")),
         sendAttachment,

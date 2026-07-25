@@ -55,6 +55,7 @@ describe("delivery service immutable platform outcome", () => {
   it("returns a strict accepted aggregate using the injected settlement clock", async () => {
     const deliveryService = service();
     const result = await deliveryService.deliverToChannel({
+      channelId: "default",
       channelType: "telegram",
       sendMessage: async () => ok("message_a"),
     }, "chat_a", "hello", options("settled"));
@@ -73,6 +74,7 @@ describe("delivery service immutable platform outcome", () => {
   it("classifies ambiguous adapter failure as unknown in original chunk order", async () => {
     const deliveryService = service({ clock: { now: () => 43_000, nowDate: () => new Date(43_000) } });
     const result = await deliveryService.deliverToChannel({
+      channelId: "default",
       channelType: "telegram",
       sendMessage: async () => err(new Error("503 Service Unavailable")),
     }, "chat_a", "hello", options("settled"));
@@ -103,6 +105,7 @@ describe("delivery service immutable platform outcome", () => {
       clock: { now: () => 44_000, nowDate: () => new Date(44_000) },
     });
     const adapter = {
+      channelId: "default",
       channelType: "telegram",
       sendMessage: async () => err(new Error("429 Too Many Requests")),
     };
@@ -123,6 +126,7 @@ describe("delivery service immutable platform outcome", () => {
       clock: { now: () => 45_000, nowDate: () => new Date(45_000) },
     });
     const result = await deliveryService.deliverToChannel({
+      channelId: "default",
       channelType: "telegram",
       sendMessage: async () => ok("message_a"),
     }, "chat_a", "hello", options("settled"));

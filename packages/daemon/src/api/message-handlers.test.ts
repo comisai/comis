@@ -34,7 +34,30 @@ import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 // delete/fetch/attach are admin-only (deny-by-origin) and carry NO in-handler
 // cap gate — the wrapper's injected caps are inert for them.
 function createMessageHandlers(deps: MessageHandlerDeps): Record<string, RpcHandler> {
-  return withHeldCapabilities(createMessageHandlersRaw(deps));
+  const handlers = withHeldCapabilities(createMessageHandlersRaw(deps));
+  return Object.fromEntries(Object.entries(handlers).map(([method, handler]) => [
+    method,
+    async (rawParams: Record<string, unknown>) => {
+      if (rawParams.endpoint !== undefined || rawParams.channel_type === "gateway") {
+        return handler(rawParams);
+      }
+      const channelType = typeof rawParams.channel_type === "string"
+        ? rawParams.channel_type
+        : method.slice(0, method.indexOf("."));
+      const adapter = deps.adaptersByType.get(channelType);
+      const channelId = rawParams.channel_id ?? rawParams.chat_id ?? rawParams.group_jid;
+      if (adapter === undefined || typeof channelId !== "string") return handler(rawParams);
+      return handler({
+        ...rawParams,
+        endpoint: {
+          channelType: adapter.channelType,
+          channelInstanceId: adapter.channelId,
+          conversationId: channelId,
+          conversationKind: "direct",
+        },
+      });
+    },
+  ]));
 }
 
 // MessageHandlerDeps requires a DeliveryService. The fake delegates to
@@ -98,10 +121,10 @@ function makeQueueTransitionError(messageId = "platform-msg-1"): DeliveryQueueTr
 // Mock helpers
 // ---------------------------------------------------------------------------
 
-function createMockAdapter(): ChannelPort {
+function createMockAdapter(channelType = "telegram", channelId = "test-ch"): ChannelPort {
   return {
-    channelId: "test-ch",
-    channelType: "telegram",
+    channelId,
+    channelType,
     start: vi.fn(async () => ok(undefined)),
     stop: vi.fn(async () => ok(undefined)),
     sendMessage: vi.fn(async () => ok("msg-1")),
@@ -141,6 +164,32 @@ function createMockDeps(workspaceDir: string): MessageHandlerDeps {
     deliveryService: makeFakeDeliveryService(),
   };
 }
+
+describe("message endpoint authority", () => {
+  it("rejects an endpoint from a different adapter instance", async () => {
+    const workspaceDir = mkdtempSync(join(tmpdir(), "comis-test-endpoint-"));
+    try {
+      const deps = createMockDeps(workspaceDir);
+      const handlers = withHeldCapabilities(createMessageHandlersRaw(deps));
+
+      await expect(handlers["message.send"]({
+        channel_type: "telegram",
+        channel_id: "chat-a",
+        endpoint: {
+          channelType: "telegram",
+          channelInstanceId: "other-account",
+          conversationId: "chat-a",
+          conversationKind: "direct",
+        },
+        text: "hello",
+      })).rejects.toThrow("exact endpoint");
+
+      expect(deps.deliveryService.deliverToChannel).not.toHaveBeenCalled();
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -349,6 +398,12 @@ describe("message.attach handler", () => {
 describe("message.attach gateway channel_type", () => {
   let workspaceDir: string;
   let mediaDir: string;
+  const gatewayEndpoint = {
+    channelType: "gateway",
+    channelInstanceId: "dashboard-a",
+    conversationId: "web-chat",
+    conversationKind: "direct" as const,
+  };
 
   beforeEach(() => {
     workspaceDir = mkdtempSync(join(tmpdir(), "comis-test-gw-"));
@@ -480,6 +535,7 @@ describe("message.attach gateway channel_type", () => {
     const result = await handlers["message.attach"]({
       channel_type: "gateway",
       channel_id: "web-chat",
+      endpoint: gatewayEndpoint,
       attachment_url: join(workspaceDir, "photo.png"),
       attachment_type: "image",
       mime_type: "image/png",
@@ -524,9 +580,10 @@ describe("message.attach gateway channel_type", () => {
       trustLevel: "user",
       clientId: "dashboard-a",
     }, () => handlers["message.attach"]({
-        channel_type: "gateway",
-        channel_id: "web-chat",
-        attachment_url: join(workspaceDir, "photo.png"),
+      channel_type: "gateway",
+      channel_id: "web-chat",
+      endpoint: gatewayEndpoint,
+      attachment_url: join(workspaceDir, "photo.png"),
         attachment_type: "image",
         mime_type: "image/png",
         file_name: "photo.png",
@@ -553,6 +610,7 @@ describe("message.attach gateway channel_type", () => {
       handlers["message.attach"]({
         channel_type: "gateway",
         channel_id: "web-chat",
+        endpoint: gatewayEndpoint,
         attachment_url: join(workspaceDir, "photo.png"),
         attachment_type: "image",
       }),
@@ -570,6 +628,7 @@ describe("message.attach gateway channel_type", () => {
       handlers["message.attach"]({
         channel_type: "gateway",
         channel_id: "web-chat",
+        endpoint: gatewayEndpoint,
         attachment_url: join(workspaceDir, "photo.png"),
         attachment_type: "image",
       }),
@@ -700,7 +759,11 @@ describe("capability guard", () => {
     const deps = createMockDeps(workspaceDir);
     deps.channelPlugins = new Map([["telegram", createMockPlugin({ fetchHistory: false })]]);
     // Add an adapter for "custom" but no plugin entry
-    deps.adaptersByType.set("custom", createMockAdapter());
+    deps.adaptersByType.set("custom", {
+      ...createMockAdapter(),
+      channelId: "custom-instance",
+      channelType: "custom",
+    });
     const handlers = createMessageHandlers(deps);
 
     const result = await handlers["message.fetch"]({ channel_type: "custom", channel_id: "123" });
@@ -1033,7 +1096,7 @@ describe("inboundMessageIdResolver integration", () => {
   it("UUID with mismatched channelType passes through unchanged (defensive)", async () => {
     const deps = makeDepsWithResolver();
     // Resolver record is for telegram, but caller asserts a different channel.
-    deps.adaptersByType.set("discord", createMockAdapter());
+    deps.adaptersByType.set("discord", createMockAdapter("discord"));
     const handlers = createMessageHandlers(deps);
     const tgAdapter = deps.adaptersByType.get("discord")!;
 

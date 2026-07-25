@@ -84,6 +84,7 @@ function createMockQueue(): DeliveryQueuePort & {
 function createMockAdapter(channelType: string, sendResults: Array<{ ok: true; value: string } | { ok: false; error: Error }> = []): DeliveryAdapter {
   let callIndex = 0;
   return {
+    channelId: "test-instance",
     channelType,
     sendMessage: vi.fn(async () => {
       const result = sendResults[callIndex] ?? { ok: true as const, value: `msg-${callIndex}` };
@@ -352,8 +353,39 @@ describe("setupDeliveryQueue", () => {
       await result.drainAndStart();
 
       expect(mockSqliteQueue.failCalls).toHaveLength(1);
-      expect(mockSqliteQueue.failCalls[0]?.error).toBe("delivery adapter unavailable");
+      expect(mockSqliteQueue.failCalls[0]?.error).toBe("delivery endpoint unavailable");
 
+      result.shutdown();
+    });
+
+    it("parks a queued endpoint for a different adapter instance", async () => {
+      const entry = makeEntry({
+        id: "other-instance",
+        destinationEndpoint: {
+          channelType: "telegram",
+          channelInstanceId: "account-a",
+          conversationId: "chat-1",
+          threadId: "thread-a",
+          conversationKind: "shared",
+        },
+        optionsJson: JSON.stringify({ threadId: "thread-a" }),
+      });
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValueOnce(ok([entry]));
+      const adapter = createMockAdapter("telegram");
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig(),
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        channelAdapters: new Map([["telegram", adapter]]),
+      });
+
+      await result.drainAndStart();
+
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+      expect(mockSqliteQueue.failCalls).toEqual([
+        { id: "other-instance", error: "delivery endpoint unavailable" },
+      ]);
       result.shutdown();
     });
 
@@ -663,6 +695,7 @@ describe("setupDeliveryQueue", () => {
       const sendPromise = new Promise<{ ok: true; value: string }>(() => { /* never resolves */ });
       let sendCallCount = 0;
       const adapter: DeliveryAdapter = {
+        channelId: "test-instance",
         channelType: "telegram",
         sendMessage: vi.fn(async () => {
           sendCallCount++;
@@ -970,6 +1003,7 @@ describe("setupDeliveryQueue", () => {
       // Spy adapter that records every entryId it was asked to send.
       const sentIds: string[] = [];
       const adapter: DeliveryAdapter = {
+        channelId: "test-instance",
         channelType: "telegram",
         sendMessage: vi.fn(async (_channelId: string, text: string) => {
           // Recover the seeded id from the text body.

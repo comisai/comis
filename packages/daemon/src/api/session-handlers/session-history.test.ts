@@ -7,10 +7,8 @@
  *   - INBOUND messages (role "user") are ALWAYS confirmed -- they were received
  *     from the channel, not sent. No queue lookup needed.
  *   - OUTBOUND messages (role "assistant" / "tool") are confirmed when there is
- *     NO matching pending/in_flight/failed delivery-queue entry for the session's
- *     channelId + the message body text. They are "pending" iff a matching queue
- *     entry exists -- meaning the channel-adapter has not yet successfully
- *     delivered that outbound message.
+ *     NO matching pending/in_flight/failed delivery-queue entry for the same
+ *     tenant, agent, conversation, endpoint, and message body text.
  *   - When `deliveryQueue` dep is absent (legacy / non-channel-bound deployments),
  *     every message is reported as `confirmed` -- nothing to mark pending.
  *   - The join is opaque on the session.history handler interface: the field
@@ -47,18 +45,19 @@ import {
 // ---------------------------------------------------------------------------
 
 const SESSION_KEY = "test:user-1:chan-A";
+const SESSION_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "telegram-account",
+  conversationId: "chan-A",
+  conversationKind: "direct" as const,
+};
 const scopeFor = (agentId: string): ConversationScope => ({
   tenantId: "test",
   agentId,
   partition: {
     kind: "endpoint-conversation-principal",
     principalId: "user-1",
-    endpoint: {
-      channelType: "telegram",
-      channelInstanceId: "telegram-account",
-      conversationId: "chan-A",
-      conversationKind: "direct",
-    },
+    endpoint: SESSION_ENDPOINT,
   },
 });
 const referenceFor = (agentId: string) => {
@@ -129,6 +128,7 @@ function makeQueueEntry(
   text: string,
   channelId: string,
   status: DeliveryQueueEntry["status"],
+  overrides: Partial<DeliveryQueueEntry> = {},
 ): DeliveryQueueEntry {
   return {
     id: `q-${text}`,
@@ -136,6 +136,9 @@ function makeQueueEntry(
     channelType: "telegram",
     channelId,
     tenantId: "test",
+    agentId: "default",
+    conversationRef: referenceFor("default"),
+    destinationEndpoint: SESSION_ENDPOINT,
     optionsJson: "{}",
     origin: "agent",
     status,
@@ -148,6 +151,7 @@ function makeQueueEntry(
     nextRetryAt: null,
     lastError: null,
     traceId: null,
+    ...overrides,
   };
 }
 
@@ -273,6 +277,45 @@ describe("session.history deliveryStatus join", () => {
     expect(pending?.deliveryStatus).toBe("pending");
     expect(inflight?.deliveryStatus).toBe("pending");
     expect(failed?.deliveryStatus).toBe("pending");
+  });
+
+  it("session.history isolates pending status by complete delivery authority", async () => {
+    const queue = makeQueuePort([
+      makeQueueEntry("pending-outbound", "chan-A", "pending", { tenantId: "other-tenant" }),
+      makeQueueEntry("pending-outbound", "chan-A", "pending", {
+        agentId: "other-agent",
+        conversationRef: referenceFor("other-agent"),
+      }),
+      makeQueueEntry("pending-outbound", "chan-A", "pending", {
+        conversationRef: referenceFor("other-agent"),
+      }),
+      makeQueueEntry("pending-outbound", "chan-A", "pending", {
+        destinationEndpoint: {
+          ...SESSION_ENDPOINT,
+          channelInstanceId: "other-account",
+        },
+      }),
+      makeQueueEntry("pending-outbound", "chan-A", "pending", {
+        destinationEndpoint: {
+          ...SESSION_ENDPOINT,
+          threadId: "other-thread",
+        },
+      }),
+      makeQueueEntry("pending-outbound", "chan-A", "pending", {
+        destinationEndpoint: {
+          ...SESSION_ENDPOINT,
+          conversationKind: "shared",
+        },
+      }),
+    ]);
+    const handlers = bindSessionReadHandlers(makeDeps({ deliveryQueue: queue }));
+
+    const result = (await handlers["session.history"]!({ session_key: SESSION_KEY })) as {
+      messages: Array<{ content: string; deliveryStatus: "confirmed" | "pending" }>;
+    };
+
+    expect(result.messages.find((message) => message.content === "pending-outbound")?.deliveryStatus)
+      .toBe("confirmed");
   });
 
   it("session.history handler emits deliveryStatus on every messages entry none missing derived field is mandatory after computation", async () => {

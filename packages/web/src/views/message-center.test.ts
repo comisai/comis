@@ -40,11 +40,56 @@ function state(el: IcMessageCenter) {
     _actionPending: boolean;
     _platformActionPending: boolean;
     _sendText: string;
+    _replyToId: string;
+    _replyText: string;
+    _editingId: string;
+    _editText: string;
     _deleteTargetId: string;
+    _reactTargetId: string;
+    _attachUrl: string;
+    _attachType: "image" | "video" | "audio" | "file";
+    _attachCaption: string;
     _selectedMessageId: string;
     _loadChats(): Promise<void>;
     _refetchMessages(): Promise<void>;
     _captureActionContext(): unknown;
+    _handleSendConfirm(): Promise<void>;
+    _handleReplyConfirm(): Promise<void>;
+    _handleEditSave(): Promise<void>;
+    _handleDeleteConfirm(): Promise<void>;
+    _handleEmojiSelect(emoji: string): Promise<void>;
+    _handleAttachSend(): Promise<void>;
+    _handlePlatformAction(action: {
+      action: string;
+      label: string;
+      needsMessageId?: boolean;
+      needsInput?: string;
+    }): Promise<void>;
+  };
+}
+
+const SELECTED_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "telegram-account",
+  conversationId: "chat-a",
+  conversationKind: "direct" as const,
+};
+
+function endpointKey(endpoint: SessionChannelEndpoint): string {
+  return JSON.stringify([
+    endpoint.channelType,
+    endpoint.channelInstanceId,
+    endpoint.conversationId,
+    endpoint.threadId,
+    endpoint.conversationKind,
+  ]);
+}
+
+function selectedEndpointState(endpoint: SessionChannelEndpoint = SELECTED_ENDPOINT) {
+  const key = endpointKey(endpoint);
+  return {
+    _chatList: [{ key, chatId: endpoint.conversationId, label: "Selected chat", endpoint }],
+    _selectedChatId: key,
   };
 }
 
@@ -135,7 +180,7 @@ describe("IcMessageCenter", () => {
 
   it("clears the breadcrumb when the route drops its channel", async () => {
     const el = await createElement({ channelType: "telegram" });
-    Object.assign(state(el), {
+    Object.assign(state(el), selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _messages: [{ id: "message-old", senderId: "user_a", text: "old", timestamp: 1 }],
@@ -223,15 +268,19 @@ describe("IcMessageCenter", () => {
       return chatB.promise;
     });
     const el = await createElement({ channelType: "telegram" });
-    Object.assign(state(el), {
+    const endpointA = SELECTED_ENDPOINT;
+    const endpointB = { ...SELECTED_ENDPOINT, conversationId: "chat-b" };
+    const keyA = endpointKey(endpointA);
+    const keyB = endpointKey(endpointB);
+    Object.assign(state(el), selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _capabilities: { fetchHistory: true },
       _chatList: [
-        { chatId: "chat-a", label: "Chat A" },
-        { chatId: "chat-b", label: "Chat B" },
+        { key: keyA, chatId: "chat-a", label: "Chat A", endpoint: endpointA },
+        { key: keyB, chatId: "chat-b", label: "Chat B", endpoint: endpointB },
       ],
-      _selectedChatId: "chat-a",
+      _selectedChatId: keyA,
       _hasLoaded: true,
     });
     el.rpcClient = createStatusRpcClient(call, "connected").client;
@@ -239,9 +288,9 @@ describe("IcMessageCenter", () => {
 
     const current = state(el);
     const oldChatARequest = current._refetchMessages();
-    current._selectedChatId = "chat-b";
+    current._selectedChatId = keyB;
     const chatBRequest = current._refetchMessages();
-    current._selectedChatId = "chat-a";
+    current._selectedChatId = keyA;
     const newChatARequest = current._refetchMessages();
 
     newChatA.resolve({
@@ -262,7 +311,7 @@ describe("IcMessageCenter", () => {
 
     expect(call.mock.calls.map(([, params]) => params?.["channel_id"]))
       .toEqual(["chat-a", "chat-b", "chat-a"]);
-    expect(current._selectedChatId).toBe("chat-a");
+    expect(current._selectedChatId).toBe(keyA);
     expect(current._messages.map((message) => message.id)).toEqual(["new-a"]);
   });
 
@@ -271,11 +320,10 @@ describe("IcMessageCenter", () => {
     const call = vi.fn(() => oldChatA.promise);
     const el = await createElement({ channelType: "telegram" });
     const current = state(el);
-    Object.assign(current, {
+    Object.assign(current, selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _capabilities: { fetchHistory: true },
-      _selectedChatId: "chat-a",
       _hasLoaded: true,
     });
     el.rpcClient = createStatusRpcClient(call, "connected").client;
@@ -284,9 +332,9 @@ describe("IcMessageCenter", () => {
 
     el.rpcClient = null;
     await el.updateComplete;
-    current._selectedChatId = "chat-b";
+    current._selectedChatId = "";
     await current._refetchMessages();
-    current._selectedChatId = "chat-a";
+    current._selectedChatId = endpointKey(SELECTED_ENDPOINT);
     await current._refetchMessages();
     oldChatA.resolve({
       channelId: "chat-a",
@@ -352,7 +400,12 @@ describe("IcMessageCenter", () => {
     });
     const el = await createElement({ channelType: "telegram" });
     const current = state(el);
-    Object.assign(current, {
+    Object.assign(current, selectedEndpointState({
+      channelType: "telegram",
+      channelInstanceId: "account-a",
+      conversationId: "chat-1",
+      conversationKind: "direct",
+    }), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _capabilities: {
@@ -361,7 +414,6 @@ describe("IcMessageCenter", () => {
         deleteMessages: true,
         reactions: true,
       },
-      _selectedChatId: "chat-1",
       _hasLoaded: true,
     });
     el.rpcClient = createStatusRpcClient(call, "connected").client;
@@ -448,7 +500,7 @@ describe("IcMessageCenter", () => {
     });
     const el = await createElement({ channelType: "telegram" });
     const current = state(el);
-    Object.assign(current, {
+    Object.assign(current, selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _capabilities: { fetchHistory: false },
@@ -475,7 +527,123 @@ describe("IcMessageCenter", () => {
       .toEqual(["selected account and thread"]);
   });
 
-  it("blocks native operations when complete endpoint identities collide", async () => {
+  it("does not infer authority for endpoint-less stored history", async () => {
+    const call = vi.fn(() => Promise.reject(new Error("Stored history must not run")));
+    const el = await createElement({ channelType: "telegram" });
+    const current = state(el);
+    Object.assign(current, {
+      _loadState: "loaded",
+      _channelIsRunning: true,
+      _capabilities: { fetchHistory: false },
+      _chatList: [{ key: "chat-a", chatId: "chat-a", label: "Chat A" }],
+      _selectedChatId: "chat-a",
+      _messages: [{ id: "old", senderId: "user_a", text: "old", timestamp: 1 }],
+      _messagesAreActionable: true,
+      _hasLoaded: true,
+    });
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
+    await el.updateComplete;
+
+    await current._refetchMessages();
+
+    expect(call).not.toHaveBeenCalled();
+    expect(current._messages).toEqual([]);
+    expect(current._messagesAreActionable).toBe(false);
+    expect(current._captureActionContext()).toBeNull();
+  });
+
+  it.each([
+    ["empty", false],
+    ["failed", true],
+  ])("disables all native actions when endpoint discovery is %s", async (_outcome, fails) => {
+    const call = vi.fn((method: string) => {
+      if (method === "obs.channels.all") {
+        return fails
+          ? Promise.reject(new Error("Discovery failed"))
+          : Promise.resolve({ channels: [] });
+      }
+      if (method === "config.read") {
+        return fails
+          ? Promise.reject(new Error("Authority discovery failed"))
+          : Promise.resolve({ config: { tenantId: "tenant-a" } });
+      }
+      if (method === "agents.list") return Promise.resolve({ agents: [] });
+      return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+    });
+    const el = await createElement({ channelType: "telegram" });
+    const current = state(el);
+    Object.assign(current, {
+      _loadState: "loaded",
+      _channelIsRunning: true,
+      _capabilities: {
+        fetchHistory: true,
+        editMessages: true,
+        deleteMessages: true,
+        reactions: true,
+        attachments: true,
+      },
+      _chatList: [],
+      _selectedChatId: "",
+      _hasLoaded: true,
+    });
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
+    await el.updateComplete;
+
+    await current._loadChats();
+    await current._refetchMessages();
+    Object.assign(current, {
+      _sendText: "send",
+      _replyToId: "message-1",
+      _replyText: "reply",
+      _editingId: "message-1",
+      _editText: "edit",
+      _deleteTargetId: "message-1",
+      _reactTargetId: "message-1",
+      _attachUrl: "https://example.com/file",
+      _attachType: "file",
+      _attachCaption: "caption",
+      _selectedMessageId: "message-1",
+      _messagesAreActionable: true,
+    });
+    await current._handleSendConfirm();
+    await current._handleReplyConfirm();
+    await current._handleEditSave();
+    await current._handleDeleteConfirm();
+    await current._handleEmojiSelect("👍");
+    await current._handleAttachSend();
+    await current._handlePlatformAction({ action: "chat_info", label: "Chat Info" });
+    await current._handlePlatformAction({
+      action: "pin",
+      label: "Pin Message",
+      needsMessageId: true,
+    });
+    await current._handlePlatformAction({
+      action: "unpin",
+      label: "Unpin Message",
+      needsMessageId: true,
+    });
+
+    current._messagesAreActionable = false;
+    el.requestUpdate();
+    await el.updateComplete;
+
+    expect(call.mock.calls.filter(([method]) =>
+      method.startsWith("message.") || method.endsWith(".action")
+    )).toEqual([]);
+    expect(current._captureActionContext()).toBeNull();
+    expect(el.shadowRoot?.querySelector<HTMLTextAreaElement>(".send-input")?.disabled).toBe(true);
+    expect(el.shadowRoot?.querySelector<HTMLButtonElement>(".send-form .btn-primary")?.disabled)
+      .toBe(true);
+    expect(
+      Array.from(
+        el.shadowRoot?.querySelectorAll<HTMLButtonElement>(
+          ".send-form button, .platform-actions button",
+        ) ?? [],
+      ).every((button) => button.disabled),
+    ).toBe(true);
+  });
+
+  it("routes native history through the exact selected endpoint", async () => {
     const endpoints = {
       "agent-a": {
         channelType: "telegram",
@@ -531,7 +699,7 @@ describe("IcMessageCenter", () => {
     });
     const el = await createElement({ channelType: "telegram" });
     const current = state(el);
-    Object.assign(current, {
+    Object.assign(current, selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _capabilities: { fetchHistory: true },
@@ -558,15 +726,20 @@ describe("IcMessageCenter", () => {
     current._selectedChatId = current._chatList[1]!.key!;
     await current._refetchMessages();
 
-    expect(call.mock.calls.filter(([method]) => method === "message.fetch")).toHaveLength(0);
-    expect(current._messagesAreActionable).toBe(false);
-    expect(current._captureActionContext()).toBeNull();
+    expect(call.mock.calls.filter(([method]) => method === "message.fetch")).toEqual([[
+      "message.fetch",
+      {
+        channel_type: "telegram",
+        channel_id: "shared-chat",
+        endpoint: endpoints["agent-b"],
+        limit: 50,
+      },
+    ]]);
+    expect(current._messagesAreActionable).toBe(true);
+    expect(current._captureActionContext()).not.toBeNull();
   });
 
-  it("fails closed for one endpoint the native contract cannot encode", async () => {
-    const call = vi.fn((_method: string) =>
-      Promise.reject(new Error("Native RPC must not run")),
-    );
+  it("preserves complete endpoint identity in native history calls", async () => {
     const endpoint = {
       channelType: "telegram",
       channelInstanceId: "account-b",
@@ -581,9 +754,15 @@ describe("IcMessageCenter", () => {
       endpoint.threadId,
       endpoint.conversationKind,
     ]);
+    const call = vi.fn((method: string) => {
+      if (method === "message.fetch") {
+        return Promise.resolve({ messages: [], channelId: endpoint.conversationId });
+      }
+      return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+    });
     const el = await createElement({ channelType: "telegram" });
     const current = state(el);
-    Object.assign(current, {
+    Object.assign(current, selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _capabilities: { fetchHistory: true },
@@ -596,9 +775,14 @@ describe("IcMessageCenter", () => {
 
     await current._refetchMessages();
 
-    expect(call.mock.calls.filter(([method]) => method === "message.fetch")).toHaveLength(0);
-    expect(current._messagesAreActionable).toBe(false);
-    expect(current._captureActionContext()).toBeNull();
+    expect(call).toHaveBeenCalledWith("message.fetch", {
+      channel_type: "telegram",
+      channel_id: "shared-chat",
+      endpoint,
+      limit: 50,
+    });
+    expect(current._messagesAreActionable).toBe(true);
+    expect(current._captureActionContext()).not.toBeNull();
   });
 
   it("does not let a stale zero-match request clear newer stored messages", async () => {
@@ -623,18 +807,31 @@ describe("IcMessageCenter", () => {
     });
     const el = await createElement({ channelType: "telegram" });
     const current = state(el);
+    const endpointA = {
+      channelType: "telegram",
+      channelInstanceId: "account-a",
+      conversationId: "chat-a",
+      conversationKind: "direct" as const,
+    };
+    const endpointB = { ...endpointA, conversationId: "chat-b" };
+    const keyA = endpointKey(endpointA);
+    const keyB = endpointKey(endpointB);
     Object.assign(current, {
       _loadState: "loaded",
       _channelIsRunning: true,
       _capabilities: { fetchHistory: false },
-      _selectedChatId: "chat-a",
+      _chatList: [
+        { key: keyA, chatId: "chat-a", label: "Chat A", endpoint: endpointA },
+        { key: keyB, chatId: "chat-b", label: "Chat B", endpoint: endpointB },
+      ],
+      _selectedChatId: keyA,
       _hasLoaded: true,
     });
     el.rpcClient = createStatusRpcClient(call, "connected").client;
     await el.updateComplete;
 
     const stale = current._refetchMessages();
-    current._selectedChatId = "chat-b";
+    current._selectedChatId = keyB;
     const latest = current._refetchMessages();
     listB.resolve({
       sessions: [{
@@ -668,7 +865,7 @@ describe("IcMessageCenter", () => {
       return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
     });
     const el = await createElement({ channelType: "telegram" });
-    Object.assign(state(el), {
+    Object.assign(state(el), selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _hasLoaded: true,
@@ -683,7 +880,8 @@ describe("IcMessageCenter", () => {
     actionButton!.click();
     expect(call).toHaveBeenCalledWith("telegram.action", {
       action: "chat_info",
-      chat_id: "telegram",
+      endpoint: SELECTED_ENDPOINT,
+      chat_id: "chat-a",
     });
 
     el.channelType = "discord";
@@ -706,7 +904,7 @@ describe("IcMessageCenter", () => {
     });
     const el = await createElement({ channelType: "telegram" });
     const current = state(el);
-    Object.assign(current, {
+    Object.assign(current, selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _messages: [{ id: "message-old", senderId: "user_a", text: "old", timestamp: 1 }],
@@ -726,14 +924,15 @@ describe("IcMessageCenter", () => {
     dialog!.dispatchEvent(new CustomEvent("confirm"));
     expect(call).toHaveBeenCalledWith("message.delete", {
       channel_type: "telegram",
-      channel_id: "telegram",
+      channel_id: "chat-a",
+      endpoint: SELECTED_ENDPOINT,
       message_id: "message-old",
     });
 
     el.rpcClient = null;
     el.channelType = "discord";
     await el.updateComplete;
-    Object.assign(current, {
+    Object.assign(current, selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _messages: [{ id: "message-new", senderId: "user_a", text: "new", timestamp: 2 }],
@@ -757,7 +956,7 @@ describe("IcMessageCenter", () => {
     const deletion = deferred<{ ok: boolean }>();
     const call = vi.fn(() => deletion.promise);
     const el = await createElement({ channelType: "telegram" });
-    Object.assign(state(el), {
+    Object.assign(state(el), selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _messages: [{ id: "message-1", senderId: "user_a", text: "hello", timestamp: 1 }],
@@ -788,7 +987,7 @@ describe("IcMessageCenter", () => {
     const call = vi.fn(() => Promise.resolve({ ok: true }));
     const el = await createElement({ channelType: "telegram" });
     const current = state(el);
-    Object.assign(current, {
+    Object.assign(current, selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _messages: [{ id: "message-1", senderId: "user_a", text: "hello", timestamp: 1 }],
@@ -828,13 +1027,12 @@ describe("IcMessageCenter", () => {
     });
     const el = await createElement({ channelType: "telegram" });
     const current = state(el);
-    Object.assign(current, {
+    Object.assign(current, selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _messages: [{ id: "message-old", senderId: "user_a", text: "old", timestamp: 1 }],
       _messagesAreActionable: true,
       _capabilities: { fetchHistory: true },
-      _selectedChatId: "chat-a",
       _selectedMessageId: "message-old",
       _hasLoaded: true,
     });
@@ -861,7 +1059,7 @@ describe("IcMessageCenter", () => {
       return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
     });
     const el = await createElement({ channelType: "telegram" });
-    Object.assign(state(el), {
+    Object.assign(state(el), selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _messages: [{ id: "message-1", senderId: "user_a", text: "hello", timestamp: 1 }],
@@ -894,7 +1092,7 @@ describe("IcMessageCenter", () => {
     const call = vi.fn(() => Promise.resolve({ ok: true }));
     const el = await createElement({ channelType: "telegram" });
     const current = state(el);
-    Object.assign(current, {
+    Object.assign(current, selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _messages: [{ id: "message-1", senderId: "user_a", text: "hello", timestamp: 1 }],
@@ -920,7 +1118,8 @@ describe("IcMessageCenter", () => {
 
     expect(call).toHaveBeenCalledWith("message.react", {
       channel_type: "telegram",
-      channel_id: "telegram",
+      channel_id: "chat-a",
+      endpoint: SELECTED_ENDPOINT,
       message_id: "message-1",
       emoji,
     });
@@ -1188,7 +1387,7 @@ describe("IcMessageCenter", () => {
     const send = deferred<{ ok: boolean }>();
     const firstCall = vi.fn(() => send.promise);
     const el = await createElement({ channelType: "telegram" });
-    Object.assign(state(el), {
+    Object.assign(state(el), selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _hasLoaded: true,
@@ -1208,7 +1407,8 @@ describe("IcMessageCenter", () => {
     el.shadowRoot?.querySelector("ic-confirm-dialog")?.dispatchEvent(new CustomEvent("confirm"));
     expect(firstCall).toHaveBeenCalledWith("message.send", {
       channel_type: "telegram",
-      channel_id: "telegram",
+      channel_id: "chat-a",
+      endpoint: SELECTED_ENDPOINT,
       text: "hello",
     });
     expect(state(el)._actionPending).toBe(true);
@@ -1233,11 +1433,10 @@ describe("IcMessageCenter", () => {
     const fetch = deferred<{ messages: Array<{ id: string; senderId: string; text: string; timestamp: number }>; channelId: string }>();
     const el = await createElement({ channelType: "telegram" });
     const current = state(el);
-    Object.assign(current, {
+    Object.assign(current, selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _capabilities: { fetchHistory: true },
-      _selectedChatId: "chat-a",
       _hasLoaded: true,
     });
     el.rpcClient = createStatusRpcClient(vi.fn(() => fetch.promise), "connected").client;
@@ -1308,7 +1507,7 @@ describe("IcMessageCenter", () => {
       return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
     });
     const el = await createElement({ channelType: "telegram" });
-    Object.assign(state(el), {
+    Object.assign(state(el), selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _hasLoaded: true,
@@ -1367,14 +1566,17 @@ describe("IcMessageCenter", () => {
     });
     const el = await createElement({ channelType: "telegram" });
     const current = state(el);
+    const endpointB = { ...SELECTED_ENDPOINT, conversationId: "chat-b" };
+    const keyA = endpointKey(SELECTED_ENDPOINT);
+    const keyB = endpointKey(endpointB);
     Object.assign(current, {
       _loadState: "loaded",
       _channelIsRunning: true,
       _chatList: [
-        { chatId: "chat-a", label: "Chat A" },
-        { chatId: "chat-b", label: "Chat B" },
+        { key: keyA, chatId: "chat-a", label: "Chat A", endpoint: SELECTED_ENDPOINT },
+        { key: keyB, chatId: "chat-b", label: "Chat B", endpoint: endpointB },
       ],
-      _selectedChatId: "chat-a",
+      _selectedChatId: keyA,
       _hasLoaded: true,
     });
     el.rpcClient = createStatusRpcClient(call, "connected").client;
@@ -1389,10 +1591,10 @@ describe("IcMessageCenter", () => {
 
     const chatSelect = el.shadowRoot?.querySelector<HTMLSelectElement>("#chat-select");
     expect(chatSelect!.disabled).toBe(true);
-    chatSelect!.value = "chat-b";
+    chatSelect!.value = keyB;
     chatSelect!.dispatchEvent(new Event("change"));
 
-    expect(current._selectedChatId).toBe("chat-a");
+    expect(current._selectedChatId).toBe(keyA);
     expect(current._platformActionPending).toBe(true);
     action.resolve("done");
     await action.promise;
@@ -1406,7 +1608,7 @@ describe("IcMessageCenter", () => {
     });
     const el = await createElement({ channelType: "telegram" });
     const current = state(el);
-    Object.assign(current, {
+    Object.assign(current, selectedEndpointState(), {
       _loadState: "loaded",
       _channelIsRunning: true,
       _channelList: [

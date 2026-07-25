@@ -13,6 +13,15 @@ import { createNotificationService as createRawNotificationService, resolveNotif
 import type { NotificationService, NotificationServiceDeps, NotifyUserOptions } from "./notification-service.js";
 import type { ChannelResolverDeps } from "./channel-resolver.js";
 
+function endpoint(channelType: string, conversationId: string) {
+  return {
+    channelType,
+    channelInstanceId: `${channelType}-account`,
+    conversationId,
+    conversationKind: "direct" as const,
+  };
+}
+
 function createMockDeliveryQueue(): DeliveryQueuePort {
   return {
     enqueue: vi.fn(async (_entry: DeliveryQueueEnqueueInput) => ok("entry-123")),
@@ -42,8 +51,10 @@ function createDefaultDeps(overrides?: Partial<NotificationServiceDeps>): Notifi
 
   const channelResolverDeps: ChannelResolverDeps = {
     activeAdapterTypes: new Set(["telegram", "discord"]),
-    getRecentSessionChannel: () => "chat-456",
-    getMostRecentSession: () => ({ channelType: "telegram", channelId: "chat-456" }),
+    getRecentSessionEndpoint: (_agentId, channelType) => endpoint(channelType, "chat-456"),
+    getMostRecentSessionEndpoint: () => endpoint("telegram", "chat-456"),
+    findSessionEndpoint: (_agentId, channelType, conversationId) =>
+      endpoint(channelType, conversationId),
   };
 
   const quietHoursConfig: QuietHoursConfig = {
@@ -79,31 +90,22 @@ function createDefaultDeps(overrides?: Partial<NotificationServiceDeps>): Notifi
 function createNotificationService(deps: NotificationServiceDeps): NotificationService {
   const service = createRawNotificationService(deps);
   return {
-    // Delegate resolveDestination to the real service (it mints from deps.tenantId
-    // + the resolution chain); only notifyUser is wrapped to auto-mint for the
-    // existing enqueue-behavior tests below.
     ...service,
     notifyUser(opts: NotifyUserOptions) {
-      const endpoint = {
-        channelType: opts.channelType ?? "telegram",
-        channelInstanceId: "notification-test",
-        conversationId: opts.channelId ?? "chat-456",
-        conversationKind: "direct" as const,
-      };
-      const conversationRef = createConversationRef({
-        tenantId: "default",
+      if (opts.authority !== undefined && opts.destinationEndpoint !== undefined) {
+        return service.notifyUser(opts);
+      }
+      const destination = service.resolveDestination({
         agentId: opts.agentId,
-        partition: { kind: "endpoint-conversation", endpoint },
+        channelType: opts.channelType,
+        channelId: opts.channelId,
+        destinationEndpoint: opts.destinationEndpoint,
       });
-      if (!conversationRef.ok) throw conversationRef.error;
+      if (!destination.ok) return Promise.resolve(destination);
       return service.notifyUser({
-        authority: {
-          tenantId: "default",
-          agentId: opts.agentId,
-          conversationRef: conversationRef.value,
-        },
-        destinationEndpoint: endpoint,
         ...opts,
+        authority: destination.value.authority,
+        destinationEndpoint: destination.value.destinationEndpoint,
       });
     },
   };
@@ -133,6 +135,8 @@ describe("NotificationService", () => {
     }
 
     expect(deps.deliveryQueue.enqueue).toHaveBeenCalledOnce();
+    expect(vi.mocked(deps.deliveryQueue.enqueue).mock.calls[0]![0].destinationEndpoint)
+      .toEqual(endpoint("telegram", "chat-123"));
     expect(emitSpy).toHaveBeenCalledWith(
       "notification:enqueued",
       expect.objectContaining({
@@ -177,16 +181,26 @@ describe("NotificationService", () => {
     deps = createDefaultDeps({
       channelResolverDeps: {
         activeAdapterTypes: new Set(),
-        getRecentSessionChannel: () => undefined,
-        getMostRecentSession: () => undefined,
+        getRecentSessionEndpoint: () => undefined,
+        getMostRecentSessionEndpoint: () => undefined,
+        findSessionEndpoint: () => undefined,
       },
     });
     emitSpy = vi.spyOn(deps.eventBus, "emit");
 
     const service = createNotificationService(deps);
+    const destinationEndpoint = endpoint("telegram", "chat-123");
+    const ref = createConversationRef({
+      tenantId: "default",
+      agentId: "agent-1",
+      partition: { kind: "endpoint-conversation", endpoint: destinationEndpoint },
+    });
+    if (!ref.ok) throw ref.error;
     const result = await service.notifyUser({
       agentId: "agent-1",
       message: "Hello!",
+      authority: { tenantId: "default", agentId: "agent-1", conversationRef: ref.value },
+      destinationEndpoint,
     });
 
     expect(result.ok).toBe(false);
@@ -201,7 +215,7 @@ describe("NotificationService", () => {
     // fixes it — not just the symptom.
     if (!result.ok) {
       expect(result.error.message).toContain("tried:");
-      expect(result.error.message).toContain("recent_session");
+      expect(result.error.message).toContain("destination_endpoint");
       expect(result.error.message).toContain("notification.primaryChannel");
       expect(result.error.message).toContain("channel_type");
     }
@@ -503,26 +517,32 @@ describe("resolveNotificationDestination — the mint helper", () => {
     expect(r.value.destinationEndpoint.channelInstanceId).toBe("discord-account");
   });
 
-  it("no registered adapter: channelInstanceId falls back to the resolved channel id", () => {
-    // "signal" has no adapter → resolveChannelInstanceId returns undefined.
-    const r = resolveNotificationDestination(mintDeps(), {
+  it("rejects notification destinations without a registered adapter endpoint", () => {
+    const r = resolveNotificationDestination(mintDeps({
+      channelResolverDeps: {
+        activeAdapterTypes: new Set(["signal"]),
+        getRecentSessionEndpoint: () => endpoint("signal", "sig-9"),
+        getMostRecentSessionEndpoint: () => endpoint("signal", "sig-9"),
+        findSessionEndpoint: () => endpoint("signal", "sig-9"),
+      },
+    }), {
       tenantId: "default",
       agentId: "agent-1",
       channelType: "signal",
       channelId: "sig-9",
     });
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.value.destinationEndpoint.channelInstanceId).toBe("sig-9");
-    expect(r.value.destinationEndpoint.conversationId).toBe("sig-9");
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.message).toContain("adapter instance is unavailable");
   });
 
   it("no channel resolvable: propagates the resolver error verbatim", () => {
     const noChannel = {
       channelResolverDeps: {
         activeAdapterTypes: new Set<string>(),
-        getRecentSessionChannel: () => undefined,
-        getMostRecentSession: () => undefined,
+        getRecentSessionEndpoint: () => undefined,
+        getMostRecentSessionEndpoint: () => undefined,
+        findSessionEndpoint: () => undefined,
       },
       notificationConfigs: new Map<string, NotificationConfig>(),
       defaultConfig: { enabled: true, maxPerHour: 30, dedupeWindowMs: 300_000, maxChainDepth: 0 } as NotificationConfig,

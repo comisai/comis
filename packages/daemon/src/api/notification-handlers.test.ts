@@ -51,6 +51,7 @@ describe("createNotificationHandlers", () => {
       priority: "high",
       channel_type: "telegram",
       channel_id: "chat-42",
+      destination_endpoint: MINTED_DESTINATION.destinationEndpoint,
     });
 
     // The handler mints the destination from the agent + requested channel first.
@@ -58,6 +59,7 @@ describe("createNotificationHandlers", () => {
       agentId: "agent-1",
       channelType: "telegram",
       channelId: "chat-42",
+      destinationEndpoint: MINTED_DESTINATION.destinationEndpoint,
     });
     // …then threads the minted authority + endpoint into notifyUser (previously
     // it called notifyUser bare, which the guard rejected).

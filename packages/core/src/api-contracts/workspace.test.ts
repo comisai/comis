@@ -515,6 +515,13 @@ describe("workspace-umbrella domain contracts", () => {
           priority: "high",
           channel_type: "telegram",
           channel_id: "chat-42",
+          destination_endpoint: {
+            channelType: "telegram",
+            channelInstanceId: "account-a",
+            conversationId: "chat-42",
+            threadId: "thread-a",
+            conversationKind: "shared",
+          },
         }),
       ).not.toThrow();
     });

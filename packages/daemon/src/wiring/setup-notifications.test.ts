@@ -124,7 +124,7 @@ function makeDeps(overrides: Partial<Parameters<typeof setupNotifications>[0]> =
     criticalBypass: overrides.criticalBypass ?? false,
     activeAdapterTypes: overrides.activeAdapterTypes ?? new Set<string>(["discord"]),
     tenantId: overrides.tenantId ?? "tenant-a",
-    resolveChannelInstanceId: overrides.resolveChannelInstanceId ?? ((channelType: string) => `${channelType}-instance`),
+    resolveChannelInstanceId: overrides.resolveChannelInstanceId ?? ((channelType: string) => `${channelType}-test`),
     logger: overrides.logger ?? createMockLogger(),
     ...overrides,
   };
@@ -156,10 +156,14 @@ describe("setupNotifications -- daemon wiring", () => {
     expect(typeof ctxA.sessionTracker.getMostRecent).toBe("function");
 
     // State isolation: writing into tracker A leaves tracker B empty.
-    ctxA.sessionTracker.recordActivity("agent-1", "discord", "discord-test-channel-A");
-    expect(ctxA.sessionTracker.getRecentForPlatform("agent-1", "discord")).toBe(
-      "discord-test-channel-A",
-    );
+    const endpoint = {
+      channelType: "discord",
+      channelInstanceId: "discord-test",
+      conversationId: "discord-test-channel-A",
+      conversationKind: "direct" as const,
+    };
+    ctxA.sessionTracker.recordActivity("agent-1", endpoint);
+    expect(ctxA.sessionTracker.getRecentForPlatform("agent-1", "discord")).toEqual(endpoint);
     expect(ctxB.sessionTracker.getRecentForPlatform("agent-1", "discord")).toBeUndefined();
   });
 
@@ -180,7 +184,12 @@ describe("setupNotifications -- daemon wiring", () => {
     const ctx = setupNotifications(deps);
     // Seed a recent session for agent-default so the channel resolver has a
     // fallback target. agent-disabled never reaches resolution.
-    ctx.sessionTracker.recordActivity("agent-default", "discord", "discord-test-channel-1");
+    ctx.sessionTracker.recordActivity("agent-default", {
+      channelType: "discord",
+      channelInstanceId: "discord-test",
+      conversationId: "discord-test-channel-1",
+      conversationKind: "direct",
+    });
 
     const disabledResult = await ctx.notificationService.notifyUser({
       agentId: "agent-disabled",

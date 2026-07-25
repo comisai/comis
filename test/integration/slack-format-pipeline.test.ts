@@ -35,6 +35,7 @@ interface CapturedMessage {
 function createMockSlackAdapter(): DeliveryAdapter & { captured: CapturedMessage[] } {
   const captured: CapturedMessage[] = [];
   return {
+    channelId: "test-instance",
     channelType: "slack",
     captured,
     async sendMessage(
