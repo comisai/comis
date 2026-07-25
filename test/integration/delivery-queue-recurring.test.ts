@@ -334,17 +334,17 @@ describe("continuous delivery-queue drainer (integration)", () => {
 
   // -------------------------------------------------------------------------
   // A configured primaryChannel supplies routing coordinates, not endpoint
-  // authority. Without a tracked endpoint, notification.send must fail closed
-  // instead of minting an implicit endpoint from those coordinates.
+  // authority. When that configured route is untracked, notification.send
+  // continues to the recent-session level and uses its authoritative endpoint.
   // -------------------------------------------------------------------------
 
   it(
-    "notification.send fails closed when primaryChannel has no tracked endpoint",
+    "notification.send falls back from an untracked primaryChannel to the recent authoritative endpoint",
     async () => {
       const beforeCount = echoAdapter.getSentMessages().length;
 
-      // No channel_type / channel_id: only the configured primaryChannel
-      // coordinates are available, so no authoritative endpoint can resolve.
+      // No channel_type / channel_id: the configured primaryChannel is
+      // untracked, so resolution continues to the inbound-seeded recent route.
       const response = (await sendNotification(
         handle,
         { message: "primary-channel fallback delivery", origin: "test" },
@@ -352,8 +352,15 @@ describe("continuous delivery-queue drainer (integration)", () => {
       )) as { result?: { success?: boolean }; error?: unknown };
 
       expect(response.error).toBeUndefined();
-      expect(response.result?.success).toBe(false);
-      expect(echoAdapter.getSentMessages()).toHaveLength(beforeCount);
+      expect(response.result?.success).toBe(true);
+
+      const deadline = Date.now() + 3_000;
+      while (echoAdapter.getSentMessages().length < beforeCount + 1 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(echoAdapter.getSentMessages()).toHaveLength(beforeCount + 1);
+      expect(echoAdapter.getSentMessages().at(-1)?.channelId)
+        .toBe(echoEndpoint.conversationId);
     },
     20_000,
   );
