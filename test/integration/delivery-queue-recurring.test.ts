@@ -316,19 +316,18 @@ describe("continuous delivery-queue drainer (integration)", () => {
   );
 
   // -------------------------------------------------------------------------
-  // primaryChannel-fallback path: a notification.send with NO channel params
-  // mints its destination from the agent's notification.primaryChannel and
-  // delivers through the same recurring drainer -> echo adapter chain. This is
-  // the second of the two resolution paths (explicit channel is covered above).
+  // A configured primaryChannel supplies routing coordinates, not endpoint
+  // authority. Without a tracked endpoint, notification.send must fail closed
+  // instead of minting an implicit endpoint from those coordinates.
   // -------------------------------------------------------------------------
 
   it(
-    "notification.send with no channel params resolves via the agent's primaryChannel and delivers",
+    "notification.send fails closed when primaryChannel has no tracked endpoint",
     async () => {
       const beforeCount = echoAdapter.getSentMessages().length;
 
-      // No channel_type / channel_id: the handler mints the destination from
-      // agents.default.notification.primaryChannel (echo / delivery-recurring-test).
+      // No channel_type / channel_id: only the configured primaryChannel
+      // coordinates are available, so no authoritative endpoint can resolve.
       const response = (await sendNotification(
         handle,
         { message: "primary-channel fallback delivery", origin: "test" },
@@ -336,13 +335,8 @@ describe("continuous delivery-queue drainer (integration)", () => {
       )) as { result?: { success?: boolean }; error?: unknown };
 
       expect(response.error).toBeUndefined();
-      expect(response.result?.success).toBe(true);
-
-      await new Promise((r) => setTimeout(r, 1_000));
-
-      const sent = echoAdapter.getSentMessages();
-      expect(sent.length).toBe(beforeCount + 1);
-      expect(sent[sent.length - 1]!.text).toContain("primary-channel fallback delivery");
+      expect(response.result?.success).toBe(false);
+      expect(echoAdapter.getSentMessages()).toHaveLength(beforeCount);
     },
     20_000,
   );
