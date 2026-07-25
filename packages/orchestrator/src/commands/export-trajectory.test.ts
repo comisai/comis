@@ -166,7 +166,7 @@ describe("handleExportTrajectory", () => {
     expect(result).toEqual({ action: "handled" });
   });
 
-  it("Test 3: group owner — inline says 'Bundle sent to owner DM' (no path); DM contains path", async () => {
+  it("rejects group export before creating or sending a sensitive bundle", async () => {
     vi.mocked(isGroupMessage).mockReturnValue(true);
     const msg = makeMsg({ senderId: "owner-1", channelId: "group-1" });
     const sessionKey = makeKey("owner-1");
@@ -185,21 +185,14 @@ describe("handleExportTrajectory", () => {
       logger: makeLogger(),
     });
 
-    // Inline group reply: "Bundle sent to owner DM" — no path
-    const inlineCalls = deliveryService.deliverToChannel.mock.calls;
-    const inlineTexts = inlineCalls.map((c: unknown[]) => String(c[2]));
-    expect(
-      inlineTexts.some((t: string) => t === "Bundle sent to owner DM." || t.startsWith("Bundle sent to owner DM")),
-    ).toBe(true);
-
-    // CRITICAL: path is NEVER inline in group
-    expect(inlineTexts.some((t: string) => t.includes("/tmp/bundle-xyz"))).toBe(false);
-
-    // DM to owner contains the path
-    expect(adapter.sendMessage).toHaveBeenCalledWith(
-      "owner-1",
-      expect.stringContaining("/tmp/bundle-xyz"),
+    expect(deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      adapter,
+      "group-1",
+      expect.stringContaining("direct message"),
+      expect.anything(),
     );
+    expect(exportSessionBundle).not.toHaveBeenCalled();
+    expect(adapter.sendMessage).not.toHaveBeenCalled();
     expect(result).toEqual({ action: "handled" });
   });
 
