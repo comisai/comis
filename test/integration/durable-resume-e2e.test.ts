@@ -510,8 +510,20 @@ describe("exactly-once chaos restart acceptance gate for the outward-send durabi
         "two distinct outward sends with an interleaved checkpoint must yield EXACTLY 2 deliveries — " +
           "NOT 1 (a silent drop from a counter reset) and NOT 3 (a double-send)",
       ).toHaveLength(2);
-      expect(handle.getOutwardLedgerRow(rootRunId, 0)?.state).toBe("committed");
-      expect(handle.getOutwardLedgerRow(rootRunId, 1)?.state).toBe("committed");
+
+      // Close the daemon-owned WAL connection before reading through an
+      // independent store. Some SQLite VFS implementations do not expose the
+      // newest WAL frames to a second connection until the writer closes.
+      await stop(handle);
+      handle = undefined;
+      const committedRows = await withStores(dbAbs, async ({ ledger }) =>
+        Promise.all([
+          ledger.lookup(rootRunId, 0),
+          ledger.lookup(rootRunId, 1),
+        ]),
+      );
+      expect(committedRows[0].ok && committedRows[0].value?.state).toBe("committed");
+      expect(committedRows[1].ok && committedRows[1].value?.state).toBe("committed");
     }, 120_000);
   });
 
