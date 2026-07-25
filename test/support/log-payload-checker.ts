@@ -9,11 +9,12 @@
  *
  * Cache: persistent JSON at
  * `node_modules/.cache/architecture-walker/log-payload-checker.json`.
- * Composite key (mtime + sha256) — both must match for a cache hit, otherwise
- * recompute. `version: 1` invalidates old caches when walker logic changes.
+ * Composite key (program context + file mtime + file sha256) — every part must
+ * match for a cache hit, otherwise recompute. The program context covers
+ * transitive declarations so rebuilt workspace packages cannot leave stale
+ * TypeChecker results behind.
  *
- * The valid 9-member closed union mirrors the canonical ErrorKind union (`config | network |
- * auth | validation | timeout | resource | dependency | internal | platform`).
+ * The valid 11-member closed union mirrors the canonical ErrorKind union.
  *
  * @module
  */
@@ -73,13 +74,13 @@ interface CacheEntry {
 }
 
 /**
- * Cache file shape. `version: 1` is the schema-version field; mismatch (or
- * corrupted JSON) drops the cache and recomputes every entry — guards against
- * cache poisoning. Version 4 includes syntax-level literal checks so a type
- * assertion cannot disguise an off-union string.
+ * Cache file shape. A schema-version or program-context mismatch drops the
+ * cache and recomputes every entry. Version 5 adds the complete TypeScript
+ * program context to prevent stale results when imported declarations change.
  */
 interface CacheFile {
-  readonly version: 4;
+  readonly version: 5;
+  readonly programContextSha256: string;
   readonly entries: Record<string, CacheEntry>;
 }
 
@@ -90,18 +91,21 @@ const CACHE_PATH = resolve(
 
 let cache: CacheFile | null = null;
 
-function loadCache(): CacheFile {
-  if (cache) return cache;
+function loadCache(programContextSha256: string): CacheFile {
+  if (cache?.programContextSha256 === programContextSha256) return cache;
   if (!existsSync(CACHE_PATH)) {
-    cache = { version: 4, entries: {} };
+    cache = { version: 5, programContextSha256, entries: {} };
     return cache;
   }
   try {
     const raw = JSON.parse(readFileSync(CACHE_PATH, "utf8")) as CacheFile;
-    cache = raw.version === 4 ? raw : { version: 4, entries: {} };
+    cache =
+      raw.version === 5 && raw.programContextSha256 === programContextSha256
+        ? raw
+        : { version: 5, programContextSha256, entries: {} };
   } catch {
     // Corrupted JSON or unreadable file — drop cache and recompute.
-    cache = { version: 4, entries: {} };
+    cache = { version: 5, programContextSha256, entries: {} };
   }
   return cache;
 }
@@ -134,6 +138,26 @@ function fileHash(filePath: string): { mtimeMs: number; sha256: string } {
     .update(readFileSync(filePath))
     .digest("hex");
   return { mtimeMs: stat.mtimeMs, sha256 };
+}
+
+function programContextHash(program: ts.Program): string {
+  const hash = createHash("sha256");
+  hash.update(ts.version);
+  const compilerOptions = Object.entries(program.getCompilerOptions()).sort(
+    ([a], [b]) => a.localeCompare(b),
+  );
+  hash.update(JSON.stringify(compilerOptions));
+  const sourceFiles = program
+    .getSourceFiles()
+    .slice()
+    .sort((a, b) => a.fileName.localeCompare(b.fileName));
+  for (const sourceFile of sourceFiles) {
+    hash.update(sourceFile.fileName);
+    hash.update("\0");
+    hash.update(sourceFile.text);
+    hash.update("\0");
+  }
+  return hash.digest("hex");
 }
 
 /**
@@ -170,19 +194,18 @@ function literalHiddenByAssertions(expression: ts.Expression): string | undefine
 /**
  * Walk the given root files, build a single TS Program with the
  * TypeChecker, and report every WARN/ERROR/FATAL log-call whose payload's
- * `errorKind` resolves to a literal NOT in the closed 9-member union (or
+ * `errorKind` resolves to a literal NOT in the closed 11-member union (or
  * to the open `string` type — also reported as `<unresolved type>`).
  *
- * Cache: per-file mtime+sha256 composite key. On hit, the walker
- * re-renders snippets from the live source but reuses the stored
- * `line` / `character` / `literal` triples. On miss (or first run) the
+ * Cache: the full TypeScript program context plus per-file mtime+sha256.
+ * On hit, the walker re-renders snippets from the live source but reuses the
+ * stored `line` / `character` / `literal` triples. On miss (or first run) the
  * walker recomputes and writes the entry.
  */
 export function checkLogPayloads(
   rootFiles: readonly string[],
   compilerOptions: ts.CompilerOptions = {},
 ): readonly LogPayloadViolation[] {
-  const c = loadCache();
   const program = ts.createProgram({
     rootNames: [...rootFiles],
     options: {
@@ -198,6 +221,7 @@ export function checkLogPayloads(
       allowJs: false,
     },
   });
+  const c = loadCache(programContextHash(program));
   const checker = program.getTypeChecker();
   const violations: LogPayloadViolation[] = [];
 
