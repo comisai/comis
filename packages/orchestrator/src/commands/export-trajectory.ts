@@ -7,7 +7,7 @@
  * Dispatched from inbound-gate.ts BEFORE the generic handleSlashCommand
  * block, because the handler needs:
  *   - msg.senderId        (for the owner gate)
- *   - isGroupMessage(msg) (for routing decision)
+ *   - deliveryOptions     (for authenticated endpoint scope)
  *   - adapter             (for durable source-endpoint delivery)
  *
  * None of these are exposed through handleSlashCommand(text, sessionKey, agentId).
@@ -17,7 +17,6 @@
 
 import type { NormalizedMessage, SessionKey, DeliveryAdapter, DeliverToChannelOptions } from "@comis/core";
 import { formatSessionKey } from "@comis/core";
-import { isGroupMessage } from "@comis/channels";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -82,8 +81,7 @@ export async function handleExportTrajectory(
   }
 
   // ---- Require an authenticated direct-message endpoint ----
-  const isGroup = isGroupMessage(msg);
-  if (isGroup) {
+  if (deliveryOptions.destinationEndpoint?.conversationKind !== "direct") {
     await deliveryService.deliverToChannel(
       adapter,
       msg.channelId,

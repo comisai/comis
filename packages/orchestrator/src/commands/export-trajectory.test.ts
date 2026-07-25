@@ -8,14 +8,6 @@ import type { DeliverToChannelOptions, NormalizedMessage, SessionKey } from "@co
 import { handleExportTrajectory } from "./export-trajectory.js";
 import { parseSlashCommand } from "./command-parser.js";
 
-// Mock isGroupMessage from @comis/channels
-vi.mock("@comis/channels", () => ({
-  isGroupMessage: vi.fn(),
-  evaluateAutoReply: vi.fn(),
-  isBotMentioned: vi.fn(),
-}));
-import { isGroupMessage } from "@comis/channels";
-
 // ---------------------------------------------------------------------------
 // Parser-level tests
 // ---------------------------------------------------------------------------
@@ -137,7 +129,6 @@ describe("handleExportTrajectory", () => {
   });
 
   it("Test 2: DM owner — inline reply contains bundle path + privacy reminder", async () => {
-    vi.mocked(isGroupMessage).mockReturnValue(false);
     const msg = makeMsg({ senderId: "owner-1" });
     const sessionKey = makeKey("owner-1");
     const adapter = makeAdapter();
@@ -170,7 +161,6 @@ describe("handleExportTrajectory", () => {
   });
 
   it("rejects a shared authenticated endpoint even when metadata looks direct", async () => {
-    vi.mocked(isGroupMessage).mockReturnValue(false);
     const msg = makeMsg({ senderId: "owner-1", channelId: "group-1" });
     const sessionKey = makeKey("owner-1");
     const adapter = makeAdapter();
@@ -200,7 +190,6 @@ describe("handleExportTrajectory", () => {
   });
 
   it("Test 4: export failure — error sent inline; no DM; result is handled", async () => {
-    vi.mocked(isGroupMessage).mockReturnValue(false);
     const msg = makeMsg({ senderId: "owner-1" });
     const sessionKey = makeKey("owner-1");
     const adapter = makeAdapter();
@@ -231,7 +220,6 @@ describe("handleExportTrajectory", () => {
   });
 
   it("Test 5: group + non-owner — 'Access denied'; no routing logic engaged", async () => {
-    vi.mocked(isGroupMessage).mockReturnValue(true);
     const msg = makeMsg({ senderId: "intruder-2", channelId: "group-1" });
     const sessionKey = makeKey("owner-1");
     const adapter = makeAdapter();
