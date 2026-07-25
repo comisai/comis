@@ -1627,6 +1627,51 @@ describe("executeAndDeliver", () => {
       );
     });
 
+    it("keeps timeout replies in the authenticated Slack thread", async () => {
+      const adapter = makeAdapter({ channelType: "slack", channelId: "slack-primary" });
+      const executor = makeExecutor({
+        execute: vi.fn(() => new Promise(() => {})),
+      });
+      const deps = makeDeps({ executionTimeoutMs: 50 });
+      const msg = makeMessage({
+        channelType: "slack",
+        channelId: "C123",
+        chatType: "group",
+        metadata: {
+          slackTs: "1700000001.000000",
+          slackThreadTs: "1699999999.000000",
+        },
+      });
+
+      await runWithContext(makeResolvedContext({
+        channelType: "slack",
+        turnScope: {
+          conversation: {
+            tenantId: "default",
+            agentId: "agent-1",
+            partition: { kind: "principal", principalId: "user-1" },
+          },
+          principal: { principalId: "user-1" },
+          endpoint: {
+            channelType: "slack",
+            channelInstanceId: "slack-primary",
+            conversationId: "C123",
+            threadId: "1699999999.000000",
+            conversationKind: "shared",
+          },
+        },
+      }), () => executeAndDeliver(
+        deps, adapter, msg, msg, executor, makeSessionKey(),
+        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      ));
+
+      expect(adapter.sendMessage).toHaveBeenCalledWith(
+        "C123",
+        expect.any(String),
+        expect.objectContaining({ threadId: "1699999999.000000" }),
+      );
+    });
+
     it("preserves known call counts when the executor returns prompt_timeout", async () => {
       const eventBus = makeEventBus();
       const executor = makeExecutor({
