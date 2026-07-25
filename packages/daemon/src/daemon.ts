@@ -32,7 +32,6 @@ import {
   type PerAgentConfig,
   type WrapExternalContentOptions,
   verifyWorkspacePolicySnapshot,
-  tryGetContext,
   type WorkspacePolicySnapshot,
 } from "@comis/core";
 // Runtime adapter factories are constructed at this composition root.
@@ -173,7 +172,7 @@ import {
 } from "./wiring/daemon-entrypoint.js";
 import { createSubagentActivityTracker, sweepStuckSubAgentRuns } from "./wiring/subagent-stuck-sweep.js"; // idle-based stuck sub-agent sweep (health tick)
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig, recordCurrentSessionEndpoint } from "./wiring/main-helpers.js";
 import { setupChannelLivenessMonitor } from "./wiring/setup-channel-liveness-monitor.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
@@ -416,12 +415,7 @@ function buildChannelManagerDeps(deps: {
     },
     onMessageProcessed: (msg, channelType) => {
       continuationTracker.complete({ channelType, channelId: msg.channelId, userId: msg.senderId });
-      const requestContext = tryGetContext();
-      const endpoint = requestContext?.turnScope?.endpoint;
-      const agentId = requestContext?.agentId;
-      if (endpoint !== undefined && agentId !== undefined) {
-        getSessionTracker()?.recordActivity(agentId, endpoint);
-      }
+      recordCurrentSessionEndpoint(getSessionTracker);
     },
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
     piSessionAdapters, costTrackers, deliveryQueue,

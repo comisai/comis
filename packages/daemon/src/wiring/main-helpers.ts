@@ -15,6 +15,7 @@ import {
   EMBED_MULTILINGUAL,
   RERANK_MULTILINGUAL,
   BackgroundTasksConfigSchema,
+  tryGetContext,
 } from "@comis/core";
 import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort, RootRunIdResolver, ComisLogger, TypedEventBus } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
@@ -59,6 +60,7 @@ import { registerComisImageProviders } from "../api/pi-image-adapter.js";
 // builds its capability by closing over the cred resolvers + resolveAgentModel.
 import { createMainProviderVision, type MainProviderVision } from "../api/main-provider-vision.js";
 import { restartChannelAdapter } from "./channel-adapter-restart.js";
+import type { SessionTracker } from "../notification/session-tracker.js";
 
 /** The bounded-autonomy late-bind seam built in
  *  `bootAgents`: the per-root budget holder (populated by the cap layer in bootChannels) +
@@ -78,6 +80,17 @@ export function resolveAgentBackgroundTasksConfig(
 ) {
   // eslint-disable-next-line security/detect-object-injection -- agentId selects a key from the validated agent configuration map.
   return BackgroundTasksConfigSchema.parse(agents[agentId]?.backgroundTasks ?? {});
+}
+
+export function recordCurrentSessionEndpoint(
+  getSessionTracker: () => SessionTracker | undefined,
+): void {
+  const requestContext = tryGetContext();
+  const endpoint = requestContext?.turnScope?.endpoint;
+  const agentId = requestContext?.agentId;
+  if (endpoint !== undefined && agentId !== undefined) {
+    getSessionTracker()?.recordActivity(agentId, endpoint);
+  }
 }
 
 /** Build the {@link BoundedAutonomyWiring} late-bind seam (see the interface doc). */
