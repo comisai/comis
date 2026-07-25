@@ -13,24 +13,30 @@
  */
 
 import {
-  parseFormattedSessionKey,
+  ConversationRefSchema,
+  conversationScopeToSessionKey,
+  formatSessionKey,
   AgentsListContract,
   SessionStatusContract,
   SessionHistoryContract,
   SessionRunStatusContract,
+  partsToMessage,
   stripInternalFields,
   systemNowMs,
 } from "@comis/core";
-import type { DeliveryQueueEntry, DeliveryQueuePort } from "@comis/core";
+import type {
+  ChannelEndpoint,
+  ConversationRef,
+  DeliveryQueueEntry,
+  DeliveryQueuePort,
+} from "@comis/core";
 import type { RpcHandler } from "../types.js";
+import { IS_DEV, type SessionHandlerDeps } from "./session-helpers.js";
+import { AuthorizationError, PreconditionError } from "../errors.js";
 import {
-  IS_DEV,
-  type SessionHandlerDeps,
-  scanWorkspaceSessions,
-  loadJsonlSession,
-  collectAvailableSessionKeys,
-} from "./session-helpers.js";
-import { PreconditionError } from "../errors.js";
+  resolveSubagentController,
+  subagentControllerOwnsRun,
+} from "../subagent-controller.js";
 
 /**
  * Bind the session read handlers. Object-spread compatible with
@@ -72,6 +78,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
     },
 
     [SessionHistoryContract.method]: async (rawParams) => {
+      const startedAt = systemNowMs();
       // Bespoke pre-Zod: missing session_key triggers the standard Zod error.
       // The session-not-found error message preserves the user-friendly hint
       // including the list of available keys — that path runs AFTER the
@@ -86,69 +93,51 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       const userParams = stripInternalFields(rawParams);
       const params = SessionHistoryContract.request.parse(userParams);
 
-      const sessionKey = params.session_key;
+      const authority = { tenantId: params.tenant_id, agentId: params.agent_id };
+      if (callerAgentId !== undefined && callerAgentId !== authority.agentId) {
+        throw new PreconditionError("Session query agent does not match the authenticated caller");
+      }
+      const callerTenantId = rawParams._tenantId as string | undefined;
+      if (callerTenantId !== undefined && callerTenantId !== authority.tenantId) {
+        throw new PreconditionError("Session query tenant does not match the authenticated caller");
+      }
+      const parsedRef = ConversationRefSchema.safeParse(params.conversation_ref);
+      if (!parsedRef.success) throw new PreconditionError("Invalid conversation reference");
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 20;
 
-      // Agent self-scope: an agent-origin caller may read ONLY its own
-      // session. Mirror session.search's `_agentId` filter exactly
-      // (session-list.ts:163-168) — the session belongs to the caller iff
-      // `parseFormattedSessionKey(sessionKey)?.agentId === callerAgentId`.
-      // Fail CLOSED with a content-free "not found" (do not confirm the
-      // session exists for another agent) so a jailed orch:read script can
-      // never exfiltrate another agent's/user's transcript. Because this gate
-      // lives in the handler it closes the orchestrate path AND any other
-      // agent-origin path. When `callerAgentId` is undefined (admin / operator
-      // / CLI) the read is unrestricted, as before.
-      if (callerAgentId) {
-        const owner = parseFormattedSessionKey(sessionKey)?.agentId;
-        if (owner !== callerAgentId) {
-          throw new PreconditionError(`Session not found: ${sessionKey}`);
+      const loaded = deps.sessionStore.loadByRef(authority, parsedRef.data);
+      if (!loaded.ok) throw loaded.error;
+      const data = loaded.value;
+      if (!data) throw new PreconditionError(`Conversation not found: ${params.conversation_ref}`);
+      const projected = conversationScopeToSessionKey(data.conversationScope);
+      if (!projected.ok) throw projected.error;
+      const sessionKey = formatSessionKey(projected.value);
+      let sourceMessages = data.messages;
+      let messageSource: "session-store" | "lcd" = "session-store";
+      if (sourceMessages.length === 0 && deps.lcdStore) {
+        const lcdRows = deps.lcdStore.getMessages({
+          tenantId: authority.tenantId,
+          agentId: authority.agentId,
+          conversationRef: parsedRef.data,
+          sessionKey,
+        });
+        if (lcdRows.length > 0) {
+          sourceMessages = lcdRows.map(partsToMessage);
+          messageSource = "lcd";
         }
       }
-
-      // Snapshot the DeliveryQueuePort once per request and build the join
-      // keyset BEFORE the message loop. The key is (channelId, text) -- the
-      // queue exposes channelType + channelId + tenantId + text; we only need
-      // channelId + text because two queue entries from different channel
-      // adapters with the same channelId would be a deployment conflict the
-      // operator must avoid. The sessionKey itself carries channelId at
-      // parts[2] (after tenant + userId); we extract it once below.
-      const pendingKeySet = await loadPendingKeySet(deps.deliveryQueue);
-
-      let data = deps.sessionStore.loadByFormattedKey(sessionKey);
-
-      // Fallback: check if this is a workspace JSONL session (metadata stores the path)
-      if (!data && deps.defaultWorkspaceDir) {
-        const wsSessions = scanWorkspaceSessions(deps.defaultWorkspaceDir);
-        const match = wsSessions.find(ws => ws.sessionKey === sessionKey);
-        if (match && match.metadata._workspaceJsonlPath) {
-          data = loadJsonlSession(match.metadata._workspaceJsonlPath as string);
-        }
-      }
-
-      if (!data) {
-        const available = collectAvailableSessionKeys(deps);
-        const hint = available.length > 0
-          ? `. Available session keys: ${available.join(", ")}`
-          : ". Use action 'list' to discover available session keys";
-        throw new PreconditionError(`Session not found: ${sessionKey}${hint}`);
-      }
-
-      // Parse session key for metadata
-      const parsed = parseFormattedSessionKey(sessionKey);
-      const agentId = parsed?.agentId ?? "default";
+      const agentId = data.conversationScope.agentId;
       const isSubAgent = data.metadata.parentSessionKey !== undefined;
-      const channelType = isSubAgent
-        ? "sub-agent"
-        : parsed?.guildId
-          ? "group"
-          : "dm";
-      // ChannelId for the deliveryStatus join. The DeliveryQueueEntry carries
-      // channelType + channelId + text; we match on (channelId, text) below
-      // because two queue entries for distinct channel adapters with the same
-      // channelId is a deployment conflict operators avoid by construction.
-      const sessionChannelId = parsed?.channelId ?? "";
+      const partition = data.conversationScope.partition;
+      const isShared = (partition.kind === "endpoint-conversation" || partition.kind === "endpoint-conversation-principal")
+        && partition.endpoint.conversationKind === "shared";
+      const channelType = isSubAgent ? "sub-agent" : isShared ? "group" : "dm";
+      const sessionEndpoint = partition.kind === "endpoint-conversation"
+        || partition.kind === "endpoint-conversation-principal"
+        ? partition.endpoint
+        : undefined;
+      const pendingKeySet = await loadPendingKeySet(deps.deliveryQueue);
 
       // Pre-scan: resolve gateway attachment tool calls so we can inject
       // <!-- attachment:... --> markers into displayable assistant messages.
@@ -156,7 +145,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       // and arguments.action "attach"; their results contain the media ID.
       const attachMeta = new Map<string, { type: string; mimeType: string; fileName: string; caption: string }>();
       const attachMedia = new Map<string, string>(); // toolCallId → /media/... URL
-      for (const msg of data.messages) {
+      for (const msg of sourceMessages) {
         const m = msg as Record<string, unknown>;
         const role = m.role as string | undefined;
         if (role === "assistant" && Array.isArray(m.content)) {
@@ -199,9 +188,13 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       }
 
       // Extract displayable messages and compute stats from raw message data.
-      // Token usage may live in the `usage` field on API response messages,
-      // or is estimated from content length (chars / 4) when not available.
-      // Tool calls appear as `tool_use` content blocks or as separate tool-role messages.
+      // Token usage may live in the `usage` field on API response messages
+      // (pi keys `input`/`output`; Anthropic wire keys `input_tokens`/
+      // `output_tokens`), or is estimated from content length (chars / 4)
+      // when not available. Tool invocations appear as `toolCall` (pi) /
+      // `tool_use` (Anthropic wire) content blocks in assistant messages;
+      // toolResult/tool-role messages answer the SAME invocation and must
+      // not double-count it.
       const messages: Array<{
         role: string;
         content: string;
@@ -212,7 +205,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       let inputTokens = 0;
       let outputTokens = 0;
       let hasApiUsage = false;
-      for (const msg of data.messages) {
+      for (const msg of sourceMessages) {
         const m = msg as Record<string, unknown>;
         const role = m.role as string | undefined;
 
@@ -220,15 +213,14 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
         const usage = m.usage as Record<string, number> | undefined;
         if (usage) {
           hasApiUsage = true;
-          inputTokens += usage.input_tokens ?? 0;
-          outputTokens += usage.output_tokens ?? 0;
+          inputTokens += usage.input ?? usage.input_tokens ?? 0;
+          outputTokens += usage.output ?? usage.output_tokens ?? 0;
         }
 
-        // Count tool_use blocks in content arrays and tool-role messages
-        if (role === "tool") { toolCalls++; }
+        // Count tool-invocation blocks in assistant content arrays
         if (Array.isArray(m.content)) {
           for (const block of m.content as Array<Record<string, unknown>>) {
-            if (block.type === "tool_use") toolCalls++;
+            if (block.type === "toolCall" || block.type === "tool_use") toolCalls++;
           }
         }
 
@@ -265,14 +257,19 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
         if (text) {
           // DeliveryStatus computation. Inbound user messages were received
           // from the channel -- always confirmed. Outbound assistant messages
-          // are confirmed unless the delivery queue still has a
-          // pending/in_flight/failed entry for this text on the session's
-          // channelId (queue's `pendingEntries()` returns only NON-delivered,
-          // NON-expired rows scheduled <= now).
+          // are confirmed unless the delivery queue still has an unconfirmed
+          // entry for this text under the same delivery authority and endpoint.
           const deliveryStatus: "confirmed" | "pending" =
             role === "user"
               ? "confirmed"
-              : pendingKeySet.has(makePendingKey(sessionChannelId, text))
+              : sessionEndpoint !== undefined
+                && pendingKeySet.has(makePendingKey({
+                  tenantId: authority.tenantId,
+                  agentId: authority.agentId,
+                  conversationRef: parsedRef.data,
+                  destinationEndpoint: sessionEndpoint,
+                  text,
+                }))
                 ? "pending"
                 : "confirmed";
           messages.push({
@@ -286,7 +283,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
 
       // If no API usage data was found, estimate tokens from message content
       if (!hasApiUsage) {
-        for (const msg of data.messages) {
+        for (const msg of sourceMessages) {
           const m = msg as Record<string, unknown>;
           const role = m.role as string | undefined;
           const contentLen = typeof m.content === "string"
@@ -307,7 +304,13 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
         key: sessionKey,
         agentId,
         channelType,
-        messageCount: data.messages.length,
+        ...(partition.kind === "endpoint-conversation"
+          || partition.kind === "endpoint-conversation-principal"
+          ? {
+              endpoint: partition.endpoint,
+            }
+          : {}),
+        messageCount: sourceMessages.length,
         totalTokens,
         inputTokens,
         outputTokens,
@@ -329,31 +332,76 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
         limit,
         hasMore: offset + limit < messages.length,
       };
+      deps.logger.info({
+        step: "session-history-read",
+        tenantId: authority.tenantId,
+        agentId: authority.agentId,
+        conversationRef: parsedRef.data,
+        messageSource,
+        sourceMessageCount: sourceMessages.length,
+        visibleMessageCount: messages.length,
+        returnedMessageCount: paginated.length,
+        durationMs: Math.max(0, systemNowMs() - startedAt),
+      }, "Session history read complete");
       if (IS_DEV) SessionHistoryContract.response.parse(result);
       return result;
     },
 
     [SessionRunStatusContract.method]: async (rawParams) => {
+      const controller = resolveSubagentController(rawParams);
       const userParams = stripInternalFields(rawParams);
       const params = SessionRunStatusContract.request.parse(userParams);
 
       const runId = params.run_id;
       const run = deps.subAgentRunner.getRunStatus(runId);
-      if (!run) throw new Error(`Unknown run ID: ${runId}`);
-      const result = {
-        runId: run.runId,
-        status: run.status,
-        agentId: run.agentId,
-        task: run.task,
-        sessionKey: run.sessionKey,
-        startedAt: run.startedAt,
-        completedAt: run.completedAt,
-        runtimeMs: run.completedAt ? run.completedAt - run.startedAt : systemNowMs() - run.startedAt,
-        response: run.result?.response,
-        tokensUsed: run.result?.tokensUsed,
-        cost: run.result?.cost,
-        error: run.error,
-      };
+      if (
+        !run
+        || (controller.kind === "caller" && !subagentControllerOwnsRun(controller, run))
+      ) {
+        throw new AuthorizationError("Sub-agent target is unavailable");
+      }
+      const now = systemNowMs();
+      let result: Record<string, unknown>;
+      if (run.status === "queued") {
+        result = {
+          runId: run.runId,
+          status: run.status,
+          agentId: run.agentId,
+          queuedAt: run.queuedAt,
+          runtimeMs: Math.max(0, now - run.queuedAt),
+        };
+      } else if (run.status === "running") {
+        result = {
+          runId: run.runId,
+          status: run.status,
+          agentId: run.agentId,
+          startedAt: run.startedAt,
+          runtimeMs: Math.max(0, now - run.startedAt),
+        };
+      } else {
+        const completion = controller.kind === "admin"
+          ? run.completion
+          : {
+              endReason: run.completion.endReason,
+              completedAtMs: run.completion.completedAtMs,
+              ...(run.completion.endReason !== "completed"
+                ? { errorKind: run.completion.errorKind }
+                : {}),
+            };
+        const startedAt = run.startedAt;
+        result = {
+          runId: run.runId,
+          status: run.status,
+          agentId: run.agentId,
+          ...(startedAt !== undefined ? { startedAt } : {}),
+          runtimeMs: Math.max(
+            0,
+            run.completion.completedAtMs - (startedAt ?? run.completion.completedAtMs),
+          ),
+          completion,
+          ...(run.telemetry ? { telemetry: run.telemetry } : {}),
+        };
+      }
       if (IS_DEV) SessionRunStatusContract.response.parse(result);
       return result;
     },
@@ -364,20 +412,30 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
 // DeliveryStatus join helpers
 // ---------------------------------------------------------------------------
 
-/** Stable join key: `${channelId}::${text}`. The double-colon separator is
- *  safe because channelId is provider-supplied (no colons in practice for
- *  Telegram/Discord/Slack chat IDs); even if it ever included one, the
- *  worst-case is a missed match (some outbound message reported as
- *  confirmed when it is actually pending) -- safer fail-mode than the
- *  reverse. */
-function makePendingKey(channelId: string, text: string): string {
-  return `${channelId}::${text}`;
+function makePendingKey(input: {
+  tenantId: string;
+  agentId: string;
+  conversationRef: ConversationRef;
+  destinationEndpoint: ChannelEndpoint;
+  text: string;
+}): string {
+  return JSON.stringify([
+    input.tenantId,
+    input.agentId,
+    input.conversationRef,
+    input.destinationEndpoint.channelType,
+    input.destinationEndpoint.channelInstanceId,
+    input.destinationEndpoint.conversationId,
+    input.destinationEndpoint.threadId ?? null,
+    input.destinationEndpoint.conversationKind,
+    input.text,
+  ]);
 }
 
 /**
  * Snapshot the DeliveryQueuePort's NOT-yet-delivered entries (pending /
  * in_flight / failed / expired) once per request and return a Set keyed by
- * `(channelId, text)`.
+ * the complete delivery authority, endpoint, and text.
  *
  * Uses `unconfirmedEntries()`, NOT `pendingEntries()`: the latter is
  * drainer-scoped (status='pending' AND scheduled_at<=now) and hides in_flight
@@ -393,9 +451,6 @@ function makePendingKey(channelId: string, text: string): string {
  *     session.history call -- the join is a defense-in-depth signal, not
  *     a correctness requirement of session.history itself).
  *
- * Note: if no message-id link exists, an indirect match (channelId + text)
- * is used; this limitation is documented so a future version can revisit if
- * a stable message id is added.
  */
 async function loadPendingKeySet(
   queue: DeliveryQueuePort | undefined,
@@ -405,7 +460,13 @@ async function loadPendingKeySet(
   if (!r.ok) return new Set();
   const set = new Set<string>();
   for (const entry of r.value as readonly DeliveryQueueEntry[]) {
-    set.add(makePendingKey(entry.channelId, entry.text));
+    set.add(makePendingKey({
+      tenantId: entry.tenantId,
+      agentId: entry.agentId,
+      conversationRef: entry.conversationRef,
+      destinationEndpoint: entry.destinationEndpoint,
+      text: entry.text,
+    }));
   }
   return set;
 }

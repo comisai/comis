@@ -72,7 +72,7 @@ describe("createGatewayServer", () => {
 
   // Plain-HTTP boot posture: the default install (loopback bind, no TLS, no
   // config.yaml) must NOT warn about itself — a loopback listener has no
-  // off-host exposure, matching the fleet `tlsOff` posture finding and the
+  // off-host exposure, matching the system `tlsOff` posture finding and the
   // gateway-exposure security check (both flag only non-loopback binds). The
   // WARN is reserved for the bind that IS reachable off-host.
   describe("plain-HTTP boot posture (loopback vs non-loopback)", () => {

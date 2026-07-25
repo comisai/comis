@@ -1,167 +1,107 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: monitoring source boundary re-raise; consumed via monitoring-source aggregator try/catch chain (daemon.ts bootstrap boundary).
-/**
- * Security Update HeartbeatSourcePort implementation.
- * Detects pending security updates by querying the system package
- * manager (apt-get, dnf, or yum). Gracefully degrades when no
- * supported package manager is found.
- */
-
-import type { SecurityUpdateMonitorConfig } from "@comis/core";
-import type { HeartbeatSourcePort, HeartbeatCheckResult } from "@comis/scheduler";
-import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
+/** Content-free operating-system security-update monitoring adapter. */
+import type { ClockPort, SecurityUpdateMonitorConfig } from "@comis/core";
+import type { HeartbeatSourcePort } from "@comis/scheduler";
+import { err, ok } from "@comis/shared";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { envWithoutSystemdNotify } from "./exec-helpers.js";
-import { systemNowMs } from "@comis/core";
 
 const execFile = promisify(execFileCb);
-
-const SOURCE_ID = "monitor:security-updates";
-const SOURCE_NAME = "Security Update Monitor";
-const EXEC_TIMEOUT_MS = 30_000; // package queries can be slow
-
+const SOURCE_ID = "monitor_security_updates";
+const EXEC_TIMEOUT_MS = 30_000;
 type PackageManager = "apt" | "dnf" | "yum";
 
-/**
- * Detect which package manager is available.
- */
-async function detectPackageManager(): Promise<PackageManager | null> {
-  for (const pm of ["apt-get", "dnf", "yum"] as const) {
+async function detectPackageManager(signal: AbortSignal): Promise<PackageManager | null> {
+  for (const executable of ["apt-get", "dnf", "yum"] as const) {
+    if (signal.aborted) return null;
     try {
-      await execFile("which", [pm], { timeout: 5_000, env: envWithoutSystemdNotify() });
-      return pm === "apt-get" ? "apt" : pm;
+      await execFile("which", [executable], { timeout: 5_000, env: envWithoutSystemdNotify(), signal });
+      return executable === "apt-get" ? "apt" : executable;
     } catch {
-      // Not found, try next
+      // Try the next supported manager.
     }
   }
   return null;
 }
 
-/**
- * Check for updates using apt-get simulate.
- */
-async function checkApt(securityOnly: boolean): Promise<{ count: number; securityCount: number }> {
+async function checkApt(
+  securityOnly: boolean,
+  signal: AbortSignal,
+): Promise<{ count: number; securityCount: number }> {
   const { stdout } = await execFile("apt-get", ["-s", "upgrade"], {
     timeout: EXEC_TIMEOUT_MS,
     env: envWithoutSystemdNotify(),
+    signal,
   });
-
-  // Parse "X upgraded, Y newly installed" line
   const upgradeMatch = stdout.match(/^(\d+)\s+upgraded/m);
-  const totalCount = upgradeMatch ? parseInt(upgradeMatch[1], 10) : 0;
-
-  // Count security updates from Inst lines
-  let securityCount = 0;
-  const lines = stdout.split("\n");
-  for (const line of lines) {
-    if (line.startsWith("Inst ") && /security/i.test(line)) {
-      securityCount++;
-    }
-  }
-
-  return {
-    count: securityOnly ? securityCount : totalCount,
-    securityCount,
-  };
+  const totalCount = upgradeMatch ? Number.parseInt(upgradeMatch[1]!, 10) : 0;
+  const securityCount = stdout.split("\n")
+    .filter((line) => line.startsWith("Inst ") && /security/i.test(line)).length;
+  return { count: securityOnly ? securityCount : totalCount, securityCount };
 }
 
-/**
- * Check for updates using dnf/yum.
- */
 async function checkDnf(
-  pm: "dnf" | "yum",
+  manager: "dnf" | "yum",
   securityOnly: boolean,
+  signal: AbortSignal,
 ): Promise<{ count: number; securityCount: number }> {
   try {
-    const args = securityOnly ? ["check-update", "--security"] : ["check-update"];
-
-    const { stdout } = await execFile(pm, args, {
-      timeout: EXEC_TIMEOUT_MS,
-      env: envWithoutSystemdNotify(),
-    });
-
-    // Count non-empty lines after the header
-    const lines = stdout
-      .trim()
-      .split("\n")
-      .filter((l) => l.trim().length > 0);
-    // dnf check-update returns exit code 100 if updates available, 0 if none
-    return { count: lines.length, securityCount: lines.length };
-  } catch (err: unknown) {
-    // Exit code 100 means updates are available (dnf convention)
-    if (err && typeof err === "object" && "code" in err && (err as { code: number }).code === 100) {
-      const stdout = "stdout" in err ? String((err as { stdout: string }).stdout) : "";
-      const lines = stdout
-        .trim()
-        .split("\n")
-        .filter((l) => l.trim().length > 0);
-      return { count: lines.length, securityCount: lines.length };
+    const { stdout } = await execFile(
+      manager,
+      securityOnly ? ["check-update", "--security"] : ["check-update"],
+      { timeout: EXEC_TIMEOUT_MS, env: envWithoutSystemdNotify(), signal },
+    );
+    const count = stdout.trim().split("\n").filter((line) => line.trim().length > 0).length;
+    return { count, securityCount: count };
+  } catch (error: unknown) {
+    if (error && typeof error === "object" && "code" in error && error.code === 100) {
+      const stdout = "stdout" in error ? String(error.stdout) : "";
+      const count = stdout.trim().split("\n").filter((line) => line.trim().length > 0).length;
+      return { count, securityCount: count };
     }
-    throw err;
+    throw error;
   }
 }
 
-/**
- * Create a security update heartbeat source.
- * Detects the system package manager and checks for pending updates.
- * Returns OK with a note if no supported package manager is found.
- */
 export function createSecurityUpdateSource(
   config: SecurityUpdateMonitorConfig,
+  clock: ClockPort,
 ): HeartbeatSourcePort {
   return {
     id: SOURCE_ID,
-    name: SOURCE_NAME,
-
-    async check(): Promise<HeartbeatCheckResult> {
-      const now = systemNowMs();
-
-      try {
-        const pm = await detectPackageManager();
-
-        if (!pm) {
-          return {
-            sourceId: SOURCE_ID,
-            text: `${HEARTBEAT_OK_TOKEN} No supported package manager detected`,
-            timestamp: now,
-            metadata: { packageManager: null },
-          };
-        }
-
-        let result: { count: number; securityCount: number };
-
-        if (pm === "apt") {
-          result = await checkApt(config.securityOnly);
-        } else {
-          result = await checkDnf(pm, config.securityOnly);
-        }
-
-        if (result.count > 0) {
-          const label = config.securityOnly ? "security updates" : "updates";
-          return {
-            sourceId: SOURCE_ID,
-            text: `CRITICAL: ${result.count} pending ${label} (${result.securityCount} security)`,
-            timestamp: now,
-            metadata: { packageManager: pm, ...result },
-          };
-        }
-
-        return {
-          sourceId: SOURCE_ID,
-          text: `${HEARTBEAT_OK_TOKEN} No pending ${config.securityOnly ? "security " : ""}updates (${pm})`,
-          timestamp: now,
-          metadata: { packageManager: pm, count: 0 },
-        };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return {
-          sourceId: SOURCE_ID,
-          text: `Security update check error: ${msg}`,
-          timestamp: now,
-          metadata: { error: msg },
-        };
+    async check(signal) {
+      if (signal.aborted) return err({ code: "cancelled", errorKind: "timeout" });
+      const manager = await detectPackageManager(signal);
+      if (signal.aborted) return err({ code: "cancelled", errorKind: "timeout" });
+      if (manager === null) {
+        return ok({
+          level: "ok",
+          observedAtMs: clock.now(),
+          code: "package_manager_unavailable",
+          counters: [],
+        });
       }
+      let result: { count: number; securityCount: number };
+      try {
+        result = manager === "apt"
+          ? await checkApt(config.securityOnly, signal)
+          : await checkDnf(manager, config.securityOnly, signal);
+      } catch {
+        return err({
+          code: signal.aborted ? "cancelled" : "package_query_failed",
+          errorKind: signal.aborted ? "timeout" : "dependency",
+        });
+      }
+      return ok({
+        level: result.count > 0 ? "critical" : "ok",
+        observedAtMs: clock.now(),
+        code: result.count > 0 ? "security_updates_pending" : "security_updates_current",
+        counters: [
+          { name: "updates_pending", value: result.count },
+          { name: "security_updates_pending", value: result.securityCount },
+        ],
+      });
     },
   };
 }

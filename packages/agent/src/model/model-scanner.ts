@@ -13,7 +13,7 @@
  * @module
  */
 
-import { type KnownProvider } from "@earendil-works/pi-ai";
+import type { BuiltinProvider } from "@earendil-works/pi-ai/compat";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
 
@@ -104,7 +104,7 @@ const GOOGLE_FALLBACK_BASE_URL = "https://generativelanguage.googleapis.com";
  */
 export function getCatalogBaseUrl(type: string): string | undefined {
   if (!_nativeProviders.has(type)) return undefined;
-  return getModels(type as KnownProvider)[0]?.baseUrl;
+  return getModels(type as BuiltinProvider)[0]?.baseUrl;
 }
 
 /**

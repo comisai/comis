@@ -291,6 +291,9 @@ describe("buildTaskDelegationSection", () => {
     const joined = result.join("\n");
     expect(joined).toContain("Do NOT Delegate");
     expect(joined).toContain("How to Delegate");
+    expect(joined).toContain("bound automatically");
+    expect(joined).not.toContain("announce_channel_type");
+    expect(joined).not.toContain("announce_channel_id");
   });
 
   it("includes parallel sub-agent guidance", () => {
@@ -359,10 +362,10 @@ describe("buildPrivilegedToolsSection", () => {
     expect(joined).toContain("Read-only");
   });
 
-  it("includes fleet management patterns", () => {
+  it("includes agent administration patterns", () => {
     const result = buildPrivilegedToolsSection(["obs_query", "models_manage"], false);
     const joined = result.join("\n");
-    expect(joined).toContain("### Fleet Management Patterns");
+    expect(joined).toContain("### System Management Patterns");
   });
 
   it("works with all 11 privileged tool names", () => {

@@ -11,7 +11,10 @@
  * @module
  */
 
-import type { NormalizedMessage } from "@comis/core";
+import {
+  getOriginalInboundMessages,
+  type NormalizedMessage,
+} from "@comis/core";
 
 /**
  * Coalesce multiple messages into a single NormalizedMessage.
@@ -67,5 +70,6 @@ export function coalesceMessages(
     timestamp: latestTimestamp,
     attachments: allAttachments,
     metadata: mergedMetadata,
+    originalMessages: messages.flatMap(getOriginalInboundMessages),
   };
 }

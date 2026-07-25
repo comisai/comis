@@ -6,9 +6,9 @@ icon: "code"
 
 **What this is for:** every JSON-RPC method the daemon exposes — what to send, what comes back, and which scope you need. **Who it's for:** developers building CLIs, dashboards, or external integrations against the Comis gateway.
 
-Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 170 methods across 41 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, autonomy live-control (lease-revoke / run-kill / autonomy-evict), platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
+Complete reference for the JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports, covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, cross-channel messaging, sub-agent lifecycle, autonomy controls, platform actions, notifications, secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
 
-Method count is sourced from `packages/core/src/api-contracts/` contract files (167 unique method strings across 39 namespaces). The 29 handler-factory modules in `packages/daemon/src/api/rpc-dispatch.ts` implement these contracts. Some older handler files may use additional direct-keyed methods not yet covered by the contracts layer; 167 represents the formally declared public API surface.
+The authoritative method set is `API_CONTRACTS_ORDERED` in `packages/core/src/api-contracts/`. Gateway registration is derived from that registry, and the bidirectional architecture check prevents handler/contract drift; this reference therefore avoids a hand-maintained global method count.
 
 ## Session-creation walkthrough
 
@@ -51,23 +51,27 @@ The most common end-to-end flow: open a connection, ping for liveness, kick off 
   <Step title="Inspect or list the session">
     `session.list` enumerates active sessions; `session.history` reads the full message log for one session.
     ```json
-    {"jsonrpc":"2.0","method":"session.list","id":3}
+    {"jsonrpc":"2.0","method":"session.list","params":{"tenant_id":"default","agent_id":"default"},"id":3}
     ```
   </Step>
   <Step title="Clean up when done">
-    Use `session.delete` (admin) to remove a session. The session entry plus its memory entries are dropped.
+    Use `session.delete` (admin) to archive and remove the exact conversation partition. RAG memories are not deleted by this method; use `session.reset_conversation` with `memory: true` for that separate destructive operation.
     ```json
     {
       "jsonrpc": "2.0",
       "method": "session.delete",
-      "params": { "key": "default:alice:cli" },
+      "params": {
+        "tenant_id": "default",
+        "agent_id": "default",
+        "conversation_ref": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o"
+      },
       "id": 4
     }
     ```
   </Step>
 </Steps>
 
-That same pattern works whether you call over WebSocket or `POST /rpc`. For streaming token deltas use the SSE endpoint `GET /api/chat/stream` documented in [HTTP Gateway](/reference/http-gateway#sse-endpoints).
+That same pattern works whether you call over WebSocket or `POST /rpc`. For streaming token deltas use the SSE endpoint `POST /api/chat/stream` documented in [HTTP Gateway](/reference/http-gateway#sse-endpoints).
 
 ## Scopes
 
@@ -225,7 +229,7 @@ Agent execution for processing user messages through the LLM pipeline, cache sta
 
 ### `agent.stream`
 
-Same parameters as `agent.execute`. Token-delta streaming over JSON-RPC is not currently implemented -- the gateway logs a warning and falls back to a non-streaming response. For real-time streaming use the SSE endpoint `GET /api/chat/stream` documented in [HTTP Gateway](/reference/http-gateway#sse-endpoints).
+Same parameters as `agent.execute`. Token-delta streaming over JSON-RPC is not currently implemented -- the gateway logs a warning and falls back to a non-streaming response. For real-time streaming use the SSE endpoint `POST /api/chat/stream` documented in [HTTP Gateway](/reference/http-gateway#sse-endpoints).
 
 ### `agent.getOperationModels`
 
@@ -608,7 +612,7 @@ Get activity data for all channels, merging live in-memory data with historical 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ channelId: string }` (required) |
+| **Parameters** | `{ channelType: string, channelId: string }` (both required) |
 | **Returns** | `{ channel: ChannelActivity \| null }` |
 
 ### `obs.delivery.recent`
@@ -616,24 +620,25 @@ Get activity data for all channels, merging live in-memory data with historical 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ sinceMs?: number, limit?: number, channelId?: string }` |
-| **Returns** | `{ deliveries: DeliveryTrace[] }` |
+| **Parameters** | `{ sinceMs?: number, limit?: number, channelId?: string, channelType?: string }` |
+| **Returns** | `{ deliveries: DeliveryTrace[] }` where every trace carries required source and target channel types and IDs |
 
 ### `obs.delivery.stats`
 
-Get aggregate delivery statistics: total messages attempted, successes, failures, and average delivery latency. Combines in-memory counters with the SQLite observability store for a complete picture across daemon restarts.
+Get aggregate message-lifecycle statistics across daemon restarts. `total` includes every completed lifecycle, while `attempted` is the delivery-health denominator (`success + error + timeout`). Intentional filtering and user cancellation are reported separately and do not depress the success rate. Average latency uses attempted deliveries only. Pass `sinceMs` as a duration-ago window; omit it for the complete retained history.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | None |
-| **Returns** | `{ total: number, successes: number, failures: number, avgLatencyMs: number }` |
+| **Parameters** | `{ sinceMs?: number }` (non-negative integer duration in milliseconds) |
+| **Returns** | `{ total: number, attempted: number, success: number, error: number, timeout: number, filtered: number, aborted: number, avgLatencyMs: number }` |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "obs.delivery.stats",
+  "params": { "sinceMs": 86400000 },
   "id": 1
 }
 ```
@@ -641,9 +646,13 @@ Get aggregate delivery statistics: total messages attempted, successes, failures
 {
   "jsonrpc": "2.0",
   "result": {
-    "total": 1204,
-    "successes": 1198,
-    "failures": 6,
+    "total": 1212,
+    "attempted": 1204,
+    "success": 1198,
+    "error": 4,
+    "timeout": 2,
+    "filtered": 7,
+    "aborted": 1,
     "avgLatencyMs": 142
   },
   "id": 1
@@ -761,38 +770,50 @@ Synthetic/test-harness session rows are excluded by default; pass `includeSynthe
 
 Assemble a self-contained, redaction-safe post-mortem (an `IncidentReport`) for a single agent session: outcome, cost, timing, per-tool stats, the normalized failures (newest-first), the circuit-breaker timeline, large-result offloads, a one-line summary, and a deterministic `likelyRootCause`. The report is derived from log evidence only -- no LLM is invoked -- so it reproduces the same verdict from the same session forever.
 
-`outcome.endReason` names the terminal cause. Three degradation causes are named individually rather than collapsing into a generic `error` (and drive `likelyRootCause`): **`context_exhausted`** (the context-window pre-flight guard aborted the run before the model could continue), **`output_starved`** (the final response was truncated at the model's max output tokens; the fix is to raise the agent's `maxTokens` or enable `contextEngine.outputEscalation`), and **`timeout`** (the prompt-level stall budget or makespan ceiling killed the turn; `likelyRootCause` code `prompt_timeout` -- when the trajectory carries the enriched `execution.prompt_timeout` record the verdict is numbers-backed: the stall variant names the binding knob, e.g. `agents.<id>.promptTimeout.promptTimeoutMs`, with the configured budget and elapsed time, and the makespan variant names `agents.<id>.promptTimeout.stallCeilingMultiplier` for a streaming runaway; sessions whose trajectory lacks that record fall back to a generic knob suggestion). A tool-failure root cause still out-ranks them -- they explain the terminal state, not a tool crash. The same causes are aggregated fleet-wide by [`obs.fleet.health`](#obs-fleet-health)'s `degradedByCause`.
+`outcome.endReason` names the terminal cause. Three degradation causes are named individually rather than collapsing into a generic `error` (and drive `likelyRootCause`): **`context_exhausted`** (the context-window pre-flight guard aborted the run before the model could continue), **`output_starved`** (the final response was truncated at the model's max output tokens; the fix is to raise the agent's `maxTokens` or enable `contextEngine.outputEscalation`), and **`timeout`** (the prompt-level stall budget or makespan ceiling killed the turn; `likelyRootCause` code `prompt_timeout` -- when the trajectory carries the enriched `execution.prompt_timeout` record the verdict is numbers-backed: the stall variant names the binding knob, e.g. `agents.<id>.promptTimeout.promptTimeoutMs`, with the configured budget and elapsed time, and the makespan variant names `agents.<id>.promptTimeout.stallCeilingMultiplier` for a streaming runaway; sessions whose trajectory lacks that record fall back to a generic knob suggestion). A tool-failure root cause still out-ranks them -- they explain the terminal state, not a tool crash. The same causes are aggregated deployment-wide by [`obs.system.health`](#obs-system-health)'s `degradedByCause`.
+
+An `outcome.endReason` of **`background_pending`** means the foreground turn
+deliberately ended after promoting work; the terminal user outcome belongs to
+the durable background completion and exact-origin delivery lifecycle.
+`likelyRootCause.code` is `background_pending` and its steps point to the
+`background_task:promoted` → `background_task:completed` → either
+`background_task:notified` (including `live_turn_consumed` and fallback routes)
+or `background_task:reentered`. If protected restart recovery could not
+durably reset a task transition, the higher-priority
+`background_recovery_retry_required` verdict points to the retained
+reconciliation authority and the
+`health_signal:background_task_recovery_failed` system-health signal.
 
 For `context_exhausted` sessions the report carries an optional **`contextBudget`** section -- the terminal per-LLM-call budget equation extracted from the trajectory's `context.budget` records (last record wins): `{ windowTokens, rawContextWindowTokens, windowCapSource, systemTokens, freshTailTokens, budgetedHistoryTokens, keptCount, assembledInputTokens, outputHeadroom, verdict }`. `windowCapSource` names what clamped the effective window below the model's configured `contextWindow`: the exact `contextEngine.budget.*` knob (`effectiveContextCapSmall` / `effectiveContextCapNano`), `served` (the Ollama-served `num_ctx` bound the window -- fix with `OLLAMA_CONTEXT_LENGTH=<configured> ollama serve` or a Modelfile `PARAMETER num_ctx`), `capabilityClass` (the operator's `providers.entries.<id>.capabilities.capabilityClass` pin bound the window -- pin a higher class or remove the pin; the `contextEngine.budget.*` caps do not move this bind), or `none`. `verdict` is the fit-check outcome (`fits` / `downshifted` / `exhausted`). When present, `likelyRootCause` is numbers-backed: it states the assembled-vs-window totals, the binding cap, the system+tools share of the window, and the kept-history count, and its suggested steps name the binding lever (the budget knob to raise, the Ollama serve knobs, or the `capabilityClass` pin) or recommend reducing the active tool surface when tool schemas dominate. The section is absent when the trajectory carries no `context.budget` records; the verdict then falls back to the generic wording.
 
-When the session ran any memory recalls the report carries an optional **`recall`** section -- the memory-recall outcome aggregated over the trajectory's `memory.recalled` records: `{ recalls, zeroHits, lastLanes, lastFinalCount, rerankerAvailable, crossUserRecalls?, lastCrossUserCount? }` (counts and booleans only -- never the query text or any recalled memory body). `recalls` is how many recalls ran, `zeroHits` how many returned **no** injected memories (a recall miss), and the `last*` fields describe the terminal recall (its lane count and final injected-memory count). **`crossUserRecalls`** (present only when `> 0`) is how many recalls injected at least one memory scoped to a **different user** than the conversation -- the cross-sender privacy signal for agent-scoped recall (one shared agent surfacing sender A's memory into sender B's turn), so "was cross-sender data injected into this turn's context?" is answerable from the always-on report without pre-enabling the opt-in `diagnostics.recallTrace` artifact; **`lastCrossUserCount`** is the terminal recall's cross-user injected count. Counts only -- never the user-ids or bodies. This drives a dedicated **`recall_miss`** `likelyRootCause` verdict: a degraded session whose recalls **all** missed (`zeroHits === recalls`) and that matched no tool/context/breaker cause is root-caused as a recall miss, pointing the operator at the recall **scope** (agent- vs user-scoped) and, for non-Latin queries, the trigram-twin lanes (see [`comis fleet`](#obs-fleet-health) `health_signal` / `config_posture` embedder). A zero-hit recall on a **healthy** turn is benign -- the agent simply did not need memory -- and never names a cause. The section is absent for sessions with no recall records.
+When the session ran any memory recalls the report carries an optional **`recall`** section -- the memory-recall outcome aggregated over the trajectory's `memory.recalled` records: `{ recalls, zeroHits, lastLanes, lastFinalCount, rerankerAvailable, crossUserRecalls?, lastCrossUserCount? }` (counts and booleans only -- never the query text or any recalled memory body). `recalls` is how many recalls ran, `zeroHits` how many returned **no** injected memories (a recall miss), and the `last*` fields describe the terminal recall (its lane count and final injected-memory count). **`crossUserRecalls`** (present only when `> 0`) is how many recalls injected at least one memory scoped to a **different user** than the conversation -- the cross-sender privacy signal for agent-scoped recall (one shared agent surfacing sender A's memory into sender B's turn), so "was cross-sender data injected into this turn's context?" is answerable from the always-on report without pre-enabling the opt-in `diagnostics.recallTrace` artifact; **`lastCrossUserCount`** is the terminal recall's cross-user injected count. Counts only -- never the user-ids or bodies. This drives a dedicated **`recall_miss`** `likelyRootCause` verdict: a degraded session whose recalls **all** missed (`zeroHits === recalls`) and that matched no tool/context/breaker cause is root-caused as a recall miss, pointing the operator at the recall **scope** (agent- vs user-scoped) and, for non-Latin queries, the trigram-twin lanes (see [`comis system-health`](#obs-system-health) `health_signal` / `config_posture` embedder). A zero-hit recall on a **healthy** turn is benign -- the agent simply did not need memory -- and never names a cause. The section is absent for sessions with no recall records.
 
 When the session ran a transcription or synthesis the report carries an optional **`voice`** block reconstructing that turn from the trajectory's `media.stt.*` / `media.tts.*` records: `{ provider, keyless, model?, durationMs?, costUsd?, source?, outcome, errorKind? }`. `keyless` is whether the resolved provider ran without a credential; `source` is the resolved selection rung (`keyless-local` / `follow-main-key` / `fallback` / `explicit`); `outcome` is `"ok"` / `"failed"`; `errorKind` is the domain voice error (`no_keyless_engine` / `auth_required` / `model_load_failed` / `model_download_failed` / `timeout` / `network` / `dependency`) on a failure. `costUsd` is `0` for a keyless turn (free is **visible**) and **omitted** for a keyed turn — the STT/TTS ports return no per-call cost, so Comis never fabricates one. The block is content-free (ids/labels/numbers/booleans only — never the audio or transcript text) and absent for sessions with no voice records. See [Voice → Observability and cost](/media/voice#observability-and-cost).
 
 When the **Verified Learning** outcome signal observed the turn the report carries an optional **`learning`** block reconstructed from the trajectory's `learning.outcome_observed` records: `{ outcomeResolved, outcome?, sources, skillsUsed, skillFailures, synthesisAbstained, skillsPromoted?, skillsDemoted?, failuresAttributed? }` (counts / ids / closed enums only — never a message body, a confidence value, or a recalled/skill id). The three optional counts surface the session's learning *transitions* in one call: `skillsPromoted`/`skillsDemoted` (candidate→active promotions / demotions, from `learning.skill_promoted`/`skill_demoted`) and `failuresAttributed` (memories that accrued a **corroborated** failure this session — the eviction-causation precursor, from `learning.memory_failure_attributed`); each is present only when it fired (additive, schemaVersion 1). `outcomeResolved` is `false` when the learning shadow saw a **finished** trajectory but **no** signal tier produced a resolvable outcome; `outcome` is the fused verdict (`success` / `failure` / `corrected` / `unknown`) when one resolved; `sources` are the contributing signal sources (`tool` / `pipeline` / `correction` / `judge` / `reaction` / `explicit`, deduped). This drives a dedicated **`outcome_unresolved`** `likelyRootCause` verdict — a **benign, lowest-priority** diagnostic that fires only when `outcomeResolved` is `false` and **no** acute cause matched (Defer ≠ Retry: an unresolved outcome is not a failure, so every tool-failure cause out-ranks it). It is **distinct** from an explicit `unknown` outcome (which IS a resolution); the verdict means the signal was never resolvable — e.g. a conversational turn with no deterministic tool/pipeline signal AND no judge verdict (the cost-gated LLM judge fallback is off, or it too abstained `unknown`). The **procedural-skill** fields are populated when the [`learning`](/reference/config-yaml#learning-agents-learning) layer is enabled: `skillsUsed` is the ids of the learned procedures whose `<location>` a `read` in the turn matched, `skillFailures` is the used-doc ids in a **failed / corrected** trajectory (a learned procedure implicated in a bad outcome — content-free ids only), and `synthesisAbstained` is `true` when the offline reflection cron deferred (the agent's model tier was below the capability gate). They drive two **benign, low-priority** `likelyRootCause` verdicts ranked below every acute cause but above the generic `outcome_unresolved`: **`learned_skill_failing`** (fires on a non-empty `skillFailures`; names the failing skill ids and points at [`comis memory skills`](/reference/cli#comis-memory)) and **`synthesis_abstained_low_capability`** (fires on `synthesisAbstained`; **benign** — Defer ≠ Retry, an abstain is never a failure or a retry). A learned procedure repeatedly used in failed/corrected reuse is **demoted** (`active` → `stale` → `archived`, corroboration-gated), which drops it from the read-only surface; its lifecycle emits two **counts-only** trajectory events — **`learning:skill_promoted`** (a candidate crossed the proof bar to `active`) and **`learning:skill_demoted`** (an active procedure weakened to `stale`) — both carrying `{ agentId, count, timestamp }` only. The block is absent for sessions with no learning records (the layer is per-agent default-off); the per-agent outcome coverage is aggregated by [`comis memory learning`](/reference/cli#comis-memory) and the admission funnel by [`comis memory skills`](/reference/cli#comis-memory).
 
-The **reflection cron** itself emits two **counts-only** trajectory events, surfaced through `comis explain` / `comis fleet` and bridged so a reflection run is reconstructable per session — never a doc body:
+The **reflection cron** itself emits two **counts-only** trajectory events, surfaced through `comis explain` / `comis system-health` and bridged so a reflection run is reconstructable per session — never a doc body:
 
 - **`reflect:admitted`** — `{ agentId, count, timestamp }`: the number of candidate docs admitted to the store this run.
 - **`reflect:funnel`** — `{ agentId, synthesized, validated, admitted, maxClusterCardinality, distinctTopicKeys, untrustedDrops, nameLengthRejections, skipped, sourceTrajectoryCount, totalSourceChars, admissionOutcome, timestamp }`: the whole admission funnel as counts plus one content-free closed enum. `maxClusterCardinality` is the largest distinct `(session, sender)` corroboration size (a value of `1` means a single uncorroborated instance, so admission correctly refused — the same conservatism that defeats poisoning). `distinctTopicKeys` is the under-merge **discriminator** — `synthesized > 1` with `distinctTopicKeys > 1` and `maxClusterCardinality < 2` means the successes landed on *separate* topicKeys (under-merge → the LLM-tag-fallback trigger), vs `distinctTopicKeys: 1, maxClusterCardinality ≥ 2` = genuinely corroborated. `untrustedDrops` is the magnitude behind an `untrusted_origin` verdict; `sourceTrajectoryCount`/`totalSourceChars` distinguish an empty-source wiring gap (0 chars in) from an LLM-yield (real chars in, nothing admitted). `admissionOutcome` is the **`reflectOutcome`** verdict — a closed string union, one of: `admitted`, `no_successes` (no trusted-origin success cleared SELECT), `untrusted_origin` (all successes dropped at SELECT for an external-trust source), `uncorroborated` (`cardinality < 2`), `empty_reflection`, `rejected_name_length` (a doc name over the cap), or `rejected_validation` — so `comis explain` answers "why was 0 admitted" from one field.
 
-The wrongness-based **forgetting** sweep emits its own trajectory signals, surfaced through the same `comis explain` / `comis fleet` lenses and **counts only** — never a memory body: **`learning:memory_demoted`** / **`learning:memory_evicted`** (the per-sweep soft-eviction counts), plus a once-per-run **`learning:lifecycle_swept`** (`{ agentId, scanned, promoted, demoted, evicted, timestamp }`) summary. The summary is folded onto the cron run history (`cron.runs jobName "Memory lifecycle"` shows `scanned/evicted/demoted` per sweep) and rolled into a daemon-wide **`memory_lifecycle`** `comis fleet` finding (run count + summed evicted/demoted; `evicted=0` is usually healthy — no corroborated-wrong / dormant candidates — not a fault). The corroborated-failure **accrual** that *precedes* eviction emits **`learning:memory_failure_attributed`** (`{ agentId, count, timestamp }`) so "why did/didn't this memory evict" has an event trail. They are bridged onto the trajectory so an eviction sweep is reconstructable per session; they are part of the one learning layer (`agents.<id>.learning.enabled`, force-disabled by `memory.enabled: false`) and read `learning.forget.*`. Recall ranking is the fixed `rag.scoring` fusion — there is no learned recall weight. The per-memory recall **score breakdown** (the `recall` records) still carries a `usefulnessOutcomeShare` annotation — the outcome-attributed component of a memory's usefulness factor (the bounded `recordUsage`/`recordFailure` feed), distinct from its lexical relevance base (a derived, normalized share — never a raw learned weight).
+The wrongness-based **forgetting** sweep emits its own trajectory signals, surfaced through the same `comis explain` / `comis system-health` lenses and **counts only** — never a memory body: **`learning:memory_demoted`** / **`learning:memory_evicted`** (the per-sweep soft-eviction counts), plus a once-per-run **`learning:lifecycle_swept`** (`{ agentId, scanned, promoted, demoted, evicted, timestamp }`) summary. The summary is folded onto the cron run history (`cron.runs jobName "Memory lifecycle"` shows `scanned/evicted/demoted` per sweep) and rolled into a daemon-wide **`memory_lifecycle`** `comis system-health` finding (run count + summed evicted/demoted; `evicted=0` is usually healthy — no corroborated-wrong / dormant candidates — not a fault). The corroborated-failure **accrual** that *precedes* eviction emits **`learning:memory_failure_attributed`** (`{ agentId, count, timestamp }`) so "why did/didn't this memory evict" has an event trail. They are bridged onto the trajectory so an eviction sweep is reconstructable per session; they are part of the one learning layer (`agents.<id>.learning.enabled`, force-disabled by `memory.enabled: false`) and read `learning.forget.*`. Recall ranking is the fixed `rag.scoring` fusion — there is no learned recall weight. The per-memory recall **score breakdown** (the `recall` records) still carries a `usefulnessOutcomeShare` annotation — the outcome-attributed component of a memory's usefulness factor (the bounded `recordUsage`/`recordFailure` feed), distinct from its lexical relevance base (a derived, normalized share — never a raw learned weight).
 
 > **One reflection cron.** There are no standalone user-representation or consolidation/reasoning crons and no dedicated revision/generalization telemetry events: that work runs inside the one reflection cron as `kind:"profile"` / `kind:"topic"` docs (see [memory config](/agents/memory-config#the-one-learning-reflection-engine)). A profile revision surfaces through the `reflect:*` funnel above, not a dedicated event.
 
 For an **unattended coding-CLI drive** (a webhook/cron turn that opens a `claude`/terminal drive), two dedicated `likelyRootCause` verdicts diagnose the two ways such a drive strands — both derived from the bridged terminal-drive trajectory records (counts / closed enums only, never screen text): **`terminal_drive_opened_without_task`** fires when a drive was created (`terminal_session_create.ok ≥ 1`) but NO task was ever delivered (zero `terminal_session_send_text` successes) — the driven CLI sat idle and the build never started (it cites the backgrounding reason from `terminal.drive_promoted` when present, and out-ranks the `completed_with_tool_errors` catch-all since a stray failure during the stall is incidental). **`terminal_drive_evicted`** fires when the reaper cut a drive short — folded from `terminal.session_evicted` into a `terminalDriveEvicted { reason, idleMs, wasProducing }` signal — but ONLY on the `idle` and `wall_clock` caps (a drive quiet past `worker.idleTtlMs`, or older than the entry's `limits.wallClockMs`), never the benign `max_sessions` LRU or the deliberate `max_interactions` budget. `wasProducing` is derived (no new event) from whether a `producing` `terminal.drive_promoted` preceded the eviction: an idle-reap of a drive that HAD been producing is the acute canary that the producing-drive keep-alive regressed, and the verdict names it as such. Both fire regardless of `endReason` (the turn that opened the drive often ended `success`), so a reaper-killed autonomous drive is a one-call diagnosis instead of a hand-correlation of the daemon WARN against the last activity.
 
-When the session ran any [`orchestrate`](/agent-tools/orchestrate) scripts the report carries an optional **`orchestrate`** array — one content-free entry per run, reconstructed from the run's `orchestrate.run_summary` + per-run `capability.audited` trajectory records: `{ runId, leaseId?, outcome, durationMs, exitCode, failureClass?, toolCalls[], resultRefs: { count, bytes }, savings? }` (ids, closed enums, counts, and token **estimates** only — never the script body, stdout, tool args, or the stderr tail). `outcome` derives from `exitCode` (`0` → `success`); `failureClass` is a closed enum (`timeout` / `stdout_cap` / `nonzero_exit` / `spawn_fail` / `lease_absent`) present only on a failed run; each `toolCalls` entry (`{ tool, capability, decision, count }`) is attributed to the run by its **per-run child leaseId**, so an in-jail `decision: "deny"` groups under the run that attempted it, not the shared assembly lease that spans the session; `savings` (`{ estSavedTokens, savedRatio }`) is the measured token-savings estimate, present only when the run materialized ResultRefs. This drives a deterministic **`orchestrate_failed`** `likelyRootCause` verdict — it fires when any run's `outcome` is `failure` **or** any `toolCalls` entry is a `deny`, names the failed-of-total run count with the de-duplicated `failureClass` / `exitCode` / denied-capability sets, and (keyed on a signal absent from a non-autonomy session) never reorders the other verdicts. Note that `capability:audited` records the **authorization** decision only — an *allowed* tool call whose result then failed is not in that stream; the run-level `failureClass` + the failing tool's own bounded stderr tail cover that half. The daemon-wide savings roll-up is [`obs.fleet.health`](#obs-fleet-health)'s `orchestrate_efficiency` finding. The section is absent for sessions that ran no orchestrate scripts.
+When the session ran any [`orchestrate`](/agent-tools/orchestrate) scripts the report carries an optional **`orchestrate`** array — one content-free entry per run, reconstructed from the run's `orchestrate.run_summary` + per-run `capability.audited` trajectory records: `{ runId, leaseId?, outcome, durationMs, exitCode, failureClass?, toolCalls[], resultRefs: { count, bytes }, savings? }` (ids, closed enums, counts, and token **estimates** only — never the script body, stdout, tool args, or the stderr tail). `outcome` derives from `exitCode` (`0` → `success`); `failureClass` is a closed enum (`timeout` / `stdout_cap` / `nonzero_exit` / `spawn_fail` / `lease_absent`) present only on a failed run; each `toolCalls` entry (`{ tool, capability, decision, count }`) is attributed to the run by its **per-run child leaseId**, so an in-jail `decision: "deny"` groups under the run that attempted it, not the shared assembly lease that spans the session; `savings` (`{ estSavedTokens, savedRatio }`) is the measured token-savings estimate, present only when the run materialized ResultRefs. This drives a deterministic **`orchestrate_failed`** `likelyRootCause` verdict — it fires when any run's `outcome` is `failure` **or** any `toolCalls` entry is a `deny`, names the failed-of-total run count with the de-duplicated `failureClass` / `exitCode` / denied-capability sets, and (keyed on a signal absent from a non-autonomy session) never reorders the other verdicts. Note that `capability:audited` records the **authorization** decision only — an *allowed* tool call whose result then failed is not in that stream; the run-level `failureClass` + the failing tool's own bounded stderr tail cover that half. The daemon-wide savings roll-up is [`obs.system.health`](#obs-system-health)'s `orchestrate_efficiency` finding. The section is absent for sessions that ran no orchestrate scripts.
 
-Accepts ONE of `sessionKey` / `traceId` / `rootRunId` (at least one is required). A `traceId` *or* a `rootRunId` is canonicalized to its `sessionKey` first, so by-trace, by-session, and by-run produce the identical report. `rootRunId` is an autonomy run's id — the synthetic in-process `root-session-<sessionKey>` (resolved by a pure prefix-strip) or a real spawned/socket root (resolved by scanning the day-keyed session-index for the run's `capability.audited` record). It is the [`obs.fleet.health`](#obs-fleet-health) → `obs.explain` drill-down ref: pass the fleet report's `autonomy.worstRootRunId` to render that run's `spawnTree`. An unresolvable `rootRunId` (or `traceId`) yields the honest `session_not_found` marker naming the ref that missed — never a clean-looking empty report. There is **no by-job-id form**: a cron [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) skip opens no session, so a cron **job id** is not a valid input — read a job's skipped fires from [`cron.runs`](#cron-runs) instead.
+Accepts ONE of `sessionKey` / `traceId` / `rootRunId` (at least one is required). A `traceId` *or* a `rootRunId` is canonicalized to its `sessionKey` first, so by-trace, by-session, and by-run produce the identical report. `rootRunId` is an autonomy run's id — the synthetic in-process `root-session-<sessionKey>` (resolved by a pure prefix-strip) or a real spawned/socket root (resolved by scanning the day-keyed session-index for the run's `capability.audited` record). It is the [`obs.system.health`](#obs-system-health) → `obs.explain` drill-down ref: pass the system report's `autonomy.worstRootRunId` to render that run's `spawnTree`. An unresolvable `rootRunId` (or `traceId`) yields the honest `session_not_found` marker naming the ref that missed — never a clean-looking empty report. There is **no by-job-id form**: a cron [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) skip opens no session, so a cron **job id** is not a valid input — read a job's skipped fires from [`cron.runs`](#cron-runs) instead.
 
-When a scheduled fire's wake-gate **woke** the model, the resulting session's report folds an optional content-free `cronWakeGate` fact — `{ jobId, wake, durationMs, toolCalls, estTurnsSaved }` (ids and counts only, never the gate's gathered finding or script). It is present only when the woke fire ran in a session the recorder had already opened; a **skipped** fire runs no model and reaches no report. The cross-job skip-rate / turns-saved rollup is on [`obs.fleet.health`](#obs-fleet-health)'s `cronWakeGate` block.
+When a scheduled fire's wake-gate **woke** the model, the resulting session's report folds an optional content-free `cronWakeGate` fact — `{ jobId, wake, durationMs, toolCalls, estTurnsSaved }` (ids and counts only, never the gate's gathered finding or script). It is present only when the woke fire ran in a session the recorder had already opened; a **skipped** fire runs no model and reaches no report. The cross-job skip-rate / turns-saved rollup is on [`obs.system.health`](#obs-system-health)'s `cronWakeGate` block.
 
 `depth: "summary"` (the default) bounds the serialized report to roughly 6 KB (about 1,500 tokens) and caps the failure list; `depth: "full"` relaxes the array caps. At BOTH depths the report is digest-only: no raw tool-output body is ever inlined (oversized previews and untrusted external content collapse to a `resultDigest` fingerprint), and an honest `truncations[]` ledger records anything the bounding pass dropped.
 
 An optional `coverage` block reports READ-coverage -- whether the trajectory, rollup, and each offload pointer were actually located and resolved (`{ trajectory: { found, records }, rollup: { present }, offloads: { pointersResolved, pointersTotal } }`) -- distinct from `truncations[]`, which records what the size-bounding pass dropped. A degraded report is self-evident from it (e.g. `records: 0` or `pointersResolved < pointersTotal`) rather than masquerading as a clean session. When the session resolved to real on-disk artifacts, `coverage.sources` carries the source **paths** (pointers, never bodies): `{ session, trajectory }`. The distinction is load-bearing for numeric/value reconciliation -- the `.trajectory.jsonl` holds tool-call **provenance** only (`toolName` / `success` / `durationMs`; the result body is deliberately kept out of the event stream for secret-egress safety), while the co-located raw session `.jsonl` (`sources.session`) holds the tool-result **values** the model actually saw. To reconcile a reported figure to the tool result that produced it, read `session` (values), not `trajectory` (provenance); large results additionally offload to disk (`offloads[].diskPathRel`).
 
-`coverage.toolStats` reconciles this report's per-tool `toolStats` (the **whole-session** trajectory union) against the persisted per-session rollup that [`obs.fleet.health`](#obs-fleet-health) reads (the **latest-execution** rollup -- it is built per execution and the session metadata is overwritten each turn). The two lenses read structurally-different sources, so they CAN differ for the same session -- but only in one direction: the rollup is a subset of the trajectory (`rollup.{ok,failed} <= trajectory.{ok,failed}` per tool). The block (`{ reconciled, rollupSource: "last-execution", divergentTools: [{ tool, rollup: { ok, failed }, trajectory: { ok, failed } }] }`) makes that gap transparent so `comis explain` and `comis fleet` can never silently contradict: `divergentTools[]` names each tool whose persisted rollup differs from the trajectory with both count pairs, and `reconciled` is the directional invariant (a rollup that OVER-counts the trajectory -- the forbidden direction, including a tool present in the rollup but absent from the trajectory -- flips it to `false` and surfaces the offending tool instead of hiding it).
+`coverage.toolStats` reconciles this report's per-tool `toolStats` (the **whole-session** trajectory union) against the persisted per-session rollup that [`obs.system.health`](#obs-system-health) reads (the **latest-execution** rollup -- it is built per execution and the session metadata is overwritten each turn). The two lenses read structurally-different sources, so they CAN differ for the same session -- but only in one direction: the rollup is a subset of the trajectory (`rollup.{ok,failed} <= trajectory.{ok,failed}` per tool). The block (`{ reconciled, rollupSource: "last-execution", divergentTools: [{ tool, rollup: { ok, failed }, trajectory: { ok, failed } }] }`) makes that gap transparent so `comis explain` and `comis system-health` can never silently contradict: `divergentTools[]` names each tool whose persisted rollup differs from the trajectory with both count pairs, and `reconciled` is the directional invariant (a rollup that OVER-counts the trajectory -- the forbidden direction, including a tool present in the rollup but absent from the trajectory -- flips it to `false` and surfaces the offending tool instead of hiding it).
 
 | Property | Value |
 |----------|-------|
@@ -805,7 +826,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
 {
   "jsonrpc": "2.0",
   "method": "obs.explain",
-  "params": { "sessionKey": "default:678314278:678314278:peer:678314278", "depth": "summary" },
+  "params": { "sessionKey": "default:agent:default:user_a:telegram:peer:user_a", "depth": "summary" },
   "id": 1
 }
 ```
@@ -814,7 +835,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
   "jsonrpc": "2.0",
   "result": {
     "schemaVersion": 1,
-    "sessionKey": "default:678314278:678314278:peer:678314278",
+    "sessionKey": "default:agent:default:user_a:telegram:peer:user_a",
     "outcome": { "endReason": "completed_with_tool_errors", "degraded": true, "severity": "degraded" },
     "cost": { "costUsd": 1.320669, "totalTokens": 735800, "cacheReadRatio": 0 },
     "timing": { "durationMs": 247740, "turnCount": 25 },
@@ -847,43 +868,43 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
 The `comis explain` CLI command (see the [CLI reference](/reference/cli)) and the `obs_query` agent `explain` / `session_report` actions surface this same report.
 </Note>
 
-### `obs.fleet.health`
+### `obs.system.health`
 
-Assemble a bounded, redaction-safe **cross-session** fleet-health triage (a `FleetHealthReport`) over a recent time window: how many sessions ran and how many degraded, the degraded sessions bucketed by named cause (`degradedByCause`), the merged top error kinds, the total circuit-breaker trips, a per-tool ok/failed rollup, the window cost, the recent activity (agents, channels, exit reasons), the recurring `findings[]` (counts + short codes + hints only -- no raw WARN bodies), and a deterministic `likelyRootCause`. Like `obs.explain`, the report is derived from log + diagnostics evidence only -- no LLM is invoked -- so the same window reproduces the same verdict.
+Assemble a bounded, redaction-safe **cross-session** system-health triage (a `SystemHealthReport`) over a recent time window: how many sessions ran and how many degraded, the degraded sessions bucketed by named cause (`degradedByCause`), the merged top error kinds, the total circuit-breaker trips, a per-tool ok/failed rollup, the window cost, the recent activity (agents, channels, exit reasons), the recurring `findings[]` (counts + short codes + hints only -- no raw WARN bodies), and a deterministic `likelyRootCause`. Like `obs.explain`, the report is derived from log + diagnostics evidence only -- no LLM is invoked -- so the same window reproduces the same verdict.
 
-`degradedByCause` is the fleet-level **degradation detector**: a bounded `{ <endReason>: count }` map (counts only) over the degraded sessions in the window, keyed by the named terminal cause -- e.g. `{ "context_exhausted": 5, "output_starved": 2 }` answers "how many sessions degraded, and *why*" at a glance. Only degraded sessions contribute; a session whose cause is missing folds into `"unknown"`. Two named degradation causes are worth calling out -- `context_exhausted` (the context-window pre-flight guard aborted the run; run `obs.explain` on the session for the numbers-backed `contextBudget` verdict) and `output_starved` (the final response was truncated at the model's max output tokens) -- both named here and in [`obs.explain`](#obs-explain)'s `outcome.endReason` + `likelyRootCause`, so neither collapses into a generic `error`.
+`degradedByCause` is the system-level **degradation detector**: a bounded `{ <endReason>: count }` map (counts only) over the degraded sessions in the window, keyed by the named terminal cause -- e.g. `{ "context_exhausted": 5, "output_starved": 2 }` answers "how many sessions degraded, and *why*" at a glance. Only degraded sessions contribute; a session whose cause is missing folds into `"unknown"`. Two named degradation causes are worth calling out -- `context_exhausted` (the context-window pre-flight guard aborted the run; run `obs.explain` on the session for the numbers-backed `contextBudget` verdict) and `output_starved` (the final response was truncated at the model's max output tokens) -- both named here and in [`obs.explain`](#obs-explain)'s `outcome.endReason` + `likelyRootCause`, so neither collapses into a generic `error`.
 
-`likelyRootCause` ranks **acute over chronic**: any degraded session with a named cause (`fleet_acute_degradation`, naming the dominant `degradedByCause` entry) out-ranks the standing config-posture (`fleet_config_posture`) and recurring-health-signal (`fleet_recurring_health_signal`) verdicts; only a fleet-wide degradation spike (`fleet_high_degraded_rate`) ranks above it. A degraded **autonomy** run (an unattended run orphaned on restart, revoked/killed, or aborted by the capability-denial breaker) ranks **first** of all -- `fleet_autonomy_degradation` names the worst run's `rootRunId` so you can paste it straight into `comis explain` (the unattended-mode signal out-prioritizes the session-level rules). Routine `session_rebase` continuations (a restart resuming at the store's max seq) ingest at `info` severity, so they never inflate the warning findings.
+`likelyRootCause` ranks **acute over chronic**: any degraded session with a named cause (`system_acute_degradation`, naming the dominant `degradedByCause` entry) out-ranks the standing config-posture (`system_config_posture`) and recurring-health-signal (`system_recurring_health_signal`) verdicts; only a deployment-wide degradation spike (`system_high_degraded_rate`) ranks above it. A degraded **autonomy** run (an unattended run orphaned on restart, revoked/killed, or aborted by the capability-denial breaker) ranks **first** of all -- `system_autonomy_degradation` names the worst run's `rootRunId` so you can paste it straight into `comis explain` (the unattended-mode signal out-prioritizes the session-level rules). Routine `session_rebase` continuations (a restart resuming at the store's max seq) ingest at `info` severity, so they never inflate the warning findings.
 
 The boot-time `config_posture` diagnostic row carries `servedBelowConfiguredCount` in its details JSON -- the number of providers whose Ollama-served window (`num_ctx`) was below the configured `contextWindow` at that boot (a **count only**, never provider names; the posture record severity is `warning` when it is > 0). When the **latest** posture row's count is non-zero, `findings[]` gains the dedicated `config_posture:served_below_configured` code with that count -- latest-row semantics because posture is standing state, not cumulative (a healthy restart clears the finding). The hint names the `OLLAMA_CONTEXT_LENGTH` / Modelfile `PARAMETER num_ctx` knobs; a malformed posture row (or one missing the count field) folds to 0 defensively (no finding, never an assembly error). For triaging this finding on a local deployment -- model choice, window sizing, and the full knob map -- see the [Local models playbook](/operations/local-models).
 
-When transcriptions/syntheses degraded across the window, `findings[]` gains a `voice_health` code: the **count of degraded STT/TTS turns** and the **dominant voice `errorKind`** in the `detail` (e.g. `model_load_failed`, `auth_required`), with a hint pointing at `comis explain` and -- for the keyless-engine load/download failures -- the whisper model cache + disk + the local engine probe. The finding rolls up the `voice_degraded` `health_signal` diagnostic rows the daemon voice path emits on a failure; like every fleet finding it carries **counts + a short code + a closed errorKind label + a static hint only -- no raw provider body or secret, safe to paste**. A malformed row folds to a no-count defensively (never an assembly error), and there is no finding when no voice turn degraded. See [Voice → Observability and cost](/media/voice#observability-and-cost).
+When transcriptions/syntheses degraded across the window, `findings[]` gains a `voice_health` code: the **count of degraded STT/TTS turns** and the **dominant voice `errorKind`** in the `detail` (e.g. `model_load_failed`, `auth_required`), with a hint pointing at `comis explain` and -- for the keyless-engine load/download failures -- the whisper model cache + disk + the local engine probe. The finding rolls up the `voice_degraded` `health_signal` diagnostic rows the daemon voice path emits on a failure; like every system finding it carries **counts + a short code + a closed errorKind label + a static hint only -- no raw provider body or secret, safe to paste**. A malformed row folds to a no-count defensively (never an assembly error), and there is no finding when no voice turn degraded. See [Voice → Observability and cost](/media/voice#observability-and-cost).
 
-When small/local-tier models author pipeline DAGs over the window, `findings[]` gains a `pipeline_authoring` code reporting the **small-model pipeline-authoring failure rate** -- the count of small/nano-tier authorings that failed schema validation over the small/nano-tier total, plus the rate. It rolls up the `pipeline_authoring` `health_signal` diagnostic rows the daemon emits from each [`pipeline:authored`](/developer-guide/event-bus) event (`define`/`execute`); like every fleet finding it carries **counts + a short code + a static hint only -- no pipeline body, no node `type_config`, no secret, safe to paste**. The hint names the small-model-DAG-authoring build/defer gate. The finding fires only when at least one small/nano-tier authoring ran in the window; `mid`- and `unknown`-tier authorings are in neither cohort. The denominator counts every contract-parse-reachable authoring invocation -- a present-but-malformed call that fails the request-contract parse **or** the graph parse/validate step is counted as invalid; only the bespoke pre-checks (a `define` with no `nodes`, an `execute` rejected by the agent-to-agent policy gate) are excluded, since neither is an authoring attempt.
+When small/local-tier models author pipeline DAGs over the window, `findings[]` gains a `pipeline_authoring` code reporting the **small-model pipeline-authoring failure rate** -- the count of small/nano-tier authorings that failed schema validation over the small/nano-tier total, plus the rate. It rolls up the `pipeline_authoring` `health_signal` diagnostic rows the daemon emits from each [`pipeline:authored`](/developer-guide/event-bus) event (`define`/`execute`); like every system finding it carries **counts + a short code + a static hint only -- no pipeline body, no node `type_config`, no secret, safe to paste**. The hint names the small-model-DAG-authoring build/defer gate. The finding fires only when at least one small/nano-tier authoring ran in the window; `mid`- and `unknown`-tier authorings are in neither cohort. The denominator counts every contract-parse-reachable authoring invocation -- a present-but-malformed call that fails the request-contract parse **or** the graph parse/validate step is counted as invalid; only the bespoke pre-checks (a `define` with no `nodes`, an `execute` rejected by the agent-to-agent policy gate) are excluded, since neither is an authoring attempt.
 
-This finding is the metric behind a **pre-committed, measure-first decision rule**. The report carries a deterministic `pipelineAuthoringGate` verdict `{ buildAuthor, reason }`, computed by a pure reducer over the windowed authoring rows -- the same window always reproduces the same verdict (no LLM, no clock). **Native small-model-authorable DAG support is built only when this rule fires `buildAuthor: true`**, which happens only when both gates pass: small-tier invocations are non-trivial (**at least 20** over the window) AND small-tier author-validity is materially below frontier (**at least 15 percentage points** below). Otherwise it defers -- and with no telemetry, the default state for a fresh deployment, it returns `buildAuthor: false` with a reason naming insufficient telemetry. The thresholds are pinned in code so a silent retune is caught; the verdict is auditable from `comis fleet` once the daemon has accumulated authoring telemetry.
+This finding is the metric behind a **pre-committed, measure-first decision rule**. The report carries a deterministic `pipelineAuthoringGate` verdict `{ buildAuthor, reason }`, computed by a pure reducer over the windowed authoring rows -- the same window always reproduces the same verdict (no LLM, no clock). **Native small-model-authorable DAG support is built only when this rule fires `buildAuthor: true`**, which happens only when both gates pass: small-tier invocations are non-trivial (**at least 20** over the window) AND small-tier author-validity is materially below frontier (**at least 15 percentage points** below). Otherwise it defers -- and with no telemetry, the default state for a fresh deployment, it returns `buildAuthor: false` with a reason naming insufficient telemetry. The thresholds are pinned in code so a silent retune is caught; the verdict is auditable from `comis system-health` once the daemon has accumulated authoring telemetry.
 
-When the daemon ran [`orchestrate`](/agent-tools/orchestrate) scripts over the window, `findings[]` gains an **`orchestrate_efficiency`** code — the **measured token savings** from those runs materializing high-volume tool results as ResultRefs instead of re-entering them into context. It rolls up the content-free `orchestrate_efficiency` `health_signal` rows the daemon emits from each `orchestrate:run_summary` event: the `detail` names the run count and the summed **estimated** tokens saved (plus a degraded-run count when any run recorded a `failureClass`), and the `count` is the run count. Like every fleet finding it carries **counts + a short code + token estimates + a static hint only — no script body, stdout, or secret, safe to paste**; the hint points at `comis explain` for the per-run savings breakdown. A completed run — success or a classified failure — is standing efficiency signal, not a fleet degrade, so it rides `info` severity and never inflates the degraded count; the finding fires only when at least one orchestrate run ran in the window.
+When the daemon ran [`orchestrate`](/agent-tools/orchestrate) scripts over the window, `findings[]` gains an **`orchestrate_efficiency`** code — the **measured token savings** from those runs materializing high-volume tool results as ResultRefs instead of re-entering them into context. It rolls up the content-free `orchestrate_efficiency` `health_signal` rows the daemon emits from each `orchestrate:run_summary` event: the `detail` names the run count and the summed **estimated** tokens saved (plus a degraded-run count when any run recorded a `failureClass`), and the `count` is the run count. Like every system finding it carries **counts + a short code + token estimates + a static hint only — no script body, stdout, or secret, safe to paste**; the hint points at `comis explain` for the per-run savings breakdown. A completed run — success or a classified failure — is standing efficiency signal, not a system degrade, so it rides `info` severity and never inflates the degraded count; the finding fires only when at least one orchestrate run ran in the window.
 
-When the daemon runs **unattended/durable** runs, the report carries an optional **`autonomy`** block -- the cross-run autonomy-health slice: `{ runs: { total, degraded, degradedRate }, orphaned, resumed, revoked, killed, breakerTrips, denialBreakerTrips, budgetBreaches, costUsd, worstRootRunId? }` (**counts + the worst run's id only** -- never a lease bearer, an orphan reason body, or any secret; safe to paste). The run counts + degraded rate come from the **crash-surviving** `durable_runs` table (`countByStatus` -- autonomy runs *are* durable runs by construction, so this survives a hard crash that would lose an in-process event), where `degraded = orphaned + revoked`. `resumed` (healthy crash-recovery) and `killed` are recovered from the event-sourced `health_signal` rows -- `killed` is separable from `revoked` *only* because a hard `run.kill` and a cooperative `lease.revoke` (which both flip the durable status to `revoked` indistinguishably in the table) emit **distinct** events. `breakerTrips` is the **tool-failure** breaker count (the synthetic-excluded `breakerTripTotal` read-back -- summed per-session `breakerTripCount`). `denialBreakerTrips` is the distinct **capability-denial** breaker count -- N consecutive capability/quota floor-blocks aborted + killed a run tree. It is **event-sourced** from the content-free `autonomy_denial_breaker` `health_signal` rows, NOT a session rollup: a denial-breaker abort is never a session `endReason` and never a `breakerTripCount`, so `breakerTrips` can never see it, and the aborted run lands in durable status `completed` (so it is also 0 in `orphaned`/`revoked`/`killed`) -- this separable count is its **only** fleet surface. `budgetBreaches` is the per-node token-budget breach count; `costUsd` is the window's autonomy-inclusive cost. `worstRootRunId` is the highest-severity degraded run (orphaned > denial-breaker > killed > revoked) -- paste it into [`comis explain`](#obs-explain) for its spawn-tree. The same labels also surface as dedicated `findings[]` codes (`durable_orphaned` / `autonomy_revoked` / `autonomy_killed` / `autonomy_denial_breaker`). The block is **absent** when the durable store is unwired -- e.g. the daemon-less `comis fleet --offline` CLI, or a non-durability boot -- an honest coverage degradation, not a silent zero.
+When the daemon runs **unattended/durable** runs, the report carries an optional **`autonomy`** block -- the cross-run autonomy-health slice: `{ runs: { total, degraded, degradedRate }, orphaned, resumed, revoked, killed, breakerTrips, denialBreakerTrips, budgetBreaches, costUsd, worstRootRunId? }` (**counts + the worst run's id only** -- never a lease bearer, an orphan reason body, or any secret; safe to paste). The run counts + degraded rate come from the **crash-surviving** `durable_run_checkpoints` table (`countByStatus` -- autonomy runs *are* durable runs by construction, so this survives a hard crash that would lose an in-process event), where `degraded = orphaned + revoked`. `resumed` (healthy crash-recovery) and `killed` are recovered from the event-sourced `health_signal` rows -- `killed` is separable from `revoked` *only* because a hard `run.kill` and a cooperative `lease.revoke` (which both flip the durable status to `revoked` indistinguishably in the table) emit **distinct** events. `breakerTrips` is the **tool-failure** breaker count (the synthetic-excluded `breakerTripTotal` read-back -- summed per-session `breakerTripCount`). `denialBreakerTrips` is the distinct **capability-denial** breaker count -- N consecutive capability/quota floor-blocks aborted + killed a run tree. It is **event-sourced** from the content-free `autonomy_denial_breaker` `health_signal` rows, NOT a session rollup: a denial-breaker abort is never a session `endReason` and never a `breakerTripCount`, so `breakerTrips` can never see it, and the aborted run lands in durable status `completed` (so it is also 0 in `orphaned`/`revoked`/`killed`) -- this separable count is its **only** system surface. `budgetBreaches` is the per-node token-budget breach count; `costUsd` is the window's autonomy-inclusive cost. `worstRootRunId` is the highest-severity degraded run (orphaned > denial-breaker > killed > revoked) -- paste it into [`comis explain`](#obs-explain) for its spawn-tree. The same labels also surface as dedicated `findings[]` codes (`durable_orphaned` / `autonomy_revoked` / `autonomy_killed` / `autonomy_denial_breaker`). The block is **absent** when the durable store is unwired -- e.g. the daemon-less `comis system-health --offline` CLI, or a non-durability boot -- an honest coverage degradation, not a silent zero.
 
 When cron jobs ran a [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) over the window, the report carries an optional **`cronWakeGate`** efficiency block -- `{ fires: { total, skipped, skipRate, failedOpen, failOpenRate }, turnsSaved, toolCalls, perAgent: [{ agentId, fires, skipped, skipRate, failedOpen, failOpenRate, turnsSaved, toolCalls }] }` (**counts + agent ids only** -- never the gate's gathered finding, its script source, or a secret; safe to paste) -- rolled up from the content-free `cron_wake_gate` diagnostic rows one gated fire writes each. It carries three legibility properties: **suppression** (a `perAgent[].skipRate` of `1.0` is a gate that never wakes the model -- either working hard or silently poisoned, visible either way); **broken-gate** (`failOpenRate` -- the share of fires that FAILED OPEN, i.e. the gate crashed / timed out / over-capped / mint-faulted and the model was woken defensively; a gate failing open every fire saves nothing and costs its own run, yet otherwise reads `skipRate 0` like a busy monitor -- the signal symmetric to a 100% skip-rate); and **net cost** (`toolCalls`, the gate's own cap-call cost, sits beside `turnsSaved`, the avoided model turns, so a gate that costs more than it saves is legible). The same rollup drives the `cron_wake_gate_efficiency` `findings[]` code, whose hint names `cron.runs jobName "<job>"` for the per-fire decisions and flags a 100% skip-rate on an expected monitor, a high `failedOpen` count, or `toolCalls` exceeding `turnsSaved`, as the signals to inspect. The block is **absent** when no gated fire ran in the window (an honest omit, not a zero).
 
-This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.explain` post-mortems ONE session; `obs.fleet.health` rolls up a WINDOW of sessions.
+This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.explain` post-mortems ONE session; `obs.system.health` rolls up a WINDOW of sessions.
 
-`sinceHours` is optional; the **24h** default is applied in the handler. The report is digest-only: `findings[]` is capped top-N and `topErrorKinds` is merged + capped (counts only), with an honest `truncations[]` ledger recording anything the bounding pass dropped. An optional `coverage` block reports READ-coverage of the fleet sources -- the session-summary store (`{ found, rows }`), the multi-day session index (`{ daysRead, daysMissing }`), and the billing source (`{ present }`) -- so a silently-empty window (e.g. `rows: 0` or `daysMissing > 0`) is self-evident rather than masquerading as a clean zero-activity fleet.
+`sinceHours` is optional; the **24h** default is applied in the handler. The report is digest-only: `findings[]` is capped top-N and `topErrorKinds` is merged + capped (counts only), with an honest `truncations[]` ledger recording anything the bounding pass dropped. An optional `coverage` block reports READ-coverage of the system sources -- the session-summary store (`{ found, rows }`), the multi-day session index (`{ daysRead, daysMissing }`), and the billing source (`{ present }`) -- so a silently-empty window (e.g. `rows: 0` or `daysMissing > 0`) is self-evident rather than masquerading as a clean zero-activity system.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ sinceHours?: number }` -- the aggregation window in hours (positive). Optional; defaults to `24` in the handler. |
-| **Returns** | A `FleetHealthReport`: `{ schemaVersion, windowHours, sessions: { total, degraded, degradedRate }, degradedByCause, topErrorKinds[], breakerTripTotal, toolStats, cost: { costUsd, totalTokens }, activity: { activeAgents[], activeChannels[], exitReasons, turnTotal, tokenTotal }, findings[], likelyRootCause, pipelineAuthoringGate?: { buildAuthor, reason }, autonomy?: { runs: { total, degraded, degradedRate }, orphaned, resumed, revoked, killed, breakerTrips, denialBreakerTrips, budgetBreaches, costUsd, worstRootRunId? }, cronWakeGate?: { fires: { total, skipped, skipRate }, turnsSaved, toolCalls, perAgent[] }, suggestedNextSteps[], truncations[], coverage? }` |
+| **Returns** | A `SystemHealthReport`: `{ schemaVersion, windowHours, sessions: { total, degraded, degradedRate }, degradedByCause, topErrorKinds[], breakerTripTotal, toolStats, cost: { costUsd, totalTokens }, activity: { activeAgents[], activeChannels[], exitReasons, turnTotal, tokenTotal }, findings[], likelyRootCause, pipelineAuthoringGate?: { buildAuthor, reason }, autonomy?: { runs: { total, degraded, degradedRate }, orphaned, resumed, revoked, killed, breakerTrips, denialBreakerTrips, budgetBreaches, costUsd, worstRootRunId? }, cronWakeGate?: { fires: { total, skipped, skipRate }, turnsSaved, toolCalls, perAgent[] }, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
-  "method": "obs.fleet.health",
+  "method": "obs.system.health",
   "params": { "sinceHours": 24 },
   "id": 1
 }
@@ -908,12 +929,12 @@ This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.exp
       "tokenTotal": 735800
     },
     "findings": [
-      { "code": "fleet_recurring_health_signal", "detail": "lcd_divergence recurred across the window", "count": 14, "hint": "inspect the LCD compaction path" },
+      { "code": "system_recurring_health_signal", "detail": "lcd_divergence recurred across the window", "count": 14, "hint": "inspect the LCD compaction path" },
       { "code": "voice_health", "detail": "6 degraded STT/TTS turn(s); top errorKind model_load_failed", "count": 6, "hint": "run `comis explain` on an affected voice session; for model_load_failed/model_download_failed check the whisper model cache + disk + the local engine probe (a keyless engine), or set the provider's audio API key for auth_required" },
       { "code": "pipeline_authoring", "detail": "3/12 small-tier pipeline authorings invalid (25.0%)", "count": 3, "hint": "small-model pipeline-authoring failure rate; gates native small-model-authorable DAGs -- see pipelineAuthoringGate" }
     ],
     "likelyRootCause": {
-      "code": "fleet_high_degraded_rate",
+      "code": "system_high_degraded_rate",
       "detail": "over half the window's sessions degraded",
       "suggestedNextSteps": ["obs.explain the worst session", "raise the breaker threshold"]
     },
@@ -929,7 +950,7 @@ This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.exp
 </CodeGroup>
 
 <Note>
-The `comis fleet` CLI command (see the [CLI reference](/reference/cli)) and the `obs_query` agent `fleet_health` action surface this same report. It is the cross-session sibling of `comis explain` -- NOT to be confused with `comis health`, the LOCAL daemon doctor (which runs no RPC).
+The `comis system-health` CLI command (see the [CLI reference](/reference/cli)) and the `obs_query` agent `system_health` action surface this same report. It is the cross-session sibling of `comis explain` -- NOT to be confused with `comis health`, the LOCAL daemon doctor (which runs no RPC).
 </Note>
 
 ### `obs.audit.query`
@@ -1052,7 +1073,7 @@ These methods permanently delete observability data. The web console requires ty
 
 </Accordion>
 
-<Accordion title="session (11 methods)">
+<Accordion title="session (12 methods)">
 
 Session management for agent conversations. Client-facing methods use `rpc` scope; administrative operations use `admin` scope.
 
@@ -1064,11 +1085,11 @@ Session management for agent conversations. Client-facing methods use `rpc` scop
 | `session.history` | `rpc` | Get session conversation history |
 | `session.search` | `rpc` | Search session content by query |
 | `session.run_status` | `rpc` | Get live status of a specific sub-agent run |
-| `session.list` | `admin` | List all active sessions |
+| `session.list` | `rpc` | List sessions in an exact tenant and agent scope |
 | `session.delete` | `admin` | Delete a session |
-| `session.reset` | `admin` | Reset all sessions |
+| `session.reset` | `rpc` | Reset one exact conversation while preserving identity |
 | `session.export` | `admin` | Export session data |
-| `session.compact` | `admin` | Compact session history |
+| `session.compact` | `rpc` | Compact one exact conversation |
 | `session.reset_conversation` | `admin` | Complete cross-mode conversation reset (LCD history + working session transcript + pi runtime session) |
 
 ### `session.status`
@@ -1108,28 +1129,34 @@ Get the current resource usage and configuration summary for the calling agent's
 
 Retrieve the conversation history for a session. Returns the raw message array stored in the session, including both user and assistant turns.
 
+`ChannelEndpoint` is the complete exact routing identity used by session,
+message, notification, and platform-action RPCs:
+`{ channelType, channelInstanceId, conversationId, threadId?, conversationKind: "direct" | "shared" }`.
+It is projected from the conversation's authoritative scope and is omitted only
+when that scope is not endpoint-bound.
+
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ channelId?: string }` |
-| **Returns** | `{ messages: Array<{ role: string, content: string, timestamp?: number }> }` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string, offset?: number, limit?: number }` |
+| **Returns** | `{ session: { key, agentId, channelType, endpoint?: ChannelEndpoint, messageCount, totalTokens, inputTokens, outputTokens, toolCalls, compactions, resetCount, createdAt, lastActiveAt, label? }, messages: Array<{ role, content, timestamp, deliveryStatus? }>, total, offset, limit, hasMore }` |
 
 ### `session.list`
 
-List all sessions the daemon knows about, including sessions stored in SQLite, JSONL transcript files, and workspace session files. Optionally filter by recency or session kind.
+List sessions in an exact tenant and agent partition, including sessions stored in SQLite, JSONL transcript files, and workspace session files. Optionally filter by recency or session kind.
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ kind?: "all" \| "sub-agent" \| "group" \| "dm", since_minutes?: number }` |
-| **Returns** | `{ sessions: Array<{ sessionKey, agentId, messageCount, updatedAt, metadata }> }` |
+| **Scope** | `rpc` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, kind?: "all" \| "sub-agent" \| "group" \| "dm", since_minutes?: number }` |
+| **Returns** | `{ sessions: Array<{ conversationRef, agentId, kind, endpoint?: ChannelEndpoint, messageCount, totalTokens, updatedAt, createdAt }>, total }` |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "session.list",
-  "params": { "kind": "dm", "since_minutes": 60 },
+  "params": { "tenant_id": "default", "agent_id": "default", "kind": "dm", "since_minutes": 60 },
   "id": 1
 }
 ```
@@ -1138,8 +1165,23 @@ List all sessions the daemon knows about, including sessions stored in SQLite, J
   "jsonrpc": "2.0",
   "result": {
     "sessions": [
-      { "sessionKey": "telegram:user123:chat456", "agentId": "default", "messageCount": 42, "updatedAt": 1773313498000 }
-    ]
+      {
+        "conversationRef": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o",
+        "agentId": "default",
+        "kind": "dm",
+        "endpoint": {
+          "channelType": "telegram",
+          "channelInstanceId": "primary",
+          "conversationId": "user_a",
+          "conversationKind": "direct"
+        },
+        "messageCount": 42,
+        "totalTokens": 21000,
+        "updatedAt": 1773313498000,
+        "createdAt": 1773100000000
+      }
+    ],
+    "total": 1
   },
   "id": 1
 }
@@ -1148,39 +1190,43 @@ List all sessions the daemon knows about, including sessions stored in SQLite, J
 
 ### `session.send`
 
+Send text to an exact durable conversation under the agent-to-agent policy and principal-isolation gates. Agent-origin calls are confined to the caller's tenant and principal and may target only the same agent or an exact delegated child.
+
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ key: string, message: string, agentId?: string }` |
-| **Returns** | Agent response |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string, text: string, mode?: "fire-and-forget" \| "wait" \| "ping-pong", timeout_ms?: number, max_turns?: number }` |
+| **Returns** | Mode-specific delivery object: immediate delivery state for `fire-and-forget`, or the bounded target response for `wait` and `ping-pong`. |
 
 ### `session.spawn`
 
+Start a background sub-agent and return its run ID immediately. The optional `async` field is accepted but does not select a synchronous path. Agent-origin calls bind result delivery to the immutable requester origin; only an authenticated control-plane caller without an agent principal may provide both announcement-route fields explicitly.
+
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ parentKey: string, task: string, agentId?: string }` |
-| **Returns** | Spawned session info |
+| **Parameters** | `{ task: string, agent?: string, async?: boolean, max_steps?: number, model?: string, expected_outputs?: string[], artifact_refs?: string[], objective?: string, domain_knowledge?: string[], tool_groups?: string[], required_tools?: string[], include_parent_history?: "none" \| "summary", announce_channel_type?: string, announce_channel_id?: string, worktree?: boolean }` |
+| **Returns** | `{ runId, async: true, inProgress: true, noteType: "background_running", queued?, deduped?, existingRunId?, dedupAgeMs? }` |
 
 ### `session.delete`
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ session_key: string }` |
-| **Returns** | `{ sessionKey: string, deleted: true, transcript: object }` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string }` |
+| **Returns** | `{ conversationRef: string, deleted: true, transcript: { messages, metadata, messageCount } }` |
 
-The parameter name is `session_key` (snake_case) — the handler rejects requests that pass `key` instead. The deleted session's transcript is returned in the response so you have a final copy.
+The deleted session's transcript is returned in the response so the caller has a final copy. This operation also clears the conversation's working, LCD, runtime, approval-cache, and delivery-mirror state on a best-effort basis; it does not delete RAG memories.
 
 ### `session.reset`
 
-Clear all messages in a session while preserving the session's metadata (identity, channel association). Useful for giving an agent a clean slate without fully deleting the session record. Also clears any cached approval decisions for the session.
+Clear the working and runtime transcripts while preserving the conversation identity. It also clears cached approval decisions and pending delivery-mirror rows. LCD durable history is not cleared; use `session.reset_conversation` when every prompt-bearing layer must be forgotten.
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ session_key: string }` |
-| **Returns** | `{ sessionKey: string, reset: true, previousMessageCount: number }` |
+| **Scope** | `rpc` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string }` |
+| **Returns** | `{ conversationRef: string, reset: true, previousMessageCount: number }` |
 
 ### `session.export`
 
@@ -1189,15 +1235,19 @@ Export a session's full message history and metadata as a JSON object. Useful fo
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ session_key: string }` |
-| **Returns** | `{ sessionKey, messages, metadata, messageCount, createdAt, updatedAt }` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string }` |
+| **Returns** | `{ conversationRef, messages, metadata, messageCount, createdAt, updatedAt }` |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "session.export",
-  "params": { "session_key": "telegram:user123:chat456" },
+  "params": {
+    "tenant_id": "default",
+    "agent_id": "default",
+    "conversation_ref": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o"
+  },
   "id": 1
 }
 ```
@@ -1205,7 +1255,7 @@ Export a session's full message history and metadata as a JSON object. Useful fo
 {
   "jsonrpc": "2.0",
   "result": {
-    "sessionKey": "telegram:user123:chat456",
+    "conversationRef": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o",
     "messageCount": 42,
     "createdAt": 1773100000000,
     "updatedAt": 1773313498000,
@@ -1219,13 +1269,15 @@ Export a session's full message history and metadata as a JSON object. Useful fo
 
 ### `session.run_status`
 
-Get the live status of a specific sub-agent run by its run ID. Returns timing, the task description, the current status, and — once complete — the response text and token usage.
+Get the owner-authorized, content-bounded status of a sub-agent run. Raw task text, provider output, display session keys, and free-form errors never cross this surface.
+
+Agent callers receive only `endReason`, `completedAtMs`, and failure `errorKind` inside `completion`. An authorized administrator may additionally receive the bounded `summary` and `resultRef` retained on the run.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
 | **Parameters** | `{ run_id: string }` |
-| **Returns** | `{ runId, status, agentId, task, sessionKey, startedAt, completedAt?, runtimeMs, response?, tokensUsed?, cost?, error? }` |
+| **Returns** | Closed union: `queued` carries `queuedAt`; `running` carries `startedAt`; `completed` carries a success `completion` and content-free `telemetry`; `failed` carries a failure `completion` and optional telemetry. |
 
 <CodeGroup>
 ```json Request
@@ -1243,11 +1295,20 @@ Get the live status of a specific sub-agent run by its run ID. Returns timing, t
     "runId": "run_abc123",
     "status": "completed",
     "agentId": "researcher",
-    "task": "Summarize recent papers on quantum error correction",
     "startedAt": 1773313450000,
-    "completedAt": 1773313498000,
     "runtimeMs": 48000,
-    "response": "Here is a summary of recent papers..."
+    "completion": {
+      "endReason": "completed",
+      "completedAtMs": 1773313498000
+    },
+    "telemetry": {
+      "tokensUsedTotal": 6200,
+      "costTotal": 0.0186,
+      "finishReason": "stop",
+      "stepsExecuted": 4,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0
+    }
   },
   "id": 1
 }
@@ -1259,31 +1320,35 @@ Get the live status of a specific sub-agent run by its run ID. Returns timing, t
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ query: string, limit?: number }` |
-| **Returns** | `Array<{ sessionKey: string, agentId: string, channelType: string, snippet: string, score: number, timestamp: number }>` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, query?: string, scope?: "all" \| "user" \| "assistant" \| "tool", summarize?: boolean, limit?: number }` |
+| **Returns** | With no query: `{ mode: "recent", sessions, total }`. With a query: `{ mode: "search", results: Array<{ conversationRef, agentId, channelType, snippet, rawSnippet?, summary?, score, timestamp }>, total }`. |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "session.search",
-  "params": { "query": "deployment instructions", "limit": 5 },
+  "params": { "tenant_id": "default", "agent_id": "default", "query": "deployment instructions", "limit": 5 },
   "id": 1
 }
 ```
 ```json Response
 {
   "jsonrpc": "2.0",
-  "result": [
-    {
-      "sessionKey": "telegram:user123:chat456",
-      "agentId": "default",
-      "channelType": "telegram",
-      "snippet": "...deploy using pm2 for production...",
-      "score": 0.87,
-      "timestamp": 1773313498000
-    }
-  ],
+  "result": {
+    "mode": "search",
+    "results": [
+      {
+        "conversationRef": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o",
+        "agentId": "default",
+        "channelType": "dm",
+        "snippet": "...deploy using the production service...",
+        "score": 1,
+        "timestamp": 1773313498000
+      }
+    ],
+    "total": 1
+  },
   "id": 1
 }
 ```
@@ -1293,23 +1358,23 @@ Get the live status of a specific sub-agent run by its run ID. Returns timing, t
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ key: string }` |
-| **Returns** | Compaction result |
+| **Scope** | `rpc` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string, instructions?: string }` |
+| **Returns** | `{ conversationRef, messageCount, estimatedTokens, compactionTriggered: true, instructions: string \| null }` |
 
 ### `session.reset_conversation`
 
-Complete cross-mode conversation reset. Clears **all three** transcript layers: the LCD durable history, the daemon sessionStore working transcript, and the pi runtime session. **Destructive and irreversible.** Admin-scoped — requires an admin token.
+Complete cross-mode conversation reset. Clears **all four prompt-bearing layers**: the delivery mirror, LCD durable history, daemon sessionStore working transcript, and pi runtime session. **Destructive and irreversible.** Admin-scoped — requires an admin token.
 
-This is the correct explicit forget command. Unlike `session.delete` (which only removes the session record), this operation ensures the model starts with a clean slate in **both engine modes**: the LCD store is empty (dag mode), the sessionStore messages are empty, and the runtime session transcript is destroyed. The runtime layer matters: without it, the surviving runtime JSONL is re-ingested wholesale on the next turn (LCD epoch rebase) and the "forgotten" conversation resurrects.
+This is the explicit forget command when the session identity should remain addressable. Unlike `session.reset`, it also clears the LCD store used by dag mode; `memory: true` additionally removes source memories. The runtime layer matters: without it, the surviving runtime JSONL is re-ingested wholesale on the next turn (LCD epoch rebase) and the "forgotten" conversation resurrects.
 
 The operation is serialized against live LCD ingest (safe to call while the daemon is running). Returns count-only — no message content is returned or logged. Best-effort on each layer: absent sessionStore entry or zero LCD rows is not an error.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ session_key: string, memory?: boolean, purge_derived?: boolean }` — `memory` defaults to `false`; when `true`, the conversation's RAG memories are also deleted by `source_session_key` (both paired-conversation **and** LCD-distilled episodic memories) for the agent + tenant scope, and the deleted sources are unlinked from consolidated observations (orphan observation → deleted; multi-source observation → kept with the reference removed). `purge_derived` (default `false`, only meaningful with `memory: true`) escalates to deleting **every** observation derived from this session, even those corroborated by other sessions. |
-| **Returns** | `{ sessionKey: string, lcdRowsDeleted: number, sessionMessagesCleared: number, memoriesDeleted?: number, runtimeSessionDestroyed?: boolean }` — `memoriesDeleted` is the count of deleted RAG memory rows when `memory: true` and a memory store is wired. It is **omitted** (`undefined`) only when `memory` was not requested, or when the daemon has no memory store wired (the LCD + session transcript are still cleared). `runtimeSessionDestroyed` reports whether the pi runtime session was destroyed; `false` means that layer was unavailable and the conversation may resurrect on the next turn (a WARN with the consequence is logged). |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string, memory?: boolean, purge_derived?: boolean }` — `memory` defaults to `false`; when `true`, the conversation's RAG memories are also deleted by source conversation (both paired-conversation **and** LCD-distilled episodic memories) for the exact agent + tenant scope, and the deleted sources are unlinked from consolidated observations (orphan observation → deleted; multi-source observation → kept with the reference removed). `purge_derived` (default `false`, only meaningful with `memory: true`) escalates to deleting **every** observation derived from this session, even those corroborated by other sessions. |
+| **Returns** | `{ conversationRef: string, lcdRowsDeleted: number, sessionMessagesCleared: number, memoriesDeleted?: number, resolvedAgentId?: string, runtimeSessionDestroyed?: boolean }` — `memoriesDeleted` is the count of deleted RAG memory rows when `memory: true` and a memory store is wired. It is **omitted** (`undefined`) only when `memory` was not requested, or when the daemon has no memory store wired (the LCD + session transcript are still cleared). `runtimeSessionDestroyed` reports whether the pi runtime session was destroyed; `false` means that layer was unavailable and the conversation may resurrect on the next turn (a WARN with the consequence is logged). |
 
 <CodeGroup>
 ```json Request
@@ -1317,7 +1382,9 @@ The operation is serialized against live LCD ingest (safe to call while the daem
   "jsonrpc": "2.0",
   "method": "session.reset_conversation",
   "params": {
-    "session_key": "default:user123:telegram",
+    "tenant_id": "default",
+    "agent_id": "default",
+    "conversation_ref": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o",
     "memory": true
   },
   "id": 1
@@ -1327,7 +1394,7 @@ The operation is serialized against live LCD ingest (safe to call while the daem
 {
   "jsonrpc": "2.0",
   "result": {
-    "sessionKey": "default:user123:telegram",
+    "conversationRef": "cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o",
     "lcdRowsDeleted": 42,
     "sessionMessagesCleared": 18,
     "memoriesDeleted": 5,
@@ -1346,27 +1413,34 @@ After a reset, the next conversation turn starts with a complete clean slate in 
 
 </Accordion>
 
-<Accordion title="cron (7 methods)">
+<Accordion title="cron (8 methods)">
 
-Scheduled job management for cron expressions, intervals, and one-time tasks.
+Strict scheduled-job authoring, authority inspection, immutable execution history, manual submission, and guarded authority reset. Unknown request and response fields are rejected.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
-| `cron.list` | `rpc` | List all cron jobs |
-| `cron.add` | `rpc` | Add a new cron job |
-| `cron.update` | `rpc` | Update an existing cron job |
-| `cron.remove` | `rpc` | Remove a cron job |
-| `cron.status` | `rpc` | Get cron job status |
-| `cron.runs` | `rpc` | Get cron job run history |
-| `cron.run` | `rpc` | Trigger a manual cron run |
+| `cron.add` | `rpc` | Add an authored job |
+| `cron.list` | `rpc` | List authored and built-in jobs |
+| `cron.update` | `rpc` | Update an authored job |
+| `cron.status` | `rpc` | Inspect scheduler and authority state |
+| `cron.runs` | `rpc` | Read immutable execution groups |
+| `cron.remove` | `rpc` | Remove an authored job |
+| `cron.run` | `rpc` | Submit manual or overdue execution |
+| `cron.reset` | `admin` | Compare-and-set reset of scheduler authorities |
 
 ### `cron.add`
 
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ name: string, message: string, agentId?: string, schedule: { kind: "cron" \| "interval" \| "once", expr?: string, tz?: string, everyMs?: number, at?: string } }` |
-| **Returns** | Created job info |
+Creates one authored job. The request is `{ name, agentId?, schedule, payload, sessionPolicy?, continuationMode?, deliveryTarget?, wakeGate?, cacheRetention?, toolPolicy?, maxConsecutiveDependencyErrors? }`.
+
+Request fields are `name`, `agentId`, `schedule`, `payload`, `sessionPolicy`, `continuationMode`, `deliveryTarget`, `wakeGate`, `cacheRetention`, `toolPolicy`, and `maxConsecutiveDependencyErrors`. Schedule kinds are `cron`, `every`, `at`, and `in`; authorable payload kinds are `heartbeat_event`, `delivery`, and `agent_turn`.
+
+- `schedule` is exactly one of `{ kind: "cron", expr, tz? }`, `{ kind: "every", everyMs, anchorMs? }`, `{ kind: "at", at, tz?, fold?: "earlier" | "later" }`, or `{ kind: "in", seconds }`. `everyMs` and `seconds` are positive safe integers. The persisted response projects an `in` or `at` request as `{ kind: "at", atMs }`.
+- `payload` is exactly one of `{ kind: "heartbeat_event", text, wakeMode: "now" | "next-heartbeat" }`, `{ kind: "delivery", text }`, or `{ kind: "agent_turn", message, model?, timeoutSeconds? }`.
+- `sessionPolicy` is `{ strategy: "fresh" }` or `{ strategy: "rolling", maxHistoryTurns }`; `continuationMode` is `none`, `heartbeat_excerpt`, or `origin_history`.
+- `deliveryTarget` is `{ conversation, destinationEndpoint }`. `conversation` carries a canonical `conversationScope` and matching `conversationRef`; `destinationEndpoint` carries `channelType`, `channelInstanceId`, `conversationId`, optional `threadId`, and `conversationKind: "direct" | "shared"`.
+- `wakeGate` is `{ script, language: "js" | "ts", timeoutSeconds }`; `cacheRetention` is `none`, `short`, or `long`; `toolPolicy` is `{ profile, allow, deny }`, where `profile` is `minimal`, `coding`, `messaging`, `supervisor`, or `full`.
+
+The response fields are `jobId`, `name`, and `schedule`, with the schedule in persisted `cron`, `every`, or `at` form.
 
 <CodeGroup>
 ```json Request
@@ -1374,13 +1448,18 @@ Scheduled job management for cron expressions, intervals, and one-time tasks.
   "jsonrpc": "2.0",
   "method": "cron.add",
   "params": {
-    "name": "daily-summary",
-    "message": "Summarize today's activity",
-    "schedule": {
-      "kind": "cron",
-      "expr": "0 18 * * *",
-      "tz": "America/New_York"
-    }
+    "name": "weekday-briefing",
+    "agentId": "default",
+    "schedule": { "kind": "cron", "expr": "0 9 * * 1-5", "tz": "America/New_York" },
+    "payload": {
+      "kind": "agent_turn",
+      "message": "Prepare the weekday briefing.",
+      "timeoutSeconds": 300
+    },
+    "sessionPolicy": { "strategy": "fresh" },
+    "continuationMode": "none",
+    "cacheRetention": "short",
+    "maxConsecutiveDependencyErrors": 3
   },
   "id": 1
 }
@@ -1389,8 +1468,9 @@ Scheduled job management for cron expressions, intervals, and one-time tasks.
 {
   "jsonrpc": "2.0",
   "result": {
-    "id": "daily-summary",
-    "created": true
+    "jobId": "job_a1b2c3",
+    "name": "weekday-briefing",
+    "schedule": { "kind": "cron", "expr": "0 9 * * 1-5", "tz": "America/New_York" }
   },
   "id": 1
 }
@@ -1399,92 +1479,80 @@ Scheduled job management for cron expressions, intervals, and one-time tasks.
 
 ### `cron.list`
 
-List all scheduled jobs. Returns each job's name, schedule expression, next run time, and whether it is currently enabled.
+The request is `{ agentId? }`. The response is `{ jobs }`; every job contains `id`, `name`, `agentId`, `source`, `schedule`, `lifecycle`, and `payload`, plus only the optional policy fields that apply: `maxConsecutiveDependencyErrors`, `sessionPolicy`, `continuationMode`, `deliveryTarget`, `wakeGate`, `cacheRetention`, and `toolPolicy`.
 
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | None |
-| **Returns** | `{ jobs: Array<{ id, name, scheduleKind, expr?, tz?, everyMs?, nextRunAtMs, enabled, lastRunAtMs?, lastError?, wakeGate? }> }` (a gated job carries its `wakeGate` so the web scheduler editor can display and edit the existing gate) |
+`source` is `authored` or `built_in`. Persisted `schedule` is `cron`, `every`, or `at`. `lifecycle` is one of:
 
-<CodeGroup>
+- `{ status: "scheduled", nextRunAtMs, consecutiveDependencyErrors }`
+- `{ status: "paused", nextRunAtMs, consecutiveDependencyErrors, reason: "operator" | "dependency_errors" }`
+- `{ status: "one_shot_claimed", executionId, scheduledForMs, claimedAtMs }`
+- `{ status: "one_shot_terminal", terminalExecutionId, terminalAtMs }`
+
+Projected `payload.kind` is `heartbeat_event`, `delivery`, `agent_turn`, or `internal_action`; built-in internal actions expose `action: "memory_review" | "memory_lifecycle" | "reflection"`.
+
 ```json Request
-{
-  "jsonrpc": "2.0",
-  "method": "cron.list",
-  "id": 1
-}
+{"jsonrpc":"2.0","method":"cron.list","params":{"agentId":"default"},"id":1}
 ```
-```json Response
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "jobs": [
-      {
-        "id": "daily-summary",
-        "name": "daily-summary",
-        "scheduleKind": "cron",
-        "expr": "0 18 * * *",
-        "tz": "America/New_York",
-        "nextRunAtMs": 1773334800000,
-        "enabled": true
-      }
-    ]
-  },
-  "id": 1
-}
-```
-</CodeGroup>
 
 ### `cron.update`
 
-Update an existing cron job's schedule or message. Only the fields you provide are changed.
+Updates an authored job selected by `jobId` or `jobName`; at least one selector is required. The strict request is `{ jobId?, jobName?, name?, schedule?, payload?, sessionPolicy?, continuationMode?, deliveryTarget?, wakeGate?, cacheRetention?, toolPolicy?, maxConsecutiveDependencyErrors?, paused? }`. `schedule` and `payload` use the same closed unions as `cron.add`. Nullable `deliveryTarget`, `wakeGate`, `cacheRetention`, `toolPolicy`, and `maxConsecutiveDependencyErrors` clear those settings. The response is `{ jobName, updated }`.
 
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ name: string, message?: string, agentId?: string, schedule?: { kind: "cron" \| "interval" \| "once", expr?: string, tz?: string, everyMs?: number, at?: string } }` |
-| **Returns** | Updated job info |
+Mutation vocabulary is `jobId`, `jobName`, `name`, `schedule`, `payload`, and `paused`; this response reports `updated`, while `cron.remove` reports the separate `removed` flag.
+
+```json Request
+{"jsonrpc":"2.0","method":"cron.update","params":{"jobName":"weekday-briefing","paused":true},"id":1}
+```
 
 ### `cron.status`
 
-Get the current status of a single cron job by name.
+Returns scheduler-wide authority state for the resolved agent, not one job. The request is `{ agentId? }`. The response is `{ state, configuredEnabled, running, strictAuthoritiesValid, ownershipReconciled, jobCount, activeClaimCount, resolvedAgentId, store, ledger, intent, lastError? }`.
 
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ name: string }` |
-| **Returns** | `{ id, name, scheduleKind, nextRunAtMs, enabled, lastRunAtMs?, lastError? }` |
+Response fields are `state`, `configuredEnabled`, `running`, `strictAuthoritiesValid`, `ownershipReconciled`, `jobCount`, `activeClaimCount`, `resolvedAgentId`, `store`, `ledger`, `intent`, and optional `lastError`; the request optionally selects `agentId`.
+
+- `state` is `initializing`, `disabled`, `ready`, `active`, `maintenance`, or `failed`.
+- `store` and `ledger` are `{ exists, bytes, digest }`; `digest` is a lowercase SHA-256 value or `null`, and the three fields must agree about whether the authority exists.
+- `intent` is `{ status: "none" }`, `{ status: "pending", operationId, target, phase, digest }`, or `{ status: "invalid", digest }`. Pending `target` is `store`, `ledger`, or `all`; `phase` is `prepared`, `archives_recorded`, `replacements_recorded`, or `completion_recorded`.
+- `lastError`, when present, is `{ code, errorKind }`, using the closed maintenance error and platform error-kind vocabularies.
 
 ### `cron.runs`
 
-Get the run history for a cron job — the timestamp, duration, and outcome of each fire. This is the per-fire lens for a [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters): a fire the gate **skipped** is recorded here as a `skipped` outcome (no model turn ran), so a gated job's skips are visible without a session to `obs.explain`.
+Reads immutable start/terminal groups for one job. The request is `{ jobName, limit?, agentId? }`; `limit` is a positive safe integer capped at 10,000. The response is `{ runs }`. Each run contains `executionId`, `jobId`, `agentId`, `scheduledForMs`, `trigger`, `workKind`, `rootRunId`, `startedAtMs`, optional `terminalAtMs` and `durationMs`, `status`, `deliveryStatus`, optional `errorKind`, and optional `counters`.
 
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ jobName: string, limit?: number, agentId?: string }` |
-| **Returns** | `{ runs: Array<{ ts: number, jobId: string, status: "ok" \| "error" \| "skipped", durationMs: number, summary?: string, error?: string, toolCalls?: number, estTurnsSaved?: number, rootRunId?: string }> }` |
+Request fields are `jobName`, `limit`, and optional `agentId`.
 
-Each entry's `status` is `ok` (the payload ran), `error` (it failed — `error` carries the message), or `skipped` (a wake-gate decided not to invoke the model — `summary` reads `wake-gate: skipped`). On a skip, `toolCalls` is the gate's own cap-call count, `estTurnsSaved` is the model turn it avoided (`1` per skip), and `rootRunId` is the gate fire's `root-wakegate-…` root: when the gate made cap-calls before skipping (a skip-after-fetch, `toolCalls > 0`), reconstruct them from the durable audit trail with [`security audit-log`](/reference/cli#security-audit-log) filtered on that root. The cross-job skip-rate rollup is on [`obs.fleet.health`](#obs-fleet-health)'s `cronWakeGate` block.
+- `trigger` is `scheduled`, `catchup`, or `manual`; `workKind` is `agent_turn`, `heartbeat_event`, `internal_action`, or `delivery_only`.
+- `status` is `started`, `dispatched`, `completed`, `failed`, `aborted`, `skipped`, or `unknown`.
+- `deliveryStatus` is `not_requested`, `suppressed`, `pre_send_failed`, `accepted`, `partial`, `rejected`, or `unknown`.
+- `counters` appears only on terminal `internal_action` outcomes. It contains at most 32 content-free `{ name, value }` records. A name matches `^[a-z][a-z0-9_]*$`, is at most 64 characters, and each value is a nonnegative safe integer.
 
 <CodeGroup>
 ```json Request
-{
-  "jsonrpc": "2.0",
-  "method": "cron.runs",
-  "params": { "jobName": "daily-summary", "limit": 5 },
-  "id": 1
-}
+{"jsonrpc":"2.0","method":"cron.runs","params":{"jobName":"Reflection","limit":5,"agentId":"default"},"id":1}
 ```
 ```json Response
 {
   "jsonrpc": "2.0",
   "result": {
-    "runs": [
-      { "ts": 1773248400000, "jobId": "job_a1b2c3", "status": "ok", "durationMs": 3200 },
-      { "ts": 1773162000000, "jobId": "job_a1b2c3", "status": "skipped", "durationMs": 210, "summary": "wake-gate: skipped", "toolCalls": 1, "estTurnsSaved": 1 }
-    ]
+    "runs": [{
+      "executionId": "execution-reflection-a",
+      "jobId": "reflection-default",
+      "agentId": "default",
+      "scheduledForMs": 1800000000000,
+      "trigger": "scheduled",
+      "workKind": "internal_action",
+      "rootRunId": "root-cron-execution-reflection-a",
+      "startedAtMs": 1800000000000,
+      "terminalAtMs": 1800000000050,
+      "durationMs": 50,
+      "status": "failed",
+      "deliveryStatus": "not_requested",
+      "errorKind": "dependency",
+      "counters": [
+        { "name": "selected", "value": 8 },
+        { "name": "dependency_failures", "value": 1 }
+      ]
+    }]
   },
   "id": 1
 }
@@ -1493,21 +1561,23 @@ Each entry's `status` is `ok` (the payload ran), `error` (it failed — `error` 
 
 ### `cron.remove`
 
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ name: string }` |
-| **Returns** | Removal confirmation |
+Removes an authored job selected by `jobId` or `jobName`; at least one selector is required. The request is `{ jobId?, jobName? }`. The response is `{ jobName, removed }`.
 
 ### `cron.run`
 
-Trigger an immediate manual run of a scheduled job. By default this forces the job to execute regardless of its next scheduled time (`mode: "force"`). Pass `mode: "due"` to run all currently overdue jobs instead.
+Submits work through the normal scheduler execution path. The request is `{ jobName?, mode?: "force" | "due", agentId? }`; omitted `mode` means `force`. `force` requires a resolvable `jobName` and returns `{ triggered, mode: "force", jobName, resolvedAgentId, executionId }`. `due` evaluates all overdue occurrences for the resolved agent and returns `{ triggered, mode: "due", resolvedAgentId, executionIds }`.
 
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ name?: string, mode?: "force" \| "due" }` (`name` required when `mode` is `"force"`) |
-| **Returns** | `{ triggered: true, mode: string, jobName?: string }` |
+The closed request/response vocabulary is `jobName`, `mode`, `force`, `due`, `agentId`, `triggered`, `resolvedAgentId`, `executionId`, and `executionIds`.
+
+A manual `force` submission does not change the job's scheduled lifecycle or dependency-breaker state. It creates a new manual occurrence; it does not replay or reinterpret an earlier uncertain occurrence.
+
+### `cron.reset`
+
+`admin`-only compare-and-set maintenance for raw scheduler authorities. The request is one of `{ target: "store", expectedDigests: { store }, confirmed: true, agentId? }`, `{ target: "ledger", expectedDigests: { ledger }, confirmed: true, agentId? }`, or `{ target: "all", expectedDigests: { store, ledger }, confirmed: true, agentId? }`. Each expected digest is a lowercase SHA-256 value or `null` when that authority is absent. The exact digest prevents resetting state that changed after inspection.
+
+The response is `{ operationId, target, resolvedAgentId, beforeDigests, afterDigests, state, reactivated }`. `beforeDigests` and `afterDigests` each contain nullable `store` and `ledger` digests; `state` is `disabled`, `ready`, or `active`.
+
+Reset fields are `target`, `expectedDigests`, `confirmed`, optional `agentId`, `operationId`, `beforeDigests`, `afterDigests`, `state`, and `reactivated`.
 
 </Accordion>
 
@@ -3504,7 +3574,7 @@ Discord platform action dispatch. Sends a platform-specific action to the Discor
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ action: string, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. See [Discord channel docs](/channels/discord) for available actions. |
+| **Parameters** | `{ action: string, channel_id: string, endpoint?: ChannelEndpoint, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. Gateway clients must supply the exact endpoint. See [Discord channel docs](/channels/discord) for available actions. |
 | **Returns** | Platform-specific result object |
 
 <CodeGroup>
@@ -3514,6 +3584,13 @@ Discord platform action dispatch. Sends a platform-specific action to the Discor
   "method": "discord.action",
   "params": {
     "action": "set_status",
+    "channel_id": "channel789",
+    "endpoint": {
+      "channelType": "discord",
+      "channelInstanceId": "discord-main",
+      "conversationId": "channel789",
+      "conversationKind": "shared"
+    },
     "status": "online",
     "activity": "Monitoring channels"
   },
@@ -3676,38 +3753,48 @@ Media processing test methods and provider inspection. All methods require `admi
 
 <Accordion title="message (7 methods)">
 
-Cross-channel message operations: send, reply, edit, delete, fetch, react, and attach files. All methods require `admin` scope and a `channel_type` + `channel_id` to identify the target channel.
+Cross-channel message operations: send, reply, edit, delete, fetch, react, and
+attach files. `message.send`, `message.reply`, and `message.react` are
+`rpc`-scoped outward operations guarded by the `orch:message` capability.
+Editing, deleting, fetching, and attaching remain `admin`-scoped. Every method
+requires the complete [`ChannelEndpoint`](#session-history) for its target and
+verifies the channel type, adapter instance, and conversation ID against the
+other request coordinates. The request schema keeps `endpoint` optional only
+because an authenticated in-process turn can supply the same endpoint through
+request context; gateway clients must send it explicitly. Missing or
+conflicting authority fails closed before any adapter action.
 
 <Note>
-**Exactly-once across a daemon restart (autonomy-originated sends).** When
+**Durable duplicate suppression for autonomy-originated sends.** When
 [`autonomy.durability.enabled`](/reference/config-yaml#autonomy-agentsautonomy)
 is on, an outward `message.send` / `message.reply` / `message.react` issued by an
-autonomy run (a run with a `rootRunId`) is durably ledgered and delivered
-**exactly once across a daemon restart**: a replayed step whose send already
-committed is a **no-op** (it returns the prior result, it does not re-send), and
-a step that crashed *between* the send attempt and the platform acknowledgement
-is **reconciled** on recovery (the channel is asked "did this send?") rather than
-blind-replayed. See [Durability & Resume](/agents/autonomy#durability-resume) for
-the guarantee and its honest per-channel coverage. Operator-issued sends (no
-`rootRunId`) are unchanged at-least-once.
+autonomy run (a run with a `rootRunId`) uses one stable logical operation
+identity. While its ledger row is retained, a committed repeat returns the prior
+platform receipt without another send, and every non-committed existing state
+blocks another execution. A call whose platform outcome may be ambiguous is
+parked `unresolved` and escalated; startup applies that rule to every interrupted
+row without a channel-history query or replay. This is not a universal
+exactly-once guarantee. See [Durability & Resume](/agents/autonomy#durability-resume)
+for the uncertainty model. Operator-issued sends (no `rootRunId`) remain
+best-effort pass-through operations.
 </Note>
 
 | Method | Scope | Description |
 |--------|-------|-------------|
-| `message.send` | `admin` | Send a message to a channel |
-| `message.reply` | `admin` | Reply to a specific message |
+| `message.send` | `rpc` | Send a message to a channel |
+| `message.reply` | `rpc` | Reply to a specific message |
 | `message.edit` | `admin` | Edit an existing message |
 | `message.delete` | `admin` | Delete a message |
 | `message.fetch` | `admin` | Fetch recent messages from a channel |
-| `message.react` | `admin` | Add a reaction to a message |
+| `message.react` | `rpc` | Add a reaction to a message |
 | `message.attach` | `admin` | Send a file attachment to a channel |
 
 ### `message.send`
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ channel_type: string, channel_id: string, text: string, buttons?: object[], cards?: object[], effects?: object[], thread_reply?: string }` |
+| **Scope** | `rpc` |
+| **Parameters** | `{ channel_type: string, channel_id: string, endpoint?: ChannelEndpoint, text: string, buttons?: object[][], cards?: object[], effects?: object[], thread_reply?: boolean }` |
 | **Returns** | `{ messageId: string, channelId: string }` |
 
 <CodeGroup>
@@ -3718,6 +3805,12 @@ the guarantee and its honest per-channel coverage. Operator-issued sends (no
   "params": {
     "channel_type": "telegram",
     "channel_id": "chat123",
+    "endpoint": {
+      "channelType": "telegram",
+      "channelInstanceId": "telegram-main",
+      "conversationId": "chat123",
+      "conversationKind": "direct"
+    },
     "text": "Hello from the API!"
   },
   "id": 1
@@ -3739,8 +3832,8 @@ the guarantee and its honest per-channel coverage. Operator-issued sends (no
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ channel_type: string, channel_id: string, text: string, message_id: string }` |
+| **Scope** | `rpc` |
+| **Parameters** | `{ channel_type: string, channel_id: string, endpoint?: ChannelEndpoint, text: string, message_id: string, buttons?: object[][], cards?: object[], effects?: object[], thread_reply?: boolean }` |
 | **Returns** | `{ messageId: string, channelId: string }` |
 
 ### `message.edit`
@@ -3748,24 +3841,24 @@ the guarantee and its honest per-channel coverage. Operator-issued sends (no
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ channel_type: string, channel_id: string, message_id: string, text: string }` |
-| **Returns** | Edit confirmation |
+| **Parameters** | `{ channel_type: string, channel_id: string, endpoint?: ChannelEndpoint, message_id: string, text: string }` |
+| **Returns** | `{ edited: true, channelId: string, messageId: string }` |
 
 ### `message.delete`
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ channel_type: string, channel_id: string, message_id: string }` |
-| **Returns** | Delete confirmation |
+| **Parameters** | `{ channel_type: string, channel_id: string, endpoint?: ChannelEndpoint, message_id: string }` |
+| **Returns** | `{ deleted: true, channelId: string, messageId: string }` |
 
 ### `message.fetch`
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ channel_type: string, channel_id: string, limit?: number, before?: string }` |
-| **Returns** | `{ messages: object[] }` |
+| **Parameters** | `{ channel_type: string, channel_id: string, endpoint?: ChannelEndpoint, limit?: number, before?: string }` |
+| **Returns** | `{ messages: object[], channelId: string }` |
 
 <CodeGroup>
 ```json Request
@@ -3775,6 +3868,12 @@ the guarantee and its honest per-channel coverage. Operator-issued sends (no
   "params": {
     "channel_type": "discord",
     "channel_id": "channel789",
+    "endpoint": {
+      "channelType": "discord",
+      "channelInstanceId": "discord-main",
+      "conversationId": "channel789",
+      "conversationKind": "shared"
+    },
     "limit": 10
   },
   "id": 1
@@ -3797,17 +3896,17 @@ the guarantee and its honest per-channel coverage. Operator-issued sends (no
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ channel_type: string, channel_id: string, message_id: string, emoji: string }` |
-| **Returns** | React confirmation |
+| **Scope** | `rpc` |
+| **Parameters** | `{ channel_type: string, channel_id: string, endpoint?: ChannelEndpoint, message_id: string, emoji: string }` |
+| **Returns** | `{ reacted: true, channelId: string, messageId: string, emoji: string }` |
 
 ### `message.attach`
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ channel_type: string, channel_id: string, file_path: string, caption?: string }` |
-| **Returns** | `{ messageId: string, channelId: string }` |
+| **Parameters** | `{ channel_type: string, channel_id: string, endpoint?: ChannelEndpoint, attachment_url: string, attachment_type?: "image" \| "file" \| "audio" \| "video", mime_type?: string, file_name?: string, caption?: string }` |
+| **Returns** | `{ receipt: { kind: "tracked", messageId: string } \| { kind: "delivered_untracked" }, channelId: string }` |
 
 </Accordion>
 
@@ -3824,8 +3923,17 @@ Send notifications through configured channels.
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ message: string, priority?: string, channel_type?: string, channel_id?: string }` |
-| **Returns** | `{ success: boolean, entryId?: string }` |
+| **Parameters** | `{ message: string, priority?: string, channel_type?: string, channel_id?: string, destination_endpoint?: ChannelEndpoint, origin?: string }` |
+| **Returns** | `{ success: boolean, entryId?: string, error?: string }` |
+
+The daemon resolves every notification to a complete endpoint before enqueueing
+it. Explicit `channel_type` plus `channel_id`, a configured primary channel,
+and automatic recent-session selection are accepted only when they resolve to
+tracked endpoint authority. `destination_endpoint` is an exact endpoint claim,
+not caller-minted authority: all five fields must match the tracked endpoint for
+that agent, including channel instance, optional thread, and direct/shared kind.
+Resolution fails closed when the tracked endpoint or its active adapter instance
+is unavailable.
 
 <CodeGroup>
 ```json Request
@@ -3866,7 +3974,7 @@ Slack platform action dispatch. Sends a platform-specific action to the Slack ch
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ action: string, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. See [Slack channel docs](/channels/slack) for available actions. |
+| **Parameters** | `{ action: string, channel_id: string, endpoint?: ChannelEndpoint, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. Gateway clients must supply the exact endpoint. See [Slack channel docs](/channels/slack) for available actions. |
 | **Returns** | Platform-specific result object |
 
 <CodeGroup>
@@ -3876,7 +3984,13 @@ Slack platform action dispatch. Sends a platform-specific action to the Slack ch
   "method": "slack.action",
   "params": {
     "action": "set_topic",
-    "channel": "C0123456",
+    "channel_id": "C0123456",
+    "endpoint": {
+      "channelType": "slack",
+      "channelInstanceId": "slack-main",
+      "conversationId": "C0123456",
+      "conversationKind": "shared"
+    },
     "topic": "Sprint 42 updates"
   },
   "id": 1
@@ -3896,23 +4010,29 @@ Slack platform action dispatch. Sends a platform-specific action to the Slack ch
 
 </Accordion>
 
-<Accordion title="subagent (3 methods)">
+<Accordion title="subagent (7 methods)">
 
-Sub-agent lifecycle management: list running sub-agents, kill stuck executions, and steer active sub-agents with new instructions.
+Sub-agent lifecycle management and process-lifetime spawn admission control. `subagent.list`, `subagent.wait`, `subagent.kill`, and `subagent.steer` have both `rpc` and `admin` routes. Agent callers on the `rpc` route are owner-scoped to runs created by the same caller agent and conversation; they cannot select global scope. Admin callers can inspect or control any selected run. `subagent.pause`, `subagent.resume`, and `subagent.status` are admin-only.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
-| `subagent.list` | `admin` | List recent sub-agent runs |
-| `subagent.kill` | `admin` | Kill a running sub-agent |
-| `subagent.steer` | `admin` | Steer a running sub-agent -- inject a message into the live child (flag on) or kill+respawn (flag off, default) |
+| `subagent.list` | `rpc`, `admin` | List recent owner-scoped or admin-selected runs |
+| `subagent.wait` | `rpc`, `admin` | Wait for bounded completion outcomes without polling |
+| `subagent.kill` | `rpc`, `admin` | Kill an owned or admin-selected running sub-agent |
+| `subagent.steer` | `rpc`, `admin` | Inject into a live child or kill and respawn it, depending on configuration |
+| `subagent.pause` | `admin` | Pause admission of new sub-agent spawns for this daemon process |
+| `subagent.resume` | `admin` | Resume admission of new sub-agent spawns |
+| `subagent.status` | `admin` | Inspect the process-lifetime spawn-admission gate |
 
 ### `subagent.list`
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ recentMinutes?: number }` |
+| **Scope** | `rpc`, `admin` |
+| **Parameters** | `{ recentMinutes?: integer, agentId?: string, rootRunId?: string }` |
 | **Returns** | `{ runs: object[], total: number }` |
+
+`recentMinutes` defaults to 30 and accepts integers from 1 through 10,080. On the `rpc` route, `agentId` and `rootRunId` are forbidden and the response contains only runs owned by the caller's agent-and-conversation pair. Those records are a content-free projection: `runId`, `status`, `agentId`, `startedAt`, and, when present, `queuedAt`, `completion`, `depth`, `rootRunId`, `graphId`, and `nodeId`. Terminal `completion` exposes `endReason`, `completedAtMs`, and `errorKind` for unsuccessful runs. On the `admin` route, `agentId` and `rootRunId` are optional exact-match filters and `runs` contains the full diagnostic run records. `total` is the length of the returned `runs` array.
 
 <CodeGroup>
 ```json Request
@@ -3928,9 +4048,56 @@ Sub-agent lifecycle management: list running sub-agents, kill stuck executions, 
   "jsonrpc": "2.0",
   "result": {
     "runs": [
-      { "runId": "run_abc", "task": "Research quantum computing", "status": "running", "durationMs": 45000 }
+      { "runId": "run_abc", "status": "running", "agentId": "default", "startedAt": 1774368000000 }
     ],
     "total": 1
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `subagent.wait`
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc`, `admin` |
+| **Parameters** | `{ runIds?: string[], timeoutMs?: integer }` |
+| **Returns** | `{ results: WaitResult[] }` (at most 32 entries, in requested order) |
+
+`runIds`, when supplied, must contain 1–32 IDs; duplicates are removed. Without `runIds`, the handler selects up to 32 currently `running` or `queued` runs visible to the caller. Agent callers can wait only for owned runs; admins can wait for any selected runs. An unknown or unauthorized ID returns `denied_unknown`, deliberately avoiding run enumeration.
+
+`timeoutMs` accepts 0–300,000. When omitted, it uses `security.agentToAgent.waitTimeoutMs` (default 60,000) capped at 300,000.
+
+Each `results` entry includes its `runId`; its `status` is `completed`, `denied_unknown`, `timeout`, or `cancelled`:
+
+- `{ runId, status: "completed", completion }`
+- `{ runId, status: "denied_unknown" }`
+- `{ runId, status: "timeout" }`
+- `{ runId, status: "cancelled" }`
+
+`completion` always contains `endReason` and `completedAtMs`. A successful completion has `endReason: "completed"`. Failure end reasons are `failed`, `killed`, `watchdog_timeout`, or `ghost_sweep` and also carry `errorKind`. Both forms may include a bounded `summary` and `resultRef`. A `resultRef` contains `ref`, `kind`, `bytes`, `preview`, and `expiresAt`, with optional `rows` and `schema`; `kind` is one of `jsonl`, `json`, `csv`, `html`, `text`, or `binary`.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "subagent.wait",
+  "params": { "runIds": ["run_abc"], "timeoutMs": 60000 },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "results": [
+      {
+        "runId": "run_abc",
+        "status": "completed",
+        "completion": { "endReason": "completed", "completedAtMs": 1774368060000, "summary": "Research completed" }
+      }
+    ]
   },
   "id": 1
 }
@@ -3941,9 +4108,11 @@ Sub-agent lifecycle management: list running sub-agents, kill stuck executions, 
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ target: string }` -- the `runId` of the sub-agent to kill |
+| **Scope** | `rpc`, `admin` |
+| **Parameters** | `{ target: string }` -- `target` is the sub-agent `runId` |
 | **Returns** | `{ killed: true, runId: string }` |
+
+Agent callers may kill only an owned direct child. Admin callers may target any run. On success, `killed` is `true` and `runId` repeats the target. A missing, unknown, or non-running target fails the RPC; it does not return `{ killed: false }`.
 
 <CodeGroup>
 ```json Request
@@ -3957,10 +4126,7 @@ Sub-agent lifecycle management: list running sub-agents, kill stuck executions, 
 ```json Response
 {
   "jsonrpc": "2.0",
-  "result": {
-    "killed": true,
-    "runId": "run_abc"
-  },
+  "result": { "killed": true, "runId": "run_abc" },
   "id": 1
 }
 ```
@@ -3970,16 +4136,48 @@ Sub-agent lifecycle management: list running sub-agents, kill stuck executions, 
 
 | Property | Value |
 |----------|-------|
+| **Scope** | `rpc`, `admin` |
+| **Parameters** | `{ target: string, message: string }` -- `target` is the sub-agent `runId` |
+| **Returns** | `{ status: "steered", oldRunId, newRunId } \| { status: "steered_inject", runId }` |
+
+Agent callers may steer only an owned direct child; admins may target any run. Behavior is gated on [`security.agentToAgent.steerInject`](/reference/config-yaml#security), which defaults to `false`:
+
+The `status` discriminator is `steered` with `oldRunId` and `newRunId`, or `steered_inject` with `runId`.
+
+- **Flag off (default)** -- kills the current run and respawns a new run with `message` as its task. The continuation preserves the original spawn tree, agent, capabilities, and parent lease, but receives a new run ID and discards the prior live transcript and progress. Returns `{ status: "steered", oldRunId, newRunId }`.
+- **Flag on** -- requires `target` to be `running` and injects `message` into the live child at its next step boundary. It preserves the transcript and progress, performs no kill or respawn, and continues with the same run ID. Returns `{ status: "steered_inject", runId }`. Injection does not interrupt a tool call mid-execution.
+
+Both modes share a per-controller, per-`target` rate limit of one steer every 2 seconds. The `message` is framed as untrusted external content and cannot grant capabilities or bypass the child's tool restrictions.
+
+### `subagent.pause`
+
+| Property | Value |
+|----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ target: string, message: string }` -- `target` is the runId; `message` is the steering text |
-| **Returns** | A discriminated union on `status` (see below) |
+| **Parameters** | `{}` (strict; no public fields) |
+| **Returns** | `{ paused: boolean, acceptingSpawns: boolean, resetsOnRestart: true, changed: boolean }` |
 
-Behavior is gated on [`security.agentToAgent.steerInject`](/reference/config-yaml#security) (default `false`):
+Sets the process-lifetime admission gate to paused. This blocks new sub-agent spawns only; existing running and queued work continues. The returned `paused`, `acceptingSpawns`, and literal `resetsOnRestart` fields describe the resulting gate. The call is idempotent: `changed` is `true` only when the gate transitions from unpaused to paused.
 
-- **Flag off (default)** -- kills the running child and respawns a fresh run with `message` as the new task. Returns `{ status: "steered", oldRunId, newRunId }`. The child's transcript and progress are discarded.
-- **Flag on** -- injects `message` into the *running* child's live session at its next step boundary, preserving the transcript and prior work (no kill, no respawn -- the same runId continues). Returns `{ status: "steered_inject", runId }`. The message lands as a user turn after the current step commits (it does not interrupt a tool call mid-execution).
+### `subagent.resume`
 
-Rate-limited to one steer per `target` every 2 seconds (shared across both modes). A steered message is a message, not a capability grant: the child's tool set is fixed at spawn, so a steered request for a tool on the sub-agent tool denylist is still refused (the [defense-in-depth](/security/defense-in-depth) governance applies regardless of message source).
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{}` (strict; no public fields) |
+| **Returns** | `{ paused: boolean, acceptingSpawns: boolean, resetsOnRestart: true, changed: boolean }` |
+
+Clears the process-lifetime pause. The returned `paused`, `acceptingSpawns`, and literal `resetsOnRestart` fields describe the resulting gate. The call is idempotent: `changed` is `true` only when the gate was paused. Resume does not reopen admission after daemon shutdown has set `acceptingSpawns: false`.
+
+### `subagent.status`
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{}` (strict; no public fields) |
+| **Returns** | `{ paused: boolean, acceptingSpawns: boolean, resetsOnRestart: true }` |
+
+Returns the current in-memory admission state. `paused` is the operator pause; `acceptingSpawns` is the runner's broader admission state and becomes `false` during shutdown. `resetsOnRestart` is always `true`: pause state is not persisted, so every daemon restart starts unpaused.
 
 </Accordion>
 
@@ -4148,7 +4346,7 @@ Telegram platform action dispatch. Sends a platform-specific action to the Teleg
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ action: string, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. See [Telegram channel docs](/channels/telegram) for available actions. |
+| **Parameters** | `{ action: string, chat_id: string, endpoint?: ChannelEndpoint, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. Gateway clients must supply the exact endpoint. See [Telegram channel docs](/channels/telegram) for available actions. |
 | **Returns** | Platform-specific result object |
 
 <CodeGroup>
@@ -4159,6 +4357,12 @@ Telegram platform action dispatch. Sends a platform-specific action to the Teleg
   "params": {
     "action": "send_message",
     "chat_id": "123456",
+    "endpoint": {
+      "channelType": "telegram",
+      "channelInstanceId": "telegram-main",
+      "conversationId": "123456",
+      "conversationKind": "shared"
+    },
     "text": "Hello from Telegram action"
   },
   "id": 1
@@ -4191,7 +4395,7 @@ WhatsApp platform action dispatch. Sends a platform-specific action to the Whats
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ action: string, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. See [WhatsApp channel docs](/channels/whatsapp) for available actions. |
+| **Parameters** | `{ action: string, group_jid: string, endpoint?: ChannelEndpoint, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. Gateway clients must supply the exact endpoint. See [WhatsApp channel docs](/channels/whatsapp) for available actions. |
 | **Returns** | Platform-specific result object |
 
 <CodeGroup>
@@ -4201,6 +4405,13 @@ WhatsApp platform action dispatch. Sends a platform-specific action to the Whats
   "method": "whatsapp.action",
   "params": {
     "action": "send_template",
+    "group_jid": "group123",
+    "endpoint": {
+      "channelType": "whatsapp",
+      "channelInstanceId": "whatsapp-main",
+      "conversationId": "group123",
+      "conversationKind": "shared"
+    },
     "to": "1234567890",
     "template": "welcome_message"
   },
@@ -4643,15 +4854,17 @@ Extract the text content from a document attachment (PDF, DOCX, etc.) using the 
 
 <Accordion title="scheduler (1 method)">
 
-Internal scheduler wake signal. Used by webhooks and other triggers to nudge the heartbeat coalescer into running immediately.
+Typed admission into the heartbeat coordinator.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
-| `scheduler.wake` | `rpc` | Request an immediate heartbeat coalescer run |
+| `scheduler.wake` | `rpc` | Submit an agent or monitoring wake |
 
 ### `scheduler.wake`
 
-Signal the wake coalescer to fire immediately rather than waiting for the next scheduled interval. The coalescer debounces rapid wake calls, so multiple calls within a short window are collapsed into a single run. Returns immediately — the actual heartbeat execution is fire-and-forget.
+Submits a routine wake to one closed target. `agent` targets the calling agent's lane; `monitoring` targets the monitoring lane. This method admits or coalesces a heartbeat occurrence and does not inspect or run cron jobs.
+
+The closed vocabulary is `target`, `agent`, `monitoring`, `accepted`, `coalesced`, `disposition`, `new_occurrence`, `occurrence_upgraded`, `correlationId`, `lane`, and `retainedReason`.
 
 <Note>
 **Not the per-job wake-gate.** `scheduler.wake` nudges the whole heartbeat coalescer to run now — it is a scheduler-wide trigger. A [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) is the opposite: a per-job pre-run script that decides whether a *single* cron fire invokes the model. They share the word "wake" and nothing else.
@@ -4660,17 +4873,17 @@ Signal the wake coalescer to fire immediately rather than waiting for the next s
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ source?: string }` |
-| **Returns** | `{ woke: true, source: string }` |
+| **Parameters** | `{ target: "agent" \| "monitoring" }` |
+| **Returns** | `{ status: "accepted", disposition: "new_occurrence" \| "occurrence_upgraded", correlationId, lane: "normal" \| "task", retainedReason }` or `{ status: "coalesced", correlationId, lane: "normal" \| "task", retainedReason }` |
 
-`source` is a free-form label for tracing (e.g. `"webhook"`, `"agent"`). Defaults to `"agent"` when omitted.
+`retainedReason` is `interval`, `manual`, `hook`, `wake`, `exec-event`, `cron`, or `task`. `accepted` distinguishes a newly admitted occurrence from an upgrade of one already admitted; `coalesced` reports the retained occurrence without creating another.
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "scheduler.wake",
-  "params": { "source": "webhook" },
+  "params": { "target": "monitoring" },
   "id": 1
 }
 ```
@@ -4678,8 +4891,11 @@ Signal the wake coalescer to fire immediately rather than waiting for the next s
 {
   "jsonrpc": "2.0",
   "result": {
-    "woke": true,
-    "source": "webhook"
+    "status": "accepted",
+    "disposition": "new_occurrence",
+    "correlationId": "wake-monitoring-a",
+    "lane": "normal",
+    "retainedReason": "wake"
   },
   "id": 1
 }

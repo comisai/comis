@@ -23,10 +23,14 @@ if (existsSync(backupPath)) {
   console.log("postpack: restored package.json with workspace:* references");
 }
 
-// Remove the bundled @comis/ copies and restore pnpm symlinks
+// Remove generated bundle copies and restore pnpm symlinks.
 const bundledScope = join(comisRoot, "node_modules", "@comis");
 if (existsSync(bundledScope)) {
   rmSync(bundledScope, { recursive: true, force: true });
+}
+const patchedProviderScope = join(comisRoot, "node_modules", "@earendil-works");
+if (existsSync(patchedProviderScope)) {
+  rmSync(patchedProviderScope, { recursive: true, force: true });
 }
 
 import { execSync } from "node:child_process";

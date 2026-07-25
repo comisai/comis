@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: capability lease minting is a security boundary; an invalid
+// persisted resume scope is caught by the orchestrate tool boundary and refused.
 /**
  * `setup-tools-autonomy` — the dormancy-activation tool wiring,
  * extracted from `setup-tools.ts` to keep it under the 800-line cap (mirrors the
@@ -26,16 +28,27 @@
 import {
   resolveAutonomy,
   degradeAutonomy,
+  attenuateCaps,
+  createConversationRef,
+  conversationScopeToSessionKey,
   systemNowMs,
   formatSessionKey,
   type ApprovalGate,
+  type AgentCapability,
   type ComisLogger,
+  type DeliveryOrigin,
   type PerAgentConfig,
+  type ResolvedTurnScope,
   type SessionKey,
   type TypedEventBus,
+  type UserTrustLevel,
 } from "@comis/core";
 import type { PlatformToolProvider } from "@comis/skills";
-import type { OrchestrateDurableRuns, SandboxProvider } from "@comis/skills/tools";
+import type {
+  OrchestrateDurableRuns,
+  ResumeAuthority,
+  SandboxProvider,
+} from "@comis/skills/tools";
 import { createOrchestrateTool, createResultRefStore } from "@comis/skills/tools";
 import type { CapabilityClass, OrchestrateRepairSeam } from "@comis/agent";
 
@@ -78,6 +91,12 @@ export interface AutonomyToolInputs {
   readonly namespacePreflightOk?: boolean;
   /** The session key the lease is minted for, or undefined (heartbeat/cron). */
   readonly sessionKey: SessionKey | undefined;
+  /** Canonical request authority; formatted session keys remain display-only. */
+  readonly turnScope?: ResolvedTurnScope;
+  /** Exact framework-authenticated trust for this assembly lease and its children. */
+  readonly trustLevel: UserTrustLevel;
+  /** Immutable requester route paired with {@link sessionKey} on the lease. */
+  readonly requesterOrigin?: DeliveryOrigin;
   /**
    * The CALLER's tree-stable rootRunId, when this
    * assembly is itself a sub-agent whose spawn metadata carried one. When present
@@ -86,6 +105,12 @@ export interface AutonomyToolInputs {
    * a tree root and a fresh id is minted here.
    */
   readonly callerRootRunId?: string;
+  /** Authenticated authority inherited by a sub-agent tool assembly. */
+  readonly parentAuthority?: {
+    readonly rootRunId: string;
+    readonly leaseId?: string;
+    readonly caps: readonly AgentCapability[];
+  };
   /** The skills-scoped logger (instrument the runner + the store). */
   readonly logger: ComisLogger;
   /** The filtered inherited env the runner scrubs; the lease vars ride placeholders. */
@@ -140,6 +165,12 @@ export interface AutonomyToolWiring {
   readonly brokerSpawnEnv: BrokerSpawnEnv | undefined;
   /** The orchestrate tool, or undefined (non-autonomy agent / no handle / no sandbox). */
   readonly orchestrateTool: AgentTool | undefined;
+  /** The exact assembly lease/cap ceiling descendants must inherit. */
+  readonly assemblyAuthority?: {
+    readonly rootRunId: string;
+    readonly leaseId: string;
+    readonly caps: readonly AgentCapability[];
+  };
 }
 
 /**
@@ -168,12 +199,11 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
   const resolved = degradeAutonomy(resolveAutonomy(input.agentConfig?.autonomy), {
     namespacePreflightOk: input.namespacePreflightOk ?? true,
   }).resolved;
-  // The resume surface gate (default-OFF, deny-by-absence): the durable-run store
-  // is forwarded into the runner ONLY when THIS agent has opted into resumable
-  // orchestrate runs. Reads the SAME config path as the capability endpoint's
-  // orchestrateResumeEnabled predicate (`=== true` so an absent/typo'd durability
-  // block resolves OFF) — so a store the composition root always threads under a
-  // durability-enabled boot goes live in the runner only for an opted-in agent.
+  // The resume surface gate is default-on after config parsing: the durable-run
+  // store is forwarded into the runner only when this agent's resolved config
+  // enables resumable orchestrate runs. Reads the same config path as the
+  // capability endpoint's orchestrateResumeEnabled predicate; strict equality
+  // keeps malformed/unparsed input fail-closed.
   const orchestrateResumeOn =
     input.agentConfig?.autonomy?.durability?.orchestrateResume === true;
   const handle = input.capEndpointHandle;
@@ -183,13 +213,46 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
   // under-count the tree); mint a fresh root id ONLY when there is no
   // caller id (the tree root). Uses systemNowMs (the sanctioned-root time helper).
   const rootRunId =
-    input.callerRootRunId ?? `root-${input.agentId}-${systemNowMs().toString(36)}`;
+    input.parentAuthority?.rootRunId
+    ?? input.callerRootRunId
+    ?? `root-${input.agentId}-${systemNowMs().toString(36)}`;
+  const effectiveCaps = input.parentAuthority === undefined
+    ? resolved.capabilities
+    : attenuateCaps(input.parentAuthority.caps, resolved.capabilities);
   // Extract the budget/session refs ONCE so the assembly capMint AND the per-run
   // child-lease seam mint against the SAME accounting refs — a child that drifted
   // onto a different budgetRef/sessionKey would mis-attribute spend and break the
   // audience-bound sessionKey correlation. budgetRef is a per-assembly id.
   const budgetRef = `run-${input.agentId}-${systemNowMs().toString(36)}`;
-  const sessionKey = input.sessionKey ? formatSessionKey(input.sessionKey) : input.agentId;
+  const formattedSessionKey = input.sessionKey ? formatSessionKey(input.sessionKey) : undefined;
+  const sessionKey = formattedSessionKey ?? input.agentId;
+  const durableConversationRef = input.turnScope === undefined
+    ? undefined
+    : createConversationRef(input.turnScope.conversation);
+  const durablePrincipal = input.turnScope !== undefined
+    && input.turnScope.conversation.agentId === input.agentId
+    && durableConversationRef?.ok === true
+    && (
+      input.requesterOrigin === undefined
+      || (
+        input.requesterOrigin.tenantId === input.turnScope.conversation.tenantId
+        && input.requesterOrigin.userId === input.turnScope.principal.principalId
+        && input.requesterOrigin.channelType === input.turnScope.endpoint.channelType
+        && input.requesterOrigin.channelId === input.turnScope.endpoint.conversationId
+        && input.requesterOrigin.threadId === input.turnScope.endpoint.threadId
+      )
+    )
+    ? {
+        tenantId: input.turnScope.conversation.tenantId,
+        agentId: input.agentId,
+        conversationRef: durableConversationRef.value,
+        conversationScope: input.turnScope.conversation,
+        principalId: input.turnScope.principal.principalId,
+        deliveryOrigin: input.requesterOrigin ?? null,
+        trustLevel: input.trustLevel,
+        caps: effectiveCaps,
+      }
+    : undefined;
   const capMint: CapabilityMintDeps | undefined =
     handle && resolved.enabled
       ? {
@@ -197,8 +260,22 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
           outputGuard: handle.outputGuard,
           capSocketPath: handle.capSocketPath,
           resolvedCaps: resolved.capabilities,
+          ...(input.parentAuthority !== undefined
+            ? {
+                parentCaps: input.parentAuthority.caps,
+                requestedCaps: resolved.capabilities,
+              }
+            : {}),
+          ...(input.parentAuthority?.leaseId !== undefined
+            ? { parentLeaseId: input.parentAuthority.leaseId }
+            : {}),
           budgetRef,
           sessionKey,
+          trustLevel: input.trustLevel,
+          ...(input.requesterOrigin !== undefined
+            ? { deliveryOrigin: input.requesterOrigin }
+            : {}),
+          ...(input.turnScope !== undefined ? { turnScope: input.turnScope } : {}),
           rootRunId,
           // Anchor the tree root in the bounded-autonomy service right after the
           // mint (the per-root budget wall-clock + the rootRunId↔leaseId index).
@@ -208,17 +285,17 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
       : undefined;
   const brokerSpawnEnv = buildBrokerSpawnEnv(input.brokerContext, input.agentId, capMint);
 
-  // The per-run child-lease mint seam (D5, EXPLAIN-01) — the correlation
-  // keystone. A closure the runner calls ONCE per orchestrate run to mint a
+  // The per-run child-lease mint seam is the correlation keystone. A closure
+  // the runner calls once per orchestrate run to mint a
   // short-TTL CHILD lease off the assembly lease: same caps + SAME rootRunId
   // (tree accounting untouched — registerRoot is NOT called, so the per-root
-  // budget/semaphore/kill stays keyed on the single registered assembly lease,
-  // INV-7), parentLeaseId = the assembly leaseId, and a TTL the RUNNER sizes and
+  // budget/semaphore/kill stays keyed on the single registered assembly lease),
+  // parentLeaseId = the assembly leaseId, and a TTL the runner sizes and
   // passes in (ttlMs === maxTtlMs === the runner-passed ttlMs): the run timeout,
   // or the run timeout + the one-shot-repair budget when auto-repair is enabled,
   // so the single lease outlives the repair-completion await into the repaired
   // re-run. The child bearer is registered in OutputGuard at mint
-  // (Pitfall 1 — never logged) BEFORE it leaves the closure. revokeByRootRun still
+  // before it leaves the closure. revokeByRootRun still
   // reaches the child (it scans by the inherited rootRunId), so kill is preserved.
   // Built ONLY when an assembly lease exists (brokerSpawnEnv.leaseId present);
   // otherwise undefined → the runner falls back to the assembly bearer (the
@@ -227,28 +304,59 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
   // runner only receives the bearer.
   const assemblyLeaseId = brokerSpawnEnv?.leaseId;
   const mintRunLease:
-    | ((runId: string, ttlMs: number) => { leaseId: string; bearer: string })
+    | ((
+        runId: string,
+        ttlMs: number,
+        resumeAuthority?: ResumeAuthority,
+      ) => { leaseId: string; bearer: string })
     | undefined =
     handle && resolved.enabled && assemblyLeaseId !== undefined
-      ? (runId, ttlMs) => {
+      ? (runId, ttlMs, resumeAuthority) => {
+          const resumePartition = resumeAuthority?.conversationScope.partition;
+          const resumeTurnScope = resumeAuthority !== undefined
+            && resumePartition?.kind === "endpoint-conversation-principal"
+            ? {
+                conversation: resumeAuthority.conversationScope,
+                principal: { principalId: resumeAuthority.principalId },
+                endpoint: resumePartition.endpoint,
+              }
+            : undefined;
+          const resumeDisplay = resumeAuthority === undefined
+            ? undefined
+            : conversationScopeToSessionKey(resumeAuthority.conversationScope);
+          if (resumeAuthority !== undefined && (!resumeDisplay?.ok || resumeTurnScope === undefined)) {
+            throw new Error("Persisted durable authority cannot mint a resolved resume lease");
+          }
           // runId is the runner's correlator; the child lease minted here is
           // correlated by its OWN fresh leaseId + the inherited rootRunId.
           const issued = handle.leaseManager.mintLease({
-            agentId: input.agentId,
-            caps: resolved.capabilities,
+            agentId: resumeAuthority?.agentId ?? input.agentId,
+            caps: resumeAuthority?.caps ?? effectiveCaps,
             budgetRef,
-            sessionKey,
-            rootRunId,
-            parentLeaseId: assemblyLeaseId,
+            sessionKey: resumeDisplay?.ok ? formatSessionKey(resumeDisplay.value) : sessionKey,
+            trustLevel: resumeAuthority?.trustLevel ?? input.trustLevel,
+            ...(resumeAuthority?.deliveryOrigin !== undefined
+              && resumeAuthority.deliveryOrigin !== null
+              ? { deliveryOrigin: resumeAuthority.deliveryOrigin }
+              : resumeAuthority === undefined && input.requesterOrigin !== undefined
+              ? { deliveryOrigin: input.requesterOrigin }
+              : {}),
+            ...(resumeTurnScope !== undefined
+              ? { turnScope: resumeTurnScope }
+              : input.turnScope !== undefined
+                ? { turnScope: input.turnScope }
+                : {}),
+            rootRunId: resumeAuthority?.rootRunId ?? rootRunId,
+            checkpointId: runId,
+            ...(resumeAuthority === undefined ? { parentLeaseId: assemblyLeaseId } : {}),
             ttlMs,
             maxTtlMs: ttlMs,
           });
-          // Register the child bearer BEFORE it leaves the closure (Pitfall 1 —
-          // a NEW bearer that is not registered can leak via a log/model echo).
+          // Register the child bearer before it leaves the closure; an
+          // unregistered bearer could leak through a log or model echo.
           handle.outputGuard.registerSecret(issued.bearer);
-          // Intentionally NO boundedAutonomy.registerRoot for the child (D5) —
-          // the child inherits the assembly's rootRunId, so tree accounting is
-          // untouched (INV-7); revokeByRootRun still reaches it.
+          // Do not register a second bounded-autonomy root for the child. It
+          // inherits the assembly root, and revokeByRootRun still reaches it.
           return { leaseId: issued.leaseId, bearer: issued.bearer };
         }
       : undefined;
@@ -257,18 +365,20 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
     handle && resolved.enabled && input.sandboxProvider
       ? (createOrchestrateTool({
           logger: input.logger,
+          trustLevel: input.trustLevel,
           workspaceResolver: () => input.agentWorkspaceDir,
           capSocketPath: handle.capSocketPath,
           sandbox: input.sandboxProvider,
           brokerSpawnEnv, // the SAME minted COMIS_CAP_LEASE/COMIS_ORCH_SOCKET
-          mintRunLease, // per-run child bearer overrides the assembly bearer (D5)
+          mintRunLease, // per-run child bearer overrides the assembly bearer
           store: createResultRefStore({ logger: input.logger }),
           baseEnv: input.baseEnv ?? {},
           // The static pre-flight's held-cap set: the SAME resolved.capabilities the
           // assembly/child leases are minted with — the advisory pre-spawn cap
           // fail-fast keys on it (the cap-socket endpoint stays the authoritative
           // gate). No drift by construction.
-          allowedCaps: resolved.capabilities,
+          allowedCaps: effectiveCaps,
+          ...(durablePrincipal !== undefined ? { durablePrincipal } : {}),
           // The approval gate — threaded ONLY when the daemon wired one
           // (config.approvals.enabled), mirroring the eventBus conditional-spread.
           // Absent ⇒ the runner fires no approval.
@@ -290,12 +400,27 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
           // root always threads), making the runner resumable. Off ⇒ omitted → the
           // runner writes no durable row + cleans normally (default-off byte-identity).
           ...(input.durableRuns !== undefined && orchestrateResumeOn
-            ? { durableRuns: input.durableRuns }
+            ? {
+                durableRuns: input.durableRuns,
+                durableBudgetState: (durableRootRunId: string) =>
+                  handle.boundedAutonomy.exportBudgetState(durableRootRunId),
+              }
             : {}),
           rootRunId,
           sessionKey,
         }) as unknown as AgentTool)
       : undefined;
 
-  return { brokerSpawnEnv, orchestrateTool };
+  const assemblyAuthority = brokerSpawnEnv?.leaseId === undefined
+    ? undefined
+    : {
+        rootRunId,
+        leaseId: brokerSpawnEnv.leaseId,
+        caps: effectiveCaps,
+      };
+  return {
+    brokerSpawnEnv,
+    orchestrateTool,
+    ...(assemblyAuthority !== undefined ? { assemblyAuthority } : {}),
+  };
 }

@@ -24,6 +24,10 @@ export type ErrorCategory =
   | "credit_exhausted"
   | "rate_limited"
   | "auth_invalid"
+  | "aws_auth_invalid"
+  | "aws_auth_expired"
+  | "aws_model_access"
+  | "aws_region_or_model"
   | "overloaded"
   | "context_too_long"
   | "content_filtered"
@@ -98,9 +102,46 @@ interface ErrorPattern {
   category: ErrorCategory;
   userMessage: string;
   retryable: boolean;
+  /** Operator-facing remediation. Never included in the user reply. */
+  hint?: string;
 }
 
 const ERROR_PATTERNS: ErrorPattern[] = [
+  // AWS Bedrock authentication and model-routing failures. These provider-
+  // specific names must precede the generic auth/network patterns: for
+  // example ResourceNotFoundException contains "ENOTFOUND" as a substring.
+  {
+    test: /UnrecognizedClientException|InvalidSignatureException/i,
+    category: "aws_auth_invalid",
+    userMessage:
+      "The AI service could not authenticate with Amazon Bedrock. Please notify the system administrator.",
+    retryable: false,
+    hint: "Set AWS_BEARER_TOKEN_BEDROCK to a valid Bedrock API key, or verify the configured AWS access keys.",
+  },
+  {
+    test: /ExpiredTokenException/i,
+    category: "aws_auth_expired",
+    userMessage:
+      "The Amazon Bedrock authentication session has expired. Please notify the system administrator.",
+    retryable: false,
+    hint: "Run `aws sso login` again or refresh the configured AWS access keys.",
+  },
+  {
+    test: /AccessDeniedException/i,
+    category: "aws_model_access",
+    userMessage:
+      "The requested Amazon Bedrock model is not available to this deployment. Please notify the system administrator.",
+    retryable: false,
+    hint: "Verify Bedrock model access in the resolved AWS_REGION or AWS_DEFAULT_REGION for the configured model id.",
+  },
+  {
+    test: /ResourceNotFoundException|model identifier is invalid/i,
+    category: "aws_region_or_model",
+    userMessage:
+      "The requested Amazon Bedrock model could not be resolved. Please notify the system administrator.",
+    retryable: false,
+    hint: "Verify the resolved AWS_REGION or AWS_DEFAULT_REGION and configured model id; this error commonly means the model is unavailable or access is not granted in that region.",
+  },
   // Billing / credits
   {
     test: /credit balance is too low|billing|purchase credits|insufficient.?funds|payment.?required|usage.?limits?|regain.?access|spend.?(cap|limit)/i,
@@ -272,6 +313,7 @@ export function classifyError(error: unknown): ClassifiedError {
         category: pattern.category,
         userMessage: pattern.userMessage,
         retryable: pattern.retryable,
+        ...(pattern.hint !== undefined ? { hint: pattern.hint } : {}),
       };
     }
   }

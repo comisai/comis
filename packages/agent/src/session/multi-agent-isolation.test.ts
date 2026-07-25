@@ -15,7 +15,8 @@
  * (the injector itself has no MemoryPort dependency and no shared state).
  */
 
-import type { MemorySearchResult, SessionKey } from "@comis/core";
+import type { MemorySearchResult, SessionKey, SessionStorePort } from "@comis/core";
+import { ok, type Result } from "@comis/shared";
 import type { SessionStore, SessionData } from "@comis/memory";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
@@ -167,6 +168,24 @@ function createFakeSessionStore(): SessionStore & {
       return entries.sort((a, b) => b.updatedAt - a.updatedAt);
     },
   };
+}
+
+function createTestSessionLifecycle(store: ReturnType<typeof createFakeSessionStore>) {
+  const port = {
+    save: (scope: SessionKey, messages: unknown[], metadata?: Record<string, unknown>) => {
+      store.save(scope, messages, metadata);
+      return ok(undefined);
+    },
+    load: (scope: SessionKey) => ok(store.load(scope)),
+    delete: (scope: SessionKey) => ok(store.delete(scope)),
+    deleteStale: (_scope: unknown, maxAgeMs: number) => ok(store.deleteStale(maxAgeMs)),
+  } as unknown as SessionStorePort;
+  return createSessionLifecycle(port);
+}
+
+function unwrap<T>(result: Result<T, unknown>): T {
+  if (!result.ok) throw result.error;
+  return result.value;
 }
 
 function delay(ms: number): Promise<void> {
@@ -355,8 +374,8 @@ describe("-- Multi-agent session isolation", () => {
   it("alpha and beta with separate SessionStores maintain session isolation", () => {
     const storeAlpha = createFakeSessionStore();
     const storeBeta = createFakeSessionStore();
-    const mgrAlpha = createSessionLifecycle(storeAlpha);
-    const mgrBeta = createSessionLifecycle(storeBeta);
+    const mgrAlpha = createTestSessionLifecycle(storeAlpha);
+    const mgrBeta = createTestSessionLifecycle(storeBeta);
 
     // Alpha saves messages
     mgrAlpha.save(alphaKey, [
@@ -371,33 +390,33 @@ describe("-- Multi-agent session isolation", () => {
     ]);
 
     // Alpha sees only alpha's data
-    const alphaMessages = mgrAlpha.loadOrCreate(alphaKey);
+    const alphaMessages = unwrap(mgrAlpha.loadOrCreate(alphaKey));
     expect(alphaMessages).toHaveLength(2);
     expect((alphaMessages[0] as { content: string }).content).toBe(
       "alpha message 1",
     );
 
     // Beta sees only beta's data
-    const betaMessages = mgrBeta.loadOrCreate(betaKey);
+    const betaMessages = unwrap(mgrBeta.loadOrCreate(betaKey));
     expect(betaMessages).toHaveLength(2);
     expect((betaMessages[0] as { content: string }).content).toBe(
       "beta message 1",
     );
 
     // Cross-agent isolation: alpha's store has no beta data
-    const alphaCrossBeta = mgrAlpha.loadOrCreate(betaKey);
+    const alphaCrossBeta = unwrap(mgrAlpha.loadOrCreate(betaKey));
     expect(alphaCrossBeta).toEqual([]);
 
     // Cross-agent isolation: beta's store has no alpha data
-    const betaCrossAlpha = mgrBeta.loadOrCreate(alphaKey);
+    const betaCrossAlpha = unwrap(mgrBeta.loadOrCreate(alphaKey));
     expect(betaCrossAlpha).toEqual([]);
   });
 
   it("concurrent session save and load maintain isolation", async () => {
     const storeAlpha = createFakeSessionStore();
     const storeBeta = createFakeSessionStore();
-    const mgrAlpha = createSessionLifecycle(storeAlpha);
-    const mgrBeta = createSessionLifecycle(storeBeta);
+    const mgrAlpha = createTestSessionLifecycle(storeAlpha);
+    const mgrBeta = createTestSessionLifecycle(storeBeta);
 
     let parallelCount = 0;
     let peakParallel = 0;
@@ -410,7 +429,7 @@ describe("-- Multi-agent session isolation", () => {
           { role: "user", content: "alpha concurrent" },
         ]);
         await delay(30);
-        const loaded = mgrAlpha.loadOrCreate(alphaKey);
+        const loaded = unwrap(mgrAlpha.loadOrCreate(alphaKey));
         expect(loaded).toHaveLength(1);
         expect((loaded[0] as { content: string }).content).toBe(
           "alpha concurrent",
@@ -424,7 +443,7 @@ describe("-- Multi-agent session isolation", () => {
           { role: "user", content: "beta concurrent" },
         ]);
         await delay(30);
-        const loaded = mgrBeta.loadOrCreate(betaKey);
+        const loaded = unwrap(mgrBeta.loadOrCreate(betaKey));
         expect(loaded).toHaveLength(1);
         expect((loaded[0] as { content: string }).content).toBe(
           "beta concurrent",
@@ -448,8 +467,8 @@ describe("-- Multi-agent session isolation", () => {
   it("alpha session deletion does not affect beta session", () => {
     const storeAlpha = createFakeSessionStore();
     const storeBeta = createFakeSessionStore();
-    const mgrAlpha = createSessionLifecycle(storeAlpha);
-    const mgrBeta = createSessionLifecycle(storeBeta);
+    const mgrAlpha = createTestSessionLifecycle(storeAlpha);
+    const mgrBeta = createTestSessionLifecycle(storeBeta);
 
     // Both agents save sessions
     mgrAlpha.save(alphaKey, [
@@ -465,11 +484,11 @@ describe("-- Multi-agent session isolation", () => {
     mgrAlpha.expire(alphaKey);
 
     // Alpha's session is gone
-    const alphaMessages = mgrAlpha.loadOrCreate(alphaKey);
+    const alphaMessages = unwrap(mgrAlpha.loadOrCreate(alphaKey));
     expect(alphaMessages).toEqual([]);
 
     // Beta's session is unaffected
-    const betaMessages = mgrBeta.loadOrCreate(betaKey);
+    const betaMessages = unwrap(mgrBeta.loadOrCreate(betaKey));
     expect(betaMessages).toHaveLength(2);
     expect((betaMessages[0] as { content: string }).content).toBe("beta data");
     expect((betaMessages[1] as { content: string }).content).toBe(

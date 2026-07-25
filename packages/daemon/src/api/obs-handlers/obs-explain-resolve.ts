@@ -9,17 +9,13 @@
  * inputs are resolved to their canonical `sessionKey` FIRST, then the rest of
  * the handler operates on that one key.
  *
- * The resolution reuses the obs-trace day-keyed session-index scan
- * (`<dataDir>/logs/session-index.YYYY-MM-DD.jsonl`, today + yesterday,
- * soft-fail on missing/corrupt files). The 678 fixture is a multi-turn
- * session whose TWO traceIds both index the ONE sessionKey — either traceId
- * resolves to the same canonical key.
- *
- * The sibling {@link resolveRootRunToSession} canonicalizes an
- * autonomy run's `rootRunId` (the synthetic in-process root by a pure
- * prefix-strip; a real socket/spawned root by the same day-keyed scan, matching
- * a `capability.audited` record's `rootRunId` and returning its `runId`). Both
- * soft-fail to `""` — NEVER fabricate a sessionKey.
+ * Resolution reuses the day-keyed session index
+ * (`<dataDir>/logs/session-index.YYYY-MM-DD.jsonl`, today + yesterday) and
+ * soft-fails on missing or corrupt files. Root resolution has four honest
+ * sources: a session-root prefix, a cron execution trace entry, a persisted
+ * task-check lifecycle row, or a capability-audited spawn record. Every source
+ * yields the same canonical key; unresolved references return `""` and never
+ * fabricate a session.
  *
  * @module
  */
@@ -27,7 +23,13 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { safePath, systemDateFrom, systemNowMs } from "@comis/core";
-import type { DurableRunPort } from "@comis/core";
+
+/** Minimal structural evidence needed to resolve a task root. The diagnostics
+ * reader owns validation and content filtering before constructing this value. */
+export interface TaskRootResolutionEvidence {
+  readonly rootRunId: string;
+  readonly sessionKey: string;
+}
 
 /** Default data directory (lazy — resolved at call time). Mirrors obs-trace.ts. */
 function defaultDataDir(): string {
@@ -44,6 +46,15 @@ function todayKey(): string {
 
 function yesterdayKey(): string {
   return systemDateFrom(systemNowMs() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+const CRON_ROOT_PREFIX = "root-cron-";
+
+/** Return the scheduler execution trace embedded in a cron root identifier. */
+export function traceIdFromCronRootRun(rootRunId: string): string | undefined {
+  if (!rootRunId.startsWith(CRON_ROOT_PREFIX)) return undefined;
+  const traceId = rootRunId.slice(CRON_ROOT_PREFIX.length);
+  return traceId.length > 0 ? traceId : undefined;
 }
 
 /**
@@ -102,24 +113,24 @@ export async function resolveTraceToSession(
 }
 
 /**
- * Resolve an autonomy run's `rootRunId` to its canonical `sessionKey`,
- * so the `fleet → explain` drill-down (paste the worst run's `rootRunId`) shares
- * the ONE assembler path with the by-sessionKey/by-traceId inputs. The sibling of
- * {@link resolveTraceToSession}. TWO honest sources, in order:
+ * Resolve a governed `rootRunId` to its canonical `sessionKey`, so every
+ * `obs.explain` identity enters one assembler path. Four honest sources, in order:
  *
- *   1. **Synthetic in-process root (the common case, PURE — no I/O):** a
- *      self-spawning top-level run with no real lease is anchored on a synthetic
- *      `root-session-<formattedKey>` root (`createRootRunIdResolver`,
- *      setup-capability-endpoint-boot.ts:101) where `<formattedKey>` IS the
- *      canonical sessionKey for the in-process leg. Strip the prefix to recover it.
+ *   1. **Session root (pure, no I/O):** `root-session-<canonicalKey>` embeds the
+ *      canonical session key directly, so stripping only that prefix resolves it.
  *
- *   2. **Real socket/spawned root:** scan the same day-keyed session-index for a
+ *   2. **Cron root:** the scheduler mints `root-cron-<executionId>` and the model
+ *      bridge indexes that occurrence with `traceId === executionId`. Strip only
+ *      the cron prefix and delegate to {@link resolveTraceToSession}.
+ *
+ *   3. **Task-check root:** use the exact root→origin-session mapping from the
+ *      persisted scheduler lifecycle diagnostic. The reader validates and
+ *      bounds this evidence before it reaches the resolver.
+ *
+ *   4. **Capability-audited root:** scan the same day-keyed session index for a
  *      `capability.audited` record whose `rootRunId` matches, and return its
- *      `runId` (≈ the sessionKey). The `capability.audited` record carries BOTH
- *      ids (events-orchestration.ts:90-104); the canonical trajectory-record shape
- *      nests them under `data` (the spawn-tree fold reads `data.rootRunId`,
- *      obs-explain-signal-folds.ts:337), so this reads `data.{rootRunId,runId}`
- *      first and tolerates a flat top-level shape as a fallback.
+ *      nonempty `runId`. Canonical records nest both identifiers under `data`;
+ *      flat records remain readable when present.
  *
  * Soft-fail to `""` when neither source resolves — NEVER fabricate a
  * sessionKey/leaseId. An empty return drives the
@@ -131,25 +142,42 @@ export async function resolveTraceToSession(
  *
  * @param dataDir - data directory containing `logs/session-index.*.jsonl`.
  *   Defaults to `~/.comis` when an empty string is passed.
- * @param rootRunId - the autonomy run's root id (synthetic `root-session-…` or a
- *   real socket/spawned root).
- * @param _durableRuns - RESERVED (optional): the two sources above need NO store,
- *   so this is unused today. It is accepted to keep the call-site signature stable
- *   for a possible future direct-store arm without a later signature churn.
+ * @param rootRunId - the governed root identifier to canonicalize.
+ * @param taskEvidence - validated durable task-check root→origin mapping.
  * @returns the canonical sessionKey, or `""` when unresolvable.
  */
 export async function resolveRootRunToSession(
   dataDir: string,
   rootRunId: string,
-  _durableRuns?: DurableRunPort,
+  taskEvidence?: TaskRootResolutionEvidence | null,
 ): Promise<string> {
   // Source 1 (PURE, common case): a synthetic in-process root is
   // `root-session-<formattedKey>` — strip the prefix to recover the formattedKey,
   // which IS the canonical sessionKey for the in-process leg. No I/O.
-  const PREFIX = "root-session-";
-  if (rootRunId.startsWith(PREFIX)) return rootRunId.slice(PREFIX.length);
+  const SESSION_ROOT_PREFIX = "root-session-";
+  if (rootRunId.startsWith(SESSION_ROOT_PREFIX)) {
+    return rootRunId.slice(SESSION_ROOT_PREFIX.length);
+  }
 
-  // Source 2 (real socket/spawned root): scan the day-keyed session-index for a
+  // Source 2 (cron root): the execution id is the indexed model trace id. Reuse
+  // the canonical trace resolver so parsing, bounds, and soft-failure stay shared.
+  const executionTraceId = traceIdFromCronRootRun(rootRunId);
+  if (executionTraceId !== undefined) {
+    const sessionKey = await resolveTraceToSession(dataDir, executionTraceId);
+    if (sessionKey.length > 0) return sessionKey;
+  }
+
+  // Source 3 (task-check root): the scheduler lifecycle row persists the exact
+  // origin sessionKey alongside the root. Equality is mandatory so evidence
+  // for one attempt can never resolve another root.
+  if (
+    taskEvidence !== undefined
+    && taskEvidence !== null
+    && taskEvidence.rootRunId === rootRunId
+    && taskEvidence.sessionKey.length > 0
+  ) return taskEvidence.sessionKey;
+
+  // Source 4 (capability-audited root): scan the day-keyed session index for a
   // capability.audited record whose rootRunId === arg, return its runId. Mirrors
   // resolveTraceToSession's [yesterdayKey(), todayKey()] loop + safePath read +
   // per-line JSONL parse + soft-fail.

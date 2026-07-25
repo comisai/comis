@@ -1,10 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from "node:crypto";
-import { createTTLCache } from "@comis/shared";
-import type { TTLCache } from "@comis/shared";
+import { createTTLCache, err, ok, tryCatch } from "@comis/shared";
+import type { Result, TTLCache } from "@comis/shared";
 import type { TypedEventBus } from "../event-bus/bus.js";
-import type { ApprovalRequest, ApprovalResolution, SerializedApprovalRequest, SerializedApprovalCacheEntry } from "../domain/approval-request.js";
+import { emitObservationalEventSafely } from "../event-bus/observational-emission.js";
+import {
+  ApprovalCallbackOwnerSchema,
+  parseSerializedApprovalCacheEntry,
+  parseSerializedApprovalRequest,
+} from "../domain/approval-request.js";
+import type {
+  ApprovalCallbackOwner,
+  ApprovalRequest,
+  ApprovalResolution,
+  SerializedApprovalRequest,
+  SerializedApprovalCacheEntry,
+} from "../domain/approval-request.js";
 import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
+import { createApprovalHmac, snapshotApprovalParams } from "./approval-fingerprint.js";
 import { mintApprovalShortId } from "./approval-short-id.js";
 
 /**
@@ -23,9 +36,12 @@ export interface ApprovalGateDeps {
   readonly clock: ClockPort;
   /** setTimeout/setInterval scheduling. */
   readonly timers: TimerPort;
+  /** Stable secret used for domain-separated operation and cache HMACs. */
+  readonly fingerprintSecret: string;
   /** Optional logger for cache hit/miss debug logging. Structural type -- no Pino import needed. */
   readonly logger?: {
     debug(obj: Record<string, unknown>, msg: string): void;
+    warn?(...args: unknown[]): void;
   };
 }
 
@@ -39,7 +55,9 @@ export interface ApprovalGateDeps {
 export interface ApprovalGate {
   /** Submit a request for approval. Returns a promise that resolves when approved/denied/timed-out. */
   requestApproval(
-    req: Omit<ApprovalRequest, "requestId" | "shortId" | "createdAt" | "timeoutMs"> & { channelType?: string },
+    req: Omit<ApprovalRequest, "requestId" | "shortId" | "createdAt" | "timeoutMs"> & {
+      fingerprintParams: Record<string, unknown>;
+    },
   ): Promise<ApprovalResolution>;
 
   /** Resolve (approve or deny) a pending request. */
@@ -64,26 +82,26 @@ export interface ApprovalGate {
    */
   getRequestByShortId(shortId: string): ApprovalRequest | undefined;
 
-  /** Get all pending requests whose `sessionKey` matches (the plain-text router branch). */
-  pendingForSession(sessionKey: string): ApprovalRequest[];
+  /** Get pending requests for one exact tenant-agent-conversation-principal authority. */
+  pendingForAuthority(authority: ApprovalAuthority): ApprovalRequest[];
 
-  /** Clear denial cache entries. If sessionKey is provided, clears entries for that session only. If omitted, clears all entries. */
-  clearDenialCache(sessionKey?: string): void;
+  /** Clear denial cache entries for one conversation authority, or all entries. */
+  clearDenialCache(authority?: ApprovalConversationAuthority): void;
 
-  /** Clear approval cache entries. If sessionKey is provided, clears entries for that session only. If omitted, clears all entries. */
-  clearApprovalCache(sessionKey?: string): void;
+  /** Clear approval cache entries for one conversation authority, or all entries. */
+  clearApprovalCache(authority?: ApprovalConversationAuthority): void;
 
   /** Serialize all pending requests to plain objects (for restart persistence). */
   serializePending(): SerializedApprovalRequest[];
 
   /** Restore pending requests from serialized records. Skips expired records. Returns count restored. */
-  restorePending(records: SerializedApprovalRequest[]): number;
+  restorePending(records: readonly unknown[]): number;
 
   /** Serialize all approval cache entries to plain objects (for restart persistence). Skips expired entries. */
   serializeApprovalCache(): SerializedApprovalCacheEntry[];
 
   /** Restore approval cache entries from serialized records. Skips expired entries. Returns count restored. */
-  restoreApprovalCache(entries: SerializedApprovalCacheEntry[]): number;
+  restoreApprovalCache(entries: readonly unknown[]): number;
 
   /** Clean up all timers (for shutdown). */
   dispose(): void;
@@ -95,8 +113,100 @@ export interface ApprovalGate {
  */
 interface PendingEntry {
   readonly request: ApprovalRequest;
+  readonly cacheKey: string;
   readonly resolve: (resolution: ApprovalResolution) => void;
   readonly timer: TimerHandle;
+}
+
+interface CachedApproval {
+  readonly resolution: ApprovalResolution & { readonly approved: true };
+  readonly expiresAt: number;
+}
+
+type ApprovalConversationAuthority = Pick<ApprovalRequest, "tenantId" | "agentId" | "conversationRef">;
+type ApprovalAuthority = ApprovalConversationAuthority & Pick<ApprovalRequest, "resolvingPrincipalId">;
+
+/** Prefix that keeps cache clearing by conversation authority exact and delimiter-safe. */
+function cacheAuthorityPrefix(authority: ApprovalConversationAuthority): string {
+  const encoded = JSON.stringify([authority.tenantId, authority.agentId, authority.conversationRef]);
+  return `h1:${encoded.length}:${encoded}:`;
+}
+
+/**
+ * Build a content-free cache key for one exact approval principal and action.
+ * Parameters are canonicalized before hashing so object insertion order does
+ * not split identical decisions, while parameter values never enter logs or
+ * persisted cache keys.
+ */
+function createApprovalCacheKey(
+  request: Pick<ApprovalRequest, "toolName" | "action" | "tenantId" | "agentId" | "conversationRef" | "resolvingPrincipalId" | "trustLevel" | "callbackOwner">,
+  canonicalParams: string,
+  secret: string,
+): Result<string, Error> {
+  if (
+    typeof request.toolName !== "string"
+    || request.toolName.length === 0
+    || typeof request.action !== "string"
+    || request.action.length === 0
+    || typeof request.agentId !== "string"
+    || request.agentId.length === 0
+    || typeof request.tenantId !== "string"
+    || request.tenantId.length === 0
+    || typeof request.conversationRef !== "string"
+    || request.conversationRef.length === 0
+    || typeof request.resolvingPrincipalId !== "string"
+    || request.resolvingPrincipalId.length === 0
+    || !["admin", "user", "guest"].includes(request.trustLevel)
+  ) {
+    return err(new Error("Approval request identity is incomplete"));
+  }
+
+  const owner = request.callbackOwner;
+  const digest = createApprovalHmac(secret, "cache", JSON.stringify([
+      request.agentId,
+      request.tenantId,
+      request.conversationRef,
+      request.resolvingPrincipalId,
+      request.trustLevel,
+      request.toolName,
+      request.action,
+      owner.tenantId,
+      owner.userId,
+      owner.channelType,
+      owner.channelKey,
+      owner.threadId ?? null,
+      canonicalParams,
+    ]));
+  return digest.ok
+    ? ok(`${cacheAuthorityPrefix(request)}${digest.value}`)
+    : digest;
+}
+
+function snapshotCallbackOwner(
+  raw: unknown,
+  tenantId: string,
+): Result<ApprovalCallbackOwner, Error> {
+  const parsedOwner = tryCatch(() => ApprovalCallbackOwnerSchema.safeParse(raw));
+  if (!parsedOwner.ok || !parsedOwner.value.success) {
+    return err(new Error("Approval callback owner is invalid"));
+  }
+  const owner = parsedOwner.value.data;
+  if (tenantId !== owner.tenantId) {
+    return err(new Error("Approval callback owner conflicts with the conversation authority"));
+  }
+  return ok(Object.freeze({ ...owner }));
+}
+
+function isApprovalCacheKey(cacheKey: string): boolean {
+  if (!cacheKey.startsWith("h1:")) return false;
+  const lengthStart = 3;
+  const lengthEnd = cacheKey.indexOf(":", lengthStart);
+  if (lengthEnd <= lengthStart) return false;
+  const sessionLength = Number(cacheKey.slice(lengthStart, lengthEnd));
+  if (!Number.isSafeInteger(sessionLength) || sessionLength <= 0) return false;
+  const digestStart = lengthEnd + 1 + sessionLength;
+  return cacheKey.charAt(digestStart) === ":"
+    && /^[0-9a-f]{64}$/.test(cacheKey.slice(digestStart + 1));
 }
 
 /**
@@ -114,26 +224,26 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
 
   /**
    * Secondary index: minted `shortId → requestId`. Lets the InteractiveCallbackRouter
-   * resolve an attacker-supplied shortId to a server-side requestId/sessionKey.
+   * resolve an attacker-supplied shortId to a server-side request authority.
    * INVARIANT: mutated symmetrically with `pendingMap` at EVERY
    * set/delete/clear site — a stale entry would defeat replay rejection, since the
    * pending-table removal IS the router's replay guard.
    */
   const shortIdIndex = new Map<string, string>();
 
-  /** Denial cache: keyed by `${sessionKey}::${action}`, stores cached denial resolutions. TTL managed by createTTLCache. */
+  /** Denial cache: keyed by exact session, principal, tool, action, and parameter digest. */
   const denialCache: TTLCache<ApprovalResolution> = createTTLCache<ApprovalResolution>({
     ttlMs: deps.getDenialCacheTtlMs?.() ?? 60_000,
     nowMs: () => deps.clock.now(),
   });
 
-  /** Approval cache: keyed by `${sessionKey}::${action}`, stores cached approval resolutions. TTL managed by createTTLCache. */
-  const approvalCache: TTLCache<ApprovalResolution> = createTTLCache<ApprovalResolution>({
+  /** Approval cache: keyed by exact session, principal, tool, action, and parameter digest. */
+  const approvalCache: TTLCache<CachedApproval> = createTTLCache<CachedApproval>({
     ttlMs: deps.getBatchApprovalTtlMs?.() ?? 30_000,
     nowMs: () => deps.clock.now(),
   });
 
-  /** Batch followers: keyed by `${sessionKey}::${action}`, holds resolve callbacks for parallel requests that joined an existing pending entry. */
+  /** Batch followers keyed by the same exact identity used by the caches. */
   const batchFollowers = new Map<string, Array<(res: ApprovalResolution) => void>>();
 
   function resolveApproval(
@@ -159,15 +269,32 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       resolvedAt: deps.clock.now(),
     };
 
+    // Claim the authoritative resolution before any synchronous observer can
+    // re-enter this gate. Promise callbacks still resume on a later microtask.
+    pendingMap.delete(requestId);
+    shortIdIndex.delete(entry.request.shortId);
+    const followers = batchFollowers.get(entry.cacheKey);
+    batchFollowers.delete(entry.cacheKey);
+
     // Approval/denial cache management with mutual invalidation.
-    const cacheKey = `${entry.request.sessionKey}::${entry.request.action}`;
+    const { cacheKey } = entry;
 
     if (approved) {
       // Populate approval cache (only for explicit user approvals, NOT for system:cached-approval)
       if (approvedBy !== "system:cached-approval") {
         const ttl = deps.getBatchApprovalTtlMs?.() ?? 30_000;
         if (ttl > 0) {
-          approvalCache.set(cacheKey, { requestId, approved, approvedBy, reason, resolvedAt: deps.clock.now() });
+          const cachedResolution = {
+            requestId,
+            approved: true as const,
+            approvedBy,
+            reason,
+            resolvedAt: resolution.resolvedAt,
+          };
+          approvalCache.set(cacheKey, {
+            resolution: cachedResolution,
+            expiresAt: resolution.resolvedAt + ttl,
+          }, ttl);
         }
       }
       // Mutual invalidation: approval clears stale denial for exact key
@@ -191,8 +318,14 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       }
     }
 
-    // Emit resolution event before unblocking the caller.
-    deps.eventBus.emit("approval:resolved", {
+    // Resolve the exact claimed decision before observational fan-out. Awaiting
+    // callers cannot resume until this synchronous stack has completed.
+    entry.resolve(resolution);
+    if (followers) {
+      for (const followerResolve of followers) followerResolve(resolution);
+    }
+
+    emitObservationalEventSafely(deps, "approval:resolved", {
       requestId,
       approved,
       approvedBy,
@@ -200,47 +333,93 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       resolvedAt: resolution.resolvedAt,
     });
 
-    // Unblock the waiting promise.
-    entry.resolve(resolution);
-
-    // Resolve all batch followers that joined this pending entry.
-    const batchKey = `${entry.request.sessionKey}::${entry.request.action}`;
-    const followers = batchFollowers.get(batchKey);
-    if (followers) {
-      for (const followerResolve of followers) {
-        followerResolve(resolution);
-      }
-      batchFollowers.delete(batchKey);
-    }
-
-    // Remove from pending map AND the secondary index atomically.
-    // Covers the explicit approve/deny path AND the timeout path (the timer calls
-    // resolveApproval), so this single site keeps shortIdIndex free of stale entries.
-    pendingMap.delete(requestId);
-    shortIdIndex.delete(entry.request.shortId);
   }
 
   function requestApproval(
-    req: Omit<ApprovalRequest, "requestId" | "shortId" | "createdAt" | "timeoutMs"> & { channelType?: string },
+    req: Omit<ApprovalRequest, "requestId" | "shortId" | "createdAt" | "timeoutMs"> & {
+      fingerprintParams: Record<string, unknown>;
+    },
   ): Promise<ApprovalResolution> {
-    const cacheKey = `${req.sessionKey}::${req.action}`;
+    const captured = tryCatch(() => ({
+      toolName: req.toolName,
+      action: req.action,
+      params: req.params,
+      fingerprintParams: req.fingerprintParams,
+      tenantId: req.tenantId,
+      agentId: req.agentId,
+      conversationRef: req.conversationRef,
+      resolvingPrincipalId: req.resolvingPrincipalId,
+      trustLevel: req.trustLevel,
+      callbackOwner: req.callbackOwner,
+    }));
+    const summary = captured.ok
+      ? snapshotApprovalParams(captured.value.params)
+      : err(new Error("Approval request could not be inspected"));
+    const fingerprintParams = captured.ok
+      ? snapshotApprovalParams(captured.value.fingerprintParams)
+      : err(new Error("Approval request could not be inspected"));
+    const callbackOwner = captured.ok
+      ? snapshotCallbackOwner(captured.value.callbackOwner, captured.value.tenantId)
+      : err(new Error("Approval request could not be inspected"));
+    const operationFingerprint = fingerprintParams.ok
+      ? createApprovalHmac(
+          deps.fingerprintSecret,
+          "operation",
+          fingerprintParams.value.canonical,
+        )
+      : fingerprintParams;
+    const displayParams = summary.ok && operationFingerprint.ok
+      ? snapshotApprovalParams({
+          ...summary.value.value,
+          operationFingerprint: operationFingerprint.value,
+        })
+      : err(new Error("Approval parameters could not be inspected"));
+    const cacheKeyResult = captured.ok && callbackOwner.ok && displayParams.ok
+      ? createApprovalCacheKey({
+          toolName: captured.value.toolName,
+          action: captured.value.action,
+          tenantId: captured.value.tenantId,
+          agentId: captured.value.agentId,
+          conversationRef: captured.value.conversationRef,
+          resolvingPrincipalId: captured.value.resolvingPrincipalId,
+          trustLevel: captured.value.trustLevel,
+          callbackOwner: callbackOwner.value,
+        }, displayParams.value.canonical, deps.fingerprintSecret)
+      : err(new Error("Approval request identity is invalid"));
+    if (
+      !captured.ok
+      || !callbackOwner.ok
+      || !cacheKeyResult.ok
+      || !displayParams.ok
+    ) {
+      const resolution: ApprovalResolution = {
+        requestId: randomUUID(),
+        approved: false,
+        approvedBy: "system:invalid-request",
+        reason: "Approval request identity or parameters are invalid",
+        resolvedAt: deps.clock.now(),
+      };
+      emitObservationalEventSafely(deps, "approval:resolved", { ...resolution });
+      return Promise.resolve(resolution);
+    }
+    const cacheKey = cacheKeyResult.value;
+    const requestInput = captured.value;
 
     // Check approval cache BEFORE denial cache: a recent approval overrides an older denial.
     const ttlMs = deps.getBatchApprovalTtlMs?.() ?? 30_000;
     if (ttlMs > 0) {
-      const cachedApproval = approvalCache.get(cacheKey);
-      if (cachedApproval) {
+      if (approvalCache.get(cacheKey)) {
         // Log cache hit
-        deps.logger?.debug({ cacheKey, action: req.action }, "Approval cache hit");
+        deps.logger?.debug({ cacheKey, action: requestInput.action }, "Approval cache hit");
         // Return cached approval immediately with a new requestId
         const resolution: ApprovalResolution = {
           requestId: randomUUID(),
           approved: true,
           approvedBy: "system:cached-approval",
-          reason: `Auto-approved: prior approval for ${req.action} still active`,
+          reason: `Auto-approved: prior approval for ${requestInput.action} still active`,
           resolvedAt: deps.clock.now(),
         };
-        deps.eventBus.emit("approval:resolved", { ...resolution });
+        emitObservationalEventSafely(deps, "approval:resolved", { ...resolution });
         return Promise.resolve(resolution);
       }
     }
@@ -254,17 +433,17 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
         requestId: randomUUID(),
         approved: false,
         approvedBy: "system:cached-denial",
-        reason: `Auto-denied: prior denial for ${req.action} still active`,
+        reason: `Auto-denied: prior denial for ${requestInput.action} still active`,
         resolvedAt: deps.clock.now(),
       };
-      deps.eventBus.emit("approval:resolved", { ...resolution });
+      emitObservationalEventSafely(deps, "approval:resolved", { ...resolution });
       return Promise.resolve(resolution);
     }
 
-    // Batch parallel requests: if an identical request (same sessionKey::action)
-    // is already pending, join it as a follower instead of creating a new entry.
+    // Batch parallel requests only when the complete approval identity matches;
+    // a matching pending request gets one follower instead of another prompt.
     for (const entry of pendingMap.values()) {
-      if (entry.request.sessionKey === req.sessionKey && entry.request.action === req.action) {
+      if (entry.cacheKey === cacheKey) {
         return new Promise<ApprovalResolution>((resolve) => {
           let arr = batchFollowers.get(cacheKey);
           if (!arr) {
@@ -283,18 +462,21 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     const timeoutMs = deps.getTimeoutMs();
     const createdAt = deps.clock.now();
 
-    const request: ApprovalRequest = {
+    const request: ApprovalRequest = Object.freeze({
       requestId,
       shortId,
-      toolName: req.toolName,
-      action: req.action,
-      params: { ...req.params },
-      agentId: req.agentId,
-      sessionKey: req.sessionKey,
-      trustLevel: req.trustLevel,
+      toolName: requestInput.toolName,
+      action: requestInput.action,
+      params: displayParams.value.value,
+      tenantId: requestInput.tenantId,
+      agentId: requestInput.agentId,
+      conversationRef: requestInput.conversationRef,
+      resolvingPrincipalId: requestInput.resolvingPrincipalId,
+      trustLevel: requestInput.trustLevel,
+      callbackOwner: callbackOwner.value,
       createdAt,
       timeoutMs,
-    };
+    });
 
     const promise = new Promise<ApprovalResolution>((resolve) => {
       const timer = deps.timers.setTimeout(() => {
@@ -305,24 +487,26 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       // .unref() preserved per the TimerHandle cancel-safety contract.
       timer.unref();
 
-      pendingMap.set(requestId, { request, resolve, timer });
+      pendingMap.set(requestId, { request, cacheKey, resolve, timer });
       // Populate the secondary index with the freshly minted shortId.
       shortIdIndex.set(shortId, requestId);
     });
 
-    // Emit request event with shallow-cloned params to prevent mutation.
-    deps.eventBus.emit("approval:requested", {
+    // Params are a deeply frozen snapshot; subscribers cannot mutate pending state.
+    emitObservationalEventSafely(deps, "approval:requested", {
       requestId,
       shortId: request.shortId,
       toolName: request.toolName,
       action: request.action,
-      params: { ...request.params },
+      params: request.params,
+      tenantId: request.tenantId,
       agentId: request.agentId,
-      sessionKey: request.sessionKey,
+      conversationRef: request.conversationRef,
+      resolvingPrincipalId: request.resolvingPrincipalId,
       trustLevel: request.trustLevel,
       createdAt: request.createdAt,
       timeoutMs: request.timeoutMs,
-      ...(req.channelType ? { channelType: req.channelType } : {}),
+      channelType: request.callbackOwner.channelType,
     });
 
     return promise;
@@ -341,17 +525,20 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     return requestId === undefined ? undefined : pendingMap.get(requestId)?.request;
   }
 
-  function pendingForSession(sessionKey: string): ApprovalRequest[] {
+  function pendingForAuthority(authority: ApprovalAuthority): ApprovalRequest[] {
     return Array.from(pendingMap.values())
       .map((e) => e.request)
-      .filter((r) => r.sessionKey === sessionKey);
+      .filter((r) => r.tenantId === authority.tenantId
+        && r.agentId === authority.agentId
+        && r.conversationRef === authority.conversationRef
+        && r.resolvingPrincipalId === authority.resolvingPrincipalId);
   }
 
-  function clearDenialCache(sessionKey?: string): void {
-    if (sessionKey === undefined) {
+  function clearDenialCache(authority?: ApprovalConversationAuthority): void {
+    if (authority === undefined) {
       denialCache.clear();
     } else {
-      const prefix = `${sessionKey}::`;
+      const prefix = cacheAuthorityPrefix(authority);
       for (const [key] of denialCache.entries()) {
         if (key.startsWith(prefix)) {
           denialCache.delete(key);
@@ -360,11 +547,11 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     }
   }
 
-  function clearApprovalCache(sessionKey?: string): void {
-    if (sessionKey === undefined) {
+  function clearApprovalCache(authority?: ApprovalConversationAuthority): void {
+    if (authority === undefined) {
       approvalCache.clear();
     } else {
-      const prefix = `${sessionKey}::`;
+      const prefix = cacheAuthorityPrefix(authority);
       for (const [key] of approvalCache.entries()) {
         if (key.startsWith(prefix)) {
           approvalCache.delete(key);
@@ -376,13 +563,21 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
   function dispose(): void {
     for (const entry of pendingMap.values()) {
       entry.timer.cancel();
-      entry.resolve({
+      const resolution: ApprovalResolution = {
         requestId: entry.request.requestId,
         approved: false,
         approvedBy: "system:shutdown",
         reason: "Daemon shutting down",
         resolvedAt: deps.clock.now(),
-      });
+      };
+      entry.resolve(resolution);
+      const followers = batchFollowers.get(entry.cacheKey);
+      if (followers) {
+        for (const followerResolve of followers) {
+          followerResolve(resolution);
+        }
+        batchFollowers.delete(entry.cacheKey);
+      }
     }
     pendingMap.clear();
     shortIdIndex.clear();
@@ -398,60 +593,94 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       toolName: e.request.toolName,
       action: e.request.action,
       params: { ...e.request.params },
+      tenantId: e.request.tenantId,
       agentId: e.request.agentId,
-      sessionKey: e.request.sessionKey,
+      conversationRef: e.request.conversationRef,
+      resolvingPrincipalId: e.request.resolvingPrincipalId,
       trustLevel: e.request.trustLevel,
+      callbackOwner: { ...e.request.callbackOwner },
       createdAt: e.request.createdAt,
       timeoutMs: e.request.timeoutMs,
     }));
   }
 
   function serializeApprovalCache(): SerializedApprovalCacheEntry[] {
-    const approvalTtl = deps.getBatchApprovalTtlMs?.() ?? 30_000;
     const entries: SerializedApprovalCacheEntry[] = [];
     // entries() only yields live (non-expired) entries
-    for (const [cacheKey, resolution] of approvalCache.entries()) {
+    for (const [cacheKey, cached] of approvalCache.entries()) {
+      const { resolution } = cached;
       entries.push({
         cacheKey,
-        resolution: { ...resolution },
-        // Approximate: resolvedAt + TTL gives the original expiresAt
-        expiresAt: resolution.resolvedAt + approvalTtl,
+        resolution: {
+          requestId: resolution.requestId,
+          approved: true,
+          approvedBy: resolution.approvedBy,
+          ...(resolution.reason === undefined ? {} : { reason: resolution.reason }),
+          resolvedAt: resolution.resolvedAt,
+        },
+        expiresAt: cached.expiresAt,
       });
     }
     return entries;
   }
 
-  function restoreApprovalCache(entries: SerializedApprovalCacheEntry[]): number {
+  function restoreApprovalCache(entries: readonly unknown[]): number {
     const now = deps.clock.now();
     let restored = 0;
-    for (const entry of entries) {
-      if (entry.expiresAt <= now) continue; // Skip expired
-      approvalCache.set(entry.cacheKey, { ...entry.resolution });
+    for (const rawEntry of entries) {
+      const parsed = parseSerializedApprovalCacheEntry(rawEntry);
+      if (!parsed.ok) continue;
+      const entry = parsed.value;
+      if (entry.expiresAt <= now || !isApprovalCacheKey(entry.cacheKey)) continue;
+      approvalCache.set(entry.cacheKey, {
+        resolution: { ...entry.resolution },
+        expiresAt: entry.expiresAt,
+      }, entry.expiresAt - now);
       restored++;
     }
     return restored;
   }
 
-  function restorePending(records: SerializedApprovalRequest[]): number {
+  function restorePending(records: readonly unknown[]): number {
     let restored = 0;
     const now = deps.clock.now();
-    for (const record of records) {
+    for (const rawRecord of records) {
+      const parsedRecord = parseSerializedApprovalRequest(rawRecord);
+      if (!parsedRecord.ok) continue;
+      const record = parsedRecord.value;
       const elapsed = now - record.createdAt;
       if (elapsed >= record.timeoutMs) continue; // Already expired, skip
 
+      const params = snapshotApprovalParams(record.params);
+      const callbackOwner = snapshotCallbackOwner(record.callbackOwner, record.tenantId);
+      if (!params.ok || !callbackOwner.ok) continue;
+      if (
+        pendingMap.has(record.requestId)
+        || shortIdIndex.has(record.shortId)
+      ) continue;
+
       const remainingMs = record.timeoutMs - elapsed;
-      const request: ApprovalRequest = {
+      const request: ApprovalRequest = Object.freeze({
         requestId: record.requestId,
         shortId: record.shortId,
         toolName: record.toolName,
         action: record.action,
-        params: { ...record.params },
+        params: params.value.value,
+        tenantId: record.tenantId,
         agentId: record.agentId,
-        sessionKey: record.sessionKey,
+        conversationRef: record.conversationRef,
+        resolvingPrincipalId: record.resolvingPrincipalId,
         trustLevel: record.trustLevel,
+        callbackOwner: callbackOwner.value,
         createdAt: record.createdAt,
         timeoutMs: record.timeoutMs,
-      };
+      });
+      const cacheKeyResult = createApprovalCacheKey(
+        request,
+        params.value.canonical,
+        deps.fingerprintSecret,
+      );
+      if (!cacheKeyResult.ok) continue;
 
       // Create a new pending entry with the ORIGINAL requestId.
       // The restored entry creates a fresh promise but the key behavior is that
@@ -465,7 +694,12 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
 
       // Use a no-op resolve for the restored entry; the original caller's promise
       // is gone after restart. resolveApproval() will still emit events.
-      pendingMap.set(record.requestId, { request, resolve: () => {}, timer });
+      pendingMap.set(record.requestId, {
+        request,
+        cacheKey: cacheKeyResult.value,
+        resolve: () => {},
+        timer,
+      });
       // Restore the secondary index too, or restored approvals are unreachable via
       // getRequestByShortId — the persisted shortId is re-used so callback identity
       // survives the restart.
@@ -473,17 +707,20 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
 
       // Emit approval:requested so channel adapters can re-render the approval prompt.
       // The persisted shortId is re-used so callback identity survives the restart.
-      deps.eventBus.emit("approval:requested", {
+      emitObservationalEventSafely(deps, "approval:requested", {
         requestId: request.requestId,
         shortId: request.shortId,
         toolName: request.toolName,
         action: request.action,
-        params: { ...request.params },
+        params: request.params,
+        tenantId: request.tenantId,
         agentId: request.agentId,
-        sessionKey: request.sessionKey,
+        conversationRef: request.conversationRef,
+        resolvingPrincipalId: request.resolvingPrincipalId,
         trustLevel: request.trustLevel,
         createdAt: request.createdAt,
         timeoutMs: request.timeoutMs,
+        channelType: request.callbackOwner.channelType,
       });
 
       restored++;
@@ -497,7 +734,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     pending,
     getRequest,
     getRequestByShortId,
-    pendingForSession,
+    pendingForAuthority,
     clearDenialCache,
     clearApprovalCache,
     serializePending,

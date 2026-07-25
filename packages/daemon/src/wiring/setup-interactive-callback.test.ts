@@ -26,6 +26,7 @@ import type {
   ActivityEvent,
   AppConfig,
 } from "@comis/core";
+import { ConversationRefSchema } from "@comis/core";
 import {
   resolveInteractiveCallbackSigningSecret,
   createInteractiveCallbackWiring,
@@ -165,7 +166,9 @@ describe("resolveInteractiveCallbackSigningSecret", () => {
 
 const SHORT_ID = "abcDEF123456";
 const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
-const SESSION_K = "tenant/user_a/inbox-1";
+const CONVERSATION_REF = ConversationRefSchema.parse(`cv_${"a".repeat(43)}`);
+const OTHER_CONVERSATION_REF = ConversationRefSchema.parse(`cv_${"b".repeat(43)}`);
+const SESSION_K = "tenant:agent:main:user_a:inbox-1:thread:thread-1";
 const CREATED_AT = 1_000_000;
 const TIMEOUT_MS = 300_000;
 
@@ -195,8 +198,12 @@ function makeFakeGate(seed: ApprovalRequest[]): {
     pending: () => Array.from(byRequestId.values()),
     getRequest: (requestId) => byRequestId.get(requestId),
     getRequestByShortId: (shortId) => byShortId.get(shortId),
-    pendingForSession: (sessionKey) =>
-      Array.from(byRequestId.values()).filter((r) => r.sessionKey === sessionKey),
+    pendingForAuthority: (authority) =>
+      Array.from(byRequestId.values()).filter((request) =>
+        request.tenantId === authority.tenantId
+        && request.agentId === authority.agentId
+        && request.conversationRef === authority.conversationRef
+        && request.resolvingPrincipalId === authority.resolvingPrincipalId),
     clearDenialCache: () => {},
     clearApprovalCache: () => {},
     serializePending: () => [],
@@ -215,13 +222,22 @@ function makeApprovalRequest(over: Partial<ApprovalRequest> = {}): ApprovalReque
     toolName: "shell",
     action: "shell.exec",
     params: {},
+    tenantId: "tenant",
     agentId: "main",
-    sessionKey: SESSION_K,
+    conversationRef: CONVERSATION_REF,
+    resolvingPrincipalId: "principal-user-a",
     trustLevel: "untrusted",
+    callbackOwner: {
+      tenantId: "tenant",
+      userId: "user_a",
+      channelType: "email",
+      channelKey: "inbox-1",
+      threadId: "thread-1",
+    },
     createdAt: CREATED_AT,
     timeoutMs: TIMEOUT_MS,
     ...over,
-  };
+  } as ApprovalRequest;
 }
 
 function makeApprovalEvent(): ActivityEvent {
@@ -259,7 +275,7 @@ describe("createInteractiveCallbackWiring (email link → router roundtrip)", ()
   it("mints an opaque link to the gateway /approve route (no signed HMAC wire form in the URL)", () => {
     const { gate } = makeFakeGate([makeApprovalRequest()]);
     const wiring = createInteractiveCallbackWiring({
-      secretStore: undefined,
+      signingSecret: "test-signing-secret-32-bytes-aaaaaaaaaaaa",
       approvalGate: gate,
       clock: createFakeClock(CREATED_AT),
       config: makeConfig(),
@@ -273,12 +289,22 @@ describe("createInteractiveCallbackWiring (email link → router roundtrip)", ()
     expect(link).not.toMatch(/v1\.(approve|deny|details)\./);
     expect(link).not.toContain(SHORT_ID);
     expect(wiring.tokens.size).toBe(1);
+    const [entry] = Array.from(wiring.tokens.values());
+    expect(entry).toMatchObject({
+      tenantId: "tenant",
+      conversationRef: CONVERSATION_REF,
+      resolvingPrincipalId: "principal-user-a",
+      inboundUserId: "user_a",
+      channelType: "email",
+      channelKey: "inbox-1",
+      agentId: "main",
+    });
   });
 
   it("resolves the approval exactly once when the minted token is consumed (resolveApproval)", async () => {
     const { gate, resolveCalls } = makeFakeGate([makeApprovalRequest()]);
     const wiring = createInteractiveCallbackWiring({
-      secretStore: undefined,
+      signingSecret: "test-signing-secret-32-bytes-aaaaaaaaaaaa",
       approvalGate: gate,
       clock: createFakeClock(CREATED_AT),
       config: makeConfig(),
@@ -299,7 +325,7 @@ describe("createInteractiveCallbackWiring (email link → router roundtrip)", ()
   it("returns false (not resolved) when the underlying approval is already gone (replay after resolve)", async () => {
     const { gate, resolveCalls } = makeFakeGate([makeApprovalRequest()]);
     const wiring = createInteractiveCallbackWiring({
-      secretStore: undefined,
+      signingSecret: "test-signing-secret-32-bytes-aaaaaaaaaaaa",
       approvalGate: gate,
       clock: createFakeClock(CREATED_AT),
       config: makeConfig(),
@@ -315,10 +341,39 @@ describe("createInteractiveCallbackWiring (email link → router roundtrip)", ()
     expect(resolveCalls).toHaveLength(1); // exactly once
   });
 
+  it("rejects an owner-bound email token replayed through another channel or thread", async () => {
+    const { gate, resolveCalls } = makeFakeGate([makeApprovalRequest()]);
+    const wiring = createInteractiveCallbackWiring({
+      signingSecret: "test-signing-secret-32-bytes-aaaaaaaaaaaa",
+      approvalGate: gate,
+      clock: createFakeClock(CREATED_AT),
+      config: makeConfig(),
+      logger: makeLogger(),
+    });
+    wiring.mintApprovalLink(makeApprovalEvent());
+    const [entry] = Array.from(wiring.tokens.values());
+    expect(entry).toBeDefined();
+
+    await expect(wiring.resolveApproval({ ...entry!, channelType: "telegram" }))
+      .resolves.toBe(false);
+    await expect(wiring.resolveApproval({
+      ...entry!,
+      threadId: "thread-2",
+    })).resolves.toBe(false);
+    await expect(wiring.resolveApproval({
+      ...entry!,
+      conversationRef: OTHER_CONVERSATION_REF,
+    })).resolves.toBe(false);
+    expect(resolveCalls).toHaveLength(0);
+
+    await expect(wiring.resolveApproval(entry!)).resolves.toBe(true);
+    expect(resolveCalls).toHaveLength(1);
+  });
+
   it("binds signCallbackData to the resolved secret (the renderer signer matches the router)", () => {
     const { gate } = makeFakeGate([makeApprovalRequest()]);
     const wiring = createInteractiveCallbackWiring({
-      secretStore: undefined,
+      signingSecret: "test-signing-secret-32-bytes-aaaaaaaaaaaa",
       approvalGate: gate,
       clock: createFakeClock(CREATED_AT),
       config: makeConfig(),

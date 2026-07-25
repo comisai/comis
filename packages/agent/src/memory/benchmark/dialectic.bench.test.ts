@@ -198,7 +198,7 @@ function makeRecall(adapter: SqliteMemoryAdapter, includeTrustLevels: Array<"sys
       maxResults: 10,
       minScore: 0,
       includeTrustLevels,
-      rerank: { enabled: false, maxCandidates: 20, minResults: 2, timeoutMs: 5000 },
+      rerank: { mode: "off", maxCandidates: 20, minResults: 2, timeoutMs: 5000 },
       scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
     },
   );

@@ -242,7 +242,7 @@ describe("recoverEmptyFinalResponse — tool-call synthesis", () => {
       extractedResponse: "",
       textEmitted: true,
       messages: [
-        { role: "user", content: "Build a trading fleet", timestamp: 1 },
+        { role: "user", content: "Build a trading system", timestamp: 1 },
         {
           role: "assistant",
           content: [

@@ -20,9 +20,14 @@ import { tmpdir } from "node:os";
 import { writeFile, unlink } from "node:fs/promises";
 import { fileTypeFromBuffer } from "file-type";
 import type { Result } from "@comis/shared";
-import { suppressError } from "@comis/shared";
+import { fromPromise, suppressError } from "@comis/shared";
 import { safePath } from "@comis/core";
-import type { AttachmentPayload, ChannelPort, SendMessageOptions } from "@comis/core";
+import type {
+  AttachmentPayload,
+  AttachmentSendReceipt,
+  ChannelPort,
+  SendMessageOptions,
+} from "@comis/core";
 import { mimeToAttachmentType } from "./media-utils.js";
 
 // ---------------------------------------------------------------------------
@@ -44,6 +49,8 @@ export interface OutboundMediaDeps {
   };
   /** Thread context for routing attachments to forum topics. */
   sendOptions?: SendMessageOptions;
+  /** Cancels remaining media work at queue/shutdown delivery boundaries. */
+  signal?: AbortSignal;
 }
 
 /** Result summary of outbound media delivery. */
@@ -52,6 +59,8 @@ export interface OutboundMediaResult {
   delivered: number;
   /** Number of failed items (download or send errors). */
   failed: number;
+  /** Receipt from the final successful attachment send. */
+  lastReceipt?: AttachmentSendReceipt;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,15 +85,38 @@ export async function deliverOutboundMedia(
 ): Promise<OutboundMediaResult> {
   let delivered = 0;
   let failed = 0;
+  let lastReceipt: AttachmentSendReceipt | undefined;
 
   for (let i = 0; i < mediaUrls.length; i++) {
+    if (deps.signal?.aborted) break;
     const url = mediaUrls[i];
 
     // 1. Download via SSRF-safe fetcher
-    const fetchResult = await deps.fetchUrl(url);
+    const fetched = await fromPromise((async () => {
+      if (deps.signal?.aborted) return undefined;
+      return deps.fetchUrl(url);
+    })());
+    if (!fetched.ok) {
+      deps.logger.warn(
+        {
+          mediaIndex: i,
+          hint: "Check URL accessibility and SSRF guard rules",
+          errorKind: "network" as const,
+        },
+        "Outbound media download failed",
+      );
+      failed++;
+      continue;
+    }
+    if (fetched.value === undefined || deps.signal?.aborted) break;
+    const fetchResult = fetched.value;
     if (!fetchResult.ok) {
       deps.logger.warn(
-        { url, hint: "Check URL accessibility and SSRF guard rules", errorKind: "network" as const },
+        {
+          mediaIndex: i,
+          hint: "Check URL accessibility and SSRF guard rules",
+          errorKind: "network" as const,
+        },
         "Outbound media download failed",
       );
       failed++;
@@ -94,7 +126,21 @@ export async function deliverOutboundMedia(
     const { buffer, mimeType: fetchedMime } = fetchResult.value;
 
     // 2. Determine MIME type
-    const mime = await resolveMimeType(buffer, fetchedMime);
+    const resolvedMime = await fromPromise(resolveMimeType(buffer, fetchedMime));
+    if (deps.signal?.aborted) break;
+    if (!resolvedMime.ok) {
+      deps.logger.warn(
+        {
+          mediaIndex: i,
+          hint: "Check the media type detector and verify the downloaded payload is readable",
+          errorKind: "dependency" as const,
+        },
+        "Outbound media MIME detection failed",
+      );
+      failed++;
+      continue;
+    }
+    const mime = resolvedMime.value;
 
     // 3. Determine attachment type from MIME
     const attachType = mimeToAttachmentType(mime) as AttachmentPayload["type"];
@@ -104,14 +150,16 @@ export async function deliverOutboundMedia(
 
     // 5. Write buffer to temp file
     const tempPath = safePath(tmpdir(), `comis-outbound-${randomUUID()}${extensionFromMime(mime)}`);
-    try {
-      await writeFile(tempPath, buffer);
-    } catch (writeErr: unknown) {
+    const written = await fromPromise(writeFile(tempPath, buffer));
+    if (deps.signal?.aborted) {
+      suppressError(unlink(tempPath), "outbound media temp cleanup after cancellation");
+      break;
+    }
+    if (!written.ok) {
       deps.logger.warn(
         {
-          url,
+          mediaIndex: i,
           tempPath,
-          err: writeErr,
           hint: "Check temp directory permissions",
           errorKind: "resource" as const,
         },
@@ -129,7 +177,8 @@ export async function deliverOutboundMedia(
       fileName,
     };
 
-    if (typeof deps.adapter.sendAttachment !== "function") {
+    const sendAttachment = deps.adapter.sendAttachment;
+    if (typeof sendAttachment !== "function") {
       // Defensive: sendAttachment is optional on ChannelPort.
       // Adapters whose platform lacks attachments (e.g. IRC) omit the method;
       // the capability gate (features.attachments) should normally have blocked
@@ -137,7 +186,7 @@ export async function deliverOutboundMedia(
       // bypassed — log and skip, do NOT crash.
       deps.logger.warn(
         {
-          url,
+          mediaIndex: i,
           hint: "Channel adapter has no sendAttachment — capability gate (features.attachments) should have blocked this call",
           errorKind: "validation" as const,
         },
@@ -147,13 +196,34 @@ export async function deliverOutboundMedia(
       suppressError(unlink(tempPath), "outbound media temp cleanup after capability skip");
       continue;
     }
-    const sendResult = await deps.adapter.sendAttachment(deps.channelId, payload, deps.sendOptions);
+    const sent = await fromPromise((async () => {
+      if (deps.signal?.aborted) return undefined;
+      return sendAttachment(deps.channelId, payload, deps.sendOptions);
+    })());
+    if (!sent.ok) {
+      deps.logger.warn(
+        {
+          mediaIndex: i,
+          hint: "Check channel adapter sendAttachment implementation",
+          errorKind: "platform" as const,
+        },
+        "Outbound media send failed",
+      );
+      failed++;
+      suppressError(unlink(tempPath), "outbound media temp cleanup after rejected send");
+      continue;
+    }
+    if (sent.value === undefined) {
+      suppressError(unlink(tempPath), "outbound media temp cleanup after cancellation");
+      break;
+    }
+    const sendResult = sent.value;
     if (!sendResult.ok) {
       deps.logger.warn(
         {
-          url,
+          mediaIndex: i,
           hint: "Check channel adapter sendAttachment implementation",
-          errorKind: "network" as const,
+          errorKind: "platform" as const,
         },
         "Outbound media send failed",
       );
@@ -163,13 +233,30 @@ export async function deliverOutboundMedia(
       continue;
     }
 
+    const receipt = sendResult.value;
+    if (receipt.kind === "delivered_untracked") {
+      deps.logger.warn(
+        {
+          mediaIndex: i,
+          hint: "Media delivery completed without a platform message ID. Do not retry; ID-based reactions and attribution are unavailable",
+          errorKind: "platform" as const,
+        },
+        "Outbound media delivered without platform tracking",
+      );
+    }
+
     delivered++;
+    lastReceipt = receipt;
 
     // 7. Clean up temp file (fire-and-forget)
     suppressError(unlink(tempPath), "outbound media temp cleanup");
   }
 
-  return { delivered, failed };
+  return {
+    delivered,
+    failed,
+    ...(lastReceipt !== undefined ? { lastReceipt } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------

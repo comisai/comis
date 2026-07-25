@@ -15,6 +15,7 @@ import {
   createFileLock,
   loadConfigFile,
   loadEnvFile,
+  parseConfigPaths,
   validateConfig,
   safePath,
   selectOAuthCredentialStore,
@@ -41,7 +42,7 @@ import { offlineOAuthProfileSet } from "../../util/offline-secrets-store.js";
 /**
  * Resolve the active credential storage mode from config.yaml.
  *
- * Uses COMIS_CONFIG_PATHS with ":" separator (matching daemon.ts:1422).
+ * Uses the shared comma-separated COMIS_CONFIG_PATHS contract.
  * Returns "file" when no config is found or the config is invalid.
  */
 export async function loadWizardStorageMode(): Promise<
@@ -49,7 +50,7 @@ export async function loadWizardStorageMode(): Promise<
 > {
   const envPaths = systemGetEnv("COMIS_CONFIG_PATHS");
   const configPath =
-    envPaths?.split(":")[0] ?? safePath(homedir(), ".comis", "config.yaml");
+    parseConfigPaths(envPaths)[0] ?? safePath(homedir(), ".comis", "config.yaml");
 
   // Resolve ${VAR} refs before validation — consistent with daemon bootstrap.
   // Use COMIS_DATA_DIR if set (test isolation), else the standard data dir.

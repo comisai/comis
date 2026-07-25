@@ -546,6 +546,68 @@ describe("web-search-tool: metadata", () => {
 // ---------------------------------------------------------------------------
 
 describe("web-search-tool: fallback chain", () => {
+  it("tries credentialed providers after DuckDuckGo before reporting exhaustion", async () => {
+    mockImpitFetch.mockRejectedValue(new Error("DuckDuckGo CAPTCHA"));
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        statusText: "Unavailable",
+        text: async () => "Brave unavailable",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          results: [{
+            title: "Tavily Answer",
+            url: "https://example.com/tavily",
+            content: "Tavily answer description",
+          }],
+        }),
+      });
+    globalThis.fetch = mockFetch;
+
+    const tool = createWebSearchTool({
+      apiKey: "brave-key",
+      tavily: { apiKey: "tavily-key" },
+    });
+    const result = await tool.execute("call-auto-fb-1", { query: "test" });
+
+    const parsed = parseResult(result);
+    expect(parsed.provider).toBe("tavily");
+    expect(mockImpitFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(String(mockFetch.mock.calls[0]![0])).toContain("api.search.brave.com");
+    expect(String(mockFetch.mock.calls[1]![0])).toContain("api.tavily.com");
+  });
+
+  it("reports exhaustion only after every credentialed provider fails", async () => {
+    mockImpitFetch.mockRejectedValue(new Error("DuckDuckGo CAPTCHA"));
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      statusText: "Unavailable",
+      text: async () => "provider unavailable",
+    });
+    globalThis.fetch = mockFetch;
+
+    const tool = createWebSearchTool({
+      apiKey: "brave-key",
+      tavily: { apiKey: "tavily-key" },
+    });
+    const result = await tool.execute("call-auto-fb-2", { query: "test" });
+
+    const parsed = parseResult(result);
+    expect(parsed.error).toBe("all_providers_failed");
+    expect(parsed.failures).toEqual([
+      expect.stringContaining("duckduckgo"),
+      expect.stringContaining("brave"),
+      expect.stringContaining("tavily"),
+    ]);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("falls back to second provider when first fails with HTTP error", async () => {
     const ddgHtml = `<div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com">DDG Answer</a><a class="result__snippet">DDG answer description</a></div>`;
     // Brave uses globalThis.fetch — fails with 500
@@ -642,6 +704,34 @@ describe("web-search-tool: fallback chain", () => {
 // ---------------------------------------------------------------------------
 
 describe("web-search-tool: runtime provider override", () => {
+  it("uses the runtime provider first without bypassing credentialed fallbacks", async () => {
+    mockImpitFetch.mockRejectedValue(new Error("DuckDuckGo CAPTCHA"));
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        web: {
+          results: [{
+            title: "Brave fallback",
+            url: "https://example.com/brave",
+            description: "Brave remained operational",
+          }],
+        },
+      }),
+    });
+
+    const tool = createWebSearchTool({ apiKey: "brave-key" });
+    const result = await tool.execute("call-override-chain", {
+      query: "test",
+      provider: "duckduckgo",
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.provider).toBe("brave");
+    expect(mockImpitFetch).toHaveBeenCalledTimes(1);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("runtime provider parameter overrides config provider", async () => {
     const ddgHtml = `<div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Foverride.com">DDG Override</a><a class="result__snippet">Override result</a></div>`;
     mockImpitFetch.mockResolvedValue({
@@ -662,8 +752,15 @@ describe("web-search-tool: runtime provider override", () => {
     expect(mockImpitFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("runtime override skips fallback chain", async () => {
+  it("runtime provider keeps the explicit fallback chain", async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error("tavily down"));
+    mockImpitFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      text: async () =>
+        `<div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Ffallback.example.com">Fallback</a><a class="result__snippet">DuckDuckGo fallback</a></div>`,
+    });
 
     const tool = createWebSearchTool({
       provider: "brave",
@@ -676,12 +773,10 @@ describe("web-search-tool: runtime provider override", () => {
       provider: "tavily",
     });
 
-    // Should NOT fall back to brave or duckduckgo
     const parsed = parseResult(result);
-    expect(parsed.error).toBe("all_providers_failed");
-    const failures = parsed.failures as string[];
-    expect(failures).toHaveLength(1);
-    expect(failures[0]).toContain("tavily");
+    expect(parsed.provider).toBe("duckduckgo");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(mockImpitFetch).toHaveBeenCalledTimes(1);
   });
 
   it("invalid runtime provider returns error", async () => {
@@ -743,12 +838,17 @@ describe("web-search-tool: duckduckgo provider", () => {
     expect(results[0].description).toContain("programming language");
   });
 
-  it("handles empty DDG response", async () => {
+  it("returns zero for DuckDuckGo's explicit no-results page", async () => {
     mockImpitFetch.mockResolvedValue({
       ok: true,
       status: 200,
       statusText: "OK",
-      text: async () => `<html><body><div id="links"></div></body></html>`,
+      text: async () => `
+        <html><body>
+          <div class="result result--no-result">
+            <div class="no-results">No results.</div>
+          </div>
+        </body></html>`,
     });
 
     const tool = createWebSearchTool({ provider: "duckduckgo" });
@@ -763,7 +863,12 @@ describe("web-search-tool: duckduckgo provider", () => {
       ok: true,
       status: 200,
       statusText: "OK",
-      text: async () => `<html><body></body></html>`,
+      text: async () => `
+        <html><body>
+          <div class="result result--no-result">
+            <div class="no-results">No results.</div>
+          </div>
+        </body></html>`,
     });
 
     const tool = createWebSearchTool({ provider: "duckduckgo" });

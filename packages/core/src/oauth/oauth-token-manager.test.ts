@@ -51,6 +51,7 @@ describe("oauth-token-manager — public type contracts", () => {
 
   it("OAuthTokenManager surface exposes the daemon-facing methods", () => {
     expectTypeOf<OAuthTokenManager["getApiKey"]>().toBeFunction();
+    expectTypeOf<OAuthTokenManager["getCredential"]>().toBeFunction();
     expectTypeOf<OAuthTokenManager["hasCredentials"]>().toBeFunction();
     expectTypeOf<OAuthTokenManager["storeCredentials"]>().toBeFunction();
     expectTypeOf<OAuthTokenManager["getSupportedProviders"]>().toBeFunction();

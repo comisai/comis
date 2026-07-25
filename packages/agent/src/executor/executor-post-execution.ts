@@ -22,9 +22,11 @@ import {
   type PerAgentConfig,
   type TypedEventBus,
   type MemoryPort,
+  type MemoryWriteScope,
   type ClockPort,
   type ContextStorePort,
   type ContextStoreScope,
+  type ConversationRef,
   tryGetContext,
   // Secret-egress guard (the keystone). Used to gate the paired-conversation
   // memory write so user-pasted secrets never reach the memories table / vector
@@ -33,6 +35,10 @@ import {
   // validateMemoryWrite REJECTS (severity "critical") when the secret-egress scan
   // finds a redaction.
   validateMemoryWrite,
+  type ResponseLocalePolicy,
+  type AgentExecutionFinishReason,
+  type ExecutionSideEffectSummary,
+  createConversationRef,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError, isSilentResponse } from "@comis/shared";
@@ -103,7 +109,7 @@ import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // The turn-end memory:recall_used emit threads
 // classifyIntent(msg.text) so the daemon write-back records the per-intent usefulness bucket.
 import { classifyIntent } from "../rag/query-understanding.js";
-import { getWorkspaceStatus } from "../workspace/index.js";
+import { getWorkspaceStatus } from "@comis/core";
 import type { ExecutionResult, ExecutionOverrides } from "./types.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import type { ContextEngine } from "../context-engine/index.js";
@@ -116,12 +122,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply } from "./degraded-reply.js";
-// Resolve the degraded reply's language once at the chokepoint.
-import { resolveReplyLanguage } from "./resolve-reply-language.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { generateCanaryToken } from "@comis/core";
+import type { BackgroundTaskManager } from "../background/background-task-manager.js";
+import { reconcilePendingBackgroundTurn } from "./pending-background-reply.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -201,6 +207,7 @@ export interface PostExecutionBridgeResult {
    *  so a weak executive never free-associates after an abort. Mirrors
    *  bridge-metrics.ts BridgeResult.abortResponse. */
   abortResponse?: string;
+  sideEffectSummary?: ExecutionSideEffectSummary;
 }
 
 /** Bridge interface used by post-execution. */
@@ -228,14 +235,12 @@ export interface PostExecutionParams {
   sm: { buildSessionContext(): unknown };
   config: PerAgentConfig;
   msg: NormalizedMessage;
-  /** USER.md preferred language, threaded from prompt assembly. Consumed by
-   *  the degraded-reply resolver (priority: config > USER.md > inbound script). */
-  userMdLanguage?: string;
+  /** Exact typed response-locale decision used for this turn. */
+  responseLocalePolicy: ResponseLocalePolicy;
   sessionKey: SessionKey;
   formattedKey: string;
-  /** Resolver-aligned key for activeRunRegistry.deregister. Must match the
-   *  formula used at the corresponding register call site. */
-  resolverRegisterKey: string;
+  /** Conversation authority used for active-run deregistration. */
+  resolverRegisterKey: ConversationRef;
   agentId: string | undefined;
   executionStartMs: number;
   executionId: string;
@@ -307,17 +312,14 @@ export interface PostExecutionParams {
   discoveryTracker?: DiscoveryTracker;
   // Deps
   deps: {
+    agentId: string;
     eventBus: TypedEventBus;
     logger: ComisLogger;
     memoryPort?: MemoryPort;
-    /** Optional LCD context store (the dag-mode write-path). Present
-     *  ⇒ the turn's NEW messages are ingested at afterTurn; absent ⇒ skipped
-     *  cleanly. TYPE-only core port (the agent↛memory cut). */
-    contextStore?: ContextStorePort;
-    /** Tenant id for the LCD ingest scope. Threaded from PiExecutorDeps.tenantId
-     *  at the call site so the scope's SECURITY column is never empty.
-     *  Falls back to the session key tenant when absent. */
-    tenantId?: string;
+    /** Canonical durable context store. TYPE-only core port. */
+    contextStore: ContextStorePort;
+    /** Tenant id for the context-store scope. */
+    tenantId: string;
     /** Getter for the leaf-summarizer deps. Present ⇒ the
      *  afterTurn leaf pass is wired live (over threshold ⇒ a leaf summary is
      *  persisted); absent ⇒ the pass is gated off cleanly. Sourced from the
@@ -332,6 +334,8 @@ export interface PostExecutionParams {
     workspaceDir: string;
     /** Wall-clock + monotonic time reads. */
     clock: ClockPort;
+    /** Required-work ownership for terminal response reconciliation. */
+    backgroundTaskManager?: Pick<BackgroundTaskManager, "getTasks">;
   };
   // Session adapter
   sessionAdapter: ComisSessionManager;
@@ -478,6 +482,7 @@ interface PairedStoreLogger {
 /** Args for {@link storePairedConversationMemory}. */
 export interface StorePairedConversationMemoryArgs {
   memoryPort: MemoryPort;
+  memoryScope: MemoryWriteScope;
   /** The built "[user] …\n[agent] …" paired content (already quality-gated + deduped). */
   pairedContent: string;
   effectiveAgentId: string;
@@ -525,7 +530,7 @@ export async function storePairedConversationMemory(
   args: StorePairedConversationMemoryArgs,
 ): Promise<void> {
   const {
-    memoryPort, pairedContent, effectiveAgentId, sessionKey,
+    memoryPort, memoryScope, pairedContent, effectiveAgentId, sessionKey,
     channelType, formattedKey, now, logger, embeddingEnqueue,
   } = args;
 
@@ -557,9 +562,6 @@ export async function storePairedConversationMemory(
     const userEntryId = randomUUID();
     const userStoreResult = await memoryPort.store({
       id: userEntryId,
-      tenantId: sessionKey.tenantId,
-      agentId: effectiveAgentId,
-      userId: sessionKey.userId,
       content: pairedContent,
       trustLevel: "learned",
       source: {
@@ -569,7 +571,7 @@ export async function storePairedConversationMemory(
       },
       tags: ["conversation", "paired"],
       createdAt: now,
-    });
+    }, memoryScope);
     if (!userStoreResult.ok) {
       logger.warn(
         { err: userStoreResult.error.message, hint: "Check database connectivity and disk space", errorKind: "dependency" as ErrorKind },
@@ -584,33 +586,16 @@ export async function storePairedConversationMemory(
 }
 
 /**
- * Decide whether the LCD afterTurn store passes (ingest + leaf + condense) run
- * for this turn, based on the agent's effective context-engine version.
- *
- * The daemon injects the LCD ContextStorePort UNCONDITIONALLY
- * (setup-agents-runtime.ts), but ONLY the dag engine READS the store: the
- * assembler's dag branch (context-engine.ts — gated `version === "dag"`) and the
- * ctx_* expansion tools (setup-tools.ts — gated `version === "dag" && lcdStore`).
- * A pipeline agent therefore must NOT write `lcd_messages` or fire leaf/condense
- * LLM summarization — that work is pure wasted cost + latency because nothing
- * reads it.
- *
- * Symmetry with the read side: the executor resolves an ABSENT
- * `config.contextEngine` via `ContextEngineConfigSchema.parse({})`, whose
- * `version` defaults to "dag" (executor-context-engine-setup.ts). So an absent
- * contextEngine (and an absent `version` within a present contextEngine) is
- * treated as dag — exactly what the assembler does — and only an EXPLICIT
- * `version: "pipeline"` skips the passes. This keeps write and read in agreement
- * and makes the dag default flip non-breaking. The gate reads per-turn config,
- * so flipping an agent pipeline→dag later takes effect on the very next turn (the
- * first dag turn catches up via the ingest delta from an empty store).
+ * Decide whether the context-store afterTurn passes (ingest + leaf + condense)
+ * run for this turn. The durable store is the canonical context source, so only
+ * the explicit master toggle can suppress these passes.
  *
  * Pure: no I/O, no side effects. Exported for unit tests.
  */
-export function shouldRunLcdStorePasses(config: {
-  contextEngine?: { version?: "pipeline" | "dag" };
+export function shouldRunContextStorePasses(config: {
+  contextEngine?: { enabled?: boolean };
 }): boolean {
-  return (config.contextEngine?.version ?? "dag") === "dag";
+  return config.contextEngine?.enabled !== false;
 }
 
 /**
@@ -635,7 +620,7 @@ export function shouldRunLcdStorePasses(config: {
  * so the named cause stays deliberate rather than accidental.
  *
  * NAMED degradation causes: flattening context-exhaustion into the generic
- * "error" bucket would leave obs.explain / obs.fleet.health unable to tell a
+ * "error" bucket would leave obs.explain / obs.system.health unable to tell a
  * context-exhausted session from a tool crash. The two related
  * context-exhaustion finish reasons —
  * `context_exhausted` (the bridge's hard context-window-guard abort,
@@ -654,14 +639,16 @@ export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["session
   context_loop: "context_exhausted", context_exhausted: "context_exhausted",
   // The terminal output-cap truncation promoted at the chokepoint.
   output_starved: "output_starved",
+  background_pending: "background_pending",
   // PromptTimeoutError terminals get their own NAMED cause. HARD_FAILURE_END_REASONS
-  // and the fleet degradedByCause record carry "timeout".
+  // and the system degradedByCause record carry "timeout".
   prompt_timeout: "timeout",
+  input_too_large: "error",
   // The dollars kill-switch abort (bridge-safety-controls sets
   // finishReason:"spend_exceeded") gets its OWN named cause instead of the `?? "error"`
-  // catch-all — so obs.explain / obs.fleet.health can tell a spend-killed session from
+  // catch-all — so obs.explain / obs.system.health can tell a spend-killed session from
   // a tool crash. HARD_FAILURE_END_REASONS (obs-explain-
-  // assemble.ts) carries it so the fleet degradedByCause record attributes the CAUSE.
+  // assemble.ts) carries it so the system degradedByCause record attributes the CAUSE.
   spend_exceeded: "spend_exceeded",
   completed_with_tool_errors: "completed_with_tool_errors",
   // The narrate-without-emit terminal promoted at the chokepoint
@@ -756,6 +743,33 @@ export function promoteNarrationStall(
   return effectiveFinishReason;
 }
 
+/** Publish the single authoritative terminal reason and side-effect facts. */
+export function settleExecutionResult(
+  result: ExecutionResult,
+  finishReason: AgentExecutionFinishReason,
+  bridgeResult: {
+    sideEffectSummary: ExecutionSideEffectSummary;
+    toolExecResults?: PostExecutionBridgeResult["toolExecResults"];
+  },
+): void {
+  const mutableResult = result as ExecutionResult & {
+    finishReason: AgentExecutionFinishReason;
+    terminalErrorKind?: ErrorKind;
+  };
+  mutableResult.sideEffectSummary = { ...bridgeResult.sideEffectSummary };
+  mutableResult.finishReason = finishReason;
+  if (finishReason === "error" || finishReason === "completed_with_tool_errors") {
+    const firstFailedKind = bridgeResult.toolExecResults?.find(
+      (toolResult) => !toolResult.success,
+    )?.errorKind;
+    mutableResult.terminalErrorKind = firstFailedKind
+      ?? mutableResult.terminalErrorKind
+      ?? "internal";
+    return;
+  }
+  delete mutableResult.terminalErrorKind;
+}
+
 /**
  * Build the SessionMetadata payload written to `_session-metadata.json` at the
  * end of an execution.
@@ -812,7 +826,7 @@ export function buildSessionEndMetadata(args: {
  *
  * The payload carries ids + counts + typed flags PLUS `topErrorKinds` and
  * `source`: both are threaded into the
- * persisted `obs_diagnostics` row so the fleet aggregate
+ * persisted `obs_diagnostics` row so the system aggregate
  * (`aggregateSessionsInWindow`) can read them without opening per-session
  * `_session-metadata.json`. Production emits the constant `source: "runtime"`;
  * a synthetic/test row is produced by a caller injecting `source: "test"`.
@@ -831,7 +845,7 @@ export function emitSessionSummary(
     rollup: SessionHealthRollup;
     /** The mapped endReason (named degradation cause) — the SAME value derived
      *  once at the chokepoint via END_REASON_MAP and co-persisted on sessionEnd.
-     *  Carried so the row feeds the fleet `degradedByCause` aggregate. */
+     *  Carried so the row feeds the system `degradedByCause` aggregate. */
     endReason: string;
     clock: ClockPort;
   },
@@ -924,7 +938,7 @@ export function snapshotSummarizerDepsForDefer(
  * plumbed on some path) every failed tool is reported as unrecovered —
  * so this never HIDES a genuine unrecovered failure.
  *
- * Observability is unaffected: effectiveFinishReason / logs / fleet rollup still
+ * Observability is unaffected: effectiveFinishReason / logs / system rollup still
  * record the failure. Only the user-facing reply is gated.
  *
  * Pure: no I/O, no side effects. Returns deduped failed names with no same-name success.
@@ -1020,7 +1034,7 @@ export {
  */
 export async function postExecution(params: PostExecutionParams): Promise<void> {
   const {
-    result, session, sm, config, msg, sessionKey, formattedKey, resolverRegisterKey, agentId,
+    result, session, sm, config, msg, sessionKey, formattedKey, resolverRegisterKey,
     executionStartMs, executionId,
     bridge, unsubscribe,
     contextEngineRef, ceSetup, streamSetup,
@@ -1037,7 +1051,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // downstream branches (silent-sentinel gate, memory-store path, drainAt
   // call site, skip-log debug branches) share the same normalized value.
   // Multi-agent isolation requires uniformity across all paths.
-  const effectiveAgentId = agentId ?? "default";
+  const effectiveAgentId = deps.agentId;
 
   unsubscribe();
   // Clear per-execution cache retention to prevent state leakage
@@ -1151,10 +1165,28 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // (the terminal stop reason is no longer "length"). See promoteOutputStarved.
   // Stage 3: promote a narrate-without-emit terminal that the one
   // bounded nudge could not recover — same conservative shape as stage 2.
-  const effectiveFinishReason = promoteNarrationStall(
+  const baseEffectiveFinishReason = promoteNarrationStall(
     promoteOutputStarved(toolReconciledFinishReason, bridgeResult.lastStopReason),
     result.narrateNudge,
   );
+  const pendingBackground = reconcilePendingBackgroundTurn({
+    response: result.response ?? "",
+    executionId,
+    tasks: deps.backgroundTaskManager?.getTasks(effectiveAgentId) ?? [],
+  });
+  const effectiveFinishReasonCandidate = pendingBackground.finishReason ?? baseEffectiveFinishReason;
+  const effectiveFinishReason = (
+    effectiveFinishReasonCandidate === "end_turn"
+      ? "stop"
+      : effectiveFinishReasonCandidate
+  ) as AgentExecutionFinishReason;
+  if (pendingBackground.finishReason !== undefined) {
+    result.response = pendingBackground.response;
+  }
+  settleExecutionResult(result, effectiveFinishReason, {
+    sideEffectSummary: bridgeResult.sideEffectSummary ?? result.sideEffectSummary,
+    toolExecResults: bridgeResult.toolExecResults,
+  });
 
   // Execution bookend INFO log with summary stats
   const durationMs = deps.clock.now() - executionStartMs;
@@ -1199,6 +1231,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       // promotion). Emitted only when it differs from finishReason to avoid noise
       // on the common case where they are identical.
       ...(effectiveFinishReason !== result.finishReason && { effectiveFinishReason }),
+      ...(pendingBackground.pendingCount > 0 && { pendingBackgroundTasks: pendingBackground.pendingCount }),
       tokensIn: result.tokensUsed.input,
       tokensOut: result.tokensUsed.output,
       tokensTotal: result.tokensUsed.total,
@@ -1322,7 +1355,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // read as a user-facing failure. Also suppressed when the model already
   // acknowledged the failure or the response is a silent sentinel. The
   // observability label (effectiveFinishReason) is unchanged — operators still
-  // see the recovered failure in logs/fleet.
+  // see the recovered failure in logs/system.
   const unrecoveredFailed = unrecoveredFailedToolNames(
     bridgeResult.failedTools ?? [],
     bridgeResult.toolExecResults,
@@ -1344,14 +1377,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // Degrade loudly — deliver an honest user-facing reply for named degraded causes.
   // APPEND for output_starved (partial text exists); REPLACE for context_exhausted (no usable text).
   // Gate on effectiveFinishReason (NOT result.finishReason — output_starved is only set here).
-  // Resolve the reply language ONCE (config > USER.md > inbound
-  // script he/ar/ru > en) and pass the tag to all three builders, so a Hebrew
-  // user reads the what/why/knob in Hebrew (en/"en" path stays byte-identical).
-  const replyLanguage = resolveReplyLanguage({
-    inboundText: params.msg.text ?? "",
-    configLanguage: params.config.language,
-    userMdLanguage: params.userMdLanguage,
-  });
+  // Resolve the open response-locale policy once and pass the canonical tag to
+  // each deterministic degraded-reply builder. Missing locale packs fall back
+  // to the injected catalog's English strings.
+  const replyLanguage = params.responseLocalePolicy.locale;
   if (effectiveFinishReason === "output_starved") {
     result.response = (result.response ?? "") + buildOutputStarvedAnnotation(replyLanguage);
     deps.logger.warn(
@@ -1494,7 +1523,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // emitSessionSummary — a throwing in-process listener must not abort teardown.
   // The event carries ids + counts + topErrorKinds + source:"runtime"
   // PLUS the mapped endReason (the named degradation cause)
-  // so the row feeds the fleet aggregate AND its degradedByCause rollup.
+  // so the row feeds the system aggregate AND its degradedByCause rollup.
   // endReason is the SAME value mapped once above and co-persisted on sessionEnd.
   emitSessionSummary(
     { eventBus: deps.eventBus, logger: deps.logger },
@@ -1511,8 +1540,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
 
   // Check onboarding completion after execution
   // Fire-and-forget: triggers getWorkspaceStatus which records
-  // onboardingCompletedAt when IDENTITY.md Name is filled or
-  // BOOTSTRAP.md is deleted. Does not block response delivery.
+  // onboardingCompletedAt when BOOTSTRAP.md is empty or absent. Does not
+  // block response delivery.
   if (isOnboarding) {
     suppressError(getWorkspaceStatus(deps.workspaceDir), "onboarding status check");
   }
@@ -1530,6 +1559,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   //
   // Non-blocking, non-fatal -- execution never fails due to memory store errors.
   const operationType = params.executionOverrides?.operationType;
+  const pairedContext = tryGetContext();
+  const pairedTurnScope = pairedContext?.turnScope;
+  const learningEligible = pairedContext?.learningEligible;
+  const canPersistPairedMemory = learningEligible !== false;
   const skipMemoryForOperation =
     operationType != null && MEMORY_SKIP_OPERATIONS.has(operationType);
 
@@ -1540,7 +1573,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // gates, a `NO_REPLY` / `HEARTBEAT_OK` / `[SILENT]` sentinel is rejected
   // from memory persistence.
   const isSilent = !!(deps.memoryPort && result.response && msg.text && isSilentResponse(result.response));
-  if (isSilent) {
+  if (!canPersistPairedMemory) {
+    deps.logger.debug(
+      { agentId: effectiveAgentId, sessionKey: formattedKey, step: "memory-persistence" },
+      "Paired memory skipped: turn ineligible for learning",
+    );
+  } else if (isSilent) {
     deps.logger.debug(
       { agentId: effectiveAgentId, sessionKey: formattedKey, hint: "Silent-sentinel response (NO_REPLY / HEARTBEAT_OK / [SILENT]) skipped from paired memory" },
       "Paired memory skipped: silent-sentinel response",
@@ -1549,6 +1587,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     deps.memoryPort &&
     result.response &&
     msg.text &&
+    pairedTurnScope !== undefined &&
     !skipMemoryForOperation &&
     shouldStorePairedMemory(msg.text, result.response)
   ) {
@@ -1570,6 +1609,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       // content stores unchanged. Helper is exported for unit-testing the gate.
       await storePairedConversationMemory({
         memoryPort: deps.memoryPort,
+        memoryScope: { turnScope: pairedTurnScope, visibility: { kind: "conversation" } },
         pairedContent,
         effectiveAgentId,
         sessionKey: { tenantId: sessionKey.tenantId, userId: sessionKey.userId },
@@ -1595,37 +1635,34 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     }
   }
 
-  // LCD afterTurn ingest (the dag-mode write-path). Mirrors the
-  // memoryPort persist above: gated on `deps.contextStore` presence, off the
+  // Context-store afterTurn ingest. Mirrors the memoryPort persist above: off the
   // injected clock, non-fatal (ingestTurn wraps each append per-entry). The
   // body lives in lcd-ingest.ts (this file is over the 800L cap).
   //
-  // The block is gated on BOTH the store's presence AND the effective
-  // engine being dag (`shouldRunLcdStorePasses`). The daemon injects the store
-  // unconditionally, but ONLY dag mode READS it (the assembler's dag branch +
-  // the ctx_* tools). A pipeline agent that wrote `lcd_messages` and fired
-  // leaf/condense LLM summarization here paid pure wasted cost + latency because
-  // nothing reads the store in pipeline mode. The version decision mirrors the
-  // read side exactly (absent contextEngine ⇒ dag, matching the executor's
-  // `ContextEngineConfigSchema.parse({})` default); only an explicit
-  // `version: "pipeline"` skips the passes. See shouldRunLcdStorePasses.
+  // The master context-engine toggle gates both reads and writes through
+  // `shouldRunContextStorePasses`.
   //
-  // Idempotency: the high-water mark `getMessages(conversationId).length`
+  // Idempotency: the high-water mark `getMessages(conversationRef).length`
   // is the persisted count (survives restarts); the delta `live.slice(persisted)`
   // appends only the not-yet-persisted tail. A retry with no new messages appends
   // nothing. `ingestTurnGuarded` also guards the shrink edge: if a heal ever
   // reassigns `state.messages` SHORTER than the store, it skips the append and
   // WARNs (errorKind `precondition`) rather than slicing past the end and either
-  // persisting nothing forever or colliding on the unique (conversationId, seq)
+  // persisting nothing forever or colliding on the unique (conversationRef, seq)
   // index.
-  if (deps.contextStore && shouldRunLcdStorePasses(config)) {
-    const conversationId = formattedKey;
+  const turnScope = tryGetContext()?.turnScope;
+  const turnConversation = turnScope?.conversation;
+  const resolvedConversationRef = turnConversation === undefined
+    ? undefined
+    : createConversationRef(turnConversation);
+  if (shouldRunContextStorePasses(config) && resolvedConversationRef?.ok && turnScope) {
+    const conversationRef = resolvedConversationRef.value;
     const scope: ContextStoreScope = {
-      conversationId,
+      conversationRef,
       // The scope's SECURITY columns must never be empty. tenantId
       // prefers the explicitly-threaded deps.tenantId, falling back to the
       // session key's tenant (the same source the memoryPort persist uses).
-      tenantId: deps.tenantId ?? sessionKey.tenantId,
+      tenantId: deps.tenantId,
       agentId: effectiveAgentId,
       sessionKey: formattedKey,
     };
@@ -1647,7 +1684,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // returns (the ingest write is a fast synchronous append — it does not block
     // on the deferred compaction, which rides the same queue BEHIND it).
     const ingestStart = deps.clock.now();
-    await store.runOnConversation(conversationId, () =>
+    await store.runOnConversation(conversationRef, () =>
       ingestTurnGuarded(
         store,
         scope,
@@ -1656,7 +1693,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         deps.logger,
         () => {
           deps.eventBus.emit("context:dag_degraded", {
-            conversationId: scope.conversationId,
+            conversationId: scope.conversationRef,
             agentId: scope.agentId,
             sessionKey: scope.sessionKey,
             reason: "fail_closed_rollover",
@@ -1666,10 +1703,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         },
         // The live/store-divergence skip emits a content-free
         // context:dag_degraded so the divergence persists as a health_signal row
-        // (queryable by the fleet lens) instead of being a Pino-only WARN.
+        // (queryable by the system health view) instead of being a Pino-only WARN.
         () => {
           deps.eventBus.emit("context:dag_degraded", {
-            conversationId: scope.conversationId,
+            conversationId: scope.conversationRef,
             agentId: scope.agentId,
             sessionKey: scope.sessionKey,
             reason: "live_store_divergence",
@@ -1683,7 +1720,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         // restart/JSONL-housekeeping" from "skipped due to corruption".
         () => {
           deps.eventBus.emit("context:dag_degraded", {
-            conversationId: scope.conversationId,
+            conversationId: scope.conversationRef,
             agentId: scope.agentId,
             sessionKey: scope.sessionKey,
             reason: "session_rebase",
@@ -1742,6 +1779,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
               void runDistillationPassAfterTurn({
                 summaryId,
                 scope,
+                memoryScope: { turnScope, visibility: { kind: "conversation" } },
                 content,
                 fallback: fallbackFlag,
                 depth: condensedDepth,
@@ -1788,7 +1826,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       // outlive the session. (Lifetime contract, documented on
       // snapshotSummarizerDepsForDefer.)
       const deferredSummarizerGetter = snapshotSummarizerDepsForDefer(deps.getSummarizerDeps);
-      const deferred = store.runOnConversation(conversationId, () =>
+      const deferred = store.runOnConversation(conversationRef, () =>
         runDeferredPasses(deferredSummarizerGetter),
       );
       suppressError(deferred, "postExecution deferred LCD compaction");

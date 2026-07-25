@@ -119,7 +119,7 @@ describe("scripts/contracts/generate-web-artifact", () => {
   });
 
   describe("bundle-size budget", () => {
-    it("real registry fits within 120 KB minified + 38 KB gzipped", () => {
+    it("real registry fits within the configured minified and gzipped budgets", () => {
       const result = runCodegen(OUT_DIR);
       expect(
         result.sizeReport.totalMinified,

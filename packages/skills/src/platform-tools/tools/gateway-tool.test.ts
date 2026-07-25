@@ -159,6 +159,20 @@ describe("gateway tool", () => {
   });
 
   describe("patch action", () => {
+    it.each([
+      ["contributions", "instances.echo"],
+      ["contributions", "activation.enabled"],
+      ["plugins", "plugins.echo.enabled"],
+    ])("rejects contribution topology path %s.%s before the patch confirmation gate", async (section, key) => {
+      const rpcCall = createMockRpcCall();
+      const tool = createGatewayTool(rpcCall, mockLogger);
+
+      await expect(
+        tool.execute("call-topology-patch", { action: "patch", section, key, value: true }),
+      ).rejects.toThrow(/\[permission_denied\].*immutable/);
+      expect(rpcCall).not.toHaveBeenCalled();
+    });
+
     it("patch is gated as destructive (requiresConfirmation)", async () => {
       const rpcCall = createMockRpcCall();
       const tool = createGatewayTool(rpcCall, mockLogger);
@@ -437,6 +451,23 @@ describe("gateway tool", () => {
       // RPC should not be called -- rejected before gate
       expect(rpcCall).not.toHaveBeenCalled();
     });
+
+    it.each(["contributions", "plugins"])(
+      "rejects contribution topology section %s before the apply confirmation gate",
+      async (section) => {
+        const rpcCall = createMockRpcCall();
+        const tool = createGatewayTool(rpcCall, mockLogger);
+
+        await expect(
+          tool.execute("call-a-topology", {
+            action: "apply" as "read",
+            section,
+            value: {},
+          }),
+        ).rejects.toThrow(/\[permission_denied\].*immutable/);
+        expect(rpcCall).not.toHaveBeenCalled();
+      },
+    );
 
     it("apply with _confirmed bypasses gate and calls RPC", async () => {
       const rpcCall = createMockRpcCall();

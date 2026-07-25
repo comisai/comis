@@ -2,7 +2,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { classifyRpcError } from "./rpc-dispatch.js";
 import { PreconditionError, ValidationError, AuthorizationError } from "./errors.js";
-import { RequiredToolsUnreachableError } from "@comis/core";
+import { RequiredToolsUnreachableError, TypedEventBus } from "@comis/core";
+
+function createEventBusMock(emit = vi.fn()) {
+  return {
+    emit,
+    emitSafely: vi.fn((event: string, payload: unknown) => {
+      emit(event, payload);
+      return { hadListeners: false, failures: [], pendingFailures: Promise.resolve([]) };
+    }),
+    on: vi.fn(),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Mock all 16 handler factory imports so createRpcDispatch can be tested
@@ -103,7 +114,10 @@ vi.mock("./browser-handlers.js", () => ({
 
 vi.mock("./subagent-handlers.js", () => ({
   createSubagentHandlers: vi.fn(() => ({
-    "subagent.run": vi.fn(async () => ({ result: "" })),
+    "subagent.list": vi.fn(async () => ({ runs: [], total: 0 })),
+    "subagent.wait": vi.fn(async () => ({ results: [] })),
+    "subagent.kill": vi.fn(async () => ({ killed: true, runId: "run-1" })),
+    "subagent.steer": vi.fn(async () => ({ status: "steered_inject", runId: "run-1" })),
   })),
 }));
 
@@ -276,7 +290,7 @@ describe("classifyRpcError", () => {
   it("classifies SandboxDowngradeError as precondition error (warn level)", () => {
     // A fail-closed P0-C no-downgrade spawn refusal is an EXPECTED security precondition
     // failure, NOT an internal handler fault — it must classify warn/precondition so a
-    // fleet health sweep does not read it as an ERROR.
+    // system health sweep does not read it as an ERROR.
     // The daemon classifies by Error.name (via @comis/core classifyTypedRpcError) — it no
     // longer imports the @comis/agent class. Construct exactly what the dispatch layer sees.
     const e = new Error('Spawn refused: child "x" sandbox posture is less confined than parent "p" on: exec.');
@@ -287,6 +301,17 @@ describe("classifyRpcError", () => {
     expect(result.hint).toBeTruthy();
   });
 
+  it("classifies a paused sub-agent spawn as a precondition warning", () => {
+    const error = new Error("Sub-agent spawning is paused by operator");
+    error.name = "SubAgentSpawnPausedError";
+
+    const result = classifyRpcError(error);
+
+    expect(result.errorKind).toBe("precondition");
+    expect(result.level).toBe("warn");
+    expect(result.hint).toContain("subagent.resume");
+  });
+
   it("classifies ValidationError as validation error (warn level)", () => {
     const result = classifyRpcError(new ValidationError("Unknown ID prefix. Expected 'sum_' or 'file_', got: abc-123"));
     expect(result.errorKind).toBe("validation");
@@ -295,7 +320,7 @@ describe("classifyRpcError", () => {
   });
 
   // An admin-trust denial is an EXPECTED authorization refusal, not an
-  // internal/handler fault — auth/warn, so an operator's wrong-trust call doesn't read as a fleet ERROR.
+  // internal/handler fault — auth/warn, so an operator's wrong-trust call doesn't read as a system ERROR.
   it("classifies AuthorizationError as auth error (warn level), NOT internal/error", () => {
     const result = classifyRpcError(new AuthorizationError("Admin access required for obs.explain (admin-trust only)"));
     expect(result.errorKind).toBe("auth");
@@ -344,7 +369,7 @@ describe("createRpcDispatch", () => {
   // to evaluate inline expressions like `deps.container.eventBus`.
   const mockDeps = {
     logger: mockLogger,
-    container: { eventBus: { emit: vi.fn(), on: vi.fn() }, config: { providers: { entries: {} } } },
+    container: { eventBus: createEventBusMock(), config: { providers: { entries: {} } } },
   } as never;
 
   beforeEach(() => {
@@ -365,6 +390,33 @@ describe("createRpcDispatch", () => {
 
     const result = (await dispatch("cron.add", {})) as { jobId: string };
     expect(result.jobId).toBe("j1");
+  });
+
+  it("wires runtime credential authorities into provider catalog status", async () => {
+    const { createModelHandlers } = await import("./model-handlers.js");
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const secretManager = { has: vi.fn(() => true) };
+    const modelsConfig = { defaultProvider: "amazon-bedrock" };
+    const oauthCredentialStore = { list: vi.fn() };
+
+    createRpcDispatch({
+      ...mockDeps,
+      oauthCredentialStore,
+      container: {
+        ...mockDeps.container,
+        secretManager,
+        config: {
+          ...mockDeps.container.config,
+          models: modelsConfig,
+        },
+      },
+    } as never);
+
+    expect(createModelHandlers).toHaveBeenCalledWith(expect.objectContaining({
+      secretManager,
+      modelsConfig,
+      oauthCredentialStore,
+    }));
   });
 
   it("throws for unknown RPC method", async () => {
@@ -390,7 +442,7 @@ describe("createRpcDispatch", () => {
     await expect(dispatch("cron.add", {})).rejects.toThrow("Scheduler not available");
   });
 
-  it("logs a typed refusal (AuthorizationError) at WARN with the message only — no stack rides an expected operator flow", async () => {
+  it("logs a typed refusal at WARN by class without the error message or stack", async () => {
     // Observed live: every operator `comis explain` run probes the
     // admin-gated obs.explain RPC before falling back offline (by design), and
     // the dispatch wrote a full AuthorizationError stack to the daemon log
@@ -409,10 +461,11 @@ describe("createRpcDispatch", () => {
 
     await expect(dispatch("cron.add", {})).rejects.toThrow(/Admin access required/);
     expect(mockLogger.warn).toHaveBeenCalledTimes(1);
-    const payload = mockLogger.warn.mock.calls[0]![0] as { err: unknown; errorKind: string };
+    const payload = mockLogger.warn.mock.calls[0]![0] as Record<string, unknown>;
     expect(payload.errorKind).toBe("auth");
-    expect(typeof payload.err, "expected refusals log the message, not the Error object (whose serializer emits the stack)").toBe("string");
-    expect(String(payload.err)).not.toMatch(/\n\s+at /);
+    expect(payload.errorName).toBe("AuthorizationError");
+    expect(payload).not.toHaveProperty("err");
+    expect(JSON.stringify(payload)).not.toContain("Admin access required");
   });
 
   it("logs an admin-trust denial on obs.explain at DEBUG, not WARN (the routine CLI probe-then-offline flow)", async () => {
@@ -454,16 +507,16 @@ describe("createRpcDispatch", () => {
     expect(logObj.method).toBe("cron.add");
     expect(logObj.hint).toBeTruthy();
     expect(logObj.errorKind).toBe("internal");
-    // params now joins the payload so operator debugging doesn't
-    // need a separate grep against the request log.
-    expect("params" in logObj).toBe(true);
+    expect(logObj.parameterCount).toBe(0);
+    expect("params" in logObj).toBe(false);
+    expect("err" in logObj).toBe(false);
   });
 
   // -----------------------------------------------------------------------
   // Severity-aware dispatcher
   // -----------------------------------------------------------------------
 
-  it("PreconditionError → logger.warn (NOT .error), errorKind=precondition, params on payload", async () => {
+  it("PreconditionError logs a content-free parameter count at WARN", async () => {
     const { createCronHandlers } = await import("./cron-handlers.js");
     (createCronHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
       "cron.add": vi.fn(async () => {
@@ -482,10 +535,12 @@ describe("createRpcDispatch", () => {
     expect(msg).toBe("JSON-RPC method error");
     expect(logObj.errorKind).toBe("precondition");
     expect(logObj.method).toBe("cron.add");
-    expect(logObj.params).toEqual({ spec: "rate(5 minutes)" });
+    expect(logObj.parameterCount).toBe(1);
+    expect(logObj).not.toHaveProperty("params");
+    expect(JSON.stringify(logObj)).not.toContain("rate(5 minutes)");
   });
 
-  it("ValidationError → logger.warn, errorKind=validation, params payload includes the offending id", async () => {
+  it("ValidationError does not repeat the offending identifier in the log", async () => {
     const { createCronHandlers } = await import("./cron-handlers.js");
     (createCronHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
       "cron.add": vi.fn(async () => {
@@ -496,16 +551,16 @@ describe("createRpcDispatch", () => {
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     const dispatch = createRpcDispatch(mockDeps);
 
-    // Regression for the ~/.comis/logs/ "cron.add id=abc-123" case:
-    // params MUST appear on the same log payload so an operator does not
-    // have to cross-reference a separate request log to find the input.
     await expect(dispatch("cron.add", { id: "abc-123" })).rejects.toThrow();
 
     expect(mockLogger.error).not.toHaveBeenCalled();
     expect(mockLogger.warn).toHaveBeenCalledTimes(1);
     const [logObj] = mockLogger.warn.mock.calls[0]!;
     expect(logObj.errorKind).toBe("validation");
-    expect(logObj.params).toEqual({ id: "abc-123" });
+    expect(logObj.parameterCount).toBe(1);
+    expect(logObj).not.toHaveProperty("params");
+    expect(logObj).not.toHaveProperty("err");
+    expect(JSON.stringify(logObj)).not.toContain("abc-123");
   });
 
   it("generic Error → logger.error, errorKind=internal (default for unmatched)", async () => {
@@ -540,7 +595,7 @@ describe("createRpcDispatch", () => {
       "image.analyze",
       "config.get",
       "browser.navigate",
-      "subagent.run",
+      "subagent.list",
       "agent.list",
       "obs.diagnostics",
       "model.list",
@@ -575,14 +630,8 @@ describe("createRpcDispatch", () => {
   // -----------------------------------------------------------------------
 
   it("auth.set handler error — dispatcher must NOT emit raw bearer or refresh token in log payload", async () => {
-    // The dispatcher error log path includes `params` on the log object.
-    // For auth.set, params carries { access: "<bearer>", refresh: "<token>" }.
-    // Before the fix, these bare field names were absent from CREDENTIAL_KEYS
-    // so the Pino/diagnostic sanitizer did not redact them.
-    //
-    // This test simulates an auth.set failure (e.g. SQLITE_BUSY) and asserts
-    // that neither ACCESS_SENTINEL nor REFRESH_SENTINEL appears in the log
-    // payload written to logger.error.
+    // RPC params may contain bearer credentials. Failure logs retain only
+    // method/cardinality/class metadata, never parameter values.
     const ACCESS_SENTINEL = "tok-bearer-DISPATCH-CR01-SENTINEL";
     const REFRESH_SENTINEL = "tok-refresh-DISPATCH-CR01-SENTINEL";
 
@@ -614,10 +663,6 @@ describe("createRpcDispatch", () => {
     const [logObj] = mockLogger.error.mock.calls[0]!;
 
     // Serialize the log payload and confirm token sentinels are absent.
-    // The safeParams projection in the dispatcher (Part B defense-in-depth)
-    // must replace access/refresh with "[REDACTED]" before they reach the
-    // log call. CREDENTIAL_KEYS redaction (Part A) ensures the diagnostic
-    // sanitizer also catches any future bypass.
     const logSerialized = JSON.stringify(logObj);
     expect(logSerialized).not.toContain(ACCESS_SENTINEL);
     expect(logSerialized).not.toContain(REFRESH_SENTINEL);
@@ -629,11 +674,8 @@ describe("createRpcDispatch", () => {
   // -----------------------------------------------------------------------
 
   it("image.analyze handler error — dispatcher must NOT emit the raw base64 source in the log payload", async () => {
-    // The dispatcher logs `params` on every thrown handler error. For
-    // image.analyze with source_type:"base64", params.source is the raw base64
-    // image — Pino key-name redaction (apiKey/token/…) does NOT cover `source`,
-    // so the whole image used to land in the daemon log. The dispatcher must
-    // strip large binary payload fields for media methods before logging.
+    // Media RPC params may contain entire binary payloads. Failure logs retain
+    // only method/cardinality/class metadata, never parameter values.
     const BASE64_SENTINEL = "QkFTRTY0LUlNQUdFLVdSMDQtU0VOVElORUwtYmFzZTY0LWJvZHk=";
 
     const { createMediaHandlers } = await import("./media-handlers.js");
@@ -661,15 +703,12 @@ describe("createRpcDispatch", () => {
     const logSerialized = JSON.stringify(logCall![0]);
     // The base64 bytes must be absent from the log payload.
     expect(logSerialized).not.toContain(BASE64_SENTINEL);
-    // The method + a non-binary param (prompt is small; kept) still aid triage,
-    // but the load-bearing assertion is that the bytes are gone.
+    // Method identity still aids triage without retaining prompt or media data.
     expect(logSerialized).toContain("image.analyze");
   });
 
-  it("a NON-media method still logs its params (the strip is scoped, not global)", async () => {
-    // Regression guard: the binary-strip must not eat ordinary RPC params —
-    // only the known base64-bearing media methods are projected.
-    const ID_SENTINEL = "cron-job-id-WR04-still-logged";
+  it("a non-media method logs only parameter cardinality, never values", async () => {
+    const ID_SENTINEL = "cron-job-id-content-sentinel";
     const { createCronHandlers } = await import("./cron-handlers.js");
     (createCronHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
       "cron.add": vi.fn(async () => {
@@ -685,8 +724,9 @@ describe("createRpcDispatch", () => {
     const logCall = mockLogger.error.mock.calls[0] ?? mockLogger.warn.mock.calls[0];
     expect(logCall).toBeDefined();
     const logSerialized = JSON.stringify(logCall![0]);
-    // A non-media method's ordinary param IS still on the log line (diagnostic).
-    expect(logSerialized).toContain(ID_SENTINEL);
+    expect(logSerialized).not.toContain(ID_SENTINEL);
+    expect(logCall![0]).toEqual(expect.objectContaining({ parameterCount: 1 }));
+    expect(logCall![0]).not.toHaveProperty("params");
   });
 
   // -----------------------------------------------------------------------
@@ -817,6 +857,10 @@ describe("createRpcDispatch", () => {
     "session.list",
     "session.compact",
     "session.reset",
+    "subagent.list",
+    "subagent.wait",
+    "subagent.kill",
+    "subagent.steer",
   ];
 
   it("an agent-origin call to its OWN orch-gated method (with the cap held) REACHES the handler, not a deny-by-origin throw", async () => {
@@ -943,12 +987,9 @@ describe("createRpcDispatch", () => {
     const deps = {
       logger: mockLogger,
       container: {
-        eventBus: { emit, on: vi.fn() },
+        eventBus: createEventBusMock(emit),
         config: { providers: { entries: {} }, tenantId: "tenant-a" },
       },
-      // The synthetic per-session root resolver (setup-capability-endpoint-boot.ts).
-      resolveRootRunId: (key: { tenantId: string; userId: string; channelId: string }) =>
-        `root-session-${key.tenantId}:${key.userId}:${key.channelId}`,
     } as never;
     const pull = (name: string) =>
       emit.mock.calls.filter((c) => c[0] === name).map((c) => c[1] as Record<string, unknown>);
@@ -971,6 +1012,7 @@ describe("createRpcDispatch", () => {
         _agentId: "agentA",
         _capabilities: ["orch:message"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
       }),
     ).resolves.toBeDefined();
 
@@ -997,6 +1039,7 @@ describe("createRpcDispatch", () => {
       _agentId: "agentA",
       _capabilities: ["orch:message"],
       _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
     });
 
     const tree = capAudited();
@@ -1031,6 +1074,7 @@ describe("createRpcDispatch", () => {
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
       }),
     ).rejects.toBeInstanceOf((await import("@comis/core")).CapabilityDeniedError);
 
@@ -1083,6 +1127,7 @@ describe("createRpcDispatch", () => {
       _agentId: "agentA",
       _capabilities: ["orch:message"],
       _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
       // hostile content the audit MUST NOT echo:
       text: "the actual chat message body",
       apiKey: "sk-PLANTED-SECRET",
@@ -1111,6 +1156,7 @@ describe("createRpcDispatch", () => {
     await dispatch("session.list", {
       _agentId: "agentA",
       _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
     });
     expect(auditEvents()).toHaveLength(0);
     expect(capAudited()).toHaveLength(0);
@@ -1201,11 +1247,11 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     const deps = {
       logger: mockLogger,
       container: {
-        eventBus: { emit, on: vi.fn() },
+        eventBus: createEventBusMock(emit),
         config: { providers: { entries: {} }, tenantId: "tenant-a" },
       },
-      resolveRootRunId: (key: { tenantId: string; userId: string; channelId: string }) =>
-        `root-session-${key.tenantId}:${key.userId}:${key.channelId}`,
+      resolveRootRunId: (_agentId: string, key: { tenantId: string; userId: string; channelId: string }) =>
+        ({ ok: true, value: `root-session-${key.tenantId}:${key.userId}:${key.channelId}` }),
       denialBreaker,
       evictRegistry,
       escalate,
@@ -1222,8 +1268,8 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
       evictRegistry,
       abortEvents: () => pull("execution:aborted"),
       // The dedicated content-free autonomy event the trip
-      // emits BESIDE execution:aborted so `comis fleet` surfaces the denial-breaker
-      // count (the abort reason is never a session endReason, so the fleet lens has
+      // emits BESIDE execution:aborted so `comis system-health` surfaces the denial-breaker
+      // count (the abort reason is never a session endReason, so the system health view has
       // no other ingestion path).
       denialBreakerEvents: () => pull("autonomy:denial_breaker_tripped"),
     };
@@ -1256,6 +1302,12 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
+        _callerConversationScope: {
+          tenantId: "tenant-a",
+          agentId: "agentA",
+          partition: { kind: "principal", principalId: "user-7" },
+        },
         _autonomyMode: "unattended",
       }),
     ).rejects.toBeInstanceOf(CapabilityDeniedError);
@@ -1292,6 +1344,12 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
+        _callerConversationScope: {
+          tenantId: "tenant-a",
+          agentId: "agentA",
+          partition: { kind: "principal", principalId: "user-7" },
+        },
         _autonomyMode: "unattended",
       }),
     ).rejects.toBeInstanceOf(CapabilityDeniedError);
@@ -1319,6 +1377,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _capabilities: ["orch:message"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         _autonomyMode: "unattended",
       }),
     ).rejects.toBeInstanceOf(CapabilityDeniedError);
@@ -1343,6 +1402,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         _autonomyMode: "accept-reversible", // standard, NOT unattended
       }),
     ).rejects.toBeInstanceOf(CapabilityDeniedError);
@@ -1366,13 +1426,19 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
+        _callerConversationScope: {
+          tenantId: "tenant-a",
+          agentId: "agentA",
+          partition: { kind: "principal", principalId: "user-7" },
+        },
         _autonomyMode: "unattended",
       });
     };
 
     await expect(callDeny()).rejects.toBeInstanceOf(CapabilityDeniedError); // 1
     await expect(callDeny()).rejects.toBeInstanceOf(CapabilityDeniedError); // 2
-    // Before the trip: no abort, no kill, no fleet denial-breaker event.
+    // Before the trip: no abort, no kill, no system denial-breaker event.
     expect(abortEvents()).toHaveLength(0);
     expect(killByRootRun).not.toHaveBeenCalled();
     expect(denialBreakerEvents()).toHaveLength(0);
@@ -1388,7 +1454,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     expect(killByRootRun).toHaveBeenCalledTimes(1);
     expect(killByRootRun).toHaveBeenCalledWith("root-session-tenant-a:user-7:chan-9");
     // The trip ALSO emits the content-free autonomy:denial_breaker_tripped
-    // event (the fleet-ingestion path — execution:aborted has none). It carries the
+    // event (the system-ingestion path — execution:aborted has none). It carries the
     // rootRunId (an id) + a timestamp ONLY — never the free-text deny reason.
     const denialEvents = denialBreakerEvents();
     expect(denialEvents).toHaveLength(1);
@@ -1400,6 +1466,49 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
       .map((c) => c[0] as Record<string, unknown>)
       .find((a) => a.kind === "denial_breaker_tripped");
     expect(tripEscalate).toBeDefined();
+  });
+
+  it("kills and cleans up a tripped run before failed lifecycle observers and preserves the denial", async () => {
+    await wireDenyingMessageSend();
+    const { deps, escalate, killByRootRun, denialBreaker, evictRegistry } = makeAutonomyDeps({ denialBreakerN: 1 });
+    const eventBus = new TypedEventBus();
+    const laterAbort = vi.fn();
+    const laterTrip = vi.fn();
+    eventBus.on("execution:aborted", () => {
+      expect(killByRootRun).toHaveBeenCalledOnce();
+      expect(evictRegistry.clear).toHaveBeenCalledOnce();
+      expect(denialBreaker.evict).toHaveBeenCalledOnce();
+      throw new Error("private abort subscriber content");
+    });
+    eventBus.on("execution:aborted", laterAbort);
+    eventBus.on("autonomy:denial_breaker_tripped", async () => {
+      throw new Error("private trip subscriber content");
+    });
+    eventBus.on("autonomy:denial_breaker_tripped", laterTrip);
+    (deps as unknown as { container: { eventBus: TypedEventBus } }).container.eventBus = eventBus;
+    const dispatch = (await import("./rpc-dispatch.js")).createRpcDispatch(deps);
+    const { CapabilityDeniedError } = await import("@comis/core");
+
+    await expect(dispatch("message.send", {
+      _agentId: "agentA",
+      _capabilities: ["orch:read"],
+      _callerSessionKey: "tenant-a:user-7:chan-9",
+      _rootRunId: "root-session-tenant-a:user-7:chan-9",
+      _callerConversationScope: {
+        tenantId: "tenant-a",
+        agentId: "agentA",
+        partition: { kind: "principal", principalId: "user-7" },
+      },
+      _autonomyMode: "unattended",
+    })).rejects.toBeInstanceOf(CapabilityDeniedError);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(killByRootRun).toHaveBeenCalledOnce();
+    expect(escalate).toHaveBeenCalledWith(expect.objectContaining({ kind: "denial_breaker_tripped" }));
+    expect(evictRegistry.clear).toHaveBeenCalledOnce();
+    expect(denialBreaker.evict).toHaveBeenCalledOnce();
+    expect(laterAbort).toHaveBeenCalledOnce();
+    expect(laterTrip).toHaveBeenCalledOnce();
   });
 
   it("count-only-floor-blocks: a deny-by-origin admin attempt (plain Error) does NOT call recordDenial", async () => {
@@ -1415,6 +1524,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _trustLevel: "user",
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         _autonomyMode: "unattended",
         name: "X",
         value: "Y",
@@ -1439,6 +1549,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
       dispatch("cron.add", {
         _agentId: "agentA",
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         _autonomyMode: "unattended",
       }),
     ).rejects.toThrow("Scheduler not available");
@@ -1457,6 +1568,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         _autonomyMode: "unattended",
       });
     };
@@ -1467,6 +1579,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _capabilities: ["orch:message"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         _autonomyMode: "unattended",
       });
     };
@@ -1532,11 +1645,11 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
     const deps = {
       logger: mockLogger,
       container: {
-        eventBus: { emit, on: vi.fn() },
+        eventBus: createEventBusMock(emit),
         config: { providers: { entries: {} }, tenantId: "tenant-a" },
       },
-      resolveRootRunId: (key: { tenantId: string; userId: string; channelId: string }) =>
-        `root-session-${key.tenantId}:${key.userId}:${key.channelId}`,
+      resolveRootRunId: (_agentId: string, key: { tenantId: string; userId: string; channelId: string }) =>
+        ({ ok: true, value: `root-session-${key.tenantId}:${key.userId}:${key.channelId}` }),
       denialBreaker,
       evictRegistry,
       escalate,
@@ -1563,6 +1676,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
     _agentId: "agentA",
     _capabilities: ["orch:read"], // missing orch:message → deny
     _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
     _autonomyMode: "unattended",
   } as const;
 
@@ -1625,6 +1739,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
       }),
     ).rejects.toBeInstanceOf(CapabilityDeniedError);
     expect(
@@ -1642,6 +1757,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         _autonomyMode: "bogus", // unparseable → resolveEffectiveMode → "default"
       }),
     ).rejects.toBeInstanceOf(CapabilityDeniedError);
@@ -1676,6 +1792,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         // NO _autonomyMode — the server-resolve from deps.agents is the source.
       }),
     ).rejects.toBeInstanceOf(CapabilityDeniedError);
@@ -1712,7 +1829,7 @@ describe("createRpcDispatch — pipeline:authored tier resolver wiring", () => {
   // to the "small" tier.
   const graphMockDeps = {
     logger: mockLogger,
-    container: { eventBus: { emit: vi.fn(), on: vi.fn() }, config: { providers: { entries: {} }, dataDir: "." } },
+    container: { eventBus: createEventBusMock(), config: { providers: { entries: {} }, dataDir: "." } },
     graphCoordinator: { run: vi.fn(), cancel: vi.fn() },
     agents: { weakbot: { provider: "ollama" } },
     getProviderCapabilityClass: (provider: string | undefined) =>
@@ -1763,7 +1880,7 @@ describe("createRpcDispatch — pipeline:authored tier resolver wiring", () => {
     const depsWithGate = {
       ...graphMockDeps,
       container: {
-        eventBus: { emit: vi.fn(), on: vi.fn() },
+        eventBus: createEventBusMock(),
         config: {
           providers: { entries: {} },
           dataDir: ".",
@@ -1808,7 +1925,7 @@ describe("createRpcDispatch — capabilities.introspect wiring", () => {
   function depsWithAutonomy() {
     return {
       logger: mockLogger,
-      container: { eventBus: { emit: vi.fn(), on: vi.fn() }, config: { providers: { entries: {} } } },
+      container: { eventBus: createEventBusMock(), config: { providers: { entries: {} } } },
       defaultAgentId: "default",
       agents: {
         "agent-a": { autonomy: { profile: "standard", capabilities: ["orch:read", "orch:web"] } },
@@ -1854,7 +1971,7 @@ describe("createRpcDispatch — capabilities.introspect wiring", () => {
     // registered unconditionally, budget omitted.
     const dispatch = createRpcDispatch({
       logger: mockLogger,
-      container: { eventBus: { emit: vi.fn(), on: vi.fn() }, config: { providers: { entries: {} } } },
+      container: { eventBus: createEventBusMock(), config: { providers: { entries: {} } } },
       defaultAgentId: "default",
       agents: { default: { autonomy: { profile: "assistant", capabilities: [] } } },
       // boundedAutonomy + resolveRootRunId deliberately ABSENT.

@@ -201,7 +201,7 @@ function makeParams(overrides?: Partial<ToolAssemblyParams>): ToolAssemblyParams
       name: "test-agent",
       provider: "anthropic",
       model: "claude-sonnet-4-5-20250929",
-      contextEngine: { enabled: true, version: "pipeline" },
+      contextEngine: { enabled: true },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PerAgentConfig has many fields
     } as any,
     deps,
@@ -873,6 +873,32 @@ describe("assembleTools — recall-trace config passthrough to prompt assembly",
         deps: expect.objectContaining({ recallTraceConfig }),
       }),
     );
+  });
+});
+
+describe("assembleTools — MCP instruction resolver passthrough to prompt assembly", () => {
+  it("forwards the live MCP instruction resolver without taking a startup snapshot", async () => {
+    const getMcpServerInstructions = vi.fn(() => [
+      {
+        serverId: "example-operations",
+        instructions: "Use the structured tools for current facts.",
+        contentHash: "a".repeat(64),
+        trust: "external" as const,
+      },
+    ]);
+    const deps = {
+      ...makeDeps(),
+      getMcpServerInstructions,
+    } satisfies ToolAssemblyDeps;
+
+    await assembleTools(makeParams({ deps }));
+
+    expect(mocks.assembleExecutionPromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deps: expect.objectContaining({ getMcpServerInstructions }),
+      }),
+    );
+    expect(getMcpServerInstructions).not.toHaveBeenCalled();
   });
 });
 

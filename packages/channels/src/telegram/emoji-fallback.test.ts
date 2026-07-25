@@ -21,7 +21,7 @@ function createMockAdapter(): ChannelPort {
     removeReaction: vi.fn().mockResolvedValue(ok(undefined)),
     deleteMessage: vi.fn().mockResolvedValue(ok(undefined)),
     fetchMessages: vi.fn().mockResolvedValue(ok([])),
-    sendAttachment: vi.fn().mockResolvedValue(ok("att-1")),
+    sendAttachment: vi.fn().mockResolvedValue(ok({ kind: "tracked", messageId: "att-1" })),
     platformAction: vi.fn().mockResolvedValue(ok(undefined)),
   };
 }

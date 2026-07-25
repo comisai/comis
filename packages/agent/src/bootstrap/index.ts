@@ -4,7 +4,6 @@ export {
   type BootstrapFile,
   type TruncationResult,
   type PromptMode,
-  type RuntimeInfo,
   type InboundMetadata,
   type BootstrapContextFile,
   SUBAGENT_BOOTSTRAP_ALLOWLIST,
@@ -26,5 +25,10 @@ export * from "./sections/index.js";
 
 export { extractMarkdownSections, MAX_POST_COMPACTION_CHARS } from "./section-extractor.js";
 
-export { assembleRichSystemPrompt, assembleRichSystemPromptBlocks, SECTION_SEPARATOR } from "./system-prompt-assembler.js";
+export {
+  assembleRichSystemPrompt,
+  assembleRichSystemPromptBlocks,
+  compileRichSystemPrompt,
+  SECTION_SEPARATOR,
+} from "./system-prompt-assembler.js";
 export type { AssemblerParams, SystemPromptBlocks } from "./system-prompt-assembler.js";

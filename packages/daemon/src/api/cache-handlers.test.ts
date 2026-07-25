@@ -23,10 +23,13 @@ function makeObsStore(overrides: Record<string, unknown> = {}) {
     queryDelivery: vi.fn().mockReturnValue([]),
     deliveryStats: vi.fn().mockReturnValue({
       total: 0,
+      attempted: 0,
       success: 0,
       error: 0,
       timeout: 0,
       filtered: 0,
+      aborted: 0,
+      attemptedLatencyMs: 0,
       avgLatencyMs: 0,
     }),
     latestChannelSnapshots: vi.fn().mockReturnValue([]),
@@ -103,7 +106,7 @@ function makeDeps(overrides?: Partial<ObsHandlerDeps>): ObsHandlerDeps {
       getRecent: vi.fn().mockReturnValue([]),
       getStats: vi
         .fn()
-        .mockReturnValue({ total: 0, successes: 0, failures: 0, avgLatencyMs: 0 }),
+        .mockReturnValue({ total: 0, attempted: 0, successes: 0, failures: 0, timeouts: 0, filtered: 0, aborted: 0, avgLatencyMs: 0 }),
       reset: vi.fn(),
       dispose: vi.fn(),
     },

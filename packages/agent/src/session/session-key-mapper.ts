@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { SessionKey } from "@comis/core";
 import { safePath } from "@comis/core";
+import { tryCatch } from "@comis/shared";
 
 /**
  * Encode a single character to its `@XX` hex representation.
@@ -96,6 +97,15 @@ function buildFilename(key: SessionKey): string {
 }
 
 /**
+ * Reserved suffix for the append-only inbound-message sidecar.
+ *
+ * `encodeComponent` always escapes `~` inside every SessionKey component, so
+ * no transcript filename produced by `buildFilename` can end in this literal
+ * token. That makes the sidecar distinguishable without relying on heuristics.
+ */
+export const INBOUND_MESSAGE_LEDGER_SUFFIX = "~ledger~inbound.jsonl";
+
+/**
  * Convert a SessionKey to a deterministic JSONL file path.
  *
  * Directory structure: `{baseDir}/{encodedTenantId}/{encodedChannelId}/{filename}.jsonl`
@@ -119,6 +129,15 @@ export function sessionKeyToPath(key: SessionKey, baseDir: string): string {
   return safePath(baseDir, tenantDir, channelDir, filename);
 }
 
+/** Map a SessionKey to its append-only inbound-message ledger sidecar. */
+export function sessionKeyToInboundMessageLedgerPath(
+  key: SessionKey,
+  baseDir: string,
+): string {
+  const sessionPath = sessionKeyToPath(key, baseDir);
+  return `${sessionPath.slice(0, -".jsonl".length)}${INBOUND_MESSAGE_LEDGER_SUFFIX}`;
+}
+
 /**
  * Convert a JSONL file path back to a SessionKey.
  *
@@ -130,13 +149,13 @@ export function sessionKeyToPath(key: SessionKey, baseDir: string): string {
  *
  * @param filePath - Absolute path to a JSONL session file
  * @param baseDir - The same baseDir used in sessionKeyToPath
- * @param agentId - Optional agentId to set on the returned SessionKey
+ * @param agentId - Agent identity supplied by the containing workspace tree
  * @returns SessionKey if the path is valid, undefined otherwise
  */
 export function pathToSessionKey(
   filePath: string,
   baseDir: string,
-  agentId?: string,
+  agentId: string,
 ): SessionKey | undefined {
   if (!filePath) return undefined;
 
@@ -157,6 +176,10 @@ export function pathToSessionKey(
   const [encodedTenant, encodedChannel, rawFilename] = parts;
   if (!encodedTenant || !encodedChannel || !rawFilename) return undefined;
 
+  // The sidecar shares the session directory and `.jsonl` extension, but it
+  // is not an SDK transcript and must stay invisible to transcript scanners.
+  if (rawFilename.endsWith(INBOUND_MESSAGE_LEDGER_SUFFIX)) return undefined;
+
   // Strip .jsonl extension
   if (!rawFilename.endsWith(".jsonl")) return undefined;
   const nameWithoutExt = rawFilename.slice(0, -6); // ".jsonl".length === 6
@@ -173,6 +196,7 @@ export function pathToSessionKey(
 
   const key: SessionKey = {
     tenantId: decodeComponent(encodedTenant!),
+    agentId,
     userId: decodeComponent(segments[0]),
     channelId: decodeComponent(encodedChannel!),
   };
@@ -193,9 +217,31 @@ export function pathToSessionKey(
     }
   }
 
-  if (agentId !== undefined) {
-    key.agentId = agentId;
-  }
-
   return key;
+}
+
+/**
+ * Decode an inbound-message ledger sidecar path back to its SessionKey.
+ * Ordinary transcripts, malformed suffixes, and nested lookalikes are rejected.
+ */
+export function inboundMessageLedgerPathToSessionKey(
+  filePath: string,
+  baseDir: string,
+  agentId: string,
+): SessionKey | undefined {
+  if (!filePath.endsWith(INBOUND_MESSAGE_LEDGER_SUFFIX)) return undefined;
+
+  const normalizedBase = baseDir.endsWith("/") ? baseDir : `${baseDir}/`;
+  if (!filePath.startsWith(normalizedBase)) return undefined;
+  const relative = filePath.slice(normalizedBase.length);
+  if (relative.split("/").length !== 3) return undefined;
+
+  const transcriptPath = `${filePath.slice(0, -INBOUND_MESSAGE_LEDGER_SUFFIX.length)}.jsonl`;
+  const sessionKey = pathToSessionKey(transcriptPath, baseDir, agentId);
+  if (sessionKey === undefined) return undefined;
+
+  const canonicalPath = tryCatch(() =>
+    sessionKeyToInboundMessageLedgerPath(sessionKey, baseDir));
+  if (!canonicalPath.ok || canonicalPath.value !== filePath) return undefined;
+  return sessionKey;
 }

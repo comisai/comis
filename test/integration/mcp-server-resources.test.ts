@@ -24,11 +24,49 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { createConversationRef, type ConversationScope } from "@comis/core";
 import {
   startTestDaemon,
   type TestDaemonHandle,
 } from "../support/daemon-harness.js";
 import { DAEMON_STARTUP_MS } from "../support/timeouts.js";
+
+// ---------------------------------------------------------------------------
+// Session scopes + conversation_refs
+//
+// Sessions are addressed by explicit authority: a ConversationScope
+// (tenant + agent + partition) that projects to an opaque conversation_ref.
+// The mcp-client sessionAllowlist holds those refs (config), so the refs below
+// MUST match the config literals in config.test-mcp-server-resources.yaml.
+// The endpoint conversationId doubles as the deliveryStatus-join channelId the
+// session.history handler uses (endpoint-conversation → partition.endpoint
+// .conversationId), so the seeded delivery entry's channelId must equal it.
+// ---------------------------------------------------------------------------
+
+function sessionScope(conversationId: string): ConversationScope {
+  return {
+    tenantId: "test",
+    // Must equal the daemon's routing.defaultAgentId (the identity the MCP
+    // resources path queries session.history under) — here the schema default
+    // "default", since these configs set no routing block.
+    agentId: "default",
+    partition: {
+      kind: "endpoint-conversation",
+      endpoint: {
+        channelType: "test",
+        channelInstanceId: "resources",
+        conversationId,
+        conversationKind: "direct",
+      },
+    },
+  };
+}
+
+function refOf(scope: ConversationScope): string {
+  const r = createConversationRef(scope);
+  if (!r.ok) throw r.error;
+  return r.value;
+}
 
 // ---------------------------------------------------------------------------
 // Path resolution
@@ -53,8 +91,13 @@ const MCP_S1_SECRET = "mcp-svr-resources-s1-tok-2-fixxxxx";
 //   - outbound "delivered-reply"              -> NO pending entry => confirmed
 //   - outbound "in-flight-outbound"           -> pending entry exists => pending
 //                                               (excluded from resources/read)
-const SESSION_KEY_S1 = "test:resources-user:chan-A";
-const SESSION_KEY_S2_NOT_ALLOWLISTED = "test:resources-user:chan-B";
+// chan-A is allowlisted (in the config); chan-B is NOT (the cross-conversation
+// leak negative test). The channelId used for the deliveryStatus join equals
+// the endpoint conversationId (chan-A / chan-B).
+const SCOPE_S1 = sessionScope("chan-A");
+const SCOPE_S2_NOT_ALLOWLISTED = sessionScope("chan-B");
+const REF_S1 = refOf(SCOPE_S1);
+const REF_S2_NOT_ALLOWLISTED = refOf(SCOPE_S2_NOT_ALLOWLISTED);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -101,11 +144,12 @@ describe("MCP resources CONFIRMED-only filter", () => {
     // Three messages: inbound (always confirmed), outbound-delivered (confirmed),
     // outbound-in-flight (pending => excluded by resources/read).
     const bridge = handle.daemon.sessionStoreBridge!;
-    bridge.saveByFormattedKey(SESSION_KEY_S1, [
+    const saved = bridge.save(SCOPE_S1, [
       { role: "user", content: "ping", timestamp: 1_700_000_000_000 },
       { role: "assistant", content: "delivered-reply", timestamp: 1_700_000_001_000 },
       { role: "assistant", content: "in-flight-outbound", timestamp: 1_700_000_002_000 },
     ], {});
+    if (!saved.ok) throw saved.error;
 
     // Enqueue an outbound delivery-queue entry for the "in-flight-outbound"
     // text on chan-A. The session.history handler's join calls
@@ -119,8 +163,18 @@ describe("MCP resources CONFIRMED-only filter", () => {
     const r = await handle.daemon.deliveryQueue.enqueue({
       text: "in-flight-outbound",
       channelType: "test",
+      // channelId must equal the session's deliveryStatus-join channelId
+      // (endpoint conversationId chan-A) so the CONFIRMED filter marks it pending.
       channelId: "chan-A",
       tenantId: "test",
+      agentId: "default",
+      conversationRef: REF_S1,
+      destinationEndpoint: {
+        channelType: "test",
+        channelInstanceId: "resources",
+        conversationId: "chan-A",
+        conversationKind: "direct",
+      },
       optionsJson: "{}",
       origin: "agent",
       maxAttempts: 3,
@@ -174,7 +228,7 @@ describe("MCP resources CONFIRMED-only filter", () => {
         expect(list.resources.length).toBe(1);
         const r = list.resources[0]!;
         // URI scheme is `comis://session/<sessionKey>` per the plan.
-        expect(r.uri).toContain(SESSION_KEY_S1);
+        expect(r.uri).toContain(REF_S1);
         expect(r.uri.startsWith("comis://session/")).toBe(true);
       } finally {
         await close();
@@ -193,7 +247,7 @@ describe("MCP resources CONFIRMED-only filter", () => {
       const { client, close } = await connectMcpClient(baseUrl, MCP_S1_SECRET);
       try {
         const read = await client.readResource({
-          uri: `comis://session/${SESSION_KEY_S1}`,
+          uri: `comis://session/${REF_S1}`,
         });
         // The MCP SDK returns `contents: Array<{uri, mimeType?, text?}>`.
         expect(read.contents.length).toBeGreaterThan(0);
@@ -224,7 +278,7 @@ describe("MCP resources CONFIRMED-only filter", () => {
         let threw = false;
         try {
           await client.readResource({
-            uri: `comis://session/${SESSION_KEY_S2_NOT_ALLOWLISTED}`,
+            uri: `comis://session/${REF_S2_NOT_ALLOWLISTED}`,
           });
         } catch (err) {
           threw = err instanceof Error;
@@ -247,7 +301,7 @@ describe("MCP resources CONFIRMED-only filter", () => {
       const { client, close } = await connectMcpClient(baseUrl, MCP_S1_SECRET);
       try {
         const read = await client.readResource({
-          uri: `comis://session/${SESSION_KEY_S1}`,
+          uri: `comis://session/${REF_S1}`,
         });
         const text = (read.contents[0] as { text?: string }).text ?? "";
 

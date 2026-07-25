@@ -19,7 +19,7 @@
  * Same re-scope class as `memory.store` (admin→rpc).
  *
  * Scope note: only the SELF-observability methods are agent-reachable. The
- * DAEMON-WIDE / sensitive obs methods (`obs.fleet.health`, `obs.audit.query`,
+ * DAEMON-WIDE / sensitive obs methods (`obs.system.health`, `obs.audit.query`,
  * billing/channels/delivery aggregates) INTENTIONALLY stay `["admin"]` — an
  * agent must not read cross-session daemon health or the security audit trail.
  * This test pins ONLY the self-diagnose pair.
@@ -70,8 +70,8 @@ describe("agent self-observability methods are agent-reachable (not deny-by-orig
 
   it("the DAEMON-WIDE obs methods INTENTIONALLY stay admin (not widened by this fix)", () => {
     // Inverse guard: self-observability ≠ daemon-wide. An agent must NOT read cross-session
-    // fleet health or the security audit trail — those stay in the deny-by-origin set.
-    for (const method of ["obs.fleet.health", "obs.audit.query"]) {
+    // system health or the security audit trail — those stay in the deny-by-origin set.
+    for (const method of ["obs.system.health", "obs.audit.query"]) {
       expect(ADMIN_METHODS.has(method), `${method} must stay scopes:["admin"] (daemon-wide/sensitive)`).toBe(true);
     }
   });

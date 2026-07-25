@@ -9,6 +9,9 @@
  */
 
 import { systemDateFrom } from "@comis/core";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
+
+const QUIET_END_SEARCH_MINUTES = 27 * 60;
 
 /** Configuration for quiet hours notification suppression. */
 export interface QuietHoursConfig {
@@ -91,4 +94,31 @@ export function isInQuietHours(config: QuietHoursConfig, nowMs: number): boolean
   }
   // Same-day window (e.g., 13:00-17:00)
   return currentMin >= startMin && currentMin < endMin;
+}
+
+export type QuietHoursResolutionError = {
+  readonly code: "invalid_config";
+  readonly errorKind: "config";
+};
+
+/** Resolve the next exact minute boundary where the current quiet window ends. */
+export function resolveQuietHoursEndMs(
+  config: QuietHoursConfig,
+  nowMs: number,
+): Result<number | null, QuietHoursResolutionError> {
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+    return err({ code: "invalid_config", errorKind: "config" });
+  }
+  const active = tryCatch(() => isInQuietHours(config, nowMs));
+  if (!active.ok) return err({ code: "invalid_config", errorKind: "config" });
+  if (!active.value) return ok(null);
+
+  let candidateMs = nowMs - (nowMs % 60_000) + 60_000;
+  for (let minute = 0; minute < QUIET_END_SEARCH_MINUTES; minute += 1) {
+    const candidate = tryCatch(() => isInQuietHours(config, candidateMs));
+    if (!candidate.ok) return err({ code: "invalid_config", errorKind: "config" });
+    if (!candidate.value) return ok(candidateMs);
+    candidateMs += 60_000;
+  }
+  return err({ code: "invalid_config", errorKind: "config" });
 }

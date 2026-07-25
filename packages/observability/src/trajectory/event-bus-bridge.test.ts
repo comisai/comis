@@ -25,7 +25,11 @@ import { describe, it, expect, vi } from "vitest";
 import { TypedEventBus } from "@comis/core";
 import type { EventMap } from "@comis/core";
 
-import { attachTrajectoryToEventBus, TRAJECTORY_BRIDGE_MAPPING } from "./event-bus-bridge.js";
+import {
+  attachTrajectoryToEventBus,
+  createTrajectoryEventTypeFilter,
+  TRAJECTORY_BRIDGE_MAPPING,
+} from "./event-bus-bridge.js";
 import type { TrajectoryEventType, TrajectoryRecorder } from "./types.js";
 import { TRAJECTORY_EVENT_TYPES } from "./types.js";
 
@@ -38,6 +42,19 @@ interface CapturedCall {
   readonly data: unknown;
   readonly parentEntryId: string | undefined;
 }
+
+describe("trajectory event type filtering", () => {
+  it("matches documented trajectory names through the bridge mapping", () => {
+    const filter = createTrajectoryEventTypeFilter([
+      "background_task.notified",
+      "tool.result",
+    ]);
+
+    expect(filter?.("background_task:notified")).toBe(true);
+    expect(filter?.("tool:executed")).toBe(true);
+    expect(filter?.("tool:started")).toBe(false);
+  });
+});
 
 function createCaptureRecorder(filePath = "/tmp/x.jsonl"): TrajectoryRecorder & { calls: CapturedCall[] } {
   const calls: CapturedCall[] = [];
@@ -353,6 +370,68 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
   });
 });
 
+describe("attachTrajectoryToEventBus -- inferred task events", () => {
+  it("maps every exact task lifecycle event and strips envelope correlation fields", () => {
+    expect(TRAJECTORY_BRIDGE_MAPPING).toMatchObject({
+      "scheduler:task_extraction_completed": "scheduler.task_extraction_completed",
+      "scheduler:task_extraction_failed": "scheduler.task_extraction_failed",
+      "scheduler:task_check_started": "scheduler.task_check_started",
+      "scheduler:task_check_terminal": "scheduler.task_check_terminal",
+      "scheduler:task_delivery_history_failed": "scheduler.task_delivery_history_failed",
+      "scheduler:task_cap_deferred": "scheduler.task_cap_deferred",
+      "scheduler:task_store_degraded": "scheduler.task_store_degraded",
+      "scheduler:task_cancelled": "scheduler.task_cancelled",
+      "scheduler:task_store_reset": "scheduler.task_store_reset",
+    });
+    for (const type of Object.values(TRAJECTORY_BRIDGE_MAPPING).filter((value) => value.startsWith("scheduler.task_"))) {
+      expect(TRAJECTORY_EVENT_TYPES).toContain(type);
+    }
+
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+    bus.emit("scheduler:task_check_terminal", {
+      agentId: "agent-a",
+      sessionKey: "tenant-a:agent:agent-a:user-a:telegram",
+      attemptId: "attempt-a",
+      rootRunId: "root-task-check-a",
+      correlationId: "correlation-a",
+      taskIds: ["task-a"],
+      sourceExecutionIds: ["execution-a"],
+      originTraceIds: ["trace-a"],
+      outcome: "delivered",
+      recovery: "live",
+      deliveredChunks: 1,
+      failedChunks: 0,
+      ambiguousChunks: 0,
+      durationMs: 50,
+      timestamp: 2_000,
+    });
+
+    expect(recorder.calls.at(-1)).toEqual(expect.objectContaining({
+      type: "scheduler.task_check_terminal",
+      data: {
+        attemptId: "attempt-a",
+        rootRunId: "root-task-check-a",
+        correlationId: "correlation-a",
+        taskIds: ["task-a"],
+        sourceExecutionIds: ["execution-a"],
+        originTraceIds: ["trace-a"],
+        outcome: "delivered",
+        recovery: "live",
+        deliveredChunks: 1,
+        failedChunks: 0,
+        ambiguousChunks: 0,
+        durationMs: 50,
+      },
+    }));
+    const data = recorder.calls.at(-1)?.data as Record<string, unknown>;
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+});
+
 describe("attachTrajectoryToEventBus -- model events", () => {
   it("model_fallback_attempt_maps with fromProvider/toProvider/attemptNumber", () => {
     const bus = makeBus();
@@ -500,6 +579,31 @@ describe("attachTrajectoryToEventBus -- model events", () => {
 });
 
 describe("attachTrajectoryToEventBus -- delivery events", () => {
+  it("outward ledger transitions map to a content-free durable delivery record", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("delivery:outward_ledger_transition", {
+      rootRunId: "root-1",
+      stepIndex: 7,
+      transition: "park",
+      outcome: "parked",
+      timestamp: 1_000,
+    });
+
+    expect(recorder.calls).toEqual([{
+      type: "delivery.outward_ledger_transition",
+      data: {
+        rootRunId: "root-1",
+        stepIndex: 7,
+        transition: "park",
+        outcome: "parked",
+      },
+      parentEntryId: undefined,
+    }]);
+  });
+
   it("delivery_enqueued_maps_to_delivery.queued with channelType/channelId", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
@@ -1121,9 +1225,49 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       toolName: "mcp__weather--weather_forecast",
       sessionKey: "k",
       notified: false,
-      reason: "live_turn_suppressed",
+      reason: "live_turn_consumed",
       traceId: null,
       timestamp: 1000,
+      trajectoryRecorded: false,
+    },
+    "scheduler:task_extraction_completed": {
+      rootRunId: "root-task-extract-a", itemCount: 1, candidateCount: 1,
+      createdCount: 1, mergedCount: 0, sourceExecutionIds: ["execution-a"],
+      taskIds: ["task-a"], durationMs: 5, timestamp: 1000,
+    },
+    "scheduler:task_extraction_failed": {
+      rootRunId: "root-task-extract-a", itemCount: 1, sourceExecutionIds: ["execution-a"],
+      stage: "model", errorKind: "dependency", durationMs: 5, timestamp: 1000,
+    },
+    "scheduler:task_check_started": {
+      attemptId: "attempt-a", rootRunId: "root-task-check-a", correlationId: "correlation-a",
+      taskIds: ["task-a"], sourceExecutionIds: ["execution-a"], originTraceIds: ["trace-a"],
+      durationMs: 1, timestamp: 1000,
+    },
+    "scheduler:task_check_terminal": {
+      attemptId: "attempt-a", rootRunId: "root-task-check-a", correlationId: "correlation-a",
+      taskIds: ["task-a"], sourceExecutionIds: ["execution-a"], originTraceIds: ["trace-a"],
+      outcome: "delivered", recovery: "live", deliveredChunks: 1, failedChunks: 0,
+      ambiguousChunks: 0, durationMs: 8, timestamp: 1000,
+    },
+    "scheduler:task_delivery_history_failed": {
+      attemptId: "attempt-a", rootRunId: "root-task-check-a", taskIds: ["task-a"],
+      errorKind: "resource", durationMs: 2, timestamp: 1000,
+    },
+    "scheduler:task_cap_deferred": {
+      rootRunId: "root-task-check-a", correlationId: "correlation-a",
+      deferredTaskCount: 1, expiredTaskCount: 0, durationMs: 1, timestamp: 1000,
+    },
+    "scheduler:task_store_degraded": {
+      operation: "claim", errorCode: "io", errorKind: "internal",
+      rootRunId: "root-task-check-a", attemptId: "attempt-a", durationMs: 1, timestamp: 1000,
+    },
+    "scheduler:task_cancelled": {
+      taskIds: ["task-a"], activeTaskCount: 0, durationMs: 1, timestamp: 1000,
+    },
+    "scheduler:task_store_reset": {
+      operationId: "operation-a", beforeDigest: "a".repeat(64), afterDigest: "b".repeat(64),
+      durationMs: 1, timestamp: 1000,
     },
     "terminal:drive_promoted": {
       sessionId: "term-1",
@@ -1153,6 +1297,13 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       resultRefBytes: 0,
       estSavedTokens: 0,
       savedRatio: 0,
+      timestamp: 1000,
+    },
+    "delivery:outward_ledger_transition": {
+      rootRunId: "root-1",
+      stepIndex: 7,
+      transition: "park",
+      outcome: "parked",
       timestamp: 1000,
     },
     "delivery:enqueued": {
@@ -1857,6 +2008,7 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- architecture-test surface", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["observability:token_usage"]).toBe("model.completed");
     expect(TRAJECTORY_BRIDGE_MAPPING["skill:prompt_loaded"]).toBe("skill.prompt_loaded");
     expect(TRAJECTORY_BRIDGE_MAPPING["skill:prompt_invoked"]).toBe("skill.prompt_invoked");
+    expect(TRAJECTORY_BRIDGE_MAPPING["delivery:outward_ledger_transition"]).toBe("delivery.outward_ledger_transition");
     expect(TRAJECTORY_BRIDGE_MAPPING["delivery:enqueued"]).toBe("delivery.queued");
     expect(TRAJECTORY_BRIDGE_MAPPING["delivery:complete"]).toBe("delivery.dispatched");
     // Context engine pipeline → context.compiled.
@@ -3857,9 +4009,9 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // 122 = 121 + memory:recall_degraded (the degraded/failed-recall record —
-    // makes a dead recall diagnosable from `comis explain` + the fleet lens
+    // makes a dead recall diagnosable from `comis explain` + the system health view
     // instead of a daemon.log grep).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(122);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(132);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
@@ -4375,5 +4527,31 @@ describe("attachTrajectoryToEventBus ownerSessionKey scoping", () => {
       toolName: "exec", toolCallId: "t-other", timestamp: 1, sessionKey: OTHER,
     });
     expect(recorder.calls).toHaveLength(1);
+  });
+});
+
+describe("attachTrajectoryToEventBus direct recovery admission", () => {
+  it("does not duplicate an acknowledged direct recovery trajectory event", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({
+      eventBus: bus,
+      recorder,
+      ownerSessionKey: "default:agent-a:echo:conversation-a:user_a",
+    });
+
+    bus.emit("background_task:notified", {
+      agentId: "agent-a",
+      taskId: "task-a",
+      toolName: "report",
+      sessionKey: "default:agent-a:echo:conversation-a:user_a",
+      notified: false,
+      reason: "recovery_retry_required",
+      traceId: null,
+      timestamp: 10,
+      trajectoryRecorded: true,
+    });
+
+    expect(recorder.calls).toHaveLength(0);
   });
 });

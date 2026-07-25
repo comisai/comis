@@ -104,13 +104,13 @@ describe("createRouter", () => {
       });
     });
 
-    it("routes hash '#/chat/sess-123' to ic-chat-console with params sessionKey=sess-123", () => {
+    it("routes hash '#/chat/sess-123' with a conversation reference", () => {
       window.location.hash = "#/chat/sess-123";
       const router = createRouter(onChange);
       expect(router.current()).toEqual({
         view: "ic-chat-console",
-        route: "chat/:sessionKey",
-        params: { sessionKey: "sess-123" },
+        route: "chat/:conversationRef",
+        params: { conversationRef: "sess-123" },
         query: {},
       });
     });
@@ -137,13 +137,13 @@ describe("createRouter", () => {
       });
     });
 
-    it("#/sessions/agent:default:telegram:12345 -> ic-session-detail, params { key: 'agent:default:telegram:12345' }", () => {
+    it("routes a session conversation reference to the detail view", () => {
       window.location.hash = "#/sessions/agent:default:telegram:12345";
       const router = createRouter(onChange);
       expect(router.current()).toEqual({
         view: "ic-session-detail",
-        route: "sessions/:key",
-        params: { key: "agent:default:telegram:12345" },
+        route: "sessions/:conversationRef",
+        params: { conversationRef: "agent:default:telegram:12345" },
         query: {},
       });
     });

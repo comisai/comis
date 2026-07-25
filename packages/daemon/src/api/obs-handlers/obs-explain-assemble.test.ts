@@ -326,7 +326,7 @@ describe("assembleIncidentReport — cronWakeGate (the woke-fire fact)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// cost — the F1-primary fallback chain (the frozen-fixture 1.320669 invariant).
+// cost — the primary fallback chain keeps the recorded 1.320669 total stable.
 // ---------------------------------------------------------------------------
 
 describe("assembleIncidentReport — cost", () => {

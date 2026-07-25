@@ -39,7 +39,7 @@ export type HostSnapshot = z.infer<typeof HostSnapshotSchema>;
  * partial bundle is still generated (the section that failed is annotated
  * rather than aborting the whole run). `source` is the closed set of bundle
  * sections that can fail — the doctor run, the host snapshot, the file writer,
- * the fleet report, the config-posture digest, the embedded explain report, the
+ * the system report, the config-posture digest, the embedded explain report, the
  * audit-summary read, or the trace-export bundle; `code` is the section-failure
  * identifier; `rows` carries offending indices when applicable.
  */
@@ -48,7 +48,7 @@ export const SupportBundleWarningSchema = z.strictObject({
     "doctor",
     "host",
     "writer",
-    "fleet",
+    "system",
     "config-posture",
     "explain",
     "audit",
@@ -91,7 +91,7 @@ const PrivacyDeclarationSchema = z.strictObject({
  *
  * `schemaVersion` is the literal 1 and `status` is the closed four-value set,
  * so a version-drifted or out-of-set artifact fails `parseSupportTriage`.
- * `fleetSummary` and `explainSummary` are optional and always omitted here;
+ * `systemSummary` and `explainSummary` are optional and always omitted here;
  * they are declared now so later enrichment can populate them without a
  * schema-version bump. `doctorSummary.failing` holds the distinct failing
  * check categories (the pure reducer only ever holds category labels, not
@@ -111,7 +111,7 @@ export const SupportTriageSchema = z.strictObject({
     repairable: z.number(),
     failing: z.array(z.string()),
   }),
-  fleetSummary: z
+  systemSummary: z
     .strictObject({
       degradedRate: z.number(),
       topErrorKinds: z.array(z.strictObject({ kind: z.string(), count: z.number() })),
@@ -156,7 +156,7 @@ export function parseSupportTriage(raw: unknown): Result<SupportTriage, z.ZodErr
  * Content-free by construction. `sections` is the set of top-level config
  * section NAMES the raw config file wrote (each a member of the fixed
  * AppConfigSchema universe) — a category structurally incapable of holding a
- * config value. `configPosture` is the fleet `config_posture` finding copied
+ * config value. `configPosture` is the system `config_posture` finding copied
  * verbatim: its `detail` carries closed name+state labels (e.g.
  * `gateway.tls (off)`) and a stranded-secret COUNT, never a secret value, and
  * it is null when no such finding fired. `schemaVersion` is the literal 1 and

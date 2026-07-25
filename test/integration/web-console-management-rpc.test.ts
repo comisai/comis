@@ -258,7 +258,7 @@ describe("WEB-CONSOLE-MGMT: Management RPC Methods via WebSocket", () => {
       const response = (await sendJsonRpc(
         ws,
         "memory.stats",
-        {},
+        { tenant_id: "web-console-mgmt-test", agent_id: "default" },
         ++rpcId,
         { timeoutMs: RPC_FAST_MS },
       )) as Record<string, unknown>;
@@ -275,7 +275,7 @@ describe("WEB-CONSOLE-MGMT: Management RPC Methods via WebSocket", () => {
       const response = (await sendJsonRpc(
         ws,
         "memory.browse",
-        { limit: 10 },
+        { tenant_id: "web-console-mgmt-test", agent_id: "default", limit: 10 },
         ++rpcId,
         { timeoutMs: RPC_FAST_MS },
       )) as Record<string, unknown>;

@@ -74,6 +74,42 @@ describe("sanitizeAssistantResponse", () => {
     expect(sanitizeAssistantResponse(input)).toBe("Line 1\n\nLine 2");
   });
 
+  it("truncates a fabricated user-role continuation after the assistant answer", () => {
+    const warn = vi.fn();
+    setSanitizeLogger({ warn } as any);
+    const input = [
+      "סימנתי את אזור חדרה. כרגע יש שם 3 רכבים.",
+      "",
+      "user תוציא את כל הרכבים בקבוצה הזאת החונים ליד תחנת דלק",
+    ].join("\n");
+
+    expect(sanitizeAssistantResponse(input)).toBe(
+      "סימנתי את אזור חדרה. כרגע יש שם 3 רכבים.",
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "response-sanitizer",
+        reason: "plain-user-role-continuation",
+        errorKind: "dependency",
+      }),
+      "Removed fabricated user-role continuation from assistant response",
+    );
+  });
+
+  it("preserves role-like lines inside fenced code examples", () => {
+    const input = [
+      "Use this transcript fixture:",
+      "",
+      "```text",
+      "assistant report ready",
+      "",
+      "user send the report",
+      "```",
+    ].join("\n");
+
+    expect(sanitizeAssistantResponse(input)).toBe(input);
+  });
+
   it("returns trimmed raw text on sanitizer error (fallback)", () => {
     // Force an error by providing input that would crash if functions were broken.
     // We test this by mocking one of the sanitizers to throw.

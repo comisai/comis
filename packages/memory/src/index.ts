@@ -215,7 +215,12 @@ export { setupSecrets } from "./setup-secrets.js";
 export type { SecretsBootResult } from "./setup-secrets.js";
 
 // Offline secrets write helpers (CLI daemon-free bootstrap path)
-export { offlineSecretSet, offlineSecretsList, offlineSecretGet } from "./offline-secrets-write.js";
+export {
+  offlineSecretGet,
+  offlineSecretGetForMode,
+  offlineSecretsList,
+  offlineSecretSet,
+} from "./offline-secrets-write.js";
 export { offlineOAuthProfileSet } from "./offline-oauth-write.js";
 
 // Named graph store (server-side pipeline persistence)
@@ -249,10 +254,11 @@ export { createSqliteDurableRunStore } from "./durable-run-store.js";
 export type { DurableRunStoreOptions } from "./durable-run-store.js";
 export { ensureDurableRunTable } from "./schema-durable-runs.js";
 
-// Outward-send exactly-once ledger. The SQLite-backed OutwardSendLedgerPort the
-// resume engine reconciles on boot (listUnreconciled) and the send-wrap site
-// consults for the dedup short-circuit; ensureOutwardLedgerTable is the idempotent
-// DDL initSchema calls — exported for the chaos/offline path.
+// Outward-send duplicate-suppression and uncertainty ledger. The SQLite-backed
+// OutwardSendLedgerPort is scanned on boot so uncertain rows can be parked, and
+// the send wrapper consults it for retained-operation short-circuits.
+// ensureOutwardLedgerTable is the idempotent DDL initSchema calls — exported for
+// the chaos/offline path.
 export { createSqliteOutwardSendLedger } from "./outward-send-ledger-store.js";
 export { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
 
@@ -300,7 +306,7 @@ export {
 export type { AuditQueryParams } from "./observability-store/index.js";
 
 // The cache-break row-builder + the rate-by-reason analytics query the daemon's
-// obs-persistence-wiring (the cache_break subscriber) and the fleet/explain
+// obs-persistence-wiring (the cache_break subscriber) and the system/explain
 // surfaces consume.
 export {
   cacheBreakEventToRow,
@@ -308,14 +314,14 @@ export {
 } from "./observability-store/index.js";
 export type { CacheBreakReasonRate } from "./observability-store/index.js";
 
-// Fleet window-rollup reducer. reduceFleetWindow is the PURE cross-session reduce
+// System window-rollup reducer. reduceSystemWindow is the PURE cross-session reduce
 // over the SessionSummaryRollup[] (synthetic excluded on the real `source`
-// field). Barrel-surfaced AHEAD of its in-repo consumer: the obs.fleet.health
+// field). Barrel-surfaced AHEAD of its in-repo consumer: the obs.system.health
 // handler imports it, but no production module references it yet — tracked in
-// public-api-policy.ts as a planned orphan (mirror FleetHealthReportSchema/
-// FleetHealthReport).
-export { reduceFleetWindow } from "./observability-store/fleet-window-rollup.js";
-export type { FleetWindowRollup } from "./observability-store/fleet-window-rollup.js";
+// public-api-policy.ts as a planned orphan (mirror SystemHealthReportSchema/
+// SystemHealthReport).
+export { reduceSystemWindow } from "./observability-store/system-window-rollup.js";
+export type { SystemWindowRollup } from "./observability-store/system-window-rollup.js";
 
 // Generic Row mapper factory.
 // Consumed via createRowMapper(schema) at every SQLite call-site to

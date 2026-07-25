@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ok } from "@comis/shared";
 import { createDiscordVoiceSender } from "./voice-sender.js";
 
 // Mock fs.readFile
@@ -48,7 +49,7 @@ describe("createDiscordVoiceSender", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value).toBe("msg-123");
+      expect(result.value).toEqual({ kind: "tracked", messageId: "msg-123" });
     }
 
     // Verify 3 fetch calls
@@ -61,6 +62,35 @@ describe("createDiscordVoiceSender", () => {
     expect(step3Body.attachments[0].duration_secs).toBe(5);
     expect(step3Body.attachments[0].waveform).toBe("d2F2ZWZvcm0=");
     expect(step3Body.attachments[0].uploaded_filename).toBe("abc.ogg");
+  });
+
+  it("returns delivered-untracked when the posted voice message has no platform message ID", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        attachments: [{
+          upload_url: "https://discord-attachments-uploads-prd.storage.googleapis.com/upload/abc",
+          upload_filename: "abc.ogg",
+        }],
+      }),
+    });
+    mockFetch.mockResolvedValueOnce({ ok: true });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({}),
+    });
+
+    const sender = createDiscordVoiceSender(deps);
+    const result = await sender.sendVoice("channel-1", "/tmp/voice.ogg", 5, "");
+
+    expect(result).toEqual(ok({ kind: "delivered_untracked" }));
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("Do not retry"),
+        errorKind: "platform",
+      }),
+      "Voice sent without platform tracking",
+    );
   });
 
   it("should return error when Step 1 fails", async () => {
@@ -313,7 +343,7 @@ describe("createDiscordVoiceSender", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value).toBe("msg-h2");
+      expect(result.value).toEqual({ kind: "tracked", messageId: "msg-h2" });
     }
     // All 3 steps should have been called
     expect(mockFetch).toHaveBeenCalledTimes(3);

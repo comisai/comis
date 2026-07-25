@@ -37,8 +37,20 @@ import {
   type MemoryConfig,
   type OutcomeSignalPort,
   type ResolvedOutcome,
+  type WorkspacePolicyPort,
+  type ConversationRef,
 } from "@comis/core";
-import { createOutcomeJudgeSeam, resolveOperationModel, resolveProviderFamily, normalizeOpenAICompatBaseUrl, type CustomCompletionsModelSpec } from "@comis/agent";
+import {
+  createOutcomeJudgeSeam,
+  resolveOperationModel,
+  resolveProviderFamily,
+  normalizeOpenAICompatBaseUrl,
+  resolveProviderApiKey,
+  type AuthStorage,
+  type CustomCompletionsModelSpec,
+  type OutcomeVerdict,
+} from "@comis/agent";
+import { fromPromise } from "@comis/shared";
 
 /**
  * Provider-config fields {@link buildCustomJudgeModelSpec} reads. `apiKeyName` is
@@ -87,8 +99,8 @@ const JUDGE_TRANSCRIPT_MAX_MESSAGES = 12;
 
 /** The mapped judge seam the resolve consume-seam calls (the verdict's narrow union + the CODE-capped reward). */
 export type OutcomeJudge = (
-  trajectoryContent: string,
-) => Promise<{ outcome: "success" | "failure" | "unknown"; cappedConfidence: number } | undefined>;
+  input: { agentId: string; trajectoryContent: string; workspacePolicyHash?: string },
+) => Promise<OutcomeVerdict | undefined>;
 
 /** The resolved scope an upgrade/transcript-read keys on (mirrors the setup-learning OutcomeScope). */
 export interface JudgeScope {
@@ -96,6 +108,8 @@ export interface JudgeScope {
   agentId: string;
   sessionId: string;
   trajectoryId: string;
+  conversationRef?: ConversationRef;
+  workspacePolicyHash?: string;
 }
 
 // ===========================================================================
@@ -106,14 +120,85 @@ export interface JudgeScope {
 interface JudgeAgentConfig {
   provider?: string;
   model?: string;
+  workspacePath?: string;
   operationModels?: Record<string, unknown>;
+  oauthProfiles?: Record<string, string>;
   learningOutcome?: { enabled?: boolean; judge?: { enabled?: boolean } };
+}
+
+/** Resolves a model credential at call time so OAuth refresh remains authoritative. */
+export type LearningModelCredentialResolver = (
+  agentId: string,
+  provider: string,
+) => Promise<string | undefined>;
+
+/** Late-binding seam used because memory wiring is constructed before agent OAuth managers. */
+export interface LateBoundLearningCredentialResolver {
+  resolve: LearningModelCredentialResolver;
+  bind: (resolver: LearningModelCredentialResolver) => void;
+}
+
+/**
+ * Create a stable resolver function whose delegate is supplied after agent setup.
+ * No inbound turn can run before that setup completes, while the stable function
+ * lets the earlier memory wiring retain the final OAuth-aware behavior.
+ */
+export function createLateBoundLearningCredentialResolver(): LateBoundLearningCredentialResolver {
+  let delegate: LearningModelCredentialResolver | undefined;
+  return {
+    resolve: (agentId, provider) => delegate?.(agentId, provider) ?? Promise.resolve(undefined),
+    bind: (resolver) => {
+      delegate = resolver;
+    },
+  };
+}
+
+/** Inputs needed to bind the learning resolver after per-agent auth setup. */
+export interface BindLearningOAuthCredentialResolverInput {
+  bind: LateBoundLearningCredentialResolver["bind"];
+  oauthManagers: Map<string, import("@comis/core").OAuthTokenManager>;
+  authStorages: Map<string, AuthStorage>;
+  agents: Record<string, import("@comis/core").PerAgentConfig>;
+  providers: OutcomeJudgeWiringContainer["config"]["providers"];
+  logger: ComisLogger;
+}
+
+/** Bind the late learning seam to the same OAuth manager and auth storage as interactive calls. */
+export function bindLearningOAuthCredentialResolver(
+  input: BindLearningOAuthCredentialResolverInput,
+): void {
+  input.bind(async (agentId, provider) => {
+    const oauthManager = input.oauthManagers.get(agentId);
+    const authStorage = input.authStorages.get(agentId);
+    // eslint-disable-next-line security/detect-object-injection -- agentId is selected from the parsed configured-agent registry
+    const agentConfig = input.agents[agentId];
+    if (oauthManager === undefined || authStorage === undefined || agentConfig === undefined) return undefined;
+    const resolved = await fromPromise(resolveProviderApiKey(provider, {
+      authStorage,
+      oauthManager,
+      agentConfig,
+      // eslint-disable-next-line security/detect-object-injection -- provider is the resolved configured operation-model provider
+      configuredApiKeyName: input.providers?.entries?.[provider]?.apiKeyName || undefined,
+    } as Parameters<typeof resolveProviderApiKey>[1]));
+    if (resolved.ok) return resolved.value;
+    input.logger.warn(
+      {
+        agentId,
+        provider,
+        errorKind: "auth" as const,
+        hint: `Re-authenticate ${provider} for agent ${agentId}; learning outcome classification cannot run without its model credential`,
+      },
+      "Learning model credential resolution failed",
+    );
+    return undefined;
+  });
 }
 
 /** The slice of the daemon container {@link buildOutcomeJudgeWiring} reads (a narrow own type — no back-import). */
 export interface OutcomeJudgeWiringContainer {
   config: {
     agents?: Record<string, JudgeAgentConfig | undefined>;
+    dataDir?: string;
     // The REAL MemoryConfig type (not a loose `{ costFeatures?: { enabled?: boolean } }`)
     // so tsc ENFORCES that the master gate reads `memory.enabled`. A loose optional type would let
     // a wrong/absent key read as `undefined !== false === true` → SILENTLY force-ENABLED (the kill-switch
@@ -136,6 +221,7 @@ export interface OutcomeJudgeWiringContainer {
     };
   };
   secretManager: { get(name: string): string | undefined };
+  workspacePolicyPort?: WorkspacePolicyPort;
 }
 
 /** Result of {@link buildOutcomeJudgeWiring}: the judge fallback deps to thread into wireLearningOutcome. */
@@ -150,12 +236,13 @@ export interface OutcomeJudgeWiringResult {
 
 /**
  * Resolve + construct the cheap `fast`-tier outcome judge for one agent (the `outcomeJudge`
- * operation tier). Mirrors `resolveCorrectionDetector`: resolves the provider/modelId by NAME
- * and the API key from the secret manager (KEYLESS sentinel for keyless providers); returns
- * `undefined` on a missing key (a no-op branch — `Defer != Retry`). Maps the seam's full verdict
- * down to the `{ outcome, cappedConfidence }` shape the resolve seam consumes — the daemon
- * `observe()`s the CODE-capped reward, never the model's raw self-report; the verdict's narrow
- * `success|failure|unknown` union is forwarded verbatim (the judge does NOT detect corrections).
+ * operation tier). Mirrors `resolveCorrectionDetector`: resolves the provider/modelId by NAME,
+ * then uses a static secret, a keyless sentinel, or the agent's late-bound OAuth credential.
+ * Returns `undefined` when no supported credential source is configured. The seam's full verdict
+ * crosses this mapper unchanged so the consumer can record its content-free provenance; the
+ * daemon still `observe()`s only the CODE-capped reward, never the model's raw self-report.
+ * The verdict's narrow `success|failure|unknown` union is forwarded verbatim (the judge does
+ * not detect corrections).
  */
 function resolveOutcomeJudge(
   agent: JudgeAgentConfig,
@@ -163,6 +250,7 @@ function resolveOutcomeJudge(
   agentId: string,
   clock: ClockPort,
   logger: ComisLogger,
+  resolveCredential?: LearningModelCredentialResolver,
 ): OutcomeJudge | undefined {
   const agentProvider = agent.provider ?? "anthropic";
   const resolved = resolveOperationModel({
@@ -180,26 +268,40 @@ function resolveOutcomeJudge(
     // outcome judge is a silent no-op on a local keyless daemon. Mirrors
     // setup-dialectic + the completion path. Guarded by test/architecture/keyless-provider-by-type.
     (KEYLESS_PROVIDER_TYPES.has(providerEntry?.type ?? resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
-  if (!apiKey) return undefined; // no key → no-op judge (Defer != Retry)
-
   // Custom YAML providers (ollama/lm-studio/…) aren't in pi-ai's catalog, so the
   // seam would skip; build a custom-model spec so the judge runs locally too.
   const customModel = buildCustomJudgeModelSpec(providerEntry, resolved.provider, resolved.modelId);
 
-  const seam = createOutcomeJudgeSeam({
-    provider: resolved.provider,
-    modelId: resolved.modelId,
-    apiKey,
-    maxOutputTokens: OUTCOME_JUDGE_MAX_OUTPUT_TOKENS,
-    clock,
-    logger,
-    agentId,
-    customModel,
-  });
-  return async (trajectoryContent: string) => {
-    const verdict = await seam(trajectoryContent);
-    if (verdict === undefined) return undefined; // model/abort failure → no verdict (non-fatal)
-    return { outcome: verdict.outcome, cappedConfidence: verdict.cappedConfidence };
+  const createJudge = (apiKeyValue: string): OutcomeJudge => {
+    const seam = createOutcomeJudgeSeam({
+      provider: resolved.provider,
+      modelId: resolved.modelId,
+      apiKey: apiKeyValue,
+      maxOutputTokens: OUTCOME_JUDGE_MAX_OUTPUT_TOKENS,
+      clock,
+      logger,
+      agentId,
+      customModel,
+    });
+    return async (input) => {
+      const policyResult = input.workspacePolicyHash === undefined
+        ? undefined
+        : container.workspacePolicyPort?.get(input.workspacePolicyHash);
+      const verdict = await seam({
+        trajectoryContent: input.trajectoryContent,
+        ...(policyResult?.ok === true ? { policySnapshot: policyResult.value } : {}),
+      });
+      return verdict;
+    };
+  };
+
+  if (apiKey) return createJudge(apiKey);
+  const hasOAuthProfile = agent.oauthProfiles?.[resolved.provider] !== undefined;
+  if (!hasOAuthProfile || resolveCredential === undefined) return undefined;
+  return async (input) => {
+    const credential = await resolveCredential(agentId, resolved.provider);
+    if (!credential) return undefined;
+    return createJudge(credential)(input);
   };
 }
 
@@ -210,8 +312,8 @@ function resolveOutcomeJudge(
  *
  * Gates:
  *  - `judgeEnabled(id) = costFeaturesEnabled && learningOutcome.enabled && learningOutcome.judge.enabled`.
- *  - the judge seam is built ONLY when SOME agent has it on AND a cheap-model API key resolves
- *    (a missing key → `undefined`, a no-op branch: `Defer != Retry`).
+ *  - the judge seam is built ONLY when SOME agent has it on AND a static, keyless, or configured
+ *    OAuth credential path exists.
  *  - `readTurnTranscript` is built ONLY when SOME agent has it on AND an LCD store is present.
  *
  * The transcript reader maps the LCD rows for the resolved sessionId to the most-recent
@@ -223,6 +325,7 @@ export function buildOutcomeJudgeWiring(
   clock: ClockPort,
   logger: ComisLogger,
   lcdStore?: Pick<ContextStorePort, "getMessages">,
+  resolveCredential?: LearningModelCredentialResolver,
 ): OutcomeJudgeWiringResult {
   const costFeaturesEnabled = container.config.memory?.enabled !== false;
   const agents = container.config.agents ?? {};
@@ -244,14 +347,15 @@ export function buildOutcomeJudgeWiring(
     return { learningOutcomeJudgeEnabled };
   }
 
-  // Resolve the cheap fast-tier model/key for the FIRST judge-enabled agent (the seam is a
-  // shared cheap-tier seam; per-agent re-selection is deferred — mirrors the correction detector).
-  let outcomeJudge: OutcomeJudge | undefined;
-  const firstAgentId = Object.keys(agents).find((id) => learningOutcomeJudgeEnabled(id));
-  const agent = firstAgentId !== undefined ? agents[firstAgentId] : undefined;
-  if (agent !== undefined) {
-    outcomeJudge = resolveOutcomeJudge(agent, container, firstAgentId ?? "default", clock, logger);
+  const judges = new Map<string, OutcomeJudge>();
+  for (const [agentId, agent] of Object.entries(agents)) {
+    if (agent === undefined || !learningOutcomeJudgeEnabled(agentId)) continue;
+    const resolved = resolveOutcomeJudge(agent, container, agentId, clock, logger, resolveCredential);
+    if (resolved !== undefined) judges.set(agentId, resolved);
   }
+  const outcomeJudge: OutcomeJudge | undefined = judges.size === 0
+    ? undefined
+    : async (input) => judges.get(input.agentId)?.(input);
   if (outcomeJudge === undefined) {
     logger.warn(
       {
@@ -265,8 +369,9 @@ export function buildOutcomeJudgeWiring(
   // The LCD transcript reader — most-recent user/assistant text for the scope's sessionId.
   const readTurnTranscript = lcdStore
     ? (scope: JudgeScope): string | undefined => {
+        if (scope.conversationRef === undefined) return undefined;
         const messages = lcdStore.getMessages({
-          conversationId: scope.sessionId,
+          conversationRef: scope.conversationRef,
           tenantId: scope.tenantId,
           agentId: scope.agentId,
           sessionKey: scope.sessionId,
@@ -347,7 +452,30 @@ export async function maybeUpgradeWithJudge(
   try {
     const text = deps.readTurnTranscript(scope);
     if (text === undefined || text.length === 0) return verdict; // nothing to score → keep unknown
-    const jv = await deps.outcomeJudge(text);
+    const judgeStartedAt = deps.clock.now();
+    const jv = await deps.outcomeJudge({
+      agentId: scope.agentId,
+      trajectoryContent: text,
+      ...(scope.workspacePolicyHash === undefined
+        ? {}
+        : { workspacePolicyHash: scope.workspacePolicyHash }),
+    });
+    if (jv !== undefined) {
+      deps.logger.info(
+        {
+          agentId: scope.agentId,
+          trajectoryId: scope.trajectoryId,
+          outcome: jv.outcome,
+          workspacePolicyHash: jv.policyHash,
+          judgeModel: jv.judgeModel,
+          rubricHash: jv.rubricHash,
+          evidenceRefs: [...jv.evidenceRefs],
+          durationMs: Math.max(0, deps.clock.now() - judgeStartedAt),
+          step: "outcome-judge" as const,
+        },
+        "Outcome judge verdict recorded",
+      );
+    }
     // A model/abort failure (undefined) or a judge abstention (unknown) → keep the
     // unknown verdict; the judge can NEVER inflate failure metrics (BENIGN, Defer ≠ Retry).
     if (jv === undefined || jv.outcome === "unknown") return verdict;

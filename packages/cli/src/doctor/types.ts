@@ -21,9 +21,9 @@ export type DoctorStatus = "pass" | "fail" | "warn" | "skip";
  * Exactly one of three shapes:
  * - `loadError` set — the file never made it to validation (missing,
  *   unparseable YAML, or not an object document);
- * - `validationIssues` set — the file parsed but the schema rejected it
- *   *after* `${VAR}` substitution; `unresolvedRefs` names any references
- *   neither env, `~/.comis/.env`, nor the encrypted secret store resolved
+ * - `validationIssues` set — the file parsed but environment substitution or
+ *   schema validation rejected it; `unresolvedRefs` names any references
+ *   the process environment, active data-dir `.env`, and configured store all missed
  *   (the usual root cause of placeholder-shaped validation noise);
  * - `config` set — the config the daemon would boot with.
  */
@@ -104,6 +104,8 @@ export interface DoctorContext {
   readonly configPaths: string[];
   readonly dataDir: string;
   readonly daemonPidFile: string;
+  /** Exact SQLite path after applying dataDir and memory.dbPath precedence. */
+  readonly memoryDbPath?: string;
   readonly gatewayUrl?: string;
   /**
    * Opt-in refresh-test toggle from the `--refresh-test` flag on
@@ -119,10 +121,9 @@ export interface DoctorContext {
    * against the daemon's reported version WITHOUT re-reading the package at
    * check time (keeps the check deterministic and unit-testable).
    *
-   * Motivates the version-skew check: a stale global `comis` (e.g. an old
-   * `npm i -g comisai`) earlier on PATH than a freshly-built daemon validates
-   * config with an OUT-OF-DATE schema and reports phantom failures. When this
-   * is absent the check reads `../../package.json` itself as a fallback.
+   * Version skew can make CLI-side schema diagnostics disagree with the
+   * daemon's active contract. When this is absent the check reads
+   * `../../package.json` itself as a fallback.
    */
   readonly cliVersion?: string;
 }

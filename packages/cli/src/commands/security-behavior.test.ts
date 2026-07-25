@@ -42,21 +42,68 @@ vi.mock("../output/spinner.js", () => ({
 }));
 
 // Mock @comis/core for loadConfigFile/validateConfig used in buildAuditContext
-vi.mock("@comis/core", () => ({
-  loadConfigFile: vi.fn(() => ({ ok: false })),
-  validateConfig: vi.fn(() => ({ ok: false })),
-  sanitizeLogString: vi.fn((s: string) => s),
-}));
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
+  const { z } = await import("zod");
+  const DeliveryStatusSchema = z.enum([
+    "success",
+    "error",
+    "timeout",
+    "filtered",
+    "aborted",
+  ]);
+  return {
+    ...actual,
+    loadConfigFile: vi.fn(() => ({ ok: false })),
+    validateConfig: vi.fn(() => ({ ok: false })),
+    sanitizeLogString: vi.fn((s: string) => s),
+    DeliveryStatusSchema,
+    DeliveryFailureStageSchema: z.enum(["execution", "delivery"]),
+    UserTrustLevelSchema: z.enum(["admin", "user", "guest"]),
+    ERROR_KINDS: [
+      "config",
+      "network",
+      "auth",
+      "validation",
+      "precondition",
+      "timeout",
+      "resource",
+      "dependency",
+      "internal",
+      "platform",
+    ],
+    parseDeliveryStatus: (raw: unknown) => {
+      const parsed = DeliveryStatusSchema.safeParse(raw);
+      return parsed.success
+        ? { ok: true as const, value: parsed.data }
+        : { ok: false as const, error: parsed.error };
+    },
+  };
+});
 
 // Mock node:fs for readFileSync used in buildAuditContext
-vi.mock("node:fs", () => ({
-  readFileSync: vi.fn(() => ""),
-}));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    readFileSync: vi.fn(() => ""),
+  };
+});
 
 // Mock node:os for homedir used in buildAuditContext
-vi.mock("node:os", () => ({
-  homedir: () => "/tmp/test-home",
-}));
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  const homedir = () => "/tmp/test-home";
+  return {
+    ...actual,
+    default: {
+      ...((actual as unknown as { default?: Record<string, unknown> }).default ?? {}),
+      ...actual,
+      homedir,
+    },
+    homedir,
+  };
+});
 
 // Dynamic imports after mocks
 const { registerSecurityCommand } = await import("./security.js");

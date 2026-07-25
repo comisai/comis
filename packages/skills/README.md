@@ -25,7 +25,7 @@ Outbound [Model Context Protocol](https://modelcontextprotocol.io/) client suppo
 | **Media** | Image generation, TTS, transcription, video description, document extraction |
 | **Browser** | Headless browser automation via Playwright |
 | **Platform** | Channel-specific operations (Discord, Telegram, Slack, WhatsApp) |
-| **Infrastructure** | Gateway management, fleet operations |
+| **Infrastructure** | Gateway management, system operations |
 
 ### Media Integrations
 

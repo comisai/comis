@@ -269,6 +269,42 @@ describe("AgentGetOperationModelsContract", () => {
     })).toBeDefined();
   });
 
+  it("accepts operation cache retention policy values emitted by the resolver", () => {
+    expect(AgentGetOperationModelsContract.response.parse({
+      agentId: "alpha",
+      primaryModel: "anthropic:claude-sonnet-4-5",
+      primaryProvider: "anthropic",
+      providerFamily: "anthropic",
+      tieringActive: true,
+      operations: [
+        {
+          operationType: "heartbeat",
+          model: "anthropic:claude-sonnet-4-5",
+          provider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+          source: "agent_primary",
+          timeoutMs: 180000,
+          cacheRetention: "none",
+          tieringActive: false,
+          crossProvider: false,
+          apiKeyConfigured: true,
+        },
+        {
+          operationType: "cron",
+          model: "anthropic:claude-sonnet-4-5",
+          provider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+          source: "agent_primary",
+          timeoutMs: 180000,
+          cacheRetention: "short",
+          tieringActive: false,
+          crossProvider: false,
+          apiKeyConfigured: true,
+        },
+      ],
+    })).toBeDefined();
+  });
+
   it("response.operations.apiKeyConfigured must be boolean", () => {
     expect(() => AgentGetOperationModelsContract.response.parse({
       agentId: "alpha",
@@ -318,16 +354,37 @@ describe("ModelsListProvidersContract", () => {
     expect(ModelsListProvidersContract.request.parse({})).toEqual({});
   });
 
-  it("response carries providers[] + count", () => {
+  it("accepts an explicit agent selector", () => {
+    expect(ModelsListProvidersContract.request.parse({ agentId: "alpha" })).toEqual({
+      agentId: "alpha",
+    });
+  });
+
+  it("response carries agent-scoped provider credential status", () => {
     expect(ModelsListProvidersContract.response.parse({
-      providers: ["anthropic", "openai"],
+      agentId: "alpha",
+      providers: [
+        {
+          provider: "amazon-bedrock",
+          modelCount: 109,
+          status: "configured",
+          credentialSource: "secret_store_canonical",
+        },
+        {
+          provider: "anthropic",
+          modelCount: 14,
+          status: "not_configured",
+          credentialSource: "none",
+        },
+      ],
       count: 2,
     })).toBeDefined();
   });
 
   it("rejects response without count", () => {
     expect(() => ModelsListProvidersContract.response.parse({
-      providers: ["x"],
+      agentId: "alpha",
+      providers: [],
     })).toThrow();
   });
 });

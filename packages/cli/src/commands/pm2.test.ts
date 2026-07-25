@@ -29,7 +29,19 @@ vi.mock("node:os", () => ({
   homedir: vi.fn(() => "/tmp/test-home"),
 }));
 
-const { registerPm2Command } = await import("./pm2.js");
+const { registerPm2Command, resolvePm2ConfigPaths } = await import("./pm2.js");
+
+describe("pm2 config path resolution", () => {
+  it("normalizes the shared comma-separated contract before persisting it", () => {
+    expect(resolvePm2ConfigPaths(" /cfg/base.yaml, , /cfg/local.yaml ", "/home/test"))
+      .toBe("/cfg/base.yaml,/cfg/local.yaml");
+  });
+
+  it("uses the per-user config when the environment value is blank", () => {
+    expect(resolvePm2ConfigPaths("   ", "/home/test"))
+      .toBe("/home/test/.comis/config.yaml");
+  });
+});
 
 describe("pm2 status failure semantics", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;

@@ -15,7 +15,12 @@ import { z } from "zod";
 import type { DeliveryQueuePort, DeliveryQueueEntry, DeliveryQueueEnqueueInput, DeliveryQueueStatusCounts, TypedEventBus } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { systemNowMs } from "@comis/core";
+import {
+  AMBIGUOUS_SEND_OUTCOME_ERROR,
+  ChannelEndpointSchema,
+  ConversationRefSchema,
+  systemNowMs,
+} from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
 import {
   DeliveryQueueDbRowSchema,
@@ -44,6 +49,9 @@ function rowToEntry(row: DeliveryQueueDbRow): DeliveryQueueEntry {
     channelType: row.channel_type,
     channelId: row.channel_id,
     tenantId: row.tenant_id,
+    agentId: row.agent_id,
+    conversationRef: ConversationRefSchema.parse(row.conversation_ref),
+    destinationEndpoint: ChannelEndpointSchema.parse(JSON.parse(row.destination_endpoint)),
     optionsJson: row.options_json,
     origin: row.origin,
     status: row.status as DeliveryQueueEntry["status"],
@@ -74,17 +82,18 @@ function rowToEntry(row: DeliveryQueueDbRow): DeliveryQueueEntry {
  */
 export function createSqliteDeliveryQueue(
   db: Database.Database,
-  eventBus: Pick<TypedEventBus, "emit">,
+  eventBus: Pick<TypedEventBus, "emitSafely">,
 ): DeliveryQueuePort {
   // --- Prepared statements ---
 
   const insertStmt = db.prepare(`
     INSERT INTO delivery_queue (
-      id, text, channel_type, channel_id, tenant_id, options_json, origin,
+      id, text, channel_type, channel_id, tenant_id, agent_id, conversation_ref,
+      destination_endpoint, options_json, origin,
       status, attempt_count, max_attempts,
       created_at, scheduled_at, expire_at, last_attempt_at, next_retry_at,
       last_error, trace_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, NULL, NULL, NULL, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, NULL, NULL, NULL, ?)
   `);
 
   const ackStmt = db.prepare(`
@@ -111,8 +120,19 @@ export function createSqliteDeliveryQueue(
 
   const pendingStmt = db.prepare(`
     SELECT * FROM delivery_queue
-    WHERE status = 'pending' AND scheduled_at <= ?
+    WHERE status = 'pending'
+      AND scheduled_at <= ?
+      AND (next_retry_at IS NULL OR next_retry_at <= ?)
     ORDER BY created_at ASC
+  `);
+
+  const claimStmt = db.prepare(`
+    UPDATE delivery_queue
+    SET status = 'in_flight', last_attempt_at = ?
+    WHERE id = ?
+      AND status = 'pending'
+      AND scheduled_at <= ?
+      AND (next_retry_at IS NULL OR next_retry_at <= ?)
   `);
 
   // Every NOT-yet-delivered row (pending / in_flight / failed / expired),
@@ -131,16 +151,17 @@ export function createSqliteDeliveryQueue(
 
   const insertInFlightStmt = db.prepare(`
     INSERT INTO delivery_queue (
-      id, text, channel_type, channel_id, tenant_id, options_json, origin,
+      id, text, channel_type, channel_id, tenant_id, agent_id, conversation_ref,
+      destination_endpoint, options_json, origin,
       status, attempt_count, max_attempts,
       created_at, scheduled_at, expire_at, last_attempt_at, next_retry_at,
       last_error, trace_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'in_flight', 0, ?, ?, ?, ?, NULL, NULL, NULL, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_flight', 0, ?, ?, ?, ?, NULL, NULL, NULL, ?)
   `);
 
   const recoverInFlightStmt = db.prepare(`
     UPDATE delivery_queue
-    SET status = 'pending', last_error = NULL
+    SET status = 'failed', last_error = ?, next_retry_at = NULL
     WHERE status = 'in_flight'
   `);
 
@@ -170,6 +191,9 @@ export function createSqliteDeliveryQueue(
           entry.channelType,
           entry.channelId,
           entry.tenantId,
+          entry.agentId,
+          entry.conversationRef,
+          JSON.stringify(entry.destinationEndpoint),
           entry.optionsJson,
           entry.origin,
           entry.maxAttempts,
@@ -179,7 +203,7 @@ export function createSqliteDeliveryQueue(
           entry.traceId ?? null,
         );
         // Emit AFTER SQL success -- preserves invariant: one delivery:enqueued <=> one persisted row.
-        eventBus.emit("delivery:enqueued", {
+        eventBus.emitSafely("delivery:enqueued", {
           entryId: id,
           channelId: entry.channelId,
           channelType: entry.channelType,
@@ -201,6 +225,9 @@ export function createSqliteDeliveryQueue(
           entry.channelType,
           entry.channelId,
           entry.tenantId,
+          entry.agentId,
+          entry.conversationRef,
+          JSON.stringify(entry.destinationEndpoint),
           entry.optionsJson,
           entry.origin,
           entry.maxAttempts,
@@ -210,7 +237,7 @@ export function createSqliteDeliveryQueue(
           entry.traceId ?? null,
         );
         // Same delivery:enqueued event as enqueue() -- universal observability.
-        eventBus.emit("delivery:enqueued", {
+        eventBus.emitSafely("delivery:enqueued", {
           entryId: id,
           channelId: entry.channelId,
           channelType: entry.channelType,
@@ -218,6 +245,16 @@ export function createSqliteDeliveryQueue(
           timestamp: systemNowMs(),
         });
         return Promise.resolve(ok(id));
+      } catch (e) {
+        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
+      }
+    },
+
+    claim(id: string): Promise<Result<boolean, Error>> {
+      try {
+        const now = systemNowMs();
+        const result = claimStmt.run(now, id, now, now);
+        return Promise.resolve(ok(result.changes === 1));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
       }
@@ -252,7 +289,8 @@ export function createSqliteDeliveryQueue(
 
     pendingEntries(): Promise<Result<DeliveryQueueEntry[], Error>> {
       try {
-        const parsed = deliveryQueueMapper.parseRows(pendingStmt.all(systemNowMs()));
+        const now = systemNowMs();
+        const parsed = deliveryQueueMapper.parseRows(pendingStmt.all(now, now));
         if (!parsed.ok) {
           return Promise.resolve(
             err(new Error(`Row validation failed: ${parsed.error.message}`)),
@@ -316,7 +354,7 @@ export function createSqliteDeliveryQueue(
 
     recoverInFlight(): Promise<Result<number, Error>> {
       try {
-        const result = recoverInFlightStmt.run();
+        const result = recoverInFlightStmt.run(AMBIGUOUS_SEND_OUTCOME_ERROR);
         return Promise.resolve(ok(result.changes));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));

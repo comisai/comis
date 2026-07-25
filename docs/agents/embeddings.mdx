@@ -122,7 +122,7 @@ the embedder later re-embeds existing memories automatically (`embedding.autoRei
 
 <Note>
   `embedding.multilingual` is an **advisory** flag — it declares the embedder
-  multilingual for the `comis fleet` model-health line and gates no behavior. The
+  multilingual for the `comis system-health` model-health line and gates no behavior. The
   embedder itself is selected by `embedding.provider` / `embedding.local.modelUri`.
 </Note>
 
@@ -132,7 +132,7 @@ the embedder later re-embeds existing memories automatically (`embedding.autoRei
 |--------|------|---------|--------------|
 | `embedding.enabled` | boolean | `true` | Enable embedding generation for meaning-based search |
 | `embedding.provider` | string | `"auto"` | Provider: `auto`, `local`, or `openai` |
-| `embedding.multilingual` | boolean | _(inferred from model id)_ | Advisory only: declares the embedder multilingual for the `comis fleet` health line — gates no behavior |
+| `embedding.multilingual` | boolean | _(inferred from model id)_ | Advisory only: declares the embedder multilingual for the `comis system-health` health line — gates no behavior |
 | `embedding.local.modelUri` | string | `nomic-embed-text-v1.5` GGUF | Local GGUF model (HuggingFace `hf:` URI or path); set a `bge-m3` GGUF for multilingual recall |
 | `embedding.local.gpu` | string | `"auto"` | GPU acceleration: `auto`, `metal`, `cuda`, `vulkan`, or `false` |
 | `embedding.local.contextSize` | number | `2048` | Maximum text length the local model can process (in tokens) |
@@ -223,14 +223,14 @@ a vector table's dimension is fixed when the table is created, so Comis drops
 and recreates it at the new dimension and queues every memory for
 re-embedding. The rebuild is logged at INFO (`Vector table rebuilt for new
 embedding dimension`) and recorded in the boot `model_health` diagnostic, so
-`comis fleet` drill-downs can confirm it ran.
+`comis system-health` drill-downs can confirm it ran.
 
 If the vector lane ever fails at query time (for example, a vector-table /
 embedder mismatch while the daemon is running), recall degrades to
 **FTS-only for that query** instead of failing outright — the degradation is
 recorded in the session trajectory (`memory.recall_degraded`), surfaced in
 `comis explain`'s recall section, and counted as a
-`health_signal:recall_degraded` finding in `comis fleet`.
+`health_signal:recall_degraded` finding in `comis system-health`.
 
 When `embedding.autoReindex: true` (the default), a background batch indexer
 re-embeds every existing memory in batches of `embedding.batch.batchSize`

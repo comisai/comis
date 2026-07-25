@@ -172,6 +172,35 @@ export const IncidentReportSchema = z.object({
    *  additive, schemaVersion stays 1. MUST stay declared — the non-strict `.parse()`
    *  strips any undeclared key. {@link IncidentCronWakeGateSchema}. */
   cronWakeGate: IncidentCronWakeGateSchema.optional(),
+  /** Durable scheduler task-check lifecycle evidence. The task body and origin
+   *  content are deliberately absent: this section exposes only bounded
+   *  identifiers, the terminal disposition, and delivery counts needed to
+   *  diagnose a governed background attempt. */
+  taskCheck: z
+    .object({
+      rootRunId: z.string().min(1).max(512),
+      attemptId: z.string().min(1).max(512),
+      correlationId: z.string().min(1).max(512),
+      lifecycle: z.enum(["started", "terminal"]),
+      outcome: z
+        .enum([
+          "dismissed",
+          "retry_scheduled",
+          "expired",
+          "delivered",
+          "delivery_partial",
+          "delivery_unknown",
+          "configuration_disabled",
+          "delivery_window_closed",
+          "failed",
+        ])
+        .optional(),
+      recovery: z.enum(["live", "ownership_recovery"]).optional(),
+      deliveredChunks: z.number().int().nonnegative().nullable().optional(),
+      failedChunks: z.number().int().nonnegative().nullable().optional(),
+      ambiguousChunks: z.number().int().nonnegative().nullable().optional(),
+    })
+    .optional(),
   /** The per-turn context-budget CASCADE — the progression of budget checks toward
    *  the terminal `contextBudget`. Present only when ≥2 distinct budget states occurred (a single
    *  check adds nothing over `contextBudget`). Dedup'd on transition + capped to the most recent 40,
@@ -517,6 +546,16 @@ export const IncidentReportSchema = z.object({
       byReason: z.record(z.string(), z.number()),
     })
     .optional(),
+  /** Protected background-continuation recovery failures associated with this
+   *  session. Content-free counts and stable identifiers only. */
+  backgroundRecovery: z
+    .object({
+      retryRequiredCount: z.number(),
+      unresolvedCount: z.number(),
+      lastTaskId: z.string().optional(),
+      lastToolName: z.string().optional(),
+    })
+    .optional(),
   /** Reply blocks an aborted execution left UNSENT — the pacer's hard stop
    *  never reaches the delivery service, so no `delivery.dispatched` fires
    *  and the user silently receives nothing. Σ over the session's
@@ -529,10 +568,9 @@ export const IncidentReportSchema = z.object({
       chunksNotSent: z.number(),
     })
     .optional(),
-  /** Distinct turns (envelope traceId) the
-   *  trajectory spans. Present only when >1 — it flags the whole-session toolStats as
-   *  cumulative-across-N-turns (the trajectory JSONL is append-only across severs), so
-   *  a reader does not misread a multi-turn count as this-turn. Additive (schemaVersion 1). */
+  /** Distinct agent turns derived from prompt anchors, with tool-lifecycle
+   *  trace ids as the sparse-history fallback. Present only when greater than one so
+   *  whole-session toolStats cannot be mistaken for one turn's counts. */
   turnCount: z.number().optional(),
   summary: z.string(),
   likelyRootCause: z
@@ -567,7 +605,7 @@ export const IncidentReportSchema = z.object({
       /**
        * The toolStats reconciliation between THIS report (the whole-session
        * trajectory union, the headline `toolStats`) and the persisted per-session
-       * rollup that `obs.fleet.health` reads (latest-execution-wins). The two
+       * rollup that `obs.system.health` reads (latest-execution-wins). The two
        * lenses read structurally-different sources, so they CAN legitimately
        * differ — but only in one direction: the rollup is built per-execution and
        * the `sessionEnd` is overwritten each execution, so it is a SUBSET of the
@@ -577,7 +615,7 @@ export const IncidentReportSchema = z.object({
        * (rollup ⊆ trajectory) holding; `rollupSource` names WHY the rollup can be
        * smaller; `divergentTools[]` lists each tool whose persisted rollup differs
        * from the trajectory with BOTH count pairs, so an operator cross-
-       * referencing `comis explain` vs `comis fleet` sees exactly the gap. A
+       * referencing `comis explain` vs `comis system-health` sees exactly the gap. A
        * rollup OVERcount (the forbidden direction — incl. a tool present in the
        * rollup but absent from the trajectory) flips `reconciled` to `false` and
        * surfaces the offending tool. Bounded: counts + tool names only, capped by
@@ -644,7 +682,7 @@ export type { IncidentFailure, IncidentSignals } from "./incident-report-signals
  *
  * Accepts ONE of `sessionKey`, `traceId`, or `rootRunId` (the
  * `.refine` rejects none-of-three). A `traceId` is canonicalized to its
- * sessionKey, and a `rootRunId` (an autonomy run) is canonicalized to the
+ * sessionKey, and a `rootRunId` (a governed run) is canonicalized to the
  * run's sessionKey, so there is one assembler path. `depth` selects the
  * summary (≤6 KB) vs. full projection. Admin-only; the handler is
  * non-mutating (read-only post-mortem).
@@ -655,10 +693,10 @@ export const ObsExplainContract = defineContract({
     .object({
       sessionKey: z.string().min(1).optional(),
       traceId: z.string().min(1).optional(),
-      // The 3rd ref shape — an autonomy run's rootRunId (the synthetic
-      // `root-session-<key>` or a real spawned/socket root). The daemon
+      // The 3rd ref shape — a governed run's rootRunId (a session, cron,
+      // task-check, or spawned/socket root). The daemon
       // canonicalizes it to its sessionKey FIRST (resolveRootRunToSession), so the
-      // fleet→explain drill-down can paste the worst run's rootRunId straight in.
+      // system→explain drill-down can paste the worst run's rootRunId straight in.
       rootRunId: z.string().min(1).optional(),
       depth: z.enum(["summary", "full"]).optional(),
       // Admin opt-in to include synthetic/test sessions (excluded by default).

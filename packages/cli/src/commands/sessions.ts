@@ -35,20 +35,13 @@ import { renderTable, renderKeyValue } from "../output/table.js";
  * Supports both canonical field names and daemon RPC field names.
  */
 interface SessionEntry {
-  key?: string;
-  sessionKey?: string;
-  channel?: string;
-  channelId?: string;
-  user?: string;
-  userId?: string;
-  lastActive?: number;
-  updatedAt?: number;
-  createdAt?: number;
-  messageCount?: number;
-  agentId?: string;
-  kind?: string;
-  totalTokens?: number;
-  metadata?: Record<string, unknown>;
+  conversationRef: string;
+  updatedAt: number;
+  createdAt: number;
+  messageCount: number;
+  agentId: string;
+  kind: string;
+  totalTokens: number;
 }
 
 /**
@@ -94,18 +87,17 @@ export function registerSessionsCommand(program: Command): void {
   sessions
     .command("list")
     .description("List all sessions")
-    .option("--tenant <tenantId>", "Filter by tenant ID")
+    .requiredOption("--tenant <tenantId>", "Tenant ID")
+    .requiredOption("--agent <agentId>", "Agent ID")
     .option("--format <format>", "Output format (table|json)", "table")
-    .action(async (options: { tenant?: string; format: string }) => {
+    .action(async (options: { tenant: string; agent: string; format: string }) => {
       try {
-        // The CLI's --tenant flag is a no-op against the contract surface:
-        // tenant scoping flows through the dispatcher-injected `_tenantId`
-        // internal (which is auth-context-derived), not the public request.
-        // The contract's `kind`/`since_minutes` fields are optional; the empty
-        // request matches the default-list-all behavior.
         const result = await withSpinner("Fetching sessions...", () =>
           withClient(async (client) => {
-            return await callTyped(client, SessionListContract, {});
+            return await callTyped(client, SessionListContract, {
+              tenant_id: options.tenant,
+              agent_id: options.agent,
+            });
           }),
         );
 
@@ -123,17 +115,15 @@ export function registerSessionsCommand(program: Command): void {
         }
 
         renderTable(
-          ["Session Key", "Agent", "User", "Last Active", "Messages"],
+          ["Conversation Ref", "Agent", "Kind", "Last Active", "Messages"],
           entries.map((s) => {
-            const key = s.sessionKey ?? s.key ?? "-";
-            const user = s.userId ?? s.user ?? "-";
-            const active = s.updatedAt ?? s.lastActive;
+            const key = s.conversationRef;
             return [
               key.length > 40 ? key.slice(0, 37) + "..." : key,
-              s.agentId ?? "-",
-              user,
-              active ? formatRelativeTime(active) : "-",
-              s.messageCount != null ? String(s.messageCount) : "-",
+              s.agentId,
+              s.kind,
+              formatRelativeTime(s.updatedAt),
+              String(s.messageCount),
             ];
           }),
         );
@@ -198,15 +188,17 @@ export function registerSessionsCommand(program: Command): void {
       }
     });
 
-  // sessions delete <key>
+  // sessions delete <conversationRef>
   sessions
-    .command("delete <key>")
+    .command("delete <conversationRef>")
     .description("Delete a session")
+    .requiredOption("--tenant <tenantId>", "Tenant ID")
+    .requiredOption("--agent <agentId>", "Agent ID")
     .option("--yes", "Skip confirmation prompt")
-    .action(async (key: string, options: { yes?: boolean }) => {
+    .action(async (conversationRef: string, options: { tenant: string; agent: string; yes?: boolean }) => {
       if (!options.yes) {
         const confirmed = await p.confirm({
-          message: `Delete session ${key}? This cannot be undone.`,
+          message: `Delete session ${conversationRef}? This cannot be undone.`,
         });
 
         if (p.isCancel(confirmed) || !confirmed) {
@@ -218,15 +210,15 @@ export function registerSessionsCommand(program: Command): void {
       try {
         await withSpinner("Deleting session...", () =>
           withClient(async (client) => {
-            // The contract uses `session_key` (snake_case — matches the
-            // daemon handler parameter name).
             return await callTyped(client, SessionDeleteContract, {
-              session_key: key,
+              tenant_id: options.tenant,
+              agent_id: options.agent,
+              conversation_ref: conversationRef,
             });
           }),
         );
 
-        success(`Session ${key} deleted`);
+        success(`Session ${conversationRef} deleted`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         error(`Failed to delete session: ${msg}`);
@@ -245,12 +237,14 @@ export function registerSessionsCommand(program: Command): void {
   // nukes EVERY observation derived from this session (destructive).
   // --yes skips confirmation (required for scripted/automated use).
   sessions
-    .command("reset <sessionKey>")
+    .command("reset <conversationRef>")
     .description("Reset a conversation to a clean slate: clears LCD history + working session transcript (admin). Use --memory to also clear RAG memories.")
+    .requiredOption("--tenant <tenantId>", "Tenant ID")
+    .requiredOption("--agent <agentId>", "Agent ID")
     .option("--memory", "Also clear RAG memories (paired + distilled) for this session")
     .option("--purge-derived", "With --memory: also purge consolidated observations derived from this session (destructive)")
     .option("--yes", "Skip confirmation prompt")
-    .action(async (sessionKeyArg: string, opts: { memory?: boolean; purgeDerived?: boolean; yes?: boolean }) => {
+    .action(async (conversationRef: string, opts: { tenant: string; agent: string; memory?: boolean; purgeDerived?: boolean; yes?: boolean }) => {
       if (!opts.yes) {
         // Destructive and admin-only: require --yes to avoid accidental wipes.
         error("Conversation reset is irreversible. Pass --yes to confirm.");
@@ -259,7 +253,9 @@ export function registerSessionsCommand(program: Command): void {
       try {
         const result = await withClient(async (client) => {
           return await callTyped(client, SessionResetConversationContract, {
-            session_key: sessionKeyArg,
+            tenant_id: opts.tenant,
+            agent_id: opts.agent,
+            conversation_ref: conversationRef,
             memory: opts.memory ?? false,
             // Commander camelCases --purge-derived → purgeDerived. Only meaningful
             // with --memory (the handler gates it on memory:true).

@@ -14,8 +14,10 @@ import type { LazyPaths } from "../file/safe-path-wrapper.js";
 
 /** Options passed to SandboxProvider.buildArgs() to generate sandbox CLI arguments. */
 export interface SandboxOptions {
-  /** Agent workspace directory (read-write inside sandbox). */
+  /** Workspace directory (read-write unless `workspaceReadOnly` is set). */
   workspacePath: string;
+  /** Bind the workspace read-only. Used by deterministic replay staging. */
+  workspaceReadOnly?: boolean;
   /** Additional directories with read-write access (e.g., graph pipeline shared dirs). */
   sharedPaths: string[];
   /** Directories with read-only access inside sandbox. */

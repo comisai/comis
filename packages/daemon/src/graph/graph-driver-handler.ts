@@ -11,8 +11,8 @@ import {
   type NodeDriverAction,
   type SessionKey,
   type NormalizedMessage,
-  parseFormattedSessionKey,
   safePath,
+  toSafeErrorLogString,
   systemNowMs,
   systemSetTimeout,
   systemClearTimeout,
@@ -72,15 +72,18 @@ export function handleDriverTurnCompleted(
   // Capture result immediately (capture before sweep)
   const run = deps.subAgentRunner.getRunStatus(event.runId);
 
-  // Capture the first round's session key for driver reuse on subsequent rounds.
-  // This MUST happen here (not in executeDriverAction) because spawn() sets run.sessionKey
+  // Capture the first round's conversation for driver reuse on subsequent rounds.
+  // This MUST happen here (not in executeDriverAction) because spawn() sets the locator
   // asynchronously inside startExecution via queueMicrotask. By the time handleDriverTurnCompleted
-  // fires, the run has completed and sessionKey is guaranteed populated.
-  if (ds && !ds.persistentSessionKey && run?.sessionKey) {
-    ds.persistentSessionKey = run.sessionKey;
+  // fires, the run has completed and the locator is guaranteed populated.
+  if (ds && !ds.persistentConversation && run) {
+    ds.persistentConversation = {
+      conversationScope: run.conversationScope,
+      conversationRef: run.conversationRef,
+    };
     deps.logger?.debug(
-      { graphId: gs.graphId, nodeId, persistentSessionKey: run.sessionKey },
-      "Captured persistent session key from first driver round",
+      { graphId: gs.graphId, nodeId, conversationRef: run.conversationRef },
+      "Captured persistent conversation from first driver round",
     );
   }
 
@@ -440,11 +443,7 @@ export function handleWaitForInput(
   }
 
   // Extract the caller's userId for identity matching
-  let callerUserId: string | undefined;
-  if (gs.callerSessionKey) {
-    const parsed = parseFormattedSessionKey(gs.callerSessionKey);
-    callerUserId = parsed?.userId;
-  }
+  const callerUserId = gs.callerPrincipalId;
 
   // Create synthetic runId for routing the reply through handleDriverTurnCompleted
   const syntheticRunId = `__user_reply__:${nodeId}`;
@@ -492,7 +491,7 @@ export function handleWaitForInput(
   // 2. Send the prompt to the channel
   deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, action.message).catch((sendErr: unknown) => {
     deps.logger?.warn(
-      { graphId: gs.graphId, nodeId, err: sendErr, hint: "Failed to send wait_for_input prompt", errorKind: "network" as const },
+      { graphId: gs.graphId, nodeId, err: toSafeErrorLogString(sendErr), hint: "Failed to send wait_for_input prompt", errorKind: "network" as const },
       "wait_for_input prompt delivery failed",
     );
   });
@@ -596,11 +595,11 @@ export function executeDriverAction(
 
   switch (action.action) {
     case "spawn": {
-      // Auto-inject persistent session key for multi-round driver reuse.
-      // After the first round completes, handleDriverTurnCompleted captures ds.persistentSessionKey.
+      // Auto-inject the persistent conversation for multi-round driver reuse.
+      // After the first round completes, handleDriverTurnCompleted captures it.
       // Subsequent spawns reuse that session for cache prefix continuity.
-      // If the driver explicitly provides reuseSessionKey, use that instead.
-      const effectiveReuseKey = action.reuseSessionKey ?? ds.persistentSessionKey;
+      // If the driver explicitly provides a conversation, use that instead.
+      const effectiveReuseConversation = action.reuseConversation ?? ds.persistentConversation;
 
       gatedSpawn(state, deps, config, gs, nodeId, () => {
         const runId = deps.subAgentRunner.spawn({
@@ -610,15 +609,23 @@ export function executeDriverAction(
           max_steps: action.maxSteps,
           callerSessionKey: gs.callerSessionKey,
           callerAgentId: gs.callerAgentId,
+          callerConversation: gs.callerConversationLocator,
+          callerEndpoint: gs.callerEndpoint,
           callerType: "graph",
+          callerTrustLevel: gs.callerTrustLevel,
           // Share the graph run's tree root (killByRootRun reach).
           ...(gs.rootRunId !== undefined ? { rootRunId: gs.rootRunId } : {}),
+          ...(gs.parentLeaseId !== undefined ? { parentLeaseId: gs.parentLeaseId } : {}),
+          caps: [...gs.callerCaps],
+          ...(gs.callerDeliveryOrigin !== undefined
+            ? { requesterOrigin: gs.callerDeliveryOrigin }
+            : {}),
           graphSharedDir: gs.sharedDir,
           graphTraceId: gs.graphTraceId,
           graphId: gs.graphId,
           nodeId,
           graphToolNames: gs.graphToolNames,  // Propagate tool superset for driver spawns
-          reuseSessionKey: effectiveReuseKey,  // Undefined on first spawn, populated on subsequent rounds
+          reuseConversation: effectiveReuseConversation,
           // Propagate leaf-node signal to the driver's inner sub-agents too —
           // e.g. the final round of a debate on a leaf node should not pay the
           // 1h cache premium since nothing reads the prefix afterwards.
@@ -628,7 +635,7 @@ export function executeDriverAction(
         ds.currentRunId = runId;
         gs.driverRunIdMap.set(runId, { nodeId, agentId: action.agentId });
         deps.logger?.debug(
-          { graphId: gs.graphId, nodeId, runId, agentId: action.agentId, reuseSession: !!effectiveReuseKey },
+          { graphId: gs.graphId, nodeId, runId, agentId: action.agentId, reuseSession: !!effectiveReuseConversation },
           "Driver spawned sub-agent",
         );
       });
@@ -666,9 +673,17 @@ export function executeDriverAction(
             max_steps: s.maxSteps,
             callerSessionKey: gs.callerSessionKey,
             callerAgentId: gs.callerAgentId,
+            callerConversation: gs.callerConversationLocator,
+            callerEndpoint: gs.callerEndpoint,
             callerType: "graph",
+            callerTrustLevel: gs.callerTrustLevel,
             // Share the graph run's tree root (killByRootRun reach).
             ...(gs.rootRunId !== undefined ? { rootRunId: gs.rootRunId } : {}),
+            ...(gs.parentLeaseId !== undefined ? { parentLeaseId: gs.parentLeaseId } : {}),
+            caps: [...gs.callerCaps],
+            ...(gs.callerDeliveryOrigin !== undefined
+              ? { requesterOrigin: gs.callerDeliveryOrigin }
+              : {}),
             graphSharedDir: gs.sharedDir,
             graphTraceId: gs.graphTraceId,
             graphId: gs.graphId,
@@ -780,7 +795,7 @@ export function executeDriverAction(
       if (gs.announceChannelType && gs.announceChannelId) {
         deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, progressMsg).catch((sendErr: unknown) => {
           deps.logger?.warn(
-            { graphId: gs.graphId, nodeId, err: sendErr, hint: "Progress message delivery failed", errorKind: "network" as const },
+            { graphId: gs.graphId, nodeId, err: toSafeErrorLogString(sendErr), hint: "Progress message delivery failed", errorKind: "network" as const },
             "Driver progress delivery failed",
           );
         });

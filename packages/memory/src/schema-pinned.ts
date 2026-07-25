@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type Database from "better-sqlite3";
+import { requireTableInfoRows } from "./schema-introspection.js";
 
 /**
  * Additively ensure the `memories` table carries the `pinned` column.
@@ -16,10 +17,10 @@ import type Database from "better-sqlite3";
  * @param db - An open better-sqlite3 Database whose `memories` table already exists.
  */
 export function ensurePinnedColumn(db: Database.Database): void {
-  // Object-literal cast (matches the `as { name: string }[]` style at ensureMemoryColumns:49);
-  // the untyped-sqlite rule targets `as Foo[]` (a \w+ named type) — object-literal casts pass.
   const cols = new Set(
-    (db.prepare(`PRAGMA table_info(memories)`).all() as { name: string }[]).map((r) => r.name),
+    requireTableInfoRows(db.prepare(`PRAGMA table_info(memories)`).all(), "memories").map(
+      (row) => row.name,
+    ),
   );
   if (!cols.has("pinned")) {
     db.exec(`ALTER TABLE memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);

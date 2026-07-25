@@ -28,6 +28,8 @@ import type {
 
 /** Dependencies for {@link wireMemoryUsefulness}. */
 export interface MemoryUsefulnessWiringDeps {
+  /** Configured deployment tenant that authorizes every write in this daemon. */
+  tenantId: string;
   /** The daemon's typed event bus (source of `memory:recall_used`). */
   eventBus: TypedEventBus;
   /** The sole @comis/memory adapter for the usefulness port (the write target). */
@@ -44,19 +46,6 @@ export interface MemoryUsefulnessWiringDeps {
 }
 
 /**
- * Derive the tenant partition from the formatted sessionKey envelope the agent
- * emits (`tenant:channel:user`). Best-effort: returns the FIRST segment, or
- * undefined when the sessionKey is absent/empty. The caller falls back to
- * "default" — but it NEVER collapses the agentId (that always rides the event),
- * so cross-agent isolation is preserved even when the tenant defaults.
- */
-export function deriveTenantFromSessionKey(sessionKey?: string): string | undefined {
-  if (sessionKey === undefined || sessionKey.length === 0) return undefined;
-  const first = sessionKey.split(":")[0];
-  return first !== undefined && first.length > 0 ? first : undefined;
-}
-
-/**
  * Stand up the `memory:recall_used` → `recordUsage` write-back subscriber on the
  * daemon's bus. Fire-and-forget / non-fatal; default-OFF via `feedbackEnabled`.
  */
@@ -67,12 +56,8 @@ export function wireMemoryUsefulness(deps: MemoryUsefulnessWiringDeps): void {
     // Nothing attributed this turn → no write (avoids an empty transaction).
     if (p.usedIds.length === 0 && p.ignoredIds.length === 0) return;
 
-    // Derive the scope from the EVENT. agentId rides the event (never collapsed
-    // to one global scope); tenantId comes from the sessionKey envelope
-    // (best-effort), defaulting only when absent.
-    const tenantId = deriveTenantFromSessionKey(p.sessionKey) ?? "default";
     const scope = {
-      tenantId,
+      tenantId: deps.tenantId,
       agentId: p.agentId,
       now: deps.clock.now(),
       // Per-intent write side: forward the recall's query-INTENT so the adapter

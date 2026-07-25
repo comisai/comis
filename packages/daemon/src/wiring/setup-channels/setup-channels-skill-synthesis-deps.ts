@@ -34,17 +34,35 @@
  * @module
  */
 
-import type { OutcomeSignalPort, MentalModelStorePort, ContextStorePort, ContextBrowsePort, AppContainer } from "@comis/core";
+import {
+  type OutcomeSignalPort,
+  type MentalModelStorePort,
+  type ContextStorePort,
+  type ContextBrowsePort,
+  type AppContainer,
+  type SessionStorePort,
+  parseFormattedSessionKey,
+} from "@comis/core";
 import type { ReflectionSourceTrajectory } from "@comis/agent";
 import type { MemoryApi } from "@comis/memory";
 import { buildReviewSessionSource } from "./review-session-source.js";
-import type { ReflectionCronDeps } from "./setup-channels-memory-crons-types.js";
+
+/** Dependencies required to build exact, trust-filtered reflection sources. */
+export interface ReflectionCronDeps {
+  learnedSkillStore: Pick<MentalModelStorePort, "get" | "admit" | "supersede">;
+  outcomeSignal: Pick<OutcomeSignalPort, "resolve">;
+  buildSourceTrajectories: (
+    kind: "skill" | "profile" | "topic",
+    agentId: string,
+    tenantId: string,
+  ) => Promise<ReflectionSourceTrajectory[]>;
+}
 
 /** The structural deps subset this helper reads (a slice of CronEventListenerDeps — avoids a cycle). */
 export interface ReflectionDepsInput {
   container: AppContainer;
-  tenantId?: string;
-  sessionStore: { listDetailed(tenantId?: string): unknown[]; loadByFormattedKey(sessionKey: string): unknown };
+  tenantId: string;
+  sessionStore: Pick<SessionStorePort, "listDetailed" | "loadByRef">;
   lcdStore?: Pick<ContextStorePort, "getMessages">;
   contextBrowse?: ContextBrowsePort;
   outcomeStore?: OutcomeSignalPort;
@@ -68,9 +86,29 @@ export interface ReflectionDepsInput {
 const UNTRUSTED_TRUST_TIER = "external";
 
 /**
- * Derive the two origin-trust signals for a session-source sender, reading the
- * per-agent `elevatedReply.senderTrustMap` (senderId -> trust-tier name) with the
- * configured `defaultTrustLevel` (schema default `"external"`) for an unmapped sender:
+ * Recover the user-authored request from the executor's persisted model-facing
+ * envelope. LCD is lossless, so the stored user message includes dynamic system,
+ * workspace, channel, and integration context ahead of the actual request. That
+ * context is required for replay but is not trajectory evidence and must never be
+ * distilled into a learned document.
+ */
+function stripExecutorEnvelope(text: string): string {
+  const openMarker = "[System context]";
+  const closeMarker = "[End system context]";
+  const openIndex = text.indexOf(openMarker);
+  if (openIndex === -1) return text;
+  const closeIndex = text.indexOf(closeMarker, openIndex + openMarker.length);
+  if (closeIndex === -1) return text;
+  const afterContext = text.slice(closeIndex + closeMarker.length);
+  const channelHeader = afterContext.match(/^\s*\[[\w-]+\]\s+\S+\s+\([^)]*\):\s*/);
+  return (channelHeader ? afterContext.slice(channelHeader[0].length) : afterContext).trim();
+}
+
+/**
+ * Derive the two origin-trust signals for a session-source sender. Prefer the
+ * immutable, content-free ingress decision persisted on the trajectory. Synthetic
+ * trajectories without that carrier fall back to `elevatedReply.senderTrustMap`
+ * plus the configured `defaultTrustLevel`:
  *
  *  - `trustedOrigin` (ANTI-POISON AXIS 1): trusted iff the resolved tier is NOT the
  *    `"external"` tier. DENY-ON-UNKNOWN — no sender id, no `senderTrustMap` entry with
@@ -88,8 +126,16 @@ function deriveOriginTrust(
   sender: string,
   senderTrustMap: Record<string, string>,
   defaultTrustLevel: string,
+  persisted?: { senderTrust?: string; senderTrustExplicit?: boolean },
 ): { trustedOrigin: boolean; explicitlyTrusted: boolean } {
-  // No sender id ⇒ cannot establish trust ⇒ deny-on-unknown (both axes false).
+  if (persisted?.senderTrust !== undefined) {
+    const trustedOrigin = persisted.senderTrust !== UNTRUSTED_TRUST_TIER;
+    return {
+      trustedOrigin,
+      explicitlyTrusted: persisted.senderTrustExplicit === true && trustedOrigin,
+    };
+  }
+  // Without persisted evidence, no sender id means trust cannot be established.
   if (sender.length === 0) return { trustedOrigin: false, explicitlyTrusted: false };
   const explicitEntry = Object.prototype.hasOwnProperty.call(senderTrustMap, sender);
   const tier = senderTrustMap[sender] ?? defaultTrustLevel;
@@ -149,16 +195,18 @@ async function buildSkillSources(
   if (!idsRes.ok || idsRes.value.length === 0) return [];
 
   const source = buildReviewSessionSource({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the review-source sessionStore view
-    sessionStore: deps.sessionStore as any,
+    sessionStore: deps.sessionStore,
     lcdStore: deps.lcdStore,
     contextBrowse: deps.contextBrowse,
-    agentId,
-    tenantId,
   });
-  // sessionKey → sender (userId), from the session view.
+  const listed = source.listDetailed({ tenantId, agentId });
+  if (!listed.ok) return [];
+  const entryBySessionId = new Map<string, (typeof listed.value)[number]>();
   const senderBySession = new Map<string, string>();
-  for (const e of source.listDetailed(tenantId)) senderBySession.set(e.sessionKey, e.userId);
+  for (const entry of listed.value) {
+    entryBySessionId.set(entry.sessionKey, entry);
+    senderBySession.set(entry.sessionKey, entry.principalId ?? "");
+  }
 
   // The per-agent trust derivation inputs (elevatedReply.senderTrustMap
   // + defaultTrustLevel). Read once per run. The config is always default-parsed
@@ -185,8 +233,12 @@ async function buildSkillSources(
   const rowsCache = new Map<string, unknown[] | undefined>();
   const sessionRows = (sessionKey: string): unknown[] | undefined => {
     if (rowsCache.has(sessionKey)) return rowsCache.get(sessionKey);
-    const loaded = source.loadByFormattedKey(sessionKey);
-    const rows = loaded?.messages.filter((m) => contentOf(m).length > 0);
+    const entry = entryBySessionId.get(sessionKey);
+    if (!entry) return undefined;
+    const loaded = source.loadByRef({ tenantId, agentId }, entry.conversationRef);
+    const rows = loaded.ok
+      ? loaded.value?.messages.filter((m) => contentOf(m).length > 0)
+      : undefined;
     const val = rows !== undefined && rows.length > 0 ? rows : undefined;
     rowsCache.set(sessionKey, val);
     return val;
@@ -214,7 +266,11 @@ async function buildSkillSources(
         })
       : rows;
     if (turnRows.length === 0) return undefined;
-    const text = turnRows.map(contentOf).filter((t) => t.length > 0).join("\n");
+    const trajectoryContentOf = (message: unknown): string => {
+      const content = contentOf(message);
+      return roleOf(message) === "user" ? stripExecutorEnvelope(content) : content;
+    };
+    const text = turnRows.map(trajectoryContentOf).filter((t) => t.length > 0).join("\n");
     // The topicKey signature = the user-role messages (the task INTENT the user
     // controls), which is stable across the agent's response wording. The JOB
     // normalizes it via normalizeOpeningRequest (topic-key.ts) — which also
@@ -222,7 +278,7 @@ async function buildSkillSources(
     // so identical requests at different times collapse to the same topicKey.
     const userText = turnRows
       .filter((m) => roleOf(m) === "user")
-      .map((m) => contentOf(m))
+      .map(trajectoryContentOf)
       .filter((t) => t.length > 0)
       .join("\n");
     // A WINDOWED turn with no user text never seeds (a per-turn topic must be the
@@ -238,7 +294,14 @@ async function buildSkillSources(
   const prevObservedBySession = new Map<string, number>();
 
   const out: ReflectionSourceTrajectory[] = [];
-  for (const { trajectoryId, sessionId, observedAt, procedureDescriptor: descriptor } of ids) {
+  for (const {
+    trajectoryId,
+    sessionId,
+    observedAt,
+    senderTrust,
+    senderTrustExplicit,
+    procedureDescriptor: descriptor,
+  } of ids) {
     const rows = sessionRows(sessionId);
     if (rows === undefined) continue; // no transcript for this turn's session → skip
     // Windowing needs BOTH the ledger observedAt AND at least one timestamped row.
@@ -247,7 +310,9 @@ async function buildSkillSources(
     if (typeof observedAt === "number") prevObservedBySession.set(sessionId, observedAt);
     const texts = turnTexts(rows, windowed, prevObservedAt, typeof observedAt === "number" ? observedAt : Number.POSITIVE_INFINITY);
     if (texts === undefined) continue; // empty window (severed LCD / no user text) → skip
-    const sender = senderBySession.get(sessionId) ?? "";
+    const sender = senderBySession.get(sessionId)
+      || parseFormattedSessionKey(sessionId)?.userId
+      || "";
     // The content-free procedure descriptor read back from listTrajectoryIds (the ordered
     // tool-NAME sequence + counts). The KEY is the ordered sequence JOINED — order + repeats
     // preserved, NOT sorted/deduped (the sequence + counts contract). It is self-sufficient
@@ -256,9 +321,14 @@ async function buildSkillSources(
     // is injective. Absent (empty) ⇒ omit — the turn ran no cap-mapped tool call sites.
     const sequence = descriptor ?? [];
     // Trust axis 1 (trustedOrigin) + the single-owner belt (explicitlyTrusted), both
-    // derived DAEMON-SIDE (deny-on-unknown). The job filters on axis 1 and counts
-    // repetition only among explicitlyTrusted members.
-    const originTrust = deriveOriginTrust(sender, senderTrustMap, defaultTrustLevel);
+    // resolved daemon-side at ingress and persisted content-free. The config lookup
+    // remains a fail-closed fallback for synthetic rows without that carrier.
+    const originTrust = deriveOriginTrust(
+      sender,
+      senderTrustMap,
+      defaultTrustLevel,
+      { senderTrust, senderTrustExplicit },
+    );
     out.push({
       trajectoryId,
       sessionId,

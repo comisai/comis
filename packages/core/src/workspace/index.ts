@@ -30,9 +30,11 @@ export { resolveWorkspaceDir } from "./workspace-resolver.js";
 export {
   WORKSPACE_FILE_NAMES,
   DEFAULT_TEMPLATES,
-  PLATFORM_OWNED_FILES,
-  USER_OWNED_FILES,
+  OPERATOR_OWNED_FILES,
+  AGENT_STATE_FILES,
   TEMPLATE_MARKER,
+  ONBOARDING_COMPLETE_TOOL_RESULT,
+  isUntouchedWorkspaceTemplate,
 } from "./templates.js";
 export type { WorkspaceFileName } from "./templates.js";
 

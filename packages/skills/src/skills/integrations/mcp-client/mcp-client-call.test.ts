@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import PQueue from "p-queue";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { runWithContext, type RequestContext } from "@comis/core";
 import type {
   McpClientManagerDeps,
   McpClientManagerState,
@@ -44,6 +45,19 @@ function makeOptions(): McpClientManagerOptions {
     keepaliveIntervalMs: 0,
     circuitBreakerThreshold: 3,
     circuitBreakerCooldownMs: 60_000,
+  };
+}
+
+function makeContext(): RequestContext {
+  return {
+    tenantId: "default",
+    userId: "user_a",
+    agentId: "agent_a",
+    sessionKey: "default:user_a:telegram:chat_a",
+    traceId: "40000000-0000-4000-8000-000000000004",
+    startedAt: 1,
+    trustLevel: "user",
+    channelType: "telegram",
   };
 }
 
@@ -154,5 +168,36 @@ describe("R8 needs_reauth", () => {
     expect(result2.value.content[0]?.text).toMatch(/^\[needs_reauth\]/);
     expect(result2.value.content[0]?.text).not.toMatch(/^\[server_unavailable\]/);
     expect(result2.value.isError).toBe(true);
+  });
+});
+
+describe("request correlation", () => {
+  it("registers MCP progress handling while forwarding the request trace separately", async () => {
+    const serverName = "inventory";
+    const state = makeConnectedState(serverName, () =>
+      Promise.resolve({ content: [{ type: "text", text: "{}" }] }),
+    );
+    const deps = { logger: makeLogger() } as unknown as McpClientManagerDeps;
+
+    const result = await runWithContext(makeContext(), () =>
+      callTool(state, deps, `mcp:${serverName}/inventory_items_list`, { name_contains: "item" }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(state.connections.get(serverName)?.client.callTool).toHaveBeenCalledWith(
+      {
+        name: "inventory_items_list",
+        arguments: { name_contains: "item" },
+        _meta: {
+          "comis.ai/requestTraceId": "40000000-0000-4000-8000-000000000004",
+        },
+      },
+      undefined,
+      {
+        timeout: 5000,
+        onprogress: expect.any(Function),
+        resetTimeoutOnProgress: true,
+      },
+    );
   });
 });

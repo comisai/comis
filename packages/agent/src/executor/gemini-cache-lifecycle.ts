@@ -12,7 +12,7 @@
  * @module
  */
 
-import { formatSessionKey, type SessionKey } from "@comis/core";
+import { conversationScopeToSessionKey, formatSessionKey, type ConversationScope } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import type { GeminiCacheManager } from "./gemini-cache-manager.js";
 
@@ -30,13 +30,13 @@ export function wireGeminiCacheCleanup(
   eventBus: {
     on(
       event: "session:expired",
-      handler: (payload: { sessionKey: SessionKey; reason: string }) => void,
+      handler: (payload: { conversationScope: ConversationScope; reason: string }) => void,
     ): void;
   },
   cacheManager: GeminiCacheManager,
 ): void {
   eventBus.on("session:expired", (payload) => {
-    const key = formatSessionKey(payload.sessionKey);
-    suppressError(cacheManager.dispose(key), "gemini-cache-session-dispose");
+    const displayKey = conversationScopeToSessionKey(payload.conversationScope);
+    if (displayKey.ok) suppressError(cacheManager.dispose(formatSessionKey(displayKey.value)), "gemini-cache-session-dispose");
   });
 }

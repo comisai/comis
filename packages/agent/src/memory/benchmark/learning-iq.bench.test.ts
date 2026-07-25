@@ -161,7 +161,7 @@ function baseRecallConfig(): MemoryRecallConfig {
     maxResults: 10,
     minScore: 0,
     includeTrustLevels: ["system", "learned"],
-    rerank: { enabled: false, maxCandidates: 20, minResults: 2, timeoutMs: 5000 },
+    rerank: { mode: "off", maxCandidates: 20, minResults: 2, timeoutMs: 5000 },
     scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 3.0 },
     lanes: {
       fts: { weight: 1.0 },

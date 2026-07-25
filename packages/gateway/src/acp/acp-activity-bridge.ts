@@ -12,9 +12,8 @@
  *     `@comis/core` + `@comis/shared` + the SDK only; spec §5.1 line 717),
  *   - drains the queue SEQUENTIALLY, awaiting each `connection.sessionUpdate`
  *     so the SDK write-queue preserves enqueue order,
- *   - resolves the ACP session id from `event.sessionKey` via
- *     `parseFormattedSessionKey(...).peerId` (the AcpSessionMap keys
- *     `peerId === acpSessionId`), and no-ops if no connection is retained.
+ *   - receives the ACP session id explicitly at turn subscription and no-ops
+ *     if no connection is retained.
  *
  * Phase → SessionUpdate is a closed-union switch (AGENTS.md §2.8): `start` →
  * `tool_call`, `progress | end` → `tool_call_update`, with an exhaustive
@@ -37,7 +36,6 @@ import type {
   ComisLogger,
   TurnActivityContext,
 } from "@comis/core";
-import { parseFormattedSessionKey } from "@comis/core";
 import type {
   AgentSideConnection,
   SessionUpdate,
@@ -74,7 +72,7 @@ export interface AcpActivityBridge {
    * `session/update` frames. Returns an `unsubscribe()` that detaches the
    * underlying activity-stream subscription (cleanup symmetry).
    */
-  subscribe(ctx: TurnActivityContext): () => void;
+  subscribe(ctx: TurnActivityContext, acpSessionId: string): () => void;
 }
 
 /**
@@ -121,7 +119,7 @@ export function createAcpActivityBridge(
   deps: CreateAcpActivityBridgeDeps,
 ): AcpActivityBridge {
   return {
-    subscribe(ctx: TurnActivityContext): () => void {
+    subscribe(ctx: TurnActivityContext, acpSessionId: string): () => void {
       // Local 256-slot bounded queue. Drop-oldest backpressure caps
       // memory if the IDE consumer is slow (spec §5.1 line 717 = 256).
       const queue = createAcpBoundedQueue<ActivityEvent>({
@@ -135,17 +133,14 @@ export function createAcpActivityBridge(
       const pump = (): void => {
         draining = draining.then(async () => {
           for (const event of queue.drain()) {
-            const acpSessionId = parseFormattedSessionKey(
-              event.sessionKey,
-            )?.peerId;
-            if (acpSessionId === undefined) {
+            if (acpSessionId.length === 0 || event.sessionKey !== ctx.sessionKey) {
               deps.logger?.debug?.(
                 {
                   sessionKey: event.sessionKey,
                   submodule: "acp-activity-bridge",
                   step: "resolve-session",
                 },
-                "activity event sessionKey has no acp peerId — dropping",
+                "activity event does not match the subscribed ACP turn — dropping",
               );
               continue;
             }

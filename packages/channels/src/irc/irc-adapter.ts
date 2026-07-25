@@ -144,7 +144,7 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
     );
 
     void runWithContext(
-      { traceId, startedAt: systemNowMs(), channelType: "irc", tenantId: "default", trustLevel: "admin" },
+      { traceId, startedAt: systemNowMs(), channelType: "irc", tenantId: "default", trustLevel: "user" },
       () => {
         for (const handler of handlers) {
           try {

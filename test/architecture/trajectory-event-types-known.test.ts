@@ -98,9 +98,13 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // cost-relevant break belongs on the per-session timeline),
   // so it is NOT listed here (the disjoint invariant — it lives in TRAJECTORY_BRIDGE_MAPPING).
   "observability:latency",
+  // Emitted only when the trajectory recorder cannot resume, so mapping it
+  // into that unavailable recorder is impossible. Daemon diagnostic
+  // persistence stores the content-free health signal instead.
+  "observability:trajectory_degraded",
   // The three observability:spend_* events were REMOVED from
   // this allowlist and MAPPED into TRAJECTORY_BRIDGE_MAPPING — a spend-killed
-  // session was undiagnosable via `comis explain` while these were fleet-only.
+  // session was undiagnosable via `comis explain` while these were system-only.
   // They now ride the per-session trajectory (spend.warning/exceeded/unpriceable),
   // content-free. The disjoint invariant forbids listing a mapped event here.
 
@@ -261,7 +265,7 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // agent:prefix_unstable: a recurring Anthropic prompt-cache-prefix collapse
   //   (a cached-region message mutated across turns on THRESHOLD+ calls) →
   //   content-free health_signal row (signal:cache_prefix_churn) surfaced by
-  //   `comis fleet`. A wasted-cache-write health signal fed to observability
+  //   `comis system-health`. A wasted-cache-write health signal fed to observability
   //   snapshots, NOT a turn-level trajectory step — same class as
   //   context:dag_degraded above.
   "agent:prefix_unstable",
@@ -385,7 +389,7 @@ const SCANNED_PACKAGES = ["agent", "orchestrator"] as const;
 // `eventBus?.emit(` (optional-chaining). The previous `/eventBus\.emit\(/` deliberately MISSED
 // `?.emit` — a documented blind spot that let `subagent:delivery_retried` (emitted by the
 // announcement-batcher via `deps.eventBus?.emit`) slip through un-bridged AND un-allowlisted,
-// so P0-B's self-healing retry was invisible to `comis explain`/`fleet`. The `\??` makes the
+// so P0-B's self-healing retry was invisible to `comis explain`/`system`. The `\??` makes the
 // `?` before `.emit` optional so an `?.emit` event can never again escape the bridge-or-allowlist gate.
 const EMIT_REGEX = /eventBus\??\.emit\(\s*"([^"]+)"/g;
 

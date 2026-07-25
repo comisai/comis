@@ -75,6 +75,7 @@ function makeDeps(over: Partial<LearningReactionsWiringDeps> = {}): {
   const timers = createFakeTimers(NOW);
   const reactionTrajectoryMap = over.reactionTrajectoryMap ?? createReactionTrajectoryMap({ clock, timers });
   const deps: LearningReactionsWiringDeps = {
+    tenantId: "tenant-configured",
     eventBus: over.eventBus ?? new TypedEventBus(),
     outcomeStore: over.outcomeStore ?? store,
     clock,
@@ -396,13 +397,15 @@ describe("wireLearningCorrection — correction → prior-trajectory observe", (
       agentId: AGENT,
       sessionKey: formatSessionKey(sessionKey()),
       traceId: TRACE,
+      toolCalls: 0,
+      llmCalls: 1,
       receivedAt: NOW,
       executionDurationMs: 5,
       deliveryDurationMs: 0,
       totalDurationMs: 5,
       tokensUsed: 100,
       cost: 0,
-      success: true,
+      status: "success",
       finishReason: "end_turn",
       timestamp: NOW,
       ...over,
@@ -450,7 +453,7 @@ describe("wireLearningCorrection — correction → prior-trajectory observe", (
     expect(obs.outcome).toBe("corrected");
     expect(obs.source).toBe("correction");
     expect(obs.trajectoryId).toBe(TRACE); // the prior trajectory recorded under the SAME sessionKey
-    expect(obs.tenantId).toBe(TENANT); // tenant derived from the sessionKey's first segment
+    expect(obs.tenantId).toBe("tenant-configured");
     expect(obs.agentId).toBe(AGENT); // the trajectory's OWN agent (from the diagnostic payload)
     expect(obs.confidence).toBe(0.6); // the capped reward
   });
@@ -583,6 +586,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     const { store } = makeStubStore();
     return {
       config: {
+        tenantId: "tenant-configured",
         agents: over.agents ?? {},
         // The master kill-switch is `memory.enabled`.
         memory: { enabled: over.costFeatures ?? true },
@@ -774,6 +778,29 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
       createFakeTimers(NOW),
     );
     expect(built.deps.correctionDetector).toBeUndefined();
+  });
+
+  it("builds the correction detector for an OAuth provider without a static API key", () => {
+    const resolveCredential = vi.fn(async () => "oauth-access-token");
+    const built = buildReactionWiringDeps(
+      makeContainer({
+        agents: {
+          a1: {
+            provider: "openai-codex",
+            model: "gpt-5.6-sol",
+            oauthProfiles: { "openai-codex": "openai-codex:test@example.com" },
+            learningOutcome: { enabled: true, correction: { enabled: true } },
+          },
+        },
+        secrets: {},
+      }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+      resolveCredential,
+    );
+
+    expect(built.deps.correctionDetector).toBeDefined();
+    expect(resolveCredential).not.toHaveBeenCalled();
   });
 
   it("the correction detector is BUILT when correction.enabled AND a cheap-model API key resolves", () => {

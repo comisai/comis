@@ -34,7 +34,7 @@
  * In-process / daemon-lifetime (resets on restart, exactly like the
  * corroboration tally). BOUNDED: the per-skill map caps at `maxTracked` and evicts the
  * OLDEST-touched skill (Map insertion order = recency, refreshed via delete-before-set)
- * so a busy/adversarial fleet never grows it without bound. Counts/ids only — never a
+ * so a busy/adversarial system never grows it without bound. Counts/ids only — never a
  * procedure body. The `nowMs` is ALWAYS the injected caller clock (never an ambient
  * wall-clock read — globals.test.ts forbids it).
  *

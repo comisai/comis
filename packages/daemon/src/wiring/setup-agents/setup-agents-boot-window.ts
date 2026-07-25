@@ -7,7 +7,7 @@ import {
 import type { PerAgentConfig } from "@comis/core";
 import type { SingleAgentDeps } from "./setup-agents-types.js";
 
-type PiModelRegistry = ReturnType<typeof createModelRegistryAdapter>;
+type PiModelRegistry = Awaited<ReturnType<typeof createModelRegistryAdapter>>["registry"];
 type ConvertTools = NonNullable<AgentBootWindowInfo["convertTools"]>;
 
 /**

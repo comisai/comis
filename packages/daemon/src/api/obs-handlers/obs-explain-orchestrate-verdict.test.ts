@@ -8,7 +8,7 @@
  * carried an in-jail `tool.invoke` denial (`decision:"deny"`), and returns `null`
  * on a clean/absent section. PURE: same signals ⇒ same verdict (asserted with an
  * idempotence check). The registry block proves the acute-tier insert leaves the
- * frozen 678/503 fixtures' verdicts UNCHANGED (first-match-wins ordering).
+ * established cost and breaker fixtures' verdicts unchanged (first-match-wins ordering).
  *
  * @module
  */
@@ -126,7 +126,7 @@ describe("orchestrateFailedVerdict (deterministic orchestrate_failed verdict)", 
   });
 });
 
-describe("orchestrate_failed registry insert (first-match-wins, no frozen-fixture reorder)", () => {
+describe("orchestrate_failed registry insert preserves first-match ordering", () => {
   it("rootCause() returns orchestrate_failed for a failed orchestrate run with no other signal", () => {
     const r = rootCause(
       makeSignals({
@@ -142,8 +142,8 @@ describe("orchestrate_failed registry insert (first-match-wins, no frozen-fixtur
     expect(r).toBeNull();
   });
 
-  it("the frozen 678 misclassification verdict is UNCHANGED after the orchestrate insert", () => {
-    const r678 = rootCause(
+  it("keeps the established misclassification verdict ahead of the orchestrate rule", () => {
+    const misclassificationResult = rootCause(
       makeSignals({
         hasMisclassificationSignal: true,
         misclassifiedTool: "web_fetch",
@@ -154,11 +154,11 @@ describe("orchestrate_failed registry insert (first-match-wins, no frozen-fixtur
         mostFailedTool: "web_fetch",
       }),
     );
-    expect(r678!.code).toBe("content_heuristic_misclassification");
+    expect(misclassificationResult!.code).toBe("content_heuristic_misclassification");
   });
 
-  it("the frozen 503 breaker verdict is UNCHANGED after the orchestrate insert", () => {
-    const r503 = rootCause(
+  it("keeps the established breaker verdict ahead of the orchestrate rule", () => {
+    const breakerResult = rootCause(
       makeSignals({
         hasMisclassificationSignal: false,
         hasDoNotRetrySignal: true,
@@ -167,7 +167,7 @@ describe("orchestrate_failed registry insert (first-match-wins, no frozen-fixtur
         mostFailedTool: "web_fetch",
       }),
     );
-    expect(r503!.code).toBe("breaker_opened_repeated_failure");
+    expect(breakerResult!.code).toBe("breaker_opened_repeated_failure");
   });
 
   it("a failed orchestrate run OUT-RANKS the completed_with_tool_errors catch-all (specific over generic)", () => {

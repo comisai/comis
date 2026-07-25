@@ -84,6 +84,9 @@ export interface MentalModelStoreDeps {
 
 // Row mapper — the sanctioned read path (no `as Foo[]`).
 const mentalModelRowMapper = createRowMapper(MentalModelRowSchema);
+const mentalModelIncumbentMapper = createRowMapper(
+  z.strictObject({ body: z.string(), history: z.string().nullable() }),
+);
 
 // Lenient JSON-string[] parser for the source_traj_ids column: corrupt/non-array
 // JSON degrades to [] (never a throw that breaks get()/list()).
@@ -264,12 +267,17 @@ export function createSqliteMentalModelStore(
       "ON CONFLICT(id) DO UPDATE SET " +
       "description = excluded.description, body = excluded.body, " +
       "structured_body = excluded.structured_body, required_tools = excluded.required_tools, " +
-      "params_schema = excluded.params_schema, proof_count = excluded.proof_count, " +
+      "params_schema = excluded.params_schema, " +
+      "proof_count = CASE WHEN mental_models.evicted_at IS NOT NULL " +
+      "THEN excluded.proof_count ELSE MAX(mental_models.proof_count, excluded.proof_count) END, " +
       "confidence = excluded.confidence, strength = excluded.strength, " +
       "source_traj_ids = excluded.source_traj_ids, mutating = excluded.mutating, " +
-      // A re-admit of a previously-evicted doc resurrects it (clears evicted_at,
-      // resets state to candidate) — the replay-stable path.
-      "state = 'candidate', evicted_at = NULL, updated_at = excluded.created_at",
+      // Preserve the monotonic lifecycle of a live doc: a later reflection may
+      // refresh its guidance but cannot erase accumulated proof or reset active/stale
+      // state. Only a previously-evicted doc is resurrected as a fresh candidate.
+      "state = CASE WHEN mental_models.evicted_at IS NOT NULL " +
+      "THEN 'candidate' ELSE mental_models.state END, " +
+      "evicted_at = NULL, updated_at = excluded.created_at",
   );
 
   // Scoped reads — the `tenant_id = ? AND agent_id = ?` filter is the
@@ -633,17 +641,18 @@ export function createSqliteMentalModelStore(
             "WHERE tenant_id = ? AND agent_id = ? AND name = ? AND evicted_at IS NULL",
         );
 
-        // The revise unit — ONE synchronous transaction (mirror the adapter's supersede).
-        // better-sqlite3 auto-ROLLBACKs on ANY throw, so SELECT-incumbent →
-        // history-append → UPDATE is atomic; a parse fault THROWS → ROLLBACK (caught
-        // below → err). The decided branch is returned for the metadata log.
-        const tx = db.transaction((): "superseded" | "not-found" => {
-          const row = selectIncumbent.get(scope.tenantId, scope.agentId, input.name) as
-            | { body: string; history: string | null }
-            | undefined;
+        // The revise unit is one synchronous transaction. Row validation runs
+        // before the update and returns an error without writing; SQLite faults
+        // still throw and automatically roll the transaction back.
+        const tx = db.transaction((): Result<"superseded" | "not-found", Error> => {
+          const parsed = mentalModelIncumbentMapper.parseOptionalRow(
+            selectIncumbent.get(scope.tenantId, scope.agentId, input.name),
+          );
+          if (!parsed.ok) return err(new Error(parsed.error.message));
+          const row = parsed.value;
           // No incumbent under THIS scope (cross-scope correction the WHERE rejects, an
           // unknown name, or a soft-evicted doc) → no-op. NO row written.
-          if (row === undefined) return "not-found";
+          if (row === undefined) return ok("not-found");
           // Append the prior body (oldest-first), then update. History is appended
           // REGARDLESS of whether body changed — a correction is the durable signal
           // (mirror the adapter's supersede). The mental_models_au/_tri_au WHEN-guarded triggers re-sync the
@@ -662,9 +671,11 @@ export function createSqliteMentalModelStore(
             scope.agentId,
             input.name,
           );
-          return "superseded";
+          return ok("superseded");
         });
-        const outcome = tx();
+        const txResult = tx();
+        if (!txResult.ok) return txResult;
+        const outcome = txResult.value;
         logger?.debug(
           { step: "mental-model-supersede", outcome, durationMs: systemNowMs() - startMs, hint: "mental-model supersede complete (history-append, non-destructive)" },
           "Mental-model supersede complete",

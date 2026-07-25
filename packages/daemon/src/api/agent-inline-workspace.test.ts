@@ -81,7 +81,7 @@ describe("writeInlineWorkspaceFiles", () => {
         bytesWritten: role.length + identity.length,
       });
     }
-    expect(mockWriteFile).toHaveBeenCalledTimes(2);
+    expect(mockWriteFile).toHaveBeenCalledTimes(3);
     expect(mockWriteFile).toHaveBeenNthCalledWith(
       1,
       "/tmp/workspace-foo/ROLE.md",
@@ -94,6 +94,33 @@ describe("writeInlineWorkspaceFiles", () => {
       identity,
       { encoding: "utf8" },
     );
+    expect(mockWriteFile).toHaveBeenNthCalledWith(
+      3,
+      "/tmp/workspace-foo/BOOTSTRAP.md",
+      "",
+      { encoding: "utf8" },
+    );
+  });
+
+  it("returns an io error when completing inline setup cannot clear BOOTSTRAP.md", async () => {
+    const deps = makeDeps();
+    mockWriteFile
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("EACCES: bootstrap locked"));
+
+    const result = await writeInlineWorkspaceFiles(deps, {
+      workspaceDir: "/tmp/workspace-foo",
+      agentId: "foo",
+      role: "ROLE-CONTENT",
+      identity: "IDENTITY-CONTENT",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("io");
+      expect(result.error.file).toBe("BOOTSTRAP.md");
+    }
   });
 
   // -------------------------------------------------------------------------
@@ -275,7 +302,7 @@ describe("writeInlineWorkspaceFiles", () => {
         agentId: "acl",
         file: "ROLE.md",
         errorKind: "resource",
-        hint: expect.stringMatching(/Inline ROLE\.md\/IDENTITY\.md write failed/),
+        hint: expect.stringMatching(/Inline workspace setup write failed/),
       }),
       expect.stringMatching(/Inline workspace file write failed/),
     );

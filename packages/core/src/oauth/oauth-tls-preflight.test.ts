@@ -41,7 +41,6 @@ describe("runOAuthTlsPreflight", () => {
       ok: false,
       kind: "tls-cert",
       code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-      message: "unable to get local issuer certificate",
     });
   });
 
@@ -56,7 +55,12 @@ describe("runOAuthTlsPreflight", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.kind).toBe("network");
-      expect(result.code).toBe("ECONNREFUSED");
+      expect(result).toEqual({
+        ok: false,
+        kind: "network",
+        reason: "connection",
+      });
+      expect(JSON.stringify(result)).not.toContain("127.0.0.1");
     }
   });
 
@@ -70,7 +74,7 @@ describe("runOAuthTlsPreflight", () => {
     if (!result.ok) {
       expect(result.kind).toBe("tls-cert");
       expect(result.code).toBeUndefined();
-      expect(result.message).toBe("self-signed certificate in certificate chain");
+      expect(result).not.toHaveProperty("message");
     }
   });
 
@@ -92,8 +96,20 @@ describe("runOAuthTlsPreflight", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.kind).toBe("network");
-      expect(result.message).toBe("EAI_AGAIN dns lookup failed");
+      expect(result).toEqual({ ok: false, kind: "network", reason: "dns" });
+      expect(result).not.toHaveProperty("message");
     }
+  });
+
+  it("classifies an aborted timeout without returning the raw exception", async () => {
+    const stubFetch = async () => {
+      throw new DOMException("PRIVATE_TIMEOUT_SENTINEL", "TimeoutError");
+    };
+
+    const result = await runOAuthTlsPreflight({ fetchImpl: stubFetch as typeof fetch });
+
+    expect(result).toEqual({ ok: false, kind: "network", reason: "timeout" });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_TIMEOUT_SENTINEL");
   });
 
   it("defensively handles null/non-object errors via String(error) fallback", async () => {
@@ -104,7 +120,25 @@ describe("runOAuthTlsPreflight", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.kind).toBe("network");
-      expect(result.message).toBe("null");
+      expect(result).toEqual({ ok: false, kind: "network", reason: "other" });
+      expect(result).not.toHaveProperty("message");
     }
+  });
+
+  it("does not return arbitrary error codes or credential-bearing messages", async () => {
+    const error = Object.assign(new Error("Authorization: Bearer PRIVATE_PREFLIGHT_SENTINEL"), {
+      cause: {
+        code: "PRIVATE_CODE_SENTINEL",
+        message: "proxy password PRIVATE_PREFLIGHT_SENTINEL",
+      },
+    });
+    const stubFetch = async () => {
+      throw error;
+    };
+
+    const result = await runOAuthTlsPreflight({ fetchImpl: stubFetch as typeof fetch });
+
+    expect(result).toEqual({ ok: false, kind: "network", reason: "proxy" });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_");
   });
 });

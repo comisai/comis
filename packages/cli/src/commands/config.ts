@@ -16,6 +16,8 @@ import chalk from "chalk";
 import { parseDocument } from "yaml";
 import {
   loadConfigFile,
+  parseConfigPaths,
+  systemGetEnv,
   validateConfig,
   deepMerge,
   loadEnvFile,
@@ -94,13 +96,9 @@ export function registerConfigCommand(program: Command): void {
     .description("Validate configuration files")
     .option("-c, --config <paths...>", "Config file paths to validate")
     .action(async (options: { config?: string[] }) => {
+      const configuredPaths = parseConfigPaths(systemGetEnv("COMIS_CONFIG_PATHS"));
       const configPaths =
-        options.config ??
-        // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-        (process.env["COMIS_CONFIG_PATHS"]
-          // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-          ? process.env["COMIS_CONFIG_PATHS"].split(":")
-          : DEFAULT_CONFIG_PATHS);
+        options.config ?? (configuredPaths.length > 0 ? configuredPaths : DEFAULT_CONFIG_PATHS);
 
       info(`Validating configuration from: ${configPaths.join(", ")}`);
 
@@ -750,4 +748,3 @@ export function registerConfigCommand(program: Command): void {
       },
     );
 }
-

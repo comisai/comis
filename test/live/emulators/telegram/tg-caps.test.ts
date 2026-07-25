@@ -45,7 +45,7 @@ function adapterCapabilities(): ChannelCapability {
   // until activate()/start(), so a bare construction safely reads the
   // module-local `CAPABILITIES` declaration (the reconciliation TARGET).
   const plugin = createTelegramPlugin({
-    botToken: "12345:test",
+    getBotToken: () => "12345:test",
     logger: createMockLogger(),
   });
   return plugin.capabilities;

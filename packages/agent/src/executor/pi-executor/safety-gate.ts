@@ -93,7 +93,7 @@ export function runSafetyGates(
     clock: deps.clock,
   });
   if (!inputGuardResult.passed) {
-    state.result.finishReason = (inputGuardResult.earlyFinishReason ?? "error") as ExecutionResult["finishReason"];
+    state.result.finishReason = inputGuardResult.earlyFinishReason ?? "error";
     state.result.response = inputGuardResult.earlyResponse ?? "";
     return { passed: false };
   }
@@ -130,7 +130,7 @@ export function runSafetyGates(
 
   // Test-only silent-LLM-failure fault injection.
   // Gated by COMIS_TEST_SILENT_FAIL_FLAG env var. Lets operators validate
-  // the retry/reuseSessionKey path end-to-end without waiting
+  // the retry/conversation-reuse path end-to-end without waiting
   // for real Anthropic instability. Env var is absent in all shipped
   // configs; see packages/agent/src/executor/fault-injector.ts for the
   // safety analysis.

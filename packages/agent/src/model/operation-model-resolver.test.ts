@@ -379,7 +379,7 @@ describe("timeout resolution", () => {
 // agent_config > builtin_default). It is born HERE where the chain branches —
 // producers thread it, decode merges it, hints render knobs from it. Deriving
 // it anywhere downstream cannot work: the cron producer materializes
-// `promptTimeout` unconditionally, collapsing "the 150s cron default applied"
+// `promptTimeout` unconditionally, collapsing "the cron default applied"
 // into what looks like an explicit operator override.
 // ---------------------------------------------------------------------------
 describe("timeout binding provenance (timeoutSource)", () => {
@@ -394,9 +394,9 @@ describe("timeout binding provenance (timeoutSource)", () => {
     expect(result.timeoutSource).toBe("operation_explicit");
   });
 
-  it("cron with NO entry timeout binds the 150s OPERATION_TIMEOUT_DEFAULTS.cron with timeoutSource operation_default", () => {
+  it("cron with no entry timeout binds the ten-minute operation default", () => {
     const result = resolveOperationModel(baseParams({ operationType: "cron" }));
-    expect(result.timeoutMs).toBe(150_000);
+    expect(result.timeoutMs).toBe(600_000);
     expect(result.timeoutSource).toBe("operation_default");
   });
 
@@ -425,7 +425,7 @@ describe("timeout binding provenance (timeoutSource)", () => {
     );
     // 0 is rejected by the > 0 guard, so the cron operation default binds —
     // and the label must say so.
-    expect(result.timeoutMs).toBe(150_000);
+    expect(result.timeoutMs).toBe(600_000);
     expect(result.timeoutSource).toBe("operation_default");
     expect(result.timeoutSource).not.toBe("operation_explicit");
   });

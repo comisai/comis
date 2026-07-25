@@ -75,7 +75,7 @@ vi.mock("./message-mapper.js", () => ({
 
 vi.mock("./voice-sender.js", () => ({
   createWhatsAppVoiceSender: vi.fn(() => ({
-    sendVoice: vi.fn(async () => ok("voice-msg-1")),
+    sendVoice: vi.fn(async () => ok({ kind: "tracked" as const, messageId: "voice-msg-1" })),
   })),
 }));
 
@@ -505,7 +505,7 @@ describe("createWhatsAppAdapter sendAttachment media-type branches", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value).toBe("voice-msg-1");
+      expect(result.value).toEqual({ kind: "tracked", messageId: "voice-msg-1" });
     }
   });
 
@@ -610,6 +610,29 @@ describe("createWhatsAppAdapter sendAttachment media-type branches", () => {
         hint: expect.stringContaining("media file"),
       }),
       "Send attachment failed",
+    );
+  });
+
+  it("returns delivered-untracked when an attachment send has no platform message ID", async () => {
+    const deps = makeDeps();
+    const adapter = createWhatsAppAdapter(deps);
+    await adapter.start();
+    mockEv.emit("connection.update", { connection: "open" });
+    mockSendMessage.mockResolvedValue({ key: {} });
+
+    const result = await adapter.sendAttachment("C123", {
+      url: "https://example.com/image.png",
+      type: "image",
+      mimeType: "image/png",
+    } as never);
+
+    expect(result).toEqual(ok({ kind: "delivered_untracked" }));
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("Do not retry"),
+        errorKind: "platform",
+      }),
+      "Attachment delivered without platform tracking",
     );
   });
 

@@ -371,7 +371,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
           maxResults: 5,
           minScore: 0.1,
           includeTrustLevels: ["system", "learned"],
-          rerank: { enabled: !!rerankerPort, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+          rerank: { mode: rerankerPort ? "on" : "off", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
           scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 },
         },
       );

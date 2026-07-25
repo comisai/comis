@@ -444,8 +444,8 @@ describe("file-size — per-file caps", () => {
     // heartbeat.states/trigger moved out). The remaining residual size is
     // dominated by 2 tab renderers (cron jobs, heartbeat), the embedded
     // ic-cron-editor overlay wiring (preserved verbatim here), SSE event
-    // handling for scheduler:job_started/job_completed/
-    // heartbeat_delivered/heartbeat_alert, optimistic-update edit/delete
+    // handling for correlated cron and heartbeat wake lifecycle events plus
+    // heartbeat_alert, optimistic-update edit/delete
     // flows, and detailed per-job/per-heartbeat row templates with
     // relative-time formatting.
     "packages/web/src/views/scheduler.ts",
@@ -649,7 +649,7 @@ describe("file-size — per-file caps", () => {
     // daemon-config → AgentDetail _mapToAgentDetail() mapper with 7 nested
     // optional shape branches, the SseController consumer driving debounced
     // reload from observability:token_usage +
-    // scheduler:heartbeat_delivered events, the suspend/resume + delete
+    // scheduler:heartbeat_wake_terminal events, the suspend/resume + delete
     // action flow with ic-confirm-dialog lifecycle + IcToast surfacing, and
     // the heartbeat status renderer with backoff / consecutive-error /
     // running-tick state coalescing — all tightly DOM-coupled.
@@ -674,10 +674,9 @@ describe("file-size — per-file caps", () => {
     // rpcClient.call sites at HEAD (form-only, no daemon I/O) and now
     // delegates the preview-recompute debounce + next-runs dispatch to the
     // controller. Controller fits the tightest 500L cap (136L). View cap
-    // tightened from 800L to 500L; the residual ≤875L is dominated by
-    // ~190L of component-scoped CSS, the 5-field cron-expression form
+    // The residual is dominated by component-scoped CSS and cron-expression
     // renderer (cron / every / at variants), the timezone dropdown, the
-    // form fields (agent / message / maxConcurrent / sessionTarget /
+    // form fields (agent / payload / session policy / continuation /
     // delivery), the next-5-runs preview rendering, the _populateFromJob /
     // _assembleJob pure mappers (parent-binding contract with the scheduler
     // view), and the save / cancel CustomEvent dispatchers — all tightly

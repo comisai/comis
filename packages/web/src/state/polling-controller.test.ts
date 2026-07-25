@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ReactiveControllerHost } from "lit";
 import type { RpcClient } from "../api/rpc-client.js";
+import { CONTRACTS } from "../api/contracts.generated.js";
 import { PollingController } from "./polling-controller.js";
 
 // -- Helpers --
@@ -42,14 +43,28 @@ function makeRpc(responses: {
   throwOn?: string;
 }): RpcClient {
   return {
-    async call<T>(method: string): Promise<T> {
+    async call<T>(method: string, params?: Record<string, unknown>): Promise<T> {
       if (responses.throwOn === method) {
         throw new Error("rpc failure");
       }
-      if (method === "agent.list") return (responses.agentList ?? { agents: [] }) as T;
-      if (method === "channel.list") return (responses.channelList ?? { channels: [] }) as T;
-      if (method === "session.list")
-        return (responses.sessionList ?? { sessions: [], total: 0 }) as T;
+      if (method === "agents.list") return (responses.agentList ?? { agents: [] }) as T;
+      if (method === "channels.list") return (responses.channelList ?? { channels: [] }) as T;
+      if (method === "config.read") return { config: { tenantId: "tenant-a" } } as T;
+      if (method === "session.list") {
+        const result = responses.sessionList ?? { sessions: [], total: 0 };
+        if (result !== null && typeof result === "object") {
+          const sessions = (result as { sessions?: unknown[] }).sessions;
+          if (Array.isArray(sessions) && typeof params?.["agent_id"] === "string") {
+            const scoped = sessions.filter((session) => (
+              session !== null
+              && typeof session === "object"
+              && (session as { agentId?: unknown }).agentId === params["agent_id"]
+            ));
+            return { ...(result as object), sessions: scoped, total: scoped.length } as T;
+          }
+        }
+        return result as T;
+      }
       throw new Error(`unexpected method: ${method}`);
     },
   } as unknown as RpcClient;
@@ -83,6 +98,31 @@ describe("PollingController", () => {
     expect(controllers).toContain(ctrl);
   });
 
+  it("polls only method names that exist in the generated contract map", async () => {
+    const methods: string[] = [];
+    const rpc = makeRpc({});
+    const call = rpc.call.bind(rpc);
+    rpc.call = (async (method: string, params?: unknown) => {
+      methods.push(method);
+      return (call as unknown as (
+        rpcMethod: string,
+        rpcParams?: unknown,
+      ) => Promise<unknown>)(method, params);
+    }) as RpcClient["call"];
+
+    const { host } = makeHost();
+    new PollingController(host, rpc, () => {}).hostConnected();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(methods).toEqual([
+      "agents.list",
+      "channels.list",
+      "config.read",
+      "agents.list",
+    ]);
+    expect(methods.every((method) => Object.hasOwn(CONTRACTS, method))).toBe(true);
+  });
+
   it("schedules a setInterval callback on hostConnected with the configured interval ms", () => {
     const { host } = makeHost();
     const ctrl = new PollingController(host, makeRpc({}), () => {}, 5_000);
@@ -112,7 +152,18 @@ describe("PollingController", () => {
       makeRpc({
         agentList: { agents: ["a1", "a2"] },
         channelList: { channels: [{}, {}, {}] },
-        sessionList: { sessions: [], total: 5 },
+        sessionList: {
+          sessions: Array.from({ length: 5 }, (_, index) => ({
+            conversationRef: `cv-${index}`,
+            agentId: "a1",
+            kind: "dm",
+            messageCount: 1,
+            totalTokens: 10,
+            updatedAt: 20,
+            createdAt: 10,
+          })),
+          total: 5,
+        },
       }),
       onData,
     );
@@ -142,7 +193,7 @@ describe("PollingController", () => {
 
   it("truncates session entries to the first 20 to bound command-palette payload size", async () => {
     const sessions = Array.from({ length: 50 }, (_, i) => ({
-      sessionKey: `s${i}`,
+      conversationRef: `s${i}`,
       agentId: "a",
     }));
     const { host } = makeHost();
@@ -150,7 +201,7 @@ describe("PollingController", () => {
     new PollingController(
       host,
       makeRpc({
-        agentList: { agents: [] },
+        agentList: { agents: ["a"] },
         channelList: { channels: [] },
         sessionList: { sessions, total: sessions.length },
       }),
@@ -158,16 +209,16 @@ describe("PollingController", () => {
     ).hostConnected();
     await new Promise((r) => setTimeout(r, 0));
     expect(onData.mock.calls[0]![0].sessionEntries).toHaveLength(20);
-    expect(onData.mock.calls[0]![0].sessionEntries[0].sessionKey).toBe("s0");
+    expect(onData.mock.calls[0]![0].sessionEntries[0].conversationRef).toBe("s0");
   });
 
-  it("defaults sessionEntries to empty array when session.list omits the sessions field", async () => {
+  it("returns an empty session entry list for an empty scoped response", async () => {
     const { host } = makeHost();
     const onData = vi.fn();
     new PollingController(
       host,
       makeRpc({
-        sessionList: { total: 0 },
+        sessionList: { sessions: [], total: 0 },
       }),
       onData,
     ).hostConnected();
@@ -182,17 +233,19 @@ describe("PollingController", () => {
     expect(requestUpdate).toHaveBeenCalled();
   });
 
-  it("swallows RPC failures silently so badge counts retain stale data (non-fatal branch)", async () => {
+  it("a failed poll reaches the observable error path while retaining stale data", async () => {
     const { host, requestUpdate } = makeHost();
     const onData = vi.fn();
-    new PollingController(
+    const ctrl = new PollingController(
       host,
-      makeRpc({ throwOn: "agent.list" }),
+      makeRpc({ throwOn: "agents.list" }),
       onData,
-    ).hostConnected();
+    );
+    ctrl.hostConnected();
     await new Promise((r) => setTimeout(r, 0));
     expect(onData).not.toHaveBeenCalled();
-    expect(requestUpdate).not.toHaveBeenCalled();
+    expect(ctrl.lastError).toEqual(expect.objectContaining({ message: "rpc failure" }));
+    expect(requestUpdate).toHaveBeenCalledTimes(1);
   });
 
   it("clears the scheduled interval on hostDisconnected to prevent leak after unmount", () => {

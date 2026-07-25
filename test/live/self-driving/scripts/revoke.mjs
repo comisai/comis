@@ -6,7 +6,7 @@
 //   node revoke.mjs run.kill   rootRunId root-session-default:678314278:678314278:peer:678314278
 //   node revoke.mjs lease.revoke leaseId <uuid>
 //   node revoke.mjs cron.list  agentId "*"
-//   node revoke.mjs obs.fleet.health sinceHours 1            # val JSON-parsed → number 1
+//   node revoke.mjs obs.system.health sinceHours 1            # val JSON-parsed → number 1
 //   node revoke.mjs graph.execute '{"nodes":[{"nodeId":"n1","task":"hi"}]}'  # full JSON params object
 //   node revoke.mjs message.send --file                      # MULTI-PARAM: params from /tmp/rpc.json
 //   node revoke.mjs tokens.create --file /tmp/tok.json       # ...or an explicit path

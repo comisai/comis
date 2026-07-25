@@ -13,9 +13,18 @@
 
 import {
   formatSessionKey,
-  parseFormattedSessionKey,
+  conversationScopeToSessionKey,
+  createConversationLocator,
+  createDeliveryOrigin,
+  createResolvedRequestContext,
   runWithContext,
+  tryGetContext,
   type SessionKey,
+  type ConversationLocator,
+  type ConversationRef,
+  type ConversationScope,
+  type ChannelEndpoint,
+  type SessionStorePort,
   type TypedEventBus,
   type AgentToAgentConfig,
   type DeliveryOrigin,
@@ -23,28 +32,46 @@ import {
   type TimerPort,
   type TimerHandle,
   type DurableRunPort,
+  type DurableRunRecord,
+  type DurableRunTerminalReason,
   type AgentCapability,
   type ResultRef,
+  type ErrorKind,
+  AgentExecutionFinishReasonSchema,
+  classifyAgentFinishErrorKind,
   SUB_AGENT_TOOL_DENYLIST,
   toolReachableGroups,
   RequiredToolsUnreachableError,
+  toSafeErrorLogString,
   type UnreachableToolEntry,
   type SubAgentSpawnRejectedEvent,
+  type UserTrustLevel,
+  type MemoryWriteEntry,
+  type MemoryWriteScope,
+  type ResolvedTurnScope,
+  type WorkspacePolicySnapshot,
+  verifyWorkspacePolicySnapshot,
+  SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
 } from "@comis/core";
-import { suppressError } from "@comis/shared";
+import { err, fromPromise, ok, suppressError, tryCatch, type Result } from "@comis/shared";
 import {
   createCoordinatorProgressFork,
   type CoordinatorProgressForkHandle,
 } from "./coordinator-progress-fork.js";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
 import { randomUUID } from "node:crypto";
-import type { AnnouncementBatcher, AnnouncementDeadLetterQueue } from "./announcement-ports.js";
+import type {
+  AnnouncementBatcher,
+  AnnouncementDeadLetterQueue,
+  SendGovernedCompletionAnnouncement,
+} from "./announcement-ports.js";
 import type { DeliveryDedup } from "./announce-key.js";
 import {
   classifyAbortReason,
   buildAnnouncementMessage,
   deliverAnnouncement,
   deliverFailureNotification,
+  resolveAnnouncementThreadId,
   validateOutputs,
   sweepResultFiles,
   persistFailureRecord,
@@ -54,15 +81,31 @@ import {
 import { comparePosture, SandboxDowngradeError, type SandboxPosture } from "./sandbox-posture.js";
 import { steerRun as steerRunHelper, type SteerRunDeps, type SteerableRun } from "./steer-run.js";
 import type { RunHandle } from "../executor/active-run-registry.js";
+import {
+  hashSubAgentResumeDescriptor,
+  parseSubAgentResumeDescriptor,
+  SubAgentResumeDescriptorSchema,
+  validateSubAgentResumeAuthority,
+  type SubAgentResumeDescriptor,
+} from "./sub-agent-resume-descriptor.js";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Hard timeout for announceToParent calls at all call sites (300 seconds / 5 minutes).
- *  Parent agents may call slow tools (image generation at 120s, web search, etc.)
- *  in response to announcements. 30s caused premature fallback + duplicate delivery. */
+/** Hard timeout for the text-only parent candidate execution. A timeout leaves
+ *  the durable decision reservation quarantined and never starts another path. */
 export const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
+const SHUTDOWN_ACTIVE_GRACE_MS = 30_000;
+const SHUTDOWN_NOTICE_GRACE_MS = 5_000;
+const DURABLE_TERMINAL_RETRY_MS = 1_000;
+/**
+ * Maximum caller-side guard for a sub-agent runner shutdown. The runner owns
+ * the active-run drain and governed-notice grace, with a final bounded margin
+ * for its announcement batch and dead-letter drains.
+ */
+export const SUB_AGENT_SHUTDOWN_TIMEOUT_MS =
+  SHUTDOWN_ACTIVE_GRACE_MS + SHUTDOWN_NOTICE_GRACE_MS + 5_000;
 
 /**
  * Build the composite-key triple from a SubAgentRun for resolver lookups.
@@ -80,7 +123,7 @@ export const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
  *   - channelType-> run.announceChannelType ?? "gateway"  (announce runs
  *                   propagate announceChannelType into ALS as deliveryOrigin
  *                   -- line 1267/1286; no-announce runs default to "gateway")
- *   - channelId  -> parseFormattedSessionKey(run.sessionKey)?.channelId
+ *   - channelId  -> the run's canonical caller endpoint
  *                   ?? run.sessionKey  (the PARSED sub-session channelId, NOT
  *                   run.announceChannelId -- the executor keys on
  *                   subSessionKey.channelId, never the announce channelId; the
@@ -97,47 +140,94 @@ export const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
  * steer-run.ts:deriveCompositeForRun — the resolution spike
  * (sub-agent-runner.steer-resolve.spike.test.ts) fails loudly on drift.
  */
-function deriveCompositeForRun(run: SubAgentRun): {
-  agentId: string;
-  channelType: string;
-  channelId: string;
-} {
-  const parsed = parseFormattedSessionKey(run.sessionKey);
-  return {
-    agentId: run.agentId,
-    channelType: run.announceChannelType ?? "gateway",
-    channelId: parsed?.channelId ?? run.sessionKey,
-  };
+function createSubAgentConversation(
+  tenantId: string,
+  agentId: string,
+  runId: string,
+  principalId: string,
+): ConversationLocator {
+  const locator = createConversationLocator({
+    tenantId,
+    agentId,
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: {
+        channelType: "sub-agent",
+        channelInstanceId: "runtime",
+        conversationId: runId,
+        conversationKind: "direct",
+      },
+      principalId,
+    },
+  });
+  if (!locator.ok) {
+    // @allow-throw: the runner mints these fields from validated non-empty ids; failure is an internal construction invariant at the spawn boundary.
+    throw locator.error;
+  }
+  return locator.value;
+}
+
+function displayKeyForConversation(locator: ConversationLocator): { key: SessionKey; formatted: string } {
+  const projected = conversationScopeToSessionKey(locator.conversationScope);
+  if (!projected.ok) {
+    // @allow-throw: persisted sub-agent conversation scopes are validated before this boundary.
+    throw projected.error;
+  }
+  return { key: projected.value, formatted: formatSessionKey(projected.value) };
+}
+
+function appendExpectedOutputContract(task: string, expectedOutputs: string[] | undefined): string {
+  if (!expectedOutputs || expectedOutputs.length === 0) return task;
+  const paths = expectedOutputs.map((filePath) => `- ${JSON.stringify(filePath)}`).join("\n");
+  return (
+    `${task}\n\n` +
+    `Expected output contract:\n` +
+    `${paths}\n` +
+    `Create every file at its exact path. The completion runner validates these exact paths; ` +
+    `an alternate filename or directory is treated as missing. Before your final response, verify every listed file exists.`
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Public interfaces
 // ---------------------------------------------------------------------------
 
-// @optional-field-count: 13 — SubAgentRun is the per-run flight-record state; its
-// optionals are independent, lifecycle-populated facets of ONE run (result/error
-// set at completion; requesterOrigin/announce* at spawn; graphId/nodeId/abortGroup
-// for graph routing; parentLeaseId/ceilingSlotAcquired for the tree-wide ceiling/
-// cascade). They are not a cluster-split candidate — every field describes the
-// SAME run and is read by the runner's own lifecycle, not handed to a sub-service.
-export interface SubAgentRun {
+export interface SubAgentRunTelemetry {
+  tokensUsedTotal: number;
+  costTotal: number;
+  finishReason: string;
+  stepsExecuted: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+export type SubAgentCompletion =
+  | {
+      endReason: "completed";
+      completedAtMs: number;
+      summary?: string;
+      resultRef?: ResultRef;
+    }
+  | {
+      endReason: "failed" | "killed" | "watchdog_timeout" | "ghost_sweep";
+      completedAtMs: number;
+      errorKind: ErrorKind;
+      summary?: string;
+      resultRef?: ResultRef;
+    };
+
+// @optional-field-count: 13 — these are independent routing/authority facets of
+// one run. Lifecycle-dependent timing, telemetry, and completion are modeled by
+// the closed variants below rather than accumulating optional mutable fields.
+interface SubAgentRunCommon {
   runId: string;
-  status: "running" | "completed" | "failed" | "queued";
   agentId: string;
+  /** Authoritative caller trust captured when the spawn was accepted. */
+  trustLevel: UserTrustLevel;
   task: string;
   sessionKey: string;
-  startedAt: number;
-  completedAt?: number;
-  /** Timestamp when this run was placed in the spawn queue. */
-  queuedAt?: number;
-  result?: {
-    response: string;
-    tokensUsed: { total: number; cacheRead?: number; cacheWrite?: number };
-    cost: { total: number; cacheSaved?: number };
-    finishReason: string;
-    stepsExecuted: number;
-  };
-  error?: string;
+  conversationScope: ConversationScope;
+  conversationRef: ConversationLocator["conversationRef"];
   /** Originating channel context from the spawning request */
   requesterOrigin?: DeliveryOrigin;
   /** Spawn depth in the chain (0 = first child, 1 = grandchild, etc.). */
@@ -146,10 +236,19 @@ export interface SubAgentRun {
    *  spawn tree; the root mints this id and descendants inherit it. The unified
    *  semaphore keys on it and killByRootRun enumerates a whole tree by it. */
   rootRunId: string;
+  /** Exact attenuated capability ceiling accepted for this child. */
+  caps: readonly AgentCapability[];
   /** Lease that authorized this spawn (revocation-cascade correlation); undefined for the root. */
   parentLeaseId?: string;
+  /** This child's own assembly lease, recorded after tool assembly. */
+  leaseId?: string;
   /** Session key of the caller agent, used for active children counting. */
   callerSessionKey?: string;
+  callerConversation?: ConversationLocator;
+  /** Immutable endpoint captured with the authenticated caller turn. */
+  callerEndpoint?: ChannelEndpoint;
+  /** Authenticated caller agent that owns completion delivery. */
+  callerAgentId?: string;
   /** Announce channel type for failure notifications (stored at spawn for ghost sweep access). */
   announceChannelType?: string;
   /** Announce channel ID for failure notifications (stored at spawn for ghost sweep access). */
@@ -169,6 +268,50 @@ export interface SubAgentRun {
   ceilingSlotAcquired?: boolean;
 }
 
+export interface SubAgentQueuedRun extends SubAgentRunCommon {
+  status: "queued";
+  queuedAt: number;
+  startedAt?: never;
+  completion?: never;
+  telemetry?: never;
+}
+
+export interface SubAgentRunningRun extends SubAgentRunCommon {
+  status: "running";
+  startedAt: number;
+  queuedAt?: never;
+  completion?: never;
+  telemetry?: never;
+}
+
+export interface SubAgentCompletedRun extends SubAgentRunCommon {
+  status: "completed";
+  startedAt: number;
+  queuedAt?: never;
+  completion: Extract<SubAgentCompletion, { endReason: "completed" }>;
+  telemetry: SubAgentRunTelemetry;
+}
+
+export interface SubAgentFailedRun extends SubAgentRunCommon {
+  status: "failed";
+  startedAt?: number;
+  queuedAt?: never;
+  completion: Exclude<SubAgentCompletion, { endReason: "completed" }>;
+  telemetry?: SubAgentRunTelemetry;
+}
+
+export type SubAgentRun =
+  | SubAgentQueuedRun
+  | SubAgentRunningRun
+  | SubAgentCompletedRun
+  | SubAgentFailedRun;
+
+export type SubAgentWaitResult =
+  | { runId: string; status: "completed"; completion: SubAgentCompletion }
+  | { runId: string; status: "denied_unknown" }
+  | { runId: string; status: "timeout" }
+  | { runId: string; status: "cancelled" };
+
 /** Minimal pino-compatible logger for sub-agent runner diagnostics. */
 export interface SubAgentRunnerLogger {
   info(obj: Record<string, unknown>, msg: string): void;
@@ -177,20 +320,65 @@ export interface SubAgentRunnerLogger {
   debug(obj: Record<string, unknown>, msg: string): void;
 }
 
+export interface SubAgentSpawnAdmissionState {
+  paused: boolean;
+  acceptingSpawns: boolean;
+  resetsOnRestart: true;
+}
+
+export interface SubAgentSpawnAdmissionMutation extends SubAgentSpawnAdmissionState {
+  changed: boolean;
+}
+
+/** Typed, closed rejection returned when the reversible operator gate is paused. */
+export class SubAgentSpawnPausedError extends Error {
+  readonly reason = "spawn_paused" as const;
+
+  constructor() {
+    super("Sub-agent spawning is paused by operator");
+    this.name = "SubAgentSpawnPausedError";
+  }
+}
+
+class DurableSubAgentAdmissionError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "DurableSubAgentAdmissionError";
+  }
+}
+
 export interface SubAgentRunnerDeps {
-  sessionStore: {
-    save(key: SessionKey, messages: unknown[], metadata: Record<string, unknown>): void;
-    delete(key: SessionKey): void;
-  };
+  sessionStore: Pick<SessionStorePort, "save" | "delete" | "loadByRef">;
   executeAgent: (
     agentId: string,
     sessionKey: SessionKey,
+    conversation: ConversationLocator,
     task: string,
     maxSteps?: number,
     callerAgentId?: string,
-    overrides?: { graphId?: string; nodeId?: string; reuseSessionKey?: string; graphNodeDepth?: number },
+    overrides?: {
+      graphId?: string;
+      nodeId?: string;
+      reuseConversation?: ConversationLocator;
+      graphNodeDepth?: number;
+      workspacePolicySnapshot?: WorkspacePolicySnapshot;
+    },
     /** Per-spawn token budget — becomes the child's BudgetGuard per-execution cap. */
     tokenBudget?: number,
+    /** Exact parent authority used to attenuate the child's own tool assembly. */
+    autonomyContext?: {
+      rootRunId: string;
+      parentLeaseId?: string;
+      parentCaps: readonly AgentCapability[];
+      onAssemblyAuthority(authority: {
+        rootRunId: string;
+        leaseId: string;
+        caps: readonly AgentCapability[];
+      }): void;
+    },
+    providerLifecycle?: {
+      onProviderStart(): Result<void, Error>;
+    },
   ) => Promise<{
     response: string;
     tokensUsed: { total: number; cacheRead?: number; cacheWrite?: number };
@@ -198,6 +386,8 @@ export interface SubAgentRunnerDeps {
     finishReason: string;
     stepsExecuted: number;
     toolCallHistory?: string[];
+    /** Boundary-classified kind for settled failures whose finish reason does not fix one. */
+    terminalErrorKind?: ErrorKind;
     errorContext?: {
       errorType: string;
       retryable: boolean;
@@ -206,16 +396,18 @@ export interface SubAgentRunnerDeps {
     };
   }>;
   sendToChannel: (channelType: string, channelId: string, text: string, options?: { threadId?: string }) => Promise<boolean>;
-  /** Optional callback to inject announcement into parent session for agent rewriting.
-   *  When provided, used instead of sendToChannel for completion announcements.
-   *  Falls back to sendToChannel if not provided or if call fails. */
+  /** Optional callback that asks the parent agent to rewrite an announcement.
+   *  It returns the candidate text without performing the platform send;
+   *  `undefined` means the parent intentionally chose NO_REPLY. */
   announceToParent?: (
     callerAgentId: string,
     callerSessionKey: SessionKey,
+    callerConversation: ConversationLocator,
     text: string,
     channelType: string,
     channelId: string,
-  ) => Promise<void>;
+    options?: { threadId?: string; resolvedLanguage?: string },
+  ) => Promise<string | undefined>;
   eventBus: TypedEventBus;
   config: AgentToAgentConfig;
   tenantId: string;
@@ -264,44 +456,23 @@ export interface SubAgentRunnerDeps {
   logger?: SubAgentRunnerLogger;
   /** Optional memory adapter for persisting sub-agent completion summaries. */
   memoryAdapter?: {
-    store(entry: {
-      id: string;
-      tenantId: string;
-      agentId: string;
-      userId: string;
-      content: string;
-      trustLevel: "system" | "learned" | "external";
-      source: { who: string; channel?: string; sessionKey?: string };
-      tags: string[];
-      createdAt: number;
-      sourceType?: "system" | "conversation" | "tool" | "web" | "api" | "unknown";
-    }): Promise<{ ok: boolean }>;
+    store(entry: MemoryWriteEntry, scope: MemoryWriteScope): Promise<{ ok: boolean }>;
   };
   /** Optional announcement batcher for coalescing near-simultaneous completions. */
   batcher?: AnnouncementBatcher;
   /** Optional dead-letter queue for persisting failed announcement deliveries */
   deadLetterQueue?: AnnouncementDeadLetterQueue;
+  /** Durable single-attempt sender for final completion-announcement delivery. */
+  sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
   /**
    * Shared, bounded delivered-key store, forwarded to deliverAnnouncement
    * + deliverFailureNotification so the failure-path dedup is correct whether or
    * not a batcher is wired. The daemon injects the SAME instance the batcher uses.
    */
   deliveryDedup?: DeliveryDedup;
-  /** Optional active run registry for aborting in-flight SDK sessions on kill. */
-  activeRunRegistry?: {
-    get(sessionKey: string): { abort(): Promise<void> } | undefined;
-  };
-  /**
-   * Optional composite-key resolver. When provided, supersedes
-   * `activeRunRegistry.get(sessionKey)` for production aborts: the resolver
-   * accepts `{ agentId, channelType, channelId }` so multi-agent /
-   * multi-channel sessions are distinguishable. Locally re-declared to a
-   * structural minimum (avoids a daemon -> agent type-only import cycle in
-   * this leaf module). The daemon wires it via
-   * `createBackgroundSessionResolver({activeRunRegistry})`.
-   */
+  /** Optional live-run resolver for aborting in-flight SDK sessions on kill. */
   sessionResolver?: {
-    resolveActiveSession(key: { agentId: string; channelType: string; channelId: string }): { abort(): Promise<void> } | undefined;
+    resolveActiveSession(conversationRef: ConversationRef): { abort(): Promise<void> } | undefined;
   };
   /** Optional result condenser for compressing subagent output */
   resultCondenser?: {
@@ -309,6 +480,7 @@ export interface SubAgentRunnerDeps {
       fullResult: string;
       task: string;
       runId: string;
+      tenantId: string;
       sessionKey: string;
       agentId: string;
       model?: unknown;
@@ -363,7 +535,7 @@ export interface SubAgentRunnerDeps {
   dataDir?: string;
   /** Wall-clock + monotonic time reads. */
   clock: ClockPort;
-  /** Timer scheduling. Sweep-interval + watchdog setTimeout + shutdown-timeout setTimeout. */
+  /** Timer scheduling for the sweep interval and per-run watchdog. */
   timers: TimerPort;
   /**
    * The durable-run checkpoint store. OPTIONAL — when
@@ -376,6 +548,9 @@ export interface SubAgentRunnerDeps {
    * not a correctness gate on the live run).
    */
   durableRuns?: DurableRunPort;
+  resolveWorkspacePolicySnapshot?: (
+    agentId: string,
+  ) => Promise<Result<WorkspacePolicySnapshot, Error>>;
   /**
    * The keep-alive cadence + lapsed threshold (from
    * `autonomy.durability`). `keepAliveMs` drives the heartbeat-refresh interval
@@ -398,7 +573,11 @@ export interface SubAgentRunnerDeps {
   durableRunFacts?: (
     rootRunId: string,
     agentId: string,
-  ) => { caps: readonly AgentCapability[]; leaseIds: readonly string[]; budgetConsumed: number } | undefined;
+  ) => {
+    caps: readonly AgentCapability[];
+    leaseIds: readonly string[];
+    rootBudget: import("@comis/core").DurableRootBudget;
+  } | undefined;
   /** Optional lifecycle hooks for spawn preparation and completion */
   lifecycleHooks?: {
     prepareSpawn(params: {
@@ -463,6 +642,9 @@ export interface SpawnParams {
   task: string;
   agentId: string;
   callerSessionKey?: string;
+  callerConversation?: ConversationLocator;
+  /** Trusted caller endpoint for context-independent graph/control-plane spawns. */
+  callerEndpoint?: ChannelEndpoint;
   callerAgentId?: string;
   announceChannelType?: string;
   announceChannelId?: string;
@@ -509,8 +691,23 @@ export interface SpawnParams {
    * both are absent the checkpoint records an empty set (a safe degrade).
    */
   caps?: readonly AgentCapability[];
-  /** Caller type for GraphCoordinator bypass of children limit. */
-  callerType?: "agent" | "graph";
+  /** Caller boundary. GraphCoordinator bypasses the children limit; the
+   *  authenticated control plane bypasses agent-principal binding only. */
+  callerType?: "agent" | "graph" | "control-plane" | "durable-resume";
+  /**
+   * Attempt identity reserved by GraphCoordinator and persisted in its running
+   * launch claim before this runner is allowed to start the side effect. Honored
+   * only for graph-owned spawns.
+   */
+  reservedRunId?: string;
+  /**
+   * Authoritative trust snapshot for a graph run. Only graph-marked spawns
+   * consume this field; direct spawns always read trust from the live parent
+   * RequestContext. GraphCoordinator resolves it once at graph submission so
+   * later queued/dependent nodes cannot inherit whichever ALS happens to drive
+   * their promotion.
+   */
+  callerTrustLevel?: UserTrustLevel;
   /** File paths for the sub-agent to reference. */
   artifactRefs?: string[];
   /** Objective statement that survives context compaction. */
@@ -557,7 +754,7 @@ export interface SpawnParams {
   /** Sorted tool name superset for graph sub-agent cache prefix sharing. */
   graphToolNames?: string[];
   /** Reuse an existing session key for multi-round driver spawns. */
-  reuseSessionKey?: string;
+  reuseConversation?: ConversationLocator;
   /** Graph node depth: 0 = root node (dependsOn=[]), 1+ = downstream.
    *  Used for depth-aware cache retention in setup-cross-session. */
   graphNodeDepth?: number;
@@ -576,6 +773,8 @@ export interface SpawnParams {
    * Absent/false ⇒ the child runs in its normal jailed workspace (the default).
    */
   worktree?: boolean;
+  workspacePolicyHash?: string;
+  workspacePolicySnapshot?: WorkspacePolicySnapshot;
 }
 
 // ---------------------------------------------------------------------------
@@ -615,7 +814,270 @@ function classifyRequiredTool(
 export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const { clock, timers } = deps;
   const runs = new Map<string, SubAgentRun>();
+  interface CompletionDeferred {
+    promise: Promise<SubAgentCompletion>;
+    resolve(completion: SubAgentCompletion): void;
+    settled: boolean;
+  }
+  interface StartDeferred {
+    promise: Promise<Result<void, Error>>;
+    resolve(result: Result<void, Error>): void;
+    settled: boolean;
+  }
+  interface PendingDurableTerminalization {
+    readonly run: SubAgentRun;
+    readonly terminalReason: DurableRunTerminalReason;
+    readonly startedAtMs: number;
+    readonly completion: Promise<void>;
+    readonly resolve: () => void;
+    attempts: number;
+    inFlight: boolean;
+    retryHandle?: TimerHandle;
+  }
+  const completionDeferreds = new Map<string, CompletionDeferred>();
+  const startDeferreds = new Map<string, StartDeferred>();
+  const durableResumeHandshakeRunIds = new Set<string>();
   const activePromises = new Set<Promise<void>>();
+  const activeRunIds = new Set<string>();
+  const providerSettledRunIds = new Set<string>();
+  const deliverySuppressedRunIds = new Set<string>();
+  const forcedTerminalRunIds = new Set<string>();
+  const durableTerminalReasons = new Map<string, DurableRunTerminalReason>();
+  const trajectoryClosedRunIds = new Set<string>();
+  const watchdogTimers = new Map<string, TimerHandle>();
+  const failureNotificationPromises = new Set<Promise<void>>();
+  const pendingDurableTerminalizations = new Map<string, PendingDurableTerminalization>();
+  const durableTerminalizationPromises = new Set<Promise<void>>();
+  let acceptingSpawns = true;
+  let spawnPaused = false;
+  let shutdownPromise: Promise<void> | undefined;
+
+  function createCompletionDeferred(runId: string): void {
+    let resolvePromise!: (completion: SubAgentCompletion) => void;
+    const deferred: CompletionDeferred = {
+      promise: new Promise((resolve) => {
+        resolvePromise = resolve;
+      }),
+      resolve(completion) {
+        if (deferred.settled) return;
+        deferred.settled = true;
+        resolvePromise(completion);
+      },
+      settled: false,
+    };
+    completionDeferreds.set(runId, deferred);
+    let resolveStart!: (result: Result<void, Error>) => void;
+    const startDeferred: StartDeferred = {
+      promise: new Promise((resolve) => {
+        resolveStart = resolve;
+      }),
+      resolve(result) {
+        if (startDeferred.settled) return;
+        startDeferred.settled = true;
+        resolveStart(result);
+      },
+      settled: false,
+    };
+    startDeferreds.set(runId, startDeferred);
+  }
+
+  function boundedCompletionSummary(text: string | undefined): string | undefined {
+    if (text === undefined) return undefined;
+    const sanitized = sanitizeAssistantResponse(text).trim();
+    if (sanitized.length === 0) return undefined;
+    return sanitized.slice(0, SUBAGENT_RESULT_SUMMARY_MAX_CHARS);
+  }
+
+  function classifyCompletionErrorKind(
+    finishReason: string,
+    terminalErrorKind: ErrorKind | undefined,
+  ): ErrorKind {
+    if (finishReason === "error" || finishReason === "completed_with_tool_errors") {
+      return terminalErrorKind ?? "internal";
+    }
+    const parsed = AgentExecutionFinishReasonSchema.safeParse(finishReason);
+    return parsed.success
+      ? classifyAgentFinishErrorKind(parsed.data) ?? "internal"
+      : "internal";
+  }
+
+  function freezeResultRef(resultRef: ResultRef | undefined): ResultRef | undefined {
+    if (!resultRef) return undefined;
+    const copy: ResultRef = {
+      ...resultRef,
+      ...(resultRef.schema ? { schema: [...resultRef.schema] } : {}),
+    };
+    if (copy.schema) Object.freeze(copy.schema);
+    return Object.freeze(copy);
+  }
+
+  function freezeCompletion(completion: SubAgentCompletion): SubAgentCompletion {
+    const summary = boundedCompletionSummary(completion.summary);
+    const resultRef = freezeResultRef(completion.resultRef);
+    if (completion.endReason === "completed") {
+      return Object.freeze({
+        endReason: completion.endReason,
+        completedAtMs: completion.completedAtMs,
+        ...(summary ? { summary } : {}),
+        ...(resultRef ? { resultRef } : {}),
+      });
+    }
+    return Object.freeze({
+      endReason: completion.endReason,
+      completedAtMs: completion.completedAtMs,
+      errorKind: completion.errorKind,
+      ...(summary ? { summary } : {}),
+      ...(resultRef ? { resultRef } : {}),
+    });
+  }
+
+  function terminalizeRun(
+    runId: string,
+    completionInput: SubAgentCompletion,
+    telemetry?: SubAgentRunTelemetry,
+  ): SubAgentCompletedRun | SubAgentFailedRun {
+    const current = runs.get(runId);
+    if (!current) {
+      // @allow-throw: terminalization is private to admitted run lifecycle paths; a missing record is an internal invariant.
+      throw new Error("Cannot terminalize an untracked sub-agent run");
+    }
+    if (current.status === "completed" || current.status === "failed") return current;
+
+    const completion = freezeCompletion(completionInput);
+    let terminal: SubAgentCompletedRun | SubAgentFailedRun;
+    if (completion.endReason === "completed") {
+      if (current.status !== "running") {
+        // @allow-throw: queued runs cannot complete successfully without first entering the running variant.
+        throw new Error("A queued sub-agent run cannot complete before execution starts");
+      }
+      const { status: _status, ...base } = current;
+      terminal = {
+          ...base,
+          status: "completed",
+          completion,
+          telemetry: telemetry ?? {
+            tokensUsedTotal: 0,
+            costTotal: 0,
+            finishReason: "stop",
+            stepsExecuted: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
+        };
+    } else {
+      const base = current.status === "queued"
+        ? (({ status: _status, queuedAt: _queuedAt, ...common }) => common)(current)
+        : (({ status: _status, ...common }) => common)(current);
+      terminal = {
+          ...base,
+          status: "failed",
+          completion,
+          ...(telemetry ? { telemetry } : {}),
+        };
+    }
+    runs.set(runId, terminal);
+    watchdogTimers.get(runId)?.cancel();
+    watchdogTimers.delete(runId);
+    finishDurableCheckpoint(terminal, completion.endReason);
+    startDeferreds.get(runId)?.resolve(
+      err(new Error(`Sub-agent provider did not start: ${completion.endReason}`)),
+    );
+    if (!durableResumeHandshakeRunIds.has(runId)) {
+      startDeferreds.delete(runId);
+    }
+    removeDedupEntry(terminal);
+    completionDeferreds.get(runId)?.resolve(completion);
+    return terminal;
+  }
+
+  function waitForCompletion(runId: string): Promise<SubAgentCompletion> | undefined {
+    const run = runs.get(runId);
+    if (!run) return undefined;
+    if (run.status === "completed" || run.status === "failed") {
+      const retained = completionDeferreds.get(runId);
+      return retained?.promise ?? Promise.resolve(run.completion);
+    }
+    return completionDeferreds.get(runId)?.promise;
+  }
+
+  async function waitForCompletions(
+    requestedRunIds: readonly string[],
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<SubAgentWaitResult[]> {
+    const runIds = [...new Set(requestedRunIds)];
+    const immediate = new Map<string, SubAgentWaitResult>();
+    const pending: Array<{ runId: string; promise: Promise<SubAgentCompletion> }> = [];
+
+    for (const runId of runIds) {
+      const run = runs.get(runId);
+      if (!run) {
+        immediate.set(runId, { runId, status: "denied_unknown" });
+        continue;
+      }
+      if (run.status === "completed" || run.status === "failed") {
+        immediate.set(runId, { runId, status: "completed", completion: run.completion });
+        continue;
+      }
+      const promise = waitForCompletion(runId);
+      if (!promise) {
+        immediate.set(runId, { runId, status: "denied_unknown" });
+        continue;
+      }
+      pending.push({ runId, promise });
+    }
+
+    if (pending.length === 0) {
+      return runIds.map((runId) => immediate.get(runId)!);
+    }
+    if (signal?.aborted) {
+      for (const entry of pending) {
+        immediate.set(entry.runId, { runId: entry.runId, status: "cancelled" });
+      }
+      return runIds.map((runId) => immediate.get(runId)!);
+    }
+    if (timeoutMs <= 0) {
+      for (const entry of pending) {
+        immediate.set(entry.runId, { runId: entry.runId, status: "timeout" });
+      }
+      return runIds.map((runId) => immediate.get(runId)!);
+    }
+
+    let deadlineHandle: TimerHandle | undefined;
+    let removeAbortListener: (() => void) | undefined;
+    const deadline = new Promise<"timeout" | "cancelled">((resolve) => {
+      deadlineHandle = timers.setTimeout(() => resolve("timeout"), timeoutMs);
+      deadlineHandle.unref();
+      if (signal) {
+        const onAbort = (): void => resolve("cancelled");
+        signal.addEventListener("abort", onAbort, { once: true });
+        removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+      }
+    });
+
+    const settled = await Promise.all(pending.map(async ({ runId, promise }) => {
+      const outcome = await Promise.race([
+        promise.then((completion) => ({ status: "completed" as const, completion })),
+        deadline.then((status) => ({ status })),
+      ]);
+      return outcome.status === "completed"
+        ? { runId, status: "completed" as const, completion: outcome.completion }
+        : { runId, status: outcome.status };
+    }));
+    deadlineHandle?.cancel();
+    removeAbortListener?.();
+    for (const result of settled) immediate.set(result.runId, result);
+    return runIds.map((runId) => immediate.get(runId)!);
+  }
+
+  function trackFailureNotification(promise: Promise<void>): void {
+    const tracked = promise.then(
+      () => undefined,
+      () => undefined,
+    );
+    failureNotificationPromises.add(tracked);
+    void tracked.then(() => failureNotificationPromises.delete(tracked));
+  }
 
   // -------------------------------------------------------------------------
   // Durable checkpoint + keep-alive heartbeat.
@@ -625,6 +1087,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   // WARN-logged but NEVER crashes the live run (durability is a recovery aid).
   // -------------------------------------------------------------------------
   const heartbeatTimers = new Map<string, TimerHandle>();
+  const resumeDescriptors = new Map<string, SubAgentResumeDescriptor>();
   const DURABLE_KEEPALIVE_MS = deps.durability?.keepAliveMs ?? 30_000;
 
   /**
@@ -638,105 +1101,269 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   }
 
   /**
-   * Write the initial durable checkpoint at the SPAWN BOUNDARY and start
-   * the keep-alive heartbeat. `stepIndex` starts at -1 (the never-sent
-   * sentinel — the outward counter is owned by allocateOutwardStep, NOT here).
+   * Write the initial execution checkpoint at the spawn boundary and start
+   * the keep-alive heartbeat.
    * Inert when no store is wired. Never throws.
    */
-  function startDurableCheckpoint(run: SubAgentRun, params: SpawnParams): void {
+  async function writeDurableCheckpoint(
+    run: SubAgentRun,
+    params: SpawnParams,
+  ): Promise<Result<void, Error>> {
     const store = deps.durableRuns;
-    if (!store) return;
+    if (!store) return ok(undefined);
+    if (runs.get(run.runId)?.status !== "running" || durableTerminalReasons.has(run.runId)) {
+      return err(new Error("Durable checkpoint write was suppressed after terminal state"));
+    }
     const rootRunId = run.rootRunId;
     const facts = deps.durableRunFacts?.(rootRunId, params.agentId);
-    // Caps: explicit spawn param wins (the lease's minted caps), else the
-    // injected facts resolver, else an empty set (a safe degrade — a resume
-    // re-mints the persisted caps VERBATIM, so empty is zero-authority, never
-    // an over-grant).
-    const caps = params.caps ?? facts?.caps ?? [];
-    const leaseIds = facts?.leaseIds ?? (params.parentLeaseId ? [params.parentLeaseId] : []);
-    const budgetConsumed = facts?.budgetConsumed ?? 0;
+    const leaseIds = facts?.leaseIds ?? [run.parentLeaseId, run.leaseId]
+      .filter((leaseId): leaseId is string => leaseId !== undefined);
+    const rootBudget = facts?.rootBudget ?? {
+      startedAtMs: clock.now(),
+      tokensConsumed: 0,
+      usdConsumed: 0,
+    };
     const cronOrigin = deriveCronOrigin(params);
-    void store
-      .upsertCheckpoint({
+    const partition = run.conversationScope.partition;
+    if (partition.kind !== "endpoint-conversation-principal") {
+      return err(new Error("Durable child conversation authority is invalid"));
+    }
+    const descriptor = resumeDescriptors.get(run.runId);
+    const workspacePolicyHash = params.workspacePolicyHash ?? tryGetContext()?.workspacePolicyHash;
+    if (descriptor === undefined || workspacePolicyHash === undefined) {
+      return err(new Error("Durable sub-agent restart authority is incomplete"));
+    }
+    const written = await fromPromise(store.upsertCheckpoint({
+        checkpointId: run.runId,
         rootRunId,
-        spawnTree: [rootRunId],
+        tenantId: run.conversationScope.tenantId,
+        agentId: run.agentId,
+        conversationRef: run.conversationRef,
+        conversationScope: run.conversationScope,
+        principalId: partition.principalId,
+        deliveryOrigin: run.requesterOrigin ?? null,
+        spawnTree: [run.runId],
         // Copy into mutable arrays — DurableRunRecord's caps/leaseIds are mutable
         // (the Zod-inferred shape); the deps/params surfaces are readonly.
-        caps: [...caps],
+        caps: [...run.caps],
         leaseIds: [...leaseIds],
-        budgetConsumed,
+        budgetConsumed: rootBudget.usdConsumed,
+        rootBudget,
         cronOrigin,
-        stepIndex: -1,
+        trustLevel: run.trustLevel,
         status: "running",
         lastHeartbeatAt: clock.now(),
-      })
-      .then((r) => {
-        if (!r.ok) {
+        scriptRef: null,
+        checkpointRef: null,
+        workspacePolicyHash,
+        resumeDescriptorHash: hashSubAgentResumeDescriptor(descriptor),
+      }));
+    if (!written.ok) return err(written.error);
+    if (!written.value.ok) return written.value;
+    const terminalReason = durableTerminalReasons.get(run.runId);
+    if (runs.get(run.runId)?.status !== "running" || terminalReason !== undefined) {
+      if (terminalReason !== undefined) {
+        const reapplied = await fromPromise(
+          store.terminalize(run.runId, terminalReason),
+        );
+        if (!reapplied.ok) return err(reapplied.error);
+        if (!reapplied.value.ok) return reapplied.value;
+      }
+      return err(new Error("Durable checkpoint terminal state won the admission race"));
+    }
+    return ok(undefined);
+  }
+
+  function persistDurableCheckpoint(run: SubAgentRun, params: SpawnParams): void {
+    if (
+      !deps.durableRuns
+      || runs.get(run.runId)?.status !== "running"
+      || durableTerminalReasons.has(run.runId)
+    ) return;
+    suppressError(
+      writeDurableCheckpoint(run, params).then((written) => {
+        if (!written.ok) {
           deps.logger?.warn(
-            { rootRunId, err: r.error, hint: "durable checkpoint upsert failed — the run still proceeds; it will not be resumable after a crash", errorKind: "internal" as const },
-            "Durable checkpoint: upsert failed (run continues)",
+            {
+              rootRunId: run.rootRunId,
+              err: toSafeErrorLogString(written.error),
+              hint: "Inspect durable-run storage before relying on further checkpoint progress",
+              errorKind: "internal" as const,
+            },
+            "Durable checkpoint progress write failed",
           );
         }
-      })
-      .catch((err: unknown) => {
-        deps.logger?.warn(
-          { rootRunId, err, hint: "durable checkpoint upsert threw — the run still proceeds", errorKind: "internal" as const },
-          "Durable checkpoint: upsert threw (run continues)",
-        );
-      });
+      }),
+      "durable checkpoint progress write",
+    );
+  }
+
+  /** Write the initial durable row and start its independent keep-alive. */
+  async function startDurableCheckpoint(
+    run: SubAgentRun,
+    params: SpawnParams,
+  ): Promise<Result<void, Error>> {
+    const store = deps.durableRuns;
+    if (!store) return ok(undefined);
+    if (runs.get(run.runId)?.status !== "running" || durableTerminalReasons.has(run.runId)) {
+      return err(new Error("Durable checkpoint admission was suppressed after terminal state"));
+    }
+    const written = await writeDurableCheckpoint(run, params);
+    if (!written.ok) return written;
+    if (runs.get(run.runId)?.status !== "running" || durableTerminalReasons.has(run.runId)) {
+      return err(new Error("Durable checkpoint heartbeat was suppressed after terminal state"));
+    }
 
     // A keep-alive that fires INDEPENDENT of step/spawn completion so a
     // long-running child never trips the watchdog's stale threshold.
     // One interval per run, cleared on terminal settle (no leaked timer).
     if (!heartbeatTimers.has(run.runId)) {
       const handle = timers.setInterval(() => {
-        suppressError(
-          store
-            .touchHeartbeat(rootRunId, clock.now())
-            .then((r) => {
-              if (!r.ok) {
-                deps.logger?.debug(
-                  { rootRunId, err: r.error, hint: "durable heartbeat touch failed; the watchdog may orphan-sweep this run if it persists", errorKind: "internal" as const },
-                  "Durable heartbeat: touch failed",
-                );
-              }
-            }),
-          "durable heartbeat touch (best-effort)",
-        );
+        if (runs.get(run.runId)?.status === "running" && !durableTerminalReasons.has(run.runId)) {
+          persistDurableCheckpoint(run, params);
+        }
       }, DURABLE_KEEPALIVE_MS);
       handle.unref();
       heartbeatTimers.set(run.runId, handle);
     }
+    return ok(undefined);
   }
 
-  /**
-   * Terminal seam: mark the run completed + clear its keep-alive
-   * heartbeat. Fires on EVERY terminal settle of a started run (completion,
-   * failure, kill/ghost/watchdog — the underlying executeAgent promise still
-   * settles), so the interval is reclaimed and the durable record stops being
-   * resumable. Inert + idempotent when no store / no timer. Never throws.
-   */
-  function finishDurableCheckpoint(run: SubAgentRun): void {
+  function scheduleDurableTerminalizationRetry(
+    pending: PendingDurableTerminalization,
+  ): void {
+    if (
+      pendingDurableTerminalizations.get(pending.run.runId) !== pending
+      || pending.retryHandle
+    ) return;
+    const handle = timers.setTimeout(() => {
+      pending.retryHandle = undefined;
+      void attemptDurableTerminalization(pending);
+    }, DURABLE_TERMINAL_RETRY_MS);
+    handle.unref();
+    pending.retryHandle = handle;
+  }
+
+  async function attemptDurableTerminalization(
+    pending: PendingDurableTerminalization,
+  ): Promise<void> {
+    if (
+      pending.inFlight
+      || pendingDurableTerminalizations.get(pending.run.runId) !== pending
+    ) return;
+    pending.retryHandle?.cancel();
+    pending.retryHandle = undefined;
+    pending.inFlight = true;
+    pending.attempts += 1;
+    const store = deps.durableRuns;
+    const invoked = store
+      ? await fromPromise(store.terminalize(pending.run.runId, pending.terminalReason))
+      : ok(ok({ kind: "not_found" as const }));
+    pending.inFlight = false;
+    if (pendingDurableTerminalizations.get(pending.run.runId) !== pending) return;
+    const result = invoked.ok ? invoked.value : err(invoked.error);
+    if (result.ok) {
+      pendingDurableTerminalizations.delete(pending.run.runId);
+      pending.resolve();
+      if (pending.attempts > 1) {
+        deps.logger?.info(
+          {
+            runId: pending.run.runId,
+            rootRunId: pending.run.rootRunId,
+            attempts: pending.attempts,
+            durationMs: clock.now() - pending.startedAtMs,
+          },
+          "Durable checkpoint terminalization recovered",
+        );
+      }
+      return;
+    }
+    if (pending.attempts === 1) {
+      deps.logger?.warn(
+        {
+          runId: pending.run.runId,
+          rootRunId: pending.run.rootRunId,
+          err: toSafeErrorLogString(result.error),
+          hint: "Repair durable-run storage; terminalization will retry and shutdown will drain pending attempts",
+          errorKind: "resource" as const,
+        },
+        "Durable checkpoint terminalization failed",
+      );
+    } else {
+      deps.logger?.debug(
+        {
+          runId: pending.run.runId,
+          rootRunId: pending.run.rootRunId,
+          attempts: pending.attempts,
+        },
+        "Durable checkpoint terminalization retry remains pending",
+      );
+    }
+    scheduleDurableTerminalizationRetry(pending);
+  }
+
+  function retainDurableTerminalization(
+    run: SubAgentRun,
+    terminalReason: DurableRunTerminalReason,
+  ): void {
+    if (!deps.durableRuns || pendingDurableTerminalizations.has(run.runId)) return;
+    let resolveCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const pending: PendingDurableTerminalization = {
+      run,
+      terminalReason,
+      startedAtMs: clock.now(),
+      completion,
+      resolve: resolveCompletion,
+      attempts: 0,
+      inFlight: false,
+    };
+    pendingDurableTerminalizations.set(run.runId, pending);
+    durableTerminalizationPromises.add(completion);
+    void completion.then(() => durableTerminalizationPromises.delete(completion));
+    void attemptDurableTerminalization(pending);
+  }
+
+  function retryPendingDurableTerminalizations(): void {
+    for (const pending of pendingDurableTerminalizations.values()) {
+      pending.retryHandle?.cancel();
+      pending.retryHandle = undefined;
+      void attemptDurableTerminalization(pending);
+    }
+  }
+
+  function finishDurableCheckpoint(
+    run: SubAgentRun,
+    terminalReason: DurableRunTerminalReason,
+  ): void {
+    durableTerminalReasons.set(run.runId, terminalReason);
     const handle = heartbeatTimers.get(run.runId);
     if (handle) {
       handle.cancel();
       heartbeatTimers.delete(run.runId);
     }
-    const store = deps.durableRuns;
-    if (!store) return;
+    retainDurableTerminalization(run, terminalReason);
+  }
+
+  function closeTrajectoryOnce(run: SubAgentRun): void {
+    if (!deps.closeTrajectory || trajectoryClosedRunIds.has(run.runId)) return;
+    trajectoryClosedRunIds.add(run.runId);
     suppressError(
-      store
-        .markCompleted(run.rootRunId)
-        .then((r) => {
-          if (!r.ok) {
-            deps.logger?.warn(
-              { rootRunId: run.rootRunId, err: r.error, hint: "durable markCompleted failed — the watchdog will eventually orphan-sweep the stale record (no live impact)", errorKind: "internal" as const },
-              "Durable checkpoint: markCompleted failed",
-            );
-          }
-        }),
-      "durable terminal markCompleted (best-effort)",
+      deps.closeTrajectory(run.sessionKey),
+      "sub-agent trajectory close",
+      (message) => deps.logger?.debug({ runId: run.runId }, message),
     );
+  }
+
+  function forceTerminalCleanup(run: SubAgentRun): void {
+    if (forcedTerminalRunIds.has(run.runId)) return;
+    forcedTerminalRunIds.add(run.runId);
+    watchdogTimers.get(run.runId)?.cancel();
+    watchdogTimers.delete(run.runId);
+    stopProgressFork(run);
+    closeTrajectoryOnce(run);
   }
 
   // -------------------------------------------------------------------------
@@ -752,10 +1379,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
   /**
    * Start the read-only progress fork for a just-started child run. `getStepState`
-   * is a thin read of the run's live step counter — `run.result` is only
-   * populated on completion (by which point the fork is already stopped), so an
-   * in-flight tick reports `stepsExecuted: 0` and the elapsed wall-clock is the
-   * advance signal (a count-only advance is still NOT a re-execution).
+   * currently reports `stepsExecuted: 0`; the elapsed wall-clock is the advance
+   * signal. Provider output and terminal telemetry are deliberately not retained
+   * on the active run.
    * Idempotent per runId. No model call, no tool, no spawn.
    */
   function startProgressFork(run: SubAgentRun, params: SpawnParams): void {
@@ -766,8 +1392,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       timers,
       runId: run.runId,
       agentId: params.agentId,
-      // Thin read of the existing run handle — no new run-state plumbing.
-      getStepState: () => ({ stepsExecuted: run.result?.stepsExecuted ?? 0 }),
+      getStepState: () => ({ stepsExecuted: 0 }),
     });
     fork.start();
     progressForks.set(run.runId, fork);
@@ -832,7 +1457,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   }
 
   function isDedupEligible(params: { callerSessionKey?: string; callerType?: string }): boolean {
-    return params.callerSessionKey !== undefined && params.callerType !== "graph";
+    return (
+      params.callerSessionKey !== undefined
+      && params.callerType !== "graph"
+      && params.callerType !== "durable-resume"
+    );
   }
 
   function removeDedupEntry(run: SubAgentRun): void {
@@ -907,7 +1536,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       channelType: run.announceChannelType,
       channelId: run.announceChannelId,
       reason,
-      durationMs: (run.completedAt ?? clock.now()) - run.startedAt,
+      durationMs: Math.max(0, clock.now() - (run.startedAt ?? clock.now())),
       timestamp: clock.now(),
     });
   }
@@ -935,32 +1564,38 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     for (const [runId, run] of runs) {
       if (
         (run.status === "completed" || run.status === "failed") &&
-        run.completedAt !== undefined &&
-        now - run.completedAt > retentionMs
+        now - run.completion.completedAtMs > retentionMs
       ) {
-        // Parse session key back to components for deletion
-        const parts = run.sessionKey.split(":");
-        if (parts.length >= 3) {
-          const sessionKey: SessionKey = {
-            tenantId: parts[0]!,
-            userId: parts[1]!,
-            channelId: parts[2]!,
-          };
-          deps.sessionStore.delete(sessionKey);
+        const deleted = deps.sessionStore.delete(run.conversationScope);
+        if (!deleted.ok) {
+          deps.logger?.warn({
+            runId,
+            conversationRef: run.conversationRef,
+            hint: "Inspect session database integrity; the retention sweep will retry on its next pass",
+            errorKind: deleted.error.errorKind,
+          }, "Sub-agent session archive failed");
+          continue;
         }
 
         deps.eventBus.emit("session:sub_agent_archived", {
           runId,
           sessionKey: run.sessionKey,
-          ageMs: now - run.completedAt,
+          ageMs: now - run.completion.completedAtMs,
           timestamp: now,
         });
 
-        deps.logger?.debug({ runId, ageMs: now - run.completedAt }, "Sub-agent run auto-archived");
+        deps.logger?.debug({ runId, ageMs: now - run.completion.completedAtMs }, "Sub-agent run auto-archived");
         // Belt-and-suspenders: terminal-transition sites already remove the
         // dedup entry, but archive is the last chance to evict if those missed.
         removeDedupEntry(run);
         runs.delete(runId);
+        completionDeferreds.delete(runId);
+        startDeferreds.delete(runId);
+        durableResumeHandshakeRunIds.delete(runId);
+        forcedTerminalRunIds.delete(runId);
+        durableTerminalReasons.delete(runId);
+        trajectoryClosedRunIds.delete(runId);
+        resumeDescriptors.delete(runId);
       }
     }
 
@@ -968,13 +1603,28 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     if (runs.size > MAX_RUNS) {
       const completedRuns = [...runs.entries()]
         .filter(([, r]) => r.status === "completed" || r.status === "failed")
-        .sort((a, b) => (a[1].completedAt ?? 0) - (b[1].completedAt ?? 0));
+        .sort((a, b) => {
+          const aCompleted = a[1].status === "completed" || a[1].status === "failed"
+            ? a[1].completion.completedAtMs
+            : 0;
+          const bCompleted = b[1].status === "completed" || b[1].status === "failed"
+            ? b[1].completion.completedAtMs
+            : 0;
+          return aCompleted - bCompleted;
+        });
 
       const toRemove = runs.size - MAX_RUNS;
       for (let i = 0; i < toRemove && i < completedRuns.length; i++) {
         const [pruneRunId, pruneRun] = completedRuns[i]!;
         removeDedupEntry(pruneRun);
         runs.delete(pruneRunId);
+        completionDeferreds.delete(pruneRunId);
+        startDeferreds.delete(pruneRunId);
+        durableResumeHandshakeRunIds.delete(pruneRunId);
+        forcedTerminalRunIds.delete(pruneRunId);
+        durableTerminalReasons.delete(pruneRunId);
+        trajectoryClosedRunIds.delete(pruneRunId);
+        resumeDescriptors.delete(pruneRunId);
       }
     }
 
@@ -990,15 +1640,17 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
           const run = runs.get(entry.runId);
           if (run && run.status === "queued") {
-            run.status = "failed";
-            run.error = `Queue timeout: waited ${queueTimeoutMs}ms for an execution slot`;
-            run.completedAt = now;
-            removeDedupEntry(run);
+            const errorMessage = `Queue timeout: waited ${queueTimeoutMs}ms for an execution slot`;
+            terminalizeRun(entry.runId, {
+              endReason: "failed",
+              completedAtMs: now,
+              errorKind: "timeout",
+              summary: errorMessage,
+            });
 
             deps.eventBus.emit("session:sub_agent_spawn_rejected", {
               parentSessionKey: callerKey,
               agentId: run.agentId,
-              task: run.task,
               reason: "queue_timeout",
               currentDepth: run.depth,
               maxDepth: 0,
@@ -1048,10 +1700,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         errorKind: "timeout" as const,
       }, "Ghost run detected and force-failed");
 
-      run.status = "failed";
-      run.completedAt = now;
-      run.error = `Ghost run: stuck in 'running' for ${(runningDurationMs / 1000).toFixed(0)}s (grace: ${(ghostGraceMs / 1000).toFixed(0)}s)`;
-      removeDedupEntry(run);
+      deliverySuppressedRunIds.add(runId);
+      const errorMessage = `Ghost run: stuck in 'running' for ${(runningDurationMs / 1000).toFixed(0)}s (grace: ${(ghostGraceMs / 1000).toFixed(0)}s)`;
+      terminalizeRun(runId, {
+        endReason: "ghost_sweep",
+        completedAtMs: now,
+        errorKind: "timeout",
+        summary: errorMessage,
+      });
+      forceTerminalCleanup(run);
 
       // Persist failure record
       if (deps.dataDir) {
@@ -1061,7 +1718,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             sessionKey: run.sessionKey,
             runId,
             task: run.task,
-            error: run.error,
+            error: errorMessage,
             endReason: "ghost_sweep",
             runtimeMs: runningDurationMs,
           }, deps.logger),
@@ -1071,7 +1728,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       // Abort SDK session (best-effort, composite-key resolver)
       if (deps.sessionResolver) {
-        const handle = deps.sessionResolver.resolveActiveSession(deriveCompositeForRun(run));
+        const handle = deps.sessionResolver.resolveActiveSession(run.conversationRef);
         if (handle) {
           // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
           handle.abort().catch(() => { /* best-effort */ });
@@ -1089,15 +1746,22 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       // Deliver failure notification using stored announce channel
       if (run.announceChannelType && run.announceChannelId) {
-        deliverFailureNotification({
+        trackFailureNotification(deliverFailureNotification({
           channelType: run.announceChannelType,
           channelId: run.announceChannelId,
           task: run.task,
           runtimeMs: runningDurationMs,
           runId,
+          threadId: resolveAnnouncementThreadId(
+            run.requesterOrigin,
+            run.announceChannelType,
+            run.announceChannelId,
+          ),
+          callerAgentId: run.callerAgentId,
           callerSessionKey: run.callerSessionKey,  // shared dedup key
-        // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
-        }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
+          callerConversation: run.callerConversation,
+          destinationEndpoint: run.callerEndpoint,
+        }, deps));
       }
 
       // Lifecycle hook (fire-and-forget)
@@ -1147,14 +1811,214 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   // -------------------------------------------------------------------------
 
   function spawn(params: SpawnParams): string {
+    if (!acceptingSpawns) {
+      // @allow-throw: spawn() is the synchronous daemon RPC boundary and must reject admission after shutdown starts.
+      throw new Error("Sub-agent runner is shutting down");
+    }
+    if (spawnPaused) {
+      const currentDepth = params.depth ?? 0;
+      const maxDepth = params.maxDepth ?? deps.config.subagentContext?.maxSpawnDepth ?? 3;
+      const maxChildren = deps.config.subagentContext?.maxChildrenPerAgent ?? 5;
+      deps.eventBus.emit("session:sub_agent_spawn_rejected", {
+        parentSessionKey: params.callerSessionKey ?? "unknown",
+        agentId: params.agentId,
+        reason: "spawn_paused",
+        currentDepth,
+        maxDepth,
+        currentChildren: 0,
+        maxChildren,
+        timestamp: clock.now(),
+      });
+      deps.logger?.warn(
+        {
+          agentId: params.agentId,
+          reason: "spawn_paused",
+          hint: "Resume sub-agent admission with the admin subagent.resume operation when new background work is allowed",
+          errorKind: "precondition" as const,
+        },
+        "Sub-agent spawn rejected: admission paused",
+      );
+      // @allow-throw: spawn() is the synchronous daemon RPC boundary and reports the closed operator-pause rejection.
+      throw new SubAgentSpawnPausedError();
+    }
     // Reset dedup signal at the start of every call so a non-deduped spawn
     // does not see a stale hit from the previous invocation.
     lastDedupHit = undefined;
 
+    const requesterOrigin = params.requesterOrigin;
+    const isGraphSpawn = params.callerType === "graph";
+    const isDurableResume = params.callerType === "durable-resume";
+    if ((isGraphSpawn || isDurableResume) && params.reservedRunId !== undefined && runs.has(params.reservedRunId)) {
+      // @allow-throw: graph launch identity collisions are rejected before any spawn ceiling is acquired.
+      throw new Error("Graph spawn reserved run identity is already active");
+    }
+    const isContextIndependentSpawn =
+      isGraphSpawn || isDurableResume || params.callerType === "control-plane";
+    const callerContext = tryGetContext();
+    const hasExplicitAnnouncementRoute = params.announceChannelType !== undefined
+      || params.announceChannelId !== undefined;
+    const reuseConversation = params.reuseConversation;
+    const callerEndpoint = isContextIndependentSpawn
+      ? params.callerEndpoint
+      : callerContext?.turnScope?.endpoint;
+
+    const rejectCallerPrincipal = (): never => {
+      deps.logger?.warn({
+        agentId: params.agentId,
+        reason: "caller_principal_mismatch",
+        hint: "Reject the spawn and verify the caller session, agent, and delivery route were copied from the active request context",
+        errorKind: "auth" as const,
+      }, "Sub-agent spawn rejected: caller principal mismatch");
+      // @allow-throw: spawn() is a daemon RPC boundary and rejects forged caller identity before creating a run or session.
+      throw new Error("Spawn rejected: caller principal does not match the active request context");
+    };
+    const rejectAnnouncementRoute = (): never => {
+      deps.logger?.warn({
+        agentId: params.agentId,
+        reason: "announcement_route_mismatch",
+        hint: "Reject the spawn; agent-origin delivery is bound to the authenticated request, so omit explicit announcement route fields",
+        errorKind: "auth" as const,
+      }, "Sub-agent spawn rejected: announcement route mismatch");
+      // @allow-throw: spawn() is a daemon RPC boundary and rejects forged delivery routing before creating a run or session.
+      throw new Error("Spawn rejected: announcement route does not match the authenticated requester");
+    };
+
+    // GraphCoordinator snapshots and authorizes graph nodes independently, and
+    // route-less daemon jobs may call the runner outside ALS. A direct spawn
+    // that does have ambient request identity must bind every supplied caller
+    // field to that principal exactly; partial or stale async state cannot pick
+    // another parent session, agent, chat, or announcement destination.
+    if (params.callerType === "agent" && callerContext === undefined) {
+      rejectCallerPrincipal();
+    }
+    if (!isContextIndependentSpawn && callerContext !== undefined) {
+      const contextualCaller = callerContext.turnScope === undefined
+        ? undefined
+        : createConversationLocator(callerContext.turnScope.conversation);
+      if (
+        callerContext.userId === undefined
+        || callerContext.sessionKey === undefined
+        || callerContext.agentId === undefined
+        || callerContext.turnScope === undefined
+        || params.callerSessionKey !== callerContext.sessionKey
+        || params.callerAgentId !== callerContext.agentId
+        || params.callerConversation === undefined
+        || contextualCaller === undefined
+        || !contextualCaller.ok
+        || params.callerConversation.conversationRef !== contextualCaller.value.conversationRef
+        || (
+          reuseConversation !== undefined
+          && (
+            reuseConversation.conversationScope.tenantId !== callerContext.tenantId
+          )
+        )
+      ) {
+        rejectCallerPrincipal();
+      }
+
+      const contextOrigin = callerContext.deliveryOrigin;
+      if (
+        requesterOrigin !== undefined
+        && (
+          contextOrigin === undefined
+          || (
+            contextOrigin.tenantId !== requesterOrigin.tenantId
+            || contextOrigin.userId !== requesterOrigin.userId
+            || contextOrigin.channelType !== requesterOrigin.channelType
+            || contextOrigin.channelId !== requesterOrigin.channelId
+            || contextOrigin.threadId !== requesterOrigin.threadId
+            || (
+              callerContext.channelType !== undefined
+              && callerContext.channelType !== requesterOrigin.channelType
+            )
+          )
+        )
+      ) {
+        rejectCallerPrincipal();
+      }
+      if (
+        hasExplicitAnnouncementRoute
+        && (
+          requesterOrigin === undefined
+          || params.announceChannelType !== requesterOrigin.channelType
+          || params.announceChannelId !== requesterOrigin.channelId
+        )
+      ) {
+        rejectAnnouncementRoute();
+      }
+    }
+    const announcementRouteMismatch = requesterOrigin !== undefined
+      && (
+        requesterOrigin.tenantId !== deps.tenantId
+        || (hasExplicitAnnouncementRoute && (
+          params.announceChannelType === undefined
+          || params.announceChannelId === undefined
+          || params.announceChannelType !== requesterOrigin.channelType
+          || params.announceChannelId !== requesterOrigin.channelId
+        ))
+        || (reuseConversation !== undefined && (
+          reuseConversation.conversationScope.tenantId !== requesterOrigin.tenantId
+        ))
+        || (callerEndpoint !== undefined && (
+          callerEndpoint.channelType !== requesterOrigin.channelType
+          || callerEndpoint.conversationId !== requesterOrigin.channelId
+          || callerEndpoint.threadId !== requesterOrigin.threadId
+        ))
+      );
+    if (announcementRouteMismatch) {
+      deps.logger?.warn({
+        agentId: params.agentId,
+        reason: "announcement_route_mismatch",
+        hint: "Spawn rejected because the requested announcement route or reused session does not belong to the authenticated requester",
+        errorKind: "precondition" as const,
+      }, "Sub-agent spawn rejected: announcement route mismatch");
+      // @allow-throw: spawn() is a daemon RPC boundary and rejects forged routing before creating a run or session.
+      throw new Error("Spawn rejected: announcement route does not match the authenticated requester");
+    }
+
     // 0. Resolve depth and config values for limit enforcement
     const currentDepth = params.depth ?? 0;
     const maxDepth = params.maxDepth ?? deps.config.subagentContext?.maxSpawnDepth ?? 3;
-    const isGraphSpawn = params.callerType === "graph";
+    // Snapshot authorization at the acceptance boundary. Direct spawns trust
+    // only the live framework context; a caller-provided field cannot elevate
+    // them. Graph nodes consume the coordinator's submission-time snapshot.
+    // Missing context/data is guest, never the RequestContext schema default.
+    const acceptedTrustLevel: UserTrustLevel = isGraphSpawn || isDurableResume
+      ? params.callerTrustLevel ?? "guest"
+      : callerContext?.trustLevel ?? "guest";
+
+    if (reuseConversation !== undefined) {
+      if (reuseConversation.conversationScope.tenantId !== deps.tenantId) {
+        deps.logger?.warn({
+          agentId: params.agentId,
+          reason: "reused_session_tenant_mismatch",
+          hint: "Reject the spawn and use a persistent session from the configured tenant",
+          errorKind: "auth" as const,
+        }, "Sub-agent spawn rejected: reused session tenant mismatch");
+        // @allow-throw: spawn() is a daemon RPC boundary and rejects cross-tenant session reuse before creating a run.
+        throw new Error("Spawn rejected: reused session tenant does not match the configured tenant");
+      }
+      const persistedSession = deps.sessionStore.loadByRef(
+        {
+          tenantId: reuseConversation.conversationScope.tenantId,
+          agentId: reuseConversation.conversationScope.agentId,
+        },
+        reuseConversation.conversationRef,
+      );
+      if (!persistedSession.ok) throw persistedSession.error;
+      if (persistedSession.value !== undefined) {
+        if (persistedSession.value.conversationScope.agentId !== params.agentId) {
+          deps.logger?.warn({
+            agentId: params.agentId,
+            reason: "reused_session_owner_mismatch",
+            hint: "Reject the spawn and use a persistent session owned by the requested child agent",
+            errorKind: "auth" as const,
+          }, "Sub-agent spawn rejected: reused session ownership mismatch");
+          // @allow-throw: spawn() is a daemon RPC boundary and rejects cross-agent session reuse before creating a run.
+          throw new Error("Spawn rejected: reused session ownership does not match the requested agent");
+        }
+      }
+    }
 
     // Establish the tree-stable rootRunId. The root
     // (the first caller with no rootRunId) mints one; every descendant MUST pass its
@@ -1163,13 +2027,17 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // each escape the parent's ceiling. Uses the injected
     // ClockPort (never the wall-clock global — the globals.test.ts arch-gate).
     const rootRunId = params.rootRunId ?? `root-${params.agentId}-${clock.now().toString(36)}`;
+    const acceptedCaps = [
+      ...(params.caps
+        ?? deps.durableRunFacts?.(rootRunId, params.agentId)?.caps
+        ?? []),
+    ];
 
     // Depth check (applies to ALL spawns including graph)
     if (currentDepth >= maxDepth) {
       deps.eventBus.emit("session:sub_agent_spawn_rejected", {
         parentSessionKey: params.callerSessionKey ?? "unknown",
         agentId: params.agentId,
-        task: params.task,
         reason: "depth_exceeded",
         currentDepth,
         maxDepth,
@@ -1328,7 +2196,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
 
     // Children check (bypassed for graph spawns)
-    if (!isGraphSpawn && params.callerSessionKey) {
+    if (!isGraphSpawn && !isDurableResume && params.callerSessionKey) {
       const maxChildren = deps.config.subagentContext?.maxChildrenPerAgent ?? 5;
       const activeChildren = countActiveChildren(params.callerSessionKey);
       if (activeChildren >= maxChildren) {
@@ -1339,7 +2207,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           deps.eventBus.emit("session:sub_agent_spawn_rejected", {
             parentSessionKey: params.callerSessionKey,
             agentId: params.agentId,
-            task: params.task,
             reason: "children_exceeded",
             currentDepth,
             maxDepth,
@@ -1368,7 +2235,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           deps.eventBus.emit("session:sub_agent_spawn_rejected", {
             parentSessionKey: params.callerSessionKey,
             agentId: params.agentId,
-            task: params.task,
             reason: "queue_full",
             currentDepth,
             maxDepth,
@@ -1395,20 +2261,38 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
         // Queue the spawn
         const queuedRunId = randomUUID();
+        const queuedPrincipalId = params.callerConversation?.conversationScope.partition.kind
+          === "endpoint-conversation-principal"
+          ? params.callerConversation.conversationScope.partition.principalId
+          : params.requesterOrigin?.userId ?? `sub-agent:${queuedRunId}`;
+        const queuedConversation = params.reuseConversation
+          ?? createSubAgentConversation(
+            deps.tenantId,
+            params.agentId,
+            queuedRunId,
+            queuedPrincipalId,
+          );
+        const queuedDisplay = displayKeyForConversation(queuedConversation);
         const now = clock.now();
         const queuedRun: SubAgentRun = {
           runId: queuedRunId,
           status: "queued",
           agentId: params.agentId,
+          trustLevel: acceptedTrustLevel,
           task: params.task,
-          sessionKey: "",
-          startedAt: 0,
+          sessionKey: queuedDisplay.formatted,
+          conversationScope: queuedConversation.conversationScope,
+          conversationRef: queuedConversation.conversationRef,
           queuedAt: now,
           requesterOrigin: params.requesterOrigin,
           depth: currentDepth,
           rootRunId,
+          caps: acceptedCaps,
           ...(params.parentLeaseId !== undefined ? { parentLeaseId: params.parentLeaseId } : {}),
           callerSessionKey: params.callerSessionKey,
+          callerConversation: params.callerConversation,
+          callerEndpoint,
+          callerAgentId: params.callerAgentId,
           announceChannelType: params.announceChannelType,
           announceChannelId: params.announceChannelId,
           graphId: params.graphId,
@@ -1418,6 +2302,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             : params.callerSessionKey,
         };
         runs.set(queuedRunId, queuedRun);
+        createCompletionDeferred(queuedRunId);
 
         // Register dedup entry for the queued run so a second same-caller-same-task
         // spawn at children-limit returns the queued runId rather than starting another.
@@ -1513,7 +2398,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         deps.eventBus.emit("session:sub_agent_spawn_rejected", {
           parentSessionKey: params.callerSessionKey ?? "unknown",
           agentId: params.agentId,
-          task: params.task,
           reason: eventReason,
           currentDepth,
           maxDepth,
@@ -1538,15 +2422,37 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
 
     // Normal (non-queued) path: create run and start execution
-    const runId = randomUUID();
+    const runId = (isGraphSpawn || isDurableResume) && params.reservedRunId !== undefined
+      ? params.reservedRunId
+      : randomUUID();
+    const runPrincipalId = params.callerConversation?.conversationScope.partition.kind
+      === "endpoint-conversation-principal"
+      ? params.callerConversation.conversationScope.partition.principalId
+      : params.requesterOrigin?.userId ?? `sub-agent:${runId}`;
+    const runConversation = params.reuseConversation
+      ?? createSubAgentConversation(
+        deps.tenantId,
+        params.agentId,
+        runId,
+        runPrincipalId,
+      );
+    const runDisplay = displayKeyForConversation(runConversation);
     const run: SubAgentRun = {
       runId, status: "running", agentId: params.agentId,
-      task: params.task, sessionKey: "", startedAt: clock.now(),
+      trustLevel: acceptedTrustLevel,
+      task: params.task, sessionKey: runDisplay.formatted,
+      conversationScope: runConversation.conversationScope,
+      conversationRef: runConversation.conversationRef,
+      startedAt: clock.now(),
       requesterOrigin: params.requesterOrigin,
       depth: currentDepth,
       rootRunId,
+      caps: acceptedCaps,
       ...(params.parentLeaseId !== undefined ? { parentLeaseId: params.parentLeaseId } : {}),
       callerSessionKey: params.callerSessionKey,
+      callerConversation: params.callerConversation,
+      callerEndpoint,
+      callerAgentId: params.callerAgentId,
       announceChannelType: params.announceChannelType,
       announceChannelId: params.announceChannelId,
       graphId: params.graphId,
@@ -1557,6 +2463,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       ...(ceilingSlotAcquired ? { ceilingSlotAcquired: true } : {}),
     };
     runs.set(runId, run);
+    createCompletionDeferred(runId);
 
     // Register dedup entry for the just-started run so duplicate spawns
     // arriving while it is in flight short-circuit to this runId.
@@ -1577,63 +2484,113 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
    */
   function startExecution(
     runId: string,
-    run: SubAgentRun,
-    params: SpawnParams,
+    admittedRun: SubAgentQueuedRun | SubAgentRunningRun,
+    inputParams: SpawnParams,
     currentDepth: number,
     maxDepth: number,
   ): void {
-    // Create sub-agent session
-    let subSessionKey: SessionKey;
-    let formattedKey: string;
-
-    if (params.reuseSessionKey) {
-      // Reuse existing persistent session -- skip session creation.
-      // The session already has prior round conversation history on disk.
-      const parsed = parseFormattedSessionKey(params.reuseSessionKey);
-      if (!parsed) {
-        deps.logger?.error(
-          { runId, reuseSessionKey: params.reuseSessionKey, hint: "Invalid reuseSessionKey format, falling back to new session", errorKind: "validation" as const },
-          "Failed to parse reuseSessionKey",
-        );
-        // Fall through to normal session creation
-        subSessionKey = { tenantId: deps.tenantId, userId: `sub-agent-${runId}`, channelId: `sub-agent:${runId}` };
-        formattedKey = formatSessionKey(subSessionKey);
-        deps.sessionStore.save(subSessionKey, [], {
-          parentSessionKey: params.callerSessionKey,
-          spawnedByAgent: params.callerAgentId,
-          spawnedAt: clock.now(),
-          taskDescription: params.task,
-          runId,
-          modelOverride: params.model,
-          spawnDepth: currentDepth + 1,
-          maxSpawnDepth: maxDepth,
-          artifactRefs: params.artifactRefs ?? [],
-          objective: params.objective ?? "",
-          language: params.resolvedLanguage,
-          domainKnowledge: params.domainKnowledge ?? [],
-          toolGroups: params.toolGroups ?? [],
-          includeParentHistory: params.includeParentHistory ?? "none",
-          graphSharedDir: params.graphSharedDir ?? "",
-          discoveredDeferredTools: params.discoveredDeferredTools ?? [],
-          graphToolNames: params.graphToolNames ?? [],
-          graphNodeDepth: params.graphNodeDepth,
-          isLeafNode: params.isLeafNode ?? false,
-        });
-      } else {
-        formattedKey = params.reuseSessionKey;
-        subSessionKey = { tenantId: parsed.tenantId, userId: parsed.userId, channelId: parsed.channelId };
-        deps.logger?.info(
-          { runId, reuseSessionKey: params.reuseSessionKey, agentId: params.agentId },
-          "Reusing persistent session for multi-round driver",
-        );
-        // Do NOT call sessionStore.save -- session already exists with prior messages
-      }
+    let params = inputParams;
+    let run: SubAgentRunningRun;
+    if (admittedRun.status === "queued") {
+      const { status: _status, queuedAt: _queuedAt, ...common } = admittedRun;
+      run = {
+        ...common,
+        status: "running",
+        startedAt: clock.now(),
+      };
+      runs.set(runId, run);
     } else {
-      // Normal path: create new session
-      subSessionKey = { tenantId: deps.tenantId, userId: `sub-agent-${runId}`, channelId: `sub-agent:${runId}` };
-      formattedKey = formatSessionKey(subSessionKey);
-      deps.sessionStore.save(subSessionKey, [], {
+      run = admittedRun;
+    }
+    const display = displayKeyForConversation({
+      conversationScope: run.conversationScope,
+      conversationRef: run.conversationRef,
+    });
+    const subSessionKey = display.key;
+    const formattedKey = display.formatted;
+    let workspacePolicyHash = params.workspacePolicyHash;
+
+    async function prepareDurableAuthority(): Promise<Result<void, Error>> {
+      if (!deps.durableRuns) return ok(undefined);
+      const snapshotResult = params.callerType === "durable-resume"
+        ? params.workspacePolicySnapshot === undefined
+          ? err(new Error("Durable sub-agent resume workspace policy snapshot is missing"))
+          : ok(params.workspacePolicySnapshot)
+        : deps.resolveWorkspacePolicySnapshot === undefined
+          ? err(new Error("Durable sub-agent workspace policy resolver is missing"))
+          : await deps.resolveWorkspacePolicySnapshot(params.agentId);
+      if (!snapshotResult.ok) return snapshotResult;
+      const verified = verifyWorkspacePolicySnapshot(snapshotResult.value);
+      if (
+        !verified.ok
+        || snapshotResult.value.agentId !== params.agentId
+        || (
+          params.callerType === "durable-resume"
+          && params.workspacePolicyHash !== snapshotResult.value.combinedHash
+        )
+      ) {
+        return err(new Error("Durable sub-agent workspace policy snapshot verification failed"));
+      }
+      workspacePolicyHash = snapshotResult.value.combinedHash;
+      params = {
+        ...params,
+        workspacePolicyHash,
+        workspacePolicySnapshot: snapshotResult.value,
+      };
+      const descriptor = SubAgentResumeDescriptorSchema.safeParse({
+        kind: "subagent_resume",
+        task: params.task,
+        agentId: params.agentId,
+        callerSessionKey: params.callerSessionKey,
+        callerConversation: params.callerConversation,
+        callerEndpoint: run.callerEndpoint,
+        callerAgentId: params.callerAgentId,
+        announceChannelType: params.announceChannelType,
+        announceChannelId: params.announceChannelId,
+        model: params.model,
+        maxSteps: params.max_steps,
+        tokenBudget: params.tokenBudget,
+        expectedOutputs: params.expected_outputs,
+        requesterOrigin: params.requesterOrigin,
+        depth: currentDepth,
+        maxDepth,
+        rootRunId: run.rootRunId,
+        capabilityCeiling: run.caps,
+        isCronAgentTurn: params.isCronAgentTurn,
+        jobId: params.jobId,
+        jobName: params.jobName,
+        artifactRefs: params.artifactRefs,
+        objective: params.objective,
+        domainKnowledge: params.domainKnowledge,
+        toolGroups: params.toolGroups,
+        resolvedLanguage: params.resolvedLanguage,
+        requiredTools: params.requiredTools,
+        includeParentHistory: params.includeParentHistory,
+        discoveredDeferredTools: params.discoveredDeferredTools,
+        graphToolNames: params.graphToolNames,
+        worktree: params.worktree,
+        workspacePolicyHash,
+      });
+      if (!descriptor.success) {
+        return err(new Error("Durable sub-agent resume descriptor validation failed"));
+      }
+      resumeDescriptors.set(runId, descriptor.data);
+      return ok(undefined);
+    }
+
+    function saveSession(): Result<void, Error> {
+      if (params.reuseConversation) {
+        deps.logger?.info(
+          { runId, conversationRef: run.conversationRef, agentId: params.agentId },
+          "Reusing persistent conversation for multi-round driver",
+        );
+        return ok(undefined);
+      }
+      const saved = deps.sessionStore.save(run.conversationScope, [], {
+        agentId: params.agentId,
         parentSessionKey: params.callerSessionKey,
+        parentConversationRef: params.callerConversation?.conversationRef,
+        parentConversationScope: params.callerConversation?.conversationScope,
         spawnedByAgent: params.callerAgentId,
         spawnedAt: clock.now(),
         taskDescription: params.task,
@@ -1657,126 +2614,251 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // workspace resolver) can run the child in an isolated git worktree.
         // Defaults to false so the no-worktree path stays byte-identical.
         worktree: params.worktree ?? false,
+        ...(resumeDescriptors.has(runId)
+          ? { durableResumeDescriptor: resumeDescriptors.get(runId) }
+          : {}),
       });
+      return saved.ok ? ok(undefined) : err(saved.error);
     }
 
-    // Update run with session info and running status
+    if (!deps.durableRuns) {
+      const saved = saveSession();
+      if (!saved.ok) {
+        // @allow-throw: session creation is part of the synchronous spawn admission boundary.
+        throw saved.error;
+      }
+    }
+
+    // Update run with canonical session info. Queued records were replaced by
+    // the closed running variant above; lifecycle discrimination is never
+    // mutated in place.
     run.sessionKey = formattedKey;
-    run.status = "running";
     run.startedAt = clock.now();
-
-    // The SPAWN BOUNDARY — the run is now registered
-    // + running, so write the initial durable checkpoint (stepIndex -1) + start
-    // the keep-alive heartbeat. Inert when no durable store is wired. The keep-
-    // alive is cleared + the record marked completed in the terminal `finally`.
-    startDurableCheckpoint(run, params);
-
-    // Start the ~30s read-only progress fork so a long-running child
-    // surfaces its advance (a content-free session:sub_agent_progress) WITHOUT
-    // completing. Stopped in the terminal `finally` (no leaked timer). Runs
-    // independent of the durable store.
-    startProgressFork(run, params);
-
-    deps.logger?.info({
-      runId, agentId: params.agentId,
-      callerAgentId: params.callerAgentId ?? "unknown",
-      parentSessionKey: params.callerSessionKey ?? "unknown",
-      task: params.task.slice(0, 200),
-      maxSteps: params.max_steps ?? deps.config.subAgentMaxSteps,
-      toolProfile: deps.config.subAgentToolGroups,
-    }, "Sub-agent spawn initiated");
-
-    // Emit spawn event
-    deps.eventBus.emit("session:sub_agent_spawned", {
-      runId, parentSessionKey: params.callerSessionKey ?? "unknown",
-      agentId: params.agentId, task: params.task, timestamp: clock.now(),
-    });
 
     // Async execution
     const execPromise = (async () => {
-      // Lifecycle hook - prepareSpawn
       let rollbackHandle: { rollback: () => Promise<void> } | undefined;
-      if (deps.lifecycleHooks) {
-        try {
-          rollbackHandle = await deps.lifecycleHooks.prepareSpawn({
-            runId,
-            parentSessionKey: params.callerSessionKey ?? "unknown",
-            childSessionKey: formattedKey,
-            agentId: params.agentId,
-            task: params.task,
-            depth: currentDepth,
-            maxDepth,
-          });
-        } catch (hookErr) {
-          deps.logger?.warn({
-            runId, err: hookErr,
-            hint: "prepareSubagentSpawn hook failed; proceeding with legacy spawn",
-            errorKind: "internal" as const,
-          }, "Lifecycle hook prepareSpawn failed");
-        }
-      }
-
-      // Hoist traceId for availability in catch block (failure record correlation)
       const traceId = params.graphTraceId ?? randomUUID();
 
       try {
+        const authority = await prepareDurableAuthority();
+        if (!authority.ok) {
+          throw new DurableSubAgentAdmissionError(
+            "Durable sub-agent workspace policy admission failed",
+            authority.error,
+          );
+        }
+        if (runs.get(runId)?.status !== "running" || deliverySuppressedRunIds.has(runId)) {
+          throw new DurableSubAgentAdmissionError(
+            "Sub-agent terminalized during workspace policy admission",
+          );
+        }
+        if (deps.durableRuns) {
+          const saved = saveSession();
+          if (!saved.ok) {
+            throw new DurableSubAgentAdmissionError(
+              "Durable sub-agent session admission failed",
+              saved.error,
+            );
+          }
+        }
+        const durableAdmission = await startDurableCheckpoint(run, params);
+        if (!durableAdmission.ok) {
+          throw new DurableSubAgentAdmissionError(
+            "Durable sub-agent checkpoint admission failed",
+            durableAdmission.error,
+          );
+        }
+        if (runs.get(runId)?.status !== "running" || deliverySuppressedRunIds.has(runId)) {
+          throw new DurableSubAgentAdmissionError(
+            "Sub-agent terminalized during checkpoint admission",
+          );
+        }
+
+        if (deps.lifecycleHooks) {
+          try {
+            rollbackHandle = await deps.lifecycleHooks.prepareSpawn({
+              runId,
+              parentSessionKey: params.callerSessionKey ?? "unknown",
+              childSessionKey: formattedKey,
+              agentId: params.agentId,
+              task: params.task,
+              depth: currentDepth,
+              maxDepth,
+            });
+          } catch (hookErr) {
+            deps.logger?.warn({
+              runId, err: hookErr,
+              hint: "prepareSubagentSpawn hook failed; inspect lifecycle integration",
+              errorKind: "internal" as const,
+            }, "Lifecycle hook prepareSpawn failed");
+          }
+        }
+        if (runs.get(runId)?.status !== "running" || deliverySuppressedRunIds.has(runId)) {
+          throw new DurableSubAgentAdmissionError(
+            "Sub-agent terminalized during spawn preparation",
+          );
+        }
+
+        startProgressFork(run, params);
+
+        deps.logger?.info({
+          runId, agentId: params.agentId,
+          callerAgentId: params.callerAgentId ?? "unknown",
+          parentSessionKey: params.callerSessionKey ?? "unknown",
+          maxSteps: params.max_steps ?? deps.config.subAgentMaxSteps,
+          toolProfile: deps.config.subAgentToolGroups,
+        }, "Sub-agent spawn initiated");
+
+        deps.eventBus.emit("session:sub_agent_spawned", {
+          runId, parentSessionKey: params.callerSessionKey ?? "unknown",
+          agentId: params.agentId, timestamp: clock.now(),
+        });
+
         deps.logger?.info({
           runId, agentId: params.agentId,
           ...(params.graphId ? { graphId: params.graphId } : {}),
           ...(params.nodeId ? { nodeId: params.nodeId } : {}),
         }, "Sub-agent execution started");
-        const parsed = parseFormattedSessionKey(formattedKey);
-
         // Propagate delivery origin into ALS so sub-agent tool calls
         // (e.g. pipeline execute -> graph.execute RPC) include announce channel fields.
         // Without this, setup-tools.ts cannot inject _callerChannelType/_callerChannelId.
-        const subDeliveryOrigin = run.announceChannelType && run.announceChannelId
-          ? {
-              channelType: run.announceChannelType,
-              channelId: run.announceChannelId,
-              userId: parsed?.userId ?? "sub-agent",
-              tenantId: parsed?.tenantId ?? deps.tenantId,
-            }
+        const childTenantId = subSessionKey.tenantId;
+        const childUserId = subSessionKey.userId;
+        const originChannelType = run.announceChannelType ?? run.requesterOrigin?.channelType;
+        const originChannelId = run.announceChannelId ?? run.requesterOrigin?.channelId;
+        const preservesRequesterRoute = originChannelType === run.requesterOrigin?.channelType
+          && originChannelId === run.requesterOrigin?.channelId;
+        const subDeliveryOrigin = originChannelType && originChannelId
+          ? createDeliveryOrigin({
+              channelType: originChannelType,
+              channelId: originChannelId,
+              userId: preservesRequesterRoute
+                ? run.requesterOrigin?.userId ?? childUserId
+                : childUserId,
+              // The child session is the tenant isolation authority. Never let
+              // a serialized routing object move the child into another tenant.
+              tenantId: childTenantId,
+              ...(preservesRequesterRoute && run.requesterOrigin?.threadId
+                ? { threadId: run.requesterOrigin.threadId }
+                : {}),
+            })
           : undefined;
 
+        const childPartition = run.conversationScope.partition;
+        if (childPartition.kind !== "endpoint-conversation-principal") {
+          // @allow-throw: sub-agent conversations are minted with this exact internal partition at admission.
+          throw new Error("Sub-agent conversation authority has an invalid partition");
+        }
+        const childTurnScope: ResolvedTurnScope = {
+          conversation: run.conversationScope,
+          principal: { principalId: childPartition.principalId },
+          endpoint: childPartition.endpoint,
+        };
+        const childContext = createResolvedRequestContext({
+          traceId,
+          tenantId: childTenantId,
+          userId: childUserId,
+          sessionKey: subSessionKey,
+          agentId: run.agentId,
+          startedAt: clock.now(),
+          trustLevel: run.trustLevel,
+          workspacePolicyHash,
+          // Propagate channel context for downstream tool RPC injection
+          ...(subDeliveryOrigin && { channelType: subDeliveryOrigin.channelType }),
+          ...(subDeliveryOrigin && { deliveryOrigin: subDeliveryOrigin }),
+          turnScope: childTurnScope,
+        });
+        if (!childContext.ok) {
+          deps.logger?.error({
+            runId,
+            agentId: run.agentId,
+            hint: "Inspect the persisted child session and requester route for inconsistent principal identity",
+            errorKind: "internal" as const,
+          }, "Sub-agent request context validation failed");
+          // @allow-throw: the surrounding execution boundary records the failed run and releases all lifecycle resources.
+          throw childContext.error;
+        }
+
+        const childTask = appendExpectedOutputContract(params.task, params.expected_outputs);
         const result = await runWithContext(
-          {
-            traceId,
-            tenantId: parsed?.tenantId ?? deps.tenantId,
-            userId: parsed?.userId ?? "sub-agent",
-            sessionKey: formattedKey,
-            startedAt: clock.now(),
-            trustLevel: "admin",
-            // Propagate channel context for downstream tool RPC injection
-            ...(run.announceChannelType && { channelType: run.announceChannelType }),
-            ...(subDeliveryOrigin && { deliveryOrigin: subDeliveryOrigin }),
+          childContext.value,
+          () => {
+            if (runs.get(runId)?.status !== "running" || deliverySuppressedRunIds.has(runId)) {
+              return Promise.reject(
+                new DurableSubAgentAdmissionError("Sub-agent terminalized before provider start"),
+              );
+            }
+            const providerExecution = deps.executeAgent(
+              params.agentId,
+              subSessionKey,
+              { conversationScope: run.conversationScope, conversationRef: run.conversationRef },
+              childTask,
+              params.max_steps,
+              params.callerAgentId,
+              params.graphId && params.nodeId
+              ? {
+                  graphId: params.graphId,
+                  nodeId: params.nodeId,
+                  reuseConversation: params.reuseConversation,
+                  graphNodeDepth: params.graphNodeDepth,
+                  workspacePolicySnapshot: params.workspacePolicySnapshot,
+                }
+              : params.reuseConversation
+                ? {
+                    reuseConversation: params.reuseConversation,
+                    workspacePolicySnapshot: params.workspacePolicySnapshot,
+                  }
+                : params.workspacePolicySnapshot === undefined
+                  ? undefined
+                  : { workspacePolicySnapshot: params.workspacePolicySnapshot },
+              params.tokenBudget,
+              {
+              rootRunId: run.rootRunId,
+              ...(run.parentLeaseId !== undefined
+                ? { parentLeaseId: run.parentLeaseId }
+                : {}),
+              parentCaps: run.caps,
+              onAssemblyAuthority: (authority) => {
+                const heldCaps = new Set(run.caps);
+                const widened = authority.caps.some((capability) => !heldCaps.has(capability));
+                if (authority.rootRunId !== run.rootRunId || widened) {
+                  // @allow-throw: the surrounding execution boundary records this invalid composition-root authority and releases run resources.
+                  throw new Error("Sub-agent assembly authority exceeded its authenticated parent ceiling");
+                }
+                run.leaseId = authority.leaseId;
+                run.caps = [...authority.caps];
+                persistDurableCheckpoint(run, params);
+              },
+              },
+              {
+                onProviderStart: () => {
+                  const current = runs.get(runId);
+                  if (
+                    current?.status !== "running"
+                    || durableTerminalReasons.has(runId)
+                    || deliverySuppressedRunIds.has(runId)
+                  ) {
+                    return err(new Error("Sub-agent provider start was suppressed after terminal state"));
+                  }
+                  startDeferreds.get(runId)?.resolve(ok(undefined));
+                  if (!durableResumeHandshakeRunIds.has(runId)) {
+                    startDeferreds.delete(runId);
+                  }
+                  return ok(undefined);
+                },
+              },
+            );
+            return providerExecution;
           },
-          () => deps.executeAgent(
-            params.agentId, subSessionKey, params.task, params.max_steps, params.callerAgentId,
-            params.graphId && params.nodeId
-              ? { graphId: params.graphId, nodeId: params.nodeId, reuseSessionKey: params.reuseSessionKey, graphNodeDepth: params.graphNodeDepth }
-              : params.reuseSessionKey
-                ? { reuseSessionKey: params.reuseSessionKey }
-                : undefined,
-            params.tokenBudget,
-          ),
         );
+        providerSettledRunIds.add(runId);
 
         // Guard: if already killed, skip completion logic
-        if (run.status === "failed") return;
+        if (deliverySuppressedRunIds.has(runId)) return;
 
-        const completedAt = clock.now();
-        run.status = "completed";
-        run.completedAt = completedAt;
-        run.result = result;
-        removeDedupEntry(run);
-
-        // Populate run.error for non-successful completions so graph coordinator
-        // and downstream consumers see a meaningful error instead of "Unknown error".
-        if (result.finishReason !== "stop" && result.finishReason !== "end_turn") {
-          run.error = result.errorContext?.originalError
-            ?? `Execution completed with finishReason: ${result.finishReason}`;
-        }
+        const providerCompletedAt = clock.now();
+        const isSuccess = result.finishReason === "stop" || result.finishReason === "end_turn";
 
         // Warn on empty response — may indicate prompt or context issues
         if (!result.response || result.response.trim().length === 0) {
@@ -1787,7 +2869,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }, "Sub-agent produced empty output");
         }
 
-        const runtimeMs = completedAt - run.startedAt;
+        const runtimeMs = providerCompletedAt - run.startedAt;
 
         // Compute cache effectiveness before condense() for disk persistence.
         // Formula: cacheRead/(cacheRead+cacheWrite), 0 when no cache activity.
@@ -1804,6 +2886,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               fullResult: result.response,
               task: params.task,
               runId,
+              tenantId: run.conversationScope.tenantId,
               sessionKey: formattedKey,
               agentId: params.agentId,
               model: deps.condenserModel,
@@ -1827,6 +2910,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               // Tool metadata plumbed from executor via bridge
               toolCallHistory: result.toolCallHistory,
             });
+            condensedResult = {
+              ...condensedResult,
+              result: {
+                ...condensedResult.result,
+                taskComplete: isSuccess,
+              },
+            };
 
             deps.eventBus.emit("session:sub_agent_result_condensed", {
               runId,
@@ -1869,7 +2959,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // path too, so the production-default tagged announcement also carries the
         // handle, not the diskPath (the longevity invariant on every path).
         let materializedRef: ResultRef | undefined;
-        if (condensedResult && deps.materializeFullOutput) {
+        if (
+          deps.materializeFullOutput &&
+          (condensedResult !== undefined || result.response.length > SUBAGENT_RESULT_SUMMARY_MAX_CHARS)
+        ) {
           const materialized = await deps.materializeFullOutput(result.response, { runId, nowMs: clock.now(), agentId: params.agentId });
           if (materialized && "ref" in materialized && typeof materialized.ref === "string") {
             // Success: the lead drills into the handle on demand (read/grep/jq).
@@ -1898,16 +2991,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }
         }
 
-        // Emit completion event
-        const isSuccess = result.finishReason === "stop" || result.finishReason === "end_turn";
-        deps.eventBus.emit("session:sub_agent_completed", {
-          runId, agentId: params.agentId, success: isSuccess,
-          runtimeMs, tokensUsed: result.tokensUsed.total,
-          cost: result.cost.total, timestamp: completedAt,
+        const completionSummary = condensedResult?.result.summary ?? result.response;
+        const telemetry: SubAgentRunTelemetry = {
+          tokensUsedTotal: result.tokensUsed.total,
+          costTotal: result.cost.total,
+          finishReason: result.finishReason,
+          stepsExecuted: result.stepsExecuted,
           cacheReadTokens: cacheRead,
           cacheWriteTokens: cacheWrite,
-        });
-
+        };
         // Post-execution output validation (best-effort, never blocks)
         let validationResults: ValidationResult[] | undefined;
         if (params.expected_outputs && params.expected_outputs.length > 0) {
@@ -2004,15 +3096,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
             await deps.memoryAdapter.store({
               id: randomUUID(),
-              tenantId: deps.tenantId,
-              agentId: params.agentId,
-              userId: "system",
               content,
               trustLevel: "system",
               source: { who: "sub-agent-runner", sessionKey: formattedKey },
               tags: ["sub-agent-result", "task-completion", ...(abortClassification ? ["aborted"] : [])],
               createdAt: clock.now(),
               sourceType: "tool",
+            }, {
+              turnScope: childTurnScope,
+              visibility: { kind: "agent-shared" },
             });
 
             deps.logger?.debug({ runId, agentId: params.agentId }, "Sub-agent completion persisted to memory");
@@ -2024,6 +3116,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             }, "Sub-agent memory persistence failed");
           }
         }
+
+        // A bounded shutdown may stop the run while post-processing is still
+        // active. The attributed failure notice then owns delivery; never
+        // enqueue a late terminal result behind the final batch drain.
+        if (deliverySuppressedRunIds.has(runId)) return;
 
         // Route provider_degraded to failure notification path
         // When isDegraded() skips the LLM call, executor returns empty response with
@@ -2037,7 +3134,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               task: params.task,
               runtimeMs,
               runId,
+              threadId: resolveAnnouncementThreadId(
+                params.requesterOrigin,
+                params.announceChannelType,
+                params.announceChannelId,
+              ),
+              callerAgentId: params.callerAgentId,
               callerSessionKey: params.callerSessionKey,  // shared dedup key
+              callerConversation: params.callerConversation,
+              destinationEndpoint: run.callerEndpoint,
             }, deps);
           }
         } else if (params.announceChannelType && params.announceChannelId) {
@@ -2048,7 +3153,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             // enriches the status label with errorContext (e.g., "Halted (PromptTimeout, retryable)")
             // which the NarrativeCaster would lose.
             let announcementText: string;
-            if (condensedResult && deps.narrativeCaster && result.finishReason !== "error") {
+            if (condensedResult && deps.narrativeCaster && isSuccess) {
               announcementText = deps.narrativeCaster.cast({
                 condensedResult,
                 task: params.task,
@@ -2065,10 +3170,18 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               // Legacy fallback: no condenser or no caster
               announcementText = buildAnnouncementMessage({
                 task: params.task,
-                status: "completed",
-                response: condensedResult
-                  ? `${condensedResult.result.summary}${fullResultLine}`
-                  : sanitizeAssistantResponse(result.response),
+                status: isSuccess ? "completed" : "failed",
+                ...(isSuccess
+                  ? {
+                      response: condensedResult
+                        ? `${condensedResult.result.summary}${fullResultLine}`
+                        : sanitizeAssistantResponse(result.response),
+                    }
+                  : {
+                      error: condensedResult
+                        ? `${condensedResult.result.summary}${fullResultLine}`
+                        : sanitizeAssistantResponse(result.response),
+                    }),
                 runtimeMs,
                 stepsExecuted: result.stepsExecuted,
                 tokensUsed: result.tokensUsed.total,
@@ -2084,9 +3197,24 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               announcementText,
               announceChannelType: params.announceChannelType,
               announceChannelId: params.announceChannelId,
+              announceThreadId: resolveAnnouncementThreadId(
+                params.requesterOrigin,
+                params.announceChannelType,
+                params.announceChannelId,
+              ),
               callerAgentId: params.callerAgentId,
               callerSessionKey: params.callerSessionKey,
+              callerConversation: params.callerConversation,
+              destinationEndpoint: run.callerEndpoint,
+              resolvedLanguage: params.resolvedLanguage,
               runId,
+              ...(validationResults?.some((output) => output.exists)
+                ? {
+                    attachments: validationResults
+                      .filter((output) => output.exists)
+                      .map((output) => ({ sourceAgentId: params.agentId, path: output.path })),
+                  }
+                : {}),
             }, deps);
           }
         } else {
@@ -2098,55 +3226,95 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }, "Sub-agent announcement skipped: no announce channel");
         }
 
+        if (deliverySuppressedRunIds.has(runId)) return;
+        const completedAt = clock.now();
+        if (isSuccess) {
+          terminalizeRun(runId, {
+            endReason: "completed",
+            completedAtMs: completedAt,
+            summary: completionSummary,
+            ...(materializedRef ? { resultRef: materializedRef } : {}),
+          }, telemetry);
+        } else {
+          terminalizeRun(runId, {
+            endReason: "failed",
+            completedAtMs: completedAt,
+            errorKind: classifyCompletionErrorKind(
+              result.finishReason,
+              result.terminalErrorKind,
+            ),
+            summary: completionSummary || result.errorContext?.originalError,
+            ...(materializedRef ? { resultRef: materializedRef } : {}),
+          }, telemetry);
+        }
+        deps.eventBus.emit("session:sub_agent_completed", {
+          runId,
+          agentId: params.agentId,
+          success: isSuccess,
+          runtimeMs: completedAt - run.startedAt,
+          tokensUsed: result.tokensUsed.total,
+          cost: result.cost.total,
+          timestamp: completedAt,
+          cacheReadTokens: cacheRead,
+          cacheWriteTokens: cacheWrite,
+        });
+
         // Safety-net proxy stop — announceToParent's own finally block handles
         // the announcement-scoped typing. This catches edge cases where announcement was skipped.
-        emitProxyStop(run, runId, "completed");
+        emitProxyStop(run, runId, isSuccess ? "completed" : "failed");
 
         // Lifecycle hook - onEnded (success path, after condensation/casting/announcement)
         if (deps.lifecycleHooks) {
-          try {
-            await deps.lifecycleHooks.onEnded({
-              runId,
-              agentId: params.agentId,
-              parentSessionKey: params.callerSessionKey ?? "unknown",
-              childSessionKey: formattedKey,
-              endReason: "completed",
-              condensedResult: condensedResult ? { level: condensedResult.level, condensedTokens: condensedResult.condensedTokens } : undefined,
-              runtimeMs,
-              tokensUsed: result.tokensUsed.total,
-              cost: result.cost.total,
-            });
-          } catch (hookErr) {
+          const lifecycleHooks = deps.lifecycleHooks;
+          Promise.resolve().then(() => lifecycleHooks.onEnded({
+            runId,
+            agentId: params.agentId,
+            parentSessionKey: params.callerSessionKey ?? "unknown",
+            childSessionKey: formattedKey,
+            endReason: isSuccess ? "completed" : "failed",
+            condensedResult: condensedResult ? { level: condensedResult.level, condensedTokens: condensedResult.condensedTokens } : undefined,
+            runtimeMs,
+            tokensUsed: result.tokensUsed.total,
+            cost: result.cost.total,
+          })).catch((hookErr) => {
             deps.logger?.warn({
               runId, err: hookErr,
               hint: "onSubagentEnded hook failed; result already delivered",
               errorKind: "internal" as const,
             }, "Lifecycle hook onEnded failed");
-          }
+          });
         }
+
       } catch (error: unknown) {
         // Guard: if already killed, skip error handling logic
-        if (run.status === "failed") return;
+        if (deliverySuppressedRunIds.has(runId)) return;
+        const authoritativeRun = runs.get(runId);
+        if (
+          authoritativeRun?.status === "completed" ||
+          authoritativeRun?.status === "failed"
+        ) return;
 
         const completedAt = clock.now();
-        run.status = "failed";
-        run.completedAt = completedAt;
-        removeDedupEntry(run);
         const errorMessage = error instanceof Error ? error.message : String(error);
-        run.error = errorMessage;
-
+        const admissionRejected = error instanceof DurableSubAgentAdmissionError;
         const runtimeMs = completedAt - run.startedAt;
+        terminalizeRun(runId, {
+          endReason: "failed",
+          completedAtMs: completedAt,
+          errorKind: "internal",
+          summary: errorMessage,
+        });
 
         deps.logger?.error({
           runId,
           durationMs: runtimeMs,
-          err: error,
+          err: toSafeErrorLogString(error),
           hint: "Sub-agent execution failed; check agent config, model availability, and API key",
           errorKind: "internal" as const,
         }, "Sub-agent execution failed");
 
         // Persist failure record BEFORE rollback deletes the directory
-        if (deps.dataDir) {
+        if (deps.dataDir && !admissionRejected) {
           await persistFailureRecord({
             dataDir: deps.dataDir,
             sessionKey: formattedKey,
@@ -2199,16 +3367,24 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         emitProxyStop(run, runId, "failed");
 
         // Announce failure to channel -- LLM-free direct send
-        if (params.announceChannelType && params.announceChannelId) {
+        if (!admissionRejected && params.announceChannelType && params.announceChannelId) {
           await deliverFailureNotification({
             channelType: params.announceChannelType,
             channelId: params.announceChannelId,
             task: params.task,
             runtimeMs,
             runId,
+            threadId: resolveAnnouncementThreadId(
+              params.requesterOrigin,
+              params.announceChannelType,
+              params.announceChannelId,
+            ),
+            callerAgentId: params.callerAgentId,
             callerSessionKey: params.callerSessionKey,  // shared dedup key
+            callerConversation: params.callerConversation,
+            destinationEndpoint: run.callerEndpoint,
           }, deps);
-        } else {
+        } else if (!admissionRejected) {
           // Log explicit reason when failure announcement cannot be routed
           deps.logger?.debug({
             runId,
@@ -2218,40 +3394,34 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }
 
         // Lifecycle hook - onEnded (failure path)
-        if (deps.lifecycleHooks) {
-          try {
-            await deps.lifecycleHooks.onEnded({
-              runId,
-              agentId: params.agentId,
-              parentSessionKey: params.callerSessionKey ?? "unknown",
-              childSessionKey: formattedKey,
-              endReason: "failed",
-              runtimeMs,
-              tokensUsed: 0,
-              cost: 0,
-            });
-          } catch (hookErr) {
+        if (deps.lifecycleHooks && !admissionRejected) {
+          const lifecycleHooks = deps.lifecycleHooks;
+          Promise.resolve().then(() => lifecycleHooks.onEnded({
+            runId,
+            agentId: params.agentId,
+            parentSessionKey: params.callerSessionKey ?? "unknown",
+            childSessionKey: formattedKey,
+            endReason: "failed",
+            runtimeMs,
+            tokensUsed: 0,
+            cost: 0,
+          })).catch((hookErr) => {
             deps.logger?.warn({
               runId, err: hookErr,
               hint: "onSubagentEnded hook failed in error path",
               errorKind: "internal" as const,
             }, "Lifecycle hook onEnded failed");
-          }
+          });
         }
       } finally {
+        providerSettledRunIds.delete(runId);
         // Release the child's trajectory recorder on EVERY terminal settle —
         // completion, natural failure, kill, and watchdog all flow through
         // this promise. Without it the dead child's recorder stays subscribed
         // to the shared event bus for the daemon's lifetime and keeps
         // ingesting other sessions' events into its trajectory file (stamped
         // with the dead child's sessionId).
-        if (deps.closeTrajectory) {
-          try {
-            await deps.closeTrajectory(run.sessionKey);
-          } catch (closeErr) {
-            deps.logger?.debug({ runId, err: closeErr }, "Sub-agent trajectory close best-effort failed");
-          }
-        }
+        closeTrajectoryOnce(run);
       }
     })();
 
@@ -2264,16 +3434,21 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       : maxRunMs;
 
     const watchdogTimer = timers.setTimeout(() => {
-      // Guard: if already completed/failed/killed, skip
-      if (run.status !== "running") return;
+      const authoritativeRun = runs.get(runId);
+      if (authoritativeRun?.status !== "running") return;
 
       const completedAt = clock.now();
       const runtimeMs = completedAt - run.startedAt;
 
-      run.status = "failed";
-      run.completedAt = completedAt;
-      run.error = `Execution timeout: exceeded ${runTimeoutMs}ms wall-clock limit`;
-      removeDedupEntry(run);
+      deliverySuppressedRunIds.add(runId);
+      const errorMessage = `Execution timeout: exceeded ${runTimeoutMs}ms wall-clock limit`;
+      terminalizeRun(runId, {
+        endReason: "watchdog_timeout",
+        completedAtMs: completedAt,
+        errorKind: "timeout",
+        summary: errorMessage,
+      });
+      forceTerminalCleanup(run);
 
       deps.logger?.error({
         runId, agentId: run.agentId,
@@ -2290,7 +3465,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             sessionKey: run.sessionKey,
             runId,
             task: run.task,
-            error: run.error,
+            error: errorMessage,
             endReason: "watchdog_timeout",
             runtimeMs,
           }, deps.logger),
@@ -2303,7 +3478,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       // resolver makes the `(agentId, channelType, channelId)` triple
       // explicit so multi-agent collisions are distinguishable.
       if (deps.sessionResolver) {
-        const handle = deps.sessionResolver.resolveActiveSession(deriveCompositeForRun(run));
+        const handle = deps.sessionResolver.resolveActiveSession(run.conversationRef);
         if (handle) {
           handle.abort().catch((abortErr: unknown) => {
             deps.logger?.debug({ runId, err: abortErr }, "Watchdog SDK abort best-effort failed");
@@ -2322,15 +3497,22 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       // Deliver failure notification (LLM-free)
       if (params.announceChannelType && params.announceChannelId) {
-        deliverFailureNotification({
+        trackFailureNotification(deliverFailureNotification({
           channelType: params.announceChannelType,
           channelId: params.announceChannelId,
           task: params.task,
           runtimeMs,
           runId,
+          threadId: resolveAnnouncementThreadId(
+            params.requesterOrigin,
+            params.announceChannelType,
+            params.announceChannelId,
+          ),
+          callerAgentId: params.callerAgentId,
           callerSessionKey: params.callerSessionKey,  // shared dedup key
-        // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
-        }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
+          callerConversation: params.callerConversation,
+          destinationEndpoint: run.callerEndpoint,
+        }, deps));
       }
 
       // Lifecycle hook (fire-and-forget)
@@ -2353,13 +3535,20 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         });
       }
     }, runTimeoutMs);
+    watchdogTimers.set(runId, watchdogTimer);
 
     // Clear watchdog on normal completion/failure
-    execPromise.finally(() => watchdogTimer.cancel());
+    execPromise.finally(() => {
+      watchdogTimer.cancel();
+      watchdogTimers.delete(runId);
+    });
 
     activePromises.add(execPromise);
+    activeRunIds.add(runId);
     execPromise.finally(() => {
       activePromises.delete(execPromise);
+      activeRunIds.delete(runId);
+      deliverySuppressedRunIds.delete(runId);
       // Release the tree-wide ceiling slot this run reserved (idempotent;
       // a no-op for promoted queued runs, which never acquired). This fires for
       // EVERY started run on its terminal settle — completion, failure, AND a
@@ -2367,10 +3556,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       // executeAgent promise still settles here), so a long-running tree's slots
       // are reclaimed rather than monotonically leaking.
       releaseCeilingSlotOnce(run);
-      // The SAME universal terminal seam — mark the
-      // durable record completed + clear its keep-alive heartbeat (no leaked
-      // interval). Inert + idempotent when no durable store is wired.
-      finishDurableCheckpoint(run);
       // Stop the read-only progress fork on the same universal terminal
       // seam so it never outlives the child (no leaked timer).
       stopProgressFork(run);
@@ -2431,11 +3616,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
    */
   function getRunBySessionKey(sessionKey: string): SubAgentRun | undefined {
     if (!sessionKey) return undefined;
-    let best: SubAgentRun | undefined;
+    let best: SubAgentQueuedRun | SubAgentRunningRun | undefined;
     for (const run of runs.values()) {
       if (run.sessionKey !== sessionKey) continue;
       if (run.status !== "running" && run.status !== "queued") continue;
-      if (!best || run.startedAt > best.startedAt) best = run;
+      const admittedAt = run.status === "queued" ? run.queuedAt : run.startedAt;
+      const bestAdmittedAt = best?.status === "queued" ? best.queuedAt : best?.startedAt;
+      if (!best || admittedAt > (bestAdmittedAt ?? 0)) best = run;
     }
     return best;
   }
@@ -2492,12 +3679,19 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
 
     const killedBy = opts?.killedBy ?? "parent";
-    run.status = "failed";
-    run.completedAt = clock.now();
-    removeDedupEntry(run);
-    run.error = opts?.reason
+    deliverySuppressedRunIds.add(runId);
+    const killedAt = clock.now();
+    const errorMessage = opts?.reason
       ?? (killedBy === "parent" ? "Killed by parent agent" : `Killed by ${killedBy}`);
-    const killRuntimeMs = run.completedAt! - run.startedAt;
+    const runBeganAt = run.status === "queued" ? run.queuedAt : run.startedAt;
+    const killRuntimeMs = Math.max(0, killedAt - runBeganAt);
+    terminalizeRun(runId, {
+      endReason: "killed",
+      completedAtMs: killedAt,
+      errorKind: killedBy === "health_monitor" ? "timeout" : "precondition",
+      summary: errorMessage,
+    });
+    forceTerminalCleanup(run);
 
     // Persist failure record for killed runs (fire-and-forget, belt-defense)
     if (deps.dataDir) {
@@ -2507,7 +3701,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           sessionKey: run.sessionKey,
           runId,
           task: run.task,
-          error: run.error!,
+          error: errorMessage,
           endReason: "killed",
           runtimeMs: killRuntimeMs,
           killedBy,
@@ -2527,13 +3721,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       runtimeMs: killRuntimeMs,
       ...(opts?.idleMs !== undefined ? { idleMs: opts.idleMs } : {}),
       ...(opts?.thresholdMs !== undefined ? { thresholdMs: opts.thresholdMs } : {}),
-      timestamp: run.completedAt!,
+      timestamp: killedAt,
     });
 
     // Abort the in-flight SDK session via composite-key resolver
     // (best-effort).
     if (deps.sessionResolver) {
-      const handle = deps.sessionResolver.resolveActiveSession(deriveCompositeForRun(run));
+      const handle = deps.sessionResolver.resolveActiveSession(run.conversationRef);
       if (handle) {
         handle.abort().catch((abortErr: unknown) => {
           deps.logger?.debug(
@@ -2549,17 +3743,17 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // CRITICAL: Do NOT emit session:sub_agent_completed AND call notifyNodeFailed --
     // both paths call handleSubAgentCompleted synchronously, causing runningCount to go to -1.
     if (run.graphId && run.nodeId && graphCoordinatorRef) {
-      graphCoordinatorRef.notifyNodeFailed(run.graphId, run.nodeId, runId, run.error!);
+      graphCoordinatorRef.notifyNodeFailed(run.graphId, run.nodeId, runId, errorMessage);
     } else {
       // Non-graph runs: use existing event bus path
       deps.eventBus.emit("session:sub_agent_completed", {
         runId,
         agentId: run.agentId,
         success: false,
-        runtimeMs: run.completedAt! - run.startedAt,
+        runtimeMs: killRuntimeMs,
         tokensUsed: 0,
         cost: 0,
-        timestamp: run.completedAt!,
+        timestamp: killedAt,
       });
     }
 
@@ -2570,18 +3764,25 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // the parent only knows about a kill it issued itself; an autonomous
     // health-monitor kill would otherwise be silent until the user asks.
     if (killedBy !== "parent" && run.announceChannelType && run.announceChannelId) {
-      deliverFailureNotification({
+      trackFailureNotification(deliverFailureNotification({
         channelType: run.announceChannelType,
         channelId: run.announceChannelId,
         task: run.task,
         runtimeMs: killRuntimeMs,
         runId,
+        threadId: resolveAnnouncementThreadId(
+          run.requesterOrigin,
+          run.announceChannelType,
+          run.announceChannelId,
+        ),
+        callerAgentId: run.callerAgentId,
         callerSessionKey: run.callerSessionKey,  // shared dedup key
+        callerConversation: run.callerConversation,
+        destinationEndpoint: run.callerEndpoint,
         detail: killedBy === "health_monitor"
           ? `The background task was stopped by the daemon health monitor${opts?.idleMs !== undefined ? ` after ${Math.round(opts.idleMs / 1000)}s without progress` : ""}${opts?.thresholdMs !== undefined ? ` (security.agentToAgent.subagentContext.stuckKillThresholdMs=${opts.thresholdMs})` : ""}.`
           : `The background task was stopped (${killedBy}).`,
-      // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
-      }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
+      }, deps));
     }
 
     deps.logger?.info({
@@ -2589,7 +3790,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       durationMs: killRuntimeMs,
       ...(opts?.idleMs !== undefined ? { idleMs: opts.idleMs } : {}),
       ...(opts?.thresholdMs !== undefined ? { thresholdMs: opts.thresholdMs } : {}),
-      task: run.task.slice(0, 200),
     }, "Sub-agent run killed");
 
     // Lifecycle hook - onEnded (kill path, fire-and-forget)
@@ -2600,7 +3800,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         parentSessionKey: run.callerSessionKey ?? "unknown",
         childSessionKey: run.sessionKey,
         endReason: "killed",
-        runtimeMs: run.completedAt! - run.startedAt,
+        runtimeMs: killRuntimeMs,
         tokensUsed: 0,
         cost: 0,
       }).catch((hookErr) => {
@@ -2650,9 +3850,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
    * narrowed `{ abort(): Promise<void> }` (the kill path only needs abort, and
    * the narrow type avoids a daemon→agent import cycle in those Deps). steerRun
    * needs the FULL RunHandle (steer/followUp/isStreaming/isCompacting). The
-   * RUNTIME handle is complete — pi-executor.ts:1161 builds all five and
-   * registers it under the SAME key the resolver composes (pinned by
-   * sub-agent-runner.steer-resolve.spike.test.ts). So
+   * RUNTIME handle is complete — PiExecutor builds all five and registers it
+   * under the canonical conversation ref. So
    * we re-type the lookups to the full RunHandle at this boundary; this is a
    * pure TS surface widening over an object that already has the methods, not
    * a behavior change.
@@ -2670,25 +3869,156 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       // Deps type omits steer/followUp/isStreaming/isCompacting that the runtime
       // object carries — re-type to the full RunHandle for the inject delegation.
       sessionResolver: deps.sessionResolver as
-        | { resolveActiveSession(key: { agentId: string; channelType: string; channelId: string }): RunHandle | undefined }
-        | undefined,
-      activeRunRegistry: deps.activeRunRegistry as
-        | { get(sessionKey: string): RunHandle | undefined }
+        | { resolveActiveSession(conversationRef: ConversationRef): RunHandle | undefined }
         | undefined,
       logger: deps.logger,
     };
     return steerRunHelper(steerDeps, runId, message);
   }
 
-  async function shutdown(): Promise<void> {
+  async function waitForTrackedPromises(
+    tracked: ReadonlySet<Promise<void>>,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    if (tracked.size === 0) return true;
+    let timeoutHandle: TimerHandle | undefined;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timeoutHandle = timers.setTimeout(() => resolve("timeout"), timeoutMs);
+      timeoutHandle.unref();
+    });
+    while (tracked.size > 0) {
+      const outcome = await Promise.race([
+        Promise.allSettled([...tracked]).then(() => "settled" as const),
+        timeout,
+      ]);
+      if (outcome === "timeout") {
+        timeoutHandle?.cancel();
+        return false;
+      }
+    }
+    timeoutHandle?.cancel();
+    return true;
+  }
+
+  async function performShutdown(): Promise<void> {
     sweepInterval.cancel();
 
-    // Flush any batched announcements before draining active runs
-    if (deps.batcher) {
-      await deps.batcher.shutdown();
+    const activeSettled = await waitForTrackedPromises(
+      activePromises,
+      SHUTDOWN_ACTIVE_GRACE_MS,
+    );
+    if (!activeSettled) {
+      const remaining = new Set(activeRunIds);
+      for (const run of runs.values()) {
+        if (run.status === "queued") remaining.add(run.runId);
+      }
+      for (const runId of remaining) {
+        const run = runs.get(runId);
+        if (!run) continue;
+        if (providerSettledRunIds.has(runId)) {
+          if (run.status === "completed" || run.status === "failed") continue;
+          deliverySuppressedRunIds.add(runId);
+          if (run.status === "running") {
+            const completedAtMs = clock.now();
+            terminalizeRun(runId, {
+              endReason: "killed",
+              completedAtMs,
+              errorKind: "timeout",
+              summary: "Post-processing stopped during daemon shutdown",
+            });
+            forceTerminalCleanup(run);
+            deps.eventBus.emit("session:sub_agent_completed", {
+              runId,
+              agentId: run.agentId,
+              success: false,
+              runtimeMs: Math.max(0, completedAtMs - run.startedAt),
+              tokensUsed: 0,
+              cost: 0,
+              timestamp: completedAtMs,
+            });
+          }
+          if (run.announceChannelType && run.announceChannelId) {
+            trackFailureNotification(deliverFailureNotification({
+              channelType: run.announceChannelType,
+              channelId: run.announceChannelId,
+              task: run.task,
+              runtimeMs: Math.max(
+                0,
+                clock.now() - (
+                  run.status === "queued"
+                    ? run.queuedAt
+                    : run.startedAt ?? clock.now()
+                ),
+              ),
+              runId,
+              threadId: resolveAnnouncementThreadId(
+                run.requesterOrigin,
+                run.announceChannelType,
+                run.announceChannelId,
+              ),
+              callerAgentId: run.callerAgentId,
+              callerSessionKey: run.callerSessionKey,
+              callerConversation: run.callerConversation,
+              destinationEndpoint: run.callerEndpoint,
+              detail: "The background task finished, but result delivery was stopped during daemon shutdown.",
+            }, deps));
+          }
+          continue;
+        }
+        if (run.status === "completed" || run.status === "failed") continue;
+        killRun(runId, {
+          killedBy: "system",
+          reason: "Stopped during daemon shutdown",
+        });
+      }
+      deps.logger?.warn(
+        {
+          activeRunCount: remaining.size,
+          errorKind: "timeout" as const,
+          hint: "Inspect the attributed shutdown failure notices and any retained outward operations",
+        },
+        "Sub-agent shutdown grace expired; remaining runs were stopped",
+      );
     }
 
-    // Drain dead-letter queue before shutdown
+    retryPendingDurableTerminalizations();
+    const [noticesSettled, terminalizationsSettled] = await Promise.all([
+      waitForTrackedPromises(
+        failureNotificationPromises,
+        SHUTDOWN_NOTICE_GRACE_MS,
+      ),
+      waitForTrackedPromises(
+        durableTerminalizationPromises,
+        SHUTDOWN_NOTICE_GRACE_MS,
+      ),
+    ]);
+    if (!noticesSettled) {
+      deps.logger?.warn(
+        {
+          notificationCount: failureNotificationPromises.size,
+          errorKind: "timeout" as const,
+          hint: "Inspect the outward ledger; timed-out governed notices remain retained for recovery",
+        },
+        "Sub-agent shutdown notice grace expired",
+      );
+    }
+    if (!terminalizationsSettled) {
+      deps.logger?.warn(
+        {
+          terminalizationCount: pendingDurableTerminalizations.size,
+          errorKind: "timeout" as const,
+          hint: "Repair durable-run storage before restart; pending terminal reasons could remain resumable",
+        },
+        "Sub-agent durable terminalization drain expired",
+      );
+    }
+
+    // The batcher closes its own admission and waits any reservation already
+    // admitted before this final drain. Stopped runs are status-gated from
+    // producing a late success when their underlying provider call returns.
+    await deps.batcher?.shutdown();
+
+    // Batcher delivery may have persisted a dead letter, so drain it last.
     if (deps.deadLetterQueue) {
       try {
         await deps.deadLetterQueue.drain(deps.sendToChannel, markRecoveredDelivered);
@@ -2697,18 +4027,34 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       }
     }
 
-    if (activePromises.size === 0) return;
+    startDeferreds.clear();
+    durableResumeHandshakeRunIds.clear();
+  }
 
-    // Wait for all active runs with a 30-second timeout
-    const timeout = new Promise<void>((resolve) => {
-      const timer = timers.setTimeout(resolve, 30_000);
-      timer.unref();
-    });
+  function shutdown(): Promise<void> {
+    acceptingSpawns = false;
+    shutdownPromise ??= performShutdown();
+    return shutdownPromise;
+  }
 
-    await Promise.race([
-      Promise.allSettled([...activePromises]),
-      timeout,
-    ]);
+  function spawnAdmissionStatus(): SubAgentSpawnAdmissionState {
+    return {
+      paused: spawnPaused,
+      acceptingSpawns,
+      resetsOnRestart: true,
+    };
+  }
+
+  function pauseSpawns(): SubAgentSpawnAdmissionMutation {
+    const changed = !spawnPaused;
+    spawnPaused = true;
+    return { ...spawnAdmissionStatus(), changed };
+  }
+
+  function resumeSpawns(): SubAgentSpawnAdmissionMutation {
+    const changed = spawnPaused;
+    spawnPaused = false;
+    return { ...spawnAdmissionStatus(), changed };
   }
 
   /** Late-bind graph coordinator for direct kill cascade notification. */
@@ -2727,5 +4073,118 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return { deduped: true, existingRunId: lastDedupHit.existingRunId, ageMs: lastDedupHit.ageMs };
   }
 
-  return { spawn, getRunStatus, getRunBySessionKey, listRuns, killRun, killByRootRun, steerRun, shutdown, setGraphCoordinator, lastSpawnDedupInfo };
+  async function resumeDurable(
+    record: DurableRunRecord,
+    leaseId: string,
+    workspacePolicySnapshot: WorkspacePolicySnapshot,
+  ): Promise<Result<string, Error>> {
+    const loaded = deps.sessionStore.loadByRef(
+      { tenantId: record.tenantId, agentId: record.agentId },
+      record.conversationRef,
+    );
+    if (!loaded.ok) return err(new Error(loaded.error.message));
+    if (loaded.value === undefined) {
+      return err(new Error("Protected sub-agent resume session was not found"));
+    }
+    if (
+      JSON.stringify(loaded.value.conversationScope)
+      !== JSON.stringify(record.conversationScope)
+    ) {
+      return err(new Error("Protected sub-agent resume session authority mismatch"));
+    }
+    const descriptor = parseSubAgentResumeDescriptor(
+      loaded.value.metadata.durableResumeDescriptor,
+    );
+    if (!descriptor.ok) return descriptor;
+    const authority = validateSubAgentResumeAuthority(descriptor.value, record);
+    if (!authority.ok) return authority;
+    if (descriptor.value.workspacePolicyHash !== record.workspacePolicyHash) {
+      return err(new Error("Protected sub-agent resume workspace policy mismatch"));
+    }
+    if (
+      workspacePolicySnapshot.agentId !== record.agentId
+      || workspacePolicySnapshot.combinedHash !== descriptor.value.workspacePolicyHash
+    ) {
+      return err(new Error("Verified sub-agent resume workspace policy mismatch"));
+    }
+    durableResumeHandshakeRunIds.add(record.checkpointId);
+    const resumed = tryCatch(() => spawn({
+      task: descriptor.value.task,
+      agentId: descriptor.value.agentId,
+      callerSessionKey: descriptor.value.callerSessionKey,
+      callerConversation: descriptor.value.callerConversation,
+      callerEndpoint: descriptor.value.callerEndpoint,
+      callerAgentId: descriptor.value.callerAgentId,
+      announceChannelType: descriptor.value.announceChannelType,
+      announceChannelId: descriptor.value.announceChannelId,
+      model: descriptor.value.model,
+      max_steps: descriptor.value.maxSteps,
+      tokenBudget: descriptor.value.tokenBudget,
+      expected_outputs: descriptor.value.expectedOutputs,
+      requesterOrigin: descriptor.value.requesterOrigin,
+      depth: descriptor.value.depth,
+      maxDepth: descriptor.value.maxDepth,
+      rootRunId: descriptor.value.rootRunId,
+      parentLeaseId: leaseId,
+      caps: record.caps,
+      callerType: "durable-resume",
+      reservedRunId: record.checkpointId,
+      callerTrustLevel: record.trustLevel,
+      artifactRefs: descriptor.value.artifactRefs,
+      objective: descriptor.value.objective,
+      domainKnowledge: descriptor.value.domainKnowledge,
+      toolGroups: descriptor.value.toolGroups,
+      resolvedLanguage: descriptor.value.resolvedLanguage,
+      requiredTools: descriptor.value.requiredTools,
+      includeParentHistory: descriptor.value.includeParentHistory,
+      discoveredDeferredTools: descriptor.value.discoveredDeferredTools,
+      graphToolNames: descriptor.value.graphToolNames,
+      worktree: descriptor.value.worktree,
+      workspacePolicyHash: descriptor.value.workspacePolicyHash,
+      workspacePolicySnapshot,
+      reuseConversation: {
+        conversationRef: record.conversationRef,
+        conversationScope: record.conversationScope,
+      },
+      isCronAgentTurn: descriptor.value.isCronAgentTurn,
+      jobId: descriptor.value.jobId,
+      jobName: descriptor.value.jobName,
+    }));
+    if (!resumed.ok) {
+      durableResumeHandshakeRunIds.delete(record.checkpointId);
+      startDeferreds.delete(record.checkpointId);
+      return resumed;
+    }
+    if (resumed.value !== record.checkpointId) {
+      return err(new Error("Durable sub-agent resume execution identity mismatch"));
+    }
+    const started = startDeferreds.get(resumed.value);
+    if (!started) {
+      durableResumeHandshakeRunIds.delete(resumed.value);
+      return err(new Error("Durable sub-agent resume start handshake is missing"));
+    }
+    const admitted = await started.promise;
+    startDeferreds.delete(resumed.value);
+    durableResumeHandshakeRunIds.delete(resumed.value);
+    return admitted.ok ? ok(resumed.value) : admitted;
+  }
+
+  return {
+    spawn,
+    getRunStatus,
+    waitForCompletion,
+    waitForCompletions,
+    getRunBySessionKey,
+    listRuns,
+    killRun,
+    killByRootRun,
+    steerRun,
+    spawnAdmissionStatus,
+    pauseSpawns,
+    resumeSpawns,
+    shutdown,
+    setGraphCoordinator,
+    lastSpawnDedupInfo,
+    resumeDurable,
+  };
 }

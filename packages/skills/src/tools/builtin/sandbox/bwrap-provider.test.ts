@@ -244,6 +244,17 @@ describe("BwrapProvider", () => {
       expect(args).toContain("/shared/reports");
     });
 
+    it("uses an owner-preserving read-only bind for a replay workspace", () => {
+      vi.mocked(existsSync).mockReturnValue(false);
+      const provider = createAvailableProvider();
+      const args = provider.buildArgs(makeOpts({ workspaceReadOnly: true }));
+      const workspaceIndex = args.indexOf("/home/agent/workspace");
+
+      expect(workspaceIndex).toBeGreaterThan(0);
+      expect(args[workspaceIndex - 1]).toBe("--ro-bind");
+      expect(args[workspaceIndex + 1]).toBe("/home/agent/workspace");
+    });
+
     it("includes --ro-bind for readOnlyPaths that exist, skips those that don't", () => {
       vi.mocked(existsSync).mockImplementation((p) => {
         return String(p) === "/opt/tools";

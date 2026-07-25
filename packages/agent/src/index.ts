@@ -5,6 +5,12 @@
 
 // Executor types
 export type { AgentExecutor, ExecutionResult, ExecutionOverrides } from "./executor/types.js";
+export { retainLastCompleteUserTurns } from "./session/bounded-session-history.js";
+export { pruneAcknowledgedHeartbeatTurn } from "./session/acknowledged-heartbeat-turn.js";
+export { replaceContextStoreHistory } from "./session/context-history-replacement.js";
+export {
+  readExecutionResultJournal,
+} from "./session/execution-result-journal.js";
 
 // Step counter
 export { createStepCounter } from "./executor/step-counter.js";
@@ -157,6 +163,7 @@ export type { LastKnownModelTracker, LastKnownModelEntry } from "./model/last-kn
 // Session lifecycle
 export { createSessionLifecycle } from "./session/session-lifecycle.js";
 export type { SessionLifecycle, SessionLifecycleOptions } from "./session/session-lifecycle.js";
+export { createDeliveredAssistantHistoryAdapter } from "./session/delivered-assistant-history.js";
 
 // Session label store (human-readable session names via metadata.label)
 export { createSessionLabelStore } from "./session/session-label-store.js";
@@ -256,7 +263,6 @@ export type {
   BootstrapFile,
   TruncationResult,
   PromptMode,
-  RuntimeInfo,
   BootstrapContextFile,
   AssemblerParams,
   SystemPromptBlocks,
@@ -273,6 +279,7 @@ export type {
 // heartbeat code via the agent barrel (it sits next to the workspace helpers
 // as a workspace-state probe).
 export { isHeartbeatContentEffectivelyEmpty } from "./workspace/index.js";
+export { createFilesystemWorkspacePolicyAdapter } from "./workspace/index.js";
 
 // File-state tracker registry (per-session lifetime)
 export { createSessionTrackerRegistry } from "./file-state/session-tracker-registry.js";
@@ -292,6 +299,10 @@ export { wrapInEnvelope, formatElapsed } from "./envelope/index.js";
 // PiExecutor core
 export { createPiExecutor } from "./executor/pi-executor/index.js";
 export type { PiExecutorDeps } from "./executor/pi-executor/index.js";
+
+// Canonical reply-locale resolution for composition-root boundaries that must
+// persist the current turn's language across process restarts.
+export { resolveResponseLocalePolicy } from "./executor/resolve-response-locale-policy.js";
 
 // ExecutionPlanPort holder — the composition root builds the holder,
 // threads it into bootstrapSession's ctx so SEP publishes the live per-turn
@@ -384,8 +395,9 @@ export type { PiEventBridgeDeps, PiEventBridgeResult, BoundedAutonomyBudgetHolde
 // Adapters (re-export for daemon wiring convenience)
 // ---------------------------------------------------------------------------
 
-// Auth storage adapter (SecretManager to pi-coding-agent AuthStorage)
+// Credential store adapter (SecretManager to pi-ai CredentialStore)
 export {
+  ComisCredentialStore,
   createAuthStorageAdapter,
   getMissingProviderCredentialNames,
   getProviderSecretNames,
@@ -396,10 +408,19 @@ export type { AuthStorage, AuthStorageAdapterOptions } from "./model/auth-storag
 
 // Model registry adapter (ModelRegistry creation + initial model resolution)
 export { createModelRegistryAdapter, registerCustomProviders, resolveInitialModel, normalizeOpenAICompatBaseUrl } from "./model/model-registry-adapter.js";
-export type { CustomProviderRegistration, CustomProviderLogger, RegisterCustomProvidersResult } from "./model/model-registry-adapter.js";
+export type { CustomProviderRegistration, CustomProviderLogger, RegisterCustomProvidersResult, ModelRegistryAdapter } from "./model/model-registry-adapter.js";
 
 // Session key mapper (SessionKey to/from filesystem path)
-export { sessionKeyToPath, pathToSessionKey } from "./session/session-key-mapper.js";
+export {
+  INBOUND_MESSAGE_LEDGER_SUFFIX,
+  inboundMessageLedgerPathToSessionKey,
+  pathToSessionKey,
+  sessionKeyToPath,
+} from "./session/session-key-mapper.js";
+export type {
+  InboundMessageProvenancePlan,
+} from "./session/inbound-message-provenance.js";
+export { isSyntheticSessionUserMessage } from "./session/synthetic-user-messages.js";
 
 // ---------------------------------------------------------------------------
 // LLM prompting improvements
@@ -417,7 +438,10 @@ export { isContextOverflowError, truncateContextForRecovery } from "./safety/con
 export type { ContextTruncationResult } from "./safety/context-truncation-recovery.js";
 
 // Hybrid memory injector (split RAG results: inline + system prompt)
-export { createHybridMemoryInjector } from "./rag/hybrid-memory-injector.js";
+export {
+  createHybridMemoryInjector,
+  stripInlineRecalledMemory,
+} from "./rag/hybrid-memory-injector.js";
 export type { HybridMemoryInjector, HybridMemoryInjection } from "./rag/hybrid-memory-injector.js";
 export { createMemoryRecall } from "./rag/memory-recall.js";
 export type { MemoryRecall, MemoryRecallDeps, MemoryRecallConfig } from "./rag/memory-recall.js";
@@ -448,9 +472,14 @@ export type { NarrativeCasterConfig, CastParams } from "./spawn/index.js";
 export { createLifecycleHooks, deriveSubagentContextEngineConfig } from "./spawn/index.js";
 export type { LifecycleHooksDeps } from "./spawn/index.js";
 export { createEphemeralComisSessionManager } from "./spawn/index.js";
-export { createSubAgentRunner, ANNOUNCE_PARENT_TIMEOUT_MS } from "./spawn/index.js";
-export type { SubAgentRunnerDeps, SubAgentRun, SpawnParams, SubAgentRunnerLogger } from "./spawn/index.js";
-export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification, classifyErrorContext } from "./spawn/index.js";
+export { createSubAgentRunner, SUB_AGENT_SHUTDOWN_TIMEOUT_MS } from "./spawn/index.js";
+export type {
+  SubAgentRunnerDeps,
+  SubAgentRun,
+  SpawnParams,
+  SubAgentRunnerLogger,
+} from "./spawn/index.js";
+export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification } from "./spawn/index.js";
 export { createDeliveryDedup } from "./spawn/index.js";
 export type { DeliveryDedup } from "./spawn/index.js";
 export { comparePosture, resolvePostureFromSkills } from "./spawn/index.js";
@@ -572,6 +601,7 @@ export type { CorrectionVerdict } from "./memory/index.js";
 // gate never sees an orphan. The prompt + triple-bound + the reward cap stay
 // agent-internal (the daemon `observe()`s the seam's already-capped `cappedConfidence`).
 export { createOutcomeJudgeSeam } from "./memory/index.js";
+export type { OutcomeVerdict } from "./memory/index.js";
 // CustomCompletionsModelSpec is consumed by the daemon's judge resolvers;
 // resolveJudgeModel stays package-internal (the seams import it relatively).
 export type { CustomCompletionsModelSpec } from "./memory/index.js";

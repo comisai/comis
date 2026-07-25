@@ -135,9 +135,10 @@ Token issuance is a two-step operator workflow.
             # Permission-gated tools this client may invoke. Tools NOT in this
             # list (and not in the always-on "safe" bucket) are hidden.
             allowlist: ["memory_search", "web_search", "session_search"]
-            # Sessions this client may read via resources/*. Empty = no
-            # session resources visible.
-            sessionAllowlist: ["default:discord:guild123:channel456:user789"]
+            # Sessions this client may read via resources/*, addressed by their
+            # opaque conversation_ref (copy them from sessions_list /
+            # context.conversations output). Empty = no session resources visible.
+            sessionAllowlist: ["cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o"]
             # Per-tool rate-limit override (calls / minute). Omitted tools
             # use the 30/min default.
             toolRateLimit:
@@ -196,7 +197,7 @@ The `gateway.tokens[i].mcpClient` block has three optional fields:
 | Field | Type | Default | Purpose |
 | ----- | ---- | ------- | ------- |
 | `allowlist` | `string[]` | `[]` | Permission-gated tools this token may invoke. Tools in the `safe` bucket are exposed even with an empty allowlist. Tools NOT in this list and NOT in `safe` are hidden from `tools/list` and rejected on `tools/call`. |
-| `sessionAllowlist` | `string[]` | `[]` | Session keys this token may read via `resources/list` and `resources/read`. Session-key format: `{agent}:{channelType}:{channelId}:{userId}` (e.g. `default:discord:guild123:channel456:user789`). Empty means no session resources visible. |
+| `sessionAllowlist` | `string[]` | `[]` | Sessions this token may read via `resources/list` and `resources/read`, addressed by their opaque `conversation_ref` (e.g. `cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o`) — the same reference `sessions_list` / `context.conversations` surface and `session.reset_conversation` / `session.delete` take. Empty means no session resources visible. |
 | `toolRateLimit` | `Record<string, number>` | `{}` | Per-tool rate-limit override in calls/minute. Tools not listed use the 30/min default. Buckets reset on the UTC-minute boundary. |
 
 <Note>
@@ -327,7 +328,7 @@ URI, set a short TTL or invalidate on every conversation turn.
 | `403 disjoint-scope violation` | Token co-issues `admin` and `mcp-client` | Config validation should have caught this at load time. Re-mint the token with only `mcp-client`; check daemon logs for the `[scope_disjointness]` line. |
 | `tools/list` returns only 3 tools | Empty `mcpClient.allowlist` — only `safe` tools surface | Add the permission-gated tool names you want exposed to `mcpClient.allowlist` and reload. |
 | `[rate_limit_exceeded]` on every call | Default 30/min/tool exhausted | Tune via `mcpClient.toolRateLimit[name]` for the specific tool; or wait until the next UTC-minute boundary (`resetAt` in the error). |
-| `resources/list` returns empty | `mcpClient.sessionAllowlist` is empty | Add the specific session keys you want exposed. Format: `{agent}:{channelType}:{channelId}:{userId}`. |
+| `resources/list` returns empty | `mcpClient.sessionAllowlist` is empty | Add the `conversation_ref` of each session you want exposed (copy them from `sessions_list` / `context.conversations` output). |
 | Silent connection close after `initialize` | SDK version mismatch | Verify client SDK >= 1.20.0. Check daemon logs for `protocol-version-negotiation-failed`. |
 
 ## What's NOT exposed

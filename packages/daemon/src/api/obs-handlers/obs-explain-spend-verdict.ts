@@ -24,7 +24,7 @@
  * must out-rank the chronic noise.
  *
  * Keys on the metadata-derived endReason (END_REASON_MAP spend_exceeded →
- * "spend_exceeded"). The frozen 678/503 fixtures carry no endReason
+ * "spend_exceeded"). The established cost and breaker fixtures carry no endReason
  * "spend_exceeded" ⇒ cannot regress them. The detail NAMES the config key family
  * the operator turns (the "name the exact knob" doctrine); the exact breached
  * scope + per-scope $ amounts live on the content-free spend.exceeded trajectory

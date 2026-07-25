@@ -12,14 +12,15 @@
 
 import * as fs from "node:fs/promises";
 import {
+  DEFAULT_TEMPLATES,
+  WORKSPACE_FILE_NAMES,
   safePath,
   PathTraversalError,
   stripInvisible,
   detectSuspiciousPatterns,
   WORKSPACE_SCANNER_PATTERNS,
 } from "@comis/core";
-import { WORKSPACE_FILE_NAMES } from "../workspace/templates.js";
-import type { WorkspaceFileName } from "../workspace/templates.js";
+import type { WorkspaceFileName } from "@comis/core";
 import { BOOT_FILE_NAME } from "../workspace/boot-file.js";
 import type { BootstrapFile, BootstrapContextFile, TruncationResult } from "./types.js";
 import {
@@ -150,6 +151,9 @@ export async function loadWorkspaceBootstrapFiles(
 
     try {
       const content = await fs.readFile(filePath, "utf-8");
+      if (content === DEFAULT_TEMPLATES[name]) {
+        continue;
+      }
       files.push({ name, path: filePath, content, missing: false });
     } catch {
       // File doesn't exist or not readable -- mark as missing

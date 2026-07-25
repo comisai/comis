@@ -85,7 +85,12 @@ export function runCacheBreakpointPhase(
     if (promptBlocks.attribution) {
       blocks.push({ type: "text" as const, text: promptBlocks.attribution });
     }
-    blocks.push({ type: "text" as const, text: promptBlocks.semiStableBody });
+    // Provider request schemas reject zero-length text members. Prompt
+    // compilation can legitimately omit this section for minimal operations,
+    // so preserve that omission instead of serializing an empty block.
+    if (promptBlocks.semiStableBody) {
+      blocks.push({ type: "text" as const, text: promptBlocks.semiStableBody });
+    }
     result.system = blocks;
     // Only last system block gets cache_control -- cumulative hash covers
     // all prior blocks. Frees 2 breakpoint slots for message breakpoints.
@@ -102,8 +107,9 @@ export function runCacheBreakpointPhase(
     );
   }
 
-  // Log first system prompt block hash for prefix-matching debug.
-  // Runs after multi-block injection so the hash reflects the final static prefix.
+  // Log only content-free structural metadata for prefix-matching diagnostics.
+  // This runs after multi-block injection so the hash reflects the final static
+  // prefix; the prompt text itself must never enter a log sink.
   if (Array.isArray(result.system)) {
     const sysBlocks = result.system as Array<Record<string, unknown>>;
     if (sysBlocks.length > 0 && typeof sysBlocks[0]?.text === "string") {
@@ -111,7 +117,6 @@ export function runCacheBreakpointPhase(
       logger.debug(
         {
           firstBlockHash: djb2(text),
-          firstBlockSnippet: text.slice(0, 80).replace(/\n/g, "\\n"),
           blockCount: sysBlocks.length,
           modelId: model.id,
         },

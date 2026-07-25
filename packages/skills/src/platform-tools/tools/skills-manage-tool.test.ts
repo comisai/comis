@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createSkillsManageTool } from "./skills-manage-tool.js";
-import { runWithContext } from "@comis/core";
+import { createDeliveryOrigin, runWithContext } from "@comis/core";
 import type { RequestContext, ApprovalGate } from "@comis/core";
 
 // Mock @comis/core: preserve real implementations, override safePath
@@ -23,10 +23,23 @@ function makeContext(trustLevel: "admin" | "user" | "guest"): RequestContext {
   return {
     tenantId: "default",
     userId: "test-user",
-    sessionKey: "test-session",
+    agentId: "test-agent",
+    sessionKey: "default:agent:test-agent:test-user:chat-1",
+    turnScope: {
+      conversation: { tenantId: "default", agentId: "test-agent", partition: { kind: "agent" } },
+      principal: { principalId: "test-user" },
+      endpoint: { channelType: "telegram", channelInstanceId: "test-instance", conversationId: "chat-1", conversationKind: "direct" },
+    },
     traceId: crypto.randomUUID(),
     startedAt: Date.now(),
     trustLevel,
+    channelType: "telegram",
+    deliveryOrigin: createDeliveryOrigin({
+      tenantId: "default",
+      userId: "test-user",
+      channelType: "telegram",
+      channelId: "chat-1",
+    }),
   };
 }
 
@@ -230,7 +243,7 @@ describe("skills_manage tool", () => {
         expect.objectContaining({
           toolName: "skills_manage",
           action: "skills.import",
-          params: expect.objectContaining({ scope: "shared" }),
+          fingerprintParams: expect.objectContaining({ scope: "shared" }),
         }),
       );
     });
@@ -256,7 +269,7 @@ describe("skills_manage tool", () => {
         expect.objectContaining({
           toolName: "skills_manage",
           action: "skills.delete",
-          params: expect.objectContaining({ scope: "shared" }),
+          fingerprintParams: expect.objectContaining({ scope: "shared" }),
         }),
       );
     });

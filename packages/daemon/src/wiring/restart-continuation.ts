@@ -8,7 +8,8 @@
  */
 
 import { readFileSync, unlinkSync, existsSync } from "node:fs";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, tryGetContext, type NormalizedMessage } from "@comis/core";
+import { resolveResponseLocalePolicy } from "@comis/agent";
 import { writeRegularFile } from "@comis/observability";
 import type { ComisLogger } from "@comis/infra";
 import type { McpConnection } from "@comis/skills";
@@ -36,15 +37,19 @@ export interface ContinuationRecord {
    * inbound carries no chat-type metadata.
    */
   chatType?: string;
+  /** Resolved response locale carried into the synthetic replay context. */
+  resolvedLanguage?: string;
   tenantId: string;
   timestamp: number;
 }
 
-/** In-memory tracker for recently-active sessions. */
+/** In-memory tracker for sessions with channel turns still in flight. */
 export interface RestartContinuationTracker {
-  /** Upsert a session record (called after each successful inbound message). */
+  /** Mark a channel turn active before inbound processing starts. */
   track(record: ContinuationRecord): void;
-  /** Check if a session has been active since the tracker was created. */
+  /** Mark one active turn complete after inbound processing settles successfully. */
+  complete(record: Pick<ContinuationRecord, "channelType" | "channelId" | "userId" | "peerId">): void;
+  /** Check if a session still has at least one channel turn in flight. */
   isTracked(record: Pick<ContinuationRecord, "channelType" | "channelId" | "userId" | "peerId">): boolean;
   /**
    * Write recent records to disk. Returns the count written.
@@ -69,33 +74,67 @@ export interface RestartContinuationTracker {
   ): number;
 }
 
+/** Resolve the language that a future synthetic restart turn must retain. */
+export function resolveContinuationLanguage(
+  message: Pick<NormalizedMessage, "metadata" | "originalMessages" | "text">,
+  explicitLocale?: string,
+): string | undefined {
+  if (message.metadata.isRestartContinuation === true) {
+    return tryGetContext()?.resolvedLanguage;
+  }
+  return resolveResponseLocalePolicy({
+    explicitLocale,
+    requestLocale: typeof message.metadata.locale === "string"
+      ? message.metadata.locale
+      : undefined,
+    requestText: message.originalMessages?.map((original) => original.text).join("\n")
+      ?? message.text,
+  }).locale;
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
 /**
- * Create an in-memory tracker that stores the most recent activity per session.
- * On shutdown, `capture()` writes records within the recent window to a JSON file.
+ * Create an in-memory tracker that stores the newest in-flight turn per session.
+ * On shutdown, `capture()` writes active records within the recent window to a JSON file.
  */
 export function createRestartContinuationTracker(): RestartContinuationTracker {
-  const records = new Map<string, ContinuationRecord>();
+  const records = new Map<string, { record: ContinuationRecord; activeCount: number }>();
 
-  function makeKey(r: ContinuationRecord): string {
+  function makeKey(r: Pick<ContinuationRecord, "channelType" | "channelId" | "userId" | "peerId">): string {
     return `${r.channelType}:${r.channelId}:${r.userId}:${r.peerId ?? ""}`;
   }
 
   return {
     track(record) {
-      records.set(makeKey(record), { ...record, timestamp: systemNowMs() });
+      const key = makeKey(record);
+      const activeCount = (records.get(key)?.activeCount ?? 0) + 1;
+      records.set(key, {
+        record: { ...record, timestamp: systemNowMs() },
+        activeCount,
+      });
+    },
+
+    complete(record) {
+      const key = makeKey(record);
+      const active = records.get(key);
+      if (!active) return;
+      if (active.activeCount > 1) {
+        records.set(key, { ...active, activeCount: active.activeCount - 1 });
+        return;
+      }
+      records.delete(key);
     },
 
     isTracked(record) {
-      return records.has(makeKey(record as ContinuationRecord));
+      return records.has(makeKey(record));
     },
 
     capture(filePath, recentWindowMs, confinedBaseDir, logger) {
       const now = systemNowMs();
-      const recent = Array.from(records.values()).filter(
+      const recent = Array.from(records.values(), ({ record }) => record).filter(
         (r) => now - r.timestamp < recentWindowMs,
       );
       if (recent.length === 0) return 0;

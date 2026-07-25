@@ -14,7 +14,7 @@
  *   |--------------------------------------|------------------------------------------|
  *   | at-most-once dispatchState gate      | DEDUPE — N input_needed → 1 woken turn   |
  *   | transitionDispatchState→persistTask  | PERSIST — survives daemon restart        |
- *   | sessionStore.loadByFormattedKey      | ACTIVE-CHECK — drop dead-session wakes    |
+ *   | authority-scoped session lookup      | ACTIVE-CHECK — drop dead-session wakes    |
  *   | maxBackgroundHops → fireFallback     | HOP-LIMIT → forced ESCALATION             |
  *   | (n/a — one-shot)                     | BOUNDED RE-ENTRY (maxConcurrentAttentionTurns) |
  *   | suppressError failure isolation      | suppressError on the woken turn           |

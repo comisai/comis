@@ -201,7 +201,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
         deps.container.eventBus.emit("audit:event", {
           timestamp: systemNowMs(),
           agentId: "system",
-          tenantId: deps.container.config.tenantId ?? "default",
+          tenantId: deps.container.config.tenantId,
           actionType: "env.set",
           classification: "destructive",
           outcome: "success",
@@ -245,7 +245,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
         deps.container.eventBus.emit("audit:event", {
           timestamp: systemNowMs(),
           agentId: "system",
-          tenantId: deps.container.config.tenantId ?? "default",
+          tenantId: deps.container.config.tenantId,
           actionType: "env.set",
           classification: "destructive",
           outcome: "failure",
@@ -345,7 +345,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       deps.container.eventBus.emit("audit:event", {
         timestamp: systemNowMs(),
         agentId: (rawParams._agentId as string | undefined) ?? "system",
-        tenantId: deps.container.config.tenantId ?? "default",
+        tenantId: deps.container.config.tenantId,
         actionType: "env.list",
         classification: "read",
         outcome: "success",

@@ -13,10 +13,12 @@ import {
   type AppendCondensedSummaryInput,
   type AppendMessageInput,
   type AppendSummaryInput,
+  type ConversationRef,
   type ContextStoreScope,
   type LcdMessagePart,
   messageToParts,
   partsToMessage,
+  ConversationRefSchema,
 } from "@comis/core";
 import type { Message } from "@earendil-works/pi-ai";
 import Database from "better-sqlite3";
@@ -27,15 +29,27 @@ import { createLcdStore } from "./lcd-store.js";
 
 const FIXED_CREATED_AT = 1000; // injected clock — no Date.now() in expectations
 
+function testConversationRef(fill: string): ConversationRef {
+  return ConversationRefSchema.parse(`cv_${fill.repeat(43)}`);
+}
+
+const REF_A = testConversationRef("a");
+const REF_B = testConversationRef("b");
+const REF_EMPTY = testConversationRef("e");
+const REF_NONE = testConversationRef("n");
+const REF_CROSS = testConversationRef("x");
+const REF_COUNT = testConversationRef("c");
+const REF_PROVENANCE = testConversationRef("p");
+
 const SCOPE_A: ContextStoreScope = {
-  conversationId: "conv-a",
+  conversationRef: REF_A,
   tenantId: "tenant_a",
   agentId: "agent_a",
   sessionKey: "sess-a",
 };
 
 const SCOPE_B: ContextStoreScope = {
-  conversationId: "conv-b",
+  conversationRef: REF_B,
   tenantId: "tenant_b",
   agentId: "agent_b",
   sessionKey: "sess-b",
@@ -43,22 +57,22 @@ const SCOPE_B: ContextStoreScope = {
 
 // ── Cross-agent fixtures: the REAL shared-(tenant,user,channel) case ──
 // `formatSessionKey` omits agentId, so two agents legitimately share ONE
-// conversation_id + tenantId + sessionKey, distinguished ONLY by agentId. Reads
+// conversation_ref + tenantId + sessionKey, distinguished ONLY by agentId. Reads
 // must filter on agent_id (and tenant_id) so agent A can never recover agent B's
 // compressed history. Same conv/tenant/session, DIFFERENT agentId.
-const SHARED_CONV = "conv-shared";
+const SHARED_CONV = testConversationRef("s");
 const SHARED_TENANT = "tenant_shared";
 const SHARED_SESSION = "sess-shared";
 
 const SCOPE_AGENT_A: ContextStoreScope = {
-  conversationId: SHARED_CONV,
+  conversationRef: SHARED_CONV,
   tenantId: SHARED_TENANT,
   agentId: "agent-a",
   sessionKey: SHARED_SESSION,
 };
 
 const SCOPE_AGENT_B: ContextStoreScope = {
-  conversationId: SHARED_CONV,
+  conversationRef: SHARED_CONV,
   tenantId: SHARED_TENANT,
   agentId: "agent-b",
   sessionKey: SHARED_SESSION,
@@ -118,6 +132,19 @@ describe("createLcdStore", () => {
     db.pragma("foreign_keys = ON"); // production sets this via openSqliteDatabase (sqlite-adapter-base.ts)
     initSchema(db, 1536);
     store = createLcdStore(db);
+  });
+
+  it("lcd context rows anchor lookups on conversation ref", () => {
+    const columns = (db.prepare("PRAGMA table_info(lcd_messages)").all() as Array<{ name: string }>)
+      .map((row) => row.name);
+    expect(columns).toContain("conversation_ref");
+    expect(columns).not.toContain("conversation_id");
+  });
+
+  it("lcd schema preflight rejects the formatted conversation layout with a backup hint", () => {
+    const oldDb = new Database(":memory:");
+    oldDb.exec("CREATE TABLE lcd_messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL)");
+    expect(() => ensureLcdTables(oldDb)).toThrow(/Back up the database/);
   });
 
   it("append + getMessages round-trip — F1/F2 store-level: persisted fields survive SQLite", () => {
@@ -214,7 +241,7 @@ describe("createLcdStore", () => {
   it("cascade — deleting a message removes its parts (ON DELETE CASCADE)", () => {
     store.append({ scope: SCOPE_A, seq: 1, role: "assistant", tokenCount: 1, createdAt: FIXED_CREATED_AT, parts: assistantParts() });
 
-    const msgRow = db.prepare("SELECT id FROM lcd_messages WHERE conversation_id = ?").get("conv-a") as { id: string };
+    const msgRow = db.prepare("SELECT id FROM lcd_messages WHERE conversation_ref = ?").get(REF_A) as { id: string };
     const beforeParts = (db.prepare("SELECT COUNT(*) AS c FROM lcd_message_parts WHERE message_id = ?").get(msgRow.id) as { c: number }).c;
     expect(beforeParts).toBe(3);
 
@@ -232,11 +259,11 @@ describe("createLcdStore", () => {
     const b = store.getMessages(SCOPE_B);
     expect(a).toHaveLength(1);
     expect(b).toHaveLength(1);
-    expect(a[0]!.conversationId).toBe("conv-a");
-    expect(b[0]!.conversationId).toBe("conv-b");
+    expect(a[0]!.conversationRef).toBe(REF_A);
+    expect(b[0]!.conversationRef).toBe(REF_B);
 
     // Empty for an unknown conversation.
-    expect(store.getMessages({ ...SCOPE_A, conversationId: "conv-nonexistent" })).toHaveLength(0);
+    expect(store.getMessages({ ...SCOPE_A, conversationRef: REF_NONE })).toHaveLength(0);
   });
 
   it("graceful degrade — corrupt metadata JSON does NOT throw on read (safeParse)", () => {
@@ -318,26 +345,26 @@ describe("createLcdStore", () => {
     const insertBadRole = () =>
       db
         .prepare(
-          "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO lcd_messages (id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .run("m_bad", "conv-a", "tenant_a", "agent_a", "sess-a", 1, "system", 0, FIXED_CREATED_AT);
+        .run("m_bad", REF_A, "tenant_a", "agent_a", "sess-a", 1, "system", 0, FIXED_CREATED_AT);
     expect(insertBadRole).toThrow(/CHECK constraint/i);
 
     // A valid role still inserts (the constraint is not over-broad).
     const insertGoodRole = () =>
       db
         .prepare(
-          "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO lcd_messages (id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .run("m_ok", "conv-a", "tenant_a", "agent_a", "sess-a", 2, "assistant", 0, FIXED_CREATED_AT);
+        .run("m_ok", REF_A, "tenant_a", "agent_a", "sess-a", 2, "assistant", 0, FIXED_CREATED_AT);
     expect(insertGoodRole).not.toThrow();
   });
 
   it("DDL CHECK — an out-of-enum part kind is rejected by the lcd_message_parts constraint", () => {
     // Seed a valid parent message so the FK is satisfiable.
     db.prepare(
-      "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run("m_parent", "conv-a", "tenant_a", "agent_a", "sess-a", 1, "assistant", 0, FIXED_CREATED_AT);
+      "INSERT INTO lcd_messages (id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("m_parent", REF_A, "tenant_a", "agent_a", "sess-a", 1, "assistant", 0, FIXED_CREATED_AT);
 
     const insertBadKind = () =>
       db
@@ -459,7 +486,7 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     expect(second.map((i) => i.refId)).toEqual(first.map((i) => i.refId));
     // No duplicate context_items rows were written by the second read.
     const rowCount = (
-      db.prepare("SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_id = ?").get("conv-a") as {
+      db.prepare("SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_ref = ?").get(REF_A) as {
         c: number;
       }
     ).c;
@@ -467,7 +494,7 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
   });
 
   it("getContextItems returns [] for a conversation with no messages (nothing to seed)", () => {
-    expect(store.getContextItems({ ...SCOPE_A, conversationId: "conv-empty" })).toHaveLength(0);
+    expect(store.getContextItems({ ...SCOPE_A, conversationRef: REF_EMPTY })).toHaveLength(0);
   });
 
   it("appendLeafSummary range-replaces [start,end] with ONE summary-ref; ordinals stay dense, gap-free and ordered", () => {
@@ -574,7 +601,7 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     // The full DTO the assembler keys by summaryId to resolve a summary-ref into
     // a user-role text message + its token authority.
     expect(s.summaryId).toBe(summaryId);
-    expect(s.conversationId).toBe("conv-a");
+    expect(s.conversationRef).toBe(REF_A);
     expect(s.kind).toBe("leaf");
     expect(s.depth).toBe(0);
     expect(s.content).toBe("the resolvable leaf content");
@@ -609,7 +636,7 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     // The underlying messages are all still present (FK RESTRICT + no DELETE).
     expect(store.getMessages(SCOPE_A)).toHaveLength(5);
     expect(
-      (db.prepare("SELECT COUNT(*) AS c FROM lcd_messages WHERE conversation_id = 'conv-a'").get() as {
+      (db.prepare("SELECT COUNT(*) AS c FROM lcd_messages WHERE conversation_ref = ?").get(REF_A) as {
         c: number;
       }).c,
     ).toBe(5);
@@ -797,9 +824,9 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     const rowCount = (
       db
         .prepare(
-          "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
+          "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ?",
         )
-        .get(SCOPE_A.conversationId, SCOPE_A.agentId, SCOPE_A.tenantId) as { c: number }
+        .get(SCOPE_A.conversationRef, SCOPE_A.agentId, SCOPE_A.tenantId) as { c: number }
     ).c;
     expect(rowCount).toBe(3);
   });
@@ -810,19 +837,19 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     // so the model-facing view starts empty. This is the only path that does real
     // work in seedContextItems now — the live append-maintained path is a no-op.
     const insertLegacyMsg = db.prepare(
-      "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO lcd_messages (id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     const legacyIds = ["legacy-0", "legacy-1", "legacy-2"];
     legacyIds.forEach((id, seq) => {
-      insertLegacyMsg.run(id, SCOPE_A.conversationId, SCOPE_A.tenantId, SCOPE_A.agentId, SCOPE_A.sessionKey, seq, "user", 1, 1000 + seq * 10);
+      insertLegacyMsg.run(id, SCOPE_A.conversationRef, SCOPE_A.tenantId, SCOPE_A.agentId, SCOPE_A.sessionKey, seq, "user", 1, 1000 + seq * 10);
     });
     // No context_items exist yet for this scope.
     const before = (
       db
         .prepare(
-          "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
+          "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ?",
         )
-        .get(SCOPE_A.conversationId, SCOPE_A.agentId, SCOPE_A.tenantId) as { c: number }
+        .get(SCOPE_A.conversationRef, SCOPE_A.agentId, SCOPE_A.tenantId) as { c: number }
     ).c;
     expect(before).toBe(0);
 
@@ -840,9 +867,9 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     const after = (
       db
         .prepare(
-          "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
+          "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ?",
         )
-        .get(SCOPE_A.conversationId, SCOPE_A.agentId, SCOPE_A.tenantId) as { c: number }
+        .get(SCOPE_A.conversationRef, SCOPE_A.agentId, SCOPE_A.tenantId) as { c: number }
     ).c;
     expect(after).toBe(3);
   });
@@ -1335,12 +1362,12 @@ describe("createLcdStore — region walk + FTS5 search", () => {
     bare.pragma("foreign_keys = ON");
     bare.exec(`
       CREATE TABLE lcd_messages (
-        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+        id TEXT PRIMARY KEY, conversation_ref TEXT NOT NULL, tenant_id TEXT NOT NULL,
         agent_id TEXT NOT NULL, session_key TEXT NOT NULL, seq INTEGER NOT NULL,
         role TEXT NOT NULL, token_count INTEGER NOT NULL, created_at INTEGER NOT NULL
       );
       CREATE TABLE lcd_summaries (
-        summary_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+        summary_id TEXT PRIMARY KEY, conversation_ref TEXT NOT NULL, tenant_id TEXT NOT NULL,
         agent_id TEXT NOT NULL, session_key TEXT NOT NULL, kind TEXT NOT NULL, depth INTEGER NOT NULL,
         earliest_at INTEGER NOT NULL, latest_at INTEGER NOT NULL, descendant_count INTEGER NOT NULL,
         token_count INTEGER NOT NULL, content TEXT NOT NULL, file_ids TEXT NOT NULL DEFAULT '[]',
@@ -1356,10 +1383,10 @@ describe("createLcdStore — region walk + FTS5 search", () => {
     // pre-index history the rebuild backfill must cover).
     bare.prepare(`
       INSERT INTO lcd_summaries
-        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+        (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
          earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
-      VALUES ('pre1','conv-a','t','a','s','leaf',0,1,1,1,1,'preexisting margin figures','[]',0,0,1)
-    `).run();
+      VALUES ('pre1',?,'t','a','s','leaf',0,1,1,1,1,'preexisting margin figures','[]',0,0,1)
+    `).run(REF_A);
 
     // NOW run ensureLcdTables — it must add the FTS tables (incl. agent_id
     // UNINDEXED) AND backfill ('rebuild') the pre-existing summary row, carrying
@@ -1367,9 +1394,9 @@ describe("createLcdStore — region walk + FTS5 search", () => {
     ensureLcdTables(bare);
     const bareStore = createLcdStore(bare);
 
-    // Scope matches the directly-seeded row (conversation_id 'conv-a', agent_id 'a').
+    // Scope matches the directly-seeded row (conversation_ref 'conv-a', agent_id 'a').
     const preScope: ContextStoreScope = {
-      conversationId: "conv-a",
+      conversationRef: REF_A,
       tenantId: "t",
       agentId: "a",
       sessionKey: "s",
@@ -1479,9 +1506,9 @@ describe("createLcdStore — FTS-populate guard", () => {
 // ───────────────────────────────────────────────────────────────────────────
 // createLcdStore — cross-agent read isolation
 // ───────────────────────────────────────────────────────────────────────────
-// Two agents (agent-a, agent-b) legitimately share ONE conversation_id +
+// Two agents (agent-a, agent-b) legitimately share ONE conversation_ref +
 // tenantId + sessionKey (formatSessionKey omits agentId). Every read filters by
-// conversation_id, agent_id AND tenant_id, so agent A can never recover agent B's
+// conversation_ref, agent_id AND tenant_id, so agent A can never recover agent B's
 // compressed history across ANY recovery surface. These tests pass the
 // scope-carrying signature (`store.getMessages(scope)` etc.) and assert agent A
 // never sees agent B's rows within the shared conversation. Each surface gets its own test.
@@ -1529,8 +1556,8 @@ describe("createLcdStore — cross-agent read isolation", () => {
   }
 
   it("getMessages scoped to agent A returns only agent A's messages within a shared conversation", () => {
-    // Same conversationId, two agents. seq is monotonic per conversation, so use
-    // disjoint seq ranges (the UNIQUE (conversation_id, seq) index spans both).
+    // Same conversationRef, two agents. seq is monotonic per conversation, so use
+    // disjoint seq ranges (the UNIQUE (conversation_ref, seq) index spans both).
     seedMessages(SCOPE_AGENT_A, 2, 0); // seq 0,1
     seedMessages(SCOPE_AGENT_B, 3, 2); // seq 2,3,4
 
@@ -1628,7 +1655,7 @@ describe("createLcdStore — cross-agent read isolation", () => {
 
   it("a cross-tenant read returns nothing within the same conversation (defense-in-depth)", () => {
     // Agent A under the shared tenant seeds messages; a read under a DIFFERENT
-    // tenant (but the SAME conversationId/agentId/sessionKey) must see nothing.
+    // tenant (but the SAME conversationRef/agentId/sessionKey) must see nothing.
     seedMessages(SCOPE_AGENT_A, 2, 0);
     const crossTenant: ContextStoreScope = { ...SCOPE_AGENT_A, tenantId: "tenant_other" };
 
@@ -1891,15 +1918,15 @@ describe("getMessagesByIds / getSummariesByIds", () => {
   });
 
   it("getMessagesByIds respects scope — messages from a different agentId are excluded", () => {
-    // Seed messages for both agents sharing the same conversationId.
+    // Seed messages for both agents sharing the same conversationRef.
     const SCOPE_CROSS_A: ContextStoreScope = {
-      conversationId: "conv-cross",
+      conversationRef: REF_CROSS,
       tenantId: "tenant-cross",
       agentId: "agentA",
       sessionKey: "sess-cross",
     };
     const SCOPE_CROSS_B: ContextStoreScope = {
-      conversationId: "conv-cross",
+      conversationRef: REF_CROSS,
       tenantId: "tenant-cross",
       agentId: "agentB",
       sessionKey: "sess-cross",
@@ -1936,13 +1963,13 @@ describe("getMessagesByIds / getSummariesByIds", () => {
 
   it("countMessages respects scope — a different agentId's messages are not counted", () => {
     const SCOPE_CNT_A: ContextStoreScope = {
-      conversationId: "conv-cnt",
+      conversationRef: REF_COUNT,
       tenantId: "tenant-cnt",
       agentId: "agentA",
       sessionKey: "sess-cnt",
     };
     const SCOPE_CNT_B: ContextStoreScope = {
-      conversationId: "conv-cnt",
+      conversationRef: REF_COUNT,
       tenantId: "tenant-cnt",
       agentId: "agentB",
       sessionKey: "sess-cnt",
@@ -1954,7 +1981,7 @@ describe("getMessagesByIds / getSummariesByIds", () => {
   });
 
   it("countMessages returns 0 for a scope with no persisted messages", () => {
-    expect(store.countMessages({ ...SCOPE_A, conversationId: "conv-none" })).toBe(0);
+    expect(store.countMessages({ ...SCOPE_A, conversationRef: REF_NONE })).toBe(0);
   });
 });
 
@@ -1973,8 +2000,8 @@ describe("createLcdStore — provenance write surface", () => {
   /** Insert a minimal memories row so the provenance FK resolves. */
   function seedMemoryRow(id: string, sessionKey = "sess-p"): void {
     db.prepare(
-      "INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_session_key, tags, created_at)" +
-        " VALUES (?, 'tenant-p', 'agent-p', 'user-p', 'distilled content', 'learned', 'episodic', 'agent', ?, '[]', 1)",
+      "INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, source_session_key, tags, created_at)" +
+        " VALUES (?, 'tenant-p', 'agent-p', 'user-p', 'agent-shared', 'distilled content', 'learned', 'episodic', 'agent', ?, '[]', 1)",
     ).run(id, sessionKey);
   }
 
@@ -1993,7 +2020,7 @@ describe("createLcdStore — provenance write surface", () => {
       memoryId: memId,
       summaryId: "sum-1",
       sourceSessionKey: "sess-p",
-      conversationId: "conv-p",
+      conversationRef: REF_PROVENANCE,
       agentId: "agent-p",
       tenantId: "tenant-p",
       createdAt: 123,
@@ -2021,7 +2048,7 @@ describe("createLcdStore — provenance write surface", () => {
       memoryId: memId,
       summaryId: "sum-c",
       sourceSessionKey: "sess-p",
-      conversationId: "conv-p",
+      conversationRef: REF_PROVENANCE,
       agentId: "agent-p",
       tenantId: "tenant-p",
       createdAt: 1,
@@ -2041,7 +2068,7 @@ describe("createLcdStore — provenance write surface", () => {
       memoryId: mem1,
       summaryId: "sum-x",
       sourceSessionKey: "sess-p",
-      conversationId: "conv-p",
+      conversationRef: REF_PROVENANCE,
       agentId: "agent-p",
       tenantId: "tenant-p",
       createdAt: 1,
@@ -2082,7 +2109,7 @@ describe("createLcdStore — provenance write surface", () => {
       memoryId: memId,
       summaryId: "sum-shared",
       sourceSessionKey: "sess-p",
-      conversationId: "conv-p",
+      conversationRef: REF_PROVENANCE,
       agentId: "agent-p",
       tenantId: "tenant-p",
       createdAt: 1,
@@ -2117,7 +2144,7 @@ describe("createLcdStore — provenance write surface", () => {
 // These tests pin two behaviors:
 //   (a) deleteConversationLcdTxn MUST wipe lcd_messages_fts. Those contentless
 //       shadow rows are SELF-CONTAINED (they store their own content + the
-//       UNINDEXED conversation_id/agent_id scope columns), so a scoped MATCH would
+//       UNINDEXED conversation_ref/agent_id scope columns), so a scoped MATCH would
 //       still return them AFTER `sessions reset` → full message text would stay
 //       ctx_search-matchable post-reset. The complete-forget contract requires
 //       `sessions reset` to leave nothing matchable in ANY FTS object (a privacy
@@ -2171,8 +2198,8 @@ describe("Forget-hole close + normalized LCD twin populate", () => {
   /** A bare scoped MATCH against a named FTS object — returns the matched rows. */
   function ftsMatch(table: string, matchExpr: string, scope: ContextStoreScope): unknown[] {
     return db
-      .prepare(`SELECT rowid FROM ${table} WHERE ${table} MATCH ? AND conversation_id = ? AND agent_id = ?`)
-      .all(matchExpr, scope.conversationId, scope.agentId);
+      .prepare(`SELECT rowid FROM ${table} WHERE ${table} MATCH ? AND conversation_ref = ? AND agent_id = ?`)
+      .all(matchExpr, scope.conversationRef, scope.agentId);
   }
 
   /** Append one message whose single text part carries `text`; returns its id. */
@@ -2311,7 +2338,7 @@ describe("Forget-hole close + normalized LCD twin populate", () => {
 
     // Agent A finds its own normalized twin row.
     expect(ftsMatch("lcd_messages_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_AGENT_A).length).toBeGreaterThan(0);
-    // Agent B (same conversation_id + tenant, different agent_id) does NOT — the
+    // Agent B (same conversation_ref + tenant, different agent_id) does NOT — the
     // twin insert stamps agent_id from the write scope; the MATCH filters it.
     expect(ftsMatch("lcd_messages_fts_tri", quoted(HE_SFARIM_FOLDED), SCOPE_AGENT_B)).toHaveLength(0);
   });
@@ -2369,7 +2396,7 @@ describe("Forget-hole close + normalized LCD twin populate", () => {
 function ensureLcdTablesWithoutTwins(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS lcd_messages (
-      id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+      id TEXT PRIMARY KEY, conversation_ref TEXT NOT NULL, tenant_id TEXT NOT NULL,
       agent_id TEXT NOT NULL, session_key TEXT NOT NULL, seq INTEGER NOT NULL,
       role TEXT NOT NULL, token_count INTEGER NOT NULL, created_at INTEGER NOT NULL
     );
@@ -2381,7 +2408,7 @@ function ensureLcdTablesWithoutTwins(db: Database.Database): void {
       metadata TEXT NOT NULL DEFAULT '{}'
     );
     CREATE TABLE IF NOT EXISTS lcd_summaries (
-      summary_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+      summary_id TEXT PRIMARY KEY, conversation_ref TEXT NOT NULL, tenant_id TEXT NOT NULL,
       agent_id TEXT NOT NULL, session_key TEXT NOT NULL, kind TEXT NOT NULL, depth INTEGER NOT NULL,
       earliest_at INTEGER NOT NULL, latest_at INTEGER NOT NULL, descendant_count INTEGER NOT NULL,
       token_count INTEGER NOT NULL, content TEXT NOT NULL, file_ids TEXT NOT NULL DEFAULT '[]',
@@ -2398,40 +2425,40 @@ function ensureLcdTablesWithoutTwins(db: Database.Database): void {
       PRIMARY KEY (parent_summary_id, child_summary_id)
     );
     CREATE TABLE IF NOT EXISTS lcd_context_items (
-      id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+      id TEXT PRIMARY KEY, conversation_ref TEXT NOT NULL, tenant_id TEXT NOT NULL,
       agent_id TEXT NOT NULL, session_key TEXT NOT NULL, ordinal INTEGER NOT NULL,
       ref_kind TEXT NOT NULL, ref_id TEXT NOT NULL,
-      UNIQUE (conversation_id, agent_id, tenant_id, ordinal)
+      UNIQUE (conversation_ref, agent_id, tenant_id, ordinal)
     );
     CREATE TABLE IF NOT EXISTS lcd_ingest_cursor (
-      conversation_id TEXT NOT NULL, agent_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+      conversation_ref TEXT NOT NULL, agent_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
       epoch_anchor TEXT NOT NULL, ingested_live_len INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-      PRIMARY KEY (conversation_id, agent_id, tenant_id)
+      PRIMARY KEY (conversation_ref, agent_id, tenant_id)
     );
     CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY);
     CREATE TABLE IF NOT EXISTS lcd_memory_provenance (
       provenance_id TEXT PRIMARY KEY, memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-      summary_id TEXT NOT NULL, source_session_key TEXT NOT NULL, conversation_id TEXT NOT NULL,
+      summary_id TEXT NOT NULL, source_session_key TEXT NOT NULL, conversation_ref TEXT NOT NULL,
       agent_id TEXT NOT NULL, tenant_id TEXT NOT NULL, created_at INTEGER NOT NULL,
       superseded_by TEXT, superseded_at INTEGER
     );
     -- Word-lane self-contained FTS (the twin populate's gate probes lcd_summaries_fts;
     -- the WORD lane is present so the store's word-lane populate path stays live).
     CREATE VIRTUAL TABLE IF NOT EXISTS lcd_messages_fts USING fts5(
-      content, conversation_id UNINDEXED, agent_id UNINDEXED, message_id UNINDEXED,
+      content, conversation_ref UNINDEXED, agent_id UNINDEXED, message_id UNINDEXED,
       tokenize='porter unicode61'
     );
     CREATE VIRTUAL TABLE IF NOT EXISTS lcd_summaries_fts USING fts5(
-      content, conversation_id UNINDEXED, agent_id UNINDEXED, summary_id UNINDEXED,
+      content, conversation_ref UNINDEXED, agent_id UNINDEXED, summary_id UNINDEXED,
       content='lcd_summaries', content_rowid='rowid', tokenize='porter unicode61'
     );
     CREATE TRIGGER IF NOT EXISTS lcd_summaries_ai AFTER INSERT ON lcd_summaries BEGIN
-      INSERT INTO lcd_summaries_fts(rowid, content, conversation_id, agent_id, summary_id)
-      VALUES (new.rowid, new.content, new.conversation_id, new.agent_id, new.summary_id);
+      INSERT INTO lcd_summaries_fts(rowid, content, conversation_ref, agent_id, summary_id)
+      VALUES (new.rowid, new.content, new.conversation_ref, new.agent_id, new.summary_id);
     END;
     CREATE TRIGGER IF NOT EXISTS lcd_summaries_ad AFTER DELETE ON lcd_summaries BEGIN
-      INSERT INTO lcd_summaries_fts(lcd_summaries_fts, rowid, content, conversation_id, agent_id, summary_id)
-      VALUES('delete', old.rowid, old.content, old.conversation_id, old.agent_id, old.summary_id);
+      INSERT INTO lcd_summaries_fts(lcd_summaries_fts, rowid, content, conversation_ref, agent_id, summary_id)
+      VALUES('delete', old.rowid, old.content, old.conversation_ref, old.agent_id, old.summary_id);
     END;
   `);
 }

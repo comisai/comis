@@ -297,14 +297,14 @@ export const METRIC_CATALOG: readonly MetricDef[] = Object.freeze([
     "counter",
     "1",
     ["agent", "severity"],
-    "Sessions observed by agent and severity (fleet rollup).",
+    "Sessions observed by agent and severity (system rollup).",
   ),
   def(
     "comis.sessions.degraded",
     "counter",
     "1",
     ["agent", "severity"],
-    "Degraded sessions by agent and severity (fleet rollup).",
+    "Degraded sessions by agent and severity (system rollup).",
   ),
   // ── Security / audit ────────────────────────────────────────────────
   def(

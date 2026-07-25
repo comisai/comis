@@ -13,10 +13,20 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PerAgentConfig, ClockPort, TimerPort, TimerHandle, ComisLogger } from "@comis/core";
+import { randomUUID } from "node:crypto";
+import {
+  createResolvedRequestContext,
+  runWithContext,
+  type PerAgentConfig,
+  type ClockPort,
+  type TimerPort,
+  type TimerHandle,
+  type ComisLogger,
+} from "@comis/core";
 import type { McpClientManager } from "@comis/skills";
+import { safeResultRunId } from "@comis/skills/tools";
 import { createLeaseManager } from "@comis/infra";
-import { constructCapabilityLayer } from "./setup-capability-endpoint-boot.js";
+import { createRootRunIdResolver, constructCapabilityLayer } from "./setup-capability-endpoint-boot.js";
 
 /** Track temp data dirs + stop thunks so each socket-binding test tears down. */
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -196,10 +206,77 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     const resolveRootRunId = result.resolveRootRunId;
     expect(resolveRootRunId).toBeDefined();
     const sk = { tenantId: "t1", channelId: "c1", userId: "u1" };
-    const id1 = resolveRootRunId!(sk);
-    const id2 = resolveRootRunId!(sk);
-    expect(id1).toContain("root-session-");
-    expect(id2).toBe(id1); // stable across calls
+    const id1 = resolveRootRunId!("a1", sk);
+    const id2 = resolveRootRunId!("a1", sk);
+    expect(id1.ok).toBe(true);
+    expect(id2).toEqual(id1); // stable across calls
+    if (id1.ok) expect(id1.value).toContain("root-session-");
+  });
+
+  it("resolveRootRunId prefers an exact trusted context root without minting a session root", async () => {
+    const dataDir = tempDataDir();
+    const registerRoot = vi.fn();
+    const holder = { current: { reserveBudget: vi.fn(), registerRoot } };
+    const deps = {
+      ...createDeps({ a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig }, { dataDir }),
+      boundedAutonomyHolder: holder,
+    };
+    const result = await constructCapabilityLayer(deps as Parameters<typeof constructCapabilityLayer>[0]);
+    cleanups.push(() => result.capEndpointStop?.());
+    const context = createResolvedRequestContext({
+      tenantId: "t1",
+      userId: "u1",
+      sessionKey: { tenantId: "t1", agentId: "a1", channelId: "c1", userId: "u1" },
+      agentId: "a1",
+      rootRunId: "root-cron-execution-1",
+      traceId: randomUUID(),
+      startedAt: 1_700_000_000_000,
+      trustLevel: "user",
+    });
+    expect(context.ok).toBe(true);
+    if (!context.ok || result.resolveRootRunId === undefined) return;
+
+    const resolved = runWithContext(context.value, () => result.resolveRootRunId!(
+      "a1",
+      { tenantId: "t1", agentId: "a1", channelId: "c1", userId: "u1" },
+    ));
+
+    expect(resolved).toEqual({ ok: true, value: "root-cron-execution-1" });
+    expect(registerRoot).not.toHaveBeenCalled();
+  });
+
+  it("resolveRootRunId reports a trusted context identity mismatch without minting a fallback", () => {
+    const registerRoot = vi.fn();
+    const onContextMismatch = vi.fn();
+    const resolver = createRootRunIdResolver({
+      holder: { current: { reserveBudget: vi.fn(), registerRoot } },
+      index: new Map(),
+      onContextMismatch,
+    });
+    const context = createResolvedRequestContext({
+      tenantId: "t1",
+      userId: "u1",
+      sessionKey: { tenantId: "t1", agentId: "a1", channelId: "c1", userId: "u1" },
+      agentId: "a1",
+      rootRunId: "root-cron-execution-1",
+      traceId: randomUUID(),
+      startedAt: 1_700_000_000_000,
+      trustLevel: "user",
+    });
+    expect(context.ok).toBe(true);
+    if (!context.ok) return;
+
+    const resolved = runWithContext(context.value, () => resolver(
+      "a2",
+      { tenantId: "t1", agentId: "a2", channelId: "c1", userId: "u1" },
+    ));
+
+    expect(resolved).toMatchObject({ ok: false, error: { code: "context_identity_mismatch" } });
+    expect(onContextMismatch).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "context_identity_mismatch" }),
+      "a2",
+    );
+    expect(registerRoot).not.toHaveBeenCalled();
   });
 
   // The cap socket path lives under the supplied data dir.
@@ -348,14 +425,14 @@ describe("constructCapabilityLayer — denial breaker + evict registry + escalat
 
 // ---------------------------------------------------------------------------
 // The content-free replay recorder is BUILT and INJECTED into the capability
-// endpoint at this boot layer (REPLAY-01). createReplayRecorder is the SOLE
+// endpoint at this boot layer. createReplayRecorder is the sole
 // writer of `results/replay.jsonl`; if the boot layer omits it, recordReplay
 // short-circuits on every dispatch and a later `comis orchestrate replay`
 // diverges on the first cap call. These drive a real cap call through the
 // constructed endpoint and assert the recorder wrote (or, when the per-run
 // surface is off, did NOT write) the content-free log.
 // ---------------------------------------------------------------------------
-describe("constructCapabilityLayer — replay recorder wiring (REPLAY-01)", () => {
+describe("constructCapabilityLayer — replay recorder wiring", () => {
   /** A self-referential logger fake (nested `child` returns itself). */
   function makeSkillsLogger(): ComisLogger {
     const l: Record<string, unknown> = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -365,10 +442,16 @@ describe("constructCapabilityLayer — replay recorder wiring (REPLAY-01)", () =
 
   /** Construct the layer with a real leaseManager + workspace, then drive one
    *  successful cap call (cron.add, orch:cron) and report whether the recorder
-   *  wrote `<workspace>/results/replay.jsonl`. */
-  async function recordsReplayFor(agentDurability: Record<string, unknown>): Promise<boolean> {
+   *  wrote the daemon-owned replay log, never an agent-workspace log. */
+  async function replayRecordingLocations(
+    agentDurability: Record<string, unknown>,
+    workspaceAtDataRoot = false,
+  ): Promise<{
+    daemonOwned: boolean;
+    agentWritable: boolean;
+  }> {
     const dataDir = tempDataDir();
-    const workspace = tempDataDir();
+    const workspace = workspaceAtDataRoot ? dataDir : tempDataDir();
     const leaseManager = createLeaseManager({ clock: { now: () => 1_700_000_000_000 } });
     const deps = {
       ...createDeps(
@@ -387,28 +470,74 @@ describe("constructCapabilityLayer — replay recorder wiring (REPLAY-01)", () =
     const result = await constructCapabilityLayer(deps as Parameters<typeof constructCapabilityLayer>[0]);
     cleanups.push(() => result.capEndpointHandle?.boundedAutonomy?.destroy());
     cleanups.push(() => result.capEndpointStop?.());
+    const endpoint = {
+      channelType: "internal",
+      channelInstanceId: "capability-boot-test",
+      conversationId: "user",
+      conversationKind: "direct" as const,
+    };
     const { bearer } = leaseManager.mintLease({
       agentId: "a1",
       caps: ["orch:cron"],
       budgetRef: "budget-1",
       sessionKey: "t:c:u",
+      trustLevel: "user",
+      deliveryOrigin: {
+        channelType: endpoint.channelType,
+        channelId: endpoint.conversationId,
+        userId: "user",
+        tenantId: "t",
+      },
+      turnScope: {
+        conversation: {
+          tenantId: "t",
+          agentId: "a1",
+          partition: {
+            kind: "endpoint-conversation-principal",
+            endpoint,
+            principalId: "user",
+          },
+        },
+        principal: { principalId: "user" },
+        endpoint,
+      },
       rootRunId: "run-rec",
     });
     // cron.add is an orch:cron method (in audience); rpcCall is mocked to succeed,
     // so recordReplay fires on the successful dispatch.
     await result.capEndpointHandle!.endpoint.handleCapCall(bearer, "cron.add", { schedule: "x" });
-    return existsSync(join(workspace, "results", "replay.jsonl"));
+    return {
+      daemonOwned: existsSync(
+        join(dataDir, "replay-recordings", "results", safeResultRunId("run-rec"), "replay.jsonl"),
+      ),
+      agentWritable: existsSync(
+        join(workspace, "results", safeResultRunId("run-rec"), "replay.jsonl"),
+      ),
+    };
   }
 
   it("records replay.jsonl on a successful cap call when orchestrateResume is enabled", async () => {
     // The recorder is wired AND the per-run gate is open → the content-free log
     // is written, so a later replay has recorded results to serve back.
-    expect(await recordsReplayFor({ durability: { orchestrateResume: true } })).toBe(true);
+    expect(await replayRecordingLocations({ durability: { orchestrateResume: true } })).toEqual({
+      daemonOwned: true,
+      agentWritable: false,
+    });
   });
 
   it("does NOT record replay.jsonl when orchestrateResume is off (the default-off per-run gate)", async () => {
     // The recorder is still WIRED, but its per-run isEnabled gate is closed for an
     // agent without the surface → byte-identical to a run that never records.
-    expect(await recordsReplayFor({})).toBe(false);
+    expect(await replayRecordingLocations({})).toEqual({
+      daemonOwned: false,
+      agentWritable: false,
+    });
+  });
+
+  it("fails recording closed when a configured agent workspace would expose the daemon recording root", async () => {
+    expect(await replayRecordingLocations(
+      { durability: { orchestrateResume: true } },
+      true,
+    )).toEqual({ daemonOwned: false, agentWritable: false });
   });
 });

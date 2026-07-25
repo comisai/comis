@@ -37,8 +37,11 @@ import * as os from "node:os";
 
 import {
   attachTrajectoryToEventBus,
+  createTrajectoryEventTypeFilter,
   createTrajectoryRecorder,
   type TrajectoryRecorder,
+  type TrajectoryResumeError,
+  type TrajectoryResumeFailureKind,
   attachCacheTraceToEventBus,
   createCacheTrace,
   type CacheTrace,
@@ -56,15 +59,27 @@ import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import {
   formatSessionKey,
+  createConversationRef,
+  emitObservationalEventSafely,
   safePath,
+  sanitizeLogString,
+  toSafeErrorLogString,
+  getToolMetadata,
   tryGetContext,
+  verifyWorkspacePolicySnapshot,
+  ResponseLocalePolicySchema,
   type SessionKey,
   type NormalizedMessage,
   type PerAgentConfig,
 } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { suppressError } from "@comis/shared";
-import type { AgentTool, AgentMessage } from "@earendil-works/pi-agent-core";
+import { ok, suppressError, type Result } from "@comis/shared";
+import type {
+  AfterToolCallResult,
+  AgentMessage,
+  AgentTool,
+  AgentToolResult,
+} from "@earendil-works/pi-agent-core";
 import type { CommandDirectives } from "../command-directive-types.js";
 import type { StepCounter } from "../step-counter.js";
 import { createToolRetryBreaker } from "../../safety/tool-retry-breaker.js";
@@ -72,8 +87,12 @@ import { createMessageSendLimiter } from "../../safety/message-send-limiter.js";
 import type { ComisSessionManager } from "../../session/comis-session-manager.js";
 import type { RunHandle } from "../active-run-registry.js";
 import { repairOrphanedMessages, scrubPoisonedThinkingBlocks } from "../../session/orphaned-message-repair.js";
+import { projectPendingDeliveredAssistantHistory } from "../../session/pending-delivered-assistant-history.js";
 import { scrubRedactedToolCalls } from "../../session/scrub-redacted-tool-calls.js";
 import { scrubForgedContextMarkers } from "../../session/forged-context-markers.js";
+import {
+  appendInboundMessageProvenance,
+} from "../../session/inbound-message-provenance.js";
 import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
 import { assertThinkingBlocksUnchanged, restoreCanonicalThinkingBlocks } from "../../bridge/thinking-block-hash-invariant.js";
 import type { AdaptiveCacheRetention } from "../adaptive-cache-retention.js";
@@ -84,10 +103,12 @@ import type { DiscoveryTracker } from "../discovery-tracker.js";
 import { applyCommandDirectives } from "../executor-command-handlers.js";
 import { setupContextEngine } from "../executor-context-engine-setup.js";
 import { runPrompt } from "../prompt-runner/index.js";
+import { appendExecutionResultJournal } from "../../session/execution-result-journal.js";
 import { wrapToolResultWithGuide } from "../jit-guide-injector.js";
 import { postExecution } from "../executor-post-execution.js";
-import { resolveReplyLanguage } from "../resolve-reply-language.js";
+import { resolveLocale } from "../resolve-response-locale-policy.js";
 import { assembleTools } from "../executor-tool-assembly.js";
+import { assembleModelRequest, prepareTurn } from "../turn-preparation.js";
 import {
   getDeliveredGuides,
   setDeliveredGuides,
@@ -110,6 +131,8 @@ import { observedModelId } from "../observed-model-id.js";
 import type { ModelProfile } from "../model-profile.js";
 import { resolveEffectiveContextWindow } from "../../model/effective-context-window.js";
 import { DEFAULT_EFFECTIVE_CAP_BY_CLASS } from "../../context-engine/budget-capacity-cap.js";
+import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
+import { scriptTokenFactor } from "@comis/core";
 import { isAnthropicFamily, isGoogleFamily, resolveProviderCapabilities } from "../../provider/capabilities.js";
 import { detectOnboardingState } from "../../workspace/onboarding-detector.js";
 import { validateRoleAttribution, sessionTreeHasSameRoleAnomaly } from "../../context-engine/index.js";
@@ -126,6 +149,7 @@ import { randomUUID } from "node:crypto";
 // Closure-extracted helpers (state-first)
 import { installCompactionTrigger } from "./compaction-trigger.js";
 import { createDeltaResetComposer } from "./delta-reset.js";
+import { createLocaleDeltaDelivery } from "./locale-delta-delivery.js";
 import { resolveTrajectoryConfinedBase } from "./trajectory-confinement.js";
 import { bootstrapSession, decodeExecutionOverrides, type MutableRef, type EffectiveTimeout } from "./session-bootstrap.js";
 import { runSafetyGates } from "./safety-gate.js";
@@ -142,6 +166,113 @@ import { computeOutputHeadroom } from "../../context-engine/output-headroom.js";
 
 /** Number of turns to restrict breakpoints after server eviction. */
 const EVICTION_COOLDOWN_TURNS = 2;
+
+interface ExternalAbortState {
+  emitted: boolean;
+}
+
+interface ToolFailureAlternativeResolution {
+  readonly alternativeToolName: string;
+  readonly errorCode: string;
+  readonly guidance: string;
+  readonly override: AfterToolCallResult;
+}
+
+const MAX_TOOL_ALTERNATIVE_GUIDANCE_CHARS = 500;
+
+function resolveToolFailureAlternative(
+  toolName: string,
+  result: AgentToolResult<unknown>,
+  activeToolNames: ReadonlySet<string>,
+): ToolFailureAlternativeResolution | undefined {
+  if (
+    typeof result.details !== "object"
+    || result.details === null
+    || Array.isArray(result.details)
+  ) {
+    return undefined;
+  }
+  const errorCode = (result.details as { error?: unknown }).error;
+  if (typeof errorCode !== "string") return undefined;
+
+  const alternative = getToolMetadata(toolName)?.failureFallbacks?.find(
+    (candidate) =>
+      candidate.onErrorCode === errorCode
+      && activeToolNames.has(candidate.toolName),
+  );
+  if (!alternative) return undefined;
+  const guidance = alternative.guidance.slice(
+    0,
+    MAX_TOOL_ALTERNATIVE_GUIDANCE_CHARS,
+  );
+
+  return {
+    alternativeToolName: alternative.toolName,
+    errorCode,
+    guidance,
+    override: {
+      content: [
+        ...result.content,
+        {
+          type: "text",
+          text: `[Runtime-declared tool alternative]\n${guidance}`,
+        },
+      ],
+    },
+  };
+}
+
+function settleExternalExecutionAbort(
+  state: ExternalAbortState,
+  result: ExecutionResult,
+  deps: Pick<PiExecutorDeps, "agentId" | "clock" | "eventBus" | "logger">,
+  sessionKey: SessionKey,
+): void {
+  if (state.emitted) return;
+  state.emitted = true;
+  result.finishReason = "prompt_timeout";
+  result.response = "The execution was cancelled before it could finish.";
+  result.errorContext = {
+    errorType: "PipelineTimeout",
+    retryable: false,
+    originalError: "Caller cancelled the agent execution",
+  };
+  deps.eventBus.emit("execution:aborted", {
+    sessionKey,
+    reason: "pipeline_timeout",
+    agentId: deps.agentId,
+    timestamp: deps.clock.now(),
+  });
+  deps.logger.warn({
+    agentId: deps.agentId,
+    sessionKey: formatSessionKey(sessionKey),
+    step: "external-abort",
+    errorKind: "timeout" as const,
+    hint: "Inspect the caller deadline or shutdown signal before retrying the execution",
+  }, "Agent execution cancelled by caller signal");
+}
+
+function trajectoryResumeErrorKind(
+  failureKind: TrajectoryResumeFailureKind,
+): ErrorKind {
+  switch (failureKind) {
+    case "invalid_jsonl":
+      return "validation";
+    case "confinement":
+    case "symlink":
+    case "non_regular":
+      return "precondition";
+    case "permission":
+    case "size_limit":
+    case "changed":
+    case "io":
+      return "resource";
+    default: {
+      const _exhaustive: never = failureKind;
+      return _exhaustive;
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -203,13 +334,91 @@ export function createPiExecutor(
       _prevTimestamp?: number,
       overrides?: ExecutionOverrides,
     ): Promise<ExecutionResult> {
+      const executionId = randomUUID();
+      let finalizedResultJournaled = false;
+      const finalizeResult = async (candidate: ExecutionResult): Promise<ExecutionResult> => {
+        if (!finalizedResultJournaled) {
+          await overrides?.onJournalFinalizedResult?.(candidate);
+          finalizedResultJournaled = true;
+        }
+        await overrides?.onFinalizedResult?.(candidate, "ready");
+        return candidate;
+      };
+      // Resolved request identity is write-once. An executor selected for a
+      // different agent/session must not relabel the live ALS object and retain
+      // the original principal's trust or delivery origin. Reject before OAuth,
+      // model, tool, or session work. An unresolved agentId remains unresolved
+      // here; only the inbound boundary may enrich authorization identity.
+      const alsCtx = tryGetContext();
+      const requestedAgentMismatch = agentId !== undefined && agentId !== deps.agentId;
+      const contextAgentMismatch = alsCtx?.agentId !== undefined
+        && alsCtx.agentId !== deps.agentId;
+      const contextSessionMismatch = alsCtx?.sessionKey !== undefined
+        && alsCtx.sessionKey !== formatSessionKey(sessionKey);
+      if (requestedAgentMismatch || contextAgentMismatch || contextSessionMismatch) {
+        const rejectedAgentId = agentId ?? alsCtx?.agentId ?? deps.agentId;
+        deps.logger.warn(
+          {
+            step: "request-context-identity",
+            agentId: rejectedAgentId,
+            agentMismatch: contextAgentMismatch,
+            sessionMismatch: contextSessionMismatch,
+            hint: "Reject the execution and verify the inbound resolver and executor selection use the same agent and session",
+            errorKind: "precondition" as ErrorKind,
+          },
+          "Agent execution rejected due to request context identity mismatch",
+        );
+        emitObservationalEventSafely({ eventBus: deps.eventBus, logger: deps.logger }, "security:warn", {
+          category: "request_context_identity_mismatch",
+          agentId: rejectedAgentId,
+          message: "Agent execution rejected because request context identity did not match the selected execution identity",
+          timestamp: deps.clock.now(),
+        });
+        return finalizeResult({
+          response: "The request could not be executed safely because its identity context was inconsistent.",
+          sessionKey,
+          executionId,
+          responseLocalePolicy: { source: "unset", enforceLocale: false },
+          sideEffectSummary: {
+            schedulingCapabilityInvoked: false,
+            outboundDeliveryCapabilityInvoked: false,
+            deferredWorkCapabilityInvoked: false,
+            unclassifiedInvocationObserved: false,
+          },
+          tokensUsed: { input: 0, output: 0, total: 0 },
+          cost: { total: 0 },
+          stepsExecuted: 0,
+          llmCalls: 0,
+          finishReason: "error",
+          terminalErrorKind: "precondition",
+          errorContext: {
+            errorType: "RequestContextIdentityMismatch",
+            retryable: false,
+            originalError: "Resolved request context identity did not match execution identity",
+          },
+        });
+      }
+
+      agentId = deps.agentId;
+
       // 1. Bootstrap: OAuth pre-resolve + ExecutionResult init + SEP plan ref
       //    (closure-extracted)
       const { executionStartMs, result, sepEnabled, executionPlanRef } = await bootstrapSession(
         {},
         deps,
-        { config, sessionKey, overrides, executionPlanHolder: deps.executionPlanHolder },
+        {
+          config,
+          sessionKey,
+          overrides,
+          executionId,
+          executionPlanHolder: deps.executionPlanHolder,
+        },
       );
+      const externalAbortState: ExternalAbortState = { emitted: false };
+      if (overrides?.signal?.aborted) {
+        settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);
+        return finalizeResult(result);
+      }
 
       // 2. Pre-lock safety gates: input validation, provider health, circuit
       //    breaker, fault injector (closure-extracted)
@@ -218,7 +427,7 @@ export function createPiExecutor(
         deps,
         { msg, sessionKey, agentId, provider: config.provider },
       );
-      if (!safetyOutcome.passed) return result;
+      if (!safetyOutcome.passed) return finalizeResult(result);
       const safetyReinforcement = safetyOutcome.safetyReinforcement;
 
       // 3. Decode per-execute overrides into the factory's mutable refs
@@ -340,27 +549,9 @@ export function createPiExecutor(
       }
 
       // Store resolved model on ALS context for sub-agent parent inheritance
-      const alsCtx = tryGetContext();
       if (alsCtx && resolvedModel) {
         (alsCtx as Record<string, unknown>).resolvedModel = `${resolvedModel.provider}:${resolvedModel.id}`;
       }
-      // Populate the turn's agentId onto the LIVE RequestContext so
-      // the in-session ctx_* tools scope LCD reads by THIS agent per-call.
-      // The agentId arrives as a positional execute() arg (not in the context set
-      // at the channel/RPC boundary); mirror the resolvedModel mutation above. The
-      // tools read `tryGetContext().agentId` — a wiring-time closure would be
-      // unsafe when one wiring serves multiple agents (the exact cross-agent
-      // scoping threat this guards against).
-      if (alsCtx && agentId) {
-        (alsCtx as Record<string, unknown>).agentId = agentId;
-      }
-      // Tag the resolved reply language on ALS for the sub-agent leg
-      // (config-then-inbound resolution order; set only when non-en so the en path is untouched).
-      if (alsCtx) {
-        const lang = resolveReplyLanguage({ inboundText: msg.text ?? "", configLanguage: config.language });
-        if (lang !== "en") (alsCtx as Record<string, unknown>).resolvedLanguage = lang;
-      }
-
       // Derive compat config via normalizeModelCompat (xAI + GBNF auto-detection;
       // providerType/comisCompat resolved per-execution because model overrides
       // can switch providers).
@@ -471,6 +662,7 @@ export function createPiExecutor(
 
       // 5. Execute within session adapter (use ephemeral adapter if provided)
       const sessionAdapter = overrides?.ephemeralSessionAdapter ?? deps.sessionAdapter;
+      const resultJournalFailure: { error?: Error } = {};
       const lockResult = await sessionAdapter.withSession(
         sessionKey,
         (sm) => runSessionLocked(sm, {
@@ -486,6 +678,7 @@ export function createPiExecutor(
           _prevTimestamp,
           executionOverrides,
           executionStartMs,
+          executionId,
           effectiveTimeout,
           sepEnabled,
           executionPlanRef,
@@ -500,16 +693,30 @@ export function createPiExecutor(
           cacheRetentionRef,
           adaptiveRetentionRef,
           minTokensOverrideRef,
+          externalAbortState,
+          resultJournalFailure,
         }),
       );
 
+      if (resultJournalFailure.error !== undefined) {
+        return Promise.reject(resultJournalFailure.error);
+      }
+      if (lockResult.ok) {
+        await overrides?.onJournalFinalizedResult?.(lockResult.value);
+        finalizedResultJournaled = true;
+      }
+      if (lockResult.ok && lockResult.value.finishReason === "session_reset") {
+        await overrides?.onFinalizedResult?.(lockResult.value, "cleanup_pending");
+      }
+
       // 6. Post-lock outcome: destroy session if session_reset; map lock failure
       //    (closure-extracted)
-      return finalizeLockResult(
+      const finalized = await finalizeLockResult(
         { result },
         deps,
         { lockResult, sessionAdapter, sessionKey },
       );
+      return finalizeResult(finalized);
     },
   };
 }
@@ -531,11 +738,12 @@ interface RunSessionLockedContext {
   readonly sessionKey: SessionKey;
   readonly tools: AgentTool[] | undefined;
   readonly onDelta: ((delta: string, kind: "text" | "thinking") => void) | undefined;
-  readonly agentId: string | undefined;
+  readonly agentId: string;
   readonly _directives: CommandDirectives | undefined;
   readonly _prevTimestamp: number | undefined;
   readonly executionOverrides: ExecutionOverrides | undefined;
   readonly executionStartMs: number;
+  readonly executionId: string;
   readonly effectiveTimeout: EffectiveTimeout;
   readonly sepEnabled: boolean;
   readonly executionPlanRef: { current: import("../../planner/types.js").ExecutionPlan | undefined };
@@ -555,6 +763,8 @@ interface RunSessionLockedContext {
   readonly cacheRetentionRef: MutableRef<CacheRetention | undefined>;
   readonly adaptiveRetentionRef: MutableRef<AdaptiveCacheRetention | undefined>;
   readonly minTokensOverrideRef: MutableRef<number | undefined>;
+  readonly externalAbortState: ExternalAbortState;
+  readonly resultJournalFailure: { error?: Error };
 }
 
 async function runSessionLocked(
@@ -564,12 +774,42 @@ async function runSessionLocked(
   const {
     config, deps, result, msg, sessionKey, tools, onDelta, agentId,
     _directives, _prevTimestamp, executionOverrides, executionStartMs,
+    executionId,
     effectiveTimeout, sepEnabled, executionPlanRef, safetyReinforcement,
     resolvedModel, modelCompat, modelProfile, windowProvenance, activeStepCounter,
     budgetWindow,
     sessionAdapter,
     cacheRetentionRef, adaptiveRetentionRef, minTokensOverrideRef,
+    externalAbortState,
+    resultJournalFailure,
   } = ctx;
+  if (executionOverrides?.signal?.aborted) {
+    settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);
+    return result;
+  }
+  const executionTurnScope = tryGetContext()?.turnScope;
+  const executionConversationRef = executionTurnScope === undefined
+    ? undefined
+    : createConversationRef(executionTurnScope.conversation);
+  if (executionTurnScope === undefined || !executionConversationRef?.ok) {
+    deps.logger.error(
+      {
+        step: "context-authority",
+        agentId: deps.agentId,
+        hint: "Resolve the canonical turn scope before selecting and running the executor",
+        errorKind: "precondition" as const,
+      },
+      "Agent execution stopped because context authority was unavailable",
+    );
+    result.finishReason = "error";
+    result.response = "The request could not be prepared safely because its conversation authority was unavailable.";
+    result.errorContext = {
+      errorType: "ContextAuthorityUnavailable",
+      retryable: false,
+      originalError: "Canonical turn scope was unavailable",
+    };
+    return result;
+  }
   // The per-run workspace jail. A `spawn --worktree` child runs in an
   // isolated git worktree (executionOverrides.workspaceDir, confined under the
   // agent's own jailed workspace), so the SDK session cwd + the
@@ -582,6 +822,46 @@ async function runSessionLocked(
   const executionCacheRetentionClear = () => { cacheRetentionRef.set(undefined); };
   const adaptiveRetentionClear = () => { adaptiveRetentionRef.set(undefined); };
   const executionMinTokensOverrideClear = () => { minTokensOverrideRef.set(undefined); };
+  const recordProvenanceFailure = (error: Error, errorKind: ErrorKind): void => {
+    const safeErrorMessage = toSafeErrorLogString(error);
+    deps.logger.error(
+      {
+        step: "session-provenance",
+        agentId,
+        durationMs: Math.max(0, deps.clock.now() - executionStartMs),
+        err: safeErrorMessage,
+        hint: "Check session-storage limits, ownership, and free space, then resend the message; model dispatch was stopped.",
+        errorKind,
+      },
+      "Inbound message provenance persistence failed",
+    );
+    result.finishReason = "error";
+    result.response = "The message could not be saved safely. Please try again.";
+    result.errorContext = {
+      errorType: "SessionPersistenceError",
+      retryable: true,
+      originalError: "Inbound message provenance persistence failed",
+    };
+  };
+
+  // Ingress already committed these immutable occurrence plans to the
+  // dedicated ledger. Reuse the exact payloads for every SDK mirror; never
+  // reconstruct them from the processed model-facing message.
+  const inboundProvenancePlans = executionOverrides?.inboundProvenancePlans ?? [];
+  const appendInboundProvenancePlans = (): Result<string, Error> => {
+    let finalEntryId = "";
+    for (const plan of inboundProvenancePlans) {
+      const appended = appendInboundMessageProvenance(sm, plan);
+      if (!appended.ok) return appended;
+      finalEntryId = appended.value;
+    }
+    return ok(finalEntryId);
+  };
+  const provenanceWrite = appendInboundProvenancePlans();
+  if (!provenanceWrite.ok) {
+    recordProvenanceFailure(provenanceWrite.error, "resource");
+    return result;
+  }
 
   // One-time scrub for sessions poisoned by an earlier on-disk thinking-signature stripper.
   // Must run before buildSessionContext so the context pipeline sees the clean fileEntries.
@@ -642,6 +922,55 @@ async function runSessionLocked(
     );
   }
 
+  const deliveredHistoryProjection = projectPendingDeliveredAssistantHistory(sm, {
+    conversationScope: executionTurnScope.conversation,
+    conversationRef: executionConversationRef.value,
+  });
+  let pendingDeliveredHistoryContext = "";
+  if (!deliveredHistoryProjection.ok) {
+    deps.logger.warn(
+      {
+        agentId: deps.agentId,
+        step: "delivered-history-projection",
+        failureCode: deliveredHistoryProjection.error.code,
+        hint: "Inspect the canonical SDK session tree and session storage health before retrying the turn.",
+        errorKind: deliveredHistoryProjection.error.errorKind,
+      },
+      "Delivered assistant history projection degraded",
+    );
+  } else {
+    pendingDeliveredHistoryContext = deliveredHistoryProjection.value.compiledContext;
+    const projectionDiagnostics = deliveredHistoryProjection.value.diagnostics;
+    const degraded = projectionDiagnostics.invalidEntries > 0
+      || projectionDiagnostics.authorityMismatches > 0
+      || projectionDiagnostics.omittedOversizedEntries > 0
+      || projectionDiagnostics.omittedOlderEntries > 0;
+    if (degraded) {
+      deps.logger.warn(
+        {
+          agentId: deps.agentId,
+          step: "delivered-history-projection",
+          ...projectionDiagnostics,
+          hint: "Inspect delivered-history session records; invalid authority is skipped and bounded older output is intentionally omitted.",
+          errorKind: projectionDiagnostics.invalidEntries > 0
+            || projectionDiagnostics.authorityMismatches > 0
+            ? ("validation" as const)
+            : ("resource" as const),
+        },
+        "Delivered assistant history projection degraded",
+      );
+    } else if (projectionDiagnostics.projectedEntries > 0) {
+      deps.logger.debug(
+        {
+          agentId: deps.agentId,
+          step: "delivered-history-projection",
+          projectedEntries: projectionDiagnostics.projectedEntries,
+        },
+        "Pending delivered assistant history projected",
+      );
+    }
+  }
+
   // Detect first message in session for BOOT.md injection
   const sessionContext = sm.buildSessionContext();
 
@@ -671,15 +1000,157 @@ async function runSessionLocked(
   // worktree is the child's actual working tree, so onboarding state reflects it).
   const isOnboarding = await detectOnboardingState(effectiveWorkspaceDir);
 
+  const capturedPolicySnapshot = executionOverrides?.workspacePolicySnapshot;
+  if (capturedPolicySnapshot !== undefined) {
+    const verification = verifyWorkspacePolicySnapshot(capturedPolicySnapshot);
+    const failureKind = !verification.ok
+      ? verification.error.code
+      : capturedPolicySnapshot.agentId === agentId
+        ? undefined
+        : "agent_mismatch";
+    if (failureKind !== undefined) {
+      deps.logger.error(
+        {
+          agentId,
+          step: "workspace-policy-verify",
+          failureKind,
+          hint: "Discard the captured work item and recreate it from a verified policy snapshot for this agent.",
+          errorKind: "validation" as const,
+        },
+        "Per-execution workspace policy snapshot verification failed",
+      );
+      result.finishReason = "error";
+      result.response = "The captured agent policy could not be verified safely.";
+      result.errorContext = {
+        errorType: "WorkspacePolicyError",
+        retryable: false,
+        originalError: "Per-execution workspace policy snapshot verification failed",
+      };
+      return result;
+    }
+  }
+
+  const capturedResponseLocalePolicy = executionOverrides?.responseLocalePolicy;
+  if (capturedResponseLocalePolicy !== undefined) {
+    const verification = ResponseLocalePolicySchema.safeParse(capturedResponseLocalePolicy);
+    if (!verification.success) {
+      deps.logger.error(
+        {
+          agentId,
+          step: "response-locale-policy-verify",
+          hint: "Discard the captured work item and recreate it with a valid canonical response locale policy.",
+          errorKind: "validation" as const,
+        },
+        "Per-execution response locale policy verification failed",
+      );
+      result.finishReason = "error";
+      result.response = "The captured response locale policy could not be verified safely.";
+      result.errorContext = {
+        errorType: "ResponseLocalePolicyError",
+        retryable: false,
+        originalError: "Per-execution response locale policy verification failed",
+      };
+      return result;
+    }
+  }
+
+  let workspacePolicySnapshot = capturedPolicySnapshot ?? deps.workspacePolicySnapshot;
+  if (workspacePolicySnapshot === undefined && deps.workspacePolicyPort !== undefined) {
+    const policyAgentId = deps.agentId;
+    const policyLoadStartMs = deps.clock.now();
+    const policyResult = await deps.workspacePolicyPort.load(policyAgentId);
+    const durationMs = Math.max(0, deps.clock.now() - policyLoadStartMs);
+    if (!policyResult.ok) {
+      deps.logger.error(
+        {
+          agentId: policyAgentId,
+          step: "workspace-policy-load",
+          failureKind: policyResult.error.kind,
+          durationMs,
+          hint: "Check the agent workspace path, file permissions, and workspace policy size before retrying.",
+          errorKind: policyResult.error.kind === "agent_not_found"
+            ? ("precondition" as const)
+            : ("resource" as const),
+        },
+        "Workspace policy snapshot load failed",
+      );
+      result.finishReason = "error";
+      result.response = "The agent policy could not be loaded safely. Please try again.";
+      result.errorContext = {
+        errorType: "WorkspacePolicyError",
+        retryable: policyResult.error.kind !== "invalid_section",
+        originalError: "Workspace policy snapshot load failed",
+      };
+      return result;
+    }
+    workspacePolicySnapshot = policyResult.value;
+    result.workspacePolicyHash = workspacePolicySnapshot.combinedHash;
+    deps.logger.info(
+      {
+        agentId: policyAgentId,
+        step: "workspace-policy-load",
+        durationMs,
+        sectionCount: workspacePolicySnapshot.sections.length,
+        workspacePolicyHash: workspacePolicySnapshot.combinedHash,
+      },
+      "Workspace policy snapshot loaded",
+    );
+  }
+  if (workspacePolicySnapshot !== undefined) {
+    result.workspacePolicyHash = workspacePolicySnapshot.combinedHash;
+    const activeContext = tryGetContext();
+    if (activeContext) {
+      (activeContext as Record<string, unknown>).workspacePolicyHash = workspacePolicySnapshot.combinedHash;
+    }
+  }
+  if (workspacePolicySnapshot === undefined) {
+    deps.logger.error(
+      {
+        agentId: deps.agentId,
+        step: "workspace-policy-load",
+        hint: "Wire a workspace policy snapshot or WorkspacePolicyPort before starting the agent.",
+        errorKind: "precondition" as const,
+      },
+      "Workspace policy snapshot is required",
+    );
+    result.finishReason = "error";
+    result.response = "The agent policy is unavailable. Please try again.";
+    result.errorContext = {
+      errorType: "WorkspacePolicyError",
+      retryable: false,
+      originalError: "Workspace policy snapshot is required",
+    };
+    return result;
+  }
+
   // Capture prompt skills XML once at execution start.
   // Skills registered during tool calls (e.g., skill-creator creating stock-scanner)
   // do not mutate the system prompt until the next execution.
-  const frozenPromptSkillsXml = deps.getPromptSkillsXml?.();
+  const capabilitiesDisabled = executionOverrides?.capabilityAccess === "none";
+  const frozenPromptSkillsXml = capabilitiesDisabled ? "" : deps.getPromptSkillsXml?.();
+  const frozenPromptSkillLocations = capabilitiesDisabled
+    ? new Map<string, string>()
+    : deps.getPromptSkillLocations?.();
+  const frozenMcpInstructions = capabilitiesDisabled
+    ? []
+    : deps.getMcpServerInstructions?.() ?? [];
   const stableGetPromptSkillsXml = frozenPromptSkillsXml !== undefined
     ? () => frozenPromptSkillsXml
     : deps.getPromptSkillsXml;
   // toolCapabilityPort flows through frozenDeps spread — no explicit re-assignment.
-  const frozenDeps = { ...deps, getPromptSkillsXml: stableGetPromptSkillsXml };
+  const frozenDeps = {
+    ...deps,
+    getPromptSkillsXml: stableGetPromptSkillsXml,
+    ...(frozenPromptSkillLocations === undefined
+      ? {}
+      : { getPromptSkillLocations: () => frozenPromptSkillLocations }),
+    getMcpServerInstructions: () => frozenMcpInstructions,
+    toolCapabilityPort: deps.toolCapabilityPort,
+    subAgentToolNames: capabilitiesDisabled ? [] : deps.subAgentToolNames,
+    mcpToolsInherited: capabilitiesDisabled ? false : deps.mcpToolsInherited,
+    workspacePolicySnapshot,
+    isOnboarding,
+  };
 
   // Tool assembly pipeline: merge, settings, prompt, deferral, JIT, pruning, snapshot, normalization, serializer
   // Extracted to executor-tool-assembly.ts
@@ -697,9 +1168,130 @@ async function runSessionLocked(
     resourceLoaderOptions, promptResult, cachedSystemTokensEstimate, cachedFreshTailPreambleTokens,
   } = toolAssembly;
   const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
-  const { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory, recalledMemories, userLanguage } = promptResult;
+  const {
+    systemPrompt,
+    systemPromptBlocks,
+    dynamicPreamble,
+    inlineMemory,
+    recalledMemories,
+    responseLocalePolicy,
+  } = promptResult;
+  result.responseLocalePolicy = responseLocalePolicy;
+  const effectiveSystemPrompt = pendingDeliveredHistoryContext.length === 0
+    ? systemPrompt
+    : `${systemPrompt}\n\n${pendingDeliveredHistoryContext}`;
+  const effectiveSystemPromptBlocks = pendingDeliveredHistoryContext.length === 0
+    || systemPromptBlocks === undefined
+    ? systemPromptBlocks
+    : {
+        ...systemPromptBlocks,
+        semiStableBody: `${systemPromptBlocks.semiStableBody}\n\n${pendingDeliveredHistoryContext}`,
+      };
+  const pendingDeliveredHistoryTokens = pendingDeliveredHistoryContext.length === 0
+    ? 0
+    : Math.ceil(
+        pendingDeliveredHistoryContext.length
+        / scriptTokenFactor(pendingDeliveredHistoryContext)
+        / CHARS_PER_TOKEN_RATIO,
+      );
+  const effectiveCachedSystemTokensEstimate = cachedSystemTokensEstimate
+    + pendingDeliveredHistoryTokens;
 
-  const resourceLoader = new DefaultResourceLoader(resourceLoaderOptions);
+  // Publish the exact per-turn decision only after prompt preparation resolves
+  // both operator configuration and request metadata. Sub-agent and graph legs
+  // inherit this live context value instead of a config-only approximation.
+  const turnContext = tryGetContext();
+  if (turnContext) turnContext.resolvedLanguage = responseLocalePolicy.locale;
+
+  const preparedTurnResult = await prepareTurn({
+    scope: tryGetContext()?.turnScope,
+    locale: resolveLocale({
+      explicitLocale: responseLocalePolicy.source === "explicit" ? responseLocalePolicy.locale : undefined,
+      requestLocale: responseLocalePolicy.source === "request" ? responseLocalePolicy.locale : undefined,
+      translationTarget: responseLocalePolicy.translationTarget,
+    }),
+    selectedSkills: typeof msg.metadata?.promptSkillContent === "string"
+      ? [{ id: "turn:selected-skill", content: msg.metadata.promptSkillContent }]
+      : [],
+    externalInstructions: frozenMcpInstructions.map((instruction) => ({
+      id: `mcp:${instruction.serverId}`,
+      content: instruction.instructions,
+    })),
+    resolvers: {
+      resolveWorkspacePolicy: async () => ok(workspacePolicySnapshot),
+      captureCapabilities: () => ok({
+        tools: mergedCustomTools.map((tool) => ({
+          name: tool.name,
+          ...(tool.description === undefined ? {} : { description: tool.description }),
+        })),
+      }),
+      assembleConversation: async () => ok({
+        history: sessionContext.messages,
+        currentRequest: msg,
+      }),
+      selectRecall: async () => ok({
+        ...(inlineMemory === undefined ? {} : { inlineMemory }),
+        memories: recalledMemories ?? [],
+      }),
+    },
+  });
+  if (!preparedTurnResult.ok) {
+    deps.logger.error(
+      {
+        agentId: deps.agentId,
+        step: "turn-preparation",
+        failureKind: preparedTurnResult.error.kind,
+        hint: "Ensure workspace policy, turn authority, capability inventory, conversation storage, and recall services are available.",
+        errorKind: "precondition" as const,
+      },
+      "Turn preparation failed",
+    );
+    result.finishReason = "error";
+    result.response = "The request could not be prepared safely. Please try again.";
+    result.errorContext = {
+      errorType: "TurnPreparationError",
+      retryable: false,
+      originalError: preparedTurnResult.error.kind,
+    };
+    return result;
+  }
+  const modelRequestResult = assembleModelRequest({
+    preparedTurn: preparedTurnResult.value,
+    compiledPrompt: { systemPrompt: effectiveSystemPrompt },
+  });
+  if (!modelRequestResult.ok) {
+    deps.logger.error(
+      {
+        agentId: deps.agentId,
+        step: "model-request-assembly",
+        failureKind: modelRequestResult.error.kind,
+        hint: "Ensure the assembled conversation contains the attributed current request.",
+        errorKind: "precondition" as const,
+      },
+      "Model request assembly failed",
+    );
+    result.finishReason = "error";
+    result.response = "The request could not be assembled safely. Please try again.";
+    result.errorContext = {
+      errorType: "ModelRequestAssemblyError",
+      retryable: false,
+      originalError: modelRequestResult.error.kind,
+    };
+    return result;
+  }
+  const assembledCurrentRequest = modelRequestResult.value.conversation.at(-1) as
+    | { role: "user"; content: string }
+    | undefined;
+  const dispatchMessage: NormalizedMessage = {
+    ...msg,
+    text: assembledCurrentRequest?.content ?? "",
+  };
+
+  const effectiveResourceLoaderOptions = {
+    ...resourceLoaderOptions,
+    systemPromptOverride: (_base: string | undefined) => effectiveSystemPrompt,
+  };
+  const resourceLoader = new DefaultResourceLoader(effectiveResourceLoaderOptions);
   await resourceLoader.reload();
 
   // The SDK's `tools` is an allowlist of tool *names* (not definitions).
@@ -722,8 +1314,7 @@ async function runSessionLocked(
   //      build (`agent-session.js:1810-1813` in pi-coding-agent@0.68.0).
   const sessionOptions: CreateAgentSessionOptions = {
     cwd: effectiveWorkspaceDir,
-    authStorage: deps.authStorage,
-    modelRegistry: deps.modelRegistry,
+    modelRuntime: deps.modelRuntime,
     model: resolvedModel ?? undefined,
     sessionManager: sm,
     settingsManager,
@@ -731,7 +1322,28 @@ async function runSessionLocked(
     tools: mergedCustomTools.map((t) => t.name),
     customTools: mergedCustomTools,
   };
+  if (executionOverrides?.signal?.aborted) {
+    settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);
+    return result;
+  }
   const { session, modelFallbackMessage } = await createAgentSession(sessionOptions);
+  const executionSignal = executionOverrides?.signal;
+  const onExternalAbort = (): void => {
+    settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);
+    session.abortCompaction();
+    suppressError(
+      session.abort(),
+      "PiExecutor external execution signal abort",
+      (message) => deps.logger.debug(
+        { step: "external-abort" },
+        sanitizeLogString(message),
+      ),
+    );
+  };
+  if (executionSignal !== undefined) {
+    executionSignal.addEventListener("abort", onExternalAbort, { once: true });
+    if (executionSignal.aborted) onExternalAbort();
+  }
   if (modelFallbackMessage) {
     deps.logger.warn(
       { hint: modelFallbackMessage, errorKind: "config" as ErrorKind },
@@ -747,9 +1359,9 @@ async function runSessionLocked(
   // subscribes once for the duration of this execute() call. Both the
   // recorder and the bridge subscription are torn down in the runner-block
   // finally (after postExecution).
-  // createTrajectoryRecorder returns null when COMIS_TRAJECTORY=0 or
-  // diagnostics.trajectory.enabled=false — the null-check below makes
-  // the wiring a no-op in that case.
+  // createTrajectoryRecorder returns ok(null) when disabled and an explicit
+  // error for an unsafe persisted state. The setup block reports errors and
+  // continues the turn without a recorder.
   let trajectoryRecorder: TrajectoryRecorder | null = null;
   let trajectoryUnsubscribe: (() => void) | undefined;
   // Cache-trace recorder local-variable lifecycle. Mirrors the trajectory
@@ -783,6 +1395,7 @@ async function runSessionLocked(
     //     keep working).
     const trajectoryInit = {
       agentId: agentId ?? config.name,
+      logger: deps.logger,
       sessionId: formattedKey,
       sessionKey: formattedKey,
       // Record the run's ACTUAL working tree (the worktree when present)
@@ -822,10 +1435,31 @@ async function runSessionLocked(
         : {}),
     };
     const eventTypes = deps.trajectoryConfig?.eventTypes;
-    const eventTypesFilter =
-      eventTypes && eventTypes.length > 0
-        ? (n: string) => eventTypes.includes(n)
-        : undefined;
+    const eventTypesFilter = createTrajectoryEventTypeFilter(eventTypes);
+
+    const reportTrajectoryResumeFailure = (
+      error: TrajectoryResumeError,
+    ): void => {
+      deps.logger.error(
+        {
+          agentId: agentId ?? config.name,
+          sessionKey: formattedKey,
+          failureKind: error.failureKind,
+          sourceCode: error.sourceCode,
+          errorKind: trajectoryResumeErrorKind(error.failureKind),
+          hint: "Inspect trajectory path confinement, file type, ownership, permissions, size cap, and JSONL envelope integrity; fix the artifact before retrying this session",
+        },
+        "Trajectory recorder could not resume persisted state",
+      );
+      deps.eventBus.emit("observability:trajectory_degraded", {
+        agentId: agentId ?? config.name,
+        sessionKey: formattedKey,
+        traceId: tryGetContext()?.traceId ?? formattedKey,
+        reason: "resume_failed",
+        failureKind: error.failureKind,
+        timestamp: deps.clock.now(),
+      });
+    };
 
     if (deps.trajectoryRegistry !== undefined) {
       // Session-scoped: registry returns the same recorder across turns.
@@ -833,7 +1467,7 @@ async function runSessionLocked(
       // `trajectoryUnsubscribe` to track locally; the registry's
       // `close(formattedKey)` (driven by session-destroy) and
       // `closeAll()` (daemon shutdown) own the teardown.
-      const { recorder } = deps.trajectoryRegistry.getOrCreate(
+      const trajectoryResult = deps.trajectoryRegistry.getOrCreate(
         formattedKey,
         trajectoryInit,
         deps.eventBus,
@@ -841,7 +1475,11 @@ async function runSessionLocked(
           | ((n: import("@comis/observability").TrajectoryBridgedEventName) => boolean)
           | undefined,
       );
-      trajectoryRecorder = recorder;
+      if (trajectoryResult.ok) {
+        trajectoryRecorder = trajectoryResult.value.recorder;
+      } else {
+        reportTrajectoryResumeFailure(trajectoryResult.error);
+      }
       // trajectoryUnsubscribe stays undefined — registry owns it.
     } else {
       // Legacy per-turn path. flushAndClose still runs in this execute's
@@ -849,7 +1487,12 @@ async function runSessionLocked(
       // fires per turn (both break the session-trajectory invariants the
       // registry guarantees). Kept for tests and callers
       // that haven't wired the registry yet.
-      trajectoryRecorder = createTrajectoryRecorder(trajectoryInit);
+      const trajectoryResult = createTrajectoryRecorder(trajectoryInit);
+      if (trajectoryResult.ok) {
+        trajectoryRecorder = trajectoryResult.value;
+      } else {
+        reportTrajectoryResumeFailure(trajectoryResult.error);
+      }
       if (trajectoryRecorder !== null) {
         trajectoryUnsubscribe = attachTrajectoryToEventBus({
           eventBus: deps.eventBus,
@@ -938,6 +1581,7 @@ async function runSessionLocked(
         suggestAlternatives: toolRetryBreakerConfig?.suggestAlternatives ?? true,
       })
     : undefined;
+  const failedToolRedirects = new Map<string, string>();
 
   // Per-execution message send limiter
   // maxSendsPerExecution lives in global MessagesConfigSchema (AppConfig.messages),
@@ -957,7 +1601,15 @@ async function runSessionLocked(
   // not load pi-mono extensions, so this override is safe.
   // v0.65.0: setBeforeToolCall() removed; beforeToolCall is now a direct property.
   session.agent.beforeToolCall =
-    createBeforeToolCallGuard(activeStepCounter, budgetWindow, deps.circuitBreaker, toolRetryBreaker, messageSendLimiter, turnLoopDetector);
+    createBeforeToolCallGuard(
+      activeStepCounter,
+      budgetWindow,
+      deps.circuitBreaker,
+      toolRetryBreaker,
+      messageSendLimiter,
+      turnLoopDetector,
+      failedToolRedirects,
+    );
 
   // Mid-turn tool injection -- when discover_tools returns sideEffects.discoveredTools,
   // inject the full ToolDefinitions into the live agentic loop tools array so the LLM can
@@ -967,12 +1619,36 @@ async function runSessionLocked(
     // discovery early-return) so normal reads fill it; mutations clear it.
     turnLoopDetector.recordCall(callCtx.toolCall.name, callCtx.args, callCtx.result);
 
+    const contextTools = callCtx.context.tools;
+    const alternative = resolveToolFailureAlternative(
+      callCtx.toolCall.name,
+      callCtx.result,
+      new Set(contextTools?.map((tool) => tool.name) ?? []),
+    );
+    if (alternative) {
+      failedToolRedirects.set(
+        callCtx.toolCall.name,
+        (
+          `Tool "${callCtx.toolCall.name}" is exhausted for this request. `
+          + `Do not call it again. ${alternative.guidance}`
+        ).slice(0, MAX_TOOL_ALTERNATIVE_GUIDANCE_CHARS),
+      );
+      deps.logger.debug(
+        {
+          step: "tool-failure-alternative",
+          toolName: callCtx.toolCall.name,
+          alternativeToolName: alternative.alternativeToolName,
+          errorCode: alternative.errorCode,
+        },
+        "Added active alternative guidance to failed tool result",
+      );
+    }
+
     const sideEffects = (callCtx.result as unknown as Record<string, unknown>)?.sideEffects as
       { discoveredTools?: string[] } | undefined;
-    if (!sideEffects?.discoveredTools?.length) return undefined;
+    if (!sideEffects?.discoveredTools?.length) return alternative?.override;
 
-    const contextTools = callCtx.context.tools;
-    if (!contextTools) return undefined;
+    if (!contextTools) return alternative?.override;
 
     // Skip mid-turn injection for providers without explicit cache control.
     // Discovery state is already persisted via markDiscovered() in the tool execution
@@ -982,7 +1658,7 @@ async function runSessionLocked(
         { discoveredCount: sideEffects.discoveredTools.length, provider: resolvedModel?.provider },
         "Skipped mid-turn injection (provider uses automatic prefix caching)",
       );
-      return undefined;
+      return alternative?.override;
     }
 
     let injectedCount = 0;
@@ -1033,7 +1709,7 @@ async function runSessionLocked(
       );
     }
 
-    return undefined; // No result modification needed
+    return alternative?.override;
   };
 
   // Stream wrapper chain composition (extracted to executor-stream-setup.ts)
@@ -1044,7 +1720,7 @@ async function runSessionLocked(
   const streamSetup = setupStreamWrappers({
     config, deps, sessionKey, formattedKey, sm,
     resolvedModel, capabilityClass, modelProfile, executionOverrides,
-    deferralResult, systemPromptBlocks, agentId,
+    deferralResult, systemPromptBlocks: effectiveSystemPromptBlocks, agentId,
     // Forward the cache-trace recorder so the wrapper chain
     // can include the cache-trace `stream:context` emit. When the
     // recorder is null (disabled), setupStreamWrappers skips the wrapper.
@@ -1084,21 +1760,18 @@ async function runSessionLocked(
   // accessible at runtime. Same pattern as streamFn override above.
   const ceSetup = setupContextEngine({
     config, deps: frozenDeps, formattedKey, sessionKey: formattedKey,
+    conversationRef: executionConversationRef.value,
     // The dag assembler's LCD read scope tenant — the SAME source
     // executor-post-execution uses for the ingest scope (deps.tenantId ?? the
     // session key's tenant), so read + write scopes agree.
     tenantId: frozenDeps.tenantId ?? sessionKey.tenantId,
-    // The dag assembler's LCD read scope agentId — the SAME
-    // `effectiveAgentId = agentId ?? "default"` expression executor-post-execution
-    // uses for the LCD ingest WRITE scope, so the read scope == the write scope and
-    // the assembler stops failing closed (the positional turn agentId never reaches
-    // frozenDeps, so deps.agentId would be undefined on this path).
-    agentId: agentId ?? "default",
+    // The selected executor owns the agent authority used by both LCD reads and writes.
+    agentId: deps.agentId,
     msg, sm, session,
     resolvedModel, executionOverrides,
     cacheBreakDetector,
     contextEngineRef,
-    getCachedSystemTokensEstimate: () => cachedSystemTokensEstimate,
+    getCachedSystemTokensEstimate: () => effectiveCachedSystemTokensEstimate,
     getCachedFreshTailPreambleTokens: () => cachedFreshTailPreambleTokens,
     getTokenAnchor: () => tokenAnchor,
     onAnchorReset: () => { tokenAnchor = null; },
@@ -1199,18 +1872,21 @@ async function runSessionLocked(
   // via the durable cursor, so skipping them removes per-turn LCD single-flight overhead.
   // Extracted to `maybeRunBootstrapSweep` (state-first helper) to keep the in-lock
   // body from accreting another wiring block; the recovery itself (the EXISTING
-  // ingestTurnGuarded path + the shouldRunLcdStorePasses dag gate) lives in
+  // ingestTurnGuarded path + the canonical context-store gate) lives in
   // `bootstrapLcdSweep`. The scope is built exactly as the afterTurn block does so read
-  // scope == write scope: conversationId === sessionKey ===
-  // formattedKey, agentId === `agentId ?? "default"`. The JSONL-loaded live array is the
+  // scope == write scope: the opaque `conversationRef` is the storage authority,
+  // `sessionKey` (formattedKey) rides along as display/path metadata — the two are
+  // distinct values, never compared — and agentId is the executor-bound
+  // authority. The JSONL-loaded live array is the
   // same ref executor-post-execution reads at the afterTurn site (typed unknown on
   // AgentSession — no public SDK type for it).
   await maybeRunBootstrapSweep({
     isFirstMessageInSession,
     contextStore: frozenDeps.contextStore,
     formattedKey,
+    conversationRef: executionConversationRef.value,
     tenantId: frozenDeps.tenantId ?? sessionKey.tenantId,
-    agentId: agentId ?? "default",
+    agentId: deps.agentId,
     live: ((session.agent as unknown as { state?: { messages?: unknown[] } }).state
       ?.messages ?? []) as AgentMessage[],
     clock: frozenDeps.clock,
@@ -1219,18 +1895,7 @@ async function runSessionLocked(
     config,
   });
 
-  // Align register/deregister key shape with
-  // BackgroundSessionResolver.formatComposite so production lookups via
-  // resolveActiveSession({agentId, channelType, channelId}) find the
-  // handle this execute() call registers. session-resolver.test.ts
-  // locks the formula — drift on either side breaks that test.
-  // NormalizedMessageSchema enforces channelType / channelId are
-  // non-empty (z.string().min(1)), so this composition is unconditional.
-  const resolverRegisterKey = formatSessionKey({
-    tenantId: agentId ?? "default",
-    channelId: `${msg.channelType}:${msg.channelId}`,
-    userId: msg.channelId,
-  });
+  const resolverRegisterKey = executionConversationRef.value;
 
   // Register active run for mid-execution steering
   if (deps.activeRunRegistry) {
@@ -1244,7 +1909,7 @@ async function runSessionLocked(
     const registered = deps.activeRunRegistry.register(resolverRegisterKey, handle);
     if (!registered) {
       deps.logger.warn(
-        { sessionKey: resolverRegisterKey, hint: "Session already has an active run; concurrent execution may cause issues", errorKind: "resource" as const },
+        { conversationRef: resolverRegisterKey, hint: "Session already has an active run; concurrent execution may cause issues", errorKind: "resource" as const },
         "Active run already registered",
       );
     }
@@ -1375,14 +2040,17 @@ async function runSessionLocked(
   // Read the live ref at bridge-creation time — adaptiveRetention is set
   // synchronously by decodeExecutionOverrides() before this callback runs.
   const capturedBridgeRetention = adaptiveRetentionRef.get();
-  const executionId = randomUUID();
   // Budget trajectory warning: shared mutable ref between bridge (writer) and prompt runner (reader)
   const budgetWarningRef = { current: false };
   // Deltas (text + thinking) reset the stall budget — ALWAYS-
   // defined (the bridge presence-gates on deps.onDelta), live-ref
   // (currentResetTimer is assigned later at onResetTimer), throttled ~1/s.
+  const localeDeltaDelivery = createLocaleDeltaDelivery({}, {
+    policy: responseLocalePolicy,
+    downstream: onDelta,
+  });
   const onDeltaWithStallReset = createDeltaResetComposer({}, {
-    channelOnDelta: onDelta,
+    channelOnDelta: localeDeltaDelivery.onDelta,
     getResetTimer: () => currentResetTimer,
     clock: deps.clock,
   });
@@ -1401,7 +2069,7 @@ async function runSessionLocked(
       ? {
           spendAccumulator: deps.spendAccumulator,
           spendConfig: deps.spendConfig,
-          spendScope: { tenantId: sessionKey.tenantId ?? "default", agentId: agentId ?? "default" },
+          spendScope: { tenantId: sessionKey.tenantId, agentId: deps.agentId },
         }
       : {}),
     // Thread the late-bound per-root budget holder +
@@ -1419,8 +2087,9 @@ async function runSessionLocked(
     circuitBreaker: deps.circuitBreaker,
     turnLoopDetector,
     sessionKey,
-    agentId: agentId ?? "default",
+    agentId: deps.agentId,
     channelId: msg.channelId ?? "",
+    inboundMessageId: msg.id,
     executionId,
     provider: config.provider,
     model: config.model,
@@ -1438,6 +2107,9 @@ async function runSessionLocked(
     homeDir: os.homedir(),
     onDelta: onDeltaWithStallReset,
     memoryPort: deps.memoryPort,
+    ...(executionTurnScope !== undefined
+      ? { memoryScope: { turnScope: executionTurnScope, visibility: { kind: "conversation" } as const } }
+      : {}),
     onAbort: () => {
       session.abortCompaction();
       suppressError(session.abort(), "session abort on compaction cancel");
@@ -1458,7 +2130,11 @@ async function runSessionLocked(
       keepRecentTokens: config.session?.compaction?.keepRecentTokens ?? 32768,
     },
     providerHealth: deps.providerHealth,
-    onToolExecutionEnd: () => { currentResetTimer?.(); },
+    // Tool progress and completion both reset the prompt stall budget.
+    onToolActivity: () => { currentResetTimer?.(); },
+    acknowledgeBackgroundTaskConsumption: deps.backgroundTaskManager !== undefined
+      ? (taskId: string) => deps.backgroundTaskManager?.acknowledgeLiveConsumption(taskId) ?? ok(false)
+      : undefined,
     // When the configured model is unregistered, pi
     // falls back to its own default model object (e.g. gemini-*); record the
     // CONFIGURED model so token_usage/cost are not mislabeled. See observedModelId.
@@ -1697,14 +2373,14 @@ async function runSessionLocked(
   // background-continuation context (which lacks these locals).
   if (deps.backgroundTaskManager && config.backgroundTasks?.enabled !== false) {
     const bgConfig = BackgroundTasksConfigSchema.parse(config.backgroundTasks ?? {});
-    const resolvedAgentId = agentId ?? "default";
     const originResolver = (): BackgroundTaskOrigin | undefined => {
       // Defensive: if any required field is unexpectedly missing, fall through
       // to foreground execution (no background promotion). Promotion requires
       // a complete origin.
-      if (!formattedKey || formattedKey.length === 0) return undefined;
-      if (!msg.channelType || msg.channelType.length === 0) return undefined;
-      if (!msg.channelId || msg.channelId.length === 0) return undefined;
+      const context = tryGetContext();
+      if (!context?.turnScope || !context.deliveryOrigin) return undefined;
+      const conversationRef = createConversationRef(context.turnScope.conversation);
+      if (!conversationRef.ok) return undefined;
       // Read incoming hop count off msg.metadata so the runner can enforce
       // the recursion bound. Top-level user messages have no
       // metadata.backgroundHopCount -> default to 0.
@@ -1714,11 +2390,11 @@ async function runSessionLocked(
         ? Math.floor(rawHopCount)
         : 0;
       return {
-        agentId: resolvedAgentId,
-        sessionKey: formattedKey,
-        channelType: msg.channelType,
-        channelId: msg.channelId,
+        turnScope: context.turnScope,
+        conversationRef: conversationRef.value,
+        deliveryOrigin: context.deliveryOrigin,
         traceId: executionId ?? null,
+        responseLocalePolicy,
         backgroundHopCount: incomingHopCount,
       };
     };
@@ -1729,6 +2405,7 @@ async function runSessionLocked(
         deps.backgroundTaskManager!,
         bgConfig,
         originResolver,
+        bridge.markDeferredWork,
       );
       tool.execute = (wrapped as unknown as typeof tool).execute;
     }
@@ -1737,56 +2414,66 @@ async function runSessionLocked(
   // Prompt execution: envelope, preamble, images, budget, retry, escalation, recovery
   // Extracted to prompt-runner/.
   try {
-    const promptRunResult = await runPrompt({
-      msg, session, config, sessionKey, formattedKey, agentId, result,
-      executionOverrides, executionStartMs, effectiveTimeout, executionId,
-      bridge, dynamicPreamble, deferredContext, capabilityIndexResult, inlineMemory,
-      systemPrompt,
-      mergedCustomTools,
-      cmdResult, sepEnabled, executionPlanRef,
-      _directives, _prevTimestamp, resolvedModel, modelProfile,
-      deps: {
-        eventBus: deps.eventBus,
-        logger: deps.logger,
-        // This run's execution-local window (precheck + envelope snapshot).
-        budgetGuard: budgetWindow,
-        costTracker: deps.costTracker,
-        authRotation: deps.authRotation,
-        fallbackModels: deps.fallbackModels,
-        modelRegistry: deps.modelRegistry,
-        providerHealth: deps.providerHealth,
-        lastKnownModel: deps.lastKnownModel,
-        envelopeConfig: deps.envelopeConfig,
-        outputGuard: deps.outputGuard,
-        canaryToken: deps.canaryToken,
-        clock: deps.clock,
-        timers: deps.timers,
-        // The canonical system-tokens estimate the pre-flight throws on, so
-        // wrapEnvelope can size the tight-window residual and drop the heavy
-        // tool-discovery preamble before it overflows (same S → no drift).
-        getSystemTokensEstimate: () => cachedSystemTokensEstimate,
-      },
-      onResetTimer: (fn) => { currentResetTimer = fn; },
-      getLastCacheWriteTokens: () => bridge.getResult().tokensUsed?.cacheWrite ?? 0,
-      budgetWarningRef,
-    });
-    // Aggregate ghost cost from timed-out request into bridge metrics
-    if (promptRunResult.ghostCost) {
-      bridge.addGhostCost(promptRunResult.ghostCost);
-    }
+    // Repeat the marker directly at the model-dispatch boundary. The early
+    // marker above protects setup failures; this adjacent marker lets a
+    // bounded tail reader recover provenance when the 5,000-record boundary
+    // falls between setup history and the SDK user record. The offline reader
+    // deduplicates the shared physical identities.
+    const dispatchProvenanceWrite = appendInboundProvenancePlans();
+    if (!dispatchProvenanceWrite.ok) {
+      recordProvenanceFailure(dispatchProvenanceWrite.error, "resource");
+    } else {
+      const promptRunResult = await runPrompt({
+        msg: dispatchMessage, session, config, sessionKey, formattedKey, agentId, result,
+        executionOverrides, executionStartMs, effectiveTimeout, executionId,
+        bridge, dynamicPreamble, responseLocalePolicy, deferredContext, capabilityIndexResult, inlineMemory,
+        systemPrompt: effectiveSystemPrompt,
+        mergedCustomTools,
+        cmdResult, sepEnabled, executionPlanRef,
+        _directives, _prevTimestamp, resolvedModel, modelProfile,
+        deps: {
+          eventBus: deps.eventBus,
+          logger: deps.logger,
+          // This run's execution-local window (precheck + envelope snapshot).
+          budgetGuard: budgetWindow,
+          costTracker: deps.costTracker,
+          authRotation: deps.authRotation,
+          fallbackModels: deps.fallbackModels,
+          modelRegistry: deps.modelRegistry,
+          providerHealth: deps.providerHealth,
+          lastKnownModel: deps.lastKnownModel,
+          envelopeConfig: deps.envelopeConfig,
+          outputGuard: deps.outputGuard,
+          canaryToken: deps.canaryToken,
+          clock: deps.clock,
+          timers: deps.timers,
+          // The canonical system-tokens estimate the pre-flight throws on, so
+          // wrapEnvelope can size the tight-window residual and drop the heavy
+          // tool-discovery preamble before it overflows (same S → no drift).
+          getSystemTokensEstimate: () => effectiveCachedSystemTokensEstimate,
+        },
+        onResetTimer: (fn) => { currentResetTimer = fn; },
+        getLastCacheWriteTokens: () => bridge.getResult().tokensUsed?.cacheWrite ?? 0,
+        budgetWarningRef,
+      });
+      // Aggregate ghost cost from timed-out request into bridge metrics
+      if (promptRunResult.ghostCost) {
+        bridge.addGhostCost(promptRunResult.ghostCost);
+      }
 
-    // Apply stuck-session outcome (closure-extracted).
-    applyPromptRunOutcome(
-      { result },
-      {
-        eventBus: deps.eventBus,
-        logger: deps.logger,
-        clock: deps.clock,
-        outputGuard: deps.outputGuard,
-        canaryToken: deps.canaryToken,
-      },
-      { promptRunResult, agentId, formattedKey },
-    );
+      // Apply stuck-session outcome (closure-extracted).
+      applyPromptRunOutcome(
+        { result },
+        {
+          eventBus: deps.eventBus,
+          logger: deps.logger,
+          clock: deps.clock,
+          outputGuard: deps.outputGuard,
+          canaryToken: deps.canaryToken,
+        },
+        { promptRunResult, agentId, formattedKey },
+      );
+    }
   } catch (error) {
     // Translate exception into ExecutionResult (closure-extracted).
     handleEnvelopeException(
@@ -1801,6 +2488,7 @@ async function runSessionLocked(
       { error, sessionKey, agentId, executionStartMs },
     );
   } finally {
+    executionSignal?.removeEventListener("abort", onExternalAbort);
     // Clear thinking ceiling so next execution recalculates from current state.
     // Defense-in-depth: context engine is recreated per execute(), but explicit clear
     // ensures no stale ceiling if engine lifetime changes in the future.
@@ -1814,7 +2502,7 @@ async function runSessionLocked(
       // Read the per-turn skill-use carrier the bridge wrote
       // back into postExecution, which emits the memory:skill_used write-back.
       usedSkillIds: [...bridge.getUsedSkillIds()],
-      userMdLanguage: userLanguage, // consumed by the degraded-reply resolver
+      responseLocalePolicy,
       executionStartMs, executionId, executionOverrides,
       bridge, unsubscribe,
       contextEngineRef, ceSetup, streamSetup,
@@ -1825,12 +2513,12 @@ async function runSessionLocked(
       providerFamily: resolveProviderCapabilities(resolvedModel?.provider ?? config.provider).providerFamily,
       deferralResult, mergedCustomTools, deliveredGuides,
       deps: {
+        agentId: deps.agentId,
         eventBus: deps.eventBus,
         logger: deps.logger,
         memoryPort: deps.memoryPort,
-        // The dag-mode afterTurn ingest write-path. Both the store
-        // and tenantId thread through so postExecution's ingest scope has a
-        // real tenant; absent ⇒ ingest skipped cleanly.
+        // Canonical afterTurn ingest authority. Both the store and tenant id
+        // thread through so postExecution's scope is complete.
         contextStore: deps.contextStore,
         tenantId: deps.tenantId,
         // The leaf-summarizer deps getter sourced from the
@@ -1844,12 +2532,23 @@ async function runSessionLocked(
         // actual working tree (the worktree when present).
         workspaceDir: effectiveWorkspaceDir,
         clock: deps.clock,
+        backgroundTaskManager: deps.backgroundTaskManager,
       },
       sessionAdapter,
       executionCacheRetentionClear,
       adaptiveRetentionClear,
       executionMinTokensOverrideClear,
     });
+    if (executionOverrides?.finalizedResultJournalKey !== undefined) {
+      const journaled = appendExecutionResultJournal(sm, {
+        journalKey: executionOverrides.finalizedResultJournalKey,
+        executionId: result.executionId,
+        response: result.response,
+        cleanupRequired: result.finishReason === "session_reset",
+      });
+      if (!journaled.ok) resultJournalFailure.error = journaled.error;
+    }
+    localeDeltaDelivery.flush(result.response);
 
     // Tear down the trajectory recorder + bridge subscription as the very
     // last action of this execute() call. Both are best-effort — a

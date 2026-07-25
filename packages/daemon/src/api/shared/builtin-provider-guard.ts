@@ -20,7 +20,7 @@
  *
  * @module
  */
-import { type KnownProvider } from "@earendil-works/pi-ai";
+import type { BuiltinProvider } from "@earendil-works/pi-ai/compat";
 import { getProviders, getModels } from "@earendil-works/pi-ai/compat";
 
 export type BuiltInProviderGuardResult =
@@ -43,7 +43,7 @@ export function checkBuiltInProviderRedundancy(
     return { ok: true };
   }
 
-  const catalogBaseUrl = getModels(providerId as KnownProvider)[0]?.baseUrl;
+  const catalogBaseUrl = getModels(providerId as BuiltinProvider)[0]?.baseUrl;
   const userBaseUrl = config.baseUrl?.trim();
 
   if (userBaseUrl && userBaseUrl !== catalogBaseUrl) {

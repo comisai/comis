@@ -4,7 +4,7 @@
  *
  * Two exported helpers under test:
  *   1. `hasAnyOAuthAgent(agents)` — boolean gate; true iff any agent's
- *      `provider` field is recognised by pi-ai's `getOAuthProvider`.
+ *      `provider` field is recognised by the provider OAuth catalog.
  *   2. `emitOAuthTlsPreflightWarn(logger)` — fire-and-forget; runs
  *      `runOAuthTlsPreflight({ timeoutMs: 4000 })` and on
  *      `kind: "tls-cert"` emits exactly one structured WARN with a
@@ -35,18 +35,15 @@ vi.mock("node:fs/promises", () => ({
   readFile: mockReadFile,
 }));
 
-// runOAuthTlsPreflight is exposed from @comis/core.
+// runOAuthTlsPreflight and getProviderOAuth are exposed from @comis/core.
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {
     ...actual,
     runOAuthTlsPreflight: mockRunOAuthTlsPreflight,
+    getProviderOAuth: mockGetOAuthProvider,
   };
 });
-
-vi.mock("@earendil-works/pi-ai/oauth", () => ({
-  getOAuthProvider: mockGetOAuthProvider,
-}));
 
 // Import after mocks are registered.
 import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "./oauth-preflight.js";
@@ -99,7 +96,7 @@ describe("hasAnyOAuthAgent", () => {
     expect(mockGetOAuthProvider).not.toHaveBeenCalled();
   });
 
-  it("returns false when no agent's provider is recognised by pi-ai", () => {
+  it("returns false when no agent's provider is recognised by the provider OAuth catalog", () => {
     mockGetOAuthProvider.mockReturnValue(undefined);
     const agents: Record<string, PerAgentConfig> = {
       a: makeAgent("anthropic"),
@@ -136,7 +133,6 @@ describe("emitOAuthTlsPreflightWarn", () => {
       ok: false,
       kind: "tls-cert",
       code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-      message: "unable to get local issuer certificate",
     };
     mockRunOAuthTlsPreflight.mockResolvedValue(certResult);
     mockReadFile.mockResolvedValue("ID=alpine\nID_LIKE=");
@@ -154,7 +150,6 @@ describe("emitOAuthTlsPreflightWarn", () => {
       errorKind: "network",
       hint: "apk add ca-certificates && update-ca-certificates",
       code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-      message: "unable to get local issuer certificate",
     });
   });
 
@@ -163,7 +158,6 @@ describe("emitOAuthTlsPreflightWarn", () => {
       ok: false,
       kind: "tls-cert",
       code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-      message: "unable to get local issuer certificate",
     } as TlsPreflightResult);
     mockReadFile.mockResolvedValue("ID=ubuntu\nID_LIKE=debian");
 
@@ -182,7 +176,6 @@ describe("emitOAuthTlsPreflightWarn", () => {
       ok: false,
       kind: "tls-cert",
       code: "CERT_HAS_EXPIRED",
-      message: "certificate has expired",
     } as TlsPreflightResult);
     mockReadFile.mockResolvedValue("ID=unknownos\nID_LIKE=");
 
@@ -201,7 +194,6 @@ describe("emitOAuthTlsPreflightWarn", () => {
       ok: false,
       kind: "tls-cert",
       code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-      message: "unable to verify the first certificate",
     } as TlsPreflightResult);
     const enoent = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     mockReadFile.mockRejectedValue(enoent);
@@ -220,7 +212,7 @@ describe("emitOAuthTlsPreflightWarn", () => {
     mockRunOAuthTlsPreflight.mockResolvedValue({
       ok: false,
       kind: "network",
-      message: "ECONNREFUSED",
+      reason: "connection",
     } as TlsPreflightResult);
 
     const { logger, calls } = makeMockLogger();
@@ -232,10 +224,24 @@ describe("emitOAuthTlsPreflightWarn", () => {
     expect(debugs).toHaveLength(1);
     expect(debugs[0]!.payload).toMatchObject({
       submodule: "oauth-tls-preflight",
-      errorKind: "oauth_tls_network",
-      message: "ECONNREFUSED",
+      errorKind: "network",
+      reason: "connection",
     });
     expect(mockReadFile).not.toHaveBeenCalled();
+  });
+
+  it("never logs extra raw error content returned by the preflight boundary", async () => {
+    mockRunOAuthTlsPreflight.mockResolvedValue({
+      ok: false,
+      kind: "network",
+      reason: "other",
+      message: "Authorization: Bearer PRIVATE_DAEMON_PREFLIGHT_SENTINEL",
+    } as unknown as TlsPreflightResult);
+
+    const { logger, calls } = makeMockLogger();
+    await emitOAuthTlsPreflightWarn(logger as never);
+
+    expect(JSON.stringify(calls)).not.toContain("PRIVATE_DAEMON_PREFLIGHT_SENTINEL");
   });
 
   it("emits nothing when the preflight succeeds", async () => {

@@ -87,9 +87,10 @@ Scheduling tools let agents create automated tasks that run on a timer. Agents c
 
 ### Messaging
 
-The message tool works across all connected channels -- Discord, Telegram, Slack, WhatsApp, and every other supported platform. Agents can send new messages, reply to specific messages, add emoji reactions, edit or delete messages, fetch message history, and send file attachments.
-
-Agents can also send messages to channels they are not currently conversing in, making the message tool ideal for notifications, alerts, and cross-channel coordination.
+The message tool provides one interface across supported platforms for sending,
+replying, reacting, editing, deleting, fetching history, and attaching files at
+the current authoritative conversation endpoint. Use `notify_user` for
+proactive delivery that must resolve a configured or recently tracked endpoint.
 
 | Tool | Description | Guide |
 |------|-------------|-------|
@@ -107,8 +108,8 @@ Session tools let agents manage their conversations, communicate with other agen
 | `sessions_history` | Retrieve session history entries | [Sessions](/agent-tools/sessions) |
 | `sessions_list` | List all sessions for the current agent | [Sessions](/agent-tools/sessions) |
 | `sessions_send` | Send a message into another session in 3 modes (`fire-and-forget`, `wait`, `ping-pong`) | [Sessions](/agent-tools/sessions) |
-| `sessions_spawn` | Spawn a sub-agent session with workspace isolation, artifact refs, and an optional objective | [Sessions](/agent-tools/sessions) |
-| `subagents` | Manage running sub-agents (`list`, `kill`, `steer`) | [Sessions](/agent-tools/sessions) |
+| `sessions_spawn` | Start a background sub-agent with artifact refs and an optional objective | [Sessions](/agent-tools/sessions) |
+| `subagents` | Manage sub-agents (`list`, `wait`, `kill`, `steer`) | [Sessions](/agent-tools/sessions) |
 
 ### Pipelines (Execution Graphs)
 
@@ -191,12 +192,12 @@ These platform-management tools let agents inspect or modify the running Comis d
 Supervisor tools require admin-level trust. They manage the entire platform, not just the current agent's session. Only agents with the `supervisor` profile or explicit `allow` entries can use these tools.
 
 <Warning>
-Supervisor tools can modify agents, delete sessions, flush memory, and manage gateway tokens. Grant these tools only to trusted agents that need fleet-wide control. See [tool policy](/skills/tool-policy) for how to restrict access.
+Supervisor tools can modify agents, delete sessions, flush memory, and manage gateway tokens. Grant these tools only to trusted agents that need deployment-wide control. See [tool policy](/skills/tool-policy) for how to restrict access.
 </Warning>
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `agents_manage` | Agent fleet management (create, get, update, delete, suspend, resume) | [Infrastructure](/agent-tools/infrastructure) |
+| `agents_manage` | Agent agent administration (create, get, update, delete, suspend, resume) | [Infrastructure](/agent-tools/infrastructure) |
 | `obs_query` | Observability and metrics queries (diagnostics, billing, delivery, channels) | [Infrastructure](/agent-tools/infrastructure) |
 | `sessions_manage` | Session lifecycle management (delete, reset, export, compact) | [Infrastructure](/agent-tools/infrastructure) |
 | `channels_manage` | Channel adapter management (list, get, enable, disable, restart, configure) | [Infrastructure](/agent-tools/infrastructure) |
@@ -288,7 +289,7 @@ Explore each tool category in detail:
     Image analysis, text-to-speech, transcription, and documents
   </Card>
   <Card title="Infrastructure" icon="server" href="/agent-tools/infrastructure">
-    Configuration, gateway control, and fleet management
+    Configuration, gateway control, and agent administration
   </Card>
   <Card title="Browser" icon="window-maximize" href="/agent-tools/browser">
     Headless browser automation and web interaction

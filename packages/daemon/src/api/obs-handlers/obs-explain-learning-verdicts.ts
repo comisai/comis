@@ -13,7 +13,7 @@
  * `outcome_unresolved`): a named skill failure / a specific abstain reason
  * out-ranks "no outcome resolved" (specific-over-generic), yet `Defer ≠ Retry`
  * means neither ever masks an acute error. Both return `null` on an absent
- * learning block, so the frozen 678/503 fixtures (which carry none) cannot
+ * learning block, so the established cost and breaker fixtures (which carry none) cannot
  * regress. The return type is structurally identical to the registry's
  * `RootCause` (no cross-module type import ⇒ no cycle).
  *

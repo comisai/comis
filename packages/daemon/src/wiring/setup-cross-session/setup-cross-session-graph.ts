@@ -2,19 +2,12 @@
 /**
  * Graph-execution wiring for cross-session sub-agent spawns.
  *
- * Hosts the `executeSubAgent` closure builder + graph-tree primitives:
- * `resolveGraphCacheRetention` (depth-aware leaf-node retention), and
- * `MIN_SUB_AGENT_STEPS` (the step budget floor that protects boot-sequence
- * consumption). `SUB_AGENT_TOOL_DENYLIST` is imported from `@comis/core`
- * (moved there so @comis/agent can import it without a cycle).
- *
- * The runtime leaf wires the resulting executeSubAgent into createSubAgentRunner.
+ * Builds sub-agent execution with depth-aware cache retention and step-budget floors.
  *
  * @module
  */
-
-import type { NormalizedMessage, SessionKey, SpawnPacket, AppContainer, AgentConfig, FileLockPort } from "@comis/core";
-import { tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+import type { AgentCapability, NormalizedMessage, SessionKey, SpawnPacket, AppContainer, AgentConfig, FileLockPort, ConversationLocator, SessionStorePort, WorkspacePolicySnapshot } from "@comis/core";
+import { ConversationRefSchema, ConversationScopeSchema, tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import {
   createStepCounter,
@@ -25,95 +18,64 @@ import {
   getCacheSafeParams,
   resolveOperationModel,
   resolveProviderFamily,
+  type ExecutionResult,
 } from "@comis/agent";
 import { randomUUID } from "node:crypto";
+import type { Result } from "@comis/shared";
 import type { GitExec } from "@comis/skills/tools";
 import type { WorktreeRegistry } from "../setup-worktree-sweep.js";
+import { resolveGraphCacheRetention } from "./graph-cache-retention.js";
 import { maybePrepareWorktreeForSpawn } from "./worktree-spawn-run.js";
-
-// ---------------------------------------------------------------------------
-// Depth-aware graph cache retention
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve cache retention for a graph sub-agent.
- *
- * Default "long" (1h TTL) — depth-aware "short" for root nodes was tried and
- * caused regressions: final pipeline nodes running 10-15 min after root nodes
- * got 0 cache reads because the shared prefix expired. The 1h write premium
- * is far cheaper than the cache misses it prevents.
- *
- * Exception: **leaf nodes** (no downstream dependents) use "short". Their
- * cache prefix has no consumers — no later node will read from it — so the
- * 1h write premium is pure waste. Observed in NVDA trade-desk pipeline: the
- * head-trader node wrote 16,663 1h tokens (~$0.17) that were never reused
- * because the pipeline ends at that node.
- *
- * @param _graphNodeDepth unused — kept for interface stability
- * @param isLeafNode true when no other graph node depends on this one
- * @returns "short" for leaf nodes, "long" otherwise
- */
-export function resolveGraphCacheRetention(
-  _graphNodeDepth: number | undefined,
-  isLeafNode?: boolean,
-): "short" | "long" {
-  if (isLeafNode === true) return "short";
-  return "long";
-}
-
-// ---------------------------------------------------------------------------
-// Sub-agent step floor
-// ---------------------------------------------------------------------------
-
-/** Minimum step budget for sub-agent spawns — prevents boot sequence from consuming all steps. */
+export { resolveGraphCacheRetention } from "./graph-cache-retention.js";
+/** Minimum spawn budget so boot cannot consume every step. */
 export const MIN_SUB_AGENT_STEPS = 30;
-
-// ---------------------------------------------------------------------------
-// executeSubAgent builder
-// ---------------------------------------------------------------------------
-
-/**
- * Closure-captured deps for the executeSubAgent callback.
- */
+/** Closure-captured dependencies for executeSubAgent. */
 export interface ExecuteSubAgentDeps {
   container: AppContainer;
-  sessionStore: {
-    loadByFormattedKey(key: string): { messages: unknown[]; metadata: Record<string, unknown> } | undefined;
-  };
+  sessionStore: Pick<SessionStorePort, "load" | "loadByRef">;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires complex type parameters from pi-ai SDK
   assembleToolsForAgent: (agentId: string, options?: import("../setup-tools.js").AssembleToolsOptions) => Promise<any[]>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentExecutor.execute has complex signature crossing package boundaries
   getExecutor: (agentId: string) => { execute: (...args: any[]) => Promise<any> };
   fileLock: FileLockPort;
   logger?: ComisLogger;
-  /**
-   * The lifecycle GitExec the composition root binds (the real
-   * execFile-backed `createExecGit` adapted to `{ stdout, exitCode }`). Present
-   * ⇒ a child whose session metadata carries `worktree:true` runs in an isolated
-   * git worktree. **Absent ⇒ the worktree request is honestly ignored** (no git
-   * seam to create one) — a content-free WARN surfaces the skip rather than a
-   * silent no-op. Paired with {@link worktreeRegistry}; the daemon wires BOTH.
-   */
+  /** Git seam for isolated child worktrees; absence is reported and skips isolation. */
   worktreeGitExec?: GitExec;
-  /** The shared registry the boot/periodic orphan sweep reads. Paired with {@link worktreeGitExec}. */
+  /** Shared registry used by boot and periodic orphan sweeps. */
   worktreeRegistry?: WorktreeRegistry;
 }
-
-/**
- * The executeSubAgent callback signature accepted by createSubAgentRunner.
- */
+/** Callback signature accepted by createSubAgentRunner. */
 export type ExecuteSubAgentFn = (
   agentId: string,
   sessionKey: SessionKey,
+  conversation: ConversationLocator,
   task: string,
   maxSteps?: number,
   callerAgentId?: string,
-  graphOverrides?: { graphId?: string; nodeId?: string; reuseSessionKey?: string; graphNodeDepth?: number },
+  graphOverrides?: {
+    graphId?: string;
+    nodeId?: string;
+    reuseConversation?: ConversationLocator;
+    graphNodeDepth?: number;
+    workspacePolicySnapshot?: WorkspacePolicySnapshot;
+  },
   /** Per-spawn token budget — rides executionOverrides into the child's
    *  BudgetGuard per-execution cap. Absent ⇒ no per-execution cap. */
   tokenBudget?: number,
-) => Promise<{ response: string; tokensUsed: { total: number; cacheRead?: number; cacheWrite?: number }; cost: { total: number; cacheSaved?: number }; finishReason: string; stepsExecuted: number; toolCallHistory?: string[] }>;
-
+  autonomyContext?: {
+    rootRunId: string;
+    parentLeaseId?: string;
+    parentCaps: readonly AgentCapability[];
+    onAssemblyAuthority(authority: {
+      rootRunId: string;
+      leaseId: string;
+      caps: readonly AgentCapability[];
+    }): void;
+  },
+  providerLifecycle?: {
+    onProviderStart(): Result<void, Error>;
+  },
+) => Promise<Pick<ExecutionResult, "response" | "tokensUsed" | "cost" | "finishReason" | "stepsExecuted" | "toolCallHistory" | "terminalErrorKind">>;
 /**
  * Build the executeSubAgent callback wired into createSubAgentRunner. The
  * closure captures the daemon container + session store + tool assembler +
@@ -130,11 +92,14 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
   return async (
     agentId,
     sessionKey,
+    conversation,
     task,
     maxSteps,
     callerAgentId,
     graphOverrides,
     tokenBudget,
+    autonomyContext,
+    providerLifecycle,
   ) => {
     deps.logger?.debug({
       agentId,
@@ -142,7 +107,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       channelId: sessionKey.channelId,
       maxSteps,
       isGraphSpawn: !!graphOverrides?.graphId,
-      isReuseSession: !!graphOverrides?.reuseSessionKey,
+      isReuseSession: !!graphOverrides?.reuseConversation,
       graphNodeDepth: graphOverrides?.graphNodeDepth,
     }, "executeSubAgent invoked");
 
@@ -173,11 +138,13 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
 
     // Read spawn packet fields from session metadata
     const formattedKey = formatSessionKey(sessionKey);
-    const sessionData = sessionStore.loadByFormattedKey(formattedKey);
+    const loadedSession = sessionStore.load(conversation.conversationScope);
+    if (!loadedSession.ok) throw loadedSession.error;
+    const sessionData = loadedSession.value;
     const meta = sessionData?.metadata ?? {};
 
     // Detect reuse-session spawns for persistent multi-round drivers
-    const isReuseSession = !!graphOverrides?.reuseSessionKey;
+    const isReuseSession = !!graphOverrides?.reuseConversation;
 
     // Per-spawn toolGroups override config default (can only narrow, never widen)
     const configToolGroups = container.config.security.agentToAgent.subAgentToolGroups;
@@ -250,6 +217,22 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       toolGroups: effectiveToolGroups,
       includeMcpTools: mcpPolicy === "inherit",
       sharedPaths: graphSharedDir ? [graphSharedDir] : undefined,
+      sessionKey,
+      ...(ctx?.deliveryOrigin !== undefined
+        ? { requesterOrigin: ctx.deliveryOrigin }
+        : {}),
+      ...(autonomyContext !== undefined
+        ? {
+            autonomyParent: {
+              rootRunId: autonomyContext.rootRunId,
+              ...(autonomyContext.parentLeaseId !== undefined
+                ? { leaseId: autonomyContext.parentLeaseId }
+                : {}),
+              caps: autonomyContext.parentCaps,
+            },
+            onAutonomyAssembly: autonomyContext.onAssemblyAuthority,
+          }
+        : {}),
     });
 
     // Intersect sub-agent tools with parent's resolved tool set.
@@ -355,9 +338,17 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
 
     // Generate parent context summary when includeParentHistory is "summary"
     let parentSummary: string | undefined;
-    if (meta.includeParentHistory === "summary" && meta.parentSessionKey) {
-      const parentSession = sessionStore.loadByFormattedKey(meta.parentSessionKey as string);
-      if (parentSession?.messages?.length) {
+    if (meta.includeParentHistory === "summary" && meta.parentConversationRef && meta.parentConversationScope) {
+      const parentScope = ConversationScopeSchema.safeParse(meta.parentConversationScope);
+      const parentRef = ConversationRefSchema.safeParse(meta.parentConversationRef);
+      const parentLoaded = parentScope.success && parentRef.success
+        ? sessionStore.loadByRef(
+            { tenantId: parentScope.data.tenantId, agentId: parentScope.data.agentId },
+            parentRef.data,
+          )
+        : undefined;
+      const parentSession = parentLoaded?.ok ? parentLoaded.value : undefined;
+      if (parentSession?.messages.length) {
         try {
           const subagentCtxConfig = container.config.security.agentToAgent.subagentContext;
           const agentConfig = container.config.agents[agentId] ?? container.config.agents["default"];
@@ -534,11 +525,17 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       // cap (pi-executor feeds it to budgetGuard.resetExecution). Omitted when
       // absent so the no-budget path stays byte-identical to today.
       ...(tokenBudget !== undefined && { tokenBudget }),
+      ...(graphOverrides?.workspacePolicySnapshot !== undefined && {
+        workspacePolicySnapshot: graphOverrides.workspacePolicySnapshot,
+      }),
       // When a worktree was created, the child's file-tool jail cwd IS the
       // worktree (the SDK session cwd + resource-loader / context-engine root), so
       // exec/read/write/edit resolve inside it. Omitted when no worktree ⇒ the
       // executor uses its construction-bound deps.workspaceDir (byte-identical).
       ...(worktreeHandle ? { workspaceDir: effectiveWorkspaceDir } : {}),
+      ...(providerLifecycle !== undefined
+        ? { onProviderStart: providerLifecycle.onProviderStart }
+        : {}),
     };
     let result;
     try {
@@ -594,6 +591,9 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       finishReason: result.finishReason,
       stepsExecuted: result.stepsExecuted,
       toolCallHistory: result.toolCallHistory,
+      ...(result.terminalErrorKind === undefined
+        ? {}
+        : { terminalErrorKind: result.terminalErrorKind }),
     };
   };
 }

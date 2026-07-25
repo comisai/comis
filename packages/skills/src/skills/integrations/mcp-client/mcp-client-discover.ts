@@ -21,7 +21,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { mcpStderrLooksLikeError } from "./mcp-client-connect-classify.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { systemNowMs, sanitizeLogString } from "@comis/core";
+import { createHash } from "node:crypto";
+import { isMcpInstructionTextSafe, systemNowMs } from "@comis/core";
 import type {
   McpClientManagerDeps,
   McpClientManagerState,
@@ -372,19 +373,36 @@ export function createClient(
 // ---------------------------------------------------------------------------
 
 export function extractServerMetadata(client: Client) {
-  const instructions = client.getInstructions();
+  const rawInstructions: unknown = client.getInstructions();
   const serverCaps = client.getServerCapabilities();
   const serverImpl = client.getServerVersion();
 
   const capabilities = serverCaps ? (serverCaps as Record<string, unknown>) : undefined;
   const serverInfo = serverImpl ? { name: serverImpl.name, version: serverImpl.version } : undefined;
 
-  // Cap instructions to prevent preamble budget issues
-  const cappedInstructions = instructions && instructions.length > MAX_INSTRUCTIONS_CHARS
-    ? instructions.slice(0, MAX_INSTRUCTIONS_CHARS - INSTRUCTIONS_TRUNCATED_SUFFIX.length) + INSTRUCTIONS_TRUNCATED_SUFFIX
-    : instructions;
+  let instructions: string | undefined;
+  let instructionHash: string | undefined;
+  let instructionValidation: "absent" | "included" | "truncated" | "rejected" = "absent";
+  if (rawInstructions !== undefined && rawInstructions !== null) {
+    if (typeof rawInstructions !== "string") {
+      instructionValidation = "rejected";
+    } else {
+      const trimmed = rawInstructions.trim();
+      if (trimmed.length > 0 && !isMcpInstructionTextSafe(trimmed)) {
+        instructionValidation = "rejected";
+      } else if (trimmed.length > 0) {
+        const truncated = trimmed.length > MAX_INSTRUCTIONS_CHARS;
+        instructions = truncated
+          ? trimmed.slice(0, MAX_INSTRUCTIONS_CHARS - INSTRUCTIONS_TRUNCATED_SUFFIX.length)
+            + INSTRUCTIONS_TRUNCATED_SUFFIX
+          : trimmed;
+        instructionHash = createHash("sha256").update(instructions, "utf-8").digest("hex");
+        instructionValidation = truncated ? "truncated" : "included";
+      }
+    }
+  }
 
-  return { instructions: cappedInstructions, capabilities, serverInfo };
+  return { instructions, instructionHash, instructionValidation, capabilities, serverInfo };
 }
 
 // ---------------------------------------------------------------------------
@@ -425,20 +443,13 @@ export function wireStderrCapture(
     // closed" and the "why" (e.g. a missing required env var) is a separate log
     // line the operator has to hand-correlate.
     state.lastStderr.set(config.name, stderrBuffer);
-    // Log each stderr line at DEBUG level for real-time visibility. SANITIZE it:
-    // a credentialed child can echo a connection string / API key, and this
-    // free-text `stderr` field is NOT a Pino-redacted key — it would leak raw
-    // into the daemon log (mirrors the connect-failure fold's scrub).
-    for (const line of text.split("\n").filter(Boolean)) {
-      logger.debug?.({ serverName: config.name, stderr: sanitizeLogString(line) }, "MCP server stderr");
-    }
   });
 
   // On transport close, surface accumulated stderr. Classify it: genuine
   // crash/error output logs at WARN ("crash diagnostics"); a benign banner /
   // "ready" line logs at INFO ("informational") so a healthy server's startup
-  // banner does not read as a fault on every restart. Either way the full
-  // (sanitized) buffer is captured at INFO below.
+  // banner does not read as a fault on every restart. Child output stays in the
+  // bounded in-memory failure classifier and never enters a durable log sink.
   stdioTransport.stderr.on("end", () => {
     if (stderrBuffer.trim()) {
       if (mcpStderrLooksLikeError(stderrBuffer)) {
@@ -452,12 +463,6 @@ export function wireStderrCapture(
           "MCP stdio server stderr (informational)",
         );
       }
-      logger.info(
-        // SANITIZE the accumulated buffer before it hits the log — same credential
-        // scrub as the per-line DEBUG + the connect-failure fold above.
-        { serverName: config.name, stderr: sanitizeLogString(stderrBuffer.trim()) },
-        "MCP stdio server stderr output",
-      );
     }
   });
 }

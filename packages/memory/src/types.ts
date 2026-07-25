@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import type { ConversationRef } from "@comis/core";
 /**
  * Internal database row shapes for the @comis/memory package.
  *
@@ -14,6 +15,9 @@ export interface MemoryRow {
   tenant_id: string;
   agent_id: string;
   user_id: string;
+  visibility: "conversation" | "principal" | "agent-shared";
+  conversation_ref: ConversationRef | null;
+  principal_id: string | null;
   content: string;
   trust_level: string;
   memory_type: string;
@@ -61,10 +65,10 @@ export interface MemoryRow {
  * Raw row shape for the `sessions` table.
  */
 export interface SessionRow {
-  session_key: string;
   tenant_id: string;
-  user_id: string;
-  channel_id: string;
+  agent_id: string;
+  conversation_ref: ConversationRef;
+  canonical_scope: string;
   /** JSON-encoded unknown[] */
   messages: string;
   /** Unix timestamp in milliseconds */
@@ -80,7 +84,7 @@ export interface SessionRow {
  *
  * Snake_case DB-row shape — NOT the public API (consumers use the `LcdMessage`
  * DTO from `@comis/core`, reconstructed via the parts-codec). Carries the
- * tenant/agent/session isolation columns (`conversation_id` is the composite,
+ * tenant/agent/session isolation columns (`conversation_ref` is the composite,
  * the three broken-out columns let a scoped read filter on the SAME schema without
  * a migration). Paired 1:1 with `LcdMessageRowSchema` in
  * `./row-schemas.js` via the `row-schemas.test.ts` drift guard.
@@ -88,7 +92,7 @@ export interface SessionRow {
 export interface LcdMessageRow {
   id: string;
   /** tenant+agent+session composite scope key. */
-  conversation_id: string;
+  conversation_ref: ConversationRef;
   tenant_id: string;
   agent_id: string;
   session_key: string;
@@ -178,7 +182,7 @@ export interface NamedGraphRow {
 export interface LcdSummaryRow {
   summary_id: string;
   /** tenant+agent+session composite scope key. */
-  conversation_id: string;
+  conversation_ref: string;
   tenant_id: string;
   agent_id: string;
   session_key: string;
@@ -239,7 +243,7 @@ export interface LcdSummaryParentRow {
  *
  * One row per item of the ordered model-facing view; carries the scoping
  * columns. `ordinal` is dense + gap-free per conversation (a UNIQUE
- * `(conversation_id, ordinal)` index enforces it); `ref_kind` is the closed
+ * `(conversation_ref, ordinal)` index enforces it); `ref_kind` is the closed
  * `message`|`summary` discriminator; `ref_id` points at the referenced
  * `lcd_messages.id` or `lcd_summaries.summary_id`. Paired 1:1 with
  * `LcdContextItemRowSchema` via the drift guard.
@@ -247,7 +251,7 @@ export interface LcdSummaryParentRow {
 export interface LcdContextItemRow {
   id: string;
   /** tenant+agent+session composite scope key. */
-  conversation_id: string;
+  conversation_ref: string;
   tenant_id: string;
   agent_id: string;
   session_key: string;

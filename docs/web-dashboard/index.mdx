@@ -85,7 +85,7 @@ Several detail pages are reached from their parent views rather than listed sepa
 
 | Item | Badge | What It Does |
 |------|-------|-------------|
-| **Overview** | Error count | System metrics summary with stat cards and 24-hour activity chart |
+| **Overview** | Delivery error count | System metrics summary with stat cards and 24-hour activity chart |
 | **Context Engine** | | Pipeline metrics, layer waterfall, and DAG visualization |
 | **Context DAG** | | Interactive DAG browser for inspecting context node graphs |
 | **Billing** | | Token usage and cost breakdown by provider and agent |
@@ -136,7 +136,7 @@ The **Skills** view lets you browse installed skills per agent with a scope togg
 
 The Dashboard is the landing page after login (`/dashboard` route). It provides an at-a-glance overview of your entire Comis system, organized into several rows:
 
-- **Stat cards** -- six clickable cards showing Active Agents (ratio of active to total), Sessions, Messages Today, Tokens Today, Cost Today (USD), and Errors. Each card links to its detail view. Messages, Tokens, and Cost cards show trend arrows comparing to previous values.
+- **Stat cards** -- six clickable cards showing Active Agents (ratio of active to total), Sessions, Messages Today, Tokens Today, Cost Today (USD), and Delivery Errors (24h). Each card links to its detail view. Messages, Tokens, and Cost cards show trend arrows comparing to the preceding 24-hour period.
 - **System Health card** -- displays daemon uptime, memory (RSS), event-loop delay, Node.js version, MCP server count, and an optional CPU progress bar. Links to the Observability Overview.
 - **Context Engine Summary card** -- shows prompt cache hit rate, budget utilization percentage, total evictions, and re-reads count. Links to the Context Engine view.
 - **Sparkline charts** -- two mini charts showing Token Usage (24h) and Cost Trend (7d) with clickable navigation to the Billing view.
@@ -144,7 +144,7 @@ The Dashboard is the landing page after login (`/dashboard` route). It provides 
 - **Channels section** -- channel badges showing each platform's type, name, connection status, enabled state, and uptime.
 - **Activity feed** -- a live-updating feed of recent system activity, powered by Server-Sent Events (SSE).
 
-All stat cards update in real time via SSE events. RPC-sourced data (sessions, messages, tokens, cost, errors) refreshes every 60 seconds. The dashboard shows loading skeletons during initial data fetch and a retry button if an error occurs.
+Stat cards refresh from their canonical RPC sources every 60 seconds and after relevant SSE events. The dashboard shows loading skeletons during initial data fetch and a retry button if an error occurs.
 
 ## Keyboard Shortcuts
 

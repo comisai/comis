@@ -79,9 +79,8 @@ describe("handleEnvelopeException", () => {
   // The second classify chokepoint. A PromptTimeoutError reaching the
   // envelope handler must carry the named terminal finishReason
   // "prompt_timeout" (END_REASON_MAP → endReason "timeout") and the WARN
-  // must carry errorKind "timeout" + the knob-named hint — pre-patch it
-  // flattened to finishReason "error" with errorKind "internal" and a
-  // generic hint.
+  // must carry errorKind "timeout" + the knob-named hint rather than a
+  // generic internal-error classification.
   it("PromptTimeoutError → finishReason 'prompt_timeout', WARN errorKind 'timeout' + knob-named hint; userMessage stays generic", () => {
     const result = makeResult();
     const warn = vi.fn();
@@ -121,9 +120,8 @@ describe("handleEnvelopeException", () => {
     );
     const warnCall = warn.mock.calls.find((c) => c[1] === "Unexpected execution error");
     expect(warnCall).toBeDefined();
-    // Pre-patch this second classify consumer passed only { agentId } and no
-    // elapsedMs, and the WARN had no durationMs — failure log lines must
-    // carry elapsed time, and the failure-path consumer has both.
+    // Failure log lines must carry elapsed time, and this consumer has both
+    // the execution start and current clock value.
     expect(warnCall![0].durationMs).toBe(195_000);
     expect(warnCall![0].hint).toMatch(/after 195000ms/);
   });
@@ -137,7 +135,31 @@ describe("handleEnvelopeException", () => {
     expect(result.errorContext?.originalError).toBe("kaboom");
   });
 
-  it("regression: a non-timeout error keeps finishReason 'error' + WARN errorKind 'internal' (unchanged path)", () => {
+  it("logs a bounded redacted message instead of the raw exception object", () => {
+    const result = makeResult();
+    const warn = vi.fn();
+    const logger = makeNoopLogger();
+    logger.warn = warn;
+
+    handleEnvelopeException(
+      { result },
+      makeDeps({ logger: logger as unknown as MessageEnvelopeDeps["logger"] }),
+      {
+        error: new Error("Authorization: Bearer PRIVATE_ENVELOPE_SENTINEL_LONG_VALUE"),
+        sessionKey: result.sessionKey,
+        agentId: "a1",
+        executionStartMs: 0,
+      },
+    );
+
+    const warnCall = warn.mock.calls.find((call) => call[1] === "Unexpected execution error");
+    expect(typeof warnCall?.[0].err).toBe("string");
+    expect(JSON.stringify(warnCall)).not.toContain("PRIVATE_ENVELOPE_SENTINEL");
+    expect(warnCall?.[0]).not.toHaveProperty("stack");
+    expect(result.errorContext?.originalError).not.toContain("PRIVATE_ENVELOPE_SENTINEL");
+  });
+
+  it("maps a non-timeout error to finishReason error and WARN errorKind internal", () => {
     const result = makeResult();
     const warn = vi.fn();
     const logger = makeNoopLogger();
@@ -213,7 +235,7 @@ describe("handleEnvelopeException", () => {
     expect(result.response.length).toBeGreaterThan(0);
   });
 
-  it("non-ContextExhaustionError still maps to 'error' (regression guard)", () => {
+  it("maps a non-ContextExhaustionError to error", () => {
     const result = makeResult();
     handleEnvelopeException({ result }, makeDeps(), { error: new Error("generic"), sessionKey: result.sessionKey, agentId: "a1", executionStartMs: 0 });
     expect(result.finishReason).toBe("error");

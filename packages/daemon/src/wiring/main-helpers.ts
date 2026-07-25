@@ -14,8 +14,10 @@ import {
   resolveMultilingual,
   EMBED_MULTILINGUAL,
   RERANK_MULTILINGUAL,
+  BackgroundTasksConfigSchema,
+  tryGetContext,
 } from "@comis/core";
-import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort, SessionKey } from "@comis/core";
+import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort, RootRunIdResolver, ComisLogger, TypedEventBus } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
 import { createImageGenRateLimiter } from "@comis/skills";
 import { createLeaseManager, type LeaseManager } from "@comis/infra";
@@ -57,6 +59,8 @@ import { registerComisImageProviders } from "../api/pi-image-adapter.js";
 // The provider-following vision bridge — the bundle
 // builds its capability by closing over the cred resolvers + resolveAgentModel.
 import { createMainProviderVision, type MainProviderVision } from "../api/main-provider-vision.js";
+import { restartChannelAdapter } from "./channel-adapter-restart.js";
+import type { SessionTracker } from "../notification/session-tracker.js";
 
 /** The bounded-autonomy late-bind seam built in
  *  `bootAgents`: the per-root budget holder (populated by the cap layer in bootChannels) +
@@ -66,15 +70,53 @@ import { createMainProviderVision, type MainProviderVision } from "../api/main-p
 export interface BoundedAutonomyWiring {
   boundedAutonomyBudgetHolder: BoundedAutonomyBudgetHolder;
   rootRunIdIndex: Map<string, string>;
-  resolveRootRunId: (sessionKey: SessionKey) => string;
+  resolveRootRunId: RootRunIdResolver;
   sharedLeaseManager: LeaseManager;
 }
 
+export function resolveAgentBackgroundTasksConfig(
+  agents: BootContext["container"]["config"]["agents"],
+  agentId: string,
+) {
+  // eslint-disable-next-line security/detect-object-injection -- agentId selects a key from the validated agent configuration map.
+  return BackgroundTasksConfigSchema.parse(agents[agentId]?.backgroundTasks ?? {});
+}
+
+export function recordCurrentSessionEndpoint(
+  getSessionTracker: () => SessionTracker | undefined,
+): void {
+  const requestContext = tryGetContext();
+  const endpoint = requestContext?.turnScope?.endpoint;
+  const agentId = requestContext?.agentId;
+  if (endpoint !== undefined && agentId !== undefined) {
+    getSessionTracker()?.recordActivity(agentId, endpoint);
+  }
+}
+
 /** Build the {@link BoundedAutonomyWiring} late-bind seam (see the interface doc). */
-export function createBoundedAutonomyWiring(deps: { clock: ClockPort }): BoundedAutonomyWiring {
+export function createBoundedAutonomyWiring(deps: {
+  clock: ClockPort;
+  logger: ComisLogger;
+  eventBus: TypedEventBus;
+}): BoundedAutonomyWiring {
   const boundedAutonomyBudgetHolder: BoundedAutonomyBudgetHolder = {};
   const rootRunIdIndex = new Map<string, string>();
-  const resolveRootRunId = createRootRunIdResolver({ holder: boundedAutonomyBudgetHolder, index: rootRunIdIndex });
+  const resolveRootRunId = createRootRunIdResolver({
+    holder: boundedAutonomyBudgetHolder,
+    index: rootRunIdIndex,
+    onContextMismatch: (error, agentId) => {
+      deps.logger.audit(
+        { agentId, outcome: "denied", reason: error.code },
+        "Trusted root context identity rejected",
+      );
+      deps.eventBus.emit("security:warn", {
+        category: "root_context_mismatch",
+        agentId,
+        message: "Trusted root context identity rejected",
+        timestamp: deps.clock.now(),
+      });
+    },
+  });
   const sharedLeaseManager = createLeaseManager({ clock: deps.clock });
   return { boundedAutonomyBudgetHolder, rootRunIdIndex, resolveRootRunId, sharedLeaseManager };
 }
@@ -165,8 +207,7 @@ export function setupChannelHealthMonitor(deps: {
       const adapter = adaptersByType.get(channelType);
       if (!adapter) return;
       daemonLogger.info({ channelType }, "Health monitor triggering auto-restart for stale adapter");
-      await adapter.stop();
-      await adapter.start();
+      await restartChannelAdapter({ adapter, channelType, logger: daemonLogger });
     },
   });
   const stop = monitor.start(adaptersByType);
@@ -796,4 +837,31 @@ export function buildMediaVisionBundle(deps: {
     logger: skillsLogger,
   });
   return { capability, resolveMainModelId: (agentId: string) => resolveMain(agentId).modelId || undefined };
+}
+
+/**
+ * Background-task notifier bound to a late-populated notification-service ref
+ * (the service is constructed by bootChannels after this closure is wired).
+ * Internal boundary: mints the delivery authority + destination endpoint the
+ * notifyUser guard requires — there is no originating turn context here. A
+ * missing service or a no-channel resolution is non-fatal: the background
+ * notification is simply dropped.
+ */
+export function createBgNotifyFn(
+  bgNotifyRef: { ref?: import("../notification/notification-service.js").NotificationService },
+): (opts: { agentId: string; message: string; priority: "normal"; origin: "background_task" }) => Promise<void> {
+  return async (opts) => {
+    const service = bgNotifyRef.ref;
+    if (!service) return;
+    const destination = service.resolveDestination({ agentId: opts.agentId });
+    if (!destination.ok) return;
+    await service.notifyUser({
+      agentId: opts.agentId,
+      message: opts.message,
+      priority: opts.priority,
+      origin: opts.origin,
+      authority: destination.value.authority,
+      destinationEndpoint: destination.value.destinationEndpoint,
+    });
+  };
 }

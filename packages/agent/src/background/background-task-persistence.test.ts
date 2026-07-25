@@ -1,28 +1,146 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { safePath } from "@comis/core";
+import { createConversationRef, safePath } from "@comis/core";
 import {
   persistTaskSync,
+  persistTaskAtomically,
   loadTask,
   recoverTasks,
   removeTaskFile,
   TASK_DIR_NAME,
+  type AtomicTaskPersistenceOps,
 } from "./background-task-persistence.js";
 import type { BackgroundTaskOrigin, PersistedTaskState } from "./background-task-types.js";
 
-function buildOrigin(overrides: Partial<BackgroundTaskOrigin> = {}): BackgroundTaskOrigin {
+function buildOrigin(overrides: Partial<BackgroundTaskOrigin> & { agentId?: string } = {}): BackgroundTaskOrigin {
+  const agentId = overrides.agentId ?? "default";
+  const endpoint = { channelType: "echo", channelInstanceId: "test-instance", conversationId: "test", conversationKind: "direct" as const };
+  const turnScope = { conversation: { tenantId: "default", agentId, partition: { kind: "endpoint-conversation-principal" as const, endpoint, principalId: "user1" } }, principal: { principalId: "user1" }, endpoint };
+  const conversationRef = createConversationRef(turnScope.conversation);
+  if (!conversationRef.ok) throw conversationRef.error;
   return {
-    agentId: "default",
-    sessionKey: "default:echo:test:user1",
-    channelType: "echo",
-    channelId: "test",
+    turnScope,
+    conversationRef: conversationRef.value,
+    deliveryOrigin: { channelType: "echo", channelId: "test", userId: "user1", tenantId: "default" },
     traceId: null,
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
-    ...overrides,
+    ...Object.fromEntries(Object.entries(overrides).filter(([key]) => key !== "agentId")),
   };
+}
+
+type RollbackFailurePhase =
+  | "open"
+  | "write"
+  | "sync"
+  | "close"
+  | "rename"
+  | "replacement-directory-open"
+  | "replacement-directory-sync"
+  | "unlink"
+  | "removal-directory-open"
+  | "removal-directory-sync";
+
+function buildRollbackFaultOps(phase: RollbackFailurePhase): {
+  ops: AtomicTaskPersistenceOps;
+  opened: Array<{ path: string; flags: string }>;
+} {
+  const descriptorPaths = new Map<number, string>();
+  const opened: Array<{ path: string; flags: string }> = [];
+  let directorySyncCount = 0;
+  let directoryOpenCount = 0;
+  let rollbackOpenCount = 0;
+  let injected = false;
+  const shouldInject = (candidate: RollbackFailurePhase): boolean => {
+    if (injected || phase !== candidate) return false;
+    injected = true;
+    return true;
+  };
+  const isRollbackPath = (path: string): boolean => path.endsWith(".rollback.tmp");
+  const ops: AtomicTaskPersistenceOps = {
+    open: (path, flags, mode) => {
+      opened.push({ path, flags });
+      if (flags === "wx") {
+        rollbackOpenCount += 1;
+        if (rollbackOpenCount === 2 && shouldInject("open")) {
+          throw new Error("injected rollback open failure");
+        }
+      }
+      if (flags === "r") {
+        directoryOpenCount += 1;
+        if (directoryOpenCount === 3 && shouldInject("replacement-directory-open")) {
+          throw new Error("injected replacement directory open failure");
+        }
+        if (directoryOpenCount === 4 && shouldInject("removal-directory-open")) {
+          throw new Error("injected removal directory open failure");
+        }
+      }
+      const fd = openSync(path, flags, mode);
+      descriptorPaths.set(fd, path);
+      return fd;
+    },
+    write: (fd, content) => {
+      const path = descriptorPaths.get(fd) ?? "";
+      if (isRollbackPath(path) && shouldInject("write")) {
+        throw new Error("injected rollback write failure");
+      }
+      writeFileSync(fd, content);
+    },
+    sync: (fd) => {
+      const path = descriptorPaths.get(fd) ?? "";
+      if (isRollbackPath(path) && shouldInject("sync")) {
+        throw new Error("injected rollback sync failure");
+      }
+      if (!path.endsWith(".tmp") && !path.endsWith(".json")) {
+        directorySyncCount += 1;
+        if (directorySyncCount <= 2) throw new Error("injected admission directory sync failure");
+        if (directorySyncCount === 3 && shouldInject("replacement-directory-sync")) {
+          throw new Error("injected replacement directory sync failure");
+        }
+        if (directorySyncCount === 4 && shouldInject("removal-directory-sync")) {
+          throw new Error("injected removal directory sync failure");
+        }
+      }
+      fsyncSync(fd);
+    },
+    close: (fd) => {
+      const path = descriptorPaths.get(fd) ?? "";
+      if (isRollbackPath(path) && shouldInject("close")) {
+        throw new Error("injected rollback close failure");
+      }
+      descriptorPaths.delete(fd);
+      closeSync(fd);
+    },
+    rename: (from, to) => {
+      if (isRollbackPath(from) && shouldInject("rename")) {
+        throw new Error("injected rollback rename failure");
+      }
+      renameSync(from, to);
+    },
+    unlink: (path) => {
+      if (path.endsWith(".json") && shouldInject("unlink")) {
+        throw new Error("injected rollback unlink failure");
+      }
+      unlinkSync(path);
+    },
+  };
+  return { ops, opened };
 }
 
 describe("background-task-persistence", () => {
@@ -42,6 +160,247 @@ describe("background-task-persistence", () => {
   });
 
   describe("persistTaskSync / loadTask round-trip", () => {
+    it.each(["write", "sync", "rename"] as const)(
+      "preserves the prior durable task when atomic %s fails",
+      (failure) => {
+        const prior: PersistedTaskState = {
+          id: "atomic-task",
+          toolName: "exec_command",
+          status: "completed",
+          startedAt: 1,
+          completedAt: 2,
+          origin: buildOrigin({ agentId: "agent-a" }),
+          continuationExecutionId: "execution-a",
+          dispatchAttempts: 0,
+          dispatchState: "pending",
+        };
+        persistTaskSync(dataDir, prior);
+        const attempted = persistTaskAtomically(
+          dataDir,
+          { ...prior, dispatchState: "ready_to_deliver" },
+          {
+            open: openSync,
+            write: (fd, content) => {
+              if (failure === "write") throw new Error("injected write failure");
+              writeFileSync(fd, content);
+            },
+            sync: (fd) => {
+              if (failure === "sync") throw new Error("injected sync failure");
+              fsyncSync(fd);
+            },
+            close: closeSync,
+            rename: (from, to) => {
+              if (failure === "rename") throw new Error("injected rename failure");
+              renameSync(from, to);
+            },
+            unlink: unlinkSync,
+          },
+        );
+        expect(attempted.ok).toBe(false);
+        expect(loadTask(dataDir, "agent-a", prior.id)?.dispatchState).toBe("pending");
+      },
+    );
+
+    it("restores the prior durable task when directory fsync fails", () => {
+      const prior: PersistedTaskState = {
+        id: "atomic-directory-task",
+        toolName: "exec_command",
+        status: "completed",
+        startedAt: 1,
+        completedAt: 2,
+        origin: buildOrigin({ agentId: "agent-a" }),
+        continuationExecutionId: "execution-directory",
+        dispatchAttempts: 0,
+        dispatchState: "pending",
+      };
+      persistTaskSync(dataDir, prior);
+      const directoryDescriptors = new Set<number>();
+      let directorySyncCount = 0;
+      const attempted = persistTaskAtomically(
+        dataDir,
+        { ...prior, dispatchState: "ready_to_deliver" },
+        {
+          open: (path, flags, mode) => {
+            const fd = openSync(path, flags, mode);
+            if (flags === "r") directoryDescriptors.add(fd);
+            return fd;
+          },
+          write: writeFileSync,
+          sync: (fd) => {
+            if (directoryDescriptors.has(fd)) {
+              directorySyncCount += 1;
+              if (directorySyncCount <= 2) throw new Error("injected directory sync failure");
+            }
+            fsyncSync(fd);
+          },
+          close: closeSync,
+          rename: renameSync,
+          unlink: unlinkSync,
+        },
+      );
+      expect(attempted.ok).toBe(false);
+      if (attempted.ok) return;
+      expect(attempted.error.message).toBe("injected directory sync failure");
+      expect(loadTask(dataDir, "agent-a", prior.id)?.dispatchState).toBe("pending");
+    });
+
+    it("leaves no recoverable running task when directory fsync rejects admission", () => {
+      const running: PersistedTaskState = {
+        id: "atomic-admission-task",
+        toolName: "exec_command",
+        status: "running",
+        startedAt: 1,
+        origin: buildOrigin({ agentId: "agent-a" }),
+        continuationExecutionId: "execution-admission",
+        dispatchAttempts: 0,
+        dispatchState: "pending",
+      };
+      const directoryDescriptors = new Set<number>();
+      let directorySyncCount = 0;
+      const attempted = persistTaskAtomically(
+        dataDir,
+        running,
+        {
+          open: (path, flags, mode) => {
+            const fd = openSync(path, flags, mode);
+            if (flags === "r") directoryDescriptors.add(fd);
+            return fd;
+          },
+          write: writeFileSync,
+          sync: (fd) => {
+            if (directoryDescriptors.has(fd)) {
+              directorySyncCount += 1;
+              if (directorySyncCount <= 2) throw new Error("injected directory sync failure");
+            }
+            fsyncSync(fd);
+          },
+          close: (fd) => {
+            directoryDescriptors.delete(fd);
+            closeSync(fd);
+          },
+          rename: renameSync,
+          unlink: unlinkSync,
+        },
+      );
+
+      expect(attempted.ok).toBe(false);
+      expect(loadTask(dataDir, "agent-a", running.id)).toBeUndefined();
+      expect(recoverTasks(dataDir).tasks).not.toContainEqual(
+        expect.objectContaining({ id: running.id }),
+      );
+    });
+
+    it.each([
+      "open",
+      "write",
+      "sync",
+      "close",
+      "rename",
+      "replacement-directory-open",
+      "replacement-directory-sync",
+    ] as const)(
+      "retains ownership authority when prior-record rollback %s fails",
+      (phase) => {
+        const prior: PersistedTaskState = {
+          id: "prior-rollback-task",
+          toolName: "exec_command",
+          status: "completed",
+          startedAt: 1,
+          completedAt: 2,
+          origin: buildOrigin({ agentId: "agent-a" }),
+          continuationExecutionId: "prior-rollback-task",
+          dispatchAttempts: 0,
+          dispatchState: "pending",
+        };
+        persistTaskSync(dataDir, prior);
+        const fault = buildRollbackFaultOps(phase);
+
+        const attempted = persistTaskAtomically(
+          dataDir,
+          { ...prior, status: "running", completedAt: undefined },
+          fault.ops,
+        );
+
+        expect(attempted.ok).toBe(true);
+        if (!attempted.ok) return;
+        expect(attempted.value.kind).toBe("committed_durability_uncertain");
+        expect(fault.opened).not.toContainEqual(expect.objectContaining({ flags: "w" }));
+      },
+    );
+
+    it.each([
+      "open",
+      "write",
+      "sync",
+      "close",
+      "rename",
+      "replacement-directory-open",
+      "replacement-directory-sync",
+      "unlink",
+      "removal-directory-open",
+      "removal-directory-sync",
+    ] as const)(
+      "retains ownership authority when new-record rollback %s fails",
+      (phase) => {
+        const running: PersistedTaskState = {
+          id: "new-rollback-task",
+          toolName: "exec_command",
+          status: "running",
+          startedAt: 1,
+          origin: buildOrigin({ agentId: "agent-a" }),
+          continuationExecutionId: "new-rollback-task",
+          dispatchAttempts: 0,
+          dispatchState: "pending",
+        };
+        const fault = buildRollbackFaultOps(phase);
+
+        const attempted = persistTaskAtomically(dataDir, running, fault.ops);
+
+        expect(attempted.ok).toBe(true);
+        if (!attempted.ok) return;
+        expect(attempted.value.kind).toBe("committed_durability_uncertain");
+        expect(fault.opened).not.toContainEqual(expect.objectContaining({ flags: "w" }));
+      },
+    );
+
+    it("commits atomically when the Node permission model disables fsync", () => {
+      const prior: PersistedTaskState = {
+        id: "atomic-permission-model-task",
+        toolName: "web_fetch",
+        status: "running",
+        startedAt: 1,
+        origin: buildOrigin({ agentId: "agent-a" }),
+        continuationExecutionId: "execution-permission-model",
+        dispatchAttempts: 0,
+        dispatchState: "pending",
+      };
+      persistTaskSync(dataDir, prior);
+      const fsyncUnavailable = Object.assign(
+        new Error("fsync API is disabled when Permission Model is enabled."),
+        { code: "ERR_ACCESS_DENIED", permission: "", resource: "" },
+      );
+
+      const attempted = persistTaskAtomically(
+        dataDir,
+        { ...prior, dispatchState: "ready_to_deliver" },
+        {
+          open: openSync,
+          write: writeFileSync,
+          sync: () => {
+            throw fsyncUnavailable;
+          },
+          close: closeSync,
+          rename: renameSync,
+          unlink: unlinkSync,
+        },
+      );
+
+      expect(attempted.ok).toBe(true);
+      if (!attempted.ok) return;
+      expect(attempted.value.kind).toBe("committed_without_fsync");
+      expect(loadTask(dataDir, "agent-a", prior.id)?.dispatchState).toBe("ready_to_deliver");
+    });
+
     it("writes and reads back a task", () => {
       const task: PersistedTaskState = {
         id: "task-1",
@@ -80,6 +439,8 @@ describe("background-task-persistence", () => {
         status: "running",
         startedAt: 1000,
         origin: buildOrigin({ agentId: "a1" }),
+        continuationExecutionId: "t1",
+        dispatchAttempts: 0,
       };
       const completed: PersistedTaskState = {
         id: "t2",
@@ -89,19 +450,21 @@ describe("background-task-persistence", () => {
         completedAt: 2000,
         result: "done",
         origin: buildOrigin({ agentId: "a1" }),
+        continuationExecutionId: "t2",
+        dispatchAttempts: 0,
       };
       persistTaskSync(dataDir, running);
       persistTaskSync(dataDir, completed);
 
       const recovered = recoverTasks(dataDir);
-      expect(recovered).toHaveLength(2);
+      expect(recovered.tasks).toHaveLength(2);
 
-      const t1 = recovered.find((t) => t.id === "t1");
-      expect(t1?.status).toBe("failed");
-      expect(t1?.error).toBe("Daemon restarted while task was running");
-      expect(t1?.completedAt).toBeGreaterThan(0);
+      const t1 = recovered.tasks.find((t) => t.id === "t1");
+      expect(t1?.status).toBe("running");
+      expect(t1?.error).toBeUndefined();
+      expect(t1?.completedAt).toBeUndefined();
 
-      const t2 = recovered.find((t) => t.id === "t2");
+      const t2 = recovered.tasks.find((t) => t.id === "t2");
       expect(t2?.status).toBe("completed");
     });
 
@@ -112,6 +475,8 @@ describe("background-task-persistence", () => {
         status: "running",
         startedAt: 1000,
         origin: buildOrigin({ agentId: "a1" }),
+        continuationExecutionId: "t1",
+        dispatchAttempts: 0,
       });
       persistTaskSync(dataDir, {
         id: "t2",
@@ -119,35 +484,72 @@ describe("background-task-persistence", () => {
         status: "running",
         startedAt: 2000,
         origin: buildOrigin({ agentId: "a2" }),
+        continuationExecutionId: "t2",
+        dispatchAttempts: 0,
       });
 
       const recovered = recoverTasks(dataDir);
-      expect(recovered).toHaveLength(2);
-      expect(recovered.every((t) => t.status === "failed")).toBe(true);
+      expect(recovered.tasks).toHaveLength(2);
+      expect(recovered.tasks.every((t) => t.status === "running")).toBe(true);
     });
 
-    it("returns empty array for nonexistent dataDir", () => {
+    it("returns an empty scan for a nonexistent dataDir", () => {
       const recovered = recoverTasks(`/tmp/nonexistent-${randomUUID()}`);
-      expect(recovered).toEqual([]);
+      expect(recovered).toEqual({ tasks: [], failures: [] });
     });
 
-    it("persists recovery status change to disk", () => {
+    it("returns a closed read failure and recovers on the next scan", () => {
+      persistTaskSync(dataDir, {
+        id: "transient-read",
+        toolName: "exec",
+        status: "completed",
+        startedAt: 1,
+        completedAt: 2,
+        origin: buildOrigin({ agentId: "a1" }),
+        continuationExecutionId: "transient-read",
+        dispatchAttempts: 0,
+        dispatchState: "delivered",
+      });
+      let failRead = true;
+      const ops = {
+        readdir: readdirSync,
+        stat: statSync,
+        read: (path: string) => {
+          if (failRead) {
+            failRead = false;
+            throw new Error("injected read failure");
+          }
+          return readFileSync(path, "utf-8");
+        },
+      };
+
+      expect(recoverTasks(dataDir, ops)).toEqual({
+        tasks: [],
+        failures: [{ kind: "task_read" }],
+      });
+      expect(recoverTasks(dataDir, ops).tasks).toEqual([
+        expect.objectContaining({ id: "transient-read" }),
+      ]);
+    });
+
+    it("preserves recovery status on disk for the manager owner", () => {
       persistTaskSync(dataDir, {
         id: "t1",
         toolName: "tool1",
         status: "running",
         startedAt: 1000,
         origin: buildOrigin({ agentId: "a1" }),
+        continuationExecutionId: "t1",
+        dispatchAttempts: 0,
       });
       recoverTasks(dataDir);
 
-      // Verify the file on disk was updated
       const raw = readFileSync(safePath(safePath(dataDir, "a1"), "t1.json"), "utf-8");
       const onDisk = JSON.parse(raw) as PersistedTaskState;
-      expect(onDisk.status).toBe("failed");
+      expect(onDisk.status).toBe("running");
     });
 
-    it("skips files missing id or toolName (sanity guard)", () => {
+    it("reports files missing durable task identity", () => {
       // Write a completely malformed file (no id or toolName)
       const agentDir = safePath(dataDir, "bad-agent");
       mkdirSync(agentDir, { recursive: true });
@@ -155,8 +557,34 @@ describe("background-task-persistence", () => {
       writeFileSync(filePath, JSON.stringify({ status: "running", startedAt: 1000 }, null, 2), "utf-8");
 
       const recovered = recoverTasks(dataDir);
-      // Malformed file is skipped
-      expect(recovered.find((t) => t.id === undefined)).toBeUndefined();
+      expect(recovered.tasks).toEqual([]);
+      expect(recovered.failures).toEqual([{ kind: "task_validation" }]);
+    });
+
+    it("reports tasks whose origin lacks canonical turn authority", () => {
+      const agentDir = safePath(dataDir, "default");
+      mkdirSync(agentDir, { recursive: true });
+      const filePath = safePath(agentDir, "stale-origin.json");
+      writeFileSync(filePath, JSON.stringify({
+        id: "stale-origin",
+        toolName: "exec",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 2000,
+        origin: {
+          agentId: "default",
+          sessionKey: "default:echo:test:user1",
+          channelType: "echo",
+          channelId: "test",
+          traceId: null,
+          backgroundHopCount: 0,
+        },
+      }, null, 2), "utf-8");
+
+      expect(recoverTasks(dataDir)).toEqual({
+        tasks: [],
+        failures: [{ kind: "task_validation" }],
+      });
     });
 
     it("skips non-directory entries in dataDir without losing legitimate agent tasks", () => {
@@ -169,6 +597,8 @@ describe("background-task-persistence", () => {
         completedAt: 2000,
         result: "ok",
         origin: buildOrigin({ agentId: "real-agent" }),
+        continuationExecutionId: "wr-04-task",
+        dispatchAttempts: 0,
       };
       persistTaskSync(dataDir, task);
 
@@ -180,9 +610,9 @@ describe("background-task-persistence", () => {
 
       // Recovery must return the legitimate task.
       const recovered = recoverTasks(dataDir);
-      expect(recovered).toHaveLength(1);
-      expect(recovered[0]!.id).toBe("wr-04-task");
-      expect(recovered[0]!.origin.agentId).toBe("real-agent");
+      expect(recovered.tasks).toHaveLength(1);
+      expect(recovered.tasks[0]!.id).toBe("wr-04-task");
+      expect(recovered.tasks[0]!.origin.turnScope.conversation.agentId).toBe("real-agent");
 
       // The stale file is untouched.
       expect(existsSync(stalePath)).toBe(true);
@@ -195,7 +625,7 @@ describe("background-task-persistence", () => {
       writeFileSync(safePath(dataDir, "lock2"), "y", "utf-8");
 
       const recovered = recoverTasks(dataDir);
-      expect(recovered).toEqual([]);
+      expect(recovered).toEqual({ tasks: [], failures: [] });
     });
   });
 
@@ -267,7 +697,7 @@ describe("background-task-persistence", () => {
   });
 
   describe("persistTaskSync persists dispatchState", () => {
-    it("round-trips dispatchState='dispatched' through the BackgroundTask path (with _promise)", () => {
+    it("round-trips a ready protected outbox through the BackgroundTask path", () => {
       // Use the BackgroundTask path (object has _promise) to exercise
       // toPersistedState — the helper that strips unknown fields. Because
       // dispatchState is part of PersistedTaskState + toPersistedState, the
@@ -279,7 +709,16 @@ describe("background-task-persistence", () => {
         startedAt: 1,
         completedAt: 2,
         origin: buildOrigin({ agentId: "agent-disp" }),
-        dispatchState: "dispatched",
+        dispatchState: "ready_to_deliver",
+        continuationExecutionId: "task-disp-1",
+        dispatchAttempts: 1,
+        continuationOutbox: {
+          kind: "continuation",
+          response: "exact response",
+          executionId: "execution-a",
+          idempotencyKey: "continuation-a",
+          deliveryProtection: "ledger",
+        },
         _promise: Promise.resolve(),
       };
       // Cast through unknown so the test file stays buildable.
@@ -291,7 +730,8 @@ describe("background-task-persistence", () => {
       const filePath = safePath(safePath(dataDir, "agent-disp"), "task-disp-1.json");
       const onDisk = JSON.parse(readFileSync(filePath, "utf-8")) as Record<string, unknown>;
       // PersistedTaskState carries dispatchState, so the round-trip preserves it.
-      expect(onDisk.dispatchState).toBe("dispatched");
+      expect(onDisk.dispatchState).toBe("ready_to_deliver");
+      expect(onDisk.continuationOutbox).toEqual(taskRecord.continuationOutbox);
     });
   });
 });

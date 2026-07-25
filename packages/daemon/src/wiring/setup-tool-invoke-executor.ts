@@ -49,9 +49,16 @@ import {
   shouldMaterialize,
   systemNowMs,
   wrapExternalContent,
+  createConversationRef,
+  toSafeErrorLogString,
+  type AgentCapability,
+  type DeliveryOrigin,
   type ResultRef,
+  type ResolvedTurnScope,
   type DurableRunPort,
   type DurableRunRecord,
+  type DurableRootBudget,
+  type UserTrustLevel,
 } from "@comis/core";
 import { fetchPinned, extractReadableContent, sanitizeMcpToolResult } from "@comis/skills/tools";
 import { qualifyToolName, type McpClientManager } from "@comis/skills";
@@ -59,8 +66,15 @@ import type { ComisLogger } from "@comis/infra";
 
 /** The validated lease projection the dispatch hands the executor (no secret). */
 export interface ToolInvokeLease {
+  leaseId: string;
   agentId: string;
-  caps: readonly string[];
+  caps: readonly AgentCapability[];
+  sessionKey: string;
+  deliveryOrigin?: DeliveryOrigin;
+  /** Canonical request authority captured in the validated lease. */
+  turnScope?: ResolvedTurnScope;
+  /** Exact trust from the validated server-held capability lease. */
+  trustLevel: UserTrustLevel;
   /**
    * The tree-stable run identity. Threaded so the
    * `budgetHook` can charge the cost-bearing web call against the right root-run
@@ -69,12 +83,16 @@ export interface ToolInvokeLease {
    * budgetHook is then a no-op for that call).
    */
   rootRunId?: string;
+  /** Unique execution checkpoint authorized by this lease. */
+  checkpointId?: string;
 }
 
 /** Context handed to an injected file-builtin core — the agent's workspace dir. */
 export interface FileExecutorContext {
   /** The agent's resolved workspace root; the builtin scopes every path under it. */
   workspaceDir: string;
+  /** Exact execution checkpoint/root identity used by mutating run-scoped cores. */
+  runId?: string;
 }
 
 /** An injected file-builtin core (the shipped read/grep/find/ls/jq logic). */
@@ -172,7 +190,7 @@ export interface ToolInvokeExecutorDeps {
    */
   writeSurfaceEnabled?: (agentId: string) => boolean;
   /**
-   * The per-agent RESUME-SURFACE gate — the default-OFF durability toggle
+   * The per-agent RESUME-SURFACE gate — the default-on durability toggle
    * (`autonomy.durability.orchestrateResume`) consulted BEFORE any checkpoint/resume
    * dispatch. checkpoint→orch:write and resume→orch:read reuse the FLOOR caps, so
    * the cap the lease holds is NOT enough — this surface is the AUTHORITATIVE gate
@@ -186,10 +204,12 @@ export interface ToolInvokeExecutorDeps {
    * The durable-run store (RESUME-01). checkpoint persists the checkpoint
    * ResultRef id onto the run's row (`upsertCheckpoint`, COALESCE-preserve so ONLY
    * checkpointRef is set — NEVER `outward_step`); resume reads the last
-   * checkpointRef back (`getByRootRun`). Only these two methods are used. OPTIONAL:
+   * checkpointRef back (`getByCheckpoint`). Only these two methods are used. OPTIONAL:
    * absent ⇒ checkpoint honest-degrades to an error-result / resume to null.
    */
-  durableRuns?: Pick<DurableRunPort, "upsertCheckpoint" | "getByRootRun">;
+  durableRuns?: Pick<DurableRunPort, "upsertCheckpoint" | "getByCheckpoint">;
+  /** Absolute tree-wide meter state persisted with every checkpoint. */
+  durableBudgetState?: (rootRunId: string) => DurableRootBudget;
   /**
    * Materialize a checkpoint state blob as a distinguished, LONGER-TTL kind:"json"
    * ResultRef keyed on `lease.rootRunId` (DISTINCT from {@link materialize}: a
@@ -498,8 +518,19 @@ export function createToolInvokeExecutor(
   ): Promise<unknown> {
     const started = systemNowMs();
     const workspaceDir = deps.resolveWorkspace(lease.agentId);
+    const runId = lease.checkpointId ?? lease.rootRunId;
+    if (tool === "write" && (runId === undefined || runId.length === 0)) {
+      log?.warn(
+        { errorKind: "precondition" as const, hint: "dispatch write only from a validated lease carrying checkpointId or rootRunId", toolName: tool },
+        "tool.invoke write missing run identity",
+      );
+      return { error: "write requires a validated run identity" };
+    }
     log?.debug({ step: "file-builtin", toolName: tool, workspaceDir }, "tool.invoke file builtin dispatching");
-    const result = await deps.fileExecutors[tool](args, { workspaceDir });
+    const context: FileExecutorContext = runId === undefined
+      ? { workspaceDir }
+      : { workspaceDir, runId };
+    const result = await deps.fileExecutors[tool](args, context);
     log?.info({ toolName: tool, durationMs: systemNowMs() - started }, "tool.invoke file builtin complete");
     return result;
   }
@@ -507,8 +538,8 @@ export function createToolInvokeExecutor(
   /**
    * The RESUME surface gate (deny-by-absence, fail-closed) shared by checkpoint +
    * resume. checkpoint→orch:write / resume→orch:read are FLOOR caps, so the cap the
-   * lease holds is NOT the gate — the default-OFF `orchestrateResumeEnabled`
-   * predicate is (mirrors the write surface). Absent predicate ⇒ deny (T-233-04).
+   * lease holds is NOT the gate — the `orchestrateResumeEnabled` predicate is
+   * (mirrors the write surface). Absent predicate ⇒ deny.
    * Returns a content-free error-result on deny, `undefined` on allow.
    */
   function resumeSurfaceDeny(tool: "checkpoint" | "resume", lease: ToolInvokeLease): { error: string } | undefined {
@@ -527,7 +558,7 @@ export function createToolInvokeExecutor(
    * Serializes the script-authored state, materializes it as a distinguished,
    * longer-TTL kind:"json" ResultRef (capped like any ResultRef — T-WS4-02), and
    * stamps ONLY the ref onto the run's durable row (COALESCE-preserve; NEVER
-   * `outward_step`, so the exactly-once outward ledger is untouched). Surface-gated
+   * `outward_step`, so the outward operation-identity ledger is untouched). Surface-gated
    * fail-closed. Honest-degrades to a content-free error on refuse/failure.
    */
   async function executeCheckpoint(args: Record<string, unknown>, lease: ToolInvokeLease): Promise<unknown> {
@@ -535,6 +566,21 @@ export function createToolInvokeExecutor(
     if (denied) return denied;
     const rootRunId = lease.rootRunId;
     if (rootRunId === undefined) return errorResult("checkpoint requires a durable run identity");
+    const checkpointId = lease.checkpointId;
+    if (checkpointId === undefined) return errorResult("checkpoint requires an execution identity");
+    const turnScope = lease.turnScope;
+    if (turnScope === undefined || turnScope.conversation.agentId !== lease.agentId) {
+      return errorResult("checkpoint requires canonical conversation authority");
+    }
+    const conversationRef = createConversationRef(turnScope.conversation);
+    if (!conversationRef.ok) return errorResult("checkpoint conversation authority is invalid");
+    if (
+      lease.deliveryOrigin !== undefined
+      && (
+        lease.deliveryOrigin.tenantId !== turnScope.conversation.tenantId
+        || lease.deliveryOrigin.userId !== turnScope.principal.principalId
+      )
+    ) return errorResult("checkpoint delivery origin does not match the conversation authority");
     if (!deps.materializeCheckpoint || !deps.durableRuns) {
       return errorResult("checkpoint is unavailable (durable store not wired)");
     }
@@ -553,22 +599,36 @@ export function createToolInvokeExecutor(
     // status running). The plan-01 COALESCE-preserve upsert keeps a scriptRef the
     // runner sets, and the store's upsertCheckpoint NEVER writes outward_step — so
     // stepIndex stays the -1 'never-sent' sentinel and the outward ledger is safe.
+    const rootBudget = deps.durableBudgetState?.(rootRunId) ?? {
+      startedAtMs: systemNowMs(),
+      tokensConsumed: 0,
+      usdConsumed: 0,
+    };
     const record: DurableRunRecord = {
+      checkpointId,
       rootRunId,
+      tenantId: turnScope.conversation.tenantId,
+      agentId: lease.agentId,
+      conversationRef: conversationRef.value,
+      conversationScope: turnScope.conversation,
+      principalId: turnScope.principal.principalId,
+      deliveryOrigin: lease.deliveryOrigin ?? null,
       spawnTree: [], // a FLAT orchestrate row (not a DAG spawn tree)
-      caps: [],
-      leaseIds: [],
-      budgetConsumed: 0,
+      caps: [...lease.caps],
+      leaseIds: [lease.leaseId],
+      budgetConsumed: rootBudget.usdConsumed,
+      rootBudget,
       cronOrigin: null,
-      stepIndex: -1,
+      trustLevel: lease.trustLevel,
       status: "running",
       lastHeartbeatAt: systemNowMs(),
+      scriptRef: null,
       checkpointRef: ref.ref,
     };
     const upserted = await deps.durableRuns.upsertCheckpoint(record);
     if (!upserted.ok) {
       log?.warn(
-        { err: upserted.error, errorKind: "internal" as const, toolName: "checkpoint", rootRunId, hint: "the checkpoint blob was materialized but the durable-row upsert failed — resume may not find it" },
+        { err: toSafeErrorLogString(upserted.error), errorKind: "internal" as const, toolName: "checkpoint", rootRunId, hint: "the checkpoint blob was materialized but the durable-row upsert failed — resume may not find it" },
         "tool.invoke checkpoint failed to persist the ref",
       );
       return errorResult("checkpoint failed to persist");
@@ -591,8 +651,10 @@ export function createToolInvokeExecutor(
     if (denied) return denied;
     const rootRunId = lease.rootRunId;
     if (rootRunId === undefined) return errorResult("resume requires a durable run identity");
+    const checkpointId = lease.checkpointId;
+    if (checkpointId === undefined) return errorResult("resume requires an execution identity");
     if (!deps.durableRuns || !deps.loadCheckpoint) return null; // no store wired ⇒ no checkpoint
-    const row = await deps.durableRuns.getByRootRun(rootRunId);
+    const row = await deps.durableRuns.getByCheckpoint(checkpointId);
     if (!row.ok) {
       log?.warn(
         { err: row.error, errorKind: "internal" as const, toolName: "resume", rootRunId, hint: "reading the durable run row failed" },

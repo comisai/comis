@@ -97,13 +97,33 @@ export function createNotificationHandlers(
         return result;
       }
 
+      // Internal boundary: mint the delivery authority + destination endpoint the
+      // notifyUser guard requires, from this agent's tenant + the requested (or
+      // resolved) channel. notifyUser re-runs the same resolution and cross-checks
+      // the minted endpoint against it, so a mismatch is still rejected there.
+      const destination = deps.notificationService.resolveDestination({
+        agentId,
+        channelType: params.channel_type,
+        channelId: params.channel_id,
+        ...(params.destination_endpoint === undefined
+          ? {}
+          : { destinationEndpoint: params.destination_endpoint }),
+      });
+      if (!destination.ok) {
+        const result = { success: false, error: destination.error.message };
+        if (IS_DEV) NotificationSendContract.response.parse(result);
+        return result;
+      }
+
       const sendResult = await deps.notificationService.notifyUser({
         agentId,
         message: params.message,
         priority: params.priority ?? "normal",
         channelType: params.channel_type,
         channelId: params.channel_id,
+        destinationEndpoint: destination.value.destinationEndpoint,
         origin: params.origin ?? "tool",
+        authority: destination.value.authority,
       });
 
       if (!sendResult.ok) {

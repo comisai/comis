@@ -12,7 +12,7 @@ import { ok, err, type Result } from "@comis/shared";
 import Database from "better-sqlite3";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { initSchema, isVecAvailable } from "./schema.js";
-import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
+import { ScopedMemoryTestAdapter as SqliteMemoryAdapter } from "../../../test/support/scoped-memory-adapter.js";
 import { createCachedEmbeddingPort } from "./embedding-cache-lru.js";
 import { createFingerprintManager } from "./embedding-fingerprint.js";
 import { createBatchIndexer } from "./embedding-batch-indexer.js";
@@ -74,8 +74,8 @@ function insertMemory(
   hasEmbedding: number = 0,
 ): void {
   db.prepare(
-    `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
-     VALUES (?, 'default', 'default', 'u1', ?, 'learned', 'semantic', 'agent', '[]', ?, ?)`,
+    `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
+     VALUES (?, 'default', 'default', 'u1', 'agent-shared', ?, 'learned', 'semantic', 'agent', '[]', ?, ?)`,
   ).run(id, content, Date.now(), hasEmbedding);
 }
 

@@ -376,8 +376,8 @@ describe("OPERATION_TIMEOUT_DEFAULTS", () => {
     expect(OPERATION_TIMEOUT_DEFAULTS.heartbeat).toBe(60_000);
   });
 
-  it("has correct timeout for cron (150000ms)", () => {
-    expect(OPERATION_TIMEOUT_DEFAULTS.cron).toBe(150_000);
+  it("allows cron turns ten minutes for long-running tool work", () => {
+    expect(OPERATION_TIMEOUT_DEFAULTS.cron).toBe(600_000);
   });
 
   it("has correct timeout for subagent (120000ms)", () => {

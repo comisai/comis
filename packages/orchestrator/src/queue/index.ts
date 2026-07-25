@@ -3,7 +3,11 @@
 
 export { createCommandQueue } from "./command-queue.js";
 export type { CommandQueue, CommandQueueDeps, QueueStats } from "./command-queue.js";
-export type { SessionLane } from "./lane.js";
+export type {
+  QueueExecutionContext,
+  QueueMessageHandler,
+  SessionLane,
+} from "./lane.js";
 export { applyOverflowPolicy } from "./overflow.js";
 export type { OverflowResult } from "./overflow.js";
 export { coalesceMessages } from "./coalescer.js";

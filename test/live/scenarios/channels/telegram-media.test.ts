@@ -71,6 +71,10 @@ const isLive = !!process.env["COMIS_LIVE"];
 // The fixed test chat the media DMs target + the (human) sender.
 const CHAT_ID = 424242;
 const FROM = { id: 100, firstName: "Alice" } as const;
+// Bot identity is now a required arg to mapGrammyToNormalized (sourced from
+// bot.api.getMe() in the adapter). MEDIA-03 asserts spoiler/location metadata,
+// which is independent of the bot identity — any valid {id, username} suffices.
+const BOT = { id: 424243, username: "comis_test_bot" } as const;
 const FAKE_BOT_TOKEN = "1234567:emulator-fake-token";
 
 // ---------------------------------------------------------------------------
@@ -182,7 +186,12 @@ describe("MEDIA-03 Stage-B — spoiler / location / venue map to metadata via th
       fileUniqueId: "uniq_spoiler_1",
       spoiler: true,
     });
-    const normalized = mapGrammyToNormalized(update.message as Message, CHAT_ID);
+    const normalized = mapGrammyToNormalized(
+      update.message as Message,
+      CHAT_ID,
+      "message",
+      BOT,
+    );
     // has_media_spoiler → metadata.hasSpoiler (message-mapper.ts:142).
     expect(normalized.metadata.hasSpoiler).toBe(true);
   });
@@ -195,7 +204,12 @@ describe("MEDIA-03 Stage-B — spoiler / location / venue map to metadata via th
       from: makeUser({ id: FROM.id, firstName: FROM.firstName }),
       location: { latitude: 51.5, longitude: -0.12, horizontalAccuracy: 10 },
     });
-    const normalized = mapGrammyToNormalized(update.message as Message, CHAT_ID);
+    const normalized = mapGrammyToNormalized(
+      update.message as Message,
+      CHAT_ID,
+      "message",
+      BOT,
+    );
     const loc = normalized.metadata.location as { latitude?: number; longitude?: number } | undefined;
     expect(loc, "metadata.location is set for a location message").toBeDefined();
     expect(loc!.latitude).toBe(51.5);
@@ -210,7 +224,12 @@ describe("MEDIA-03 Stage-B — spoiler / location / venue map to metadata via th
       from: makeUser({ id: FROM.id, firstName: FROM.firstName }),
       venue: { latitude: 40.0, longitude: -74.0, title: "The Office", address: "1 Main St" },
     });
-    const normalized = mapGrammyToNormalized(update.message as Message, CHAT_ID);
+    const normalized = mapGrammyToNormalized(
+      update.message as Message,
+      CHAT_ID,
+      "message",
+      BOT,
+    );
     const loc = normalized.metadata.location as { latitude?: number; longitude?: number; name?: string } | undefined;
     expect(loc, "metadata.location is set for a venue message").toBeDefined();
     expect(loc!.latitude).toBe(40.0);

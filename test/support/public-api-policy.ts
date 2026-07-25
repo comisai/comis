@@ -31,6 +31,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
   new Map<string, ReadonlySet<string>>([
     // @comis/agent: baseline orphans tracked here (SessionLifecycleOptions remains — no in-repo consumer yet).
     ["@comis/agent", new Set<string>([
+      // Credential-store class + registry-adapter result type: daemon wiring
+      // consumes the factory functions and the AuthStorage type alias; the
+      // class value and the result type have no out-of-package consumer yet.
+      "ComisCredentialStore",
+      "ModelRegistryAdapter",
       "ExecutionResult",
       "ExecutionOverrides",
       "StepCounter",
@@ -235,7 +240,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "BootstrapFile",
       "TruncationResult",
       "PromptMode",
-      "RuntimeInfo",
       "BootstrapContextFile",
       "AssemblerParams",
       "SystemPromptBlocks",
@@ -422,14 +426,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DispatcherTaskManager",
       "ActiveSessionKey",
       "BackgroundSessionResolverDeps",
-      // Sub-agent runtime moved from packages/daemon/src/ to
-      // packages/agent/src/spawn/. The 7 entries below are the move's type
-      // and helper exports that have no in-repo consumer at the moment
-      // (the moved tests/integration coverage import via the local file
-      // path, not via @comis/agent). createSubAgentRunner and
-      // ANNOUNCE_PARENT_TIMEOUT_MS are NOT listed because they DO have
-      // in-repo consumers (wiring/setup-cross-session.ts and
-      // graph/graph-completion.ts respectively).
+      // These sub-agent runtime types and helpers are supported package
+      // surface even though their tests consume the co-located modules.
       "SubAgentRunnerDeps",
       "SubAgentRun",
       "SpawnParams",
@@ -1018,6 +1016,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "isSecretRef",
       "SecretRefOrStringSchema",
       "DeliveryOriginSchema",
+      // parseDeliveryFailureStage is the Result-returning public parser paired
+      // with DeliveryFailureStageSchema. Internal storage and wire contracts
+      // consume the schema directly, while external callers use the parser to
+      // validate standalone values without depending on Zod control flow.
+      "parseDeliveryFailureStage",
       // IncidentReportSchema is the Zod schema for the obs.explain response
       // (the IncidentReport wire shape). The handler + the
       // contract consume the inferred *type* `IncidentReport` (which has
@@ -1028,17 +1031,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // IncidentReport off the wire imports this schema. Tracked here per the
       // baseline orphan-export policy; remove if an in-repo value consumer lands.
       "IncidentReportSchema",
-      // FleetHealthReportSchema is the Zod schema VALUE for the obs.fleet.health
-      // response (the cross-session fleet digest). The obs.fleet.health handler +
-      // the ObsFleetHealthContract consume the inferred TYPE `FleetHealthReport`
+      // SystemHealthReportSchema is the Zod schema VALUE for the obs.system.health
+      // response (the cross-session system digest). The obs.system.health handler +
+      // the ObsSystemHealthContract consume the inferred TYPE `SystemHealthReport`
       // (now removed from this allowlist — it has a real consumer), and the
       // contract's `response` field references the schema VALUE internally within
-      // fleet-health-report.ts — but no OTHER in-repo module imports the schema
+      // system-health-report.ts — but no OTHER in-repo module imports the schema
       // value directly. It is part of the documented external-API surface (an
-      // external consumer validating a FleetHealthReport off the wire imports it).
+      // external consumer validating a SystemHealthReport off the wire imports it).
       // Same rationale + precedent as IncidentReportSchema above; remove if an
       // in-repo value consumer lands.
-      "FleetHealthReportSchema",
+      "SystemHealthReportSchema",
       // ── Audit schema reshape ──
       // AUDIT_KINDS (the closed kind value-list) + kindIsSecuritySignal (the
       // exhaustiveness-guarded severity helper) + AuditKind (the inferred union
@@ -2006,6 +2009,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "loginOpenAICodexDeviceCode",
       "DeviceCodeVerificationPrompt",
       "LoginOpenAICodexDeviceCodeOptions",
+      // Comis-owned Codex browser OAuth flow: the login runner consumes the
+      // implementation as an in-package sibling import, so the barrel export
+      // is a planned orphan until an out-of-package consumer materializes.
+      "loginOpenAICodexBrowser",
+      "CodexBrowserLoginCredentials",
+      "LoginOpenAICodexBrowserOptions",
+      // resolveOAuthApiKey result/deps types: the function itself is consumed
+      // by @comis/agent's OAuth token manager; only the types are orphans.
+      "ResolvedOAuthApiKey",
+      "ResolveOAuthApiKeyDeps",
       // CLI + daemon consume createModelCatalog + workspace helpers from
       // @comis/core — only the subset of relocated symbols WITHOUT in-repo
       // consumers remains in policy. Each entry below tracks a specific
@@ -2327,12 +2340,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "main",
       "DaemonInstance",
       "DaemonOverrides",
-      // Sub-agent runtime relocated to @comis/agent. The 9 entries
-      // previously tracked here (createSubAgentRunner,
-      // ANNOUNCE_PARENT_TIMEOUT_MS, the 4 type names, sweepResultFiles,
-      // buildAnnouncementMessage, deliverFailureNotification) have been
-      // removed from packages/daemon/src/index.ts and the 7 orphan entries
-      // are now tracked under @comis/agent above.
+      // The daemon package owns only daemon composition and handlers; sub-agent
+      // execution helpers belong to the agent package surface above.
       "createAnnouncementDeadLetterQueue",
       "AnnouncementDeadLetterQueue",
       "DeadLetterEntry",
@@ -2441,7 +2450,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createAuthHandlers",
       "AuthHandlerDeps",
       // Obs-explain assembler + reader DI seam — re-exported so
-      // the RE-PROVE scenario + its self-test (test/live/support +
+      // the live verification scenario + its self-test (test/live/support +
       // test/live/scenarios/prove) can call the FROZEN assembler over
       // a fixture reader via the clean @comis/daemon alias. Same rationale as
       // createMcpHandlers / emitStartupInvariants: the consumer imports these
@@ -2456,8 +2465,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "assembleIncidentReportFromSources",
       "makeRealReader",
       "IncidentSourceReader",
-      // Fleet-health assembler (RE-PROVE seam) — re-exported from
-      // the TOP-LEVEL daemon barrel so the keyless deterministic fleet RE-PROVE
+      // System-health assembler verification seam — re-exported from
+      // the top-level daemon barrel so the keyless deterministic system test
       // scenario can call it over a seeded tmp store via the clean @comis/daemon
       // alias (the live config aliases only the top-level @comis/daemon →
       // daemon/dist/index.js, with no obs-handlers subpath alias). Exact analog
@@ -2466,11 +2475,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // public-export-consumers AST walker excludes, so this orphan list is the
       // canonical place to record the planned test consumer. SECURITY: the
       // surface widens by EXACTLY the assembler — the admin gate stays on the
-      // bindObsFleetHealthHandlers RPC (NOT re-exported), and the assembler
+      // bindObsSystemHealthHandlers RPC (NOT re-exported), and the assembler
       // itself excludes synthetic sessions (excludeSynthetic: true) and reads
       // only sqlite + the session-index JSONL (never daemon.log).
-      // Consumer: test/live/scenarios/prove/fleet-reprove.test.ts
-      "assembleFleetHealthReport",
+      // Consumer: test/live/scenarios/prove/system-reprove.test.ts
+      "assembleSystemHealthReport",
       // Pointer-discipline sessionKey → session `.jsonl` resolver — re-exported
       // from the TOP-LEVEL daemon barrel so the CLI support-bundle offline seam
       // (resolveSessionFileOffline in packages/cli/src/util/offline-obs.ts)
@@ -2522,13 +2531,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "__setOutwardSendCrashHookForTest",
       "OUTWARD_SEND_CRASH_SENTINEL",
       "OutwardSendCrashHookMode",
-      // Cap-socket denylist RE-PROVE seam — re-exported
+      // Cap-socket denylist verification seam — re-exported
       // from the TOP-LEVEL daemon barrel so the comis-agent-same-gate /
       // comis-agent-no-admin arch-tests DERIVE the denylisted-method set from the
       // SAME source the cap endpoint's pre-check uses (not a hand-copied literal
       // that drifts). @comis/core CANNOT import it (a package cycle), so the
       // cross-check must live in the architecture suite. Exact analog of
-      // assembleFleetHealthReport above: the sole external consumers import it
+      // assembleSystemHealthReport above: the sole external consumers import it
       // statically from @comis/daemon under test/architecture/**, which the
       // public-export-consumers AST walker (it scans packages/ only) excludes — so
       // this orphan list is the canonical place to record the test-only export.
@@ -3060,28 +3069,28 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // daemon's existing selectSecretStore call is the sole production consumer of the factory.
       "createSqliteSecretStore",
       "SqliteSecretStoreHandle",
-      // Fleet window-rollup reducer. reduceFleetWindow
+      // System window-rollup reducer. reduceSystemWindow
       // is the PURE cross-session reduce over the SessionSummaryRollup[] (the
-      // synthetic-excluded fleet aggregate); FleetWindowRollup is its output type.
+      // synthetic-excluded system aggregate); SystemWindowRollup is its output type.
       // Barrel-exported from packages/memory/src/index.ts so the
-      // obs.fleet.health handler can import it — but no in-repo module consumes the
+      // obs.system.health handler can import it — but no in-repo module consumes the
       // reducer/type until that handler lands. The public-export-consumers walker
       // excludes *.test.ts (the reducer's only current consumer is its own test) and
       // self-imports, so both surface as orphans now. Same rationale + precedent as
-      // FleetHealthReportSchema (@comis/core above). Remove when an in-repo
+      // SystemHealthReportSchema (@comis/core above). Remove when an in-repo
       // non-test value consumer of each lands.
-      "reduceFleetWindow",
-      "FleetWindowRollup",
+      "reduceSystemWindow",
+      "SystemWindowRollup",
       // Cache-break rate-by-reason analytics query.
       // queryCacheBreakRateByReason is the GROUP BY json_extract(details,'$.reason')
       // over obs_diagnostics category:'cache_break'; CacheBreakReasonRate is its
-      // output row type. Barrel-exported from packages/memory/src/index.ts so a fleet/
+      // output row type. Barrel-exported from packages/memory/src/index.ts so a system/
       // explain surface (a later plan — this plan only PERSISTS the rows + ships the
       // queryable shape) can import it; the only current consumer is the daemon
       // wiring TEST (the walker excludes *.test.ts), so both surface as orphans now.
-      // Same rationale + precedent as reduceFleetWindow/FleetWindowRollup above.
+      // Same rationale + precedent as reduceSystemWindow/SystemWindowRollup above.
       // (cacheBreakEventToRow is NOT listed — the daemon's cache_break subscriber is
-      // its real production consumer.) Remove when the fleet/explain consumer lands.
+      // its real production consumer.) Remove when the system/explain consumer lands.
       "queryCacheBreakRateByReason",
       "CacheBreakReasonRate",
       // Video job store. SHRUNK (the async

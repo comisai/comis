@@ -13,8 +13,10 @@
  * 1. **Orphaned user messages** -- trailing user turn without an assistant reply.
  * 2. **Tool-result tails** -- session ends with a tool result (role "tool" or
  *    "toolResult") after an assistant toolUse, or with an assistant message
- *    whose stopReason is "toolUse" (interrupted before tool results arrived).
- *    Both cases arise when a daemon restart kills execution mid-tool-call.
+ *    whose stopReason is "toolUse" (the turn ended before a result was
+ *    recorded). These cases may follow background promotion, cancellation,
+ *    timeout, or process interruption; the session alone does not identify
+ *    the cause.
  *
  * **Mid-session anomalies (Case 4, full scan):**
  * 4. **Consecutive same-role messages** -- user-user or assistant-assistant at
@@ -36,6 +38,8 @@ import type {
   SessionMessageEntry,
 } from "@earendil-works/pi-coding-agent";
 import { systemNowMs } from "@comis/core";
+import { CONTINUATION_USER_MESSAGE } from "./synthetic-user-messages.js";
+import { getSessionFileEntries, rewriteSessionFile } from "./session-manager-internals.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -61,8 +65,8 @@ export interface RepairResult {
  * 2. Trailing tool result (role "tool" or "toolResult") -- execution was
  *    interrupted by a restart after tool calls completed but before the
  *    assistant processed results.
- * 3. Trailing assistant message with stopReason "toolUse" -- execution was
- *    interrupted before tool results arrived.
+ * 3. Trailing assistant message with stopReason "toolUse" -- the turn ended
+ *    before a tool result was recorded.
  * 4. Mid-session consecutive same-role messages (user-user or
  *    assistant-assistant) at any position. Detected by scanning the
  *    getBranch() entry path. Repaired via branch() + re-append with
@@ -135,9 +139,9 @@ export function repairOrphanedMessages(sessionManager: SessionManager): RepairRe
       // results arrived.
       appendSyntheticAssistant(
         sessionManager,
-        "(previous tool execution was interrupted by a system restart)",
+        "(the previous turn ended before this tool result was recorded)",
       );
-      reasons.push("assistant toolUse interrupted before processing results");
+      reasons.push("assistant toolUse without a recorded result");
     }
   }
 
@@ -339,7 +343,7 @@ function repairMidSessionAnomalies(sessionManager: SessionManager): RepairResult
           const fillerText =
             fillerRole === "assistant"
               ? "(previous response was interrupted)"
-              : "(continued from previous message)";
+              : CONTINUATION_USER_MESSAGE;
           sessionManager.appendMessage(
             createSyntheticMessage(fillerRole, fillerText) as any,
           );
@@ -430,15 +434,14 @@ export interface ScrubResult {
  * Best-effort: silently no-ops if the session manager shape is unexpected.
  */
 export function scrubPoisonedThinkingBlocks(sessionManager: SessionManager): ScrubResult {
-  /* eslint-disable @typescript-eslint/no-explicit-any -- SessionManager internals */
-  const sm = sessionManager as any;
-  const fileEntries = sm?.fileEntries;
-  if (!Array.isArray(fileEntries)) return { scrubbed: false, blocksRemoved: 0 };
+  /* eslint-disable @typescript-eslint/no-explicit-any -- persisted-entry payloads are untyped JSONL shapes */
+  const fileEntries = getSessionFileEntries(sessionManager);
+  if (!fileEntries) return { scrubbed: false, blocksRemoved: 0 };
 
   let blocksRemoved = 0;
   for (const entry of fileEntries) {
     if (!entry || entry.type !== "message") continue;
-    const msg = entry.message;
+    const msg = entry.message as any;
     if (!msg || msg.role !== "assistant") continue;
     const content = msg.content;
     if (!Array.isArray(content)) continue;
@@ -459,8 +462,8 @@ export function scrubPoisonedThinkingBlocks(sessionManager: SessionManager): Scr
     }
   }
 
-  if (blocksRemoved > 0 && typeof sm._rewriteFile === "function") {
-    sm._rewriteFile();
+  if (blocksRemoved > 0) {
+    rewriteSessionFile(sessionManager);
   }
   return { scrubbed: blocksRemoved > 0, blocksRemoved };
   /* eslint-enable @typescript-eslint/no-explicit-any */

@@ -5,8 +5,9 @@
  */
 
 import type Database from "better-sqlite3";
+import { z } from "zod";
+import { createRowMapper } from "../row-mapper.js";
 import {
-  deliveryMapper,
   diagnosticMapper,
   channelSnapshotMapper,
   providerAggMapper,
@@ -14,11 +15,8 @@ import {
   sessionAggMapper,
   hourlyBucketMapper,
   sessionSummaryRollupMapper,
-  deliveryStatsMapper,
   systemPromptReportMapper,
   type ObservabilityStore,
-  type DeliveryRow,
-  type DeliveryQueryParams,
   type DiagnosticRow,
   type DiagnosticQueryParams,
   type ChannelSnapshotRow,
@@ -27,17 +25,19 @@ import {
   type SessionAggregation,
   type HourlyBucket,
   type SessionSummaryRollup,
-  type DeliveryStats,
   type SystemPromptReportRow,
 } from "./observability-store-types.js";
 // The *FromRow mappers live in observability-row-shapes.ts (extracted for the
 // file-size cap; imported here directly to avoid a store-types↔row-shapes cycle).
 import {
-  deliveryFromRow,
   diagnosticFromRow,
   snapshotFromRow,
   systemPromptReportFromRow,
 } from "./observability-row-shapes.js";
+
+const offSessionCostMapper = createRowMapper(
+  z.strictObject({ total_cost: z.number() }),
+);
 
 /** Shape of the subset of ObservabilityStore implemented by this module. */
 export type ObservabilityQueries = Pick<
@@ -47,8 +47,6 @@ export type ObservabilityQueries = Pick<
   | "aggregateBySession"
   | "aggregateHourly"
   | "aggregateSessionsInWindow"
-  | "queryDelivery"
-  | "deliveryStats"
   | "queryDiagnostics"
   | "offSessionCostSince"
   | "latestChannelSnapshots"
@@ -59,7 +57,7 @@ export type ObservabilityQueries = Pick<
 /**
  * Validate the `details.toolStats` record from an untrusted session_summary row,
  * keeping ONLY entries with finite numeric `ok`/`failed`. A malformed entry is
- * DROPPED — the fleet reducer does raw arithmetic and would otherwise emit `NaN`.
+ * DROPPED — the system reducer does raw arithmetic and would otherwise emit `NaN`.
  */
 function parseToolStats(value: unknown): Record<string, { ok: number; failed: number }> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
@@ -77,7 +75,7 @@ function parseToolStats(value: unknown): Record<string, { ok: number; failed: nu
   return out;
 }
 
-/** Validate `details.topErrorKinds` from an untrusted row, keeping ONLY finite-number entries (a string/NaN count would corrupt the fleet reducer). */
+/** Validate `details.topErrorKinds` from an untrusted row, keeping ONLY finite-number entries (a string/NaN count would corrupt the system reducer). */
 function parseErrorKinds(value: unknown): Record<string, number> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
   const out: Record<string, number> = {};
@@ -145,7 +143,7 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     FROM obs_token_usage WHERE timestamp >= ? GROUP BY (timestamp / 3600000) ORDER BY hour
   `);
 
-  // Fleet aggregate: ALL in-window session_summary rows, ordered by insert id. A
+  // System aggregate: ALL in-window session_summary rows, ordered by insert id. A
   // session emits ONE summary row per EXECUTION → the rollup SUMs additive fields
   // across a session's rows (latest-row-only under-reports). Rides idx_obs_diag_session_cat.
   const aggSessionsInWindowStmt = db.prepare(`
@@ -156,34 +154,20 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     ORDER BY id
   `);
 
-  const deliveryStatsAllStmt = db.prepare(`
-    SELECT
-      COUNT(*) as total,
-      COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success,
-      COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as error,
-      COALESCE(SUM(CASE WHEN status = 'timeout' THEN 1 ELSE 0 END), 0) as timeout,
-      COALESCE(SUM(CASE WHEN status = 'filtered' THEN 1 ELSE 0 END), 0) as filtered,
-      COALESCE(AVG(latency_ms), 0) as avg_latency_ms
-    FROM obs_delivery
-  `);
-
-  const deliveryStatsSinceStmt = db.prepare(`
-    SELECT
-      COUNT(*) as total,
-      COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success,
-      COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as error,
-      COALESCE(SUM(CASE WHEN status = 'timeout' THEN 1 ELSE 0 END), 0) as timeout,
-      COALESCE(SUM(CASE WHEN status = 'filtered' THEN 1 ELSE 0 END), 0) as filtered,
-      COALESCE(AVG(latency_ms), 0) as avg_latency_ms
-    FROM obs_delivery WHERE timestamp >= ?
-  `);
-
   const latestSnapshotsStmt = db.prepare(`
-    SELECT s.* FROM obs_channel_snapshots s
-    INNER JOIN (
-      SELECT channel_type, MAX(timestamp) as max_ts
-      FROM obs_channel_snapshots GROUP BY channel_type
-    ) latest ON s.channel_type = latest.channel_type AND s.timestamp = latest.max_ts
+    SELECT snapshot.*
+    FROM obs_channel_snapshots snapshot
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM obs_channel_snapshots newer
+      WHERE newer.channel_type = snapshot.channel_type
+        AND newer.channel_id = snapshot.channel_id
+        AND (
+          newer.timestamp > snapshot.timestamp
+          OR (newer.timestamp = snapshot.timestamp AND newer.id > snapshot.id)
+        )
+    )
+    ORDER BY snapshot.channel_type, snapshot.channel_id
   `);
 
   // SystemPromptReport queries.
@@ -289,9 +273,9 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     const rows = parsed.ok ? parsed.value : [];
     // One accumulator per session_key, reduced over ALL its in-window rows
     // (one row per execution). Additive fields SUM; `degraded` ORs; the state
-    // fields (`lastTs`/`source`) take the latest row (rows arrive in id order);
-    // `endReason` keeps the latest DEGRADED row's named cause so a later clean
-    // execution does not erase what degradedByCause buckets on.
+    // fields (`lastTs`/`source`) take the latest row (rows arrive in id order).
+    // Real degradations remain sticky, while a successful continuation resolves
+    // the transitional `background_pending` state.
     const bySession = new Map<string, SessionSummaryRollup>();
     for (const r of rows) {
       let d: Record<string, unknown>;
@@ -329,9 +313,9 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
       acc.turnCount += typeof d.turnCount === "number" ? d.turnCount : 0;
       // Validate the nested record shapes rather than blind-casting: a malformed
       // value (a bare number for toolStats, a string for an errorKind count)
-      // would otherwise flow unchecked into the fleet reducer and corrupt its
+      // would otherwise flow unchecked into the system reducer and corrupt its
       // arithmetic (NaN / string concatenation). Mirrors the session reader's
-      // `typeof … && Number.isFinite(…)` discipline (fleet-session-index.ts).
+      // `typeof … && Number.isFinite(…)` discipline (system-session-index.ts).
       for (const [tool, s] of Object.entries(parseToolStats(d.toolStats))) {
         const t = acc.toolStats[tool] ?? { ok: 0, failed: 0 }; // eslint-disable-line security/detect-object-injection -- validated tool-name key from parseToolStats
         acc.toolStats[tool] = { ok: t.ok + s.ok, failed: t.failed + s.failed }; // eslint-disable-line security/detect-object-injection -- validated tool-name key from parseToolStats
@@ -340,68 +324,29 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
         acc.topErrorKinds[kind] = (acc.topErrorKinds[kind] ?? 0) + n; // eslint-disable-line security/detect-object-injection -- validated ErrorKind key from parseErrorKinds
       }
       // Pre-change rows lack `source` -> parse-default "runtime" (additive
-      // read-time default per AGENTS §2.9; not a migration shim). The fleet
+      // read-time default per AGENTS §2.9; not a migration shim). The system
       // reducer filters on this; the latest row's provenance wins.
       acc.source = typeof d.source === "string" ? d.source : "runtime";
       // The named degradation cause. Pre-change rows (and a blank value)
       // parse-default to "unknown" so degradedByCause always has a stable,
-      // finite bucket key. A degraded row's cause overwrites; a clean row's
-      // endReason only applies while the session has no degradation yet.
+      // finite bucket key. A real degraded row's cause overwrites and remains
+      // sticky. `background_pending` describes an unfinished continuation, so
+      // the later clean execution resolves it without erasing real failures.
       const rowEndReason =
         typeof d.endReason === "string" && d.endReason.length > 0 ? d.endReason : "unknown";
-      if (rowDegraded || !acc.degraded) acc.endReason = rowEndReason;
-      acc.degraded = acc.degraded || rowDegraded;
+      if (rowDegraded) {
+        const isPendingContinuation = rowEndReason === "background_pending";
+        if (!isPendingContinuation || !acc.degraded) acc.endReason = rowEndReason;
+        acc.degraded = true;
+      } else if (acc.endReason === "background_pending") {
+        acc.endReason = rowEndReason;
+        acc.degraded = false;
+      } else if (!acc.degraded) {
+        acc.endReason = rowEndReason;
+      }
       bySession.set(r.session_key, acc);
     }
     return [...bySession.values()];
-  }
-
-  function queryDelivery(params?: DeliveryQueryParams): DeliveryRow[] {
-    const conditions: string[] = [];
-    const values: unknown[] = [];
-
-    if (params?.sinceMs != null) {
-      conditions.push("timestamp >= ?");
-      values.push(params.sinceMs);
-    }
-    if (params?.channelType != null) {
-      conditions.push("channel_type = ?");
-      values.push(params.channelType);
-    }
-    if (params?.status != null) {
-      conditions.push("status = ?");
-      values.push(params.status);
-    }
-
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const limit = params?.limit ?? 1000;
-    const sql = `SELECT * FROM obs_delivery ${where} ORDER BY timestamp DESC LIMIT ?`;
-    values.push(limit);
-
-    const parsed = deliveryMapper.parseRows(db.prepare(sql).all(...values));
-    // Degrade-on-validation-error: observability query -> empty result.
-    const rows = parsed.ok ? parsed.value : [];
-    return rows.map(deliveryFromRow);
-  }
-
-  function deliveryStats(sinceMs?: number): DeliveryStats {
-    const raw = sinceMs != null
-      ? deliveryStatsSinceStmt.get(sinceMs)
-      : deliveryStatsAllStmt.get();
-    const parsed = deliveryStatsMapper.parseOptionalRow(raw);
-    // Degrade-on-validation-error or missing row -> zero-stats.
-    const row = parsed.ok ? parsed.value : undefined;
-    if (!row) {
-      return { total: 0, success: 0, error: 0, timeout: 0, filtered: 0, avgLatencyMs: 0 };
-    }
-    return {
-      total: row.total,
-      success: row.success,
-      error: row.error,
-      timeout: row.timeout,
-      filtered: row.filtered,
-      avgLatencyMs: row.avg_latency_ms,
-    };
   }
 
   function queryDiagnostics(params?: DiagnosticQueryParams): DiagnosticRow[] {
@@ -432,10 +377,10 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     return rows.map(diagnosticFromRow);
   }
 
-  /** Total USD cost of off-session (`__PREFIX__`-keyed background-job) LLM spend since `sinceMs`. Distinct from the per-session cost the fleet rollup sums (no double-count). */
+  /** Total USD cost of off-session (`__PREFIX__`-keyed background-job) LLM spend since `sinceMs`. Distinct from the per-session cost the system rollup sums (no double-count). */
   function offSessionCostSince(sinceMs: number): number {
-    const row = offSessionCostSinceStmt.get(sinceMs) as { total_cost: number } | undefined;
-    return row?.total_cost ?? 0;
+    const parsed = offSessionCostMapper.parseOptionalRow(offSessionCostSinceStmt.get(sinceMs));
+    return parsed.ok ? (parsed.value?.total_cost ?? 0) : 0;
   }
 
   function latestChannelSnapshots(): ChannelSnapshotRow[] {
@@ -483,8 +428,6 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     aggregateBySession,
     aggregateHourly,
     aggregateSessionsInWindow,
-    queryDelivery,
-    deliveryStats,
     queryDiagnostics,
     offSessionCostSince,
     latestChannelSnapshots,

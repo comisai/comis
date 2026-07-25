@@ -8,14 +8,26 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ok, err } from "@comis/shared";
 import { resolveModelProfile } from "../model-profile.js";
-import type { PerAgentConfig, SessionKey, NormalizedMessage } from "@comis/core";
-import { formatSessionKey, runWithContext, tryGetContext } from "@comis/core";
-import type { ExecutionResult } from "../types.js";
+import type { ContextStorePort, PerAgentConfig, SessionKey, NormalizedMessage } from "@comis/core";
+import {
+  createDeliveryOrigin,
+  createConversationRef,
+  computeWorkspacePolicyCombinedHash,
+  formatSessionKey,
+  hashWorkspacePolicyContent,
+  INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
+  registerToolMetadata,
+  runWithContext,
+  tryGetContext,
+  TypedEventBus,
+} from "@comis/core";
+import type { ExecutionOverrides, ExecutionResult } from "../types.js";
 import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot } from "../prompt-assembly.js";
 import { clearSessionToolSchemaSnapshot } from "../executor-session-state.js";
 import { resetPairedMemoryDedupForTests } from "../executor-post-execution.js";
 import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "../cache-detection/index.js";
 import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
+import { planInboundMessageProvenance } from "../../session/inbound-message-provenance.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mock setup -- vi.hoisted runs before vi.mock factories
@@ -31,6 +43,8 @@ const {
   mockSetSystemPrompt,
   mockCompact,
   mockAbortCompaction,
+  mockAppendCustomEntry,
+  mockAppendInboundMessageLedger,
   mockSendCustomMessage,
   mockStreamFn,
   mockSteer,
@@ -43,6 +57,7 @@ const {
   mockSetThinkingLevel,
   mockSession,
   mockBridgeListener,
+  mockHasOutboundDelivery,
   mockGetResult,
   mockApplyOverrides,
   mockSettingsManagerCreate,
@@ -69,6 +84,11 @@ const {
   const mockSetSystemPrompt = vi.fn();
   const mockCompact = vi.fn().mockResolvedValue({ summary: "compacted", firstKeptEntryId: "e1", tokensBefore: 5000 });
   const mockAbortCompaction = vi.fn();
+  const mockAppendCustomEntry = vi.fn().mockReturnValue("provenance-entry");
+  const mockAppendInboundMessageLedger = vi.fn().mockReturnValue({
+    ok: true,
+    value: undefined,
+  });
 
   const mockSendCustomMessage = vi.fn().mockResolvedValue(undefined);
   const mockStreamFn = vi.fn().mockReturnValue("original-stream");
@@ -117,6 +137,7 @@ const {
   };
 
   const mockBridgeListener = vi.fn();
+  const mockHasOutboundDelivery = vi.fn().mockReturnValue(false);
   const mockGetResult = vi.fn().mockReturnValue({
     tokensUsed: { input: 100, output: 50, total: 150 },
     cost: { total: 0.01 },
@@ -174,6 +195,8 @@ const {
     mockSetSystemPrompt,
     mockCompact,
     mockAbortCompaction,
+    mockAppendCustomEntry,
+    mockAppendInboundMessageLedger,
     mockSendCustomMessage,
     mockStreamFn,
     mockSteer,
@@ -186,6 +209,7 @@ const {
     mockSetThinkingLevel,
     mockSession,
     mockBridgeListener,
+    mockHasOutboundDelivery,
     mockGetResult,
     mockApplyOverrides,
     mockSettingsManagerCreate,
@@ -250,12 +274,21 @@ vi.mock("../../bridge/pi-event-bridge.js", () => ({
     // postExecution reads the per-turn skill-use carrier back. Default
     // empty (no skill attributed) → memory:skill_used not emitted.
     getUsedSkillIds: () => new Set<string>(),
+    hasOutboundDelivery: mockHasOutboundDelivery,
   }),
 }));
 
 vi.mock("../../bootstrap/index.js", () => ({
   assembleRichSystemPrompt: mockAssembleRichSystemPrompt,
   assembleRichSystemPromptBlocks: vi.fn().mockReturnValue({ staticPrefix: "static-prefix", attribution: "attribution", semiStableBody: "semi-stable-body" }),
+  compileRichSystemPrompt: vi.fn().mockReturnValue({
+    report: {
+      mode: "full",
+      combinedHash: "c".repeat(64),
+      totalChars: 42,
+      sections: [],
+    },
+  }),
   buildDateTimeSection: mockBuildDateTimeSection,
   buildInboundMetadataSection: mockBuildInboundMetadataSection,
   loadWorkspaceBootstrapFiles: mockLoadWorkspaceBootstrapFiles,
@@ -320,6 +353,7 @@ import { createCapabilityPortStub } from "../../../../core/src/ports/__test-help
 import { repairOrphanedMessages, scrubPoisonedThinkingBlocks } from "../../session/orphaned-message-repair.js";
 import { scrubRedactedToolCalls } from "../../session/scrub-redacted-tool-calls.js";
 import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
+import { INTERACTIVE_SILENT_FAILURE_RESPONSE } from "../prompt-runner/interactive-silent-recovery.js";
 import { assembleRichSystemPrompt, loadWorkspaceBootstrapFiles, buildBootstrapContextFiles } from "../../bootstrap/index.js";
 import { wrapInEnvelope } from "../../envelope/message-envelope.js";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -333,18 +367,79 @@ const mockAppendFileSync = vi.mocked(appendFileSync);
 
 const testSessionKey: SessionKey = {
   tenantId: "t1",
+  agentId: "agent-1",
   channelId: "c1",
   userId: "u1",
 };
 
 const testMessage: NormalizedMessage = {
-  id: "msg-1",
+  id: "11111111-1111-4111-8111-111111111111",
   text: "hello world",
   senderId: "user1",
   channelId: "c1",
   channelType: "test",
   timestamp: Date.now(),
 } as NormalizedMessage;
+
+function makeInboundProvenanceOverrides(
+  message: NormalizedMessage,
+  recordedAt = Date.parse("2026-03-12T00:00:00.000Z"),
+) {
+  const planned = planInboundMessageProvenance(message, recordedAt);
+  if (!planned.ok) throw planned.error.error;
+  return {
+    operationType: "interactive" as const,
+    inboundProvenancePlans: [planned.value],
+  };
+}
+
+function withTestTurnScope<T>(agentId: string, fn: () => T): T {
+  const endpoint = {
+    channelType: "test",
+    channelInstanceId: "test-instance",
+    conversationId: testSessionKey.channelId,
+    conversationKind: "direct" as const,
+  };
+  return runWithContext({
+    tenantId: testSessionKey.tenantId,
+    userId: testSessionKey.userId,
+    sessionKey: formatSessionKey(testSessionKey),
+    agentId,
+    turnScope: {
+      conversation: {
+        tenantId: testSessionKey.tenantId,
+        agentId,
+        partition: { kind: "agent" as const },
+      },
+      principal: { principalId: testSessionKey.userId },
+      endpoint,
+    },
+    traceId: "00000000-0000-4000-8000-000000000001",
+    startedAt: 1,
+    trustLevel: "admin",
+  }, fn);
+}
+
+function makeContextStore(): ContextStorePort {
+  return {
+    append: vi.fn(),
+    getMessages: vi.fn(() => []),
+    appendLeafSummary: vi.fn(() => "leaf"),
+    appendCondensedSummary: vi.fn(() => "condensed"),
+    getContextItems: vi.fn(() => []),
+    getSummaries: vi.fn(() => []),
+    getMessagesByIds: vi.fn(() => []),
+    getSummariesByIds: vi.fn(() => []),
+    countMessages: vi.fn(() => 0),
+    getSummaryChildren: vi.fn(() => []),
+    getSummaryMessages: vi.fn(() => []),
+    searchLcd: vi.fn(() => ({ hits: [], lane: "word", matchErrored: false, cjkZeroHit: false, scanCapped: false })),
+    runOnConversation: vi.fn(async (_conversationRef, fn) => fn()),
+    getIngestCursor: vi.fn(() => null),
+    upsertIngestCursor: vi.fn(),
+    deleteConversationLcd: vi.fn(() => 0),
+  };
+}
 
 const testConfig: PerAgentConfig = {
   name: "test-agent",
@@ -361,7 +456,12 @@ const testConfig: PerAgentConfig = {
 // ---------------------------------------------------------------------------
 
 function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
+  const emit = vi.fn();
+  const boundAgentId = overrides?.agentId ?? "agent-1";
   return {
+    agentId: boundAgentId,
+    tenantId: "tenant-1",
+    contextStore: makeContextStore(),
     circuitBreaker: {
       isOpen: vi.fn().mockReturnValue(false),
       recordSuccess: vi.fn(),
@@ -394,7 +494,11 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
       getCount: vi.fn().mockReturnValue(0),
     },
     eventBus: {
-      emit: vi.fn(),
+      emit,
+      emitSafely: vi.fn((event: string, payload: unknown) => {
+        emit(event, payload);
+        return { hadListeners: false, failures: [], pendingFailures: Promise.resolve([]) };
+      }),
       on: vi.fn(),
       off: vi.fn(),
       once: vi.fn(),
@@ -423,22 +527,40 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
       getAll: vi.fn().mockReturnValue([]),
       getAvailable: vi.fn().mockReturnValue([]),
     } as any,
+    modelRuntime: {
+      getAuth: vi.fn().mockResolvedValue(undefined),
+      setRuntimeApiKey: vi.fn().mockResolvedValue(undefined),
+    } as any,
     sessionAdapter: {
       withSession: vi.fn().mockImplementation(
         async (_sk: SessionKey, fn: (sm: any) => Promise<any>) => {
           const mockSm = {
             buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
+            getBranch: vi.fn().mockReturnValue([]),
             appendMessage: vi.fn(),
+            appendCustomEntry: mockAppendCustomEntry,
             getSessionDir: vi.fn().mockReturnValue("/tmp/test-session"),
           };
-          const value = await fn(mockSm);
+          const value = tryGetContext()?.turnScope
+            ? await fn(mockSm)
+            : await withTestTurnScope(boundAgentId, () => fn(mockSm));
           return ok(value);
         },
       ),
+      appendInboundMessageLedger: mockAppendInboundMessageLedger,
+      persistInboundMessage: vi.fn().mockResolvedValue(ok({
+        payloads: [],
+        ledgerContent: "",
+      })),
       destroySession: vi.fn().mockResolvedValue(undefined),
     },
     workspaceDir: "/tmp/test-workspace",
     agentDir: "/tmp/test-agent-dir",
+    workspacePolicySnapshot: {
+      agentId: boundAgentId,
+      sections: [],
+      combinedHash: "a".repeat(64),
+    },
     customTools: [],
     // REQUIRED on PiExecutorDeps. Stub returns gate-enabled + empty defaults —
     // assembleTools() will invoke buildCapabilityIndexContext, which sees zero
@@ -498,6 +620,11 @@ describe("PiExecutor", () => {
     mockSubscribe.mockReturnValue(vi.fn());
     mockCompact.mockResolvedValue({ summary: "compacted", firstKeptEntryId: "e1", tokensBefore: 5000 });
     mockAbortCompaction.mockReset();
+    mockAppendCustomEntry.mockReset().mockReturnValue("provenance-entry");
+    mockAppendInboundMessageLedger.mockReset().mockReturnValue({
+      ok: true,
+      value: undefined,
+    });
     mockGetUserMessagesForForking.mockReturnValue([
       { entryId: "entry-1", text: "First user message" },
       { entryId: "entry-2", text: "Second user message" },
@@ -529,6 +656,7 @@ describe("PiExecutor", () => {
     // Reset steering mocks
     mockSteer.mockResolvedValue(undefined);
     mockFollowUp.mockResolvedValue(undefined);
+    mockHasOutboundDelivery.mockReset().mockReturnValue(false);
     mockSession.isStreaming = false;
     mockSession.isCompacting = false;
     // getVisibleAssistantText now reads from mockSession.messages
@@ -550,6 +678,213 @@ describe("PiExecutor", () => {
   // -------------------------------------------------------------------------
 
   describe("basic execution", () => {
+    it("loads one workspace policy snapshot and records its hash on the turn result", async () => {
+      const snapshot = {
+        agentId: "agent-1",
+        sections: [],
+        combinedHash: "a".repeat(64),
+      };
+      const load = vi.fn().mockResolvedValue(ok(snapshot));
+      const deps = createMockDeps({
+        workspacePolicySnapshot: undefined,
+        workspacePolicyPort: { load, get: vi.fn() },
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(testMessage, testSessionKey);
+
+      expect(load).toHaveBeenCalledTimes(1);
+      expect(load).toHaveBeenCalledWith("agent-1");
+      expect(result.workspacePolicyHash).toBe(snapshot.combinedHash);
+    });
+
+    it("uses a hash-verified per-execution policy snapshot without rereading mutable workspace files", async () => {
+      const content = "# Scope\n\nUse the captured task scope.";
+      const section = {
+        id: "workspace:scope",
+        sourceKind: "operator" as const,
+        trust: "trusted" as const,
+        stability: "stable" as const,
+        content,
+        contentHash: hashWorkspacePolicyContent(content),
+        maxChars: 20_000,
+      };
+      const captured = {
+        agentId: "agent-1",
+        sections: [section],
+        combinedHash: computeWorkspacePolicyCombinedHash([section]),
+      };
+      const load = vi.fn().mockResolvedValue(ok({
+        agentId: "agent-1",
+        sections: [],
+        combinedHash: computeWorkspacePolicyCombinedHash([]),
+      }));
+      const deps = createMockDeps({
+        workspacePolicySnapshot: undefined,
+        workspacePolicyPort: { load, get: vi.fn() },
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage,
+        testSessionKey,
+        [],
+        undefined,
+        "agent-1",
+        undefined,
+        undefined,
+        { operationType: "taskExtraction", workspacePolicySnapshot: captured } as ExecutionOverrides,
+      );
+
+      expect(load).not.toHaveBeenCalled();
+      expect(result.workspacePolicyHash).toBe(captured.combinedHash);
+    });
+
+    it("rejects a corrupted per-execution policy snapshot before model dispatch or mutable policy fallback", async () => {
+      const content = "# Scope\n\nUse the captured task scope.";
+      const corrupted = {
+        agentId: "agent-1",
+        sections: [{
+          id: "workspace:scope",
+          sourceKind: "operator" as const,
+          trust: "trusted" as const,
+          stability: "stable" as const,
+          content,
+          contentHash: "f".repeat(64),
+          maxChars: 20_000,
+        }],
+        combinedHash: "f".repeat(64),
+      };
+      const load = vi.fn().mockResolvedValue(ok({
+        agentId: "agent-1",
+        sections: [],
+        combinedHash: computeWorkspacePolicyCombinedHash([]),
+      }));
+      const deps = createMockDeps({
+        workspacePolicySnapshot: undefined,
+        workspacePolicyPort: { load, get: vi.fn() },
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage,
+        testSessionKey,
+        [],
+        undefined,
+        "agent-1",
+        undefined,
+        undefined,
+        { operationType: "taskExtraction", workspacePolicySnapshot: corrupted } as ExecutionOverrides,
+      );
+
+      expect(result.finishReason).toBe("error");
+      expect(result.errorContext?.errorType).toBe("WorkspacePolicyError");
+      expect(load).not.toHaveBeenCalled();
+      expect(createAgentSession).not.toHaveBeenCalled();
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "workspace-policy-verify",
+          failureKind: "content_hash_mismatch",
+          hint: expect.any(String),
+          errorKind: "validation",
+        }),
+        "Per-execution workspace policy snapshot verification failed",
+      );
+    });
+
+    it("uses and reports the exact captured response locale policy for delayed work", async () => {
+      const responseLocalePolicy = {
+        locale: "en",
+        source: "explicit" as const,
+        enforceLocale: true,
+      };
+      const executor = createPiExecutor(testConfig, createMockDeps());
+
+      const result = await executor.execute(
+        testMessage,
+        testSessionKey,
+        [],
+        undefined,
+        "agent-1",
+        undefined,
+        undefined,
+        { operationType: "heartbeat", responseLocalePolicy },
+      );
+
+      expect(result.responseLocalePolicy).toEqual(responseLocalePolicy);
+    });
+
+    it("rejects an invalid captured response locale policy before model dispatch", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage,
+        testSessionKey,
+        [],
+        undefined,
+        "agent-1",
+        undefined,
+        undefined,
+        {
+          operationType: "heartbeat",
+          responseLocalePolicy: { locale: "not a locale", source: "explicit", enforceLocale: true },
+        } as ExecutionOverrides,
+      );
+
+      expect(result.finishReason).toBe("error");
+      expect(result.errorContext?.errorType).toBe("ResponseLocalePolicyError");
+      expect(createAgentSession).not.toHaveBeenCalled();
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "response-locale-policy-verify",
+          hint: expect.any(String),
+          errorKind: "validation",
+        }),
+        "Per-execution response locale policy verification failed",
+      );
+    });
+
+    it("stops before model dispatch when workspace policy loading fails", async () => {
+      const load = vi.fn().mockResolvedValue(err({
+        kind: "agent_not_found" as const,
+        agentId: "agent-1",
+      }));
+      const deps = createMockDeps({
+        workspacePolicySnapshot: undefined,
+        workspacePolicyPort: { load, get: vi.fn() },
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(testMessage, testSessionKey);
+
+      expect(result.finishReason).toBe("error");
+      expect(result.errorContext?.errorType).toBe("WorkspacePolicyError");
+      expect(createAgentSession).not.toHaveBeenCalled();
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "workspace-policy-load",
+          hint: expect.any(String),
+          errorKind: "precondition",
+        }),
+        "Workspace policy snapshot load failed",
+      );
+    });
+
+    it("stops before model dispatch when no workspace policy source is configured", async () => {
+      const deps = createMockDeps({
+        workspacePolicySnapshot: undefined,
+        workspacePolicyPort: undefined,
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(testMessage, testSessionKey);
+
+      expect(result.finishReason).toBe("error");
+      expect(result.errorContext?.errorType).toBe("WorkspacePolicyError");
+      expect(createAgentSession).not.toHaveBeenCalled();
+    });
+
     it("calls withSession with correct sessionKey", async () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
@@ -571,8 +906,7 @@ describe("PiExecutor", () => {
       expect(createAgentSession).toHaveBeenCalledWith(
         expect.objectContaining({
           cwd: deps.workspaceDir,
-          authStorage: deps.authStorage,
-          modelRegistry: deps.modelRegistry,
+          modelRuntime: deps.modelRuntime,
           customTools: deps.customTools,
         }),
       );
@@ -654,6 +988,200 @@ describe("PiExecutor", () => {
       expect(promptText).toContain("hello world");
     });
 
+    it("mirrors the exact preprocessed inbound provenance plan before model dispatch", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+      const rawMessage = { ...testMessage, text: "raw initial body" } as NormalizedMessage;
+      const processedMessage = { ...testMessage, text: "processed model body" } as NormalizedMessage;
+      const recordedAt = Date.parse("2026-03-12T00:00:00.000Z");
+      const overrides = makeInboundProvenanceOverrides(rawMessage, recordedAt);
+
+      await executor.execute(
+        processedMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        overrides,
+      );
+
+      const expectedBatch = {
+        schemaVersion: 1,
+        batchId: rawMessage.id,
+        chunkIndex: 0,
+        chunkCount: 1,
+        recordedAt,
+        messages: [{
+          id: rawMessage.id,
+          channelId: rawMessage.channelId,
+          channelType: rawMessage.channelType,
+          senderId: rawMessage.senderId,
+          text: rawMessage.text,
+          timestamp: rawMessage.timestamp,
+        }],
+      };
+      expect(mockAppendInboundMessageLedger).not.toHaveBeenCalled();
+      expect(mockAppendCustomEntry).toHaveBeenCalledTimes(2);
+      expect(mockAppendCustomEntry).toHaveBeenNthCalledWith(
+        1,
+        INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
+        expectedBatch,
+      );
+      expect(mockAppendCustomEntry).toHaveBeenNthCalledWith(
+        2,
+        INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
+        expectedBatch,
+      );
+      expect(mockAppendCustomEntry.mock.invocationCallOrder[0]).toBeLessThan(
+        mockPrompt.mock.invocationCallOrder[0]!,
+      );
+      expect(mockAppendCustomEntry.mock.invocationCallOrder[1]).toBeLessThan(
+        mockPrompt.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("stops model dispatch when inbound provenance cannot be persisted", async () => {
+      mockAppendCustomEntry.mockImplementationOnce(() => {
+        throw new Error("session disk unavailable");
+      });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined, makeInboundProvenanceOverrides(testMessage),
+      );
+
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(result.finishReason).toBe("error");
+      expect(result.response).toBe("The message could not be saved safely. Please try again.");
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "session-provenance",
+          errorKind: "resource",
+          hint: expect.stringContaining("session-storage limits"),
+        }),
+        "Inbound message provenance persistence failed",
+      );
+    });
+
+    it("contains a provenance failure whose Error message accessor is hostile", async () => {
+      const hostile = new Error("placeholder");
+      Object.defineProperty(hostile, "message", {
+        get() { throw new Error("message accessor escaped"); },
+      });
+      mockAppendCustomEntry.mockImplementationOnce(() => {
+        throw hostile;
+      });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined, makeInboundProvenanceOverrides(testMessage),
+      );
+
+      expect(result.finishReason).toBe("error");
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "session-provenance",
+          err: "[unreadable error message]",
+        }),
+        "Inbound message provenance persistence failed",
+      );
+    });
+
+    it("contains a provenance failure whose Error message accessor is not a string", async () => {
+      const hostile = new Error("placeholder");
+      Object.defineProperty(hostile, "message", {
+        get() { return { untrusted: "not a string" }; },
+      });
+      mockAppendCustomEntry.mockImplementationOnce(() => {
+        throw hostile;
+      });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined, makeInboundProvenanceOverrides(testMessage),
+      );
+
+      expect(result.finishReason).toBe("error");
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "session-provenance",
+          err: "[unreadable error message]",
+        }),
+        "Inbound message provenance persistence failed",
+      );
+    });
+
+    it("redacts credentials and URLs from provenance failure logs", async () => {
+      const credential = `xoxb-${"s".repeat(32)}`;
+      mockAppendCustomEntry.mockImplementationOnce(() => {
+        throw new Error(`write failed at https://private.example/session with ${credential}`);
+      });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined, makeInboundProvenanceOverrides(testMessage),
+      );
+
+      expect(JSON.stringify(deps.logger.error.mock.calls)).not.toContain(credential);
+      expect(JSON.stringify(deps.logger.error.mock.calls)).not.toContain("private.example");
+    });
+
+    it("stops model dispatch when the adjacent provenance marker cannot be persisted", async () => {
+      mockAppendCustomEntry
+        .mockReturnValueOnce("early-provenance-entry")
+        .mockImplementationOnce(() => {
+          throw new Error("session disk became unavailable");
+        });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined, makeInboundProvenanceOverrides(testMessage),
+      );
+
+      expect(mockAppendCustomEntry).toHaveBeenCalledTimes(2);
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(result.finishReason).toBe("error");
+      expect(result.response).toBe("The message could not be saved safely. Please try again.");
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "session-provenance",
+          errorKind: "resource",
+          hint: expect.stringContaining("session-storage limits"),
+        }),
+        "Inbound message provenance persistence failed",
+      );
+    });
+
+    it("never appends the durable physical-message ledger from model execution", async () => {
+      mockAppendInboundMessageLedger.mockReturnValueOnce({
+        ok: false,
+        error: new Error("ledger disk unavailable"),
+      });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(testMessage, testSessionKey);
+
+      expect(mockAppendInboundMessageLedger).not.toHaveBeenCalled();
+      expect(mockAppendCustomEntry).not.toHaveBeenCalled();
+      expect(mockPrompt).toHaveBeenCalledOnce();
+      expect(result.finishReason).toBe("stop");
+    });
+
     it("returns response from getLastAssistantText", async () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
@@ -690,6 +1218,63 @@ describe("PiExecutor", () => {
       expect(mockResourceLoaderArgs.captured.systemPromptOverride).toBeTypeOf("function");
       const overrideResult = mockResourceLoaderArgs.captured.systemPromptOverride("");
       expect(overrideResult).toBe("assembled system prompt");
+    });
+
+    it.each([
+      ["enabled", testConfig],
+      ["disabled", {
+        ...testConfig,
+        contextEngine: { enabled: false, thinkingKeepTurns: 10, historyTurns: 15 },
+      } as PerAgentConfig],
+    ])("projects pending delivered history when the context engine is %s", async (_mode, config) => {
+      const conversation = {
+        tenantId: testSessionKey.tenantId,
+        agentId: "agent-1",
+        partition: { kind: "agent" as const },
+      };
+      const conversationRef = createConversationRef(conversation);
+      if (!conversationRef.ok) throw conversationRef.error;
+      const branch = [{
+        type: "custom",
+        customType: "delivered_assistant_history",
+        data: {
+          tenantId: testSessionKey.tenantId,
+          agentId: "agent-1",
+          conversationRef: conversationRef.value,
+          sourceExecutionId: "execution_a",
+          attemptId: "attempt_a",
+          deliveredAtMs: 1_700_000_000_000,
+          text: "pending-delivered-output",
+          contentTrust: "derived",
+        },
+      }];
+      const deps = createMockDeps({
+        sessionAdapter: {
+          withSession: vi.fn().mockImplementation(
+            async (_sk: SessionKey, fn: (sm: any) => Promise<any>) => withTestTurnScope(
+              "agent-1",
+              async () => ok(await fn({
+                buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
+                getBranch: vi.fn().mockReturnValue(branch),
+                appendMessage: vi.fn(),
+                appendCustomEntry: mockAppendCustomEntry,
+                getSessionDir: vi.fn().mockReturnValue("/tmp/test-session"),
+              })),
+            ),
+          ),
+          appendInboundMessageLedger: mockAppendInboundMessageLedger,
+          persistInboundMessage: vi.fn().mockResolvedValue(ok({ payloads: [], ledgerContent: "" })),
+          destroySession: vi.fn().mockResolvedValue(undefined),
+        } as PiExecutorDeps["sessionAdapter"],
+      });
+      const executor = createPiExecutor(config, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+
+      const overrideResult = mockResourceLoaderArgs.captured.systemPromptOverride("");
+      expect(overrideResult).toContain("assembled system prompt");
+      expect(overrideResult).toContain("pending-delivered-output");
+      expect(overrideResult).toContain("not a new user request");
     });
   });
 
@@ -1144,7 +1729,8 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-fallback");
+      await withTestTurnScope(deps.agentId, () =>
+        executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId));
 
       const infoCalls = (deps.logger.info as Mock).mock.calls;
       const bookendCall = infoCalls.find(
@@ -1172,7 +1758,8 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-codex");
+      await withTestTurnScope(deps.agentId, () =>
+        executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId));
 
       const infoCalls = (deps.logger.info as Mock).mock.calls;
       const bookendCall = infoCalls.find(
@@ -1191,7 +1778,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-zero");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       const infoCalls = (deps.logger.info as Mock).mock.calls;
       const bookendCall = infoCalls.find(
@@ -1278,24 +1865,25 @@ describe("PiExecutor", () => {
         textEmitted: true,
       });
 
-      // First read returns "" (triggers L4); after followUp pushes the
+      // First read returns "" (triggers L4); after the continuation pushes the
       // recovered turn, getVisibleAssistantText reads it directly from
       // session.messages (since the latest assistant has a visible text
       // block, phase-filter's getVisibleAssistantText returns it).
       mockGetLastAssistantText.mockReturnValue("");
-      mockFollowUp.mockImplementationOnce(async () => {
-        mockSession.messages.push({
-          role: "assistant",
-          content: [{ type: "text", text: "done!" }],
-        });
-        // Bump the SDK getter so post-followUp reads see "done!".
-        mockGetLastAssistantText.mockReturnValue("done!");
+      mockPrompt.mockImplementation(async (text: string) => {
+        if (text.includes("post-batch continuation")) {
+          mockSession.messages.push({
+            role: "assistant",
+            content: [{ type: "text", text: "done!" }],
+          });
+          mockGetLastAssistantText.mockReturnValue("done!");
+        }
       });
 
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-l4");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       const infoCalls = (deps.logger.info as Mock).mock.calls;
       const bookendCall = infoCalls.find(
@@ -1309,7 +1897,10 @@ describe("PiExecutor", () => {
         postBatchContinuationAttempts: 1,
         postBatchContinuationOutcome: "recovered",
       });
-      expect(mockFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockPrompt).toHaveBeenCalledWith(
+        expect.stringContaining("post-batch continuation"),
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
 
     it("emits sepStepsPlanned/sepStepsCompleted; does NOT emit sepNudgeTriggered (SEP observability after L4 downgrade)", async () => {
@@ -1339,6 +1930,7 @@ describe("PiExecutor", () => {
           getDrainState: () => ({ drainInflightByKey: new Map<string, Promise<void>>() }),
           // Per-turn skill-use carrier read-back (empty in the mock).
           getUsedSkillIds: () => new Set<string>(),
+          hasOutboundDelivery: vi.fn().mockReturnValue(false),
         };
       });
 
@@ -1352,7 +1944,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-sep");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       const infoCalls = (deps.logger.info as Mock).mock.calls;
       const bookendCall = infoCalls.find(
@@ -1384,7 +1976,8 @@ describe("PiExecutor", () => {
       const deps = createMockDeps({ fallbackModels: [] });
       const executor = createPiExecutor(testConfig, deps);
 
-      const result = await executor.execute(testMessage, testSessionKey);
+      const result = await withTestTurnScope(deps.agentId, () =>
+        executor.execute(testMessage, testSessionKey));
 
       expect(result.finishReason).toBe("error");
       // Raw error details must NOT leak to user
@@ -1400,7 +1993,8 @@ describe("PiExecutor", () => {
       const deps = createMockDeps({ fallbackModels: [] });
       const executor = createPiExecutor(testConfig, deps);
 
-      const result = await executor.execute(testMessage, testSessionKey);
+      const result = await withTestTurnScope(deps.agentId, () =>
+        executor.execute(testMessage, testSessionKey));
 
       expect(result.finishReason).toBe("error");
       expect(result.response).toBe("An error occurred while processing your request. Please try again.");
@@ -1527,7 +2121,7 @@ describe("PiExecutor", () => {
       );
     });
 
-    it("empty assistant content produces empty response", async () => {
+    it("returns a visible failure when an interactive completion stays empty", async () => {
       // getVisibleAssistantText reads mockSession.messages directly
       // (no SDK delegation). An empty-content assistant — e.g. provider
       // returned no text blocks — must yield "".
@@ -1550,8 +2144,12 @@ describe("PiExecutor", () => {
 
       const result = await executor.execute(testMessage, testSessionKey);
 
-      expect(result.response).toBe("");
-      expect(result.finishReason).toBe("stop");
+      expect(result.response).toBe(INTERACTIVE_SILENT_FAILURE_RESPONSE);
+      expect(result.finishReason).toBe("error");
+      expect(mockPrompt).toHaveBeenCalledWith(
+        expect.stringContaining("no response was delivered"),
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
 
     it("multiple sequential executions on same executor produce valid results", async () => {
@@ -1852,62 +2450,63 @@ describe("PiExecutor", () => {
   // -------------------------------------------------------------------------
 
   describe("full prompt assembly", () => {
-    it("passes full assembler params including runtime info and inbound metadata", async () => {
+    it("passes policy inputs to the compiler and inbound state to the dynamic section builder", async () => {
       const deps = createMockDeps({
         secretManager: { get: vi.fn().mockReturnValue("canary-secret-123") } as any,
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-x");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
         expect.objectContaining({
-          agentName: "test-agent",
           promptMode: "full",
-          runtimeInfo: expect.objectContaining({
-            agentId: "agent-x",
-            host: expect.any(String),
-            os: expect.any(String),
-            arch: expect.any(String),
-            model: "claude-sonnet-4-5-20250929",
-            nodeVersion: expect.any(String),
-            defaultModel: "claude-sonnet-4-5-20250929",
-            channel: "test",
-          }),
-          inboundMeta: expect.objectContaining({
-            messageId: "msg-1",
-            senderId: "user1",
-            chatId: "c1",
-            channel: "test",
-            chatType: "dm",
-            flags: expect.any(Object),
-          }),
-          workspaceDir: "/tmp/test-workspace",
-          // canarySecret and sessionKey no longer passed to assembler (relocated to dynamic preamble)
         }),
+      );
+      const compilerInput = mockAssembleRichSystemPrompt.mock.calls[0][0];
+      expect(compilerInput).not.toHaveProperty("runtimeInfo");
+      expect(compilerInput).not.toHaveProperty("inboundMeta");
+      expect(mockBuildInboundMetadataSection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messageId: testMessage.id,
+          senderId: "user1",
+          chatId: "c1",
+          channel: "test",
+          chatType: "dm",
+          flags: expect.any(Object),
+        }),
+        false,
       );
     });
 
-    it("loads bootstrap files and passes to assembler", async () => {
-      const mockBootstrapFiles = [
-        { name: "SOUL.md", path: "/tmp/SOUL.md", content: "soul content", missing: false },
-      ];
+    it("compiles bootstrap files from the captured workspace snapshot without rereading the workspace", async () => {
       const mockContextFiles = [
         { path: "SOUL.md", content: "soul content" },
       ];
-      mockLoadWorkspaceBootstrapFiles.mockResolvedValueOnce(mockBootstrapFiles);
       mockBuildBootstrapContextFiles.mockReturnValueOnce(mockContextFiles);
 
-      const deps = createMockDeps();
+      const deps = createMockDeps({
+        workspacePolicySnapshot: {
+          agentId: "agent-1",
+          combinedHash: "b".repeat(64),
+          sections: [{
+            id: "workspace:soul",
+            sourceKind: "operator",
+            trust: "trusted",
+            stability: "stable",
+            content: "soul content",
+            contentHash: "c".repeat(64),
+            maxChars: 100,
+          }],
+        },
+      });
       const executor = createPiExecutor(testConfig, deps);
 
       await executor.execute(testMessage, testSessionKey);
 
-      expect(mockLoadWorkspaceBootstrapFiles).toHaveBeenCalledWith(
-        "/tmp/test-workspace",
-      );
+      expect(mockLoadWorkspaceBootstrapFiles).not.toHaveBeenCalled();
       expect(mockBuildBootstrapContextFiles).toHaveBeenCalledWith(
-        mockBootstrapFiles,
+        [expect.objectContaining({ name: "SOUL.md", content: "soul content" })],
         expect.objectContaining({ maxChars: 20_000 }),
       );
       expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
@@ -1932,29 +2531,32 @@ describe("PiExecutor", () => {
       // pool size (limit = maxResults) and fusion order.
       const ragConfig = {
         enabled: true, maxResults: 5, minScore: 0.5, maxContextChars: 5000, includeTrustLevels: ["system"],
-        rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        rerank: { mode: "off", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
         scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 },
       };
       const configWithRag = { ...testConfig, rag: ragConfig } as PerAgentConfig;
       const deps = createMockDeps({ memoryPort: mockMemoryPort as any });
       const executor = createPiExecutor(configWithRag, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-rag");
+      await withTestTurnScope(deps.agentId, () =>
+        executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId));
 
       // Recall resolves results via MemoryPort.search + the hybrid injector.
       // With rerank OFF the search limit is maxResults (default pool size unchanged).
       expect(mockMemoryPort.search).toHaveBeenCalledWith(
-        testSessionKey,
+        {
+          tenantId: testSessionKey.tenantId,
+          agentId: deps.agentId,
+          principalId: testSessionKey.userId,
+          conversationRef: expect.stringMatching(/^cv_/),
+          includeAgentShared: true,
+        },
         "hello world",
-        { limit: 5, minScore: 0.5, agentId: "agent-rag" },
+        { limit: 5, minScore: 0.5 },
       );
       expect(mockCreateHybridMemoryInjector).toHaveBeenCalled();
-      // RAG relocated to dynamic preamble, not system prompt
-      expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
-        expect.objectContaining({
-          additionalSections: [],
-        }),
-      );
+      const compilerInput = mockAssembleRichSystemPrompt.mock.calls[0][0];
+      expect(compilerInput).not.toHaveProperty("additionalSections");
     });
 
     it("RAG retrieval failure is non-fatal", async () => {
@@ -1965,14 +2567,15 @@ describe("PiExecutor", () => {
 
       const ragConfig = {
         enabled: true, maxResults: 5, minScore: 0.5, maxContextChars: 5000, includeTrustLevels: ["system"],
-        rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        rerank: { mode: "off", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
         scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 },
       };
       const configWithRag = { ...testConfig, rag: ragConfig } as PerAgentConfig;
       const deps = createMockDeps({ memoryPort: mockMemoryPort as any });
       const executor = createPiExecutor(configWithRag, deps);
 
-      const result = await executor.execute(testMessage, testSessionKey);
+      const result = await withTestTurnScope(deps.agentId, () =>
+        executor.execute(testMessage, testSessionKey));
 
       // Execution should still complete successfully
       expect(result.finishReason).toBe("stop");
@@ -2057,12 +2660,12 @@ describe("PiExecutor", () => {
       const deps = createMockDeps({ hookRunner: mockHookRunner as any });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "hook-agent");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       expect(mockHookRunner.runBeforeAgentStart).toHaveBeenCalledWith(
         { systemPrompt: "assembled system prompt", messages: [] },
         expect.objectContaining({
-          agentId: "hook-agent",
+          agentId: deps.agentId,
           sessionKey: testSessionKey,
           workspaceDir: "/tmp/test-workspace",
         }),
@@ -2115,7 +2718,7 @@ describe("PiExecutor", () => {
       expect(promptText).toContain("You are a helpful assistant.");
     });
 
-    it("derives tool names from customTools, not legacy tools parameter", async () => {
+    it("uses custom tools structurally without turning their names into prompt prose", async () => {
       const customTools = [
         { name: "memory_store", description: "Store memory", parameters: {} },
         { name: "memory_search", description: "Search memory", parameters: {} },
@@ -2126,15 +2729,15 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey);
 
-      expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
-        expect.objectContaining({
-          toolNames: ["memory_store", "memory_search", "bash"],
-          hasMemoryTools: true,
-        }),
-      );
+      expect(mockSetActiveToolsByName).toHaveBeenCalledWith([
+        "memory_store", "memory_search", "bash",
+      ]);
+      const compilerInput = mockAssembleRichSystemPrompt.mock.calls[0][0];
+      expect(compilerInput).not.toHaveProperty("toolNames");
+      expect(compilerInput).not.toHaveProperty("hasMemoryTools");
     });
 
-    it("passes undefined channelContext and reactionLevel to assembler", async () => {
+    it("keeps channel and reaction presentation state out of compiler configuration", async () => {
       const configWithReaction = {
         ...testConfig,
         reactionLevel: "extensive" as const,
@@ -2144,12 +2747,9 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey);
 
-      expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
-        expect.objectContaining({
-          channelContext: undefined,
-          reactionLevel: "extensive",
-        }),
-      );
+      const compilerInput = mockAssembleRichSystemPrompt.mock.calls[0][0];
+      expect(compilerInput).not.toHaveProperty("channelContext");
+      expect(compilerInput).not.toHaveProperty("reactionLevel");
     });
   });
 
@@ -2911,10 +3511,7 @@ describe("PiExecutor", () => {
 
       expect(mockRegistry.register).toHaveBeenCalledTimes(1);
       const [registeredKey, registeredHandle] = mockRegistry.register.mock.calls[0];
-      // Register key mirrors BackgroundSessionResolver.formatComposite:
-      //   formatSessionKey({tenantId: "default", channelId: "test:c1", userId: "c1"}) = "default:c1:test:c1"
-      // testSessionKey {tenantId: "t1", userId: "u1", channelId: "c1"} → no longer the register key.
-      expect(registeredKey).toBe("default:c1:test:c1");
+      expect(registeredKey).toMatch(/^cv_/);
       // Verify handle has all required methods
       expect(typeof registeredHandle.steer).toBe("function");
       expect(typeof registeredHandle.followUp).toBe("function");
@@ -2930,7 +3527,7 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey);
 
-      expect(mockRegistry.deregister).toHaveBeenCalledWith("default:c1:test:c1");
+      expect(mockRegistry.deregister).toHaveBeenCalledWith(expect.stringMatching(/^cv_/));
       // Deregister must be called before dispose
       const deregisterOrder = mockRegistry.deregister.mock.invocationCallOrder[0];
       const disposeOrder = mockDispose.mock.invocationCallOrder[0];
@@ -2945,7 +3542,7 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey);
 
-      expect(mockRegistry.deregister).toHaveBeenCalledWith("default:c1:test:c1");
+      expect(mockRegistry.deregister).toHaveBeenCalledWith(expect.stringMatching(/^cv_/));
     });
 
     it("RunHandle.steer delegates to session.steer", async () => {
@@ -2988,6 +3585,66 @@ describe("PiExecutor", () => {
       expect(mockAbort).toHaveBeenCalled();
     });
 
+    it("pre-aborted execution signal prevents model dispatch and emits the authoritative abort", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { operationType: "cron", signal: controller.signal },
+      );
+
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(result.finishReason).toBe("prompt_timeout");
+      expect(deps.eventBus.emit).toHaveBeenCalledWith("execution:aborted", {
+        sessionKey: testSessionKey,
+        reason: "pipeline_timeout",
+        agentId: "agent-1",
+        timestamp: expect.any(Number),
+      });
+    });
+
+    it("execution signal aborts the live SDK session and unregisters its listener", async () => {
+      const controller = new AbortController();
+      let releasePrompt!: () => void;
+      mockPrompt.mockImplementationOnce(() => new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      }));
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const executing = executor.execute(
+        testMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { operationType: "cron", signal: controller.signal },
+      );
+      await vi.waitFor(() => expect(mockPrompt).toHaveBeenCalledTimes(1));
+
+      controller.abort();
+      await vi.waitFor(() => expect(mockAbort).toHaveBeenCalledTimes(1));
+      expect(mockAbortCompaction).toHaveBeenCalledTimes(1);
+      releasePrompt();
+      await executing;
+
+      mockAbort.mockClear();
+      controller.abort();
+      await Promise.resolve();
+      expect(mockAbort).not.toHaveBeenCalled();
+    });
+
     it("RunHandle.isStreaming delegates to session.isStreaming", async () => {
       const mockRegistry = createMockRegistry();
       mockSession.isStreaming = true;
@@ -3022,7 +3679,7 @@ describe("PiExecutor", () => {
 
       expect(deps.logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
-          sessionKey: "default:c1:test:c1",
+          conversationRef: expect.stringMatching(/^cv_/),
           hint: expect.stringContaining("already has an active run"),
           errorKind: "resource",
         }),
@@ -3059,7 +3716,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(configWithThinking, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-think");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       const warnCalls = (deps.logger.warn as Mock).mock.calls;
       const thinkWarn = warnCalls.find(
@@ -3176,7 +3833,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(messageWithImages, testSessionKey, undefined, undefined, "agent-v");
+      await executor.execute(messageWithImages, testSessionKey, undefined, undefined, deps.agentId);
 
       // Verify prompt was called with images and the image hint prefix
       const promptCall = mockPrompt.mock.calls[0];
@@ -3214,7 +3871,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(messageWithImages, testSessionKey, undefined, undefined, "agent-nv");
+      await executor.execute(messageWithImages, testSessionKey, undefined, undefined, deps.agentId);
 
       // Verify prompt was called WITHOUT images
       const promptCall = mockPrompt.mock.calls[0];
@@ -3250,7 +3907,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      const result = await executor.execute(messageWithImages, testSessionKey, undefined, undefined, "agent-undef");
+      const result = await executor.execute(messageWithImages, testSessionKey, undefined, undefined, deps.agentId);
 
       // Should not crash
       expect(result.finishReason).toBe("stop");
@@ -3281,7 +3938,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-noimg");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       // No image-related INFO or WARN logs
       const infoCalls = (deps.logger.info as Mock).mock.calls;
@@ -3317,7 +3974,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-notrace");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       // No "JSONL tracing enabled" log should be emitted
       const infoCalls = (deps.logger.info as Mock).mock.calls;
@@ -3346,7 +4003,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(configWithTracing, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-trace");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       // "JSONL api-payload tracing enabled" INFO log should be emitted.
       // Tracing is split across two artifacts: api-payload remains under
@@ -3384,7 +4041,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(configWithTracing, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-cache04");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       // Verify wrapper names from the summary log.
       // wrapperNames array order matches the wrappers array (outermost first):
@@ -3451,7 +4108,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(configWithTracing, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-sid");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       // Exercise the wrapped streamFn -- triggers the api-payload trace writer.
       const wrappedStreamFn = mockSession.agent.streamFn;
@@ -3464,14 +4121,12 @@ describe("PiExecutor", () => {
       const jsonlCalls = mockAppendFileSync.mock.calls;
       expect(jsonlCalls.length).toBeGreaterThanOrEqual(1);
 
-      // testSessionKey = { tenantId: "t1", userId: "u1", channelId: "c1" }
-      // formatSessionKey produces "t1:u1:c1"
-      const expectedSessionId = "t1:u1:c1";
+      const expectedSessionId = "t1:agent:agent-1:u1:c1";
 
       const apiPayloadLine = JSON.parse((jsonlCalls[0][1] as string).trim());
       expect(apiPayloadLine.type).toBe("api_payload");
       expect(apiPayloadLine.sessionId).toBe(expectedSessionId);
-      expect(apiPayloadLine.agentId).toBe("agent-sid");
+      expect(apiPayloadLine.agentId).toBe(deps.agentId);
     });
 
     it("passes tracingDefaults maxSize/maxFiles to trace wrapper configs", async () => {
@@ -3484,7 +4139,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(configWithTracing, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-rot");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       // Exercise the wrapped streamFn -- this triggers the api-payload
       // trace writer, which calls appendJsonlLine -> rotation check ->
@@ -3744,6 +4399,47 @@ describe("PiExecutor", () => {
       expect(mockSetActiveToolsByName).toHaveBeenCalledWith(["bash", "memory_search"]);
     });
 
+    it("removes configured tools and prompt capabilities for an isolated model execution", async () => {
+      const getPromptSkillsXml = vi.fn(() => "<skills>must-not-appear</skills>");
+      const getPromptSkillLocations = vi.fn(() => new Map([["/skill", "must-not-appear"]]));
+      const getMcpServerInstructions = vi.fn(() => [{
+        serverName: "example",
+        instructions: "must not appear",
+      }]);
+      const configWithDiscovery = {
+        ...testConfig,
+        skills: { discoveryPaths: ["/configured/skills"], promptSkills: {} },
+      } as PerAgentConfig;
+      const deps = createMockDeps({
+        customTools: [{ name: "exec", description: "Execute", parameters: {} }] as any,
+        getPromptSkillsXml,
+        getPromptSkillLocations,
+        getMcpServerInstructions,
+      });
+      const executor = createPiExecutor(configWithDiscovery, deps);
+
+      await executor.execute(
+        testMessage,
+        testSessionKey,
+        [],
+        undefined,
+        "agent-1",
+        undefined,
+        undefined,
+        { operationType: "taskExtraction", capabilityAccess: "none" } as ExecutionOverrides,
+      );
+
+      expect(createAgentSession).toHaveBeenCalledWith(expect.objectContaining({ customTools: [] }));
+      expect(mockSetActiveToolsByName).toHaveBeenCalledWith([]);
+      expect(getPromptSkillsXml).not.toHaveBeenCalled();
+      expect(getPromptSkillLocations).not.toHaveBeenCalled();
+      expect(getMcpServerInstructions).not.toHaveBeenCalled();
+      expect(mockResourceLoaderArgs.captured).toMatchObject({
+        additionalSkillPaths: [],
+        noSkills: true,
+      });
+    });
+
     it("continues execution if getAllTools throws", async () => {
       mockGetAllTools.mockImplementation(() => { throw new Error("getAllTools not available"); });
       const deps = createMockDeps();
@@ -3846,7 +4542,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-err");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       expect(deps.logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -3989,7 +4685,8 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(memoryTestMessage, testSessionKey, undefined, undefined, "test-agent");
+      await withTestTurnScope(deps.agentId, () =>
+        executor.execute(memoryTestMessage, testSessionKey, undefined, undefined, deps.agentId));
 
       expect(mockStore).toHaveBeenCalledTimes(1);
 
@@ -4011,7 +4708,8 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      const result = await executor.execute(memoryTestMessage, testSessionKey);
+      const result = await withTestTurnScope(deps.agentId, () =>
+        executor.execute(memoryTestMessage, testSessionKey));
 
       expect(result.finishReason).toBe("stop");
       expect(result.response).toBe("test response");
@@ -4127,7 +4825,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(thresholdMsg, testSessionKey);
+      await withTestTurnScope(deps.agentId, () => executor.execute(thresholdMsg, testSessionKey));
 
       expect(mockStore).toHaveBeenCalledTimes(1);
     });
@@ -4144,11 +4842,11 @@ describe("PiExecutor", () => {
     ): Promise<ExecutionResult> {
       const msg = { ...testMessage, text } as NormalizedMessage;
       const executor = createPiExecutor(testConfig, deps);
-      return executor.execute(
-        msg, testSessionKey, undefined, undefined, "test-agent",
+      return withTestTurnScope(deps.agentId, () => executor.execute(
+        msg, testSessionKey, undefined, undefined, deps.agentId,
         undefined, undefined,
         { operationType } as any,
-      );
+      ));
     }
 
     it.each([
@@ -4346,7 +5044,7 @@ describe("PiExecutor", () => {
       expect(silentWarn).toBeUndefined();
     });
 
-    it("does NOT trigger when text was emitted in intermediate turn (multi-turn agentic loop)", async () => {
+    it("does not treat intermediate model text as delivery proof when the final response is empty", async () => {
       // Simulate: multi-turn agentic loop where text was produced in an
       // intermediate turn but the final assistant has no visible text
       // (empty final turn after bookkeeping tool call like memory_store).
@@ -4365,9 +5063,8 @@ describe("PiExecutor", () => {
 
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Should NOT be treated as error -- text was delivered mid-loop
-      expect(result.finishReason).not.toBe("error");
-      expect(result.response).toBe(""); // Empty is OK when text was streamed
+      expect(result.finishReason).toBe("error");
+      expect(result.response).toBe(INTERACTIVE_SILENT_FAILURE_RESPONSE);
 
       // Verify the WARN log was NOT emitted
       const warnCalls = (deps.logger.warn as Mock).mock.calls;
@@ -4383,12 +5080,12 @@ describe("PiExecutor", () => {
   // -------------------------------------------------------------------------
 
   describe("thinking-only continuation retry", () => {
-    it("retries with followUp when finishReason is stop and tool calls were made", async () => {
-      // initial check returns "" triggering the block. After followUp, the
+    it("retries with a continuation turn when finishReason is stop and tool calls were made", async () => {
+      // initial check returns "" triggering the block. After continuation, the
       // assistant message in mockSession.messages contains "recovered response"
       // for the continuation re-check and all subsequent reads
       // (getVisibleAssistantText reads messages directly, so we wire the
-      // recovery via followUp's mockImplementation pushing a new assistant).
+      // recovery via the prompt mock pushing a new assistant).
       setMockAssistantText("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -4397,8 +5094,10 @@ describe("PiExecutor", () => {
         llmCalls: 4,
         finishReason: "stop",
       });
-      mockFollowUp.mockImplementation(async () => {
-        setMockAssistantText("recovered response");
+      mockPrompt.mockImplementation(async (text: string) => {
+        if (text === "(continued from previous message)") {
+          setMockAssistantText("recovered response");
+        }
       });
 
       const deps = createMockDeps();
@@ -4407,7 +5106,10 @@ describe("PiExecutor", () => {
 
       expect(result.response).toBe("recovered response");
       expect(result.finishReason).not.toBe("error");
-      expect(mockFollowUp).toHaveBeenCalledWith("(continued from previous message)");
+      expect(mockPrompt).toHaveBeenCalledWith(
+        "(continued from previous message)",
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
 
     it("does NOT retry when finishReason is error (provider failure)", async () => {
@@ -4425,12 +5127,14 @@ describe("PiExecutor", () => {
       const result = await executor.execute(testMessage, testSessionKey);
 
       expect(result.finishReason).toBe("error");
-      // followUp should NOT have been called — finishReason is "error"
-      expect(mockFollowUp).not.toHaveBeenCalled();
+      expect(mockPrompt).not.toHaveBeenCalledWith(
+        "(continued from previous message)",
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
 
-    it("retries with followUp when thinking-only with zero tool calls (stepsExecuted=0)", async () => {
-      // initial check returns "" triggering the block. After followUp, the
+    it("retries with a continuation turn when thinking-only with zero tool calls", async () => {
+      // initial check returns "" triggering the block. After continuation, the
       // assistant message in mockSession.messages contains "recovered response".
       setMockAssistantText("");
       mockGetResult.mockReturnValue({
@@ -4440,8 +5144,10 @@ describe("PiExecutor", () => {
         llmCalls: 1,
         finishReason: "stop",
       });
-      mockFollowUp.mockImplementation(async () => {
-        setMockAssistantText("recovered response");
+      mockPrompt.mockImplementation(async (text: string) => {
+        if (text === "(continued from previous message)") {
+          setMockAssistantText("recovered response");
+        }
       });
 
       const deps = createMockDeps();
@@ -4450,11 +5156,14 @@ describe("PiExecutor", () => {
 
       expect(result.response).toBe("recovered response");
       expect(result.finishReason).not.toBe("error");
-      expect(mockFollowUp).toHaveBeenCalledWith("(continued from previous message)");
+      expect(mockPrompt).toHaveBeenCalledWith(
+        "(continued from previous message)",
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
 
-    it("falls through to failure when zero-tool followUp also produces empty", async () => {
-      // Assistant content always empty — even after followUp
+    it("falls through to failure when the zero-tool continuation stays empty", async () => {
+      // Assistant content always empty — even after continuation
       setMockAssistantText("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 100, output: 50, total: 150 },
@@ -4470,12 +5179,14 @@ describe("PiExecutor", () => {
       const result = await executor.execute(testMessage, testSessionKey);
 
       expect(result.finishReason).toBe("error");
-      // followUp WAS called (continuation attempted), but recovery failed
-      expect(mockFollowUp).toHaveBeenCalledWith("(continued from previous message)");
+      expect(mockPrompt).toHaveBeenCalledWith(
+        "(continued from previous message)",
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
 
-    it("falls through to failure when followUp also produces empty response", async () => {
-      // Assistant content always empty — even after followUp
+    it("falls through to failure when the continuation also produces an empty response", async () => {
+      // Assistant content always empty — even after continuation
       setMockAssistantText("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -4491,13 +5202,15 @@ describe("PiExecutor", () => {
       const result = await executor.execute(testMessage, testSessionKey);
 
       expect(result.finishReason).toBe("error");
-      // followUp WAS called (continuation attempted), but recovery failed
-      expect(mockFollowUp).toHaveBeenCalledWith("(continued from previous message)");
+      expect(mockPrompt).toHaveBeenCalledWith(
+        "(continued from previous message)",
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
 
     it("strips empty assistant turn and retries via model retry on silent failure (recovery succeeds)", async () => {
       // First prompt: finishReason "stop" but empty text (thinking-only response).
-      // followUp also fails. New behavior: strip empty assistant turn, re-enter model retry.
+      // The continuation also stays empty. Strip the empty assistant turn and re-enter model retry.
       // Second prompt: returns "recovered text".
       // getVisibleAssistantText reads mockSession.messages directly,
       // so we drive the recovery via mockPrompt's mockImplementation: the second
@@ -4505,7 +5218,7 @@ describe("PiExecutor", () => {
       let promptCallCount = 0;
       mockPrompt.mockImplementation(async () => {
         promptCallCount++;
-        if (promptCallCount === 2) {
+        if (promptCallCount === 3) {
           // Model retry — replace the thinking-only assistant with recovered text.
           mockSession.messages = [
             { role: "user", content: "hello", timestamp: 1 },
@@ -4549,8 +5262,8 @@ describe("PiExecutor", () => {
       // Should succeed via retry
       expect(result.response).toBe("recovered text");
       expect(result.finishReason).not.toBe("error");
-      // prompt should be called twice: original + retry
-      expect(mockPrompt).toHaveBeenCalledTimes(2);
+      // Initial turn + continuation attempt + model retry.
+      expect(mockPrompt).toHaveBeenCalledTimes(3);
 
       // Verify INFO log for the retry attempt
       const infoCalls = (deps.logger.info as Mock).mock.calls;
@@ -4593,8 +5306,8 @@ describe("PiExecutor", () => {
       // Silent LLM failure classifier produces an actionable message instead
       // of the legacy generic "An error occurred…" UNKNOWN_ERROR fallback.
       expect(result.response.toLowerCase()).toMatch(/try again|no output|tool call/);
-      // prompt should be called twice: original + retry
-      expect(mockPrompt).toHaveBeenCalledTimes(2);
+      // Initial turn + continuation attempt + model retry.
+      expect(mockPrompt).toHaveBeenCalledTimes(3);
     });
 
     it("cleans thinking-only assistant messages from session before retry", async () => {
@@ -4607,7 +5320,7 @@ describe("PiExecutor", () => {
 
       mockGetLastAssistantText
         .mockReturnValueOnce("") // initial candidateResponse
-        .mockReturnValueOnce("") // after followUp
+        .mockReturnValueOnce("") // after continuation
         .mockReturnValue("recovered text"); // after retry
 
       mockGetResult.mockReturnValue({
@@ -4619,7 +5332,7 @@ describe("PiExecutor", () => {
       });
       mockFollowUp.mockResolvedValue(undefined);
 
-      // Simulate: user message + thinking-only assistant + followUp assistant (also thinking-only)
+      // Simulate: user message + thinking-only assistant + continuation assistant (also thinking-only)
       mockSession.messages = [
         { role: "user", content: "hello", timestamp: 1 },
         {
@@ -4630,7 +5343,7 @@ describe("PiExecutor", () => {
         },
         {
           role: "assistant",
-          content: [{ type: "thinking", thinking: "followUp thinking" }],
+          content: [{ type: "thinking", thinking: "continuation thinking" }],
           stopReason: "stop",
           timestamp: 3,
         },
@@ -4640,10 +5353,10 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       await executor.execute(testMessage, testSessionKey);
 
-      // On the retry call (second prompt), the thinking-only assistant messages
+      // On the retry call (third prompt), the thinking-only assistant messages
       // should have been stripped. The snapshot should show only non-assistant messages.
-      expect(messageSnapshots.length).toBe(2);
-      const retryMessages = messageSnapshots[1];
+      expect(messageSnapshots.length).toBe(3);
+      const retryMessages = messageSnapshots[2];
       const assistantMsgs = retryMessages?.filter((m: any) => m.role === "assistant") ?? [];
       // All thinking-only assistant messages should be removed
       expect(assistantMsgs.length).toBe(0);
@@ -4675,8 +5388,8 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       await executor.execute(testMessage, testSessionKey);
 
-      // prompt called exactly 2 times: original + 1 retry (no infinite loop)
-      expect(mockPrompt).toHaveBeenCalledTimes(2);
+      // Initial turn + one continuation + one model retry (no infinite loop).
+      expect(mockPrompt).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -4763,7 +5476,7 @@ describe("PiExecutor", () => {
       expect(result.response).toBe("Normal final response");
     });
 
-    it("returns empty when no assistant messages have text blocks (degenerate case)", async () => {
+    it("returns a visible failure when no assistant message has a text block", async () => {
       mockGetLastAssistantText.mockReturnValue("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 100, output: 50, total: 150 },
@@ -4788,15 +5501,12 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Fallback tried but found nothing -- empty is the honest result
-      expect(result.response).toBe("");
+      expect(result.response).toBe(INTERACTIVE_SILENT_FAILURE_RESPONSE);
+      expect(result.finishReason).toBe("error");
     });
 
-    it("passes NO_REPLY silent token through unchanged (channel-layer filter handles suppression)", async () => {
-      // Contract change: silent tokens are explicit suppression
-      // signals; the agent layer passes them through unchanged so the
-      // channel-layer filter (packages/channels/src/shared/response-filter.ts)
-      // can suppress delivery downstream.
+    it("preserves NO_REPLY after message-tool delivery to the request route", async () => {
+      mockHasOutboundDelivery.mockReturnValue(true);
       mockGetLastAssistantText.mockReturnValue("NO_REPLY");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -4836,7 +5546,7 @@ describe("PiExecutor", () => {
       expect(result.finishReason).not.toBe("error");
     });
 
-    it("passes HEARTBEAT_OK silent token through unchanged (channel-layer filter handles suppression)", async () => {
+    it("preserves HEARTBEAT_OK for a heartbeat operation", async () => {
       mockGetLastAssistantText.mockReturnValue("HEARTBEAT_OK");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -4869,14 +5579,17 @@ describe("PiExecutor", () => {
 
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
-      const result = await executor.execute(testMessage, testSessionKey);
+      const result = await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined, { operationType: "heartbeat" },
+      );
 
       expect(result.response).toBe("HEARTBEAT_OK");
       expect(result.response).not.toContain("All systems are running normally.");
       expect(result.finishReason).not.toBe("error");
     });
 
-    it("passes HEARTBEAT_OK through unchanged even when prior turns include NO_REPLY (no recovery override)", async () => {
+    it("preserves HEARTBEAT_OK for heartbeat history containing NO_REPLY", async () => {
       mockGetLastAssistantText.mockReturnValue("HEARTBEAT_OK");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -4918,7 +5631,10 @@ describe("PiExecutor", () => {
 
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
-      const result = await executor.execute(testMessage, testSessionKey);
+      const result = await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined, { operationType: "heartbeat" },
+      );
 
       expect(result.response).toBe("HEARTBEAT_OK");
       expect(result.response).not.toContain("Here is the analysis result.");
@@ -5175,12 +5891,7 @@ describe("PiExecutor", () => {
       expect(mockFollowUp).not.toHaveBeenCalled();
     });
 
-    it("late continuation still fires when synthesis is unavailable (pure-conversational thinking-only case)", async () => {
-      // L3 update: synthesis only fires when ≥1 tool call exists in the current
-      // execution window. For pure-conversational fixtures (no tool calls) where
-      // all visible text is thinking-only, recovery returns "" → late
-      // continuation still fires as before. This proves the L3 change did not
-      // break the late-continuation pathway for the case it was designed for.
+    it("returns a visible failure when late continuation remains silent", async () => {
       mockGetLastAssistantText.mockReturnValue("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -5222,9 +5933,12 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Late continuation tried but followUp produced nothing visible → empty.
-      expect(result.response).toBe("");
-      expect(mockFollowUp).toHaveBeenCalled();
+      expect(result.response).toBe(INTERACTIVE_SILENT_FAILURE_RESPONSE);
+      expect(result.finishReason).toBe("error");
+      expect(mockPrompt).toHaveBeenCalledWith(
+        "Please provide a visible response summarizing what you did.",
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
   });
 
@@ -5256,6 +5970,124 @@ describe("PiExecutor", () => {
       expect(result.response).toContain("send your message again");
       // Verify destroySession was called to clean up the JSONL
       expect(deps.sessionAdapter.destroySession).toHaveBeenCalledWith(testSessionKey);
+    });
+
+    it("hands off a journaled reset result before destroying its session", async () => {
+      mockGetLastAssistantText.mockReturnValue("synthetic response from repair");
+      mockGetResult.mockReturnValue({
+        tokensUsed: { input: 0, output: 0, total: 0 },
+        cost: { total: 0 },
+        stepsExecuted: 0,
+        llmCalls: 0,
+        finishReason: "stop",
+        textEmitted: false,
+      });
+      const entries: Array<Record<string, unknown>> = [];
+      const deps = createMockDeps();
+      vi.mocked(deps.sessionAdapter.withSession).mockImplementation(
+        async (_key, callback) => {
+          const value = await withTestTurnScope("agent-1", () => callback({
+            buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
+            getBranch: vi.fn().mockReturnValue([]),
+            appendMessage: vi.fn(),
+            getEntries: vi.fn(() => entries),
+            appendCustomEntry: vi.fn((customType, data) => {
+              entries.push({ type: "custom", customType, data });
+              return "journal-entry";
+            }),
+            getSessionDir: vi.fn().mockReturnValue("/tmp/test-session"),
+          } as never));
+          return ok(value);
+        },
+      );
+      const phases: string[] = [];
+      const onFinalizedResult = vi.fn(async (
+        _result: ExecutionResult,
+        phase: "cleanup_pending" | "ready",
+      ) => {
+        phases.push(phase);
+        expect(entries).toContainEqual(expect.objectContaining({
+          type: "custom",
+          customType: "execution_result_journal",
+        }));
+        if (phase === "cleanup_pending") {
+          expect(deps.sessionAdapter.destroySession).not.toHaveBeenCalled();
+        } else {
+          expect(deps.sessionAdapter.destroySession).toHaveBeenCalledWith(testSessionKey);
+        }
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          operationType: "interactive",
+          finalizedResultJournalKey: "continuation-reset",
+          onFinalizedResult,
+        },
+      );
+
+      expect(result.finishReason).toBe("session_reset");
+      expect(phases).toEqual(["cleanup_pending", "ready"]);
+      expect(deps.sessionAdapter.destroySession).toHaveBeenCalledWith(testSessionKey);
+    });
+
+    it("preserves a reset session when protected handoff fails", async () => {
+      mockGetLastAssistantText.mockReturnValue("synthetic response from repair");
+      mockGetResult.mockReturnValue({
+        tokensUsed: { input: 0, output: 0, total: 0 },
+        cost: { total: 0 },
+        stepsExecuted: 0,
+        llmCalls: 0,
+        finishReason: "stop",
+        textEmitted: false,
+      });
+      const entries: Array<Record<string, unknown>> = [];
+      const deps = createMockDeps();
+      vi.mocked(deps.sessionAdapter.withSession).mockImplementation(
+        async (_key, callback) => {
+          const value = await withTestTurnScope("agent-1", () => callback({
+            buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
+            getBranch: vi.fn().mockReturnValue([]),
+            appendMessage: vi.fn(),
+            getEntries: vi.fn(() => entries),
+            appendCustomEntry: vi.fn((customType, data) => {
+              entries.push({ type: "custom", customType, data });
+              return "journal-entry";
+            }),
+            getSessionDir: vi.fn().mockReturnValue("/tmp/test-session"),
+          } as never));
+          return ok(value);
+        },
+      );
+      const executor = createPiExecutor(testConfig, deps);
+
+      await expect(executor.execute(
+        testMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          operationType: "interactive",
+          finalizedResultJournalKey: "continuation-reset-failed",
+          onFinalizedResult: async () => Promise.reject(new Error("protected handoff unavailable")),
+        },
+      )).rejects.toThrow("protected handoff unavailable");
+
+      expect(entries).toContainEqual(expect.objectContaining({
+        type: "custom",
+        customType: "execution_result_journal",
+      }));
+      expect(deps.sessionAdapter.destroySession).not.toHaveBeenCalled();
     });
 
     it("does NOT trigger stuck session detection when LLM calls were made", async () => {
@@ -5297,10 +6129,103 @@ describe("PiExecutor", () => {
   });
 
   // -------------------------------------------------------------------------
-  // afterToolCall provider guard
+  // afterToolCall result handling
   // -------------------------------------------------------------------------
 
-  describe("afterToolCall provider guard", () => {
+  describe("afterToolCall result handling", () => {
+    it("appends an active declared alternative and blocks another call to the exhausted tool", async () => {
+      registerToolMetadata("search_primary_fallback_test", {
+        failureFallbacks: [{
+          onErrorCode: "all_providers_failed",
+          toolName: "browser_fallback_test",
+          guidance: "Use browser_fallback_test next for the same query.",
+        }],
+      });
+
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+
+      const afterToolCall = mockSession.agent.afterToolCall;
+      const result = {
+        content: [{ type: "text" as const, text: "{\"error\":\"all_providers_failed\"}" }],
+        details: { error: "all_providers_failed" },
+      };
+      const replacement = await afterToolCall({
+        toolCall: { name: "search_primary_fallback_test" },
+        args: { query: "latest AI news" },
+        result,
+        isError: false,
+        context: {
+          tools: [
+            { name: "search_primary_fallback_test" },
+            { name: "browser_fallback_test" },
+          ],
+        },
+      });
+
+      expect(replacement).toEqual({
+        content: [
+          ...result.content,
+          {
+            type: "text",
+            text: expect.stringContaining(
+              "Use browser_fallback_test next for the same query.",
+            ),
+          },
+        ],
+      });
+      expect(deps.logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "tool-failure-alternative",
+          toolName: "search_primary_fallback_test",
+          alternativeToolName: "browser_fallback_test",
+          errorCode: "all_providers_failed",
+        }),
+        "Added active alternative guidance to failed tool result",
+      );
+
+      const retryVerdict = await mockSession.agent.beforeToolCall({
+        toolCall: { name: "search_primary_fallback_test" },
+        args: { query: "different query" },
+      });
+      expect(retryVerdict).toEqual({
+        block: true,
+        reason: expect.stringContaining(
+          "Use browser_fallback_test next for the same query.",
+        ),
+      });
+    });
+
+    it("does not append a declared alternative that is absent from the live tool set", async () => {
+      registerToolMetadata("search_disabled_fallback_test", {
+        failureFallbacks: [{
+          onErrorCode: "all_providers_failed",
+          toolName: "browser_disabled_fallback_test",
+          guidance: "Use browser_disabled_fallback_test next for the same query.",
+        }],
+      });
+
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+
+      const replacement = await mockSession.agent.afterToolCall({
+        toolCall: { name: "search_disabled_fallback_test" },
+        args: { query: "latest AI news" },
+        result: {
+          content: [{ type: "text" as const, text: "{\"error\":\"all_providers_failed\"}" }],
+          details: { error: "all_providers_failed" },
+        },
+        isError: false,
+        context: { tools: [{ name: "search_disabled_fallback_test" }] },
+      });
+
+      expect(replacement).toBeUndefined();
+    });
+
     it("skips mid-turn tool injection for OpenAI providers", async () => {
       const deps = createMockDeps({
         modelRegistry: {
@@ -5448,9 +6373,9 @@ describe("ExcludeDeferralResult wiring", () => {
 
       // Execute within an ALS context scope so tryGetContext() returns something
       const ctx = {
-        tenantId: "default",
+        tenantId: testSessionKey.tenantId,
         userId: "u1",
-        sessionKey: "t1:c1:u1",
+        sessionKey: formatSessionKey(testSessionKey),
         traceId: crypto.randomUUID(),
         startedAt: Date.now(),
         trustLevel: "admin" as const,
@@ -5470,6 +6395,7 @@ describe("ExcludeDeferralResult wiring", () => {
     it("RequestContextSchema accepts resolvedModel as optional string", async () => {
       const { RequestContextSchema } = await import("@comis/core");
       const validCtx = RequestContextSchema.parse({
+        tenantId: "tenant-a",
         userId: "u1",
         sessionKey: "s1",
         traceId: crypto.randomUUID(),
@@ -5482,6 +6408,7 @@ describe("ExcludeDeferralResult wiring", () => {
     it("RequestContextSchema allows omitting resolvedModel", async () => {
       const { RequestContextSchema } = await import("@comis/core");
       const validCtx = RequestContextSchema.parse({
+        tenantId: "tenant-a",
         userId: "u1",
         sessionKey: "s1",
         traceId: crypto.randomUUID(),
@@ -5494,6 +6421,7 @@ describe("ExcludeDeferralResult wiring", () => {
       const { RequestContextSchema } = await import("@comis/core");
       expect(() =>
         RequestContextSchema.parse({
+          tenantId: "tenant-a",
           userId: "u1",
           sessionKey: "s1",
           traceId: crypto.randomUUID(),
@@ -5501,6 +6429,157 @@ describe("ExcludeDeferralResult wiring", () => {
           totallyUnknownField: true,
         }),
       ).toThrow();
+    });
+  });
+
+  describe("request context principal immutability", () => {
+    it("rejects execution when the selected agent disagrees with resolved ALS identity", async () => {
+      mockPrompt.mockClear();
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+      const deliveryOrigin = createDeliveryOrigin({
+        channelType: "telegram",
+        channelId: "chat_a",
+        userId: "user_a",
+        tenantId: "default",
+      });
+      const ctx = {
+        tenantId: "default",
+        userId: testSessionKey.userId,
+        sessionKey: formatSessionKey(testSessionKey),
+        agentId: "agent-a",
+        traceId: crypto.randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "admin" as const,
+        channelType: "telegram",
+        deliveryOrigin,
+      };
+
+      const result = await runWithContext(ctx, () => executor.execute(
+        testMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        "agent-b",
+      ));
+
+      expect(result.finishReason).toBe("error");
+      expect(result.errorContext).toMatchObject({
+        errorType: "RequestContextIdentityMismatch",
+        retryable: false,
+      });
+      expect(ctx.agentId).toBe("agent-a");
+      expect(ctx.trustLevel).toBe("admin");
+      expect(ctx.deliveryOrigin).toBe(deliveryOrigin);
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(deps.authStorage.getApiKey).not.toHaveBeenCalled();
+      expect(deps.eventBus.emit).toHaveBeenCalledWith("security:warn", expect.objectContaining({
+        category: "request_context_identity_mismatch",
+        agentId: "agent-b",
+      }));
+    });
+
+    it("does not populate unresolved ALS agent identity from an execute argument", async () => {
+      mockPrompt.mockClear();
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+      const ctx = {
+        tenantId: "default",
+        userId: testSessionKey.userId,
+        sessionKey: formatSessionKey(testSessionKey),
+        traceId: crypto.randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "user" as const,
+      };
+
+      let inScopeAgentId: string | undefined;
+      await runWithContext(ctx, async () => {
+        await executor.execute(
+          testMessage,
+          testSessionKey,
+          undefined,
+          undefined,
+          "agent-b",
+        );
+        inScopeAgentId = tryGetContext()?.agentId;
+      });
+
+      expect(inScopeAgentId).toBeUndefined();
+      expect("agentId" in ctx).toBe(false);
+    });
+
+    it("returns the exact identity-mismatch result and reaches later security observers after failures", async () => {
+      mockPrompt.mockClear();
+      const eventBus = new TypedEventBus();
+      const laterObserver = vi.fn();
+      eventBus.on("security:warn", () => {
+        throw new Error("private sync identity subscriber content");
+      });
+      eventBus.on("security:warn", async () => {
+        throw new Error("private async identity subscriber content");
+      });
+      eventBus.on("security:warn", laterObserver);
+      const deps = createMockDeps({ eventBus });
+      const executor = createPiExecutor(testConfig, deps);
+      const ctx = {
+        tenantId: "default",
+        userId: testSessionKey.userId,
+        sessionKey: formatSessionKey(testSessionKey),
+        agentId: "agent-a",
+        traceId: crypto.randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "admin" as const,
+      };
+
+      const result = await runWithContext(ctx, () => executor.execute(
+        testMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        "agent-b",
+      ));
+
+      expect(result).toMatchObject({
+        finishReason: "error",
+        stepsExecuted: 0,
+        errorContext: {
+          errorType: "RequestContextIdentityMismatch",
+          retryable: false,
+        },
+      });
+      expect(laterObserver).toHaveBeenCalledOnce();
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(deps.authStorage.getApiKey).not.toHaveBeenCalled();
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+
+    it("rejects execution when the selected session disagrees with resolved ALS identity", async () => {
+      mockPrompt.mockClear();
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+      const ctx = {
+        tenantId: "default",
+        userId: testSessionKey.userId,
+        sessionKey: "default:other-user:other-session",
+        agentId: "agent-a",
+        traceId: crypto.randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "admin" as const,
+      };
+
+      const result = await runWithContext(ctx, () => executor.execute(
+        testMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        "agent-a",
+      ));
+
+      expect(result.finishReason).toBe("error");
+      expect(result.errorContext?.errorType).toBe("RequestContextIdentityMismatch");
+      expect(ctx.sessionKey).toBe("default:other-user:other-session");
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(deps.authStorage.getApiKey).not.toHaveBeenCalled();
     });
   });
 
@@ -5544,7 +6623,7 @@ describe("ExcludeDeferralResult wiring", () => {
       } as PerAgentConfig;
 
       const executor = createPiExecutor(escalationConfig, deps);
-      const result = await executor.execute(testSessionKey, testMessage);
+      const result = await executor.execute(testMessage, testSessionKey);
 
       // Should have called prompt twice (original + escalation retry)
       expect(mockPrompt.mock.calls.length).toBeGreaterThanOrEqual(2);
@@ -5580,7 +6659,7 @@ describe("ExcludeDeferralResult wiring", () => {
       } as PerAgentConfig;
 
       const executor = createPiExecutor(configWithMaxTokens, deps);
-      await executor.execute(testSessionKey, testMessage);
+      await executor.execute(testMessage, testSessionKey);
 
       // No escalation event should be emitted -- config.maxTokens is explicitly set
       const emittedCalls = (deps.eventBus.emit as Mock).mock.calls;
@@ -5612,7 +6691,7 @@ describe("ExcludeDeferralResult wiring", () => {
       } as PerAgentConfig;
 
       const executor = createPiExecutor(disabledConfig, deps);
-      await executor.execute(testSessionKey, testMessage);
+      await executor.execute(testMessage, testSessionKey);
 
       // No escalation event should be emitted -- escalation is disabled
       const emittedCalls = (deps.eventBus.emit as Mock).mock.calls;
@@ -5655,7 +6734,7 @@ describe("ExcludeDeferralResult wiring", () => {
       } as PerAgentConfig;
 
       const executor = createPiExecutor(escalationConfig, deps);
-      await executor.execute(testSessionKey, testMessage);
+      await executor.execute(testMessage, testSessionKey);
 
       const emittedCalls = (deps.eventBus.emit as Mock).mock.calls;
       const escalationEvent = emittedCalls.find(
@@ -5708,7 +6787,7 @@ describe("ExcludeDeferralResult wiring", () => {
       } as PerAgentConfig;
 
       const executor = createPiExecutor(escalationConfig, deps);
-      const result = await executor.execute(testSessionKey, testMessage);
+      const result = await executor.execute(testMessage, testSessionKey);
 
       // Response should be the escalated version, not the truncated one
       expect(result.response).toBe("full escalated response with complete content");
@@ -5827,7 +6906,7 @@ describe("ExcludeDeferralResult wiring", () => {
       expect(result.budgetMetrics!.stopReason).toBe("budget_reached");
     });
 
-    it("injects continuation nudge via followUp when tracker says continue", async () => {
+    it("injects a continuation prompt when the budget tracker says continue", async () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
@@ -5862,9 +6941,9 @@ describe("ExcludeDeferralResult wiring", () => {
         { userTokenBudget: 500_000 },
       );
 
-      // followUp should have been called with budget nudge text
-      expect(mockFollowUp).toHaveBeenCalledWith(
+      expect(mockPrompt).toHaveBeenCalledWith(
         expect.stringContaining("[budget:nudge]"),
+        { expandPromptTemplates: false, source: "extension" },
       );
       expect(result.response).toContain("extended response after budget nudge");
     });
@@ -5940,10 +7019,11 @@ describe("ExcludeDeferralResult wiring", () => {
       // Budget tracker should be active and suppress escalation
       expect(result.budgetMetrics).toBeDefined();
       // With budget active, the escalation guard includes `&& !budgetTracker`
-      // so no escalation retry happens. Only the initial prompt was called.
-      const promptCallsDuringExec = mockPrompt.mock.calls.length - promptCallsBefore;
-      // We expect exactly 1 prompt call (the initial one), no escalation retry
-      expect(promptCallsDuringExec).toBe(1);
+      // so no escalation retry happens. Budget continuation calls carry the
+      // extension source and are excluded from this initial/escalation count.
+      const promptCallsDuringExec = mockPrompt.mock.calls.slice(promptCallsBefore);
+      const nonContinuationCalls = promptCallsDuringExec.filter((call) => call[1]?.source !== "extension");
+      expect(nonContinuationCalls).toHaveLength(1);
     });
   });
 
@@ -6411,6 +7491,24 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     expect(src).toMatch(/deps\.trajectoryConfig\?\.enabled/);
     expect(src).toMatch(/deps\.trajectoryConfig\?\.dir/);
     expect(src).toMatch(/deps\.trajectoryConfig\?\.maxFileBytes/);
+    expect(src).toMatch(/createTrajectoryEventTypeFilter\(eventTypes\)/);
+  });
+
+  it("forwards the executor logger into the trajectory recorder init", async () => {
+    const src = await readPiExecutorSrc();
+    const trajectoryInitStart = src.indexOf("const trajectoryInit = {");
+    expect(trajectoryInitStart).toBeGreaterThan(0);
+    const closeIdx = src.indexOf("};", trajectoryInitStart);
+    expect(closeIdx).toBeGreaterThan(trajectoryInitStart);
+    expect(src.slice(trajectoryInitStart, closeIdx)).toMatch(/logger:\s*deps\.logger/);
+  });
+
+  it("surfaces trajectory resume failures without caching them as disabled", async () => {
+    const src = await readPiExecutorSrc();
+    expect(src).toMatch(/trajectoryResult\.ok/);
+    expect(src).toMatch(/failureKind:\s*error\.failureKind/);
+    expect(src).toMatch(/eventBus\.emit\(\s*"observability:trajectory_degraded"/);
+    expect(src).toContain("Trajectory recorder could not resume persisted state");
   });
 
   it("trajectory_init_includes_sessionFile_from_sessionAdapter (pointer sidecar)", async () => {
@@ -6837,7 +7935,7 @@ describe("served-window gate on per-execution provider identity", () => {
     const executor = createPiExecutor(ollamaConfig, deps);
 
     await executor.execute(
-      testMessage, testSessionKey, undefined, undefined, "agent-wr02",
+      testMessage, testSessionKey, undefined, undefined, deps.agentId,
       undefined, undefined, { model: "anthropic:claude-sonnet-4-5-20250929" },
     );
 
@@ -6857,7 +7955,7 @@ describe("served-window gate on per-execution provider identity", () => {
     });
     const executor = createPiExecutor(ollamaConfig, deps);
 
-    await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-wr02");
+    await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
     const reconcile = findReconcileDebug(deps);
     expect(reconcile).toBeDefined();
@@ -6876,7 +7974,7 @@ describe("served-window gate on per-execution provider identity", () => {
     const executor = createPiExecutor(ollamaConfig, deps);
 
     await executor.execute(
-      testMessage, testSessionKey, undefined, undefined, "agent-wr02",
+      testMessage, testSessionKey, undefined, undefined, deps.agentId,
       undefined, undefined, { model: `${OLLAMA_PRIMARY}:qwen3.6:4b` },
     );
 
@@ -6955,6 +8053,22 @@ describe("composed onDelta wrapper at the bridge hand-off", () => {
     // and the execution resolves with a failed-but-handled result.
     await execPromise;
   }, 15_000);
+});
+
+describe("per-turn locale inheritance wiring", () => {
+  it("publishes the resolved request locale to the live request context before sub-agent work", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+    const policyIndex = src.indexOf("responseLocalePolicy,\n  } = promptResult");
+    const assignmentIndex = src.indexOf(
+      "turnContext.resolvedLanguage = responseLocalePolicy.locale",
+    );
+    const prepareIndex = src.indexOf("const preparedTurnResult = await prepareTurn", policyIndex);
+
+    expect(policyIndex).toBeGreaterThan(0);
+    expect(assignmentIndex).toBeGreaterThan(policyIndex);
+    expect(prepareIndex).toBeGreaterThan(assignmentIndex);
+  });
 });
 
 // ---------------------------------------------------------------------------

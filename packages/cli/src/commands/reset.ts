@@ -94,17 +94,20 @@ function isDaemonUnreachable(err: unknown): boolean {
  * via session.list, then deletes each via session.delete.
  * Falls back to direct SQLite database file removal if daemon is not running.
  */
-async function resetSessions(dataDir: string): Promise<void> {
+async function resetSessions(dataDir: string, tenantId: string, agentId: string): Promise<void> {
   try {
     await withSpinner("Clearing sessions via daemon...", () =>
       withClient(async (client) => {
-        // Typed RPC. The contract response is { sessions: SessionInfo[], total };
-        // iterate the typed array and delete each by sessionKey.
-        const result = await callTyped(client, SessionListContract, {});
+        const result = await callTyped(client, SessionListContract, {
+          tenant_id: tenantId,
+          agent_id: agentId,
+        });
         if (result.total === 0) return;
         for (const session of result.sessions) {
           await callTyped(client, SessionDeleteContract, {
-            session_key: session.sessionKey,
+            tenant_id: tenantId,
+            agent_id: agentId,
+            conversation_ref: session.conversationRef,
           });
         }
       }),
@@ -178,7 +181,9 @@ export function registerResetCommand(program: Command): void {
     .description("Reset sessions, config, or workspace")
     .option("--yes", "Skip confirmation prompt")
     .option("-c, --config <path>", "Config file path for resolving data directory")
-    .action(async (target: string, options: { yes?: boolean; config?: string }) => {
+    .option("--tenant <tenantId>", "Tenant ID for session reset")
+    .option("--agent <agentId>", "Agent ID for session reset")
+    .action(async (target: string, options: { yes?: boolean; config?: string; tenant?: string; agent?: string }) => {
       // Validate target
       if (!VALID_TARGETS.includes(target as ResetTarget)) {
         error(`Invalid target: "${target}"`);
@@ -188,6 +193,12 @@ export function registerResetCommand(program: Command): void {
 
       const resetTarget = target as ResetTarget;
       const dataDir = resolveDataDir(options.config);
+
+      if (resetTarget === "sessions" && (!options.tenant || !options.agent)) {
+        error("Resetting sessions requires --tenant and --agent.");
+        process.exit(1);
+        return;
+      }
 
       // Confirmation prompt (unless --yes)
       if (!options.yes) {
@@ -203,7 +214,7 @@ export function registerResetCommand(program: Command): void {
       try {
         switch (resetTarget) {
           case "sessions":
-            await resetSessions(dataDir);
+            await resetSessions(dataDir, options.tenant!, options.agent!);
             break;
           case "config":
             resetConfig();

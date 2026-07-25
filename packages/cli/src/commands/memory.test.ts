@@ -58,12 +58,14 @@ describe("registerMemoryCommand", () => {
     const memoryCmd = program.commands.find((c) => c.name() === "memory");
     const clearCmd = memoryCmd!.commands.find((c) => c.name() === "clear");
     expect(clearCmd).toBeDefined();
-    expect(clearCmd!.description()).toBe("Clear memory entries matching a filter");
+    expect(clearCmd!.description()).toBe("Clear non-system, non-pinned memory for one tenant-agent scope");
 
     const filterOpt = clearCmd!.options.find((o) => o.long === "--filter");
-    expect(filterOpt).toBeDefined();
+    expect(filterOpt).toBeUndefined();
     const tenantOpt = clearCmd!.options.find((o) => o.long === "--tenant");
     expect(tenantOpt).toBeDefined();
+    const agentOpt = clearCmd!.options.find((o) => o.long === "--agent");
+    expect(agentOpt).toBeDefined();
     const yesOpt = clearCmd!.options.find((o) => o.long === "--yes");
     expect(yesOpt).toBeDefined();
   });
@@ -146,7 +148,10 @@ describe("memory search runs the contracted entry search", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      await program.parseAsync(["node", "test", "memory", "search", "dog name"]);
+      await program.parseAsync([
+        "node", "test", "memory", "search", "dog name",
+        "--tenant", "test-tenant", "--agent", "test-agent",
+      ]);
       const out = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
       expect(out).toContain("8a6087cd");
       expect(out).toContain("golden retriever");
@@ -159,27 +164,17 @@ describe("memory search runs the contracted entry search", () => {
 });
 
 describe("memory clear safety checks", () => {
-  it("requires at least one filter", async () => {
+  it("requires explicit tenant and agent authority", async () => {
     const program = new Command();
     program.exitOverride();
     registerMemoryCommand(program);
 
-    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const consoleErrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("process.exit called");
-    }) as never);
-
     try {
-      await program.parseAsync(["node", "test", "memory", "clear", "--yes"]);
+      await expect(
+        program.parseAsync(["node", "test", "memory", "clear", "--yes"]),
+      ).rejects.toThrow("required option '--tenant <tenantId>' not specified");
     } catch (e) {
-      expect((e as Error).message).toBe("process.exit called");
-      const errOutput = consoleErrSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-      expect(errOutput).toContain("At least one filter is required");
-    } finally {
-      consoleSpy.mockRestore();
-      consoleErrSpy.mockRestore();
-      exitSpy.mockRestore();
+      throw e;
     }
   });
 
@@ -200,8 +195,10 @@ describe("memory clear safety checks", () => {
         "test",
         "memory",
         "clear",
-        "--filter",
-        "memoryType=conversation",
+        "--tenant",
+        "default",
+        "--agent",
+        "default",
       ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
@@ -232,7 +229,10 @@ describe("memory inspect shows the entry detail", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      await program.parseAsync(["node", "test", "memory", "inspect", "abc-123"]);
+      await program.parseAsync([
+        "node", "test", "memory", "inspect", "abc-123",
+        "--tenant", "test-tenant", "--agent", "test-agent",
+      ]);
       const out = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
       expect(out).toContain("green tea");
       expect(out).toContain("learned");
@@ -257,7 +257,10 @@ describe("memory stats error handling", () => {
     }) as never);
 
     try {
-      await program.parseAsync(["node", "test", "memory", "stats"]);
+      await program.parseAsync([
+        "node", "test", "memory", "stats",
+        "--tenant", "test-tenant", "--agent", "test-agent",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
       const errOutput = consoleErrSpy.mock.calls.map((c) => c.join(" ")).join("\n");
@@ -351,7 +354,8 @@ describe("memory export subcommand", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       await program.parseAsync([
-        "node", "test", "memory", "export", "--agent", "test-agent",
+        "node", "test", "memory", "export", "--tenant", "test-tenant",
+        "--agent", "test-agent",
       ]);
     } catch {
       // may throw from withClient/callTyped not being real
@@ -362,7 +366,7 @@ describe("memory export subcommand", () => {
     expect(mockCallTyped).toHaveBeenCalledWith(
       expect.anything(),
       MemoryPortabilityExportContract,
-      expect.objectContaining({ agent_id: "test-agent" }),
+      expect.objectContaining({ tenant_id: "test-tenant", agent_id: "test-agent" }),
     );
   });
 
@@ -374,7 +378,8 @@ describe("memory export subcommand", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       await program.parseAsync([
-        "node", "test", "memory", "export", "--agent", "test-agent", "--output", "/tmp/test-export.json",
+        "node", "test", "memory", "export", "--tenant", "test-tenant",
+        "--agent", "test-agent", "--output", "/tmp/test-export.json",
       ]);
     } catch {
       // spinner/process.exit noise
@@ -429,7 +434,8 @@ describe("memory import subcommand", () => {
 
     try {
       await program.parseAsync([
-        "node", "test", "memory", "import", "bad-file.json", "--agent", "test-agent",
+        "node", "test", "memory", "import", "bad-file.json", "--tenant", "test-tenant",
+        "--agent", "test-agent",
       ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
@@ -452,7 +458,8 @@ describe("memory import subcommand", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       await program.parseAsync([
-        "node", "test", "memory", "import", "file.json", "--agent", "test-agent",
+        "node", "test", "memory", "import", "file.json", "--tenant", "test-tenant",
+        "--agent", "test-agent",
       ]);
     } catch {
       // ignore output noise
@@ -463,7 +470,11 @@ describe("memory import subcommand", () => {
     expect(mockCallTyped).toHaveBeenCalledWith(
       expect.anything(),
       MemoryPortabilityImportContract,
-      expect.objectContaining({ agent_id: "test-agent", entries: FAKE_ENVELOPE.entries }),
+      expect.objectContaining({
+        tenant_id: "test-tenant",
+        agent_id: "test-agent",
+        entries: FAKE_ENVELOPE.entries,
+      }),
     );
   });
 
@@ -475,7 +486,8 @@ describe("memory import subcommand", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       await program.parseAsync([
-        "node", "test", "memory", "import", "file.json", "--agent", "test-agent", "--dry-run",
+        "node", "test", "memory", "import", "file.json", "--tenant", "test-tenant",
+        "--agent", "test-agent", "--dry-run",
       ]);
     } catch {
       // ignore output noise
@@ -517,7 +529,8 @@ describe("memory export --limit NaN guard rejects non-numeric input", () => {
 
     try {
       await program.parseAsync([
-        "node", "test", "memory", "export", "--agent", "test-agent", "--limit", "abc",
+        "node", "test", "memory", "export", "--tenant", "test-tenant",
+        "--agent", "test-agent", "--limit", "abc",
       ]);
     } catch (e) {
       // The guard must call process.exit with an error message before
@@ -555,6 +568,7 @@ describe("memory pin subcommand", () => {
     try {
       await program.parseAsync([
         "node", "test", "memory", "pin", "mem-test-001",
+        "--tenant", "test-tenant", "--agent", "test-agent",
       ]);
     } catch {
       // ignore spinner/output noise
@@ -565,7 +579,11 @@ describe("memory pin subcommand", () => {
     expect(mockCallTyped).toHaveBeenCalledWith(
       expect.anything(),
       MemoryPinContract,
-      expect.objectContaining({ id: "mem-test-001" }),
+      expect.objectContaining({
+        id: "mem-test-001",
+        tenant_id: "test-tenant",
+        agent_id: "test-agent",
+      }),
     );
   });
 
@@ -597,6 +615,7 @@ describe("memory unpin subcommand", () => {
     try {
       await program.parseAsync([
         "node", "test", "memory", "unpin", "mem-test-002",
+        "--tenant", "test-tenant", "--agent", "test-agent",
       ]);
     } catch {
       // ignore spinner/output noise
@@ -607,7 +626,11 @@ describe("memory unpin subcommand", () => {
     expect(mockCallTyped).toHaveBeenCalledWith(
       expect.anything(),
       MemoryUnpinContract,
-      expect.objectContaining({ id: "mem-test-002" }),
+      expect.objectContaining({
+        id: "mem-test-002",
+        tenant_id: "test-tenant",
+        agent_id: "test-agent",
+      }),
     );
   });
 

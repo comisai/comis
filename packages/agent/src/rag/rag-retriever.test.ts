@@ -31,13 +31,14 @@ function createMockResult(overrides: {
   createdAt?: number;
   occurredAt?: number;
   score?: number;
+  userId?: string;
 }): MemorySearchResult {
   return {
     entry: {
       id: overrides.id ?? "00000000-0000-0000-0000-000000000001",
       tenantId: "default",
       agentId: "default",
-      userId: "user-1",
+      userId: overrides.userId ?? "user-1",
       content: overrides.content ?? "Test memory content",
       trustLevel: overrides.trustLevel ?? "learned",
       source: {
@@ -93,6 +94,22 @@ describe("formatMemorySection", () => {
     // tells the model the current conversation is authoritative on conflicts.
     expect(result).toContain("outdated");
     expect(result).toContain("current conversation is authoritative");
+  });
+
+  it("labels cross-sender system memory so personal claims are not assigned to the current user", () => {
+    const results = [
+      createMockResult({
+        content: "Vehicle 16333301 belongs to another operator",
+        userId: "other-user",
+      }),
+    ];
+
+    const result = formatMemorySection(results, 4000, undefined, "current-user");
+
+    expect(result).toContain("another sender");
+    expect(result).toContain("Do not attribute personal facts");
+    expect(result).toContain("identity, ownership, preferences, or authorization");
+    expect(result).toContain("Vehicle 16333301 belongs to another operator");
   });
 
   it("stops adding entries when budget exceeded", () => {

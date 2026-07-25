@@ -82,7 +82,7 @@ export function createDebateDriver(): NodeTypeDriver {
 
       // After first round output is recorded in transcript,
       // use session-reuse task builder. The session history has prior conversation.
-      // graph-driver-handler auto-injects reuseSessionKey from ds.persistentSessionKey.
+      // graph-driver-handler auto-injects the driver's persistent conversation.
       const useSessionReuse = state.transcript.length > 0;
 
       // Check if debating is done
@@ -184,7 +184,7 @@ function buildDebateTask(
 
 /**
  * Build session-reuse-aware debate task text.
- * When a persistent session exists (tracked by graph-driver-handler's ds.persistentSessionKey),
+ * When a persistent conversation exists (tracked by graph-driver-handler),
  * the session JSONL already contains the prior conversation. Embedding the transcript in the
  * task text would duplicate it. This function produces lean task instructions referencing
  * "the conversation history above" instead.

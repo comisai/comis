@@ -39,9 +39,9 @@ Turn the requirements into tests. **Deep** (every requirement, plus its edge/abu
 
 Order within the plan: **harness/baseline → cheap channel round-trips → runtime/tools → memory/context → research/orchestration → media → interactivity/groups → multi-agent/API → scheduling → MCP → security gauntlet → platform/resilience/failure-injection (LAST)**, then the broad sweeps (K/L/M). Mutating/destructive tests come **last in their phase**.
 
-## STEP 3 — Stand up the rig + baseline (Phase 0)
+## STEP 3 — Stand up the rig + baseline
 
-Follow **`01-SETUP.md`**: deploy the build under test to the VPS, run the daemon **as `comis`** (not root), wire the emulator, set the literal gateway token + the target provider/model, clean-slate, and prove a **green baseline** (one text round-trip + a smoke turn) so a healthy rig never looks broken. Record baselines (memory.db counts, fleet, log offsets) so you can tell *your* incidents from pre-existing ones. **Exit Phase 0** only when one round-trip is green through the real adapter, every observability lens is readable, the model serves, and keys are inventoried.
+Follow **`01-SETUP.md`**: deploy the build under test to the VPS, run the daemon **as `comis`** (not root), wire the emulator, set the literal gateway token + the target provider/model, clean-slate, and prove a **green baseline** (one text round-trip + a smoke turn) so a healthy rig never looks broken. Record baselines (memory.db counts, system, log offsets) so you can tell *your* incidents from pre-existing ones. Proceed only when one round-trip is green through the real adapter, every observability lens is readable, the model serves, and keys are inventoried.
 
 ## STEP 4 — Drive forward, **fix-verify per issue** (the inner loop)
 
@@ -64,7 +64,7 @@ Run the plan in order. Per test:
 ## STEP 4.5 — System-health sweep (the broad-issue mandate — do it deliberately)
 
 The target is the vehicle; while the rig is hot, **actively hunt system-wide issues** (non-negotiable #6), not just the target's. This is where you catch the bugs the target's tests never would. Method + the precise filters in `03-OBSERVABILITY.md §system-health-sweep`:
-- **`fleet --since N`** → degraded rate, top errorKinds, breaker trips, the `config_posture`/`model_health`/`health_signal` findings. Triage each: real bug vs. expected-for-the-rig (TLS-off on loopback, no canary) vs. advisory.
+- **`system --since N`** → degraded rate, top errorKinds, breaker trips, the `config_posture`/`model_health`/`health_signal` findings. Triage each: real bug vs. expected-for-the-rig (TLS-off on loopback, no canary) vs. advisory.
 - **Daemon-log scan with PRECISE filters** (read structured fields, not raw word-grep — `grep "degraded"` matches the `"Daemon health"` report lines, a false positive). Look for `"level":50/60` (ERROR/FATAL), unexplained `errorKind`, tool-failure records (`"success":false` / `failedTools`), `not reachable` / `Capability denied` / `EACCES`/`EPERM`.
 - **Drive a basic agent tool turn** (memory_store, web_search, a file write) even if the target doesn't use it — a broken core tool (like a `memory_store` deny-by-origin regression) only shows under a real agent turn, never in a handler unit test.
 - Each real issue → the same fix-verify loop (STEP 4.3). Each one that's nuanced/security-sensitive/out-of-budget → a **documented finding** with the verdict + evidence + fix direction (never silently dropped) + a recommended focused follow-up.

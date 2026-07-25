@@ -14,6 +14,7 @@
 # Only VPS is mandatory — every other value below IS the standard install.sh layout; override per box.
 
 export VPS="user@your-vps-host-or-ip" # ssh target — how you reach the test VPS (ssh KEY lives in ~/.ssh)
+export REMOTE_SUDO="0"                 # 1 for an SSH deployment user with passwordless sudo -n
 export COMIS_USER="comis"             # the dedicated service user install.sh creates
 export COMIS_HOME="/home/comis"       # that user's home
 export DATA="/home/comis/.comis"      # daemon data dir (config.yaml, secrets.db, logs, workspace)

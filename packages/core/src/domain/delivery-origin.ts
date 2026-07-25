@@ -22,7 +22,7 @@ export const DeliveryOriginSchema = z.strictObject({
     /** Thread within the channel (platform-specific, e.g., Discord thread, Telegram topic) */
     threadId: z.string().optional(),
     /** Multi-tenant isolation key */
-    tenantId: z.string().min(1).default("default"),
+    tenantId: z.string().min(1),
   });
 
 export type DeliveryOrigin = Readonly<z.infer<typeof DeliveryOriginSchema>>;
@@ -30,7 +30,7 @@ export type DeliveryOrigin = Readonly<z.infer<typeof DeliveryOriginSchema>>;
 /**
  * Create an immutable DeliveryOrigin from raw input.
  *
- * Validates through DeliveryOriginSchema (applies defaults), then
+ * Validates through DeliveryOriginSchema, then
  * freezes the result. Throws ZodError on invalid input.
  */
 export function createDeliveryOrigin(input: z.input<typeof DeliveryOriginSchema>): DeliveryOrigin {

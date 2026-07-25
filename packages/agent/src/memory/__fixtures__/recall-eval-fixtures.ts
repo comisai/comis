@@ -96,6 +96,7 @@ function candidate(id: string, content: string, score: number): MemorySearchResu
       tenantId: "default",
       agentId: "default",
       userId: "user_a",
+      visibility: { kind: "agent-shared" },
       content,
       trustLevel: "learned",
       source: { who: "user_a" },

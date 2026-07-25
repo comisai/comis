@@ -53,6 +53,7 @@ interface ProviderUiHint {
  * pi-ai adds them in a future release.
  */
 const PROVIDER_UI_HINTS: Record<string, ProviderUiHint> = {
+  "amazon-bedrock": { label: "Amazon Bedrock (AWS)", hint: "Claude, Nova, Llama via AWS — API key or IAM", category: "other" },
   anthropic: { label: "Anthropic (Claude)", hint: "Recommended for agents", category: "recommended" },
   openai: { label: "OpenAI (GPT)", hint: "GPT-4o, o1, o3 — API key (pay per token)", category: "recommended" },
   "openai-codex": { label: "OpenAI Codex", hint: "ChatGPT/Codex subscription — OAuth login", category: "recommended" },
@@ -110,10 +111,10 @@ export const providerStep: WizardStep = {
     prompter.note(CATEGORY_NOTE, "Available Providers");
 
     // Build option list from live catalog (RPC-first, local fallback)
-    const providerIds = await loadProvidersWithFallback();
-    const options = providerIds.map((id) => {
-      const hint = getProviderHint(id);
-      return { value: id, label: hint.label, hint: hint.hint };
+    const providers = await loadProvidersWithFallback();
+    const options = providers.map(({ provider }) => {
+      const hint = getProviderHint(provider);
+      return { value: provider, label: hint.label, hint: hint.hint };
     });
 
     // Synthetic Custom option (always last, never in catalog)

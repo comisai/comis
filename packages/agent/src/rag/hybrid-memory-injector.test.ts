@@ -9,11 +9,14 @@ function mockResult(
   score: number,
   date?: string,
   occurredDate?: string,
+  userId = "memory-owner",
 ): MemorySearchResult {
   return {
     entry: {
       id: `mem-${Math.random().toString(36).slice(2, 8)}`,
       tenantId: "test-tenant",
+      agentId: "test-agent",
+      userId,
       content,
       createdAt: date ? new Date(date).getTime() : Date.now(),
       ...(occurredDate !== undefined ? { occurredAt: new Date(occurredDate).getTime() } : {}),
@@ -26,7 +29,7 @@ function mockResult(
 }
 
 describe("hybrid-memory-injector", () => {
-  describe("createHybridMemoryInjector", () => {
+describe("createHybridMemoryInjector", () => {
     it("returns empty results for no memories", () => {
       const injector = createHybridMemoryInjector();
       const result = injector.split([], 5000);
@@ -45,6 +48,29 @@ describe("hybrid-memory-injector", () => {
       // No occurredAt → no "occurred" segment (recorded-only inline format unchanged).
       expect(result.inlineMemory).not.toContain("occurred ");
       expect(result.systemPromptSections).toEqual([]);
+    });
+
+    it("keeps cross-sender memory out of the user-message inline position", () => {
+      const injector = createHybridMemoryInjector({ requesterUserId: "current-user" });
+      const results = [
+        mockResult("Vehicle 16333301 belongs to the other sender", 0.85, "2026-01-15"),
+      ];
+
+      const result = injector.split(results, 5000);
+
+      expect(result.inlineMemory).toBeUndefined();
+      expect(result.systemPromptSections).toHaveLength(1);
+      expect(result.systemPromptSections[0]).toContain("another sender");
+      expect(result.systemPromptSections[0]).toContain("Do not attribute personal facts");
+      expect(result.systemPromptSections[0]).toContain("identity, ownership, preferences, or authorization");
+      expect(result.systemPromptSections[0]).toContain("Vehicle 16333301 belongs to the other sender");
+    });
+
+    it("keeps same-sender inline memory free of a foreign-provenance warning", () => {
+      const injector = createHybridMemoryInjector({ requesterUserId: "memory-owner" });
+      const result = injector.split([mockResult("User prefers dark mode", 0.85)], 5000);
+
+      expect(result.inlineMemory).not.toContain("another sender");
     });
 
     it("inlines BOTH recorded and occurred dates when occurredAt is present", () => {
@@ -110,6 +136,35 @@ describe("hybrid-memory-injector", () => {
       expect(result.systemPromptSections.length).toBeLessThanOrEqual(1);
     });
 
+    it("enforces maxChars across inline and system recall together", () => {
+      const injector = createHybridMemoryInjector({ requesterUserId: "memory-owner" });
+      const maxChars = 4000;
+      const result = injector.split(
+        [
+          mockResult("T".repeat(1000), 0.9),
+          mockResult("A".repeat(1500), 0.8),
+          mockResult("B".repeat(1500), 0.7),
+        ],
+        maxChars,
+      );
+
+      const injectedChars =
+        (result.inlineMemory?.length ?? 0) +
+        result.systemPromptSections.reduce((total, section) => total + section.length, 0);
+      expect(injectedChars).toBeLessThanOrEqual(maxChars);
+    });
+
+    it("does not emit an inline block larger than the total recall budget", () => {
+      const injector = createHybridMemoryInjector({ requesterUserId: "memory-owner" });
+      const maxChars = 400;
+      const result = injector.split([mockResult("T".repeat(1000), 0.9)], maxChars);
+
+      const injectedChars =
+        (result.inlineMemory?.length ?? 0) +
+        result.systemPromptSections.reduce((total, section) => total + section.length, 0);
+      expect(injectedChars).toBeLessThanOrEqual(maxChars);
+    });
+
     it("handles results with undefined score (treats as 0)", () => {
       const injector = createHybridMemoryInjector();
       const result: MemorySearchResult = {
@@ -144,5 +199,27 @@ describe("hybrid-memory-injector", () => {
       expect(result.systemPromptSections[0]).toContain("Memory A");
       expect(result.systemPromptSections[0]).toContain("Memory B");
     });
+  });
+
+  it("redacts a labelled password from high-salience inline recall", () => {
+    const injector = createHybridMemoryInjector({ inlineMinScore: 0.7 });
+    const secret = "ordinary-password-value";
+    const result = injector.split([
+      mockResult(`SERVICE_PASSWORD='${secret}'`, 0.95),
+    ], 4000);
+
+    expect(result.inlineMemory).toContain("[REDACTED]");
+    expect(result.inlineMemory).not.toContain(secret);
+  });
+
+  it("redacts a labelled password from system-section recall", () => {
+    const injector = createHybridMemoryInjector({ inlineMinScore: 0.99 });
+    const secret = "ordinary-password-value";
+    const result = injector.split([
+      mockResult(`password: ${secret}`, 0.5),
+    ], 4000);
+
+    expect(result.systemPromptSections.join("\n")).toContain("[REDACTED]");
+    expect(result.systemPromptSections.join("\n")).not.toContain(secret);
   });
 });

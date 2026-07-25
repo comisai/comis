@@ -39,6 +39,7 @@ export function createBeforeToolCallGuard(
   toolRetryBreaker?: ToolRetryBreaker,
   messageSendLimiter?: MessageSendLimiter,
   turnLoopDetector?: TurnLoopDetector,
+  failedToolRedirects?: ReadonlyMap<string, string>,
 ) {
   return async (context: unknown, _signal?: AbortSignal) => {
     // Proactive step limit check
@@ -71,6 +72,19 @@ export function createBeforeToolCallGuard(
           return { block: true, reason: verdict.steer };
         }
       }
+    }
+
+    // A structured terminal failure can redirect the rest of this execution to
+    // a capability that was live when the failure occurred. This runs before
+    // the threshold-based retry breaker because the source tool has already
+    // reported the exact error state declared terminal by its metadata.
+    if (failedToolRedirects && context && typeof context === "object") {
+      const ctx = context as { toolCall?: { name?: string } };
+      const toolName = ctx.toolCall?.name;
+      const redirect = toolName
+        ? failedToolRedirects.get(toolName)
+        : undefined;
+      if (redirect) return { block: true, reason: redirect };
     }
 
     // Tool retry breaker check -- block tools after repeated failures

@@ -31,10 +31,30 @@ describe("classifyTypedRpcError", () => {
     expect(c!.hint).toMatch(/sandboxNoDowngrade/);
   });
 
+  it("classifies a paused sub-agent spawn as an expected precondition refusal", () => {
+    const classification = classifyTypedRpcError(named("SubAgentSpawnPausedError"));
+
+    expect(classification).toEqual({
+      errorKind: "precondition",
+      hint: "Resume sub-agent admission with the admin subagent.resume operation when new background work is allowed",
+      level: "warn",
+    });
+  });
+
   it("classifies ValidationError and RequiredToolsUnreachableError as validation/warn", () => {
     expect(classifyTypedRpcError(named("ValidationError"))!.errorKind).toBe("validation");
     expect(classifyTypedRpcError(named("RequiredToolsUnreachableError"))!.errorKind).toBe("validation");
     expect(classifyTypedRpcError(named("ValidationError"))!.level).toBe("warn");
+  });
+
+  it("classifies schema parse errors as validation warnings at both RPC log boundaries", () => {
+    const classification = classifyTypedRpcError(named("ZodError"));
+
+    expect(classification).toEqual({
+      errorKind: "validation",
+      hint: "Check parameter types and values against the schema",
+      level: "warn",
+    });
   });
 
   it("classifies AuthorizationError as auth/warn", () => {

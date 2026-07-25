@@ -85,6 +85,31 @@ function seedSessionIndex(): string {
   return dataDir;
 }
 
+function seedCronTraceIndex(
+  dataDir: string,
+  sessionKey: string,
+  traceIds: readonly string[],
+): void {
+  const logsDir = path.join(dataDir, "logs");
+  fs.mkdirSync(logsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(logsDir, `session-index.${todayKey()}.jsonl`),
+    traceIds.map((traceId) => JSON.stringify({
+      traceSchema: "comis-session-index",
+      schemaVersion: 1,
+      event: "turn_completed",
+      ts: "2026-07-22T10:00:00.000Z",
+      traceId,
+      sessionId: sessionKey,
+      durationMs: 100,
+      inputTokens: 10,
+      outputTokens: 5,
+      lastError: null,
+    })).join("\n") + "\n",
+    "utf-8",
+  );
+}
+
 describe("bindObsExplainHandlers", () => {
   it("returns exactly one handler keyed obs.explain", () => {
     const handlers = bindObsExplainHandlers(makeDeps());
@@ -292,6 +317,302 @@ describe("bindObsExplainHandlers", () => {
     expect(r.likelyRootCause).toBeNull();
   });
 
+  it("cron root resolution drives the real nested session and trajectory layout", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-cron-root-"));
+    const sessionKey = "default:agent:default:scheduler-cron:scheduler:job-a:peer:scheduler-cron";
+    const executionId = "execution-cron-a";
+    const rootRunId = `root-cron-${executionId}`;
+    const logsDir = path.join(dataDir, "logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(logsDir, `session-index.${todayKey()}.jsonl`),
+      JSON.stringify({
+        traceSchema: "comis-session-index",
+        schemaVersion: 1,
+        event: "turn_completed",
+        traceId: executionId,
+        sessionId: sessionKey,
+      }) + "\n",
+      "utf-8",
+    );
+
+    const sessionDir = path.join(dataDir, "workspace", "sessions", "default", "scheduler");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const sessionFile = path.join(sessionDir, "scheduler-cron~peer~scheduler-cron.jsonl");
+    const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    fs.writeFileSync(
+      trajectoryFile,
+      JSON.stringify({
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "execution.completed",
+        sessionId: sessionKey,
+        traceId: executionId,
+        data: { outcome: "success" },
+      }) + "\n",
+      "utf-8",
+    );
+    fs.writeFileSync(
+      `${sessionFile}.trajectory-path.json`,
+      JSON.stringify({
+        traceSchema: "comis-trajectory-pointer",
+        schemaVersion: 1,
+        sessionId: sessionKey,
+        runtimeFile: trajectoryFile,
+      }),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      sessionFile.replace(/\.jsonl$/u, "_session-metadata.json"),
+      JSON.stringify({
+        traceId: executionId,
+        runId: "run-cron-a",
+        sessionKey,
+        sessionEnd: {
+          type: "session_end",
+          endReason: "success",
+          durationMs: 50,
+          totalTokens: 10,
+          degraded: false,
+          costUsd: 0.001,
+          toolStats: {},
+          breakerTripCount: 0,
+          topErrorKinds: {},
+        },
+      }),
+      "utf-8",
+    );
+
+    const handlers = bindObsExplainHandlers(makeDeps({ dataDir }));
+    const report = (await handlers["obs.explain"]!({
+      rootRunId,
+      _trustLevel: "admin",
+    })) as IncidentReport;
+
+    expect(report.sessionKey).toBe(sessionKey);
+    expect(report.traceId).toBe(executionId);
+    expect(report.likelyRootCause?.code).not.toBe("session_not_found");
+    expect(report.coverage.trajectory).toEqual({ found: true, records: 1 });
+  });
+
+  it("cron roots sharing one durable scheduler session report only the requested execution", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-cron-execution-"));
+    const sessionKey = "default:agent:default:scheduler-cron:scheduler:job-a:peer:scheduler-cron";
+    const firstExecutionId = "execution-cron-first";
+    const secondExecutionId = "execution-cron-second";
+    const logsDir = path.join(dataDir, "logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(logsDir, `session-index.${todayKey()}.jsonl`),
+      [
+        { traceId: firstExecutionId, durationMs: 90, inputTokens: 10, outputTokens: 5 },
+        { traceId: secondExecutionId, durationMs: 180, inputTokens: 20, outputTokens: 10 },
+      ]
+        .map((turn) => JSON.stringify({
+          traceSchema: "comis-session-index",
+          schemaVersion: 1,
+          event: "turn_completed",
+          ts: "2026-07-22T10:00:00.000Z",
+          traceId: turn.traceId,
+          sessionId: sessionKey,
+          durationMs: turn.durationMs,
+          inputTokens: turn.inputTokens,
+          outputTokens: turn.outputTokens,
+          lastError: null,
+        }))
+        .join("\n") + "\n",
+      "utf-8",
+    );
+
+    const sessionDir = path.join(dataDir, "workspace", "sessions", "default", "scheduler");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const sessionFile = path.join(sessionDir, "scheduler-cron~peer~scheduler-cron.jsonl");
+    const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    const trajectoryRecords = [
+      {
+        traceSchema: "comis-trajectory", schemaVersion: 1, type: "prompt.submitted",
+        sessionId: sessionKey, traceId: firstExecutionId, ts: "2026-07-22T10:00:00.000Z", data: {},
+      },
+      {
+        traceSchema: "comis-trajectory", schemaVersion: 1, type: "model.completed",
+        sessionId: sessionKey, traceId: firstExecutionId, ts: "2026-07-22T10:00:00.090Z",
+        data: { durationMs: 90, inputTokens: 10, outputTokens: 5 },
+      },
+      {
+        traceSchema: "comis-trajectory", schemaVersion: 1, type: "session.summary",
+        sessionId: sessionKey, traceId: firstExecutionId, ts: "2026-07-22T10:00:00.111Z",
+        data: { degraded: false, turnCount: 1, costUsd: 0.01, toolStats: {}, breakerTripCount: 0 },
+      },
+      {
+        traceSchema: "comis-trajectory", schemaVersion: 1, type: "prompt.submitted",
+        sessionId: sessionKey, traceId: secondExecutionId, ts: "2026-07-22T11:00:00.000Z", data: {},
+      },
+      {
+        traceSchema: "comis-trajectory", schemaVersion: 1, type: "model.completed",
+        sessionId: sessionKey, traceId: secondExecutionId, ts: "2026-07-22T11:00:00.180Z",
+        data: { durationMs: 180, inputTokens: 20, outputTokens: 10 },
+      },
+      {
+        traceSchema: "comis-trajectory", schemaVersion: 1, type: "session.summary",
+        sessionId: sessionKey, traceId: secondExecutionId, ts: "2026-07-22T11:00:00.222Z",
+        data: { degraded: false, turnCount: 2, costUsd: 0.02, toolStats: {}, breakerTripCount: 0 },
+      },
+    ];
+    fs.writeFileSync(
+      trajectoryFile,
+      trajectoryRecords.map((record) => JSON.stringify(record)).join("\n") + "\n",
+      "utf-8",
+    );
+    fs.writeFileSync(
+      `${sessionFile}.trajectory-path.json`,
+      JSON.stringify({
+        traceSchema: "comis-trajectory-pointer",
+        schemaVersion: 1,
+        sessionId: sessionKey,
+        runtimeFile: trajectoryFile,
+      }),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      sessionFile.replace(/\.jsonl$/u, "_session-metadata.json"),
+      JSON.stringify({
+        traceId: secondExecutionId,
+        runId: "run-cron-second",
+        sessionKey,
+        sessionEnd: {
+          type: "session_end",
+          endReason: "success",
+          durationMs: 222,
+          totalTokens: 20,
+          degraded: false,
+          costUsd: 0.02,
+          toolStats: {},
+          breakerTripCount: 0,
+          topErrorKinds: {},
+        },
+      }),
+      "utf-8",
+    );
+
+    const handlers = bindObsExplainHandlers(makeDeps({ dataDir }));
+    const first = (await handlers["obs.explain"]!({
+      rootRunId: `root-cron-${firstExecutionId}`,
+      _trustLevel: "admin",
+    })) as IncidentReport;
+    const second = (await handlers["obs.explain"]!({
+      rootRunId: `root-cron-${secondExecutionId}`,
+      _trustLevel: "admin",
+    })) as IncidentReport;
+
+    expect(first.traceId).toBe(firstExecutionId);
+    expect(first.timing).toMatchObject({ durationMs: 111, turnCount: 1 });
+    expect(first.cost.costUsd).toBe(0.01);
+    expect(first.coverage.trajectory).toEqual({ found: true, records: 3 });
+
+    expect(second.traceId).toBe(secondExecutionId);
+    expect(second.timing).toMatchObject({ durationMs: 222, turnCount: 2 });
+    expect(second.cost.costUsd).toBe(0.02);
+    expect(second.coverage.trajectory).toEqual({ found: true, records: 3 });
+  });
+
+  it("historical cron execution derives success from its selected terminal evidence", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-cron-outcome-"));
+    const sessionKey = "default:agent:default:scheduler-cron:scheduler:job-a:peer:scheduler-cron";
+    const firstExecutionId = "execution-cron-outcome-first";
+    const secondExecutionId = "execution-cron-outcome-second";
+    seedCronTraceIndex(dataDir, sessionKey, [firstExecutionId, secondExecutionId]);
+    const records: Array<Record<string, unknown>> = [
+      {
+        traceSchema: "comis-trajectory", type: "model.completed", traceId: firstExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T10:00:00.090Z",
+        data: { stopReason: "stop", durationMs: 90, inputTokens: 10, outputTokens: 5 },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "session.summary", traceId: firstExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T10:00:00.100Z",
+        data: { degraded: false, turnCount: 1, costUsd: 0.01, toolStats: {}, breakerTripCount: 0 },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "delivery.dispatched", traceId: firstExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T10:00:00.110Z",
+        data: { status: "success", totalChunks: 1, deliveredChunks: 1, failedChunks: 0 },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "session.summary", traceId: secondExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T11:00:00.100Z",
+        data: { degraded: false, turnCount: 2, costUsd: 0.02, toolStats: {}, breakerTripCount: 0 },
+      },
+    ];
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => records,
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({
+        traceId: secondExecutionId,
+        sessionEnd: { endReason: "success", durationMs: 200, degraded: false },
+      }),
+      readDiagnosticsRollup: async () => null,
+      readAuditEvents: async () => [],
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, dataDir, {
+      rootRunId: `root-cron-${firstExecutionId}`,
+    });
+
+    expect(report.outcome).toMatchObject({ endReason: "success", degraded: false, severity: "ok" });
+    expect(report.timing.turnCount).toBe(1);
+    expect(report.cost.costUsd).toBe(0.01);
+  });
+
+  it("recurring cron execution retains session channel identity without prior execution metrics", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-cron-channel-"));
+    const sessionKey = "default:agent:default:scheduler-cron:scheduler:job-b:peer:scheduler-cron";
+    const firstExecutionId = "execution-cron-channel-first";
+    const secondExecutionId = "execution-cron-channel-second";
+    seedCronTraceIndex(dataDir, sessionKey, [firstExecutionId, secondExecutionId]);
+    const records: Array<Record<string, unknown>> = [
+      {
+        traceSchema: "comis-trajectory", type: "session.started", traceId: firstExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T10:00:00.000Z",
+        data: { channelType: "scheduler", channelId: "job-b" },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "session.summary", traceId: firstExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T10:00:00.100Z",
+        data: { degraded: false, turnCount: 4, costUsd: 0.04, toolStats: {}, breakerTripCount: 0 },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "model.completed", traceId: secondExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T11:00:00.090Z",
+        data: { stopReason: "stop", durationMs: 90, inputTokens: 20, outputTokens: 10 },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "session.summary", traceId: secondExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T11:00:00.100Z",
+        data: { degraded: false, turnCount: 1, costUsd: 0.02, toolStats: {}, breakerTripCount: 0 },
+      },
+    ];
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => records,
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({
+        traceId: secondExecutionId,
+        sessionEnd: { endReason: "success", durationMs: 100, degraded: false },
+      }),
+      readDiagnosticsRollup: async () => null,
+      readAuditEvents: async () => [],
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, dataDir, {
+      rootRunId: `root-cron-${secondExecutionId}`,
+    });
+
+    expect(report.channel).toEqual({ type: "scheduler", id: "job-b" });
+    expect(report.timing.turnCount).toBe(1);
+    expect(report.cost.costUsd).toBe(0.02);
+  });
+
   // ------------------------------------------------------------------------
   // An unresolvable traceId must be DISTINGUISHABLE from a clean, empty
   // session. Without the marker both yield the same empty report keyed on "".
@@ -387,6 +708,93 @@ describe("bindObsExplainHandlers", () => {
 // These tests pin that seam: the fn produces the SAME
 // report as the RPC handler for the SAME inputs, WITHOUT any _trustLevel param.
 describe("assembleIncidentReportFromSources", () => {
+  it("surfaces a protected background recovery incident in session explain", async () => {
+    const sessionKey = "default:agent-a:telegram:chat-a:user_a";
+    const records = [{
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "background_task.notified",
+      seq: 1,
+      agentId: "agent-a",
+      data: {
+        taskId: "task-recovery-a",
+        toolName: "report",
+        notified: false,
+        reason: "recovery_retry_required",
+      },
+    }];
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => records,
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({ agentId: "agent-a" }),
+      readDiagnosticsRollup: async () => null,
+      readAuditEvents: async () => [],
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, ".", {
+      sessionKey,
+    });
+
+    expect(report.backgroundRecovery).toEqual({
+      retryRequiredCount: 1,
+      unresolvedCount: 1,
+      lastTaskId: "task-recovery-a",
+      lastToolName: "report",
+    });
+    expect(report.likelyRootCause?.code).toBe("background_recovery_retry_required");
+    expect(report.likelyRootCause?.detail).toContain("task-recovery-a");
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" ")).toContain(
+      "protected background-task store",
+    );
+  });
+
+  it("keeps resolved recovery evidence without dominating later explain", async () => {
+    const sessionKey = "default:agent-a:telegram:chat-a:user_a";
+    const records = [
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "background_task.notified",
+        seq: 1,
+        agentId: "agent-a",
+        data: {
+          taskId: "task-recovery-a",
+          toolName: "report",
+          notified: false,
+          reason: "recovery_retry_required",
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "background_task.notified",
+        seq: 2,
+        agentId: "agent-a",
+        data: {
+          taskId: "task-recovery-a",
+          toolName: "report",
+          notified: false,
+          reason: "recovery_resolved",
+        },
+      },
+    ];
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => records,
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({ agentId: "agent-a" }),
+      readDiagnosticsRollup: async () => null,
+      readAuditEvents: async () => [],
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, ".", { sessionKey });
+
+    expect(report.backgroundRecovery).toEqual({
+      retryRequiredCount: 1,
+      unresolvedCount: 0,
+    });
+    expect(report.likelyRootCause?.code).not.toBe("background_recovery_retry_required");
+  });
+
   it("678 fixture: produces content_heuristic_misclassification + degraded + breaker timeline WITHOUT any admin/_trustLevel param", async () => {
     // The seam the obs_explain MCP path uses: call the EXTRACTED assembler
     // DIRECTLY (no admin gate, no contract parse, no _trustLevel) with the SAME
@@ -520,7 +928,7 @@ describe("assembleIncidentReportFromSources", () => {
   });
 
   // -------------------------------------------------------------------------
-  // The fleet→explain drill-down by rootRunId. fleet names
+  // The system→explain drill-down by rootRunId. system names
   // the worst run's rootRunId; pasting it into obs.explain must resolve to the
   // run's sessionKey and render its spawn-tree. The rootRunId arm is FIRST in
   // the 3-way resolution; an unresolvable rootRunId yields the not-found
@@ -529,13 +937,13 @@ describe("assembleIncidentReportFromSources", () => {
   // -------------------------------------------------------------------------
 
   it("assemble by rootRunId resolves the run's sessionKey and renders its spawnTree (REAL layout)", async () => {
-    const ROOT_RUN_ID = "run-fleet-05-headline";
+    const ROOT_RUN_ID = "run-system-05-headline";
     const SESSION_KEY = "default:unattended:unattended:peer:7";
     // Seed a REAL <dataDir>/logs/session-index.<dayKey>.jsonl carrying a
     // capability.audited record that maps the rootRunId → the run's runId
     // (≈ sessionKey), so resolveRootRunToSession canonicalizes ROOT_RUN_ID →
     // SESSION_KEY against the actual nested file layout.
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-fleet05-"));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-system05-"));
     const logsDir = path.join(dataDir, "logs");
     fs.mkdirSync(logsDir, { recursive: true });
     fs.writeFileSync(
@@ -590,7 +998,7 @@ describe("assembleIncidentReportFromSources", () => {
   it("an unresolvable rootRunId yields the session_not_found marker (not a clean session)", async () => {
     // Empty dataDir → no session-index → resolveRootRunToSession returns "" (and
     // the id is not a synthetic root). The report must SIGNAL unresolvability.
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-fleet05-nope-"));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-system05-nope-"));
     const reader: IncidentSourceReader = {
       readSessionRecords: async () => [],
       readCacheTraceRecords: async () => [],

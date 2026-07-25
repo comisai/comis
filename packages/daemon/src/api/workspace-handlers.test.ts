@@ -293,9 +293,9 @@ describe("workspace.deleteFile", () => {
     await fs.writeFile(filePath, "content", "utf-8");
 
     const mockMemoryApi = {
-      search: vi.fn().mockResolvedValue([
-        { entry: { id: "mem-1", content: "references cleanup.txt here" }, score: 0.9 },
-        { entry: { id: "mem-2", content: "unrelated" }, score: 0.5 },
+      inspect: vi.fn().mockReturnValue([
+        { id: "mem-1", content: "references cleanup.txt here" },
+        { id: "mem-2", content: "unrelated" },
       ]),
     };
     const mockMemoryAdapter = {
@@ -316,14 +316,17 @@ describe("workspace.deleteFile", () => {
       filePath: "cleanup.txt",
     });
 
-    expect(mockMemoryApi.search).toHaveBeenCalledWith("cleanup.txt", {
+    expect(mockMemoryApi.inspect).toHaveBeenCalledWith({
       tenantId: "test-tenant",
       agentId: "test-agent",
       limit: 50,
     });
     // Only mem-1 includes the filePath in content
     expect(mockMemoryAdapter.delete).toHaveBeenCalledTimes(1);
-    expect(mockMemoryAdapter.delete).toHaveBeenCalledWith("mem-1", "test-tenant");
+    expect(mockMemoryAdapter.delete).toHaveBeenCalledWith("mem-1", {
+      tenantId: "test-tenant",
+      agentId: "test-agent",
+    });
   });
 
   it("memory cleanup failure does not block delete", async () => {

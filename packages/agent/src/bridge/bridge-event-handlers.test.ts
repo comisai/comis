@@ -11,7 +11,7 @@
  * @module
  */
 import { describe, it, expect } from "vitest";
-import { extractErrorText } from "./bridge-event-handlers.js";
+import { classifyMcpErrorType, extractErrorText } from "./bridge-event-handlers.js";
 
 const MAX_ERROR_TEXT_CHARS = 2000;
 
@@ -56,5 +56,14 @@ describe("extractErrorText -- bounded output", () => {
     const result = extractErrorText(huge);
     expect(result.length).toBeLessThanOrEqual(MAX_ERROR_TEXT_CHARS + 60);
     expect(result).toMatch(/…\[\+\d+ chars, digest:[0-9a-f]{12}\]$/);
+  });
+});
+
+describe("classifyMcpErrorType", () => {
+  it("classifies MCP schema and JSON-RPC invalid-params failures as validation", () => {
+    expect(classifyMcpErrorType('Validation failed for tool "lookup": missing required property')).toBe(
+      "validation",
+    );
+    expect(classifyMcpErrorType('MCP error -32602: Input validation error: "too_big"')).toBe("validation");
   });
 });

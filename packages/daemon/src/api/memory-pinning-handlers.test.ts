@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
-import { createMemoryPinningHandlers } from "./memory-pinning-handlers.js";
+import { createMemoryPinningHandlers as createRawMemoryPinningHandlers } from "./memory-pinning-handlers.js";
 import type { MemoryApiDeps as MemoryHandlerDeps } from "./types.js";
 import { ok } from "@comis/shared";
 
@@ -43,6 +43,16 @@ function makeDeps(overrides?: Partial<MemoryHandlerDeps>): MemoryHandlerDeps {
   };
 }
 
+function createMemoryPinningHandlers(deps: MemoryHandlerDeps) {
+  const handlers = createRawMemoryPinningHandlers(deps);
+  return Object.fromEntries(
+    Object.entries(handlers).map(([method, handler]) => [
+      method,
+      (params: Record<string, unknown>) => handler({ tenant_id: deps.tenantId, ...params }),
+    ]),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -59,6 +69,7 @@ describe("createMemoryPinningHandlers", () => {
 
       const result = await handlers["memory.pin"]!({
         id: "mem-123",
+        agent_id: "agent-1",
         _trustLevel: "admin",
       });
 
@@ -87,6 +98,7 @@ describe("createMemoryPinningHandlers", () => {
 
       const result = await handlers["memory.unpin"]!({
         id: "mem-456",
+        agent_id: "agent-1",
         _trustLevel: "admin",
       });
 
@@ -108,6 +120,15 @@ describe("createMemoryPinningHandlers", () => {
   // -------------------------------------------------------------------------
 
   describe("handler forwards agent_id from request params", () => {
+    it("memory.pin rejects a missing agent instead of widening the update", async () => {
+      const deps = makeDeps();
+      const handlers = createMemoryPinningHandlers(deps);
+
+      await expect(handlers["memory.pin"]!({ id: "mem-789", _trustLevel: "admin" }))
+        .rejects.toThrow();
+      expect(deps.memoryApi.pin).not.toHaveBeenCalled();
+    });
+
     it("memory.pin forwards agent_id to memoryApi.pin when provided", async () => {
       const pinMock = vi.fn(async () => ok(true));
       const deps = makeDeps({
@@ -165,7 +186,7 @@ describe("createMemoryPinningHandlers", () => {
         } as never,
       });
       const handlers = createMemoryPinningHandlers(deps);
-      const result = await handlers["memory.pin"]!({ id: "mem-found", _trustLevel: "admin" });
+      const result = await handlers["memory.pin"]!({ id: "mem-found", agent_id: "agent-1", _trustLevel: "admin" });
       expect(result).toMatchObject({ pinned: true, found: true, id: "mem-found" });
     });
 
@@ -181,7 +202,7 @@ describe("createMemoryPinningHandlers", () => {
         } as never,
       });
       const handlers = createMemoryPinningHandlers(deps);
-      const result = await handlers["memory.pin"]!({ id: "mem-not-found", _trustLevel: "admin" });
+      const result = await handlers["memory.pin"]!({ id: "mem-not-found", agent_id: "agent-1", _trustLevel: "admin" });
       expect(result).toMatchObject({ pinned: true, found: false, id: "mem-not-found" });
     });
   });

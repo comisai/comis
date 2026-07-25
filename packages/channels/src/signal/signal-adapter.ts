@@ -16,6 +16,7 @@
 
 import type {
   AttachmentPayload,
+  AttachmentSendReceipt,
   ChannelPort,
   ChannelStatus,
   MessageHandler,
@@ -33,7 +34,11 @@ import {
 import { mapSignalToNormalized } from "./message-mapper.js";
 import { convertIrToSignalTextStyles } from "./signal-format.js";
 import type { MarkdownIR } from "@comis/core";
-import { systemNowMs, runWithContext } from "@comis/core";
+import {
+  createAttachmentSendReceipt,
+  systemNowMs,
+  runWithContext,
+} from "@comis/core";
 import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -103,7 +108,7 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
             );
 
             void runWithContext(
-              { traceId, startedAt: systemNowMs(), channelType: "signal", tenantId: "default", trustLevel: "admin" },
+              { traceId, startedAt: systemNowMs(), channelType: "signal", tenantId: "default", trustLevel: "user" },
               () => {
                 for (const handler of handlers) {
                   try {
@@ -351,7 +356,7 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
       attachment: AttachmentPayload,
        
       _options?: SendMessageOptions,
-    ): Promise<Result<string, Error>> {
+    ): Promise<Result<AttachmentSendReceipt, Error>> {
       // Voice send bookend logging
       if (attachment.isVoiceNote) {
         deps.logger.info(
@@ -389,12 +394,32 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
         return err(result.error);
       }
 
-      const timestamp = (result.value as { timestamp?: number })?.timestamp;
-      const attachmentMessageId = timestamp ? String(timestamp) : "unknown";
+      const timestamp = (result.value as { timestamp?: unknown })?.timestamp;
+      const messageIdCandidate =
+        typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0
+          ? String(timestamp)
+          : undefined;
+      const receipt = createAttachmentSendReceipt(messageIdCandidate);
+      if (receipt.kind === "delivered_untracked") {
+        deps.logger.warn(
+          {
+            channelType: "signal",
+            chatId,
+            hint: "signal-cli completed the send without a positive timestamp. Do not retry; the message may already be delivered",
+            errorKind: "platform" as const,
+          },
+          "Attachment delivered without platform tracking",
+        );
+      }
 
       if (attachment.isVoiceNote) {
         deps.logger.info(
-          { channelType: "signal", messageId: attachmentMessageId, chatId },
+          {
+            channelType: "signal",
+            chatId,
+            tracking: receipt.kind,
+            ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
+          },
           "Voice send complete",
         );
         deps.logger.debug(
@@ -406,8 +431,9 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
       deps.logger.debug(
         {
           channelType: "signal" as const,
-          messageId: attachmentMessageId,
           chatId,
+          tracking: receipt.kind,
+          ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
           attachmentType: attachment.type,
           captionLength: attachment.caption?.length ?? 0,
           hasFileName: attachment.fileName !== undefined,
@@ -415,7 +441,7 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
         "Outbound attachment",
       );
 
-      return ok(attachmentMessageId);
+      return ok(receipt);
     },
 
     async platformAction(

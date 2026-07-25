@@ -4,7 +4,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:331–381`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 22 (10 required + 12 optional + 0 stale-fallback)
+**Field count:** 31 (15 required + 16 optional + 0 stale-fallback)
 **Location rationale:** Co-located with @comis/daemon package. `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from npm tarball.
 
 ## Field Classification
@@ -14,13 +14,19 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | **Field** | **Classification** | **When-absent** | **Evidence-link** |
 |-----------|--------------------|-----------------|-------------------|
 | getAgentCronScheduler | required | — | packages/daemon/src/api/types.ts:217 |
+| getAgentCronAuthoringConfig | required | — | packages/daemon/src/api/types.ts:327 |
 | cronSchedulers | required | — | packages/daemon/src/api/types.ts:218 |
 | executionTrackers | required | — | packages/daemon/src/api/types.ts:219 |
-| wakeCoalescer | required | — | packages/daemon/src/api/types.ts:220 |
+| cronMaintenanceControllers | required | — | packages/daemon/src/api/types.ts:333 |
+| taskMaintenanceControllers | required | — | packages/daemon/src/api/types.ts:334 |
+| followupTaskStores | required | — | packages/daemon/src/api/types.ts:335 |
+| requestTaskRescan | required | — | packages/daemon/src/api/types.ts:336 |
 | graphCoordinator | optional | graph.run RPC fails with "graph coordinator unavailable"; named graph execution is disabled (read-only catalog still works via namedGraphStore) | packages/daemon/src/api/types.ts:222 |
 | namedGraphStore | optional | graph.list returns an empty array; graph.run with a stored-graph reference returns "named graph not found" | packages/daemon/src/api/types.ts:224 |
 | nodeTypeRegistry | optional | graph.run skips driver-config validation; bad node configs surface later at node-execution time instead of being rejected up front | packages/daemon/src/api/types.ts:228 |
-| perAgentRunner | optional | heartbeat.run / heartbeat.list cannot trigger or report per-agent heartbeats; global heartbeats (if any) remain available | packages/daemon/src/api/types.ts:230 |
+| heartbeatCoordinator | optional | heartbeat.trigger, scheduler.wake, and periodic reconfiguration reject with a closed precondition; state reads still expose configured agents | packages/daemon/src/api/types.ts:339 |
+| getAgentSchedulerSeed | optional | heartbeat.update cannot deterministically re-arm the agent phase and rejects before mutating configuration | packages/daemon/src/api/types.ts:340 |
+| schedulerNowMs | required | — | packages/daemon/src/api/types.ts:344 |
 | globalHeartbeatConfig | optional | heartbeat.list omits the global-heartbeat config field; UI shows "not configured" | packages/daemon/src/api/types.ts:231 |
 | defaultAgentId | required | — | packages/daemon/src/api/types.ts:233 |
 | tenantId | required | — | packages/daemon/src/api/types.ts:235 |
@@ -30,7 +36,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | logger | required | — | packages/daemon/src/api/types.ts:244 |
 | dataDir | optional | graph-handlers cannot write graph-run output files to disk; runs execute in memory only and the audit trail under `<dataDir>/graph-runs/` is not produced | packages/daemon/src/api/types.ts:246 |
 | subAgentRunner | required | — | packages/daemon/src/api/types.ts:248 |
-| eventBus | optional | graph-handlers cannot emit the counts-only `pipeline:authored` telemetry event; the small-model pipeline-authoring fleet metric stays empty (handlers otherwise function) | packages/daemon/src/api/types.ts:370 |
+| eventBus | optional | graph-handlers cannot emit the counts-only `pipeline:authored` telemetry event; the small-model pipeline-authoring system metric stays empty (handlers otherwise function) | packages/daemon/src/api/types.ts:370 |
 | getProviderCapabilityClass | optional | the per-agent `resolveCapabilityClass` wired at rpc-dispatch.ts:200 returns undefined, so every `pipeline:authored` records `capabilityClass:"unknown"` (the tier is recorded honestly, never dropped) | packages/daemon/src/api/types.ts:378 |
 | leaseManager | optional | the autonomy-handlers' `lease.revoke` / `run.kill` are not registered in the dispatcher (a partial boot); a stray call hits the dispatcher's unknown-method path. The composition root wires the real instance, so production always carries it | packages/daemon/src/api/types.ts:362 |
 | durableRuns | optional | the revoke does NOT poison the persisted run record, so a restart could re-mint pre-revoke caps; inert when absent (the in-memory lease revoke alone still stops the live bearer — only matters once durability is enabled, which is when the composition root wires this) | packages/daemon/src/api/types.ts:363 |
@@ -41,12 +47,12 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Removed Fields (stale-fallback — deleted)
 
-**None.** Every optional field corresponds to a feature-gate documented above. The graph-handler quartet (`graphCoordinator` / `namedGraphStore` / `nodeTypeRegistry` / `dataDir`) is gated together at dispatcher wiring time; tests omit each independently to exercise the degraded paths. `perAgentRunner` / `globalHeartbeatConfig` reflect optional heartbeat subsystems.
+**None.** Every optional field corresponds to a feature-gate documented above. The graph-handler quartet (`graphCoordinator` / `namedGraphStore` / `nodeTypeRegistry` / `dataDir`) is gated together at dispatcher wiring time; tests omit each independently to exercise the degraded paths. `heartbeatCoordinator` / `getAgentSchedulerSeed` / `globalHeartbeatConfig` reflect optional heartbeat subsystems.
 
 ## Summary
 
 - **Pre-audit count:** 17
-- **Final count:** 22 (10 required + 12 optional)
+- **Final count:** 31 (15 required + 16 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

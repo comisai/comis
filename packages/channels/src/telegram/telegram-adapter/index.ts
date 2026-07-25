@@ -4,13 +4,13 @@
  *
  * Provides the bridge between Telegram's Bot API and Comis's
  * channel-agnostic ChannelPort interface. Uses:
- *   - @grammyjs/runner    - concurrent update processing
+ *   - grammy sequential polling - acknowledgement after durable acceptance
  *   - @grammyjs/auto-retry - 429 rate-limit handling
  *   - @grammyjs/files     - file hydration
  *
  * Lifecycle: start() validates token, wires inbound handlers via
- * bindInboundHandlers, then boots the runner (or defers to webhook
- * mode). Messages translate through mapGrammyToNormalized in inbound
+ * bindInboundHandlers, then boots one-update-at-a-time polling. Messages
+ * translate through mapGrammyToNormalized in inbound
  * and dispatch to handlers registered via onMessage.
  *
  * State-first protocol: shared state lives on TelegramAdapterState and
@@ -36,12 +36,12 @@ import { registerMessageHandler, registerReactionHandler } from "./telegram-inbo
 import {
   deleteMessage,
   editMessage,
-  platformAction,
   reactToMessage,
   removeReaction,
   sendAttachment,
   sendMessage,
 } from "./telegram-outbound.js";
+import { platformAction } from "./telegram-platform-actions.js";
 
 // Re-export the public-API types (consumers import these from
 // @comis/channels via packages/channels/src/index.ts which re-exports
@@ -52,33 +52,44 @@ export type {
   TelegramAdapterState,
 } from "./telegram-adapter-types.js";
 
+/** Build one isolated polling generation with all API transformers installed. */
+function createConfiguredBot(deps: TelegramAdapterDeps, botToken: string): Bot {
+  const bot = deps.apiRoot
+    ? new Bot(botToken, { client: { apiRoot: deps.apiRoot } })
+    : new Bot(botToken);
+
+  bot.api.config.use(autoRetry({
+    maxRetryAttempts: 3,
+    maxDelaySeconds: 10,
+    rethrowHttpErrors: true,
+    rethrowInternalServerErrors: true,
+  }));
+  bot.api.config.use(hydrateFiles(botToken));
+  return bot;
+}
+
 /**
  * Create a Telegram adapter implementing the ChannelPort interface.
  *
  * Uses Grammy for Telegram Bot API communication, with auto-retry for
- * rate limiting and runner for concurrent update processing.
+ * rate limiting and sequential update acknowledgement.
  */
 export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapterHandle {
-  // E2E seam: if deps.apiRoot is set, point grammy at that URL instead of
-  // api.telegram.org. Production callers leave it unset and grammy uses its
-  // default (https://api.telegram.org). The `client` option is included ONLY
-  // when redirected: the production path constructs the Bot with no options object.
-  const bot = deps.apiRoot
-    ? new Bot(deps.botToken, { client: { apiRoot: deps.apiRoot } })
-    : new Bot(deps.botToken);
-
-  // Install auto-retry transformer for 429 handling
-  bot.api.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 10 }));
-
-  // Install file hydration transformer
-  bot.api.config.use(hydrateFiles(deps.botToken));
+  const createBot = (botToken: string): Bot => createConfiguredBot(deps, botToken);
 
   const state: TelegramAdapterState = {
-    bot,
+    bot: createBot(deps.getBotToken()),
+    createBot,
     handlers: [],
     reactionHandlers: [],
     channelId: "telegram-pending",
-    runnerHandle: null,
+    pollingTask: null,
+    pollingGeneration: 0,
+    lifecycleTail: Promise.resolve(),
+    inFlightUpdates: new Set(),
+    acceptingUpdates: false,
+    stopGateTriggered: false,
+    inboundHandlersBound: false,
     botIdentity: undefined,
     connected: false,
     startedAt: undefined,
@@ -130,7 +141,9 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
 
     getStatus: () => getStatusReport(state),
 
-    bot, // Expose Grammy Bot instance for resolver creation
+    get bot(): Bot {
+      return state.bot;
+    },
   };
 
   return adapter;

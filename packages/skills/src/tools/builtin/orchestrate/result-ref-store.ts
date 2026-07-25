@@ -38,11 +38,13 @@ import {
   isExpired,
   safePath,
   selectEvictions,
+  toSafeErrorLogString,
   PER_FILE_CAP_BYTES,
   type ComisLogger,
   type ResultRef,
 } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -125,8 +127,10 @@ export interface CleanupRunContext {
 
 /** Context for the per-run materialized-aggregate read (read-only enumeration). */
 export interface RunAggregateContext {
-  /** The jailed workspace path whose `results/` the aggregate enumerates. */
+  /** The jailed workspace path whose run-scoped results directory is enumerated. */
   readonly workspacePath: string;
+  /** The orchestrate run whose isolated results directory is enumerated. */
+  readonly runId: string;
 }
 
 /** The content-free error a refuse/failed-write returns (never the payload). */
@@ -254,6 +258,15 @@ export function buildPreview(payload: string | Buffer, kind: ResultKind): string
   return buf.subarray(0, PREVIEW_MAX_BYTES).toString("utf8");
 }
 
+/**
+ * Convert an execution id into one bounded, separator-free directory segment.
+ * The digest is stable across daemon restarts and never embeds caller-controlled
+ * path syntax, so every run owns exactly one directory under `results/`.
+ */
+export function safeResultRunId(runId: string): string {
+  return createHash("sha256").update(runId, "utf8").digest("hex");
+}
+
 // ---------------------------------------------------------------------------
 // The store factory.
 // ---------------------------------------------------------------------------
@@ -266,7 +279,7 @@ export function buildPreview(payload: string | Buffer, kind: ResultKind): string
  */
 export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
   const log = deps.logger.child({ submodule: "result-ref-store" });
-  let seq = 0;
+  const seqByRun = new Map<string, number>();
 
   /**
    * A collision-free, deterministic basename that ENCODES the lifecycle stamps
@@ -277,8 +290,9 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
    * mtime (which would diverge from a synthetic/replayed clock). The basename is
    * opaque to the agent (the `ResultRef.ref` is a handle, not a parsed path).
    */
-  function nextBasename(createdAtMs: number, expiresAtMs: number): string {
-    const n = seq++;
+  function nextBasename(runId: string, createdAtMs: number, expiresAtMs: number): string {
+    const n = seqByRun.get(runId) ?? 0;
+    seqByRun.set(runId, n + 1);
     return `${createdAtMs.toString(36)}-${n.toString(36)}-${expiresAtMs.toString(36)}`;
   }
 
@@ -313,7 +327,7 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
     // these back off the name, injected-clock-consistent — see nextBasename).
     const ttlMs = ctx.ttlMs ?? DEFAULT_TTL_MS;
     const expiresAtMs = ctx.nowMs + ttlMs;
-    const fileName = `${nextBasename(ctx.nowMs, expiresAtMs)}.${kind}`;
+    const fileName = `${nextBasename(ctx.runId, ctx.nowMs, expiresAtMs)}.${kind}`;
 
     // 2. Resolve the workspace-confined path. safePath throws on a traversal
     //    escape; the id is store-generated (not the caller's runId) so this is
@@ -322,7 +336,12 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
     let absPath: string;
     let resultsDir: string;
     try {
-      absPath = safePath(ctx.workspacePath, RESULTS_DIR, fileName);
+      absPath = safePath(
+        ctx.workspacePath,
+        RESULTS_DIR,
+        safeResultRunId(ctx.runId),
+        fileName,
+      );
       resultsDir = dirname(absPath);
     } catch (e) {
       log.warn(
@@ -330,7 +349,7 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
           toolName,
           // "validation": a path validation rejection (closed ErrorKind union).
           errorKind: "validation" as const,
-          err: e,
+          err: toSafeErrorLogString(e),
           hint: "The results/ path escaped the workspace — refusing the write.",
         },
         "Refusing to materialize outside the workspace",
@@ -356,7 +375,9 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
           bytes,
           // "internal": an unexpected I/O / confinement failure on the write.
           errorKind: "internal" as const,
-          err: dirResult.ok ? writeResult.ok ? undefined : writeResult.error : dirResult.error,
+          err: toSafeErrorLogString(
+            dirResult.ok ? writeResult.ok ? undefined : writeResult.error : dirResult.error,
+          ),
           hint: "The contained write was rejected (confinement escape or I/O error) — the result was NOT materialized.",
         },
         "Failed to write a materialized result",
@@ -365,7 +386,7 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
     }
 
     const ref: ResultRef = {
-      ref: `${RESULTS_DIR}/${fileName}`,
+      ref: `${RESULTS_DIR}/${safeResultRunId(ctx.runId)}/${fileName}`,
       kind,
       bytes,
       preview: buildPreview(payload, kind),
@@ -380,7 +401,7 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
   }
 
   async function gcRun(ctx: GcRunContext): Promise<void> {
-    const entries = listRunResults(ctx.workspacePath);
+    const entries = listRunResults(ctx.workspacePath, ctx.runId);
     if (entries.length === 0) return;
 
     // a) TTL: drop any file whose per-file expiry (ENCODED in the basename at
@@ -426,7 +447,7 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
   }
 
   async function cleanupRun(ctx: CleanupRunContext): Promise<void> {
-    const resultsDir = resolveResultsDir(ctx.workspacePath);
+    const resultsDir = resolveResultsDir(ctx.workspacePath, ctx.runId);
     if (resultsDir === undefined || !existsSync(resultsDir)) return;
     try {
       rmSync(resultsDir, { recursive: true, force: true });
@@ -435,7 +456,7 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
       log.warn(
         {
           runId: ctx.runId,
-          err: e,
+          err: toSafeErrorLogString(e),
           // "internal": an unexpected I/O failure during best-effort cleanup.
           errorKind: "internal" as const,
           hint: "Best-effort cleanup of results/ failed — a later run-GC or workspace teardown will reclaim it.",
@@ -445,10 +466,10 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
     }
   }
 
-  /** Resolve `<workspace>/results` defensively (safePath); undefined on escape. */
-  function resolveResultsDir(workspacePath: string): string | undefined {
+  /** Resolve one run's isolated results directory defensively. */
+  function resolveResultsDir(workspacePath: string, runId: string): string | undefined {
     try {
-      return safePath(workspacePath, RESULTS_DIR);
+      return safePath(workspacePath, RESULTS_DIR, safeResultRunId(runId));
     } catch {
       return undefined;
     }
@@ -461,8 +482,8 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
    * a name that does not match our scheme (defensive — should not occur for
    * store-written files).
    */
-  function listRunResults(workspacePath: string): RunResultEntry[] {
-    const resultsDir = resolveResultsDir(workspacePath);
+  function listRunResults(workspacePath: string, runId: string): RunResultEntry[] {
+    const resultsDir = resolveResultsDir(workspacePath, runId);
     if (resultsDir === undefined || !existsSync(resultsDir)) return [];
     let names: string[];
     try {
@@ -501,7 +522,7 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
       unlinkSync(path);
     } catch (e) {
       log.debug(
-        { err: e, hint: `best-effort unlink (${reason}) failed; will retry on next GC/cleanup` },
+        { err: toSafeErrorLogString(e), hint: `best-effort unlink (${reason}) failed; will retry on next GC/cleanup` },
         "Suppressed a results/ unlink failure",
       );
     }
@@ -515,7 +536,7 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
    * `{count:0, bytes:0}` (listRunResults returns [] defensively — no error).
    */
   function runAggregate(ctx: RunAggregateContext): { count: number; bytes: number } {
-    const entries = listRunResults(ctx.workspacePath);
+    const entries = listRunResults(ctx.workspacePath, ctx.runId);
     let bytes = 0;
     for (const entry of entries) {
       bytes += entry.bytes;

@@ -12,7 +12,7 @@
  *   serialize; different profiles refresh in parallel. The factory is
  *   injected as a deps field so agent's production source does not depend
  *   on `@comis/core` at the value-import level.
- * - 30s timeout wrapper around pi-ai's getOAuthApiKey to prevent indefinite hang
+ * - 30s timeout wrapper around resolveOAuthApiKey to prevent indefinite hang
  *   when auth.openai.com is unreachable.
  * - Real-refresh detection via newCredentials.refresh !== profile.refresh — the
  *   original !!newCredentials check was a no-op since pi-ai always returns truthy
@@ -59,10 +59,11 @@ import {
 import type { ComisLogger } from "@comis/core";
 import type { OAuthCredentials } from "@earendil-works/pi-ai";
 import {
-  getOAuthProvider,
-  getOAuthApiKey,
-  getOAuthProviders,
-} from "@earendil-works/pi-ai/oauth";
+  getProviderOAuth,
+  listOAuthProviderIds,
+  resolveOAuthApiKey,
+  extractCodexAccountId,
+} from "@comis/core";
 import { watch, type FSWatcher } from "chokidar";
 import {
   resolveCodexAuthIdentity,
@@ -97,6 +98,11 @@ export interface OAuthError {
   profileId?: string;
   /** Operator action recommendation; mirrors the WARN log `hint` field. */
   hint?: string;
+}
+
+export interface ResolvedOAuthCredential {
+  apiKey: string;
+  credential: OAuthCredentials;
 }
 
 /** Dependencies injected into the OAuth token manager factory. */
@@ -157,6 +163,11 @@ export interface OAuthTokenManager {
     providerId: string,
     agentContext?: { oauthProfiles?: Record<string, string> },
   ): Promise<Result<string, OAuthError>>;
+  /** Resolve both the provider request key and the canonical OAuth credential. */
+  getCredential(
+    providerId: string,
+    agentContext?: { oauthProfiles?: Record<string, string> },
+  ): Promise<Result<ResolvedOAuthCredential, OAuthError>>;
   /**
    * Synchronous best-effort check: the in-memory cache + env-var (SecretManager)
    * ONLY. Does NOT consult the async persisted credential store — so in
@@ -305,7 +316,7 @@ async function raceWithTimeout<T>(
 // ---------------------------------------------------------------------------
 // Bypass pi-ai for OpenAI Codex refresh so we can parse the HTTP response body
 // for clean error classification (refresh_token_reused detection). pi-ai
-// 0.71's getOAuthApiKey discards the wire body in a generic error — the body
+// resolveOAuthApiKey discards the wire body in a generic error — the body
 // never reaches our wrapper.
 //
 // Source: ports the body of pi-ai's refreshOpenAICodexToken
@@ -331,7 +342,7 @@ type LocalRefreshOutcome = LocalRefreshSuccess | LocalRefreshFailure;
 
 /**
  * Refresh OpenAI Codex OAuth tokens by calling auth.openai.com directly
- * (bypassing pi-ai's getOAuthApiKey wrapper). On HTTP error, parses the
+ * (bypassing the resolveOAuthApiKey wrapper). On HTTP error, parses the
  * response body so refresh_token_reused / invalid_grant can be classified
  * by `rewriteOAuthError`.
  *
@@ -401,21 +412,13 @@ async function refreshOpenAICodexTokenLocal(
     id_token?: string;
   };
 
-  // Recover accountId via pi-ai's exported provider helper. The provider
-  // object may NOT expose `getAccountId` (the openai-codex provider in
-  // pi-ai 0.71 does not), so the optional chain falls through to undefined
-  // — `mergeRefreshedCredentials` handles missing accountId.
-  const provider = getOAuthProvider("openai-codex") as
-    | { getAccountId?: (token: string) => string | null }
-    | undefined;
+  // Recover accountId from the refreshed access token's JWT claim via the
+  // shared Codex helper — `mergeRefreshedCredentials` handles a missing
+  // accountId (malformed/claimless JWTs decode to null).
   let accountId: string | undefined;
-  try {
-    const extracted = provider?.getAccountId?.(json.access_token);
-    if (typeof extracted === "string" && extracted.length > 0) {
-      accountId = extracted;
-    }
-  } catch {
-    // Defensive — getAccountId may throw on malformed JWT; leave undefined.
+  const extracted = extractCodexAccountId(json.access_token);
+  if (extracted !== null) {
+    accountId = extracted;
   }
 
   return {
@@ -449,6 +452,21 @@ function mergeRefreshedCredentials(
     expires: refreshed.expires,
     accountId,
     version: SCHEMA_VERSION,
+  };
+}
+
+function resolvedCredential(
+  profile: OAuthProfile,
+  apiKey: string,
+): ResolvedOAuthCredential {
+  return {
+    apiKey,
+    credential: {
+      access: profile.access,
+      refresh: profile.refresh,
+      expires: profile.expires,
+      ...(profile.accountId === undefined ? {} : { accountId: profile.accountId }),
+    },
   };
 }
 
@@ -808,13 +826,13 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
   async function refreshUnderLock(
     providerId: string,
     initialProfile: OAuthProfile,
-  ): Promise<Result<string, OAuthError>> {
+  ): Promise<Result<ResolvedOAuthCredential, OAuthError>> {
     const lockPath = lockSentinelPath(dataDir, initialProfile.profileId);
     const lockStart = systemNowMs();
 
     const lockResult = await fileLock.withLock(
       lockPath,
-      async (): Promise<Result<string, OAuthError>> => {
+      async (): Promise<Result<ResolvedOAuthCredential, OAuthError>> => {
         const acquireMs = systemNowMs() - lockStart;
         logger.debug(
           {
@@ -857,14 +875,14 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           // Both branches end with `apiKeyResult` populated to the pi-ai
           // success-shape. This let-binding mirrors pi-ai's untyped result
           // — `any` is the one acceptable use in this file (pi-ai's
-          // getOAuthApiKey return type is genuinely untyped at the npm
+          // resolveOAuthApiKey mirrors the historic result shape at the npm
           // boundary; the bypass synthesizes the same shape).
           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi-ai surface is untyped
           let apiKeyResult: any;
 
           if (isCodex) {
             // Skip the wire if the persisted access is still valid.
-            // pi-ai's getOAuthApiKey performs this check internally for
+            // resolveOAuthApiKey performs this check internally for
             // non-codex providers; the codex bypass must mirror it or every
             // getApiKey() call would re-hit the token endpoint and break the
             // "restart-survives-refresh" contract. 60s buffer keeps callers
@@ -886,7 +904,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 },
                 "OAuth token still valid — skipping refresh",
               );
-              return ok(profile.access);
+              return ok(resolvedCredential(profile, profile.access));
             }
 
             // Bypass never throws (it returns a tagged outcome on every path),
@@ -994,7 +1012,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           } else {
             // Non-Codex: original pi-ai path UNCHANGED.
             // 30s timeout wrapper — pi-ai has no built-in timeout.
-            const piAiCall = fromPromise(getOAuthApiKey(providerId, credsRecord));
+            const piAiCall = fromPromise(resolveOAuthApiKey(providerId, credsRecord));
             const raceResult = await raceWithTimeout(
               piAiCall,
               REFRESH_TIMEOUT_MS,
@@ -1077,7 +1095,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           if (!oauthResult) {
             return err({
               code: "NO_CREDENTIALS",
-              message: `getOAuthApiKey returned null for provider "${providerId}"`,
+              message: `resolveOAuthApiKey returned null for provider "${providerId}"`,
               providerId,
             });
           }
@@ -1086,6 +1104,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           // value, not the always-truthy newCredentials marker.
           const refreshed = oauthResult.newCredentials.refresh !== profile.refresh;
 
+          let effectiveProfile: OAuthProfile;
           if (refreshed) {
             const newProfile = mergeRefreshedCredentials(profile, oauthResult.newCredentials);
             const writeResult = await credentialStore.set(profile.profileId, newProfile);
@@ -1108,6 +1127,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               });
             }
             cache.set(profile.profileId, newProfile);
+            effectiveProfile = newProfile;
             // pi-ai's OAuthCredentials.expires is already milliseconds since epoch
             // — use directly, do NOT multiply by 1000.
             eventBus.emit("auth:token_rotated", {
@@ -1119,6 +1139,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           } else {
             // Cache the unrotated profile for the next read (no DB roundtrip needed).
             cache.set(profile.profileId, profile);
+            effectiveProfile = profile;
           }
 
           const completeStart = systemNowMs();
@@ -1151,7 +1172,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             );
           }
 
-          return ok(oauthResult.apiKey);
+          return ok(resolvedCredential(effectiveProfile, oauthResult.apiKey));
         } finally {
           logger.debug(
             {
@@ -1200,13 +1221,12 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     return lockResult.value;
   }
 
-  return {
-    async getApiKey(
-      providerId: string,
-      agentContext?: { oauthProfiles?: Record<string, string> },
-    ): Promise<Result<string, OAuthError>> {
+  async function resolveCredential(
+    providerId: string,
+    agentContext?: { oauthProfiles?: Record<string, string> },
+  ): Promise<Result<ResolvedOAuthCredential, OAuthError>> {
       // Provider validation first (cheap check; avoids store I/O on bad input).
-      const provider = getOAuthProvider(providerId);
+      const provider = getProviderOAuth(providerId);
       if (!provider) {
         return err({
           code: "NO_PROVIDER",
@@ -1427,6 +1447,21 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
 
       // Acquire per-profile lock and run the refresh body.
       return refreshUnderLock(providerId, profile);
+  }
+
+  const manager: OAuthTokenManager = {
+    async getApiKey(
+      providerId: string,
+      agentContext?: { oauthProfiles?: Record<string, string> },
+    ): Promise<Result<string, OAuthError>> {
+      const result = await resolveCredential(providerId, agentContext);
+      return result.ok ? ok(result.value.apiKey) : result;
+    },
+    async getCredential(
+      providerId: string,
+      agentContext?: { oauthProfiles?: Record<string, string> },
+    ): Promise<Result<ResolvedOAuthCredential, OAuthError>> {
+      return resolveCredential(providerId, agentContext);
     },
 
     hasCredentials(providerId: string): boolean {
@@ -1462,7 +1497,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     },
 
     getSupportedProviders(): string[] {
-      return getOAuthProviders().map((p) => p.id);
+      return listOAuthProviderIds();
     },
 
     async dispose(): Promise<void> {
@@ -1486,4 +1521,5 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       cache.clear();
     },
   };
+  return manager;
 }

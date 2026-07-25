@@ -195,7 +195,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   {
     file: "packages/web/src/views/scheduler.ts",
     lines: 1615,
-    reason: "Lit web view; ~10 rpcClient.call sites inlined (formerly via scheduler-controller.ts before inlining; cron.list / cron.status / cron.add / cron.update / cron.remove / cron.run / config.read / config.set / heartbeat.states / heartbeat.trigger; parameter normalization with spread + _agentId precedence preserved inline). Residual size is dominated by 2 tab renderers (cron jobs, heartbeat), the embedded ic-cron-editor overlay wiring, SSE event handling for scheduler:job_started/job_completed/heartbeat_delivered/heartbeat_alert, optimistic-update edit/delete flows, and detailed per-job/per-heartbeat row templates with relative-time formatting.",
+    reason: "Lit web view; ~10 rpcClient.call sites inlined (formerly via scheduler-controller.ts before inlining; cron.list / cron.status / cron.add / cron.update / cron.remove / cron.run / config.read / config.set / heartbeat.states / heartbeat.trigger; parameter normalization with spread + _agentId precedence preserved inline). Residual size is dominated by 2 tab renderers (cron jobs, heartbeat), the embedded ic-cron-editor overlay wiring, SSE event handling for correlated cron and heartbeat wake lifecycle events plus heartbeat alerts, optimistic-update edit/delete flows, and detailed per-job/per-heartbeat row templates with relative-time formatting.",
     removedIn: "deferred",
   },
   {
@@ -279,7 +279,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   {
     file: "packages/web/src/views/agents/agent-detail.ts",
     lines: 1018,
-    reason: "Lit web view; ~6 rpcClient.call sites inlined (formerly via agent-detail-controller.ts before inlining; agents.get / obs.billing.byAgent / skills.list / heartbeat.states / agents.suspend / agents.resume / agents.delete — 7 unique RPC methods spanning 6 call sites). The remaining ≤1020L is dominated by ~380L of component-scoped CSS, the two-column detail layout with 7 card renderers (_renderIdentityCard / _renderStatsCard / _renderConfigCard / _renderBudgetGaugesCard / _renderCircuitBreakerCard / _renderSkillsCard / _renderHeartbeatCard), the daemon-config → AgentDetail _mapToAgentDetail() mapper (~63L) with 7 nested optional shape branches (circuitBreaker / contextGuard / sdkRetry / modelFailover / rag / sessionPolicy / concurrency), the SseController consumer driving debounced reload from observability:token_usage + scheduler:heartbeat_delivered events, the suspend/resume + delete action flow with ic-confirm-dialog lifecycle + IcToast surfacing, the heartbeat status renderer with backoff / consecutive-error / running-tick state coalescing, the skill-chip variant mapping for 4 source classes, and the relative-time formatters — all tightly DOM-coupled.",
+    reason: "Lit web view; ~6 rpcClient.call sites inlined (formerly via agent-detail-controller.ts before inlining; agents.get / obs.billing.byAgent / skills.list / heartbeat.states / agents.suspend / agents.resume / agents.delete — 7 unique RPC methods spanning 6 call sites). The remaining ≤1020L is dominated by ~380L of component-scoped CSS, the two-column detail layout with 7 card renderers (_renderIdentityCard / _renderStatsCard / _renderConfigCard / _renderBudgetGaugesCard / _renderCircuitBreakerCard / _renderSkillsCard / _renderHeartbeatCard), the daemon-config → AgentDetail _mapToAgentDetail() mapper (~63L) with 7 nested optional shape branches (circuitBreaker / contextGuard / sdkRetry / modelFailover / rag / sessionPolicy / concurrency), the SseController consumer driving debounced reload from observability:token_usage + scheduler:heartbeat_wake_terminal events, the suspend/resume + delete action flow with ic-confirm-dialog lifecycle + IcToast surfacing, the heartbeat status renderer with backoff / consecutive-error / running-tick state coalescing, the skill-chip variant mapping for 4 source classes, and the relative-time formatters — all tightly DOM-coupled.",
     removedIn: "deferred",
   },
   {
@@ -290,8 +290,8 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/components/scheduler/ic-cron-editor.ts",
-    lines: 872,
-    reason: "Graph form component (NO-RPC variant); preview-debounce orchestration extracted via ic-cron-editor-controller.ts — view has 0 rpcClient.call sites at HEAD (form-only, no daemon I/O) and now delegates the preview-recompute debounce + next-runs dispatch to the controller. Controller fits the tightest 500L cap (136L). View cap tightened from 800L to 500L; the residual ≤875L is dominated by ~190L of component-scoped CSS, the 5-field cron-expression form renderer (cron / every / at variants with conditional input fields), the 10-entry TIMEZONE dropdown renderer, the agent-selector dropdown + message textarea + maxConcurrent + sessionTarget + deliveryMode form-fields renderer, the next-5-runs preview rendering with timezone-aware Intl.DateTimeFormat, the _populateFromJob() / _assembleJob() pure mappers between view @state and CronJobInput shape (parent-binding contract with scheduler view), the willUpdate() hook for job-property + agents-property propagation into @state, the updated() hook for schedule-field change detection driving the debounce, and the save / cancel CustomEvent dispatchers — all tightly DOM-coupled with the parent scheduler view's <ic-cron-editor> @property bindings. The 16 form @state fields stay on the view because they are the form contract — the controller would not satisfy the parent scheduler view's expectation of @state semantics, and the existing 24 view tests rely on direct @state access via priv().",
+    lines: 1071,
+    reason: "Lit cron editor form with no daemon I/O; ic-cron-editor-controller.ts owns preview debounce and next-run dispatch. The view is dominated by component-scoped CSS, cron-expression and timezone controls, payload/session-policy/continuation/delivery fields, next-run rendering, and pure mappers between view state and CronJobInput. Form state remains on the view because it is the parent-facing binding contract and the view tests exercise that state directly.",
     removedIn: "deferred",
   },
   {
@@ -347,12 +347,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     file: "packages/agent/src/spawn/sub-agent-runner.ts",
     lines: 2085,
     reason: "Executor-adjacent file; gated by the SubAgentRunnerDeps audit; the audit closed (AUDIT.md exists) but the natural module seams require focused-follow-up care (default-defer). STEER-01 (Phase 175) added only a thin steerRun() delegation (~38L) — the inject mechanism lives in the separate steer-run.ts helper (≤800L) precisely to avoid growing this file.",
-    removedIn: "deferred",
-  },
-  {
-    file: "packages/agent/src/executor/prompt-assembly.ts",
-    lines: 1100,
-    reason: "Executor-adjacent file (1,100L re-measured; -5L drift from prior measurement); direct-global retargeting closed; no obvious natural seam at this size; defer pending further audit (default-defer)",
     removedIn: "deferred",
   },
   {
@@ -1299,73 +1293,9 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     removedIn: "permanent",
   },
 ] as const;
-export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [
-  // ============================================================================
-  // TypeScript hygiene — closed via RowMapper<TRow>
-  // ============================================================================
-  // Every entry below records one `{file, symbol}` cast site in
-  // packages/memory/src/ that currently uses the unsafe
-  // `.all(...) as Type[]` / `.get(...) as Type` form. The hygiene work
-  // introduces the typed `RowMapper<TRow>` factory and retargets every
-  // site to `mapper.parseRows(...)` / `mapper.parseOptionalRow(...)`;
-  // each retarget closes one entry in this list atomically.
-  //
-  // The `symbol` field captures the FIRST `\w+` after `as ` per the rule's
-  // regex (e.g. `.get(...) as Row | undefined` records symbol "Row"; the
-  // union pipe truncation is intentional). For `as Array<{...}>` casts the
-  // symbol is "Array" (the angle-bracketed generic body does not match
-  // `\w+`).
-  //
-  // The allowlist key is `{file, symbol}`: multiple raw cast sites in the same
-  // file that target the same `symbol` collapse into one entry. The live grep
-  // yielded 61 raw cast sites collapsing to 35 unique pairs across 14 files.
-
-  // context-store.ts — DRAINED.
-  // Previously held 8 `{file, symbol}` entries for {Array (inline id-projection
-  // and FTS hit shapes), CtxConversationRow, CtxMessageRow, CtxMessagePartRow,
-  // CtxSummaryRow, CtxContextItemRow, CtxLargeFileRow, CtxExpansionGrantRow}.
-  // All 17 cast sites retargeted to mapper.parseRows / parseOptionalRow with
-  // degrade-on-validation-error semantics (preserves ContextStorePort plain-
-  // return contract for the 16 production-file consumers in agent + daemon).
-
-  // credential-mapping-store.ts — DRAINED.
-
-  // delivery-mirror-adapter.ts — DRAINED.
-  // Result-returning port; mapper failure flows through err() to the
-  // existing try/catch wrapper.
-
-  // delivery-queue-adapter.ts — DRAINED.
-
-  // embedding-cache-sqlite.ts — DRAINED.
-
-  // hybrid-search.ts — DRAINED.
-
-  // identity-link-store.ts — DRAINED.
-
-  // memory-api.ts — DRAINED.
-
-  // named-graph-store.ts — DRAINED.
-
-  // oauth-profile-store-encrypted.ts — DRAINED.
-
-  // observability-store.ts — DRAINED.
-  // Previously held 9 `{file, symbol}` entries for {TokenUsageDbRow,
-  // DeliveryDbRow, DiagnosticDbRow, ChannelSnapshotDbRow, ProviderAggDbRow,
-  // AgentAggDbRow, SessionAggDbRow, HourlyBucketDbRow, DeliveryStatsDbRow}.
-  // Every site retargets to mapper.parseRows / parseOptionalRow with
-  // degrade-on-validation-error (observability metrics are non-fatal —
-  // see file header for the chosen Option 2 rationale).
-
-  // row-mapper.ts — DRAINED.
-  // The mapper module's own internal countRows / groupCountRows projections
-  // now go through local schemas + createRowMapper (self-closing).
-
-  // session-store.ts — DRAINED.
-
-  // sqlite-memory-adapter.ts — DRAINED.
-
-  // sqlite-secret-store.ts — DRAINED.
-] as const;
+// Raw `.all()`/`.get()` row assertions have no exceptions in memory production
+// source. Every SQLite read validates through a RowMapper before consumption.
+export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [] as const;
 export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
   // ============================================================================
   // Per-declaration audit (final state)
@@ -1429,13 +1359,6 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
     typeName: "InboundPipelineDeps",
     optionalCount: 40,
     reason: "(b) Cluster-split candidate: optionals mix the 5 inbound-pipeline phases (resolve, preprocess, gate, setup, route) plus auxiliary concerns (voice pipeline, delivery queue, command/approval handling, debounce/group history buffers). Each `?` field is wired only when the corresponding feature is configured (e.g. approvalGate present only when approval workflow enabled). Future refactor: per-phase sub-Deps interfaces..",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/agent/src/bootstrap/system-prompt-assembler.ts",
-    typeName: "AssemblerParams",
-    optionalCount: 34,
-    reason: "(b) Cluster-split candidate: prompt-section assembly params — every `?` corresponds to ONE prompt section (skills XML, attribution, language hint, sub-agent role, sender trust, documentation, media directives, SEP, MCP inheritance, runtime info, etc). Each section's `includeIn` set determines whether the corresponding param is read in a given PromptMode; absent params skip the section. Future refactor: group by section family (identity / safety / tooling / media / sub-agent)..",
     removedIn: "phase-D",
   },
   {
@@ -1578,7 +1501,7 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
     file: "packages/skills/src/platform-tools/registry.ts",
     typeName: "PlatformToolBuildContext",
     optionalCount: 13,
-    reason: "(a) Tool-specific predicate signals (per file:95 JSDoc): each `?` corresponds to ONE platform tool's wiring requirement (approvalGate for tools needing approval, imageGenProvider for image_generate, backgroundTaskManager for background_tasks, toolCapabilityPort for capability index, contextEngineVersion for unified_context (gated on 'dag'), builtinToolsBrowserEnabled + browserSanitizeImage + browserPersistMedia + browserWorkspaceDir for the browser tool). Each descriptor's `conditional(ctx)` predicate inspects only the field it needs; marking all required would force unrelated tools to receive `undefined`-equivalent fabricated values..",
+    reason: "(a) Tool-specific predicate signals: each optional field corresponds to one platform tool's wiring requirement (approvalGate for tools needing approval, imageGenProvider for image_generate, backgroundTaskManager for background_tasks, toolCapabilityPort for capability index, and the browser signals for browser tools). Each descriptor inspects only the field it needs; marking all required would force unrelated tools to receive fabricated values.",
     removedIn: "phase-D",
   },
 ] as const;

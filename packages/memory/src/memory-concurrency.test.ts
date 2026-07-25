@@ -20,7 +20,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
+import { ScopedMemoryTestAdapter as SqliteMemoryAdapter } from "../../../test/support/scoped-memory-adapter.js";
 import type { MemoryEntry, MemoryConfig, SessionKey } from "@comis/core";
 import type { Result } from "@comis/shared";
 import * as fs from "node:fs";

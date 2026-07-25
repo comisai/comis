@@ -46,7 +46,7 @@ describe("UserStorySchema — positive", () => {
       id: "US-TEST-FULL",
       story: "As a power user, I want everything, so that all fields validate.",
       tags: ["A", "B", "N", "E", "T", "V"],
-      dimensions: ["search=tavily", "contextEngine.version=dag"],
+      dimensions: ["search=tavily", "contextEngine.contextThreshold=high"],
       requires: {
         providers: ["anthropic"],
         capabilities: ["tools", "vision"],

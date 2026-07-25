@@ -15,7 +15,6 @@
  */
 
 import type { ChannelPort, ComisLogger, MessageHandler, ReactionHandler } from "@comis/core";
-import type { run } from "@grammyjs/runner";
 import type { Bot } from "grammy";
 import type { TelegramBotIdentity } from "../message-mapper.js";
 
@@ -24,7 +23,8 @@ import type { TelegramBotIdentity } from "../message-mapper.js";
 // ---------------------------------------------------------------------------
 
 export interface TelegramAdapterDeps {
-  botToken: string;
+  /** Resolve the current credential for validation and each Bot generation. */
+  getBotToken(): string;
   webhookSecret?: string;
   webhookUrl?: string;
   logger: ComisLogger;
@@ -54,10 +54,9 @@ export interface TelegramAdapterHandle extends ChannelPort {
 
 /**
  * Mutable state shared across the state-first helpers extracted from the
- * createTelegramAdapter factory body. The factory closure captured exactly
- * these 9 variables; this interface enumerates them explicitly so each leaf
- * can read/write them via a single `state` parameter instead of relying on
- * lexical capture.
+ * createTelegramAdapter factory body. This interface enumerates the lifecycle
+ * and handler state explicitly so each leaf can read/write it via a single
+ * `state` parameter instead of relying on lexical capture.
  *
  * Convention: every state-first helper takes `state: TelegramAdapterState`
  * as its FIRST positional parameter, followed by `deps` and any per-call
@@ -68,17 +67,31 @@ export interface TelegramAdapterHandle extends ChannelPort {
  * naming collision no longer exists once the locals live on `state`.
  */
 export interface TelegramAdapterState {
-  /** Grammy bot instance constructed in createTelegramAdapter and reused. */
+  /** Grammy bot instance owned by the current polling generation. */
   bot: Bot;
+  /** Construct a fully configured Bot with no inherited polling offset. */
+  createBot: (botToken: string) => Bot;
   /** Message handlers registered via handle.onMessage(). */
   handlers: MessageHandler[];
   /** Reaction handlers registered via handle.onReaction(). */
   reactionHandlers: ReactionHandler[];
   /** "telegram-pending" before start(); "telegram-{botId}" after start() succeeds. */
   channelId: string;
-  /** grammy/runner handle returned by run(bot); null in webhook mode and before start(). */
-  runnerHandle: ReturnType<typeof run> | null;
-  /** Populated by start() after getMe() succeeds; used by mapGrammyToNormalized to detect mentions. */
+  /** Built-in sequential polling task; null before start and after shutdown. */
+  pollingTask: Promise<void> | null;
+  /** Monotonic owner token for polling completion callbacks. */
+  pollingGeneration: number;
+  /** Serializes start/stop transitions without a second lifecycle primitive. */
+  lifecycleTail: Promise<void>;
+  /** Inbound middleware promises that must settle before polling offset confirmation. */
+  inFlightUpdates: Set<Promise<void>>;
+  /** False before startup and immediately when shutdown is requested. */
+  acceptingUpdates: boolean;
+  /** Set when grammY presents an update after the shutdown gate closes. */
+  stopGateTriggered: boolean;
+  /** Prevent duplicate middleware registration across lifecycle restarts. */
+  inboundHandlersBound: boolean;
+  /** Populated by start() after getMe() succeeds; scopes inbound ids and addressing to this account. */
   botIdentity: TelegramBotIdentity | undefined;
   /** true after start() succeeds; false before start() and after stop(). */
   connected: boolean;

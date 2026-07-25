@@ -13,7 +13,7 @@
  * (DoctorFinding messages — e.g. a configured gateway URL with `user:pass@`), so
  * every string leaf there is value-shape masked before it reaches disk. The
  * reducer's own outputs (`triage.json`, `issue-summary.md`, `ai-issue-draft.md`)
- * and the content-free digests (`fleet.json`, `config-posture.json`)
+ * and the content-free digests (`system-health.json`, `config-posture.json`)
  * are content-free by construction — counts, category labels, signal codes,
  * section names, version facts, static placeholders, and
  * static remediation strings — so they get path-token normalization ONLY; the
@@ -60,16 +60,16 @@ export interface WriteSupportBundleInput {
   /** The doctor diagnostic object (written as doctor.json). */
   readonly doctorJson: unknown;
   /**
-   * The fleet health report (written as fleet.json when present). A content-free
+   * The system health report (written as system-health.json when present). A content-free
    * trusted leaf: path substitution only, never the value-shape pass — which
    * would mangle its ids/codes. Omitted from the write set when undefined (the
-   * fleet read threw).
+   * system read threw).
    */
-  readonly fleetJson?: unknown;
+  readonly systemJson?: unknown;
   /**
    * The config-posture membership digest (written as config-posture.json when
    * present). A content-free trusted leaf: section names + the closed
-   * fleet-finding labels only. Omitted from the write set when undefined (the
+   * system-finding labels only. Omitted from the write set when undefined (the
    * config did not parse).
    */
   readonly configPostureJson?: unknown;
@@ -253,7 +253,7 @@ export function ensureSupportBundleDir(
  *
  * Creates `comis-support-<tsIso>/` (a timestamp-only name — no host component)
  * and writes `issue-summary.md`, `ai-issue-draft.md`, `triage.json`,
- * `doctor.json`, and `manifest.json`, plus `fleet.json`, `config-posture.json`,
+ * `doctor.json`, and `manifest.json`, plus `system-health.json`, `config-posture.json`,
  * `explain.json` (on `--session`), and `audit-summary.json` when their inputs are
  * present, each through the symlink-safe primitives with the redaction backstop
  * applied. The manifest is written last so it records every section that failed.
@@ -273,7 +273,7 @@ export function writeSupportBundle(
     issueSummaryMd,
     aiIssueDraftMd,
     doctorJson,
-    fleetJson,
+    systemJson,
     configPostureJson,
     explainJson,
     auditSummaryJson,
@@ -336,10 +336,10 @@ export function writeSupportBundle(
   // are content-free and get path normalization only. ai-issue-draft.md rides the
   // trusted leaf like issue-summary.md — the value-shape pass would treat its
   // `<REQUIRED: …>` idiom and field-name-like tokens as payloads and mangle it.
-  // fleet.json and config-posture.json ride the SAME trusted leaf (content-free
+  // system-health.json and config-posture.json ride the SAME trusted leaf (content-free
   // by construction — codes, section names, closed labels + counts); each is
-  // appended ONLY when its input is defined, so a thrown fleet read omits
-  // fleet.json and an unparseable config omits config-posture.json.
+  // appended ONLY when its input is defined, so a thrown system read omits
+  // system-health.json and an unparseable config omits config-posture.json.
   const FILE_PLAN: ReadonlyArray<{ name: string; body: () => string }> = [
     { name: "issue-summary.md", body: () => substitutePathsOnly(issueSummaryMd) },
     { name: "ai-issue-draft.md", body: () => substitutePathsOnly(aiIssueDraftMd) },
@@ -351,12 +351,12 @@ export function writeSupportBundle(
       name: "doctor.json",
       body: () => JSON.stringify(walkAndRedactStrings(doctorJson, redactionOpts), null, 2),
     },
-    ...(fleetJson !== undefined
+    ...(systemJson !== undefined
       ? [
           {
-            name: "fleet.json",
+            name: "system-health.json",
             body: (): string =>
-              JSON.stringify(walkAndSubstitutePaths(fleetJson, redactionOpts), null, 2),
+              JSON.stringify(walkAndSubstitutePaths(systemJson, redactionOpts), null, 2),
           },
         ]
       : []),
@@ -384,7 +384,7 @@ export function writeSupportBundle(
           },
         ]
       : []),
-    // audit-summary.json rides the TRUSTED leaf (like fleet.json): pure counts +
+    // audit-summary.json rides the TRUSTED leaf (like system-health.json): pure counts +
     // closed AuditKind labels — path substitution only. Appended only when the
     // offline audit read returned a digest.
     ...(auditSummaryJson !== undefined

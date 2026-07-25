@@ -16,6 +16,7 @@
  *   - POST /control/chats/:id/messages   { fromUserId, text }            → { messageId }
  *   - GET  /control/chats/:id/outbound    ?afterMessageId&waitMs          → RecordedOutbound[]
  *   - POST /control/chats/:id/reactions   { fromUserId, botMessageId, emoji }
+ *   - POST /control/chats/:id/reset                                        → { ok: true }
  *
  * Writes the wiring to /tmp/comis-emu.json and prints `EMU_UP {json}`.
  * Group chats (negative ids) are pre-created on request via EMU_GROUPS env
@@ -69,7 +70,6 @@ const info = {
   groups: groups.map((g) => g.chatId),
 };
 writeFileSync("/tmp/comis-emu.json", JSON.stringify(info, null, 2));
-// eslint-disable-next-line no-console
 console.log("EMU_UP " + JSON.stringify(info));
 
 const stop = async (): Promise<void> => {

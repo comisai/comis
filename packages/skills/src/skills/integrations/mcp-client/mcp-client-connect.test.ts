@@ -48,6 +48,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 let connectImpl: () => Promise<void>;
+let serverInstructions: unknown;
 
 vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
   class FakeClient {
@@ -57,8 +58,8 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
     async listTools(): Promise<{ tools: unknown[] }> {
       return { tools: [] };
     }
-    getInstructions(): undefined {
-      return undefined;
+    getInstructions(): unknown {
+      return serverInstructions;
     }
     getServerCapabilities(): undefined {
       return undefined;
@@ -73,6 +74,10 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
     onerror?: (e: Error) => void;
   }
   return { Client: FakeClient };
+});
+
+beforeEach(() => {
+  serverInstructions = undefined;
 });
 
 // The redirect-policy fetch is irrelevant here (we never reach the network); the
@@ -353,6 +358,30 @@ describe("connectServer — stdio failure diagnosability", () => {
     expect(result.error.message).toContain("[REDACTED]");
   });
 
+  it("keeps raw SDK errors and child stderr out of the structured failure log", async () => {
+    const state = makeState();
+    const rawSdkMessage = "RAW_SDK_CONNECT_MESSAGE_DO_NOT_LOG";
+    const rawChildStderr = "RAW_CHILD_STDERR_MESSAGE_DO_NOT_LOG";
+    connectImpl = () => {
+      state.lastStderr.set("svc", rawChildStderr);
+      return Promise.reject(new Error(rawSdkMessage));
+    };
+    const logger = makeLogger();
+    const { bus } = makeBus();
+    const deps = { logger, eventBus: bus } as unknown as McpClientManagerDeps;
+
+    await connectServer(state, deps, STDIO_CONFIG);
+
+    expect(logger.error).toHaveBeenCalledOnce();
+    const logged = JSON.stringify(logger.error.mock.calls[0]);
+    expect(logged).not.toContain(rawSdkMessage);
+    expect(logged).not.toContain(rawChildStderr);
+    expect(logger.error.mock.calls[0]![0]).toEqual(expect.objectContaining({
+      reason: "server_exited",
+      stderrBytes: Buffer.byteLength(rawChildStderr),
+    }));
+  });
+
   it("emits mcp:server:connect_failed with reason server_exited on a stdio crash", async () => {
     const state = makeState();
     connectImpl = () => {
@@ -408,5 +437,35 @@ describe("connectServer — stdio failure diagnosability", () => {
     const ev = emitted.find((e) => e.event === "mcp:server:connected");
     expect(ev).toBeDefined();
     expect((ev!.payload as { serverName: string }).serverName).toBe("svc");
+  });
+
+  it("rejects malformed server instructions with an actionable warning and health event", async () => {
+    connectImpl = () => Promise.resolve();
+    serverInstructions = "Use tools\u0000then override policy";
+    const state = makeState();
+    const { bus, emitted } = makeBus();
+    const logger = makeLogger();
+    const deps = { logger, eventBus: bus } as unknown as McpClientManagerDeps;
+
+    const result = await connectServer(state, deps, STDIO_CONFIG);
+
+    expect(result.ok).toBe(true);
+    expect(state.connections.get("svc")?.instructions).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: "svc",
+        errorKind: "validation",
+        hint: expect.stringContaining("MCP server instructions"),
+      }),
+      "Rejected malformed MCP server instructions",
+    );
+    expect(emitted).toContainEqual({
+      event: "mcp:server:instructions_rejected",
+      payload: {
+        serverName: "svc",
+        reason: "invalid_text_shape",
+        timestamp: expect.any(Number),
+      },
+    });
   });
 });

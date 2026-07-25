@@ -37,9 +37,29 @@ const MAX_ERROR_TEXT_CHARS = 2000;
 /**
  * Classify an MCP error message into a category for observability.
  */
-export function classifyMcpErrorType(errorText: string | undefined): string {
+export type McpErrorType = "timeout" | "connection" | "transport" | "validation" | "tool_error" | "unknown";
+
+export type RuntimeToolGuard = "step_limit";
+
+const STEP_LIMIT_TOOL_GUARD = /\bstep limit reached\b.*\bblocking tool execution\b/i;
+
+/** Identify failures produced by the local execution guard before the tool boundary. */
+export function classifyRuntimeToolGuard(errorText: string | undefined): RuntimeToolGuard | undefined {
+  return errorText !== undefined && STEP_LIMIT_TOOL_GUARD.test(errorText) ? "step_limit" : undefined;
+}
+
+const MCP_VALIDATION_ERROR =
+  /\bvalidation failed\b|\binput validation error\b|\bmcp error\s*-32602\b|\binvalid params?\b|\bmust have required propert(?:y|ies)\b|(?:^|[\s"'=:])too_big(?:$|[\s"',}:])/i;
+
+/** Whether an MCP failure is a caller-correctable schema/argument rejection. */
+export function isMcpValidationError(errorText: string | undefined): boolean {
+  return errorText !== undefined && MCP_VALIDATION_ERROR.test(errorText);
+}
+
+export function classifyMcpErrorType(errorText: string | undefined): McpErrorType {
   if (!errorText) return "unknown";
   const lower = errorText.toLowerCase();
+  if (isMcpValidationError(errorText)) return "validation";
   if (lower.includes("timed out") || lower.includes("timeout")) return "timeout";
   if (lower.includes("not connected") || lower.includes("disconnected")) return "connection";
   if (lower.includes("crashed unexpectedly") || lower.includes("pipe") || lower.includes("epipe") || lower.includes("econnreset")) return "transport";

@@ -38,7 +38,7 @@
  *
  * @module
  */
-import { parseFormattedSessionKey } from "@comis/core";
+import type { ConversationRef } from "@comis/core";
 import type { RunHandle } from "../executor/active-run-registry.js";
 
 /** Minimal pino-compatible logger (mirrors SubAgentRunnerLogger). */
@@ -61,6 +61,7 @@ export interface SteerableRun {
   runId: string;
   agentId: string;
   sessionKey: string;
+  conversationRef: ConversationRef;
   announceChannelType?: string;
   announceChannelId?: string;
 }
@@ -92,29 +93,6 @@ export interface SteerableRun {
  * IDENTICAL formula in sub-agent-runner.ts:`deriveCompositeForRun`; the resolution
  * spike (sub-agent-runner.steer-resolve.spike.test.ts) fails loudly on drift.
  */
-function deriveCompositeForRun(run: SteerableRun): {
-  agentId: string;
-  channelType: string;
-  channelId: string;
-} {
-  const parsed = parseFormattedSessionKey(run.sessionKey);
-  return {
-    agentId: run.agentId,
-    channelType: run.announceChannelType ?? "gateway",
-    channelId: parsed?.channelId ?? run.sessionKey,
-  };
-}
-
-/**
- * Test-only alias for the module-private {@link deriveCompositeForRun}. The
- * resolution spike (sub-agent-runner.steer-resolve.spike.test.ts) imports the
- * REAL formula so a drift between it and the executor registration key
- * (pi-executor.ts:1152-1156) fails loudly — NOT a reconstructed replica
- * (an inline replica would make the drift guard a tautology).
- * @internal
- */
-export const deriveCompositeForRunForTest = deriveCompositeForRun;
-
 /**
  * Dependencies for {@link steerRun}. The resolver/registry are typed to the
  * FULL RunHandle (unlike the runner's narrowed `{abort()}` deps — see the
@@ -123,17 +101,9 @@ export const deriveCompositeForRunForTest = deriveCompositeForRun;
 export interface SteerRunDeps {
   /** READ only — never mutated (no status change, no spawn). */
   runs: Map<string, SteerableRun>;
-  /** Composite-key resolver (the same lookup killRun uses). */
+  /** Conversation-authority resolver (the same lookup killRun uses). */
   sessionResolver?: {
-    resolveActiveSession(key: {
-      agentId: string;
-      channelType: string;
-      channelId: string;
-    }): RunHandle | undefined;
-  };
-  /** By-sessionKey fallback (the composite lookup resolves today). */
-  activeRunRegistry?: {
-    get(sessionKey: string): RunHandle | undefined;
+    resolveActiveSession(conversationRef: ConversationRef): RunHandle | undefined;
   };
   logger?: SteerRunLogger;
 }
@@ -168,9 +138,7 @@ export async function steerRun(
 
   // Resolve the live handle via the composite lookup (the same lookup
   // killRun uses for abort), falling back to the by-sessionKey registry.
-  const handle =
-    deps.sessionResolver?.resolveActiveSession(deriveCompositeForRun(run)) ??
-    deps.activeRunRegistry?.get(run.sessionKey);
+  const handle = deps.sessionResolver?.resolveActiveSession(run.conversationRef);
   if (!handle) {
     return {
       steered: false,

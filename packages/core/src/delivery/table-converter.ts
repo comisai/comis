@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { MarkdownBlock, MarkdownSpan } from "./markdown-ir.js";
+import { parseInlineSpans, type MarkdownBlock, type MarkdownSpan } from "./markdown-ir.js";
 
 /** Table conversion mode. */
 export type TableMode = "code" | "bullets" | "off";
@@ -59,11 +59,13 @@ function tableToCodeBlock(headers: string[], rows: string[][]): MarkdownBlock {
     };
   }
 
-  const colCount = headers.length;
+  const plainHeaders = headers.map(toPlainCellText);
+  const plainRows = rows.map((row) => row.map(toPlainCellText));
+  const colCount = plainHeaders.length;
 
   // Calculate column widths from headers + all rows
-  const widths: number[] = headers.map((h) => h.length);
-  for (const row of rows) {
+  const widths: number[] = plainHeaders.map((h) => h.length);
+  for (const row of plainRows) {
     for (let c = 0; c < colCount; c++) {
       const cell = row[c] ?? "";
       widths[c] = Math.max(widths[c] ?? 0, cell.length);
@@ -80,7 +82,7 @@ function tableToCodeBlock(headers: string[], rows: string[][]): MarkdownBlock {
   const lines: string[] = [];
 
   // Header row
-  const headerLine = headers.map((h, i) => pad(h, i)).join("  ");
+  const headerLine = plainHeaders.map((h, i) => pad(h, i)).join("  ");
   lines.push(headerLine);
 
   // Separator row (dashes matching column widths)
@@ -88,8 +90,8 @@ function tableToCodeBlock(headers: string[], rows: string[][]): MarkdownBlock {
   lines.push(sepLine);
 
   // Body rows
-  for (const row of rows) {
-    const rowLine = headers.map((_, i) => pad(row[i] ?? "", i)).join("  ");
+  for (const row of plainRows) {
+    const rowLine = plainHeaders.map((_, i) => pad(row[i] ?? "", i)).join("  ");
     lines.push(rowLine);
   }
 
@@ -98,6 +100,13 @@ function tableToCodeBlock(headers: string[], rows: string[][]): MarkdownBlock {
     spans: [],
     raw: lines.join("\n"),
   };
+}
+
+/** Code blocks are opaque, so inline Markdown must be flattened before insertion. */
+function toPlainCellText(text: string): string {
+  return parseInlineSpans(text)
+    .map((span) => span.text)
+    .join("");
 }
 
 /**

@@ -11,16 +11,22 @@ import "../data/ic-relative-time.js";
 /** Inline SVG path for success checkmark. */
 const SUCCESS_ICON = svg`<path d="M20 6L9 17l-5-5" stroke="var(--ic-success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>`;
 
-/** Inline SVG path for failed X. */
-const FAILED_ICON = svg`<path d="M18 6L6 18M6 6l12 12" stroke="var(--ic-error)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>`;
+/** Inline SVG path for an execution or delivery error. */
+const ERROR_ICON = svg`<path d="M18 6L6 18M6 6l12 12" stroke="var(--ic-error)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>`;
 
 /** Inline SVG path for timeout clock. */
 const TIMEOUT_ICON = svg`<circle cx="12" cy="12" r="10" stroke="var(--ic-warning)" stroke-width="2" fill="none"/><path d="M12 6v6l4 2" stroke="var(--ic-warning)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>`;
 
+/** Inline SVG path for policy-filtered responses. */
+const FILTERED_ICON = svg`<path d="M4 5h16l-6 7v5l-4 2v-7L4 5z" stroke="var(--ic-text-dim)" stroke-width="2" stroke-linejoin="round" fill="none"/>`;
+
+/** Inline SVG path for user-aborted responses. */
+const ABORTED_ICON = svg`<circle cx="12" cy="12" r="10" stroke="var(--ic-warning)" stroke-width="2" fill="none"/><path d="M8 8l8 8" stroke="var(--ic-warning)" stroke-width="2" stroke-linecap="round"/>`;
+
 /**
  * Renders a single delivery trace row in a CSS Grid table.
  *
- * 6 columns: Time, Channel, Message, Status, Latency, Steps.
+ * 6 columns: Time, Destination, Trace, Status, Latency, Steps.
  * Uses `display: contents` for grid row with ARIA role="row".
  * Dispatches `trace-click` CustomEvent on click or Enter/Space keydown.
  */
@@ -52,7 +58,7 @@ export class IcDeliveryRow extends LitElement {
         transition: background var(--ic-transition);
       }
 
-      .cell-message {
+      .cell-trace {
         color: var(--ic-text-dim);
         overflow: hidden;
         text-overflow: ellipsis;
@@ -96,14 +102,15 @@ export class IcDeliveryRow extends LitElement {
   private _renderStatusIcon() {
     if (!this.trace) return nothing;
 
-    const statusMap = {
+    const statusMap: Record<DeliveryTrace["status"], { icon: unknown; label: string }> = {
       success: { icon: SUCCESS_ICON, label: "Success" },
-      failed: { icon: FAILED_ICON, label: "Failed" },
+      error: { icon: ERROR_ICON, label: "Error" },
       timeout: { icon: TIMEOUT_ICON, label: "Timeout" },
+      filtered: { icon: FILTERED_ICON, label: "Filtered" },
+      aborted: { icon: ABORTED_ICON, label: "Aborted" },
     };
 
     const entry = statusMap[this.trace.status];
-    if (!entry) return nothing;
 
     return html`
       <svg
@@ -119,10 +126,9 @@ export class IcDeliveryRow extends LitElement {
     if (!this.trace) return nothing;
 
     const t = this.trace;
-    const preview =
-      t.messagePreview.length > 40
-        ? t.messagePreview.slice(0, 40) + "..."
-        : t.messagePreview;
+    const traceId = t.traceId.length > 40
+      ? t.traceId.slice(0, 40) + "..."
+      : t.traceId;
     const latency = t.latencyMs != null ? `${t.latencyMs}ms` : "--";
 
     return html`
@@ -137,9 +143,9 @@ export class IcDeliveryRow extends LitElement {
           <ic-relative-time .timestamp=${t.timestamp}></ic-relative-time>
         </div>
         <div class="cell" role="cell">
-          <ic-tag variant=${t.channelType}>${t.channelType}</ic-tag>
+          <ic-tag variant=${t.targetChannelType}>${t.targetChannelType}</ic-tag>
         </div>
-        <div class="cell cell-message" role="cell">${preview}</div>
+        <div class="cell cell-trace" role="cell">${traceId}</div>
         <div class="cell" role="cell">${this._renderStatusIcon()}</div>
         <div class="cell cell-latency" role="cell">${latency}</div>
         <div class="cell" role="cell">${t.stepCount}</div>

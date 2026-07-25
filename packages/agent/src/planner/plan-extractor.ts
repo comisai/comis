@@ -28,21 +28,21 @@ export function extractPlanFromResponse(text: string, maxSteps: number): PlanSte
   if (!text || maxSteps < 2) return undefined;
 
   // Strategy 1: Numbered list ("1. Do X\n2. Do Y\n3. Do Z")
-  const numberedMatches = text.match(/^\s*(\d+)[.)]\s+(.+)$/gm);
-  if (numberedMatches && numberedMatches.length >= 2) {
-    return numberedMatches.slice(0, maxSteps).map((line, i) => ({
+  const numberedMatches = text.split("\n").map(parseNumberedLine).filter((line) => line !== undefined);
+  if (numberedMatches.length >= 2) {
+    return numberedMatches.slice(0, maxSteps).map((description, i) => ({
       index: i + 1,
-      description: line.replace(/^\s*\d+[.)]\s+/, "").trim(),
+      description,
       status: "pending" as const,
     }));
   }
 
   // Strategy 2: Markdown bullets ("- Do X\n- Do Y")
-  const bulletMatches = text.match(/^\s*[-*]\s+(.+)$/gm);
-  if (bulletMatches && bulletMatches.length >= 2) {
-    return bulletMatches.slice(0, maxSteps).map((line, i) => ({
+  const bulletMatches = text.split("\n").map(parseBulletLine).filter((line) => line !== undefined);
+  if (bulletMatches.length >= 2) {
+    return bulletMatches.slice(0, maxSteps).map((description, i) => ({
       index: i + 1,
-      description: line.replace(/^\s*[-*]\s+/, "").trim(),
+      description,
       status: "pending" as const,
     }));
   }
@@ -55,7 +55,10 @@ export function extractPlanFromResponse(text: string, maxSteps: number): PlanSte
   const seqMatches: string[] = [];
   let match: RegExpExecArray | null;
   while ((match = sequentialRegex.exec(text)) !== null) {
-    const description = match[2]!.replace(/[.!?]+$/, "").trim();
+    let description = match[2]!.trim();
+    while (description.endsWith(".") || description.endsWith("!") || description.endsWith("?")) {
+      description = description.slice(0, -1);
+    }
     if (description.length > 0) {
       seqMatches.push(description);
     }
@@ -69,4 +72,31 @@ export function extractPlanFromResponse(text: string, maxSteps: number): PlanSte
   }
 
   return undefined; // Not a multi-step task
+}
+
+function parseNumberedLine(line: string): string | undefined {
+  const trimmed = line.trimStart();
+  let cursor = 0;
+  while (cursor < trimmed.length && trimmed[cursor]! >= "0" && trimmed[cursor]! <= "9") cursor++;
+  if (
+    cursor === 0 ||
+    (trimmed[cursor] !== "." && trimmed[cursor] !== ")") ||
+    !/\s/.test(trimmed[cursor + 1] ?? "")
+  ) {
+    return undefined;
+  }
+  const description = trimmed.slice(cursor + 1).trim();
+  return description || undefined;
+}
+
+function parseBulletLine(line: string): string | undefined {
+  const trimmed = line.trimStart();
+  if (
+    (trimmed[0] !== "-" && trimmed[0] !== "*") ||
+    !/\s/.test(trimmed[1] ?? "")
+  ) {
+    return undefined;
+  }
+  const description = trimmed.slice(1).trim();
+  return description || undefined;
 }

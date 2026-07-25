@@ -74,7 +74,6 @@ export interface DeferralContext {
   capabilityClass: CapabilityClass;
   recentlyUsedToolNames: Set<string>;
   toolNames: string[];
-  contextEngineVersion?: string;
   /** Tool names demoted by lifecycle management. When provided, these tools
    *  are treated as an additional deferral source so discover_tools covers them. */
   lifecycleDemotedNames?: Set<string>;
@@ -160,7 +159,7 @@ export const DEFERRAL_RULES: DeferralRule[] = [
     tools: [...PRIVILEGED_TOOL_NAMES],
     activeWhen: (ctx) => ctx.trustLevel === "admin",
     namespace: "admin",
-    namespaceDescription: "Fleet management, observability, session/memory/channel/token/skill/MCP admin (requires admin trust)",
+    namespaceDescription: "Agent administration, observability, session/memory/channel/token/skill/MCP admin (requires admin trust)",
   },
   ...CHANNEL_TOOL_GATES.map((gate) => ({
     tools: [gate.tool],

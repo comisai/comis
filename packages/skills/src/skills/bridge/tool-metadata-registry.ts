@@ -22,6 +22,7 @@ import {
 import { validateExecCommand } from "../../tools/builtin/exec-security/index.js";
 import { GATEWAY_ACTIONS } from "../../platform-tools/tools/gateway-tool.js";
 import { registerFailureDetectorMetadata } from "./register-failure-detector-metadata.js";
+import { registerInvocationSideEffectMetadata } from "./register-invocation-side-effect-metadata.js";
 
 export function registerAllToolMetadata(): void {
   // =========================================================================
@@ -336,12 +337,12 @@ export function registerAllToolMetadata(): void {
 
   registerToolMetadata("sessions_manage", {
     validActions: ["delete", "reset", "export", "compact"],
-    validKeys: ["action", "session_key", "instructions"],
+    validKeys: ["action", "tenant_id", "agent_id", "conversation_ref", "instructions"],
     requiredByAction: {
-      delete:  ["session_key"],
-      reset:   ["session_key"],
-      export:  ["session_key"],
-      compact: ["session_key"],
+      delete:  ["tenant_id", "agent_id", "conversation_ref"],
+      reset:   ["tenant_id", "agent_id", "conversation_ref"],
+      export:  ["tenant_id", "agent_id", "conversation_ref"],
+      compact: ["tenant_id", "agent_id", "conversation_ref"],
     },
   });
 
@@ -389,10 +390,9 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("heartbeat_manage", {
     validActions: ["get", "update", "status", "trigger"],
     validKeys: [
-      "action", "agent_id", "enabled", "interval_ms", "prompt", "model",
-      "target_channel_type", "target_channel_id", "target_chat_id", "target_is_dm",
+      "action", "agent_id", "enabled", "interval_ms", "prompt", "target",
       "light_context", "show_ok", "show_alerts", "allow_dm",
-      "skip_heartbeat_only_delivery", "ack_max_chars", "response_prefix", "session",
+      "ack_max_chars", "response_prefix",
       "alert_threshold", "alert_cooldown_ms", "stale_ms",
     ],
     // Every action's params beyond `action` are Type.Optional. Empty
@@ -484,6 +484,12 @@ export function registerAllToolMetadata(): void {
   });
 
   registerToolMetadata("web_search", {
+    failureFallbacks: [{
+      onErrorCode: "all_providers_failed",
+      toolName: "browser",
+      guidance:
+        "Use browser next: call action start, then action open with a Google Search URL for the same query. Do not call web_search again for this request.",
+    }],
     outputSchema: {
       type: "object",
       description:
@@ -568,7 +574,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("whatsapp_action", { searchHint: "status group admin label broadcast forward whatsapp" });
 
   // --- Privileged management tools ---
-  registerToolMetadata("agents_manage",    { searchHint: "fleet list create delete suspend resume agent configure roster inventory" });
+  registerToolMetadata("agents_manage",    { searchHint: "system list create delete suspend resume agent configure roster inventory" });
   registerToolMetadata("obs_query",        { searchHint: "diagnostics monitoring metrics billing health explain incident post-mortem" });
   registerToolMetadata("sessions_manage",  { searchHint: "delete reset export compact session lifecycle cleanup admin" });
   registerToolMetadata("memory_manage",    { searchHint: "delete flush export browse stats storage cleanup purge" });
@@ -648,10 +654,10 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("session_status",   { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("sessions_list",    { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("sessions_history", { mcpExportPolicy: "permission-gated" });
-  // Observability (3) — all permission-gated; operator allowlists by query scope. obs_explain + obs_fleet_health are READ-ONLY digests that run their assembler directly under daemon authority (NOT the admin RPC); the allowlist is the grant.
+  // Observability (3) — all permission-gated; operator allowlists by query scope. obs_explain + obs_system_health are READ-ONLY digests that run their assembler directly under daemon authority (NOT the admin RPC); the allowlist is the grant.
   registerToolMetadata("obs_query", { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("obs_explain", { mcpExportPolicy: "permission-gated", isReadOnly: true, maxResultSizeChars: 100_000, searchHint: "explain incident root-cause post-mortem session report" });
-  registerToolMetadata("obs_fleet_health", { mcpExportPolicy: "permission-gated", isReadOnly: true, maxResultSizeChars: 100_000, searchHint: "fleet health cross-session degradation rate errorKinds breaker trips config posture model health" });
+  registerToolMetadata("obs_system_health", { mcpExportPolicy: "permission-gated", isReadOnly: true, maxResultSizeChars: 100_000, searchHint: "system health cross-session degradation rate errorKinds breaker trips config posture model health" });
   // Meta-tool (1) — reveals registered-tools attack surface; per-client allowlist required.
   registerToolMetadata("discover_tools", { mcpExportPolicy: "permission-gated" });
   // Media analysis (4) — see media-tools note above. Default permission-gated
@@ -725,6 +731,22 @@ export function registerAllToolMetadata(): void {
   // Sleep — never-export; an internal between-turns pacing primitive
   // inside Comis's trust boundary, not a capability an external MCP client needs.
   registerToolMetadata("sleep", { mcpExportPolicy: "never-export" });
+
+  // Exact emitted names that previously relied on default-deny or activity-only
+  // registration. They are first-class metadata entries so execution-side
+  // effect coverage and MCP export policy cannot drift independently.
+  registerToolMetadata("background_tasks", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("get_prompt", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("list_prompts", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("list_resources", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("read_resource", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("mcp_login", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("memory_ask", { mcpExportPolicy: "never-export", isReadOnly: true });
+  registerToolMetadata("image_generate", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("notify_user", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("notebook_edit", { mcpExportPolicy: "never-export" });
+
+  registerInvocationSideEffectMetadata();
 
   // Failure Detectors — web_search / web_fetch structured-field failure
   // classification. Extracted to keep this file ≤800 lines; a behavior-neutral

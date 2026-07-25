@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Edge case tests for data validation: malformed YAML, mixed field names,
- * session key parsing, and memory clear filter safety.
+ * session key parsing, and memory clear scope safety.
  *
  * Tests that the CLI handles broken, unexpected, or missing input data
  * gracefully without crashing or producing unhandled exceptions.
@@ -484,10 +484,10 @@ describe("agent list field normalization edge cases", () => {
 });
 
 // ============================================================
-// Memory clear no-filter rejection
+// Memory clear no-scope rejection
 // ============================================================
 
-describe("memory clear no-filter rejection", () => {
+describe("memory clear no-scope rejection", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -502,42 +502,30 @@ describe("memory clear no-filter rejection", () => {
     exitSpy.restore();
   });
 
-  it("rejects clear with no filters and no --yes in non-TTY", async () => {
+  it("rejects clear without explicit authority before confirmation", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    try {
-      await program.parseAsync(["node", "test", "memory", "clear"]);
-    } catch (e) {
-      expect((e as Error).message).toBe("process.exit called");
-    }
-
-    expect(exitSpy.spy).toHaveBeenCalledWith(1);
-    const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("At least one filter is required");
+    await expect(
+      program.parseAsync(["node", "test", "memory", "clear"]),
+    ).rejects.toThrow("required option '--tenant <tenantId>' not specified");
   });
 
-  it("rejects clear with --yes but no filters", async () => {
+  it("rejects clear with --yes but no authority", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    try {
-      await program.parseAsync(["node", "test", "memory", "clear", "--yes"]);
-    } catch (e) {
-      expect((e as Error).message).toBe("process.exit called");
-    }
-
-    expect(exitSpy.spy).toHaveBeenCalledWith(1);
-    const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("At least one filter is required");
+    await expect(
+      program.parseAsync(["node", "test", "memory", "clear", "--yes"]),
+    ).rejects.toThrow("required option '--tenant <tenantId>' not specified");
   });
 
-  it("handles invalid filter format (no equals sign)", async () => {
+  it("rejects the unsupported filter option", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    try {
-      await program.parseAsync([
+    await expect(
+      program.parseAsync([
         "node",
         "test",
         "memory",
@@ -545,25 +533,23 @@ describe("memory clear no-filter rejection", () => {
         "--filter",
         "badfilter",
         "--yes",
-      ]);
-    } catch (e) {
-      expect((e as Error).message).toBe("process.exit called");
-    }
+        "--tenant",
+        "test-tenant",
+        "--agent",
+        "test-agent",
+      ]),
+    ).rejects.toThrow("unknown option '--filter'");
 
-    expect(exitSpy.spy).toHaveBeenCalledWith(1);
-    const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("Invalid filter format");
+    expect(exitSpy.spy).not.toHaveBeenCalled();
   });
 
-  it("accepts valid filter with --yes", async () => {
-    // Mock withClient to succeed for valid clear operation
+  it("accepts an explicit tenant-agent scope with --yes", async () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
-      // MemoryFlushContract.response = { flushed: true, entriesRemoved, scope }
       const mockClient = createMockRpcClient()
         .onCall("memory.flush", {
           flushed: true,
           entriesRemoved: 0,
-          scope: { tenantId: "", agentId: null },
+          scope: { tenantId: "default", agentId: "default" },
         })
         .build();
       return fn(mockClient);
@@ -577,12 +563,13 @@ describe("memory clear no-filter rejection", () => {
       "test",
       "memory",
       "clear",
-      "--filter",
-      "memoryType=conversation",
+      "--tenant",
+      "default",
+      "--agent",
+      "default",
       "--yes",
     ]);
 
-    // Should succeed without crash or process.exit
     expect(exitSpy.spy).not.toHaveBeenCalled();
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("cleared");

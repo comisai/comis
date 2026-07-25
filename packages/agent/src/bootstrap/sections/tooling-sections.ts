@@ -280,7 +280,7 @@ export const PRIVILEGED_TOOL_NAMES = [
  *
  * Included only when at least one privileged tool is present in toolNames
  * and mode is not minimal. Covers overview, approval gate behavior, and
- * fleet management patterns.
+ * agent administration patterns.
  */
 // ---------------------------------------------------------------------------
 // 5a. Task Delegation (skip if minimal or no sessions_spawn)
@@ -325,11 +325,11 @@ export function buildTaskDelegationSection(
     "- **Time-intensive operations**: Any task where tool execution alone will take >30 seconds",
     "",
     "### How to Delegate",
-    "1. Use `sessions_spawn` with `async=true` and a **goal-oriented** task description",
+    "1. Use `sessions_spawn` with a **goal-oriented** task description; every spawn runs in the background",
     "2. Describe WHAT to accomplish, not HOW -- the sub-agent has its own skills and will read SKILL.md itself",
     "3. Do NOT copy-paste skill instructions, shell commands, or step-by-step procedures into the task",
     "4. Include user context the sub-agent needs (e.g., desired style, dimensions, topic) but not tool instructions",
-    "5. Set `announce_channel_type` and `announce_channel_id` for result delivery",
+    "5. Result delivery is bound automatically to the authenticated request route; do not supply route identifiers",
     "6. Tell the user the task is delegated and give them the runId",
     "7. Continue the conversation -- the result will be announced automatically when done",
     "",
@@ -343,7 +343,7 @@ export function buildTaskDelegationSection(
     "- All sub-agents run concurrently and announce results independently",
     "- Examples: research topic A + topic B simultaneously, build frontend + backend in parallel,",
     "  generate report + create visualization at the same time",
-    "- Use `subagents` (action=\"list\") to check progress of all running sub-agents",
+    "- Use `subagents` (action=\"wait\") to collect owned results without polling; use action=\"list\" only for a status snapshot",
     "",
     "### Do NOT Delegate",
     "- Quick lookups, single-file reads, simple questions, status checks",
@@ -450,7 +450,7 @@ export function buildPrivilegedToolsSection(
     "",
     "Do not ask the user for permission before calling a gated action -- the approval gate handles that. Just call the tool and the system manages the rest.",
     "",
-    "### Fleet Management Patterns",
+    "### System Management Patterns",
     "",
     "- **Create vs reuse**: Before creating a new agent, check if one with the right configuration already exists (agents_manage get). Reuse when possible.",
     "- **Workspace files**: After creating a new agent, customize its workspace files — ROLE.md (role/behavior), TOOLS.md (tool notes), IDENTITY.md (name/vibe). AGENTS.md and SOUL.md are read-only platform files.",
@@ -463,7 +463,7 @@ export function buildPrivilegedToolsSection(
     "- **Provider then agent**: When adding a custom (non-built-in) provider, first create the provider entry (providers_manage create), store the API key if needed (gateway env_set -- skip for keyless providers like Ollama), then switch the agent (agents_manage update). Never set an agent's model to a name that has no matching provider. If you lack the provider's base URL or model ID, use web_search to find it; if that fails, ask the user.",
     "- **Failover chain**: After creating multiple providers, configure automatic model failover on the agent (agents_manage update with modelFailover.fallbackModels). Each fallback entry is a {provider, modelId} pair referencing a configured provider. Failover order: primary > cache-aware retry > auth key rotation > fallback models in order. Never add a fallback model whose provider does not exist.",
     "- **Add vs replace fallback**: modelFailover.fallbackModels and authProfiles are REPLACED wholesale on update (scalar fields deep-merge; arrays do not). When the user says 'add' / 'also' / 'in addition', call agents_manage get FIRST to read the current array, append, then update with the full list. When the user says 'set' / 'use' / 'switch to', overwrite directly.",
-    "- **Fleet-wide changes**: providers_manage and agents_manage operate on one entity at a time. For fleet-wide provider/model/failover changes: (1) create new provider(s) first, (2) agents_manage list to discover agents, (3) agents_manage update x N in parallel (one call per agent in the same turn). Group agents by model tier for tiered failover (e.g. opus agents get different fallbacks than sonnet agents).",
+    "- **Deployment-wide changes**: providers_manage and agents_manage operate on one entity at a time. For deployment-wide provider/model/failover changes: (1) create new provider(s) first, (2) agents_manage list to discover agents, (3) agents_manage update x N in parallel (one call per agent in the same turn). Group agents by model tier for tiered failover (e.g. opus agents get different fallbacks than sonnet agents).",
   ];
 
   return lines;

@@ -23,7 +23,7 @@ import type { Command } from "commander";
 import * as os from "node:os";
 import { existsSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import { systemGetEnv, systemNowMs } from "@comis/core";
+import { parseConfigPaths, systemGetEnv, systemNowMs } from "@comis/core";
 import { info, warn, error, json } from "../output/format.js";
 import { ExitCode } from "../util/exit-codes.js";
 import { resolveOfflineDataDir } from "../util/offline-obs.js";
@@ -33,15 +33,14 @@ import { generateSupportBundle } from "../support-bundle/generate.js";
  * Resolve default config paths from COMIS_CONFIG_PATHS or the standard
  * locations. The environment is read via `systemGetEnv` (the sanctioned env
  * reader — never a raw env global) so the globals architecture test passes, and
- * the value is split on ":" exactly as the daemon and the doctor command split
+ * the value is parsed exactly as the daemon and doctor commands parse
  * it. When the variable is unset, the standard candidate files that exist on
  * disk are used.
  */
 function resolveDefaultConfigPaths(): string[] {
   const envPaths = systemGetEnv("COMIS_CONFIG_PATHS");
-  if (envPaths) {
-    return envPaths.split(":").filter((p) => p.length > 0);
-  }
+  const configuredPaths = parseConfigPaths(envPaths);
+  if (configuredPaths.length > 0) return configuredPaths;
   const candidates = [
     os.homedir() + "/.comis/config.yaml",
     os.homedir() + "/.comis/config.local.yaml",
@@ -98,8 +97,8 @@ export function registerSupportBundleCommand(program: Command): void {
 
       // The window must be a positive number of hours. A non-numeric or
       // non-positive value would otherwise ride through as NaN/≤0 with no
-      // feedback to the operator and misbehave the moment a fleet read consumes
-      // it — reject it at the boundary (the fleet window is likewise constrained
+      // feedback to the operator and misbehave the moment a system read consumes
+      // it — reject it at the boundary (the system window is likewise constrained
       // to a positive number).
       const sinceHours = Number.parseFloat(options.since);
       if (!Number.isFinite(sinceHours) || sinceHours <= 0) {

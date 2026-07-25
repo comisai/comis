@@ -61,7 +61,6 @@ const mockCreateFileStateTracker = vi.hoisted(() => vi.fn(() => ({
 })));
 const mockSanitizeLogString = vi.hoisted(() => vi.fn((s: string) => s));
 const mockTryGetContext = vi.hoisted(() => vi.fn(() => undefined));
-const mockParseFormattedSessionKey = vi.hoisted(() => vi.fn(() => undefined));
 const mockSessionKeyToPath = vi.hoisted(() => vi.fn((_key: unknown, baseDir: string) => baseDir + "/tenant/channel/user.jsonl"));
 const mockSkillsConfigSchemaParse = vi.hoisted(() => vi.fn(() => ({
   builtinTools: { browser: false, exec: false, process: false },
@@ -141,7 +140,6 @@ vi.mock("@comis/core", () => ({
   enterConfigMutationFence: vi.fn(),
   leaveConfigMutationFence: vi.fn(),
   tryGetContext: mockTryGetContext,
-  parseFormattedSessionKey: mockParseFormattedSessionKey,
   // makeCreateAgentRpcCall (via assembleToolsForAgent) resolves the
   // agent's held capability set with resolveAutonomy(autonomy).capabilities.
   // This wiring test never exercises the cap set, so a zero-cap resolved shape

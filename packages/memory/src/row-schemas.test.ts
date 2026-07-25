@@ -162,6 +162,9 @@ describe("row-schemas — MemoryRowSchema occurred_at column", () => {
       tenant_id: "default",
       agent_id: "default",
       user_id: "user-1",
+      visibility: "agent-shared",
+      conversation_ref: null,
+      principal_id: null,
       content: "test",
       trust_level: "learned",
       memory_type: "semantic",
@@ -243,13 +246,18 @@ describe("row-schemas — internal DB row runtime parses", () => {
       id: 1,
       timestamp: 1700000000000,
       trace_id: "trace-1",
+      tenant_id: "tenant-1",
       agent_id: "agent-1",
+      conversation_ref: "cv_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      destination_endpoint: "telegram:tg-1",
       channel_type: "telegram",
       channel_id: "tg-1",
       session_key: "sess-1",
-      status: "delivered",
+      status: "success",
       latency_ms: 200,
       error_message: "",
+      failure_stage: null,
+      error_kind: null,
       message_preview: "hello",
       tool_calls: 0,
       llm_calls: 1,
@@ -257,6 +265,179 @@ describe("row-schemas — internal DB row runtime parses", () => {
       cost_total: 0.001,
     };
     expect(DeliveryDbRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("DeliveryDbRowSchema accepts unknown call counts as null", () => {
+    const sample = {
+      id: 1,
+      timestamp: 1700000000000,
+      trace_id: "trace-1",
+      tenant_id: "tenant-1",
+      agent_id: "agent-1",
+      conversation_ref: "cv_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      destination_endpoint: "telegram:tg-1",
+      channel_type: "telegram",
+      channel_id: "tg-1",
+      session_key: "sess-1",
+      status: "timeout",
+      latency_ms: 200,
+      error_message: "",
+      failure_stage: "execution",
+      error_kind: "timeout",
+      message_preview: "",
+      tool_calls: null,
+      llm_calls: null,
+      tokens_total: 0,
+      cost_total: 0,
+    };
+    expect(DeliveryDbRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it.each([
+    ["id", -1],
+    ["timestamp", -1],
+    ["latency_ms", -1],
+    ["tool_calls", -1],
+    ["llm_calls", -1],
+    ["tokens_total", -1],
+    ["cost_total", -0.001],
+  ] as const)("DeliveryDbRowSchema rejects negative %s values", (field, value) => {
+    const sample = {
+      id: 1,
+      timestamp: 1700000000000,
+      trace_id: "trace-1",
+      agent_id: "agent-1",
+      channel_type: "telegram",
+      channel_id: "tg-1",
+      session_key: "sess-1",
+      status: "success",
+      latency_ms: 200,
+      error_message: "",
+      failure_stage: null,
+      error_kind: null,
+      message_preview: "",
+      tool_calls: 0,
+      llm_calls: 1,
+      tokens_total: 50,
+      cost_total: 0.001,
+      [field]: value,
+    };
+
+    expect(DeliveryDbRowSchema.safeParse(sample).success).toBe(false);
+  });
+
+  it.each([
+    ["id", 1.5],
+    ["timestamp", 1700000000000.5],
+    ["tool_calls", 0.5],
+    ["llm_calls", 1.5],
+    ["tokens_total", 50.5],
+  ] as const)("DeliveryDbRowSchema rejects fractional %s counts", (field, value) => {
+    const sample = {
+      id: 1,
+      timestamp: 1700000000000,
+      trace_id: "trace-1",
+      agent_id: "agent-1",
+      channel_type: "telegram",
+      channel_id: "tg-1",
+      session_key: "sess-1",
+      status: "success",
+      latency_ms: 200.5,
+      error_message: "",
+      failure_stage: null,
+      error_kind: null,
+      message_preview: "",
+      tool_calls: 0,
+      llm_calls: 1,
+      tokens_total: 50,
+      cost_total: 0.0015,
+      [field]: value,
+    };
+
+    expect(DeliveryDbRowSchema.safeParse(sample).success).toBe(false);
+  });
+
+  it.each([
+    "id",
+    "timestamp",
+    "latency_ms",
+    "tool_calls",
+    "llm_calls",
+    "tokens_total",
+    "cost_total",
+  ] as const)("DeliveryDbRowSchema rejects non-finite %s values", (field) => {
+    const sample = {
+      id: 1,
+      timestamp: 1700000000000,
+      trace_id: "trace-1",
+      agent_id: "agent-1",
+      channel_type: "telegram",
+      channel_id: "tg-1",
+      session_key: "sess-1",
+      status: "success",
+      latency_ms: 200,
+      error_message: "",
+      failure_stage: null,
+      error_kind: null,
+      message_preview: "",
+      tool_calls: 0,
+      llm_calls: 1,
+      tokens_total: 50,
+      cost_total: 0.001,
+      [field]: Number.POSITIVE_INFINITY,
+    };
+
+    expect(DeliveryDbRowSchema.safeParse(sample).success).toBe(false);
+  });
+
+  it("DeliveryDbRowSchema keeps empty persisted strings valid", () => {
+    const sample = {
+      id: 0,
+      timestamp: 0,
+      trace_id: "",
+      tenant_id: "",
+      agent_id: "",
+      conversation_ref: "",
+      destination_endpoint: "",
+      channel_type: "",
+      channel_id: "",
+      session_key: "",
+      status: "filtered",
+      latency_ms: 0,
+      error_message: "",
+      failure_stage: null,
+      error_kind: null,
+      message_preview: "",
+      tool_calls: null,
+      llm_calls: null,
+      tokens_total: 0,
+      cost_total: 0,
+    };
+
+    expect(DeliveryDbRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("DeliveryDbRowSchema rejects lifecycle statuses outside the closed union", () => {
+    const sample = {
+      id: 1,
+      timestamp: 1700000000000,
+      trace_id: "trace-1",
+      agent_id: "agent-1",
+      channel_type: "telegram",
+      channel_id: "tg-1",
+      session_key: "sess-1",
+      status: "delivered",
+      latency_ms: 200,
+      error_message: "",
+      failure_stage: null,
+      error_kind: null,
+      message_preview: "",
+      tool_calls: null,
+      llm_calls: null,
+      tokens_total: 0,
+      cost_total: 0,
+    };
+    expect(DeliveryDbRowSchema.safeParse(sample).success).toBe(false);
   });
 
   it("DiagnosticDbRowSchema parses a complete diagnostics row", () => {
@@ -336,11 +517,15 @@ describe("row-schemas — internal DB row runtime parses", () => {
   it("DeliveryStatsDbRowSchema parses a delivery-stats summary row", () => {
     const sample = {
       total: 100,
-      success: 90,
+      attempted: 97,
+      success: 89,
       error: 5,
       timeout: 3,
       filtered: 2,
+      aborted: 1,
+      attempted_latency_ms: 14550,
       avg_latency_ms: 150,
+      invalid_rows: 0,
     };
     expect(DeliveryStatsDbRowSchema.safeParse(sample).success).toBe(true);
   });
@@ -485,7 +670,10 @@ describe("row-schemas — internal DB row runtime parses", () => {
   it("DeliveryMirrorDbRowSchema parses a delivery_mirror row with acknowledged_at null", () => {
     const sample = {
       id: "del-1",
-      session_key: "sess-1",
+      tenant_id: "tenant-1",
+      agent_id: "agent-1",
+      conversation_ref: "cv_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      destination_endpoint: "telegram:tg-1",
       text: "hello",
       media_urls: "[]",
       channel_type: "telegram",
@@ -506,6 +694,9 @@ describe("row-schemas — internal DB row runtime parses", () => {
       channel_type: "telegram",
       channel_id: "tg-1",
       tenant_id: "tenant-1",
+      agent_id: "agent-1",
+      conversation_ref: "cv_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      destination_endpoint: "telegram:tg-1",
       options_json: "{}",
       origin: "agent",
       status: "pending",
@@ -809,7 +1000,7 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
 
   const fullLcdMessageRow = {
     id: "msg-1",
-    conversation_id: "conv-1",
+    conversation_ref: "cv_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     tenant_id: "tenant-1",
     agent_id: "agent-1",
     session_key: "sess-1",
@@ -890,7 +1081,7 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
 
   const fullLcdSummaryRow = {
     summary_id: "sum-1",
-    conversation_id: "conv-1",
+    conversation_ref: "cv_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     tenant_id: "tenant-1",
     agent_id: "agent-1",
     session_key: "sess-1",
@@ -968,7 +1159,7 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
 
   const fullLcdContextItemRow = {
     id: "ci-1",
-    conversation_id: "conv-1",
+    conversation_ref: "cv_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     tenant_id: "tenant-1",
     agent_id: "agent-1",
     session_key: "sess-1",

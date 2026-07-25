@@ -36,6 +36,18 @@ const MOCK_SESSIONS = [
   },
 ];
 
+const MOCK_CONVERSATION_REFS = ["conversation-default", "conversation-coding"] as const;
+const MOCK_SESSION_KINDS = ["dm", "group"] as const;
+const MOCK_SESSION_ROWS = MOCK_SESSIONS.map((session, index) => ({
+  conversationRef: MOCK_CONVERSATION_REFS[index] ?? "conversation-unknown",
+  agentId: session.agentId,
+  kind: MOCK_SESSION_KINDS[index] ?? "dm",
+  messageCount: session.messageCount,
+  totalTokens: session.totalTokens,
+  createdAt: session.createdAt,
+  updatedAt: session.lastActiveAt,
+}));
+
 /** Mock session detail response matching getSessionDetail return type */
 const MOCK_SESSION_DETAIL = {
   session: MOCK_SESSIONS[0],
@@ -51,6 +63,10 @@ const MOCK_SESSION_DETAIL = {
       timestamp: Date.now() - 3600000,
     },
   ],
+  total: 2,
+  offset: 0,
+  limit: 20,
+  hasMore: false,
 };
 
 /**
@@ -61,27 +77,35 @@ const MOCK_SESSION_DETAIL = {
 const SESSION_RPC_HANDLERS: Record<string, unknown> = {
   ...DEFAULT_RPC_HANDLERS,
   "session.list": {
-    sessions: MOCK_SESSIONS.map((s) => ({
-      sessionKey: s.key,
-      agentId: s.agentId,
-      kind: s.channelType,
-      messageCount: s.messageCount,
-      totalTokens: s.totalTokens,
-      inputTokens: s.inputTokens,
-      outputTokens: s.outputTokens,
-      toolCalls: s.toolCalls,
-      compactions: s.compactions,
-      resetCount: s.resetCount,
-      createdAt: s.createdAt,
-      updatedAt: s.lastActiveAt,
-    })),
+    sessions: MOCK_SESSION_ROWS,
     total: MOCK_SESSIONS.length,
   },
   "session.history": MOCK_SESSION_DETAIL,
-  "session.reset": { reset: 1 },
-  "session.compact": { success: true },
-  "session.delete": { success: true },
-  "session.export": '{"role":"user","content":"Hello"}',
+  "session.reset": {
+    conversationRef: MOCK_CONVERSATION_REFS[0],
+    reset: true,
+    previousMessageCount: 2,
+  },
+  "session.compact": {
+    conversationRef: MOCK_CONVERSATION_REFS[0],
+    messageCount: 2,
+    estimatedTokens: 20,
+    compactionTriggered: true,
+    instructions: null,
+  },
+  "session.delete": {
+    conversationRef: MOCK_CONVERSATION_REFS[0],
+    deleted: true,
+    transcript: { messages: [], metadata: {}, messageCount: 0 },
+  },
+  "session.export": {
+    conversationRef: MOCK_CONVERSATION_REFS[0],
+    messages: [],
+    metadata: {},
+    messageCount: 0,
+    createdAt: 0,
+    updatedAt: 0,
+  },
 };
 
 /**
@@ -95,7 +119,7 @@ async function mockSessionRoutes(page: Page): Promise<void> {
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(MOCK_SESSIONS),
+        body: JSON.stringify(MOCK_SESSION_ROWS),
       });
     }
     return route.continue();
@@ -172,8 +196,7 @@ async function mockSessionRoutes(page: Page): Promise<void> {
 }
 
 /**
- * Login flow for session detail view -- navigates to /#/sessions/:key
- * then waits for ic-session-detail instead of ic-dashboard.
+ * Login flow for session detail view.
  */
 async function loginForDetail(page: Page): Promise<void> {
   await page.locator("ic-app").waitFor();
@@ -181,7 +204,6 @@ async function loginForDetail(page: Page): Promise<void> {
   const tokenInput = page.locator("ic-app").getByPlaceholder("Gateway bearer token");
   await tokenInput.fill("test-token-123");
   await page.locator("ic-app").getByRole("button", { name: "Connect" }).click();
-  // When URL hash is sessions/:key, router resolves to ic-session-detail
   await expect(page.locator("ic-session-detail")).toBeVisible({ timeout: 10_000 });
 }
 
@@ -206,12 +228,11 @@ test.describe("Session list view", () => {
     // Verify first session data -- scope to the ic-session-list table area.
     const sessionList = sessionView.locator("ic-session-list");
     await expect(sessionList.getByText("agent-default")).toBeVisible();
-    // Channel name renders inside an ic-tag chip; scope to that.
-    await expect(sessionList.locator("ic-tag").filter({ hasText: "telegram" }).first()).toBeVisible();
+    await expect(sessionList.locator("ic-tag").filter({ hasText: "dm" }).first()).toBeVisible();
 
     // Verify second session data (use exact cell match to avoid key truncation collision)
     await expect(sessionList.getByRole("cell", { name: "agent-coding", exact: true })).toBeVisible();
-    await expect(sessionList.locator("ic-tag").filter({ hasText: "discord" }).first()).toBeVisible();
+    await expect(sessionList.locator("ic-tag").filter({ hasText: "group" }).first()).toBeVisible();
   });
 
   test("session list shows message count", async ({ page }) => {
@@ -231,17 +252,15 @@ test.describe("Session list view", () => {
     // Find search input by its role (ic-search-input renders role="searchbox")
     const searchBox = sessionView.getByRole("searchbox");
     await expect(searchBox).toBeVisible();
-    await searchBox.fill("telegram");
+    await searchBox.fill("agent-coding");
 
     // Wait for debounce (300ms default) + re-render
     await page.waitForTimeout(500);
 
-    // Verify telegram session is still visible (channel tag in row).
     const sessionList = sessionView.locator("ic-session-list");
-    await expect(sessionList.locator("ic-tag").filter({ hasText: "telegram" }).first()).toBeVisible();
+    await expect(sessionList.locator("ic-tag").filter({ hasText: "group" }).first()).toBeVisible();
 
-    // Verify discord session is no longer visible.
-    await expect(sessionList.locator("ic-tag").filter({ hasText: "discord" })).toHaveCount(0);
+    await expect(sessionList.locator("ic-tag").filter({ hasText: "dm" })).toHaveCount(0);
   });
 
   test("clicking session navigates to detail", async ({ page }) => {
@@ -262,7 +281,7 @@ test.describe("Session detail view", () => {
     await mockApiRoutes(page);
     await mockRpcRoutes(page, SESSION_RPC_HANDLERS);
     await mockSessionRoutes(page);
-    await page.goto("/#/sessions/agent-default:telegram:12345");
+    await page.goto(`/#/sessions/${MOCK_CONVERSATION_REFS[0]}`);
     await loginForDetail(page);
   });
 

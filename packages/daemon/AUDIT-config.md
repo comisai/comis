@@ -3,7 +3,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts`
 **Construction site:** `packages/daemon/src/daemon.ts` (`buildRpcDispatchDeps`)
-**Field count:** 12 (8 required + 4 optional + 0 stale-fallback)
+**Field count:** 13 (8 required + 5 optional + 0 stale-fallback)
 **Co-location:** This audit doc lives alongside @comis/daemon package source. The `files: ["dist", "bundled-skills"]` entry in `packages/daemon/package.json` excludes it from the npm tarball.
 
 ## Field Classification
@@ -24,6 +24,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | secretStore | required | — | packages/daemon/src/api/types.ts:380 |
 | mutableSecretManager | required | — | packages/daemon/src/api/types.ts:384 |
 | auditEnabled | optional | config.patch RPC handler treats undefined as default-true (`!== false` semantics); the config-audit JSONL append at config-write.ts:124+395 runs. Only an explicit `false` skips both halves of the two-phase audit hook. Wired from `container.config.diagnostics?.configAudit?.enabled !== false` at rpc-dispatch.ts:109+ | packages/daemon/src/api/types.ts:388 |
+| onConfigPersisted | optional | persisted config remains authoritative, but live proactive scheduler containment waits for the daemon restart instead of being applied synchronously | packages/daemon/src/api/types.ts:510 |
 
 ## Removed Fields (stale-fallback — deleted)
 
@@ -32,7 +33,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 ## Summary
 
 - **Pre-audit count:** 10
-- **Final count:** 12 (8 required + 4 optional)
+- **Final count:** 13 (8 required + 5 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

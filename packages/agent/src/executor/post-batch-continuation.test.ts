@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, type Mock } from "vitest";
 import { runPostBatchContinuation } from "./post-batch-continuation.js";
 import type { ComisLogger } from "@comis/core";
+import { allowProviderDispatch } from "./provider-dispatch.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -30,23 +31,23 @@ function mockLogger(): ComisLogger {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * Build a mock session whose `followUp` is a `vi.fn()` that, on each call,
- * appends a new assistant message containing `followUpResponses[i]` to
+ * Build a mock session whose `prompt` is a `vi.fn()` that, on each call,
+ * appends a new assistant message containing `continuationResponses[i]` to
  * `session.messages`. When the response is the empty string, an empty
- * assistant turn is appended (to simulate a still-silent followUp).
+ * assistant turn is appended (to simulate a still-silent continuation).
  *
  * `getVisibleAssistantText` (passed into the handler) reads the most recent
  * assistant turn's first text block, mirroring how the production caller
  * (output-escalation.ts) reads recovered text.
  */
-function makeSession(messages: any[], followUpResponses: string[]) {
+function makeSession(messages: any[], continuationResponses: string[]) {
   const session: any = {
     messages,
-    followUp: vi.fn(),
+    prompt: vi.fn(),
   };
   let callIdx = 0;
-  session.followUp.mockImplementation(async () => {
-    const text = followUpResponses[callIdx] ?? "";
+  session.prompt.mockImplementation(async () => {
+    const text = continuationResponses[callIdx] ?? "";
     callIdx++;
     if (text === "") {
       session.messages.push({ role: "assistant", content: [] });
@@ -139,6 +140,7 @@ describe("runPostBatchContinuation", () => {
       logger,
       agentId: "agent-test",
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(result.ok).toBe(true);
@@ -151,8 +153,8 @@ describe("runPostBatchContinuation", () => {
       priorToolCallCount: 3,
       priorToolNames: ["agents_manage"],
     });
-    expect(session.followUp).toHaveBeenCalledTimes(1);
-    const directive = session.followUp.mock.calls[0][0] as string;
+    expect(session.prompt).toHaveBeenCalledTimes(1);
+    const directive = session.prompt.mock.calls[0][0] as string;
     expect(directive).toContain("post-batch continuation");
     expect(directive).toContain("3 successful tool calls");
     expect(directive).toContain("agents_manage");
@@ -168,6 +170,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: true, maxRetries: 2 },
       logger: mockLogger(),
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(result.ok).toBe(true);
@@ -175,10 +178,10 @@ describe("runPostBatchContinuation", () => {
     expect(result.value.recovered).toBe(true);
     expect(result.value.outcome).toBe("recovered");
     expect(result.value.priorToolCallCount).toBe(2);
-    expect(session.followUp).toHaveBeenCalledTimes(1);
+    expect(session.prompt).toHaveBeenCalledTimes(1);
   });
 
-  it("no tool calls in window → no_match (followUp NOT called)", async () => {
+  it("no tool calls in window returns no_match without a continuation prompt", async () => {
     /* eslint-disable @typescript-eslint/no-explicit-any */
     const messages: any[] = [
       { role: "user", content: [{ type: "text", text: "hi" }] },
@@ -193,6 +196,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: true, maxRetries: 2 },
       logger: mockLogger(),
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(result.ok).toBe(true);
@@ -204,7 +208,7 @@ describe("runPostBatchContinuation", () => {
       priorToolCallCount: 0,
       priorToolNames: [],
     });
-    expect(session.followUp).not.toHaveBeenCalled();
+    expect(session.prompt).not.toHaveBeenCalled();
   });
 
   it("final assistant turn has visible text → no_match", async () => {
@@ -229,16 +233,17 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: true, maxRetries: 2 },
       logger: mockLogger(),
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.recovered).toBe(false);
     expect(result.value.outcome).toBe("no_match");
-    expect(session.followUp).not.toHaveBeenCalled();
+    expect(session.prompt).not.toHaveBeenCalled();
   });
 
-  it("multi-shot retry: first followUp empty, second returns text", async () => {
+  it("multi-shot retry recovers when the second continuation returns text", async () => {
     const messages = emptyAfterToolBatch(1);
     const session = makeSession(messages, ["", "Recovered on attempt 2"]);
 
@@ -248,6 +253,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: true, maxRetries: 2 },
       logger: mockLogger(),
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(result.ok).toBe(true);
@@ -258,10 +264,10 @@ describe("runPostBatchContinuation", () => {
       outcome: "recovered",
       response: "Recovered on attempt 2",
     });
-    expect(session.followUp).toHaveBeenCalledTimes(2);
+    expect(session.prompt).toHaveBeenCalledTimes(2);
   });
 
-  it("max retries exhausted: all followUps empty", async () => {
+  it("max retries are exhausted when every continuation stays empty", async () => {
     const messages = emptyAfterToolBatch(2);
     const session = makeSession(messages, ["", ""]);
 
@@ -271,6 +277,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: true, maxRetries: 2 },
       logger: mockLogger(),
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(result.ok).toBe(true);
@@ -281,7 +288,7 @@ describe("runPostBatchContinuation", () => {
       outcome: "max_attempts_exhausted",
     });
     // Critically: exactly 2 calls, NOT 3.
-    expect(session.followUp).toHaveBeenCalledTimes(2);
+    expect(session.prompt).toHaveBeenCalledTimes(2);
   });
 
   it("structured Pino INFO logs: decision-log on entry + per-attempt log", async () => {
@@ -296,6 +303,7 @@ describe("runPostBatchContinuation", () => {
       logger,
       agentId: "agent-7",
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     const infoCalls = (logger.info as Mock).mock.calls;
@@ -340,6 +348,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: false, maxRetries: 2 },
       logger: mockLogger(),
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
     expect(result8a.ok).toBe(true);
     if (!result8a.ok) return;
@@ -348,7 +357,7 @@ describe("runPostBatchContinuation", () => {
       attempts: 0,
       outcome: "disabled",
     });
-    expect(session8a.followUp).not.toHaveBeenCalled();
+    expect(session8a.prompt).not.toHaveBeenCalled();
 
     // 8b: maxRetries=0
     const messages8b = emptyAfterToolBatch(2);
@@ -359,6 +368,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: true, maxRetries: 0 },
       logger: mockLogger(),
       getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
     });
     expect(result8b.ok).toBe(true);
     if (!result8b.ok) return;
@@ -367,15 +377,15 @@ describe("runPostBatchContinuation", () => {
       attempts: 0,
       outcome: "disabled",
     });
-    expect(session8b.followUp).not.toHaveBeenCalled();
+    expect(session8b.prompt).not.toHaveBeenCalled();
   });
 
-  it("returns err({kind:'followup_error'}) when session.followUp throws", async () => {
+  it("returns err({kind:'followup_error'}) when the continuation prompt rejects", async () => {
     const messages = emptyAfterToolBatch(2);
     /* eslint-disable @typescript-eslint/no-explicit-any */
     const session: any = {
       messages,
-      followUp: vi.fn().mockRejectedValueOnce(new Error("network down")),
+      prompt: vi.fn().mockRejectedValueOnce(new Error("network down")),
     };
     /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -385,6 +395,7 @@ describe("runPostBatchContinuation", () => {
       config: { enabled: true, maxRetries: 2 },
       logger: mockLogger(),
       getVisibleAssistantText: () => "",
+      guardProviderDispatch: allowProviderDispatch,
     });
 
     expect(result.ok).toBe(false);

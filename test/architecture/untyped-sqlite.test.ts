@@ -11,24 +11,18 @@
  * The rule scope is ONLY `packages/memory/src/` — other packages may
  * have legitimate SQLite use via external libraries with their own typing.
  *
- * The classifier is a regex (no AST/TypeChecker needed). The test
- * validates the regex against positive/negative fixtures BEFORE
- * scanning production source.
- *
- * Line-extraction note: `findInSourceFiles` returns matched FILES but
- * not match LINES. To produce per-line violations, the test reads each
- * matched file with `readFileSync`, splits on newlines, and tests each
- * line against the regex. The test's allowlist key is `{file, symbol}`
- * (the type name cast TO).
+ * The classifier walks TypeScript `as` expressions, so formatting and the
+ * spelling of the asserted type cannot hide a raw row cast. The test validates
+ * it against positive/negative fixtures before scanning production source.
  *
  * @module
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { findInSourceFiles } from "../support/source-grep.js";
+import * as ts from "typescript";
 import { formatViolations } from "../support/architecture-helpers.js";
 import { untypedSqliteAllowlist } from "../support/architecture-allowlist.js";
 
@@ -38,27 +32,12 @@ const PACKAGES_ROOT = resolve(REPO_ROOT, "packages");
 const MEMORY_SRC = resolve(PACKAGES_ROOT, "memory", "src");
 const FIXTURES_DIR = resolve(here, "fixtures");
 
-/**
- * Matches `<expr>.all(...) as <Type>[]?` or `<expr>.get(...) as <Type>[]?`.
- *
- * Regex anatomy:
- *   \.(all|get)        — method call on prepared statement
- *   \(                 — open paren
- *   [^)]*              — any non-paren args (single-line; multi-line
- *                        args would need `[\s\S]`, but the current cast
- *                        sites are all single-line)
- *   \)                 — close paren
- *   \s+as\s+           — TS `as` cast keyword
- *   \w+                — type name (one or more word chars)
- *   (\[\])?            — optional [] array suffix
- */
-const UNTYPED_SQLITE_RE = /\.(all|get)\([^)]*\)\s+as\s+(\w+)(\[\])?/;
-
 interface UntypedSqliteHit {
   readonly file: string; // absolute path
   readonly line: number; // 1-indexed
+  readonly column: number; // 1-indexed
   readonly symbol: string; // captured type name
-  readonly snippet: string; // the offending line text (trimmed)
+  readonly snippet: string; // the offending expression, whitespace-normalized
 }
 
 function repoRelative(absPath: string): string {
@@ -67,53 +46,72 @@ function repoRelative(absPath: string): string {
     : absPath;
 }
 
-/**
- * Extract per-line hits from a single file. Returns one UntypedSqliteHit
- * per matched line.
- */
+function castTargetSymbol(type: ts.TypeNode, sourceFile: ts.SourceFile): string {
+  if (ts.isArrayTypeNode(type)) return castTargetSymbol(type.elementType, sourceFile);
+  if (ts.isTypeLiteralNode(type)) return "<inline-object>";
+  if (ts.isUnionTypeNode(type)) {
+    const concrete = type.types.find((member) => member.kind !== ts.SyntaxKind.UndefinedKeyword);
+    return concrete ? castTargetSymbol(concrete, sourceFile) : "<union>";
+  }
+  if (ts.isTypeReferenceNode(type)) return type.typeName.getText(sourceFile);
+  return type.getText(sourceFile).replace(/\s+/g, " ");
+}
+
+function rawRowMethod(expression: ts.Expression): "all" | "get" | undefined {
+  let current = expression;
+  while (ts.isParenthesizedExpression(current)) current = current.expression;
+  if (!ts.isCallExpression(current) || !ts.isPropertyAccessExpression(current.expression)) {
+    return undefined;
+  }
+  const method = current.expression.name.text;
+  return method === "all" || method === "get" ? method : undefined;
+}
+
+/** Extract raw SQLite row casts from a single TypeScript source file. */
 function findHitsInFile(file: string): UntypedSqliteHit[] {
   const content = readFileSync(file, "utf8");
-  const lines = content.split(/\r?\n/);
+  const sourceFile = ts.createSourceFile(file, content, ts.ScriptTarget.ES2023, true);
   const hits: UntypedSqliteHit[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    // Clone the regex per line to avoid lastIndex state (mirrors the
-    // source-grep.ts guard).
-    const re = new RegExp(UNTYPED_SQLITE_RE.source);
-    const match = re.exec(line);
-    if (match) {
-      // Skip string-literal occurrences: if the match starts INSIDE a
-      // string delimited by `"` or `'` or backtick, skip. (Trivial
-      // heuristic — comments and string literals containing the pattern
-      // are caught by counting unescaped quote chars before the match
-      // start.) Edge case: chained .get() as A | B matches the first
-      // word-char identifier (which is correct — the symbol field records
-      // "A" only; the `|` truncation is intentional for the allowlist
-      // symbol field).
-      const beforeMatch = line.slice(0, match.index);
-      const isComment =
-        /^\s*\/\//.test(line) || /^\s*\*\s/.test(line);
-      if (isComment) continue;
-
-      const dq = (beforeMatch.match(/"/g) ?? []).length;
-      const sq = (beforeMatch.match(/'/g) ?? []).length;
-      const bt = (beforeMatch.match(/`/g) ?? []).length;
-      // Inside a string if odd-count of any unescaped quote precedes.
-      if (dq % 2 === 1 || sq % 2 === 1 || bt % 2 === 1) continue;
-
+  function visit(node: ts.Node): void {
+    if (ts.isAsExpression(node) && rawRowMethod(node.expression) !== undefined) {
+      const location = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
       hits.push({
         file,
-        line: i + 1,
-        symbol: match[2] ?? "<unknown>",
-        snippet: line.trim(),
+        line: location.line + 1,
+        column: location.character + 1,
+        symbol: castTargetSymbol(node.type, sourceFile),
+        snippet: node.getText(sourceFile).replace(/\s+/g, " "),
       });
     }
+    ts.forEachChild(node, visit);
   }
+  visit(sourceFile);
   return hits;
 }
 
+function listProductionFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name.startsWith(".") || entry.isSymbolicLink()) continue;
+    const full = resolve(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!["__tests__", "__snapshots__", "fixtures"].includes(entry.name)) {
+        listProductionFiles(full, out);
+      }
+    } else if (
+      entry.isFile() &&
+      entry.name.endsWith(".ts") &&
+      !entry.name.endsWith(".test.ts") &&
+      !entry.name.endsWith(".generated.ts") &&
+      !entry.name.endsWith(".d.ts")
+    ) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
 describe("untyped-sqlite — packages/memory/src/ forbids db.prepare(...).all/get(...) as Type", () => {
-  it("fixture validation: positive fixture produces ≥5 violations, negative fixture produces 0", () => {
+  it("fixture validation detects multiline and inline-object casts without false positives", () => {
     // Validate classifier correctness BEFORE scanning production source.
     // This is the analog of `globals-positive.ts` / `globals-negative.ts`
     // assertions for the simpler regex-based classifier.
@@ -131,8 +129,9 @@ describe("untyped-sqlite — packages/memory/src/ forbids db.prepare(...).all/ge
 
     expect(
       positiveHits.length,
-      `untyped-sqlite-positive fixture must produce ≥5 violations (got ${positiveHits.length})`,
-    ).toBeGreaterThanOrEqual(5);
+      `untyped-sqlite-positive fixture must produce exactly 9 violations, including multiline and inline-object casts (got ${positiveHits.length})`,
+    ).toBe(9);
+    expect(positiveHits.filter((hit) => hit.symbol === "<inline-object>")).toHaveLength(2);
 
     expect(
       negativeHits,
@@ -142,6 +141,7 @@ describe("untyped-sqlite — packages/memory/src/ forbids db.prepare(...).all/ge
         violations: negativeHits.map((h) => ({
           file: repoRelative(h.file),
           line: h.line,
+          column: h.column,
           snippet: h.snippet,
         })),
         suggestedFix:
@@ -153,16 +153,8 @@ describe("untyped-sqlite — packages/memory/src/ forbids db.prepare(...).all/ge
   });
 
   it("no NEW untyped-sqlite cast in packages/memory/src/ beyond untypedSqliteAllowlist", () => {
-    const result = findInSourceFiles({
-      rootDir: MEMORY_SRC,
-      needle: UNTYPED_SQLITE_RE,
-      excludeFileSuffixes: [".test.ts"],
-    });
-
-    const violations: UntypedSqliteHit[] = [];
-    for (const matchedFile of result.matches) {
-      violations.push(...findHitsInFile(matchedFile));
-    }
+    const productionFiles = listProductionFiles(MEMORY_SRC);
+    const violations = productionFiles.flatMap(findHitsInFile);
 
     // Allowlist key shape: {file, symbol}. A single file may have
     // multiple cast sites for different types, so per-symbol
@@ -183,6 +175,7 @@ describe("untyped-sqlite — packages/memory/src/ forbids db.prepare(...).all/ge
         violations: newViolations.map((v) => ({
           file: repoRelative(v.file),
           line: v.line,
+          column: v.column,
           snippet: `${v.snippet}  (cast target: ${v.symbol})`,
         })),
         suggestedFix:
@@ -196,8 +189,8 @@ describe("untyped-sqlite — packages/memory/src/ forbids db.prepare(...).all/ge
 
     // Sanity: scan walked at least one production file in memory/src/.
     expect(
-      result.checkedFiles,
-      "sanity: findInSourceFiles walked at least one production file in packages/memory/src/",
+      productionFiles.length,
+      "sanity: the AST classifier walked at least one production file in packages/memory/src/",
     ).toBeGreaterThan(0);
   });
 });

@@ -54,7 +54,7 @@ describe("observability-domain contracts", () => {
     // obs.explain + obs.diagnostics are scopes:["rpc"] — the obs_query agent tool's
     // self-diagnose path ("why did my session degrade?") needs them agent-reachable.
     // Read-only + scrubbed (zero secret residency), single-tenant. The
-    // daemon-wide/sensitive obs contracts (fleet/audit/billing/channels/delivery)
+    // daemon-wide/sensitive obs contracts (system/audit/billing/channels/delivery)
     // stay admin.
     const SELF_OBS = new Set(["obs.explain", "obs.diagnostics"]);
     for (const c of OBSERVABILITY_CONTRACTS) {
@@ -89,13 +89,13 @@ describe("observability-domain contracts", () => {
       "obs.diagnostics",
       // Incident-report assembler.
       "obs.explain",
-      // Cross-session fleet-health digest.
-      "obs.fleet.health",
       "obs.getCacheStats",
       "obs.reset",
       "obs.reset.table",
       // Live spend snapshot the kill-switch enforces.
       "obs.spend.snapshot",
+      // Cross-session system-health digest.
+      "obs.system.health",
       // SystemPromptReport surface.
       "obs.systemPromptReport.latest",
       "obs.systemPromptReport.list",
@@ -391,9 +391,16 @@ describe("observability-domain contracts", () => {
     expect(ObsChannelsGetContract.method).toBe("obs.channels.get");
   });
 
-  it("obs.channels.get: requires channelId", () => {
+  it("obs.channels.get: requires channelType and channelId", () => {
     expect(() => ObsChannelsGetContract.request.parse({})).toThrow();
+    expect(() => ObsChannelsGetContract.request.parse({ channelId: "ch-1" })).toThrow();
+    expect(() => ObsChannelsGetContract.request.parse({ channelType: "telegram" })).toThrow();
+    expect(() => ObsChannelsGetContract.request.parse({ channelType: "", channelId: "ch-1" })).toThrow();
     expect(() => ObsChannelsGetContract.request.parse({ channelId: "" })).toThrow();
+    expect(ObsChannelsGetContract.request.parse({
+      channelType: "telegram",
+      channelId: "ch-1",
+    })).toEqual({ channelType: "telegram", channelId: "ch-1" });
   });
 
   it("obs.channels.get: response accepts channel | null", () => {
@@ -423,13 +430,26 @@ describe("observability-domain contracts", () => {
 
   it("obs.delivery.recent: accepts filter params", () => {
     expect(() => ObsDeliveryRecentContract.request.parse({})).not.toThrow();
-    expect(() =>
+    expect(ObsDeliveryRecentContract.request.parse({ limit: 1 })).toEqual({ limit: 1 });
+    expect(
       ObsDeliveryRecentContract.request.parse({
         sinceMs: 60_000,
-        limit: 50,
+        limit: 10_000,
         channelId: "ch-1",
+        channelType: "telegram",
       }),
-    ).not.toThrow();
+    ).toEqual({
+      sinceMs: 60_000,
+      limit: 10_000,
+      channelId: "ch-1",
+      channelType: "telegram",
+    });
+  });
+
+  it("obs.delivery.recent: rejects limits outside the bounded integer range", () => {
+    for (const limit of [0, -1, 1.5, 10_001]) {
+      expect(() => ObsDeliveryRecentContract.request.parse({ limit })).toThrow();
+    }
   });
 
   it("obs.delivery.recent: response accepts deliveries array", () => {
@@ -443,12 +463,31 @@ describe("observability-domain contracts", () => {
             targetChannelType: "telegram",
             deliveredAt: Date.now(),
             latencyMs: 100,
-            success: true,
+            status: "success",
+            error: null,
             agentId: "a1",
+            sessionKey: "default:u1:ch1",
+            traceId: "trace-1",
+            toolCalls: 1,
+            llmCalls: 2,
+            tokensTotal: 30,
+            costTotal: 0.01,
+            failureStage: null,
+            errorKind: null,
+            steps: [],
+            evidence: "diagnostic",
           },
         ],
       }),
     ).not.toThrow();
+  });
+
+  it("obs.delivery.recent: rejects boolean-only delivery rows", () => {
+    expect(() =>
+      ObsDeliveryRecentContract.response.parse({
+        deliveries: [{ success: true }],
+      }),
+    ).toThrow();
   });
 
   // -------------------------------------------------------------------------
@@ -459,16 +498,26 @@ describe("observability-domain contracts", () => {
     expect(ObsDeliveryStatsContract.method).toBe("obs.delivery.stats");
   });
 
-  it("obs.delivery.stats: request is empty", () => {
+  it("obs.delivery.stats: accepts an optional bounded time window", () => {
     expect(() => ObsDeliveryStatsContract.request.parse({})).not.toThrow();
+    expect(ObsDeliveryStatsContract.request.parse({ sinceMs: 86_400_000 })).toEqual({
+      sinceMs: 86_400_000,
+    });
+    for (const sinceMs of [-1, 1.5, Number.POSITIVE_INFINITY]) {
+      expect(() => ObsDeliveryStatsContract.request.parse({ sinceMs })).toThrow();
+    }
   });
 
   it("obs.delivery.stats: parses the response shape", () => {
     expect(() =>
       ObsDeliveryStatsContract.response.parse({
         total: 15,
-        successes: 12,
-        failures: 3,
+        attempted: 13,
+        success: 12,
+        error: 1,
+        timeout: 0,
+        filtered: 1,
+        aborted: 1,
         avgLatencyMs: 167,
       }),
     ).not.toThrow();
@@ -478,8 +527,23 @@ describe("observability-domain contracts", () => {
     expect(() =>
       ObsDeliveryStatsContract.response.parse({
         total: "15",
-        successes: 12,
-        failures: 3,
+        attempted: 13,
+        success: 12,
+        error: 1,
+        timeout: 0,
+        filtered: 1,
+        aborted: 1,
+        avgLatencyMs: 167,
+      }),
+    ).toThrow();
+  });
+
+  it("obs.delivery.stats: rejects the ambiguous boolean summary shape", () => {
+    expect(() =>
+      ObsDeliveryStatsContract.response.parse({
+        total: 15,
+        success: 12,
+        error: 3,
         avgLatencyMs: 167,
       }),
     ).toThrow();

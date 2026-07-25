@@ -149,7 +149,6 @@ describe("createActivityStream (EventBus → ActivityEvent mapping)", () => {
       runId: "run-x",
       parentSessionKey: SESSION,
       agentId: AGENT,
-      task: "do work",
       timestamp: 1,
     });
     expect(received).toHaveLength(1);
@@ -170,8 +169,10 @@ describe("createActivityStream (EventBus → ActivityEvent mapping)", () => {
       toolName: "shell",
       action: "run",
       params: {},
+      tenantId: "tenant-a",
       agentId: AGENT,
-      sessionKey: SESSION,
+      conversationRef: SESSION,
+      resolvingPrincipalId: "principal-a",
       trustLevel: "external",
       createdAt: 1000,
       timeoutMs: 60000,
@@ -210,8 +211,10 @@ describe("createActivityStream (EventBus → ActivityEvent mapping)", () => {
       toolName: "shell",
       action: "run",
       params: {},
+      tenantId: "tenant-a",
       agentId: AGENT,
-      sessionKey: SESSION,
+      conversationRef: SESSION,
+      resolvingPrincipalId: "principal-a",
       trustLevel: "external",
       createdAt: 1000,
       timeoutMs: 60000,
@@ -409,7 +412,6 @@ describe("ActivityStream themed status markers", () => {
       runId: "run-themed",
       parentSessionKey: SESSION,
       agentId: AGENT,
-      task: "do work",
       timestamp: 1,
     });
     sub.unsubscribe();
@@ -455,7 +457,6 @@ describe("ActivityStream themed status markers", () => {
       runId: "run-complete",
       parentSessionKey: SESSION,
       agentId: AGENT,
-      task: "do work",
       timestamp: 1,
     });
     bus.emit("session:sub_agent_completed", {

@@ -15,7 +15,7 @@ import Database from "better-sqlite3";
 import { systemNowMs } from "@comis/core";
 import { initSchema } from "../schema.js";
 import { createObservabilityStore } from "./index.js";
-import { reduceFleetWindow } from "./fleet-window-rollup.js";
+import { reduceSystemWindow } from "./system-window-rollup.js";
 import { tokenUsageFromRow, type TokenUsageDbRow } from "./observability-row-shapes.js";
 import type {
   ObservabilityStore,
@@ -207,7 +207,7 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
     // A session's summary rows are per-EXECUTION snapshots (each execution
     // emits its own cost/turns/toolStats). Representing the session by its
     // latest row alone under-reports every additive field — observed live: a
-    // 4-execution session that spent ~$0.50 was fleet-reported at $0.03 (the
+    // 4-execution session that spent ~$0.50 was system-reported at $0.03 (the
     // final execution's cost), with toolStats {} despite 10 real tool calls.
     store.insertDiagnostic({
       timestamp: 1_000,
@@ -296,6 +296,43 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
     expect(r.costUsd).toBeCloseTo(0.3);
   });
 
+  it("resolves a pending background execution when its continuation later succeeds", () => {
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "s-background",
+      message: "session:summary",
+      details: summaryDetails({
+        degraded: true,
+        costUsd: 0.2,
+        turnCount: 2,
+        endReason: "background_pending",
+      }),
+    });
+    store.insertDiagnostic({
+      timestamp: 2_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "s-background",
+      message: "session:summary",
+      details: summaryDetails({
+        degraded: false,
+        costUsd: 0.1,
+        turnCount: 1,
+        endReason: "success",
+      }),
+    });
+
+    const rollups = store.aggregateSessionsInWindow(0);
+    expect(rollups).toHaveLength(1);
+    const r = rollups[0]!;
+    expect(r.degraded).toBe(false);
+    expect(r.endReason).toBe("success");
+    expect(r.costUsd).toBeCloseTo(0.3);
+    expect(r.turnCount).toBe(3);
+  });
+
   it("excludes rows whose timestamp < sinceMs (window predicate)", () => {
     store.insertDiagnostic({
       timestamp: 1_000,
@@ -376,7 +413,7 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
 
   it("does not abort the scan on a non-object `details` (\"null\"/primitive JSON degrade-on-error)", () => {
     // `details = "null"` is VALID JSON that parses to JS `null`; an unguarded
-    // `d.degraded` then throws TypeError and aborts the WHOLE fleet aggregate —
+    // `d.degraded` then throws TypeError and aborts the WHOLE system aggregate —
     // the exact failure the file's "a corrupt details never aborts the scan"
     // contract forbids. Seed the toxic shapes alongside valid rows.
     store.insertDiagnostic({
@@ -473,14 +510,14 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
       expect(Number.isFinite(r.topErrorKinds.timeout)).toBe(true);
     }
 
-    // End-to-end: feeding the rollup into the fleet reducer must yield finite numbers
+    // End-to-end: feeding the rollup into the system reducer must yield finite numbers
     // (this is the corruption the reducer would otherwise propagate).
-    const fleet = reduceFleetWindow(rollups, { excludeSynthetic: true });
-    for (const s of Object.values(fleet.toolStats)) {
+    const system = reduceSystemWindow(rollups, { excludeSynthetic: true });
+    for (const s of Object.values(system.toolStats)) {
       expect(Number.isFinite(s.ok)).toBe(true);
       expect(Number.isFinite(s.failed)).toBe(true);
     }
-    for (const n of Object.values(fleet.topErrorKinds)) {
+    for (const n of Object.values(system.topErrorKinds)) {
       expect(Number.isFinite(n)).toBe(true);
     }
   });

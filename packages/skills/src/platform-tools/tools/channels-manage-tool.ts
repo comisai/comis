@@ -13,12 +13,13 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { ApprovalGate } from "@comis/core";
-import { tryGetContext, registerActivityLabelSpec } from "@comis/core";
+import { registerActivityLabelSpec } from "@comis/core";
 import {
   readStringParam,
   readBooleanParam,
   throwToolError,
 } from "../tool-helpers.js";
+import { resolveApprovalRequestContext } from "../approval-request-context.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
 
@@ -156,15 +157,18 @@ export function createChannelsManageTool(
 
           // Approval gate for configure -- handled inline because validation must run before gate
           if (approvalGate) {
-            const gateCtx = tryGetContext();
+            const approvalContext = resolveApprovalRequestContext();
+            if (!approvalContext.ok) {
+              throwToolError("permission_denied", approvalContext.error.message, {
+                hint: "Retry from a resolved agent request scope",
+              });
+            }
             const resolution = await approvalGate.requestApproval({
               toolName: "channels_manage",
               action: "channels.configure",
               params: { channel_type: channelType, setting, enabled },
-              agentId: gateCtx?.userId ?? "unknown",
-              sessionKey: gateCtx?.sessionKey ?? "unknown",
-              trustLevel: (gateCtx?.trustLevel ?? "guest") as "admin" | "user" | "guest",
-              channelType: gateCtx?.channelType,
+              fingerprintParams: { channel_type: channelType, setting, enabled },
+              ...approvalContext.value,
             });
             if (!resolution.approved) {
               throwToolError("permission_denied", `Action denied: configure was not approved`, {

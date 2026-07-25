@@ -13,6 +13,7 @@
 
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import type { RpcClient } from "../api/rpc-client.js";
+import type { WebRpcMethodMap } from "../api/contracts.generated.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
@@ -78,10 +79,10 @@ export const PLATFORM_TOOL_DESCRIPTIONS: Record<string, string> = {
   sessions_list: "List active sessions filtered by kind and recency",
   sessions_history: "View conversation history for a session with pagination",
   sessions_send: "Send a message into another session (fire-and-forget, wait, or ping-pong)",
-  sessions_spawn: "Spawn a sub-agent session for background work (sync or async)",
+  sessions_spawn: "Start a background sub-agent and return its run ID immediately",
   sessions_manage: "Delete, reset, export, or compact session lifecycles",
   agents_manage: "List, create, inspect, update, suspend/resume, and delete agents",
-  subagents: "List, kill, or steer running sub-agents",
+  subagents: "List, wait for, kill, or steer sub-agents",
   message: "Send, reply, react, edit, delete, and fetch messages across all channels",
   discord_action: "Pin/unpin, kick/ban, roles, threads, channels, bot presence",
   telegram_action: "Pin/unpin, polls, stickers, chat info, ban/promote members",
@@ -110,7 +111,7 @@ export const PLATFORM_TOOL_CATEGORIES: { label: string; tools: string[] }[] = [
   { label: "MESSAGING", tools: ["message", "discord_action", "telegram_action", "slack_action", "whatsapp_action"] },
   { label: "MEDIA", tools: ["image_analyze", "tts_synthesize", "transcribe_audio", "describe_video", "extract_document"] },
   { label: "INFRASTRUCTURE", tools: ["cron", "gateway", "browser", "obs_query"] },
-  { label: "FLEET MANAGEMENT", tools: ["models_manage", "tokens_manage", "channels_manage", "skills_manage"] },
+  { label: "SYSTEM MANAGEMENT", tools: ["models_manage", "tokens_manage", "channels_manage", "skills_manage"] },
 ];
 
 export const SKILLS_TABS = [
@@ -136,6 +137,15 @@ export interface SkillsConfig {
   };
 }
 
+interface ConfigReadResult {
+  config: {
+    agents?: Record<string, { skills?: SkillsConfig }>;
+    routing?: { defaultAgentId?: string };
+    [key: string]: unknown;
+  };
+  sections: string[];
+}
+
 /** Shape of a discovered prompt skill from skills.list RPC */
 export interface DiscoveredSkill {
   name: string;
@@ -152,14 +162,6 @@ export interface SkillEventRecord {
   timestamp: number;
   outcome: "executed" | "rejected";
   reason?: string;
-}
-
-/** Result shape from config.read RPC (wraps full config) */
-interface ConfigReadResult {
-  config: {
-    agents?: Record<string, { skills?: SkillsConfig }>;
-  };
-  sections: string[];
 }
 
 /**
@@ -326,7 +328,11 @@ export function createSkillsController(
       const dotIdx = path.indexOf(".");
       const section = dotIdx > 0 ? path.slice(0, dotIdx) : path;
       const key = dotIdx > 0 ? path.slice(dotIdx + 1) : undefined;
-      await rpcClient.call("config.patch", { section, key, value });
+      await rpcClient.call("config.patch", {
+        section,
+        key,
+        value: value as WebRpcMethodMap["config.patch"]["params"]["value"],
+      });
       IcToast.show("Configuration updated", "success");
       return true;
     } catch (err) {
@@ -408,7 +414,7 @@ export function createSkillsController(
         // Fetch discovered prompt skills in the background (non-blocking).
         if (targetAgentId) {
           rpcClient
-            .call<{ skills: DiscoveredSkill[] }>("skills.list", {
+            .call("skills.list", {
               agentId: targetAgentId,
             })
             .then((skillsResult) => {
@@ -421,7 +427,7 @@ export function createSkillsController(
           // "All Agents" mode: fetch from every agent and merge.
           Promise.allSettled(
             agentIds.map((id) =>
-              rpcClient.call<{ skills: DiscoveredSkill[] }>("skills.list", {
+              rpcClient.call("skills.list", {
                 agentId: id,
               }),
             ),
@@ -451,7 +457,7 @@ export function createSkillsController(
 
     async refreshSkills(): Promise<void> {
       try {
-        const result = await rpcClient.call<{ skills: DiscoveredSkill[] }>(
+        const result = await rpcClient.call(
           "skills.list",
           { agentId: state.targetAgentId },
         );
@@ -602,11 +608,7 @@ export function createSkillsController(
       if (!url || state.isImportingSkill) return;
       _mutate({ isImportingSkill: true });
       try {
-        const result = await rpcClient.call<{
-          ok: boolean;
-          name?: string;
-          fileCount?: number;
-        }>("skills.import", {
+        const result = await rpcClient.call("skills.import", {
           url,
           agentId:
             state.installScope === "agent"
@@ -729,7 +731,6 @@ export function createSkillsController(
     getResolvedTools(): { included: string[]; denied: string[] } {
       if (!state.skillsConfig) return { included: [], denied: [] };
       const policy = state.skillsConfig.toolPolicy;
-      // eslint-disable-next-line security/detect-object-injection -- policy.profile from validated config schema
       const base = PROFILE_TOOLS[policy.profile] ?? [];
       const combined = new Set([...base, ...policy.allow]);
       const denied = new Set(policy.deny);

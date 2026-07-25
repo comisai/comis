@@ -8,14 +8,15 @@
 
 import {
   MemoryAskContract,
-  parseFormattedSessionKey,
+  createMemoryRecallScope,
+  conversationScopeToSessionKey,
+  formatSessionKey,
   systemDateFrom,
   systemGetEnv,
   systemNowMs,
   tryGetContext,
   wrapExternalContent,
 } from "@comis/core";
-import type { SessionKey } from "@comis/core";
 import { assembleSynthesis, citationChains, orderByTrust, sanitizeToolOutput } from "@comis/agent";
 import type { RpcHandler } from "./types.js";
 import type { MemoryApiDeps as MemoryHandlerDeps } from "./types.js";
@@ -56,8 +57,9 @@ export function bindMemoryAskHandler(deps: MemoryHandlerDeps): Record<string, Rp
       // bare abstain sentinel while the chat path recalls the same fact
       // fine. No widening beyond existing token
       // authority: memory.search serves the same rpc scope tenant-wide.
-      const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
-      const callerSessionKey = rawParams._callerSessionKey as string | undefined;
+      const requestContext = tryGetContext();
+      const injectedAgentId = rawParams._agentId as string | undefined;
+      const agentId = requestContext?.turnScope?.conversation.agentId;
       const userParams = stripInternalFields(rawParams);
       const params = MemoryAskContract.request.parse(userParams);
       const question = params.question;
@@ -68,7 +70,13 @@ export function bindMemoryAskHandler(deps: MemoryHandlerDeps): Record<string, Rp
       // is never disguised as a semantic "no data" abstain (otherwise all
       // branches would return the identical bare sentinel with ZERO log
       // lines — undiagnosable without reading the wiring).
-      if (deps.dialecticSeam === undefined || deps.buildDialecticRecall === undefined || agentId === undefined) {
+      if (
+        deps.dialecticSeam === undefined
+        || deps.buildDialecticRecall === undefined
+        || agentId === undefined
+        || requestContext?.turnScope === undefined
+        || (injectedAgentId !== undefined && injectedAgentId !== agentId)
+      ) {
         const reason = agentId === undefined ? "no_agent_scope" : "dialectic_unavailable";
         deps.logger?.info(
           {
@@ -80,7 +88,7 @@ export function bindMemoryAskHandler(deps: MemoryHandlerDeps): Record<string, Rp
             hint:
               reason === "dialectic_unavailable"
                 ? "memory.ask abstained because the dialectic seam is not wired — check dialectic.enabled / memory.enabled and the agent's provider key"
-                : "memory.ask abstained because no agent scope was resolvable (no _agentId and no defaultAgentId)",
+                : "memory.ask abstained because resolved request authority was unavailable or mismatched",
           },
           "memory.ask abstained (dialectic unavailable)",
         );
@@ -102,14 +110,17 @@ export function bindMemoryAskHandler(deps: MemoryHandlerDeps): Record<string, Rp
       // memory.ask, on every caller path, would abstain with an empty recall.
       // Parse the dispatcher-injected formatted key when present; otherwise a
       // synthetic key carrying the daemon tenant (the only field search scopes by).
-      const recallScope: SessionKey =
-        (callerSessionKey !== undefined ? parseFormattedSessionKey(callerSessionKey) : undefined) ?? {
-          tenantId: deps.tenantId,
-          userId: "memory-ask",
-          channelId: "rpc",
-        };
+      const recallScope = createMemoryRecallScope(requestContext.turnScope, true);
+      if (!recallScope.ok) {
+        return { ...ABSTAIN_SENTINEL, reason: "authority_unavailable" };
+      }
+      const displaySession = conversationScopeToSessionKey(requestContext.turnScope.conversation);
+      if (!displaySession.ok) {
+        return { ...ABSTAIN_SENTINEL, reason: "authority_unavailable" };
+      }
+      const callerSessionKey = formatSessionKey(displaySession.value);
       const recall = deps.buildDialecticRecall(agentId);
-      const recalled = await recall.recall(question, recallScope, agentId);
+      const recalled = await recall.recall(question, recallScope.value, displaySession.value);
 
       // Empty / failed recall ⇒ abstain in CODE, WITHOUT calling the seam
       // (no grounding ⇒ no LLM call, no fabricated answer).

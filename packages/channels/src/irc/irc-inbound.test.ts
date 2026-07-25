@@ -142,6 +142,7 @@ describe("irc-adapter -- dispatchMessage runWithContext wrap", () => {
   it("runs handlers inside runWithContext({ traceId, channelType: \"irc\" })", async () => {
     let ctxTraceId: string | undefined;
     let ctxChannelType: string | undefined;
+    let ctxTrustLevel: string | undefined;
     let stampedTraceId: string | undefined;
     const normalized = makeNormalized();
     vi.mocked(mapIrcToNormalized).mockReturnValue(normalized);
@@ -151,6 +152,7 @@ describe("irc-adapter -- dispatchMessage runWithContext wrap", () => {
       const ctx = tryGetContext();
       ctxTraceId = ctx?.traceId;
       ctxChannelType = ctx?.channelType;
+      ctxTrustLevel = ctx?.trustLevel;
       stampedTraceId = m.metadata.traceId as string | undefined;
     });
 
@@ -166,5 +168,6 @@ describe("irc-adapter -- dispatchMessage runWithContext wrap", () => {
     expect(ctxTraceId).toBeDefined();
     expect(ctxTraceId).toBe(stampedTraceId);
     expect(ctxChannelType).toBe("irc");
+    expect(ctxTrustLevel).toBe("user");
   });
 });

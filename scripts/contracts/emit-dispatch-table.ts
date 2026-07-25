@@ -77,6 +77,60 @@ export interface ContractMeta {
   readonly response: JsonSchemaNode;
   readonly scopes: readonly string[];
 }
+
+// ---------------------------------------------------------------------------
+// JSON Schema -> TypeScript projection for the generated RPC method map.
+// The generator emits each schema as a literal, so method names, params, and
+// results stay tied to the one API contract registry without browser imports.
+// ---------------------------------------------------------------------------
+
+type SchemaProperties<S> = S extends { readonly properties: infer P }
+  ? P extends Readonly<Record<string, unknown>>
+    ? P
+    : Record<never, never>
+  : Record<never, never>;
+
+type SchemaRequiredKeys<S> = S extends {
+  readonly required: readonly (infer K)[];
+}
+  ? Extract<K, keyof SchemaProperties<S>>
+  : never;
+
+type JsonObjectValue<S> = {
+  [K in SchemaRequiredKeys<S>]-?: JsonSchemaValue<SchemaProperties<S>[K]>;
+} & {
+  [K in Exclude<keyof SchemaProperties<S>, SchemaRequiredKeys<S>>]?:
+    JsonSchemaValue<SchemaProperties<S>[K]>;
+} & (S extends { readonly additionalProperties: infer A }
+  ? A extends false
+    ? unknown
+    : A extends Readonly<Record<string, unknown>>
+      ? Readonly<Record<string, JsonSchemaValue<A>>>
+      : Readonly<Record<string, unknown>>
+  : Readonly<Record<string, unknown>>);
+
+export type JsonSchemaValue<S> =
+  S extends { readonly anyOf: readonly (infer A)[] }
+    ? JsonSchemaValue<A>
+    : S extends { readonly oneOf: readonly (infer O)[] }
+      ? JsonSchemaValue<O>
+      : S extends { readonly const: infer C }
+        ? C
+        : S extends { readonly enum: readonly (infer E)[] }
+          ? E
+          : S extends { readonly type: "string" }
+            ? string
+            : S extends { readonly type: "number" | "integer" }
+              ? number
+              : S extends { readonly type: "boolean" }
+                ? boolean
+                : S extends { readonly type: "null" }
+                  ? null
+                  : S extends { readonly type: "array"; readonly items: infer I }
+                    ? JsonSchemaValue<I>[]
+                    : S extends { readonly type: "object" }
+                      ? JsonObjectValue<S>
+                      : unknown;
 `;
 
   const validator = `
@@ -179,9 +233,16 @@ function validateNode(node: JsonSchemaNode, v: unknown): boolean {
 // { unrepresentable: "throw", reused: "inline" }).
 // ---------------------------------------------------------------------------
 
-export const CONTRACTS: Readonly<Record<string, ContractMeta>> = ${contractsJson} as const;
+export const CONTRACTS = ${contractsJson} as const satisfies Readonly<Record<string, ContractMeta>>;
 
-export type MethodName = keyof typeof CONTRACTS;
+export type WebRpcMethodMap = {
+  readonly [M in keyof typeof CONTRACTS]: {
+    readonly params: JsonSchemaValue<(typeof CONTRACTS)[M]["request"]>;
+    readonly result: JsonSchemaValue<(typeof CONTRACTS)[M]["response"]>;
+  };
+};
+
+export type MethodName = keyof WebRpcMethodMap;
 
 // ---------------------------------------------------------------------------
 // Public validators — delegate to validateNode against the request/response
@@ -189,15 +250,13 @@ export type MethodName = keyof typeof CONTRACTS;
 // caller distinguishes request vs. response.
 // ---------------------------------------------------------------------------
 
-export function validateRequest(method: string, v: unknown): boolean {
-  const entry = (CONTRACTS as Readonly<Record<string, ContractMeta>>)[method];
-  if (!entry) return false;
+export function validateRequest(method: MethodName, v: unknown): boolean {
+  const entry = CONTRACTS[method];
   return validateNode(entry.request, v);
 }
 
-export function validateResponse(method: string, v: unknown): boolean {
-  const entry = (CONTRACTS as Readonly<Record<string, ContractMeta>>)[method];
-  if (!entry) return false;
+export function validateResponse(method: MethodName, v: unknown): boolean {
+  const entry = CONTRACTS[method];
   return validateNode(entry.response, v);
 }
 `;

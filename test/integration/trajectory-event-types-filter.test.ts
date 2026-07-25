@@ -70,9 +70,13 @@ describe("diagnostics.trajectory.eventTypes filter — end-to-end honor check", 
       "utf-8",
     );
     expect(setupAgentsSrc).toMatch(
-      /trajectoryConfig:\s*container\.config\.diagnostics\?\.trajectory/,
+      /trajectoryConfig:\s*resolveEffectiveTrajectoryConfig\(container\.config\)/,
     );
-    expect(setupAgentsSrc).toMatch(/eventTypes:\s*container\.config\.diagnostics\.trajectory\.eventTypes/);
+    const resolverSrc = fs.readFileSync(
+      path.join(repoRoot, "packages/daemon/src/wiring/trajectory-runtime-config.ts"),
+      "utf-8",
+    );
+    expect(resolverSrc).toMatch(/eventTypes:\s*trajectory\.eventTypes/);
   });
 
   it("pi-executor reads deps.trajectoryConfig.eventTypes and threads it into attachTrajectoryToEventBus as filter", () => {
@@ -99,7 +103,7 @@ describe("diagnostics.trajectory.eventTypes filter — end-to-end honor check", 
     // TypedEventBus and assert only the model.completed line lands.
     const eventBus = new TypedEventBus();
 
-    const recorder = createTrajectoryRecorder({
+    const recorderResult = createTrajectoryRecorder({
       agentId: "agent-evt-filter",
       sessionId: "session-evt-filter",
       sessionKey: "tenant:user:channel",
@@ -108,6 +112,8 @@ describe("diagnostics.trajectory.eventTypes filter — end-to-end honor check", 
       provider: "anthropic",
       modelId: "claude-3-opus",
     });
+    if (!recorderResult.ok) throw recorderResult.error;
+    const recorder = recorderResult.value;
     expect(recorder).not.toBeNull();
 
     // Simulate the pi-executor wiring: when eventTypes is set, the
@@ -185,7 +191,7 @@ describe("diagnostics.trajectory.eventTypes filter — end-to-end honor check", 
     unsubscribe();
 
     const eventBus2 = new TypedEventBus();
-    const recorder2 = createTrajectoryRecorder({
+    const recorderResult2 = createTrajectoryRecorder({
       agentId: "agent-evt-filter",
       sessionId: "session-evt-filter-2",
       sessionKey: "tenant:user:channel",
@@ -194,6 +200,8 @@ describe("diagnostics.trajectory.eventTypes filter — end-to-end honor check", 
       provider: "anthropic",
       modelId: "claude-3-opus",
     });
+    if (!recorderResult2.ok) throw recorderResult2.error;
+    const recorder2 = recorderResult2.value;
     expect(recorder2).not.toBeNull();
 
     // The plan's `eventTypes: ["model.completed"]` is a list of

@@ -72,7 +72,7 @@ const CORE_METHODS: ReadonlySet<string> = new Set<string>([
  */
 export interface DynamicMethodRouter {
   /** Register a new RPC method with scope enforcement. */
-  registerMethod(name: string, scope: string, handler: RpcMethodHandler): void;
+  registerMethod(name: string, scope: string | readonly string[], handler: RpcMethodHandler): void;
   /** Check if a method is registered. */
   hasMethod(name: string): boolean;
   /** Get the underlying JSONRPCServer for receive() calls. */
@@ -102,8 +102,11 @@ export interface MethodRouterLogger {
  * @returns A DynamicMethodRouter with registerMethod, hasMethod, and server
  */
 export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?: MethodRouterLogger): DynamicMethodRouter {
-  const server = new JSONRPCServer<RpcContext>();
-  const registeredScopes = new Map<string, string>();
+  // The library default is console.warn(message, Error), which writes the
+  // handler's free-text message and stack directly to stderr. The trace wrapper
+  // below owns structured failure logging; suppress the duplicate raw sink.
+  const server = new JSONRPCServer<RpcContext>({ errorListener: () => undefined });
+  const registeredScopes = new Map<string, string | readonly string[]>();
 
   /**
    * Classify an RPC method error for structured logging.
@@ -123,11 +126,10 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
     if (typed) return { errorKind: typed.errorKind, hint: typed.hint };
     // Unrecognized errors keep the gateway's own message-substring fallbacks, then internal.
     const msg = err instanceof Error ? err.message : String(err);
-    const excerpt = msg.length > 120 ? msg.slice(0, 120) + "..." : msg;
-    if (msg.includes("immutable")) return { errorKind: "config", hint: `This config path requires daemon restart: ${excerpt}` };
-    if (msg.includes("Admin access") || msg.includes("Unauthorized")) return { errorKind: "auth", hint: `Insufficient permissions: ${excerpt}` };
-    if (msg.includes("not found") || msg.includes("Unknown") || msg.includes("Invalid")) return { errorKind: "validation", hint: `Invalid request: ${excerpt}` };
-    return { errorKind: "internal", hint: `Handler error: ${excerpt}` };
+    if (msg.includes("immutable")) return { errorKind: "config", hint: "This configuration path requires daemon restart; apply it through a restart-safe operator path" };
+    if (msg.includes("Admin access") || msg.includes("Unauthorized")) return { errorKind: "auth", hint: "Use an authenticated client with the required scope and trust level" };
+    if (msg.includes("not found") || msg.includes("Unknown") || msg.includes("Invalid")) return { errorKind: "validation", hint: "Check the request against the RPC method contract" };
+    return { errorKind: "internal", hint: "Inspect the RPC handler and correlate this failure by trace and client identifiers" };
   }
 
   /**
@@ -145,7 +147,7 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
 
   /**
    * Admin-gated, READ-ONLY obs methods whose operator CLI (`comis explain` /
-   * `comis fleet`) probes the RPC then falls back to offline assembly from the
+   * `comis system-health`) probes the RPC then falls back to offline assembly from the
    * local data dir. An admin-trust denial here is a ROUTINE control flow — the
    * CLI expects it and recovers — so it logs at DEBUG, not WARN: otherwise
    * every `comis explain` an operator runs spams an `errorKind:auth` WARN into
@@ -155,12 +157,13 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
    */
   const OFFLINE_FALLBACK_OBS_METHODS: ReadonlySet<string> = new Set([
     "obs.explain",
-    "obs.fleet.health",
+    "obs.system.health",
   ]);
 
   /**
    * Wrap an RPC handler with debug trace logging.
-   * Logs method name, clientId, duration on success, and err on failure.
+   * Logs method name, clientId, duration on success, and a closed failure class
+   * plus parameter count on failure.
    * Polling methods in SUPPRESS_LOG_METHODS skip trace logging entirely.
    */
   function wrapWithTrace(name: string, handler: RpcMethodHandler): RpcMethodHandler {
@@ -181,9 +184,15 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
       } catch (err) {
         const durationMs = Math.round(performance.now() - startMs);
         const classified = classifyRpcMethodError(err);
+        const typed = classifyTypedRpcError(err);
+        const parameterCount = Array.isArray(params)
+          ? params.length
+          : typeof params === "object" && params !== null
+            ? Object.keys(params as Record<string, unknown>).filter((key) => !key.startsWith("_")).length
+            : 0;
         // A routine operator flow — an admin-trust denial on a read-only obs
         // method the CLI probes-then-falls-back-offline — logs at DEBUG so
-        // `comis explain` / `comis fleet` do not spam WARNs into the log an
+        // `comis explain` / `comis system-health` do not spam WARNs into the log an
         // operator is reviewing. Internal errors → error; every other
         // non-internal refusal (incl. denials on other methods) → warn.
         const isRoutineObsDeny =
@@ -197,9 +206,11 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
           logFn(
             {
               method: name,
-              // Expected refusals and internal failures log a bounded message at
-              // this level. Full Error stacks belong on DEBUG-only diagnostics.
-              err: err instanceof Error ? err.message : String(err),
+              parameterCount,
+              errorName:
+                typed !== null && err instanceof Error
+                  ? err.name
+                  : "UnhandledError",
               durationMs,
               clientId: context.clientId,
               hint: classified.hint,
@@ -213,7 +224,6 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
         if (err instanceof JSONRPCErrorException) throw err;
 
         const traceId = tryGetContext()?.traceId;
-        const typed = classifyTypedRpcError(err);
         const data = traceId ? { traceId } : undefined;
 
         if (typed && err instanceof Error) {
@@ -257,7 +267,11 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
     }
   }
 
-  function registerMethod(name: string, scope: string, handler: RpcMethodHandler): void {
+  function registerMethod(
+    name: string,
+    scope: string | readonly string[],
+    handler: RpcMethodHandler,
+  ): void {
     // Validate namespace for non-core methods
     if (!CORE_METHODS.has(name) && !name.includes(".")) {
       throw new Error(`Method name must use namespace prefix (e.g., 'cron.list'), got: ${name}`);
@@ -268,14 +282,20 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
       throw new Error(`Method '${name}' is already registered`);
     }
 
+    const acceptedScopes = typeof scope === "string" ? [scope] : [...scope];
+    if (acceptedScopes.length === 0) {
+      throw new Error(`Method '${name}' must declare at least one scope`);
+    }
+
     registeredScopes.set(name, scope);
 
     const traced = wrapWithTrace(name, handler);
     server.addMethod(name, (params, context) => {
-      if (!checkScope(context.scopes, scope)) {
-        throw new JSONRPCErrorException(`Insufficient scope: requires '${scope}'`, -32603, {
+      if (!acceptedScopes.some((requiredScope) => checkScope(context.scopes, requiredScope))) {
+        const requirement = acceptedScopes.join("' or '");
+        throw new JSONRPCErrorException(`Insufficient scope: requires '${requirement}'`, -32603, {
           clientId: context.clientId,
-          required: scope,
+          required: acceptedScopes,
         });
       }
       return traced(params, context);

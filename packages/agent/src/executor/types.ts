@@ -5,7 +5,18 @@
  * @module
  */
 
-import type { SessionKey, NormalizedMessage, SpawnPacket, ModelOperationType } from "@comis/core";
+import type {
+  ModelOperationType,
+  NormalizedMessage,
+  SessionKey,
+  SpawnPacket,
+  ResponseLocalePolicy,
+  WorkspacePolicySnapshot,
+  AgentExecutionFinishReason,
+  ExecutionSideEffectSummary,
+  ErrorKind,
+} from "@comis/core";
+import type { ResponseLocaleQualityFinding } from "./resolve-response-locale-policy.js";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 // CommandDirectives canonical home is @comis/orchestrator/src/commands/types.ts.
 // Agent uses a local mirror to avoid the orchestrator → agent circular dep
@@ -13,16 +24,28 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { CommandDirectives } from "./command-directive-types.js";
 import type { StepCounter } from "./step-counter.js";
 import type { ComisSessionManager } from "../session/comis-session-manager.js";
+import type { InboundMessageProvenancePlan } from "../session/inbound-message-provenance.js";
 import type { TimeoutSource } from "../model/operation-model-resolver.js";
+import type { Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
-/** Result of a single agent execution cycle. */
-export interface ExecutionResult {
+/** Fields shared by every settled agent execution result. */
+export interface ExecutionResultBase {
   response: string;
   sessionKey: SessionKey;
+  /** Opaque identity minted once at the start of this executor invocation. */
+  executionId: string;
+  /** Content-free hash of the immutable workspace policy used for this turn. */
+  workspacePolicyHash?: string;
+  /** Exact validated response-locale policy used to compile this turn. */
+  responseLocalePolicy: ResponseLocalePolicy;
+  /** Runtime-owned monotonic facts about attempted side-effect capabilities. */
+  sideEffectSummary: ExecutionSideEffectSummary;
+  /** Content-free finding recorded when the initial model output required locale repair. */
+  localeQualityFinding?: ResponseLocaleQualityFinding;
   /** PER-EXECUTION token totals (the bridge's accumulation for THIS execute()
    *  call) — scope-consistent with `cost`. For the session-cumulative total
    *  (across every execution on the persisted session) read `sessionTokensUsed`. */
@@ -53,7 +76,6 @@ export interface ExecutionResult {
   // a DEDICATED member (not a reuse of budget_exceeded, which is the token cap)
   // so the dollars-vs-tokens cause stays distinct. SafetyCheckResult.finishReason
   // (bridge-safety-controls.ts) is typed off this; checkSpendLimit returns it.
-  finishReason: "stop" | "max_steps" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "context_loop" | "context_exhausted" | "output_starved" | "session_reset" | "loop_detected" | "prompt_timeout" | "spend_exceeded" | "error";
   /** Ordered list of tool names invoked during execution (for post-mortem analysis). */
   toolCallHistory?: string[];
   /** Narrate-without-emit nudge outcome (small/nano only). A fired-but-
@@ -102,15 +124,40 @@ export interface ExecutionResult {
   };
 }
 
+/** Result of a single agent execution cycle after terminal reconciliation. */
+export type ExecutionResult = ExecutionResultBase & (
+  | { finishReason: "stop"; terminalErrorKind?: never }
+  | {
+      finishReason: "error" | "completed_with_tool_errors";
+      terminalErrorKind: ErrorKind;
+    }
+  | {
+      finishReason: Exclude<
+        AgentExecutionFinishReason,
+        "stop" | "error" | "completed_with_tool_errors"
+      >;
+      terminalErrorKind?: never;
+    }
+);
+
 /** Optional overrides for per-execution behavior (e.g., sub-agent isolation). */
-// @optional-field-count: 13 — ExecutionOverrides is the per-EXECUTION override bag;
+// @optional-field-count: 22 — ExecutionOverrides is the per-EXECUTION override bag;
 // every `?` field is an independent per-run knob the caller MAY set (stepCounter/
 // tokenBudget for sub-agent isolation, spawnPacket/model/cacheRetention/skipRag/
 // graphId/nodeId/activeToolGroups for graph nodes, ephemeralSessionAdapter/skipSep/
-// promptTimeout, and workspaceDir for an isolated worktree run). They are
+// promptTimeout, workspacePolicySnapshot/responseLocalePolicy for immutable background work,
+// finalizedResultJournalKey/onProviderStart for durable provider execution,
+// capabilityAccess for isolated model-only runs, and workspaceDir for an
+// isolated worktree run). They are
 // not a cluster-split candidate — each describes ONE execution's override surface,
 // applied at distinct executor chokepoints; `operationType` is the only required field.
 export interface ExecutionOverrides {
+  /** Caller-owned cooperative cancellation for the whole execution. The
+   *  executor checks it before model dispatch and aborts the live SDK session
+   *  when cancellation arrives after session creation. */
+  signal?: AbortSignal;
+  /** Immutable physical inbound occurrences already committed by ingress. */
+  inboundProvenancePlans?: readonly InboundMessageProvenancePlan[];
   /** Override the shared StepCounter with a fresh instance.
    *  When provided, this counter is used instead of the deps.stepCounter. */
   stepCounter?: StepCounter;
@@ -147,6 +194,27 @@ export interface ExecutionOverrides {
   promptTimeout?: { promptTimeoutMs?: number; retryPromptTimeoutMs?: number; source?: TimeoutSource };
   /** Operation type for cost attribution and timeout resolution. */
   operationType: ModelOperationType;
+  /** Capability surface for this execution. `none` removes configured and
+   *  per-request tools, skill discovery/listings, MCP instructions, and the
+   *  capability index while preserving engine and operator policy. */
+  capabilityAccess?: "configured" | "none";
+  /** Hash-verified immutable operator policy captured by an earlier trusted
+   *  boundary. The executor uses this exact snapshot instead of rereading
+   *  mutable workspace files for delayed or background work. */
+  workspacePolicySnapshot?: WorkspacePolicySnapshot;
+  /** Immutable locale decision captured with delayed or background work. */
+  responseLocalePolicy?: ResponseLocalePolicy;
+  /** Awaited after the exact terminal result is finalized and before execute resolves. */
+  onFinalizedResult?: (
+    result: ExecutionResult,
+    phase: "cleanup_pending" | "ready",
+  ) => Promise<void>;
+  /** Protected durable result journal written before any delivery handoff. */
+  onJournalFinalizedResult?: (result: ExecutionResult) => Promise<void>;
+  /** Stable protected-session journal identity for crash-recoverable execution results. */
+  finalizedResultJournalKey?: string;
+  /** Authoritative callback invoked immediately before every provider dispatch. */
+  onProviderStart?: () => Result<void, Error>;
   /** Graph ID for cache write signal emission. Set only for graph subagents. */
   graphId?: string;
   /** Graph node ID for cache write signal emission. Set only for graph subagents. */

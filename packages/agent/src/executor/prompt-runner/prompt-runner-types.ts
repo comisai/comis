@@ -20,6 +20,7 @@ import type {
   OutputGuardPort,
   ClockPort,
   TimerPort,
+  ResponseLocalePolicy,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { CommandDirectives } from "../command-directive-types.js";
@@ -53,6 +54,10 @@ export interface PromptRunnerBridge {
     /** Abort redirect message set at bridge abort sites; undefined for normal completions. */
     abortResponse?: string;
   };
+  hasOutboundDelivery(target: {
+    channelType: string;
+    channelId: string;
+  }): boolean;
 }
 
 /** Parameters for runPrompt(). */
@@ -71,6 +76,7 @@ export interface RunPromptParams {
   bridge: PromptRunnerBridge;
   // Prompt assembly data
   dynamicPreamble: string | undefined;
+  responseLocalePolicy?: ResponseLocalePolicy;
   deferredContext: string | undefined;
   /**
    * Per-turn capability-index render result. The .text field is concatenated

@@ -325,7 +325,8 @@ export interface ChannelEvents {
     chunkIndex: number;
     totalChunks: number;
     charCount: number;
-    ok: boolean;
+    status: "accepted" | "rejected" | "unknown";
+    errorKind?: ErrorKind;
     retried: boolean;
     timestamp: number;
   };
@@ -334,9 +335,12 @@ export interface ChannelEvents {
   "delivery:complete": {
     channelId: string;
     channelType: string;
+    status: "accepted" | "partial" | "rejected" | "unknown";
+    errorKind?: ErrorKind;
     totalChunks: number;
     deliveredChunks: number;
     failedChunks: number;
+    ambiguousChunks: number;
     totalChars: number;
     durationMs: number;
     origin: string;
@@ -429,6 +433,20 @@ export interface ChannelEvents {
   };
 
   /**
+   * A durable outward-send ledger transition completed or was blocked. The
+   * payload is deliberately content-free: durable identities, a closed
+   * transition/outcome pair, and time only. It never carries the message body,
+   * digest, platform error text, or credentials.
+   */
+  "delivery:outward_ledger_transition": {
+    rootRunId: string;
+    stepIndex: number;
+    transition: "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
+    outcome: "blocked" | "in_flight" | "committed" | "failed" | "parked";
+    timestamp: number;
+  };
+
+  /**
    * A minted agent-reply
    * messageId was bound to its trajectory scope on the PRIMARY inbound-reply
    * (direct-ack) path — the positive proof that the reaction->trajectory
@@ -462,13 +480,13 @@ export interface ChannelEvents {
     timestamp: number;
   };
 
-  /** Queue entry permanently failed -- no more retries. */
+  /** Queue entry terminally stopped -- no automatic retries. */
   "delivery:failed": {
     entryId: string;
     channelId: string;
     channelType: string;
     error: string;
-    reason: "permanent_error" | "retries_exhausted";
+    reason: "permanent_error" | "retries_exhausted" | "uncertain_outcome";
     timestamp: number;
   };
 
@@ -524,7 +542,7 @@ export interface ChannelEvents {
    * any body parse or adapter dispatch. Raised by the ingress through an
    * injected content-free hook so a forged / expired / wrong-audience /
    * missing-token FLOOD against the public messaging endpoint is COUNTABLE by
-   * the fleet lens instead of living only in a raw WARN. Content-free by
+   * the system health view instead of living only in a raw WARN. Content-free by
    * construction: the closed `reason` class + the channel label ONLY — never
    * the bearer token, the Authorization header, or the request body (§2.7 and
    * the opaque-401 contract: the forged material is counted without being

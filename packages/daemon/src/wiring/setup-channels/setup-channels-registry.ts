@@ -16,7 +16,7 @@
 import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, MsTeamsConversationStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, EnvPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
+import type { AgentExecutor, ComisSessionManager, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { createSessionStore, MemoryApi } from "@comis/memory";
 import type { CommandQueue } from "@comis/orchestrator";
 import type { VoiceResponsePipelineDeps, LifecycleReactor } from "@comis/channels";
@@ -25,11 +25,10 @@ import { initTelegramFileGuardConfig } from "@comis/core";
 import type { MediaResolverPort } from "@comis/core";
 import type { SsrfGuardedFetcher, LinkRunner, AudioConverter, MediaTempManager, MediaSemaphore } from "@comis/skills";
 import type { RpcCall } from "@comis/skills/platform-tools";
-import type { ExecutionLogEntry } from "@comis/scheduler";
 import { bootstrapAdapters } from "../setup-channels-adapters.js";
 import { buildMediaPipeline } from "../setup-channels-media.js";
-import { registerCronEventListeners } from "./setup-channels-credentials.js";
 import { buildAndStartChannelManager } from "./setup-channels-runtime.js";
+import type { GraphReportDurability } from "./graph-report-delivery.js";
 
 // Re-export the unused VoiceResponsePipelineDeps + LifecycleReactor types to
 // silence lint and document the public-surface boundary: callers of this
@@ -79,6 +78,10 @@ export interface ChannelsResult {
 export interface ChannelsDeps {
   /** Bootstrap output: config, event bus, secret manager. */
   container: AppContainer;
+  /** Absolute Comis data root resolved by the daemon composition root. */
+  dataDir: string;
+  /** Durable receipt ownership for authenticated graph-report uploads. */
+  graphReportDurability: GraphReportDurability;
   /** Per-agent executor instances keyed by agentId. */
   executors: Map<string, AgentExecutor>;
   /** Default agent ID from routing config. */
@@ -246,7 +249,7 @@ export interface ChannelsDeps {
    *  Absent → capture is skipped and a proactive Teams send errs. */
   msTeamsConversationStore?: MsTeamsConversationStorePort;
   /** Default tenant ID for memory storage. */
-  tenantId?: string;
+  tenantId: string;
   /** Embedding queue for new memory entries (optional). */
   embeddingQueue?: { enqueue(id: string, content: string): void };
   /** Optional callback for suspicious-content detection. Forwarded from the
@@ -287,7 +290,7 @@ export interface ChannelsDeps {
    * Optional callback fired BEFORE each inbound message is dispatched to the
    * executor. Used by the restart continuation tracker so the session is
    * visible in tracker state before any tool call could trigger SIGUSR2.
-   * Bypassed for early-return paths (no-adapter, graph-report intercept).
+   * Bypassed for the no-adapter early return.
    */
   onMessageReceived?: (msg: NormalizedMessage, channelType: string) => void;
   /** Optional callback fired AFTER each successful inbound message processing. Used by post-processing state (e.g. notification session activity recording). */
@@ -295,21 +298,19 @@ export interface ChannelsDeps {
   /** Optional approval gate for /approve and /deny chat commands in inbound pipeline. */
   approvalGate?: import("@comis/core").ApprovalGate;
   /** Per-agent PI session adapters for session stats/destroy in slash commands. */
-  piSessionAdapters?: Map<string, {
-    getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
-    destroySession(key: SessionKey): Promise<void>;
-  }>;
+  piSessionAdapters?: Map<string, Pick<
+    ComisSessionManager,
+    "getSessionStats" | "destroySession" | "persistInboundMessage"
+  >>;
   /** Complete three-layer conversation forget for slash /new + /reset
    *  (createConversationReset — runtime-only destroy
    *  leaves the LCD context the DAG re-presents on the next turn). */
-  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
+  destroyConversation?: (scope: import("@comis/core").ConversationScope, key: SessionKey) => Promise<unknown>;
   /** Per-agent cost trackers for /usage and /status cost data. */
   costTrackers?: Map<string, {
     getByProvider(): Array<{ provider: string; model: string; totalTokens: number; totalCost: number; callCount: number }>;
     getBySession(key: string): { totalTokens: number; totalCost: number };
   }>;
-  /** Per-agent cron execution trackers for enriched JSONL entries. */
-  cronExecutionTrackers?: Map<string, { record(entry: ExecutionLogEntry): Promise<void> }>;
   /**
    * DI seam for /export-trajectory slash command.
    * Threaded into buildAndStartChannelManager → createChannelManager →
@@ -336,7 +337,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     executors,
     defaultAgentId,
     sessionManager,
-    logger,
     channelsLogger,
     linkRunner,
     ssrfFetcher,
@@ -362,6 +362,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     hookRunner: container.hookRunner,
     deliveryQueue: deps.deliveryQueue ?? createNoOpDeliveryQueue(),
     logger: channelsLogger,
+    clock: deps.clock,
     eventBus: container.eventBus,
     // Bind the minted reply id → trajectory on the direct platform-send
     // path too (the primary inbound-reply path sends here, not via the drain).
@@ -412,45 +413,12 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     onSuspiciousContent: deps.onSuspiciousContent,
   });
 
-  // Register cron-delivery event listeners (scheduler:job_result + scheduler:job_suspended).
-  registerCronEventListeners({
-    container,
-    executors,
-    defaultAgentId,
-    sessionManager,
-    sessionStore: deps.sessionStore,
-    logger,
-    clock: deps.clock,
-    resolveAccessToken: deps.resolveAccessToken, // OAuth-provider background jobs
-    adaptersByType,
-    deliveryService,
-    assembleToolsForAgent: deps.assembleToolsForAgent,
-    transcriber,
-    workspaceDirs: deps.workspaceDirs,
-    memoryAdapter: deps.memoryAdapter,
-    lcdStore: deps.lcdStore,
-    contextBrowse: deps.contextBrowse,
-    entityStore: deps.entityStore,
-    causalStore: deps.causalStore,
-    consolidationStore: deps.consolidationStore,
-    memoryLifecycleStore: deps.memoryLifecycleStore,
-    // Reflection: the outcome gate + mental-model store ride the SAME cron-deps chain →
-    // the __REFLECT__ sentinel assembles the closed-graph reflection bundle (no embedder — the
-    // reflection job groups by topicKey, not clustering embeddings).
-    outcomeStore: deps.outcomeStore,
-    learnedSkillStore: deps.learnedSkillStore,
-    memoryApi: deps.memoryApi,
-    tenantId: deps.tenantId,
-    piSessionAdapters: deps.piSessionAdapters,
-    cronExecutionTrackers: deps.cronExecutionTrackers,
-    activeRunRegistry: deps.activeRunRegistry,
-  });
-
   // Build the ChannelManager (voice pipeline + command queue + slash handlers +
   // lifecycle reactors).
   const { channelManager, lifecycleReactors, commandQueue } =
     await buildAndStartChannelManager({
       container,
+      dataDir: deps.dataDir,
       executors,
       defaultAgentId,
       sessionManager,
@@ -458,6 +426,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       ssrfFetcher,
       linkRunner,
       deliveryService,
+      graphReportDurability: deps.graphReportDurability,
       adaptersByType,
       channelPlugins,
       clock: deps.clock,
@@ -487,7 +456,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       piSessionAdapters: deps.piSessionAdapters,
       destroyConversation: deps.destroyConversation,
       costTrackers: deps.costTrackers,
-      cronExecutionTrackers: deps.cronExecutionTrackers,
       exportSessionBundle: deps.exportSessionBundle,
     });
 

@@ -32,8 +32,10 @@ coverage/
 *.swo
 *~
 
-# Claude Code working directory
+# Local agent state
 .claude/
+.agents/
+/skills-lock.json
 
 .planning/
 

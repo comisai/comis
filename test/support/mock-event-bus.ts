@@ -11,8 +11,17 @@ export function createMockEventBus(
   overrides?: Partial<TypedEventBus>,
 ): TypedEventBus {
   const unsub = vi.fn();
+  const emit = overrides?.emit ?? vi.fn();
   return {
-    emit: vi.fn(),
+    emit,
+    emitSafely: vi.fn((event, payload) => {
+      emit(event, payload);
+      return {
+        hadListeners: false,
+        failures: [],
+        pendingFailures: Promise.resolve([]),
+      };
+    }),
     on: vi.fn(() => unsub),
     off: vi.fn(),
     once: vi.fn(() => unsub),

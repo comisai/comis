@@ -39,6 +39,7 @@ export {
   createResultRefStore,
   buildPreview,
   inferKind,
+  safeResultRunId,
   CHECKPOINT_TTL_MS,
 } from "./result-ref-store.js";
 export type {
@@ -55,11 +56,15 @@ export type {
 // resume). The daemon threads its real durable-run store as the `durableRuns`
 // seam; only the port TYPE is surfaced here (the runner imports the helpers
 // directly).
-export type { OrchestrateDurableRuns } from "./orchestrate-durable.js";
+export type {
+  OrchestrateDurableRuns,
+  ResumeAuthority,
+  ResumePrincipal,
+} from "./orchestrate-durable.js";
 
 // The deterministic-replay pinned-byte re-spawn seam: re-runs a durable run's
 // PINNED bytes in the SAME jail envelope with COMIS_ORCH_SOCKET pointed at the
-// SEPARATE operator replay socket (INV-1). The daemon assembles it at the
+// Separate operator replay socket. The daemon assembles it at the
 // composition root (it needs the sandbox provider) + threads it into the
 // orchestrate.replay RPC wiring; the real bwrap round-trip is the .linux/VPS tier.
 export { createOrchestrateReplayRespawn } from "./orchestrate-replay-respawn.js";

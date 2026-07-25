@@ -78,6 +78,7 @@ export type { FileSnapshot } from "./shared/file-snapshot.js";
 // 10 sibling writers through.
 export {
   appendRegularFile,
+  readRegularFile,
   writeRegularFile,
   ensureContainedDir,
   SymlinkParentRejected,
@@ -88,6 +89,9 @@ export type {
   AppendRegularFileOptions,
   AppendRegularFileSuccess,
   AppendRegularFileError,
+  ReadRegularFileOptions,
+  ReadRegularFileSuccess,
+  ReadRegularFileError,
   WriteRegularFileOptions,
   WriteRegularFileSuccess,
   WriteRegularFileError,
@@ -166,9 +170,12 @@ export { writeTrajectoryPointerFileBestEffort } from "./trajectory/pointer-file.
 export type { WriteTrajectoryPointerFileParams } from "./trajectory/pointer-file.js";
 
 export { createTrajectoryRecorder } from "./trajectory/runtime.js";
+export { TrajectoryResumeError } from "./trajectory/persisted-state.js";
+export type { TrajectoryResumeFailureKind } from "./trajectory/persisted-state.js";
 
 export {
   attachTrajectoryToEventBus,
+  createTrajectoryEventTypeFilter,
   TRAJECTORY_BRIDGE_MAPPING,
 } from "./trajectory/event-bus-bridge.js";
 export type { TrajectoryBridgedEventName } from "./trajectory/event-bus-bridge.js";
@@ -521,8 +528,8 @@ export type {
 // The pre-committed, PURE, deterministic decision rule:
 // `pipelineAuthoringGate(aggregate) -> { buildAuthor, reason }`.
 // This package is the SINGLE SOURCE of `PipelineAuthoringAggregate` — the
-// daemon's fleet-findings reducer imports the type from here, and the daemon's
-// fleet-health assembler surfaces the verdict on the FleetHealthReport. Pure
+// daemon's system-findings reducer imports the type from here, and the daemon's
+// system-health assembler surfaces the verdict on the SystemHealthReport. Pure
 // (no I/O, no clock, no globals) — a leaf consumer like the rest of the package.
 export {
   pipelineAuthoringGate,

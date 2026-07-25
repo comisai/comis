@@ -34,8 +34,8 @@ export interface TTLCacheOptions {
 export interface TTLCache<T> {
   /** Get a value by key. Returns undefined if missing or expired (auto-evicts expired). */
   get(key: string): T | undefined;
-  /** Store a value with TTL. Evicts oldest if maxEntries exceeded. */
-  set(key: string, value: T): void;
+  /** Store a value with the default or supplied TTL. Evicts oldest if maxEntries exceeded. */
+  set(key: string, value: T, ttlMs?: number): void;
   /** Check if key exists and is not expired (auto-evicts expired). */
   has(key: string): boolean;
   /** Remove a key. Returns true if the key existed. */
@@ -85,7 +85,7 @@ export function createTTLCache<T>(opts: TTLCacheOptions): TTLCache<T> {
     return entry.value;
   }
 
-  function set(key: string, value: T): void {
+  function set(key: string, value: T, entryTtlMs = ttlMs): void {
     // Evict oldest entry if at capacity and key is new
     if (maxEntries != null && store.size >= maxEntries && !store.has(key)) {
       const oldest = store.keys().next();
@@ -93,7 +93,7 @@ export function createTTLCache<T>(opts: TTLCacheOptions): TTLCache<T> {
         store.delete(oldest.value);
       }
     }
-    store.set(key, { value, expiresAt: getNow() + ttlMs });
+    store.set(key, { value, expiresAt: getNow() + entryTtlMs });
   }
 
   function has(key: string): boolean {

@@ -180,6 +180,42 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       }
       return;
     }
+    case "background_task.notified": {
+      const reason = asString(data.reason);
+      const taskId = asString(data.taskId);
+      if (taskId === undefined) return;
+      if (reason === "recovery_retry_required") {
+        const toolName = asString(data.toolName);
+        acc.backgroundRecoveryRetryCount += 1;
+        acc.backgroundRecoveryByTask.set(taskId, {
+          unresolved: true,
+          ...(toolName === undefined ? {} : { toolName }),
+        });
+        acc.backgroundRecoveryLastTaskId = taskId;
+        acc.backgroundRecoveryLastToolName = toolName;
+        return;
+      }
+      if (
+        reason === "live_turn_consumed"
+        || reason === "silent_consumed"
+        || reason === "continuation_accepted"
+        || reason === "fallback_accepted"
+        || reason === "permanent_parked"
+        || reason === "uncertain_parked"
+        || reason === "recovery_resolved"
+      ) {
+        const existing = acc.backgroundRecoveryByTask.get(taskId);
+        if (existing !== undefined) {
+          acc.backgroundRecoveryByTask.set(taskId, { ...existing, unresolved: false });
+          const unresolved = [...acc.backgroundRecoveryByTask.entries()]
+            .filter(([, entry]) => entry.unresolved);
+          const last = unresolved[unresolved.length - 1];
+          acc.backgroundRecoveryLastTaskId = last?.[0];
+          acc.backgroundRecoveryLastToolName = last?.[1].toolName;
+        }
+      }
+      return;
+    }
     case "tool.result": {
       if (!tool) return;
       // Dedupe by toolCallId — the live ctx_search counted twice when its
@@ -582,7 +618,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     synthesizedBreakerTools: new Set(),
     misclassTokenByTool: new Map(),
     seenToolResultCallIds: new Set(),
-    turnTraceIds: new Set(),
+    promptTraceIds: new Set(),
+    toolTraceIds: new Set(),
     recallCount: 0,
     recallZeroHits: 0,
     crossUserRecalls: 0,
@@ -597,6 +634,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     videoOutcomeSeq: -1,
     voiceOutcomeSeq: -1,
     terminalDrivePromotedCount: 0,
+    backgroundRecoveryRetryCount: 0,
+    backgroundRecoveryByTask: new Map(),
   };
 
   for (const rec of records) {
@@ -606,11 +645,17 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       if (envelopeAgentId !== undefined && envelopeAgentId.length > 0) acc.agentId = envelopeAgentId;
     }
     if (rec.traceSchema === "comis-trajectory") {
-      // Count distinct turns (envelope traceId, one per agent turn) so the
-      // report can flag whole-session toolStats as cumulative-across-N-turns (the
-      // trajectory JSONL is append-only across reset_conversation severs).
+      // Count only explicit per-turn anchors. Daemon-global records can ride an
+      // open session recorder outside request context and receive the session id
+      // as their fallback trace id; counting every envelope therefore fabricates
+      // extra turns. Tool records retain support for sparse historical traces that
+      // do not contain prompt.submitted.
       const tid = asString(rec.traceId);
-      if (tid !== undefined && tid.length > 0) acc.turnTraceIds.add(tid);
+      const type = asString(rec.type) ?? "";
+      if (tid !== undefined && tid.length > 0) {
+        if (type === "prompt.submitted") acc.promptTraceIds.add(tid);
+        else if (type.startsWith("tool.")) acc.toolTraceIds.add(tid);
+      }
       handleEventRecord(acc, rec);
     } else if (rec.traceSchema === "comis-cache-trace") {
       // Cache-layer telemetry — NOT tool evidence. Its tool:before/tool:after
@@ -668,6 +713,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
   }
 
   const learning = buildLearningSignal(acc.learning); // undefined ⇒ omitted below
+  const turnTraceCount = acc.promptTraceIds.size > 0
+    ? acc.promptTraceIds.size
+    : acc.toolTraceIds.size;
   return {
     sessionKey: acc.sessionKey,
     toolStats,
@@ -740,7 +788,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
         }
       : {}),
     // Collapse the per-reason cache-break fold → a bounded,
-    // deterministically-ordered array (count desc, then reason asc — the fleet
+    // deterministically-ordered array (count desc, then reason asc — the system
     // degradedByCause ordering). Present ONLY when the session had ≥1 cache break
     // (undefined, never [], when none). estCostUsd rounded to cents-precision to
     // avoid float-noise in the digest.
@@ -771,7 +819,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     // Surface the turn span ONLY when >1 — it flags the whole-session toolStats
     // as cumulative across N turns (the trajectory is append-only across severs), so a
     // reader does not misread a multi-turn count as this-turn. Absent for a 1-turn session.
-    ...(acc.turnTraceIds.size > 1 ? { turnCount: acc.turnTraceIds.size } : {}),
+    ...(turnTraceCount > 1 ? { turnCount: turnTraceCount } : {}),
     ...(learning !== undefined ? { learning } : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),
@@ -809,6 +857,21 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             ...(acc.subagentKilledRuntimeMs !== undefined ? { runtimeMs: acc.subagentKilledRuntimeMs } : {}),
             ...(acc.subagentKilledIdleMs !== undefined ? { idleMs: acc.subagentKilledIdleMs } : {}),
             ...(acc.subagentKilledThresholdMs !== undefined ? { thresholdMs: acc.subagentKilledThresholdMs } : {}),
+          },
+        }
+      : {}),
+    ...(acc.backgroundRecoveryRetryCount > 0
+      ? {
+          backgroundRecovery: {
+            retryRequiredCount: acc.backgroundRecoveryRetryCount,
+            unresolvedCount: [...acc.backgroundRecoveryByTask.values()]
+              .filter((entry) => entry.unresolved).length,
+            ...(acc.backgroundRecoveryLastTaskId !== undefined
+              ? { lastTaskId: acc.backgroundRecoveryLastTaskId }
+              : {}),
+            ...(acc.backgroundRecoveryLastToolName !== undefined
+              ? { lastToolName: acc.backgroundRecoveryLastToolName }
+              : {}),
           },
         }
       : {}),

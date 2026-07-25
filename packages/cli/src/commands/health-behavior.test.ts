@@ -29,42 +29,22 @@ vi.mock("../output/spinner.js", () => ({
   withSpinner: vi.fn(async (_text: string, fn: () => Promise<unknown>) => fn()),
 }));
 
-// Mock all individual doctor checks (health.ts imports them)
-vi.mock("../doctor/checks/config-health.js", () => ({
-  configHealthCheck: { id: "config", name: "Config", run: vi.fn() },
-}));
-vi.mock("../doctor/checks/daemon-health.js", () => ({
-  daemonHealthCheck: { id: "daemon", name: "Daemon", run: vi.fn() },
-}));
-vi.mock("../doctor/checks/gateway-health.js", () => ({
-  gatewayHealthCheck: { id: "gateway", name: "Gateway", run: vi.fn() },
-}));
-vi.mock("../doctor/checks/channel-health.js", () => ({
-  channelHealthCheck: { id: "channel", name: "Channel", run: vi.fn() },
-}));
-vi.mock("../doctor/checks/workspace-health.js", () => ({
-  workspaceHealthCheck: { id: "workspace", name: "Workspace", run: vi.fn() },
+const { diagnosticChecks } = vi.hoisted(() => ({
+  diagnosticChecks: Array.from({ length: 10 }, (_, index) => ({
+    id: `check-${index}`,
+    name: `Check ${index}`,
+    run: vi.fn(),
+  })),
 }));
 
-// Mock @comis/core for buildHealthContext (loadConfigFile, validateConfig)
-vi.mock("@comis/core", () => ({
-  loadConfigFile: vi.fn(() => ({ ok: false, error: { code: "FILE_NOT_FOUND" } })),
-  validateConfig: vi.fn(() => ({ ok: true, value: {} })),
-  sanitizeLogString: vi.fn((s: string) => s),
-}));
-
-// Mock node:fs readFileSync for buildHealthContext
-vi.mock("node:fs", () => ({
-  readFileSync: vi.fn(() => {
-    throw new Error("not found");
-  }),
-  existsSync: vi.fn(() => false),
-}));
-
-// Mock node:os for homedir in buildHealthContext
-vi.mock("node:os", () => ({
-  default: { homedir: vi.fn(() => "/tmp/test-home") },
-  homedir: vi.fn(() => "/tmp/test-home"),
+vi.mock("../doctor/diagnostic-suite.js", () => ({
+  DIAGNOSTIC_CHECKS: diagnosticChecks,
+  resolveDefaultDiagnosticConfigPaths: vi.fn(() => []),
+  buildDiagnosticContext: vi.fn(() => ({
+    configPaths: [],
+    dataDir: "/tmp/test-home/.comis",
+    daemonPidFile: "/tmp/test-home/.comis/daemon.pid",
+  })),
 }));
 
 // Dynamic imports after mocks
@@ -138,6 +118,7 @@ describe("health shows only failures/warnings by default", () => {
     // Pass findings NOT visible
     expect(output).not.toContain("Config file exists");
     expect(output).not.toContain("Discord connected");
+    expect(vi.mocked(runDoctorChecks).mock.calls[0]?.[0]).toHaveLength(10);
   });
 
   it("shows category header and suggestion text for fail finding", async () => {

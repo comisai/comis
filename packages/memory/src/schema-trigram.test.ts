@@ -30,12 +30,12 @@ function baseTablesDb(): Database.Database {
   db.pragma("foreign_keys = ON");
   db.exec(`
     CREATE TABLE lcd_messages (
-      id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+      id TEXT PRIMARY KEY, conversation_ref TEXT NOT NULL, tenant_id TEXT NOT NULL,
       agent_id TEXT NOT NULL, session_key TEXT NOT NULL, seq INTEGER NOT NULL,
       role TEXT NOT NULL, token_count INTEGER NOT NULL, created_at INTEGER NOT NULL
     );
     CREATE TABLE lcd_summaries (
-      summary_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+      summary_id TEXT PRIMARY KEY, conversation_ref TEXT NOT NULL, tenant_id TEXT NOT NULL,
       agent_id TEXT NOT NULL, session_key TEXT NOT NULL, kind TEXT NOT NULL, depth INTEGER NOT NULL,
       earliest_at INTEGER NOT NULL, latest_at INTEGER NOT NULL, descendant_count INTEGER NOT NULL,
       token_count INTEGER NOT NULL, content TEXT NOT NULL, file_ids TEXT NOT NULL DEFAULT '[]',
@@ -85,14 +85,14 @@ describe("schema-trigram — twin existence + idempotency", () => {
     }>;
     const memColNames = memCols.map((c) => c.name);
     expect(memColNames).toContain("content");
-    expect(memColNames).not.toContain("conversation_id");
+    expect(memColNames).not.toContain("conversation_ref");
     expect(memColNames).not.toContain("agent_id");
     // lcd_messages_fts_tri: carries the UNINDEXED tenant/agent scope columns
     const msgCols = db
       .prepare("PRAGMA table_info(lcd_messages_fts_tri)")
       .all() as Array<{ name: string }>;
     const msgColNames = msgCols.map((c) => c.name);
-    expect(msgColNames).toContain("conversation_id");
+    expect(msgColNames).toContain("conversation_ref");
     expect(msgColNames).toContain("agent_id");
     expect(msgColNames).toContain("message_id");
     db.close();
@@ -115,13 +115,13 @@ describe("schema-trigram — delete-mirror triggers (base DELETE → twin row go
     ensureTrigramTwins(db);
     const info = db
       .prepare(
-        "INSERT INTO lcd_messages(id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at)" +
+        "INSERT INTO lcd_messages(id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at)" +
           " VALUES (?,?,?,?,?,?,?,?,?)",
       )
       .run("msg1", "conv-a", "t", "agentA", "s", 0, "user", 1, 1);
     const rowid = info.lastInsertRowid as number;
     db.prepare(
-      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_id, agent_id, message_id) VALUES (?,?,?,?,?)",
+      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_ref, agent_id, message_id) VALUES (?,?,?,?,?)",
     ).run(rowid, "the quarterly report", "conv-a", "agentA", "msg1");
     expect(
       (db.prepare("SELECT count(*) AS c FROM lcd_messages_fts_tri").get() as { c: number }).c,
@@ -138,14 +138,14 @@ describe("schema-trigram — delete-mirror triggers (base DELETE → twin row go
     ensureTrigramTwins(db);
     const info = db
       .prepare(
-        "INSERT INTO lcd_summaries(summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth," +
+        "INSERT INTO lcd_summaries(summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth," +
           " earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)" +
           " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       )
       .run("sum1", "conv-a", "t", "agentA", "s", "leaf", 0, 1, 1, 1, 1, "summary text", "[]", 0, 0, 1);
     const rowid = info.lastInsertRowid as number;
     db.prepare(
-      "INSERT INTO lcd_summaries_fts_tri(rowid, content, conversation_id, agent_id, summary_id) VALUES (?,?,?,?,?)",
+      "INSERT INTO lcd_summaries_fts_tri(rowid, content, conversation_ref, agent_id, summary_id) VALUES (?,?,?,?,?)",
     ).run(rowid, "summary text", "conv-a", "agentA", "sum1");
     expect(
       (db.prepare("SELECT count(*) AS c FROM lcd_summaries_fts_tri").get() as { c: number }).c,
@@ -214,12 +214,12 @@ describe("schema-trigram — boot safety / trigger pairing (partial schema must 
     db.pragma("foreign_keys = ON");
     db.exec(`
       CREATE TABLE lcd_messages (
-        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+        id TEXT PRIMARY KEY, conversation_ref TEXT NOT NULL, tenant_id TEXT NOT NULL,
         agent_id TEXT NOT NULL, session_key TEXT NOT NULL, seq INTEGER NOT NULL,
         role TEXT NOT NULL, token_count INTEGER NOT NULL, created_at INTEGER NOT NULL
       );
       CREATE TABLE lcd_summaries (
-        summary_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+        summary_id TEXT PRIMARY KEY, conversation_ref TEXT NOT NULL, tenant_id TEXT NOT NULL,
         agent_id TEXT NOT NULL, session_key TEXT NOT NULL, kind TEXT NOT NULL, depth INTEGER NOT NULL,
         earliest_at INTEGER NOT NULL, latest_at INTEGER NOT NULL, descendant_count INTEGER NOT NULL,
         token_count INTEGER NOT NULL, content TEXT NOT NULL, file_ids TEXT NOT NULL DEFAULT '[]',
@@ -236,7 +236,7 @@ describe("schema-trigram — boot safety / trigger pairing (partial schema must 
     expect(objectExists(db, "trigger", "lcd_messages_tri_ad")).toBe(true);
     // …and an lcd_messages base DELETE still works (no orphan trigger broke it).
     db.prepare(
-      "INSERT INTO lcd_messages(id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at)" +
+      "INSERT INTO lcd_messages(id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at)" +
         " VALUES (?,?,?,?,?,?,?,?,?)",
     ).run("m1", "conv-a", "t", "agentA", "s", 0, "user", 1, 1);
     expect(() => db.prepare("DELETE FROM lcd_messages WHERE id = ?").run("m1")).not.toThrow();
@@ -254,7 +254,7 @@ describe("schema-trigram — boot safety / trigger pairing (partial schema must 
       null,
     );
     db.prepare(
-      "INSERT INTO lcd_messages(id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at)" +
+      "INSERT INTO lcd_messages(id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at)" +
         " VALUES (?,?,?,?,?,?,?,?,?)",
     ).run("m1", "conv-a", "t", "agentA", "s", 0, "user", 1, 1);
     expect(() => db.prepare("DELETE FROM memories WHERE id = ?").run("mem1")).not.toThrow();
@@ -264,24 +264,24 @@ describe("schema-trigram — boot safety / trigger pairing (partial schema must 
 });
 
 describe("schema-trigram — tenant/agent isolation mechanics on the raw LCD twin (probe-verified)", () => {
-  it("MATCH ? AND conversation_id = ? AND agent_id = ? isolates agents in BOTH directions", () => {
+  it("MATCH ? AND conversation_ref = ? AND agent_id = ? isolates agents in BOTH directions", () => {
     const db = baseTablesDb();
     ensureTrigramTwins(db);
     db.prepare(
-      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_id, agent_id, message_id) VALUES (?,?,?,?,?)",
+      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_ref, agent_id, message_id) VALUES (?,?,?,?,?)",
     ).run(1, "shared secret alpha", "conv-a", "agentA", "m1");
     db.prepare(
-      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_id, agent_id, message_id) VALUES (?,?,?,?,?)",
+      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_ref, agent_id, message_id) VALUES (?,?,?,?,?)",
     ).run(2, "shared secret bravo", "conv-a", "agentB", "m2");
     const forA = db
       .prepare(
-        "SELECT rowid FROM lcd_messages_fts_tri WHERE lcd_messages_fts_tri MATCH ? AND conversation_id = ? AND agent_id = ? ORDER BY rank",
+        "SELECT rowid FROM lcd_messages_fts_tri WHERE lcd_messages_fts_tri MATCH ? AND conversation_ref = ? AND agent_id = ? ORDER BY rank",
       )
       .all('"secret"', "conv-a", "agentA") as Array<{ rowid: number }>;
     expect(forA.map((r) => r.rowid)).toEqual([1]);
     const forB = db
       .prepare(
-        "SELECT rowid FROM lcd_messages_fts_tri WHERE lcd_messages_fts_tri MATCH ? AND conversation_id = ? AND agent_id = ? ORDER BY rank",
+        "SELECT rowid FROM lcd_messages_fts_tri WHERE lcd_messages_fts_tri MATCH ? AND conversation_ref = ? AND agent_id = ? ORDER BY rank",
       )
       .all('"secret"', "conv-a", "agentB") as Array<{ rowid: number }>;
     expect(forB.map((r) => r.rowid)).toEqual([2]);
@@ -290,30 +290,30 @@ describe("schema-trigram — tenant/agent isolation mechanics on the raw LCD twi
 });
 
 describe("schema-trigram — G10 wipe mechanism (scoped DELETE on the FTS5 vtable)", () => {
-  it("DELETE FROM lcd_messages_fts_tri WHERE conversation_id = ? AND agent_id = ? removes scoped rows; MATCH then returns zero", () => {
+  it("DELETE FROM lcd_messages_fts_tri WHERE conversation_ref = ? AND agent_id = ? removes scoped rows; MATCH then returns zero", () => {
     const db = baseTablesDb();
     ensureTrigramTwins(db);
     db.prepare(
-      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_id, agent_id, message_id) VALUES (?,?,?,?,?)",
+      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_ref, agent_id, message_id) VALUES (?,?,?,?,?)",
     ).run(1, "matchable target text", "conv-a", "agentA", "m1");
     db.prepare(
-      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_id, agent_id, message_id) VALUES (?,?,?,?,?)",
+      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_ref, agent_id, message_id) VALUES (?,?,?,?,?)",
     ).run(2, "matchable target text", "conv-a", "agentB", "m2");
-    db.prepare("DELETE FROM lcd_messages_fts_tri WHERE conversation_id = ? AND agent_id = ?").run(
+    db.prepare("DELETE FROM lcd_messages_fts_tri WHERE conversation_ref = ? AND agent_id = ?").run(
       "conv-a",
       "agentA",
     );
     // agentA's row is gone…
     const forA = db
       .prepare(
-        "SELECT rowid FROM lcd_messages_fts_tri WHERE lcd_messages_fts_tri MATCH ? AND conversation_id = ? AND agent_id = ?",
+        "SELECT rowid FROM lcd_messages_fts_tri WHERE lcd_messages_fts_tri MATCH ? AND conversation_ref = ? AND agent_id = ?",
       )
       .all('"target"', "conv-a", "agentA") as unknown[];
     expect(forA.length).toBe(0);
     // …agentB's row survives (scope was respected).
     const forB = db
       .prepare(
-        "SELECT rowid FROM lcd_messages_fts_tri WHERE lcd_messages_fts_tri MATCH ? AND conversation_id = ? AND agent_id = ?",
+        "SELECT rowid FROM lcd_messages_fts_tri WHERE lcd_messages_fts_tri MATCH ? AND conversation_ref = ? AND agent_id = ?",
       )
       .all('"target"', "conv-a", "agentB") as unknown[];
     expect(forB.length).toBe(1);
@@ -326,7 +326,7 @@ describe("schema-trigram — trigram substring sanity (the tokenizer is really p
     const db = baseTablesDb();
     ensureTrigramTwins(db);
     db.prepare(
-      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_id, agent_id, message_id) VALUES (?,?,?,?,?)",
+      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_ref, agent_id, message_id) VALUES (?,?,?,?,?)",
     ).run(1, "הספרים", "conv-a", "agentA", "m1");
     const hits = db
       .prepare("SELECT rowid FROM lcd_messages_fts_tri WHERE lcd_messages_fts_tri MATCH ?")

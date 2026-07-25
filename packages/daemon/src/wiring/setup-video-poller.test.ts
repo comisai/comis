@@ -223,7 +223,9 @@ function makePoller(opts: {
   }
 
   const provider = opts.provider ?? makeProvider();
-  const sendAttachment = opts.sendAttachment ?? vi.fn().mockResolvedValue(ok("msg-1"));
+  const sendAttachment = opts.sendAttachment ?? vi.fn().mockResolvedValue(
+    ok({ kind: "tracked", messageId: "msg-1" }),
+  );
   const sendMessage = opts.sendMessage ?? vi.fn().mockResolvedValue(ok("notice-1"));
   // The link/notice degrade calls sendMessage (a REQUIRED ChannelPort
   // method, present on every adapter). An IRC-style adapter (adapterHasSend:false)
@@ -565,7 +567,7 @@ describe("createVideoPoller", () => {
     });
     const poller = createVideoPoller({
       store, provider: makeProvider() as never, persist: vi.fn().mockResolvedValue(ok(PERSISTED_OK)) as never,
-      costLimiter: { record: vi.fn() }, getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: vi.fn().mockResolvedValue(ok("m")) }) as never,
+      costLimiter: { record: vi.fn() }, getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: vi.fn().mockResolvedValue(ok({ kind: "tracked", messageId: "m" })) }) as never,
       config: makeConfig(), logger: createMockLogger(), timers: createFakeTimers(), sleep: vi.fn().mockResolvedValue(undefined), nowMs: () => 0,
       // NO eventBus
     });
@@ -920,7 +922,7 @@ describe("createVideoPoller", () => {
     const sendAttachment = vi
       .fn()
       .mockResolvedValueOnce(err(new Error("transient channel error")))
-      .mockResolvedValue(ok("msg-1"));
+      .mockResolvedValue(ok({ kind: "tracked", messageId: "msg-1" }));
     const { poller, deps } = makePoller({
       sendAttachment,
       config: makeConfig({ maxDeliveryAttempts: 5 } as Partial<VideoGenerationConfig>),

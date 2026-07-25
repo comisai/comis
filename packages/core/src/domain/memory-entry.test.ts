@@ -16,7 +16,10 @@ const VALID_UUID = "550e8400-e29b-41d4-a716-446655440000";
 function validEntry(overrides: Record<string, unknown> = {}) {
   return {
     id: VALID_UUID,
+    tenantId: "tenant-1",
+    agentId: "agent-1",
     userId: "user-42",
+    visibility: { kind: "agent-shared" },
     content: "The user prefers dark mode.",
     trustLevel: "learned",
     source: { who: "agent" },
@@ -37,12 +40,11 @@ describe("MemoryEntry", () => {
       }
     });
 
-    it("applies default tenantId", () => {
-      const result = parseMemoryEntry(validEntry());
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value.tenantId).toBe("default");
-      }
+    it("requires an explicit tenant and agent scope", () => {
+      const { tenantId: _tenantId, ...withoutTenant } = validEntry();
+      const { agentId: _agentId, ...withoutAgent } = validEntry();
+      expect(parseMemoryEntry(withoutTenant).ok).toBe(false);
+      expect(parseMemoryEntry(withoutAgent).ok).toBe(false);
     });
 
     it("applies default tags", () => {

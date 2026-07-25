@@ -15,6 +15,7 @@
 import { Impit } from "impit";
 import { wrapWebContent, type WrapExternalContentOptions } from "@comis/core";
 import { registerSearchProvider, type SearchProvider, type SearchProviderParams } from "./search-provider.js";
+import { detectErrorPagePattern } from "./web-fetch-utils.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -63,19 +64,32 @@ function getClient(): Impit {
 /** Decode common HTML entities in extracted text. */
 function decodeHtmlEntities(text: string): string {
   return text
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&#x27;/g, "'")
     .replace(/&#x2F;/g, "/")
-    .replace(/&nbsp;/g, " ");
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
 }
 
 /** Strip all HTML tags from a string. */
 function stripHtmlTags(text: string): string {
-  return text.replace(/<[^>]*>/g, "");
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const start = text.indexOf("<", cursor);
+    if (start === -1) {
+      parts.push(text.slice(cursor));
+      break;
+    }
+    parts.push(text.slice(cursor, start));
+    const end = text.indexOf(">", start + 1);
+    if (end === -1) break;
+    cursor = end + 1;
+  }
+  return parts.join("");
 }
 
 /** Clean extracted text: strip tags, decode entities, normalize whitespace. */
@@ -155,6 +169,16 @@ export function parseDdgHtml(
   return results;
 }
 
+/**
+ * DuckDuckGo represents a genuine empty result set with a dedicated result
+ * row. A plain page with no parsed links is not sufficient evidence: it may be
+ * a challenge page, upstream outage, or parser drift.
+ */
+function isDdgEmptyResultsPage(html: string): boolean {
+  return /\bresult--no-result\b/i.test(html)
+    && /class=["'][^"']*\bno-results\b[^"']*["'][^>]*>\s*No\s+results\.\s*</i.test(html);
+}
+
 // ---------------------------------------------------------------------------
 // Provider implementation
 // ---------------------------------------------------------------------------
@@ -193,6 +217,16 @@ export async function runDuckDuckGoSearch(params: {
 
   const html = await res.text();
   const rawResults = parseDdgHtml(html);
+  if (rawResults.length === 0) {
+    const errorPage = detectErrorPagePattern(html);
+    if (errorPage !== null) {
+      const providerReason = `${errorPage.charAt(0).toLowerCase()}${errorPage.slice(1)}`;
+      throw new Error(`DuckDuckGo search ${providerReason}`);
+    }
+    if (!isDdgEmptyResultsPage(html)) {
+      throw new Error("DuckDuckGo search returned an unrecognized empty response");
+    }
+  }
   const limit = Math.max(1, params.count);
   const limited = rawResults.slice(0, limit);
 

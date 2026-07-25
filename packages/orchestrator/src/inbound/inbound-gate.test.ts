@@ -26,16 +26,19 @@ import type {
   SessionKey,
   DeliveryService,
   ApprovalRequest,
+  ResolvedTurnScope,
 } from "@comis/core";
-import { formatSessionKey } from "@comis/core";
+import { createConversationRef, formatSessionKey } from "@comis/core";
 import { ok } from "@comis/shared";
 
 import { evaluateInboundGate } from "./inbound-gate.js";
 import type { GateDeps } from "./inbound-gate.js";
+import { createDeterministicLocalization } from "../localization/deterministic-localization.js";
 import type {
   InteractiveCallbackRouter,
   CallbackResolution,
 } from "../approval/index.js";
+import type { SourceTerminalScope } from "../source-message-terminal.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -54,7 +57,7 @@ function makeAdapter(channelType = "telegram"): ChannelPort {
     removeReaction: vi.fn(async () => ok(undefined)),
     deleteMessage: vi.fn(async () => ok(undefined)),
     fetchMessages: vi.fn(async () => ok([])),
-    sendAttachment: vi.fn(async () => ok("att-1")),
+    sendAttachment: vi.fn(async () => ok({ kind: "tracked" as const, messageId: "att-1" })),
     platformAction: vi.fn(async () => ok(undefined)),
   };
 }
@@ -73,12 +76,57 @@ function makeMsg(overrides?: Partial<NormalizedMessage>): NormalizedMessage {
   };
 }
 
-function makeSessionKey(): SessionKey {
+function makeSessionKey(overrides: Partial<SessionKey> = {}): SessionKey {
   return {
     tenantId: "default",
+    agentId: "agent-1",
     userId: "user-1",
     channelId: "chat-1",
     peerId: "user-1",
+    ...overrides,
+  };
+}
+
+const TURN_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "adapter-1",
+  conversationId: "chat-1",
+  conversationKind: "direct" as const,
+};
+
+const TURN_SCOPE: ResolvedTurnScope = {
+  conversation: {
+    tenantId: "default",
+    agentId: "agent-1",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: TURN_ENDPOINT,
+      principalId: "principal-user-1",
+    },
+  },
+  principal: { principalId: "principal-user-1" },
+  endpoint: TURN_ENDPOINT,
+};
+
+const turnConversationRef = createConversationRef(TURN_SCOPE.conversation);
+if (!turnConversationRef.ok) throw turnConversationRef.error;
+const TURN_CONVERSATION_REF = turnConversationRef.value;
+
+function expectedDeliveryOptions(
+  turnScope: ResolvedTurnScope,
+  conversationRef: typeof TURN_CONVERSATION_REF,
+  skipChunking = false,
+) {
+  return {
+    completionMode: "deferred_retry" as const,
+    authority: {
+      tenantId: turnScope.conversation.tenantId,
+      agentId: turnScope.conversation.agentId,
+      conversationRef,
+    },
+    destinationEndpoint: turnScope.endpoint,
+    ...(turnScope.endpoint.threadId === undefined ? {} : { threadId: turnScope.endpoint.threadId }),
+    ...(skipChunking ? { skipChunking: true } : {}),
   };
 }
 
@@ -130,11 +178,62 @@ function makeDeps(overrides?: Partial<GateDeps>): GateDeps {
       cleanStale: vi.fn(() => 0),
     },
     deliveryService: makeFakeDeliveryService(),
+    localization: createDeterministicLocalization(),
     ...overrides,
   } as GateDeps;
 }
 
 const SEND_OVERRIDES = { get: () => undefined, set: vi.fn(), delete: vi.fn() };
+
+describe("evaluateInboundGate history serialization", () => {
+  it("passes ingress terminal authority into queued history injection", async () => {
+    const enqueue = vi.fn(async () => ok(undefined));
+    const deps = makeDeps({
+      commandQueue: { enqueue } as never,
+      autoReplyEngineConfig: {
+        enabled: true,
+        groupActivation: "mention-gated",
+        customPatterns: [],
+        historyInjection: true,
+        maxHistoryInjections: 50,
+        maxGroupHistoryMessages: 20,
+      },
+    });
+    const sourceTerminalScope: SourceTerminalScope = {
+      publish: vi.fn(() => 1),
+      isPublished: false,
+    };
+    const msg = makeMsg({
+      metadata: {
+        telegramMessageId: "42",
+        telegramChatType: "group",
+        isBotMentioned: false,
+        replyToBot: false,
+      },
+    });
+
+    const result = await evaluateInboundGate(
+      deps,
+      makeAdapter(),
+      msg,
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      SEND_OVERRIDES as never,
+      sourceTerminalScope,
+    );
+
+    expect(result).toEqual({ action: "skip" });
+    expect(enqueue).toHaveBeenCalledWith(
+      makeSessionKey(),
+      msg,
+      "telegram",
+      expect.any(Function),
+      sourceTerminalScope,
+    );
+  });
+});
 
 /** Build a full ApprovalRequest fixture (the slash path reads shortId/toolName/action/sessionKey). */
 function makeRequest(overrides?: Partial<ApprovalRequest>): ApprovalRequest {
@@ -144,9 +243,17 @@ function makeRequest(overrides?: Partial<ApprovalRequest>): ApprovalRequest {
     toolName: "agents.delete",
     action: "agents.delete",
     params: {},
+    tenantId: "default",
     agentId: "agent-1",
-    sessionKey: formatSessionKey(makeSessionKey()),
+    conversationRef: TURN_CONVERSATION_REF,
+    resolvingPrincipalId: TURN_SCOPE.principal.principalId,
     trustLevel: "user",
+    callbackOwner: {
+      tenantId: "default",
+      userId: "user-1",
+      channelType: "telegram",
+      channelKey: "chat-1",
+    },
     createdAt: 1000,
     timeoutMs: 300_000,
     ...overrides,
@@ -162,7 +269,16 @@ function makeFakeGate(pending: ApprovalRequest[]) {
       pending: () => pending,
       getRequest: (id: string) => pending.find((r) => r.requestId === id),
       getRequestByShortId: (sid: string) => pending.find((r) => r.shortId === sid),
-      pendingForSession: (sk: string) => pending.filter((r) => r.sessionKey === sk),
+      pendingForAuthority: (authority: {
+        tenantId: string;
+        agentId: string;
+        conversationRef: string;
+        resolvingPrincipalId: string;
+      }) => pending.filter((request) =>
+        request.tenantId === authority.tenantId
+        && request.agentId === authority.agentId
+        && request.conversationRef === authority.conversationRef
+        && request.resolvingPrincipalId === authority.resolvingPrincipalId),
     },
     resolveApproval,
   };
@@ -174,6 +290,7 @@ function makeFakeRouter(resolution: CallbackResolution) {
   const router: InteractiveCallbackRouter = {
     route,
     render: vi.fn(() => ok("v1.approve.abc123XYZ789.deadbeefdeadbeef")),
+    registerGraphReport: vi.fn(() => ok("v1.details.abc123XYZ789.deadbeefdeadbeef")),
   };
   return { router, route };
 }
@@ -210,6 +327,8 @@ describe("evaluateInboundGate button-callback intercept", () => {
       msg,
       sessionKey,
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -249,6 +368,8 @@ describe("evaluateInboundGate button-callback intercept", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -288,11 +409,124 @@ describe("evaluateInboundGate button-callback intercept", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
 
     expect(deps.deliveryService.deliverToChannel).not.toHaveBeenCalled();
+  });
+
+  it("delivers an owner-validated graph report only after the signed router resolves it", async () => {
+    const callbackData = "v1.details.abc123XYZ789.deadbeefdeadbeef";
+    const onGraphReportRequest = vi.fn(async () => undefined);
+    const { router, route } = makeFakeRouter({
+      kind: "graph_report_requested",
+      graphId: "11111111-2222-4333-8444-555555555555",
+    });
+    const deps = makeDeps({
+      interactiveCallbackRouter: router,
+      onGraphReportRequest,
+    });
+    const adapter = makeAdapter();
+    const msg = makeMsg({
+      text: callbackData,
+      metadata: {
+        isButtonCallback: true,
+        callbackData,
+        threadId: "untrusted-topic",
+      },
+    });
+
+    const ownerThreadScope: ResolvedTurnScope = {
+      ...TURN_SCOPE,
+      endpoint: { ...TURN_SCOPE.endpoint, threadId: "owner-topic" },
+      conversation: {
+        ...TURN_SCOPE.conversation,
+        partition: {
+          kind: "endpoint-conversation-principal",
+          endpoint: { ...TURN_SCOPE.endpoint, threadId: "owner-topic" },
+          principalId: TURN_SCOPE.principal.principalId,
+        },
+      },
+    };
+    const ownerThreadRef = createConversationRef(ownerThreadScope.conversation);
+    if (!ownerThreadRef.ok) throw ownerThreadRef.error;
+    const result = await evaluateInboundGate(
+      deps,
+      adapter,
+      msg,
+      makeSessionKey(),
+      "agent-1",
+      ownerThreadScope,
+      ownerThreadRef.value,
+      SEND_OVERRIDES as never,
+    );
+
+    expect(result).toEqual({ action: "handled" });
+    expect(onGraphReportRequest).toHaveBeenCalledWith(
+      "11111111-2222-4333-8444-555555555555",
+      "telegram",
+      "chat-1",
+      adapter,
+      expectedDeliveryOptions(ownerThreadScope, ownerThreadRef.value, true),
+      makeSessionKey(),
+    );
+    expect(route).toHaveBeenCalledWith(expect.objectContaining({
+      channelType: "telegram",
+      channelKey: "chat-1",
+      threadId: "owner-topic",
+    }));
+    expect(deps.deliveryService.deliverToChannel).not.toHaveBeenCalled();
+  });
+
+  it("routes a signed callback in a mention-gated group without treating it as chat history", async () => {
+    const callbackData = "v1.details.abc123XYZ789.deadbeefdeadbeef";
+    const onGraphReportRequest = vi.fn(async () => undefined);
+    const { router, route } = makeFakeRouter({
+      kind: "graph_report_requested",
+      graphId: "11111111-2222-4333-8444-555555555555",
+    });
+    const enqueue = vi.fn(async () => ok(undefined));
+    const deps = makeDeps({
+      interactiveCallbackRouter: router,
+      onGraphReportRequest,
+      commandQueue: { enqueue } as never,
+      autoReplyEngineConfig: {
+        enabled: true,
+        groupActivation: "mention-gated",
+        customPatterns: [],
+        historyInjection: true,
+        maxHistoryInjections: 50,
+        maxGroupHistoryMessages: 20,
+      },
+    });
+    const msg = makeMsg({
+      text: callbackData,
+      metadata: {
+        isButtonCallback: true,
+        callbackData,
+        telegramChatType: "supergroup",
+        isBotMentioned: false,
+      },
+    });
+
+    const result = await evaluateInboundGate(
+      deps,
+      makeAdapter(),
+      msg,
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      SEND_OVERRIDES as never,
+    );
+
+    expect(result).toEqual({ action: "handled" });
+    expect(route).toHaveBeenCalledTimes(1);
+    expect(onGraphReportRequest).toHaveBeenCalledTimes(1);
+    expect(enqueue).not.toHaveBeenCalled();
   });
 });
 
@@ -301,6 +535,33 @@ describe("evaluateInboundGate button-callback intercept", () => {
 // ---------------------------------------------------------------------------
 
 describe("evaluateInboundGate /approve shortId slash path", () => {
+  it("does not resolve a same-session request owned by another inbound user", async () => {
+    const req = makeRequest({
+      callbackOwner: {
+        tenantId: "default",
+        userId: "user-2",
+        channelType: "telegram",
+        channelKey: "chat-1",
+      },
+    });
+    const { gate, resolveApproval } = makeFakeGate([req]);
+    const deps = makeDeps({ approvalGate: gate as never });
+
+    const result = await evaluateInboundGate(
+      deps,
+      makeAdapter(),
+      makeMsg({ text: "/approve abc123XYZ789" }),
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      SEND_OVERRIDES as never,
+    );
+
+    expect(result.action).toBe("handled");
+    expect(resolveApproval).not.toHaveBeenCalled();
+  });
+
   it("lists shortIds (not requestId prefixes) when multiple approvals are pending", async () => {
     const reqA = makeRequest({
       requestId: "aaaaaaaa-2222-4333-8444-555555555555",
@@ -326,6 +587,8 @@ describe("evaluateInboundGate /approve shortId slash path", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -361,6 +624,8 @@ describe("evaluateInboundGate /approve shortId slash path", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -396,6 +661,8 @@ describe("evaluateInboundGate /approve shortId slash path", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -425,6 +692,8 @@ describe("evaluateInboundGate /approve shortId slash path", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -457,6 +726,8 @@ describe("evaluateInboundGate /approve shortId slash path", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -486,6 +757,8 @@ describe("evaluateInboundGate /approve shortId slash path", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );

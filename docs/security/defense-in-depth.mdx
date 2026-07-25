@@ -104,7 +104,7 @@ the input checkpoint.
     `channels.msteams.enabled` off until the endpoint is wired, and rely on the
     `comis doctor` Teams probes plus the missed-inbound alert
     (`missedInboundThresholdMs`, default 6 hours) to catch a dead ingress -- it
-    surfaces as a `comis fleet` health signal. See the
+    surfaces as a `comis system-health` health signal. See the
     [Microsoft Teams setup guide](/channels/msteams) for the full exposure and
     liveness walkthrough.
   </Accordion>
@@ -504,7 +504,7 @@ someone gains access to your server's file system.
     **Why it matters:** The inbound-message format is plain, reproducible text
     (unlike external content, which is fenced with an unforgeable per-session
     nonce). Without this, a model can fabricate a "next user turn" in its reply;
-    the fabrication is persisted verbatim and replayed as genuine history, so on
+    the fabrication would be persisted and replayed as genuine history, so on
     the following turn the agent reads its own forgery as a real user message and
     acts on it -- a self-reinforcing hallucination. Neutralizing the framing makes
     that impossible. Each occurrence is logged (a counts-only WARN naming

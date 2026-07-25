@@ -63,12 +63,12 @@ function makeFakeConnection(): {
   return { conn, frames };
 }
 
-// The bridge resolves the ACP session id from sessionKey via
-// parseFormattedSessionKey(sessionKey).peerId, so the event sessionKey must be a
-// formatted key whose peerId is the connection's registered ACP session id.
+// The server-owned ACP session map resolves this display label to the retained
+// connection id; the bridge never recovers authority by parsing the label.
 const ACP_SESSION_ID = "acp-session-1";
 const SESSION_KEY = formatSessionKey({
   tenantId: "default",
+  agentId: "a1",
   userId: "u1",
   channelId: "acp",
   peerId: ACP_SESSION_ID,
@@ -99,6 +99,7 @@ describe("createAcpPlanBridge (§16.7 — SEP plan → SDK Plan, no new tool)", 
       eventBus: bus,
       executionPlanPort: port,
       getConnection: (id) => (id === ACP_SESSION_ID ? conn : undefined),
+      resolveAcpSessionId: () => ACP_SESSION_ID,
     });
 
     bus.emit("sep:plan_extracted", {
@@ -147,6 +148,7 @@ describe("createAcpPlanBridge (§16.7 — SEP plan → SDK Plan, no new tool)", 
       eventBus: bus,
       executionPlanPort: port,
       getConnection: () => conn,
+      resolveAcpSessionId: () => ACP_SESSION_ID,
     });
 
     bus.emit("sep:plan_extracted", {
@@ -180,6 +182,7 @@ describe("createAcpPlanBridge (§16.7 — SEP plan → SDK Plan, no new tool)", 
       eventBus: bus,
       executionPlanPort: port,
       getConnection: () => conn,
+      resolveAcpSessionId: () => ACP_SESSION_ID,
     });
 
     bus.emit("sep:plan_extracted", {
@@ -228,6 +231,7 @@ describe("createAcpPlanBridge (§16.7 — SEP plan → SDK Plan, no new tool)", 
       eventBus: bus,
       executionPlanPort: port,
       getConnection: () => conn,
+      resolveAcpSessionId: () => ACP_SESSION_ID,
     });
 
     // No agentId / sessionKey → skipped before re-reading the plan.
@@ -254,6 +258,7 @@ describe("createAcpPlanBridge (§16.7 — SEP plan → SDK Plan, no new tool)", 
       eventBus: busA,
       executionPlanPort: undefinedPort.port,
       getConnection: () => a.conn,
+      resolveAcpSessionId: () => ACP_SESSION_ID,
     });
     busA.emit("sep:plan_extracted", {
       agentId: "a1",
@@ -277,6 +282,7 @@ describe("createAcpPlanBridge (§16.7 — SEP plan → SDK Plan, no new tool)", 
       eventBus: busB,
       executionPlanPort: inactivePort.port,
       getConnection: () => b.conn,
+      resolveAcpSessionId: () => ACP_SESSION_ID,
     });
     busB.emit("sep:plan_extracted", {
       agentId: "a1",
@@ -302,6 +308,7 @@ describe("createAcpPlanBridge (§16.7 — SEP plan → SDK Plan, no new tool)", 
       eventBus: bus,
       executionPlanPort: port,
       getConnection: () => undefined, // dropped / unknown session
+      resolveAcpSessionId: () => ACP_SESSION_ID,
     });
     bus.emit("sep:plan_extracted", {
       agentId: "a1",
@@ -329,6 +336,7 @@ describe("createAcpPlanBridge (§16.7 — SEP plan → SDK Plan, no new tool)", 
       eventBus: bus,
       executionPlanPort: port,
       getConnection: () => conn,
+      resolveAcpSessionId: () => ACP_SESSION_ID,
     });
     bus.emit("sep:plan_extracted", {
       agentId: "a1",
@@ -389,6 +397,7 @@ describe("createAcpPlanBridge (§16.7 — SEP plan → SDK Plan, no new tool)", 
       eventBus: bus,
       executionPlanPort: port,
       getConnection: () => conn,
+      resolveAcpSessionId: () => ACP_SESSION_ID,
       logger,
     });
 
@@ -430,6 +439,7 @@ describe("createAcpPlanBridge (§16.7 — SEP plan → SDK Plan, no new tool)", 
       eventBus: bus,
       executionPlanPort: port,
       getConnection: () => conn,
+      resolveAcpSessionId: () => ACP_SESSION_ID,
     });
 
     unsubscribe();

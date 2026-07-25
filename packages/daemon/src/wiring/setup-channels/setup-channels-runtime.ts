@@ -7,20 +7,20 @@
  * @module
  */
 
-import { readdir, readFile, stat } from "node:fs/promises";
 import type { Attachment, ChannelPort, ChannelPluginPort, DeliveryService, ExecutionPlanPort, NormalizedMessage, SessionKey, ClockPort, TimerPort, ActivityStreamPort, TurnActivityContext } from "@comis/core";
-import { formatSessionKey, safePath, systemNowDate, themeForName, chatProjection } from "@comis/core";
+import { formatSessionKey, systemNowDate, themeForName, chatProjection, toSafeErrorLogString, tryGetContext } from "@comis/core";
 import { createPlanStream } from "@comis/observability";
 import type { AppContainer } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
+import type { AgentExecutor, ComisSessionManager, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import { createCommandHandler, parseSlashCommand, createMessageRouter, createCommandQueue, createActivityTurnCoordinator, type CommandHandlerDeps, type CommandQueue, type ActivityTurnCoordinator, type ActivityBreakerGate } from "@comis/orchestrator";
 import { type VoiceResponsePipelineDeps, createLifecycleReactor, reactWithFallback, createTestSink, type LifecycleReactor, type ChannelRegistry } from "@comis/channels";
 import { buildReadOnlyChannelRegistry, buildChannelCredentialMap } from "./setup-channels-registry-builder.js";
 import { buildActivityRenderers, type ActivityRendererFactory } from "./setup-channels-activity-renderers.js";
 import { resolveActivityKillSwitchSlice } from "./activity-kill-switch.js";
-import { createChannelManager, processInboundMessage, type ChannelManager } from "@comis/orchestrator";
-import { RetryConfigSchema, createRetryEngine } from "@comis/core";
+import { createGraphReportRequestHandler, type GraphReportDurability } from "./graph-report-delivery.js";
+import { createChannelManager, createDeterministicLocalization, processInboundMessage, type ChannelManager } from "@comis/orchestrator";
+import { DmScopeConfigSchema, RetryConfigSchema, createRetryEngine } from "@comis/core";
 import {
   shouldAutoTts,
   resolveOutputFormat,
@@ -33,12 +33,14 @@ import {
 } from "@comis/skills";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import type { TTSPort, QueueConfig } from "@comis/core";
-import type { ExecutionLogEntry } from "@comis/scheduler";
+import { err, fromPromise, tryCatch } from "@comis/shared";
 
 /** Closure-captured deps for building and starting the ChannelManager. */
 // @optional-field-count: Inherits the optional-field surface of ChannelsDeps (allowlisted at optionalFieldAllowlist for setup-channels-registry.ts/ChannelsDeps, optionalCount: 26). The runtime leaf passes through the ChannelsDeps optionals (ttsAdapter, audioConverter, queueConfig, etc.) unchanged; tightening these to required would force the registry caller (and every downstream consumer of ChannelsDeps) to fabricate stub values at every call site. The split mirrors the ChannelsDeps optional surface so the rebuild matches the pre-split call shape byte-for-byte.
 export interface ChannelManagerBuildDeps {
   container: AppContainer;
+  /** Absolute Comis data root resolved by the daemon composition root. */
+  dataDir: string;
   executors: Map<string, AgentExecutor>;
   defaultAgentId: string;
   sessionManager: ReturnType<typeof createSessionLifecycle>;
@@ -46,6 +48,7 @@ export interface ChannelManagerBuildDeps {
   ssrfFetcher: SsrfGuardedFetcher;
   linkRunner: LinkRunner;
   deliveryService: DeliveryService;
+  graphReportDurability: GraphReportDurability;
   adaptersByType: Map<string, ChannelPort>;
   /** Per-channel plugin map; consumers read `plugin.capabilities` for
    *  features.reactions, replyToMetaKey, etc. */
@@ -72,7 +75,10 @@ export interface ChannelManagerBuildDeps {
   // Server-side interactive-callback router (verifier) — inbound-gate.ts verifies
   // a signed button callback BEFORE slash parsing so the payload never reaches the LLM.
   interactiveCallbackRouter?: import("@comis/orchestrator").InteractiveCallbackRouter;
-  preprocessMessageCallback: (msg: NormalizedMessage) => Promise<NormalizedMessage>;
+  preprocessMessageCallback: (
+    msg: NormalizedMessage,
+    turnScope: import("@comis/core").ResolvedTurnScope,
+  ) => Promise<NormalizedMessage>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PreflightResult type from channels package is not re-exported; pass-through matches setup-channels-media.ts
   preflightFn?: (msg: NormalizedMessage) => Promise<any>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires complex type parameters from pi-ai SDK
@@ -89,17 +95,16 @@ export interface ChannelManagerBuildDeps {
   onMessageReceived?: (msg: NormalizedMessage, channelType: string) => void;
   onMessageProcessed?: (msg: NormalizedMessage, channelType: string) => void;
   approvalGate?: import("@comis/core").ApprovalGate;
-  piSessionAdapters?: Map<string, {
-    getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
-    destroySession(key: SessionKey): Promise<void>;
-  }>;
+  piSessionAdapters?: Map<string, Pick<
+    ComisSessionManager,
+    "getSessionStats" | "destroySession" | "persistInboundMessage"
+  >>;
   /** Complete three-layer forget for slash /new + /reset (runtime-only destroy leaves the LCD context the DAG re-presents). */
-  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
+  destroyConversation?: (scope: import("@comis/core").ConversationScope, key: SessionKey) => Promise<unknown>;
   costTrackers?: Map<string, {
     getByProvider(): Array<{ provider: string; model: string; totalTokens: number; totalCost: number; callCount: number }>;
     getBySession(key: string): { totalTokens: number; totalCost: number };
   }>;
-  cronExecutionTrackers?: Map<string, { record(entry: ExecutionLogEntry): Promise<void> }>;
   /** DI seam for /export-trajectory. Absent → command falls through to generic slash handling. */
   exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
   /** Override for the credential→channelType map. Absent → auto-built from config. */
@@ -128,6 +133,7 @@ export async function buildAndStartChannelManager(
 ): Promise<ChannelManagerBuildResult> {
   const {
     container,
+    dataDir,
     executors,
     defaultAgentId,
     sessionManager,
@@ -241,16 +247,22 @@ export async function buildAndStartChannelManager(
     // Create retry engine for resilient message delivery (rate limit retry + HTML parse fallback)
     const retryConfig = RetryConfigSchema.parse({});
     const retryEngine = createRetryEngine(retryConfig, container.eventBus, channelsLogger);
-
     // Read-only ChannelRegistry over channelPlugins (lifecycle owned by setup-channels-adapters).
     const channelRegistry: ChannelRegistry = buildReadOnlyChannelRegistry(channelPlugins);
     // credential→channelType map; auto-built from enabled channels or overridden by caller.
     const channelCredentialMap = deps.channelCredentialMap ?? buildChannelCredentialMap(container.config.channels);
     channelManager = createChannelManager({
+      tenantId: container.config.tenantId,
       eventBus: container.eventBus,
+      clock: deps.clock,
       messageRouter,
       commandQueue,
       sessionManager,
+      principalResolver: container.principalResolver,
+      localization: createDeterministicLocalization(),
+      getDmScope: (agentId: string) => DmScopeConfigSchema.parse(
+        agents[agentId]?.session?.dmScope ?? {},
+      ),
       retryEngine,
       deliveryQueue: deps.deliveryQueue,
       deliveryService,
@@ -258,6 +270,21 @@ export async function buildAndStartChannelManager(
       // Required: orchestrator inbound entrypoint (channels avoids a back-edge import).
       processInboundMessage,
       createExecutor: (agentId: string) => executors.get(agentId) ?? executors.get(defaultAgentId),
+      persistInboundMessage: async (agentId, message, sessionKey) => {
+        const sessionAdapter = deps.piSessionAdapters?.get(agentId)
+          ?? deps.piSessionAdapters?.get(defaultAgentId);
+        if (sessionAdapter === undefined) {
+          return err({
+            error: new Error(`No session adapter is registered for resolved agent '${agentId}'`),
+            errorKind: "config" as const,
+          });
+        }
+        return sessionAdapter.persistInboundMessage(
+          sessionKey,
+          message,
+          deps.clock.now(),
+        );
+      },
       logger: channelsLogger,
       preprocessMessage: preprocessMessageCallback,
       audioPreflight: preflightFn,
@@ -285,6 +312,14 @@ export async function buildAndStartChannelManager(
       // The redacted stream port + per-turn coordinatorFactory (gate at :395).
       activityStreamPort: deps.activityStream,
       coordinatorFactory,
+      ...(container.workspacePolicyPort === undefined
+        ? {}
+        : {
+            taskCapture: {
+              taskExtractionPort: container.taskExtractionPort,
+              workspacePolicyPort: container.workspacePolicyPort,
+            },
+          }),
       // Live boot adapter registry — injectMessage falls back to it for post-startAll adapters.
       adapterRegistry: adaptersByType,
       getAllowFrom: (channelType: string) => {
@@ -314,117 +349,14 @@ export async function buildAndStartChannelManager(
       },
       onMessageReceived: deps.onMessageReceived,
       onMessageProcessed: deps.onMessageProcessed,
-      // Graph report button callback intercept: deliver full report as .md file attachment
-      onGraphReportRequest: async (graphId, _channelType, channelId, adapter, threadId) => {
-        const dataDir = container.config.dataDir || ".";
-        try {
-          if (!/^[a-f0-9-]{8,64}$/i.test(graphId)) {
-            channelsLogger.warn({ graphId, hint: "Invalid graphId format in report request", errorKind: "validation" as const }, "Graph report request rejected");
-            return;
-          }
-
-          let graphDir: string;
-          // Two-step safePath (throws on traversal; the catch emits one operator WARN).
-          try {
-            const graphRunsDir = safePath(dataDir, "graph-runs");
-            graphDir = safePath(graphRunsDir, graphId);
-          } catch {
-            channelsLogger.warn({ graphId, hint: "Path traversal attempt in graphId", errorKind: "validation" as const }, "Graph report request rejected");
-            return;
-          }
-
-          try {
-            await stat(graphDir);
-          } catch {
-            channelsLogger.warn({ graphId, graphDir, hint: "Graph run directory not found", errorKind: "validation" as const }, "Graph report directory missing");
-            await adapter.sendMessage(channelId, "Report not available — graph run data not found.", threadId ? { extra: { threadId } } : undefined);
-            return;
-          }
-
-          const files = await readdir(graphDir);
-          const outputFiles = files.filter((f) => f.endsWith("-output.md"));
-
-          if (outputFiles.length === 0) {
-            await adapter.sendMessage(channelId, "Report not available — no output files found.", threadId ? { extra: { threadId } } : undefined);
-            return;
-          }
-
-          let leafOutputFile: string | undefined;
-          try {
-            const metadataRaw = await readFile(safePath(graphDir, "_run-metadata.json"), "utf8");
-            const metadata = JSON.parse(metadataRaw) as {
-              nodes: Record<string, { status: string }>;
-            };
-            const completedNodes = Object.entries(metadata.nodes)
-              .filter(([, v]) => v.status === "completed")
-              .map(([k]) => k);
-
-            let maxSize = 0;
-            for (const f of outputFiles) {
-              const nodeId = f.replace(/-output\.md$/, "");
-              if (completedNodes.includes(nodeId)) {
-                const fileStat = await stat(safePath(graphDir, f));
-                if (fileStat.size > maxSize) {
-                  maxSize = fileStat.size;
-                  leafOutputFile = f;
-                }
-              }
-            }
-          } catch {
-            // Metadata read failed -- fall back to largest output file
-          }
-
-          if (!leafOutputFile) {
-            let maxSize = 0;
-            for (const f of outputFiles) {
-              const fileStat = await stat(safePath(graphDir, f));
-              if (fileStat.size > maxSize) {
-                maxSize = fileStat.size;
-                leafOutputFile = f;
-              }
-            }
-          }
-
-          if (!leafOutputFile) {
-            await adapter.sendMessage(channelId, "Report not available — could not identify output file.", threadId ? { extra: { threadId } } : undefined);
-            return;
-          }
-
-          const filePath = safePath(graphDir, leafOutputFile);
-          const nodeId = leafOutputFile.replace(/-output\.md$/, "");
-          const caption = `Full report — ${nodeId} (graph ${graphId.slice(0, 8)})`;
-
-          // sendAttachment is optional on ChannelPort; attachment-less platforms (IRC)
-          // omit it — degrade to a text message referencing the caption.
-          if (typeof adapter.sendAttachment !== "function") {
-            await adapter.sendMessage(
-              channelId,
-              `${caption}\n(attachment not supported on this channel — full report at ${filePath})`,
-              threadId ? { extra: { threadId } } : undefined,
-            );
-            channelsLogger.debug(
-              { graphId, nodeId, channelId, hint: "channel lacks sendAttachment; sent caption + path text" },
-              "Graph report delivered as text (no attachment capability)",
-            );
-            return;
-          }
-
-          await adapter.sendAttachment(channelId, {
-            type: "file",
-            url: filePath,
-            fileName: `report-${graphId.slice(0, 8)}.md`,
-            mimeType: "text/markdown",
-            caption,
-          }, threadId ? { extra: { threadId } } : undefined);
-
-          channelsLogger.debug({ graphId, nodeId, channelId }, "Graph report delivered as file attachment");
-        } catch (err: unknown) {
-          channelsLogger.warn(
-            { graphId, err, hint: "Failed to deliver graph report file", errorKind: "internal" as const },
-            "Graph report delivery failed",
-          );
-        }
-      },
+      // Called only after the inbound signed-callback router validates ownership.
+      onGraphReportRequest: createGraphReportRequestHandler({
+        dataDir,
+        clock: deps.clock,
+        logger: channelsLogger,
+        deliveryService,
+        durability: deps.graphReportDurability,
+      }),
       approvalGate: deps.approvalGate,
       // Signed button-callback verifier (inbound-gate.ts), via pipelineDeps = deps.
       interactiveCallbackRouter: deps.interactiveCallbackRouter,
@@ -434,6 +366,70 @@ export async function buildAndStartChannelManager(
 
         // /config and /stop are handled by dedicated inbound pipeline blocks
         if (parsed.command === "config" || parsed.command === "stop") return undefined;
+
+        if (parsed.command === "new" || parsed.command === "reset") {
+          const resetStartedAt = deps.clock.now();
+          const adapter = deps.piSessionAdapters?.get(agentId);
+          const conversationScope = tryGetContext()?.turnScope?.conversation;
+          if (!conversationScope) {
+            const error = new Error("Channel reset requires the resolved conversation scope");
+            channelsLogger.error(
+              {
+                step: "channel-session-reset",
+                agentId,
+                hint: "Ensure channel commands execute inside the resolved inbound request context",
+                errorKind: "precondition" as const,
+              },
+              "Channel session reset scope unavailable",
+            );
+            container.eventBus.emitSafely("system:error", {
+              error,
+              source: "channel-session-reset",
+            });
+            return Promise.reject(error);
+          }
+          const started = tryCatch(() => {
+            if (deps.destroyConversation) {
+              return deps.destroyConversation(conversationScope, sessionKey);
+            }
+            if (adapter) return adapter.destroySession(sessionKey);
+            const expired = sessionManager.expire(conversationScope);
+            if (!expired.ok) return Promise.reject(expired.error);
+            return Promise.resolve(undefined);
+          });
+          const destroyed = started.ok
+            ? await fromPromise(started.value)
+            : started;
+          if (!destroyed.ok) {
+            channelsLogger.error(
+              {
+                step: "channel-session-reset",
+                agentId,
+                err: toSafeErrorLogString(destroyed.error),
+                hint: "Check session storage ownership and lock health, then retry the reset command",
+                errorKind: "resource" as const,
+              },
+              "Channel session reset failed",
+            );
+            container.eventBus.emitSafely("system:error", {
+              error: destroyed.error,
+              source: "channel-session-reset",
+            });
+            return Promise.reject(destroyed.error);
+          }
+          container.eventBus.emit("session:expired", {
+            conversationScope,
+            reason: "chat-reset",
+          });
+          channelsLogger.info(
+            {
+              step: "channel-session-reset",
+              agentId,
+              durationMs: Math.max(0, deps.clock.now() - resetStartedAt),
+            },
+            "Channel session reset completed",
+          );
+        }
 
         const execAgentConfig = agents[agentId] ?? agents[defaultAgentId];
 
@@ -456,20 +452,8 @@ export async function buildAndStartChannelManager(
             provider: execAgentConfig?.provider ?? "unknown",
             maxSteps: execAgentConfig?.maxSteps ?? 10,
           }),
-          destroySession: (key) => {
-            // Complete three-layer forget when wired; legacy runtime-only destroy otherwise.
-            const adapter = deps.piSessionAdapters?.get(agentId);
-            if (deps.destroyConversation) {
-              // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
-              deps.destroyConversation(agentId, key).catch(() => { /* fire-and-forget */ });
-            } else if (adapter) {
-              // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
-              adapter.destroySession(key).catch(() => { /* fire-and-forget */ });
-            } else {
-              sessionManager.expire(key);
-            }
-            container.eventBus.emit("session:expired", { sessionKey: key, reason: "chat-reset" });
-          },
+          // /new and /reset completed their awaited durable reset above.
+          destroySession: () => undefined,
           getAvailableModels: () => [],
           getUsageBreakdown: () => {
             const tracker = deps.costTrackers?.get(agentId) ?? deps.costTrackers?.get(defaultAgentId);

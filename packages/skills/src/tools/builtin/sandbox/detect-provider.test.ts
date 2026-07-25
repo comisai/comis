@@ -206,16 +206,20 @@ describe("detectSandboxProvider", () => {
     expect(logger.calls[0]!.msg).toContain("smoke test failed");
     expect(logger.calls[0]!.obj.hint).toContain("bare-metal host");
     expect(logger.calls[0]!.obj.errorKind).toBe("config");
-    // Real bwrap stderr must be in the payload so operators don't have to enable DEBUG.
-    expect(logger.calls[0]!.obj.stderr).toContain("Creating new namespace failed: Operation not permitted");
+    // Child output is untrusted content; retain only a closed class + byte count.
+    expect(logger.calls[0]!.obj.stderrClass).toBe("permission_denied");
+    expect(logger.calls[0]!.obj.stderrBytes).toBe(
+      Buffer.byteLength("bwrap: Creating new namespace failed: Operation not permitted"),
+    );
+    expect(JSON.stringify(logger.calls[0]!.obj)).not.toContain("Creating new namespace failed");
     expect(logger.calls[0]!.obj.signal).toBeNull();
-    // Hint structure: stderr-first, kernel sysctls demoted to secondary.
-    expect(logger.calls[0]!.obj.hint).toMatch(/stderr/i);
+    // Hint structure: closed-class guidance first, kernel sysctls secondary.
+    expect(logger.calls[0]!.obj.hint).toMatch(/failure class/i);
     expect(logger.calls[0]!.obj.hint).toContain("kernel.unprivileged_userns_clone");
     expect(logger.calls[0]!.obj.hint).toContain("apparmor_restrict_unprivileged_userns");
-    // Order matters: stderr guidance must precede kernel sysctl guidance.
+    // Order matters: failure-class guidance precedes kernel sysctl guidance.
     const hint = String(logger.calls[0]!.obj.hint);
-    expect(hint.toLowerCase().indexOf("stderr"))
+    expect(hint.toLowerCase().indexOf("failure class"))
       .toBeLessThan(hint.indexOf("kernel.unprivileged_userns_clone"));
   });
 

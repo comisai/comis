@@ -50,7 +50,6 @@ export type {
   ActivityParseError,
   ApprovalCorrelation,
   ApprovalChoice,
-  FinalDeliveryReceipt,
   DeliveryFailureReceipt,
   DeliveryStageResult,
   TurnOutcome,

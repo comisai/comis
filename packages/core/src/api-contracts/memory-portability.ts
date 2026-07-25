@@ -30,8 +30,8 @@ import { defineContract } from "./types.js";
 export const MemoryPortabilityExportContract = defineContract({
   method: "memory.portability.export",
   request: z.object({
-    agent_id: z.string().optional(),
-    tenant_id: z.string().optional(),
+    agent_id: z.string().min(1),
+    tenant_id: z.string().min(1),
     limit: z.number().int().positive().optional(),
   }),
   response: z.object({
@@ -39,7 +39,7 @@ export const MemoryPortabilityExportContract = defineContract({
     exportedAt: z.number(),
     scope: z.object({
       tenantId: z.string(),
-      agentId: z.nullable(z.string()),
+      agentId: z.string(),
     }),
     entryCount: z.number(),
     entries: z.array(z.record(z.string(), z.unknown())),
@@ -72,7 +72,7 @@ export const MemoryPortabilityImportContract = defineContract({
   request: z.object({
     entries: z.array(z.record(z.string(), z.unknown())).max(10_000),
     agent_id: z.string().min(1),
-    tenant_id: z.string().optional(),
+    tenant_id: z.string().min(1),
     dry_run: z.boolean().optional(),
   }),
   response: z.object({

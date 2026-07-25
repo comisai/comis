@@ -4,7 +4,7 @@
  * search -> fuse -> rerank -> score -> trust-filter -> dedup.
  *
  * Load-bearing assertions:
- * - DEFAULT-OFF CHARACTERIZATION (no-regression pin): with rerank.enabled=false,
+ * - With rerank mode off,
  *   recall yields the SAME order as the documented inline reference computation
  *   (single-lane fuse = identity -> score boosts -> trust-filter -> dedup).
  * - Trust filter: results whose trustLevel ∉ includeTrustLevels are dropped.
@@ -71,6 +71,22 @@ import { completeSimple, getModel } from "@earendil-works/pi-ai/compat";
 
 const NOW = 1_700_000_000_000;
 const SESSION_KEY = "telegram:chat_1:user_a" as unknown as SessionKey;
+const DEFAULT_SESSION_KEY_OBJ = {
+  tenantId: "default",
+  agentId: "default",
+  userId: "user_a",
+  channelId: "chat_1",
+} as unknown as SessionKey;
+
+function memoryScope(agentId = "default", tenantId = "default") {
+  return {
+    tenantId,
+    agentId,
+    conversationRef: `cv_${"r".repeat(43)}`,
+    principalId: "user_a",
+    includeAgentShared: true,
+  } as const;
+}
 
 const DEFAULT_ALPHAS: ScoringAlphas = {
   recencyAlpha: 0.2,
@@ -172,6 +188,7 @@ function mockReranker(opts: {
  */
 const SESSION_KEY_OBJ = {
   tenantId: "tenant_x",
+  agentId: "agent_y",
   userId: "user_a",
   channelId: "chat_1",
 } as unknown as SessionKey;
@@ -249,7 +266,7 @@ function baseConfig(overrides: Partial<MemoryRecallConfig> = {}): MemoryRecallCo
     maxResults: 5,
     minScore: 0.1,
     includeTrustLevels: ["system", "learned"],
-    rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+    rerank: { mode: "off", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
     scoring: DEFAULT_ALPHAS,
     ...overrides,
   };
@@ -277,7 +294,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
       { memoryPort: fakeMemoryPort(input), reranker: undefined, timers: fakeTimers().port, clock: fixedClock, logger: noopLogger },
       cfg,
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.map((r) => r.entry.id)).toEqual(expected);
@@ -307,7 +324,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig(),
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true); // obs-substrate failure NEVER fails the recall hot path
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -338,7 +355,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
       baseConfig(),
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const topScore = got.value[0]?.score ?? 0;
@@ -353,7 +370,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
       { memoryPort: failingMemoryPort(), clock: fixedClock, logger: noopLogger },
       baseConfig(),
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(false);
   });
 
@@ -366,7 +383,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
       baseConfig({ includeTrustLevels: ["system"] }),
     );
-    const got = await recall.recall("q", SESSION_KEY);
+    const got = await recall.recall("q", memoryScope(), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const ids = got.value.map((r) => r.entry.id);
@@ -383,7 +400,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
       baseConfig(),
     );
-    const got = await recall.recall("q", SESSION_KEY);
+    const got = await recall.recall("q", memoryScope(), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.length).toBe(1);
@@ -402,7 +419,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
       baseConfig(),
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const ids = got.value.map((r) => r.entry.id);
@@ -420,9 +437,9 @@ describe("createMemoryRecall — orchestrator composition", () => {
     const { port, calls } = mockReranker({ available: false });
     const recall = createMemoryRecall(
       { memoryPort: fakeMemoryPort(input), reranker: port, timers: fakeTimers().port, clock: fixedClock, logger: noopLogger },
-      baseConfig({ rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 } }),
+      baseConfig({ rerank: { mode: "on", maxCandidates: 40, minResults: 1, timeoutMs: 800 } }),
     );
-    const got = await recall.recall("q", SESSION_KEY);
+    const got = await recall.recall("q", memoryScope(), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.length).toBe(3);
@@ -446,11 +463,11 @@ describe("createMemoryRecall — orchestrator composition", () => {
       { memoryPort: fakeMemoryPort(input), reranker: port, timers: fakeTimers().port, clock: fixedClock, logger: noopLogger },
       // turn trust/recency boosts off so the CE inversion is unambiguous
       baseConfig({
-        rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        rerank: { mode: "on", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
         scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
       }),
     );
-    const got = await recall.recall("q", SESSION_KEY);
+    const got = await recall.recall("q", memoryScope(), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(1);
@@ -471,11 +488,11 @@ describe("createMemoryRecall — orchestrator composition", () => {
     const recall = createMemoryRecall(
       { memoryPort: fakeMemoryPort(input), reranker: port, timers: timers.port, clock: fixedClock, logger },
       baseConfig({
-        rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 50 },
+        rerank: { mode: "on", maxCandidates: 40, minResults: 1, timeoutMs: 50 },
         scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
       }),
     );
-    const promise = recall.recall("q", SESSION_KEY);
+    const promise = recall.recall("q", memoryScope(), DEFAULT_SESSION_KEY_OBJ);
     // let the rank() promise register, then fire the deadline.
     await Promise.resolve();
     expect(timers.pending).toBeGreaterThan(0);
@@ -502,11 +519,11 @@ describe("createMemoryRecall — orchestrator composition", () => {
     const recall = createMemoryRecall(
       { memoryPort: fakeMemoryPort(input), reranker: port, timers: fakeTimers().port, clock: fixedClock, logger },
       baseConfig({
-        rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        rerank: { mode: "on", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
         scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
       }),
     );
-    const got = await recall.recall("q", SESSION_KEY);
+    const got = await recall.recall("q", memoryScope(), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true); // recall still returns (graceful fusion fallback)
     const warnArg = warn.mock.calls.find((c) => (c[0] as { errorKind?: string })?.errorKind === "dependency");
     expect(warnArg).toBeDefined();
@@ -526,11 +543,11 @@ describe("createMemoryRecall — orchestrator composition", () => {
     const recall = createMemoryRecall(
       { memoryPort: fakeMemoryPort(input), reranker: port, timers: fakeTimers().port, clock: fixedClock, logger },
       baseConfig({
-        rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        rerank: { mode: "on", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
         scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
       }),
     );
-    await recall.recall("q", SESSION_KEY);
+    await recall.recall("q", memoryScope(), DEFAULT_SESSION_KEY_OBJ);
     const warnArg = warn.mock.calls.find((c) => c[1] === "rerank fallback");
     expect(warnArg).toBeDefined();
     const loggedErr = (warnArg![0] as { err?: unknown }).err;
@@ -553,12 +570,12 @@ describe("createMemoryRecall — orchestrator composition", () => {
       { memoryPort: fakeMemoryPort(input), reranker: port, timers: fakeTimers().port, clock: fixedClock, logger: noopLogger },
       baseConfig({
         includeTrustLevels: ["system", "learned"],
-        rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        rerank: { mode: "on", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
         // recency neutral (equal createdAt); trust boost on so system wins.
         scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0.1, usefulnessAlpha: 0 },
       }),
     );
-    const got = await recall.recall("q", SESSION_KEY);
+    const got = await recall.recall("q", memoryScope(), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value[0]?.entry.id).toBe("system");
@@ -579,11 +596,11 @@ describe("createMemoryRecall — orchestrator composition", () => {
     const recall = createMemoryRecall(
       { memoryPort: fakeMemoryPort(input), reranker: port, timers: fakeTimers().port, clock: fixedClock, logger: noopLogger },
       baseConfig({
-        rerank: { enabled: true, maxCandidates: 2, minResults: 1, timeoutMs: 800 },
+        rerank: { mode: "on", maxCandidates: 2, minResults: 1, timeoutMs: 800 },
         scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
       }),
     );
-    const got = await recall.recall("q", SESSION_KEY);
+    const got = await recall.recall("q", memoryScope(), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // exactly maxCandidates docs were reranked
@@ -615,12 +632,12 @@ describe("createMemoryRecall — orchestrator composition", () => {
     const recall = createMemoryRecall(
       { memoryPort: fakeMemoryPort(input), reranker: port, timers: fakeTimers().port, clock: fixedClock, logger: noopLogger },
       baseConfig({
-        rerank: { enabled: true, maxCandidates: 2, minResults: 1, timeoutMs: 800 },
+        rerank: { mode: "on", maxCandidates: 2, minResults: 1, timeoutMs: 800 },
         // boosts off so the pool-before-tail partition is the only thing under test.
         scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
       }),
     );
-    const got = await recall.recall("q", SESSION_KEY);
+    const got = await recall.recall("q", memoryScope(), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(1);
@@ -646,11 +663,11 @@ describe("createMemoryRecall — orchestrator composition", () => {
       // NOTE: timers omitted entirely.
       { memoryPort: fakeMemoryPort(input), reranker: port, clock: fixedClock, logger: noopLogger },
       baseConfig({
-        rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        rerank: { mode: "on", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
         scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
       }),
     );
-    const got = await recall.recall("q", SESSION_KEY);
+    const got = await recall.recall("q", memoryScope(), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // rerank skipped — the hanging rank() was never invoked.
@@ -677,13 +694,13 @@ describe("createMemoryRecall — orchestrator composition", () => {
     const recall = createMemoryRecall(
       { memoryPort: fakeMemoryPort(input), reranker: port, timers: fakeTimers().port, clock: fixedClock, logger: noopLogger },
       baseConfig({
-        rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        rerank: { mode: "on", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
         // boosts off → boosted score is exactly the CE score, so the ONLY thing that
         // can order the equal-CE/equal-trust pool is the explicit index tie-break.
         scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
       }),
     );
-    const got = await recall.recall("q", SESSION_KEY);
+    const got = await recall.recall("q", memoryScope(), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.map((r) => r.entry.id)).toEqual(["a", "b", "c"]);
@@ -694,9 +711,9 @@ describe("createMemoryRecall — orchestrator composition", () => {
     const input = [makeResult("a")];
     const recall = createMemoryRecall(
       { memoryPort: fakeMemoryPort(input, capture), reranker: mockReranker({}).port, timers: fakeTimers().port, clock: fixedClock, logger: noopLogger },
-      baseConfig({ maxResults: 5, rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 } }),
+      baseConfig({ maxResults: 5, rerank: { mode: "on", maxCandidates: 40, minResults: 1, timeoutMs: 800 } }),
     );
-    await recall.recall("q", SESSION_KEY);
+    await recall.recall("q", memoryScope(), DEFAULT_SESSION_KEY_OBJ);
     expect(capture.opts?.limit).toBe(40);
   });
 
@@ -707,7 +724,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
       { memoryPort: fakeMemoryPort(input, capture), clock: fixedClock, logger: noopLogger },
       baseConfig({ maxResults: 5 }),
     );
-    await recall.recall("q", SESSION_KEY);
+    await recall.recall("q", memoryScope(), DEFAULT_SESSION_KEY_OBJ);
     expect(capture.opts?.limit).toBe(5);
   });
 });
@@ -759,7 +776,7 @@ describe("createMemoryRecall — entity associative lane", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, entityLane: ENABLED_LANE } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const ids = got.value.map((r) => r.entry.id);
@@ -769,7 +786,7 @@ describe("createMemoryRecall — entity associative lane", () => {
     // Lane invoked once, lazily, with the seed ids (top seedCount), the recall scope, and cap.
     expect(calls.length).toBe(1);
     expect(calls[0]?.seedIds).toEqual(["seed", "nonSharing"]);
-    expect(calls[0]?.scope).toEqual({ tenantId: "tenant_x", agentId: "agent_y" });
+    expect(calls[0]?.scope).toEqual(expect.objectContaining({ tenantId: "tenant_x", agentId: "agent_y" }));
     expect(calls[0]?.cap).toBe(200);
   });
 
@@ -792,7 +809,7 @@ describe("createMemoryRecall — entity associative lane", () => {
         entityLane: { ...ENABLED_LANE, seedCount: 2 },
       } as Partial<MemoryRecallConfig>),
     );
-    await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(calls.length).toBe(1);
     // only the top 2 hits seed the lane
     expect(calls[0]?.seedIds).toEqual(["s1", "s2"]);
@@ -814,7 +831,7 @@ describe("createMemoryRecall — entity associative lane", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, entityLane: DISABLED_LANE } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(0); // lane never invoked when disabled
@@ -830,7 +847,7 @@ describe("createMemoryRecall — entity associative lane", () => {
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
       baseConfig({ scoring: NEUTRAL, entityLane: ENABLED_LANE } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.map((r) => r.entry.id)).toEqual(singleLaneReference(input));
@@ -847,7 +864,7 @@ describe("createMemoryRecall — entity associative lane", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, entityLane: ENABLED_LANE } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(0); // no seeds -> lane never invoked
@@ -869,7 +886,7 @@ describe("createMemoryRecall — entity associative lane", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, entityLane: ENABLED_LANE } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(1); // lane WAS queried (seeds existed)
@@ -894,7 +911,7 @@ describe("createMemoryRecall — entity associative lane", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, entityLane: ENABLED_LANE } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     // recall NEVER fails because the entity lane failed.
     expect(got.ok).toBe(true);
     if (!got.ok) return;
@@ -957,7 +974,7 @@ describe("createMemoryRecall — usefulness signal read-path", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: USEFULNESS_ONLY, feedback: FLAG_ON } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // Read once, with the fused ranked ids and the recall scope.
@@ -992,7 +1009,7 @@ describe("createMemoryRecall — usefulness signal read-path", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: USEFULNESS_ONLY, feedback: FLAG_ON } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const ids = got.value.map((r) => r.entry.id);
@@ -1024,7 +1041,7 @@ describe("createMemoryRecall — usefulness signal read-path", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: USEFULNESS_ONLY, feedback: FLAG_OFF } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(readUsefulness).not.toHaveBeenCalled();
@@ -1040,7 +1057,7 @@ describe("createMemoryRecall — usefulness signal read-path", () => {
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
       baseConfig({ scoring: USEFULNESS_ONLY, feedback: FLAG_ON } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // No store -> neutral factor -> base order preserved (m1 > m2).
@@ -1066,7 +1083,7 @@ describe("createMemoryRecall — usefulness signal read-path", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: USEFULNESS_ONLY, feedback: FLAG_ON } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     // recall NEVER fails because the usefulness read failed.
     expect(got.ok).toBe(true);
     if (!got.ok) return;
@@ -1163,7 +1180,7 @@ describe("createMemoryRecall — per-intent usefulness read", () => {
       } as Partial<MemoryRecallConfig>),
     );
     // "when did the deploy happen" → classifyIntent → "temporal".
-    const got = await recall.recall("when did the deploy happen", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("when did the deploy happen", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // The deterministic classified intent reached the read scope.
@@ -1233,7 +1250,7 @@ describe("createMemoryRecall — per-intent usefulness read", () => {
       } as Partial<MemoryRecallConfig>),
     );
     // A temporal-shaped query, but intentReweight is OFF → intent stays undefined → omitted.
-    const got = await recall.recall("when did the deploy happen", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("when did the deploy happen", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // The read still ran (feedback ON) but the scope carries NO intent → global bucket.
@@ -1265,7 +1282,7 @@ describe("createMemoryRecall — per-intent usefulness read", () => {
         queryUnderstanding: QU_INTENT_ON,
       } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("when did the deploy happen", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("when did the deploy happen", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // intent reached the scope (temporal) but the empty map → neutral → base order kept.
@@ -1303,7 +1320,7 @@ describe("createMemoryRecall — per-intent usefulness read", () => {
         queryUnderstanding: QU_INTENT_ON,
       } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("when did the deploy happen", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("when did the deploy happen", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // The binding default-OFF guarantee: the read NEVER ran (spy = 0) …
@@ -1336,7 +1353,7 @@ describe("createMemoryRecall — per-intent usefulness read", () => {
         queryUnderstanding: QU_INTENT_ON,
       } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("when did the deploy happen", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("when did the deploy happen", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     // The intent is classifyIntent (pure) — the per-intent read touched NO model surface.
     expect(completeSimple).not.toHaveBeenCalled();
@@ -1400,7 +1417,7 @@ describe("createMemoryRecall — recall-trace capture", () => {
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger, recallTrace },
       baseConfig(),
     );
-    const got = await recall.recall("what is the plan", SESSION_KEY, "agent_z");
+    const got = await recall.recall("what is the plan", memoryScope("agent_z"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     // exactly one record per recall.
     expect(records.length).toBe(1);
@@ -1449,7 +1466,7 @@ describe("createMemoryRecall — recall-trace capture", () => {
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
       cfg,
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.map((r) => r.entry.id)).toEqual(expected);
@@ -1467,7 +1484,7 @@ describe("createMemoryRecall — recall-trace capture", () => {
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger, recallTrace },
       baseConfig({ includeTrustLevels: ["system", "learned"] }),
     );
-    await recall.recall("q", SESSION_KEY, "agent_z");
+    await recall.recall("q", memoryScope("agent_z"), DEFAULT_SESSION_KEY_OBJ);
     const rec = records[0] as { ranked?: Array<{ id: string; reason: string }> };
     const byId = new Map((rec.ranked ?? []).map((e) => [e.id, e.reason]));
     // external memory excluded by the trust filter — present in the trace with the reason.
@@ -1485,7 +1502,7 @@ describe("createMemoryRecall — recall-trace capture", () => {
       baseConfig(),
     );
     const rawQuery = "my secret query about project apollo";
-    await recall.recall(rawQuery, SESSION_KEY, "agent_z");
+    await recall.recall(rawQuery, memoryScope("agent_z"), DEFAULT_SESSION_KEY_OBJ);
     const rec = records[0] as { queryDigest?: string };
     expect(typeof rec.queryDigest).toBe("string");
     // the recorded value is NOT the raw query and looks like a hex digest.
@@ -1496,6 +1513,54 @@ describe("createMemoryRecall — recall-trace capture", () => {
 });
 
 describe("createMemoryRecall — memory:recalled / memory:reranked emit", () => {
+  it("caps entity-expanded recall to maxResults and reports only injected survivors", async () => {
+    const input = [
+      makeResult("base-own", { base: 0.95, userId: "user_a", sourceWho: "user_a" }),
+      makeResult("base-foreign", { base: 0.9, userId: "user_b", sourceWho: "user_b" }),
+    ];
+    const { store } = fakeEntityStore(
+      ok([
+        makeResult("entity-b", { base: 0.85, userId: "user_b", sourceWho: "user_b" }),
+        makeResult("entity-c", { base: 0.8, userId: "user_c", sourceWho: "user_c" }),
+        makeResult("entity-d", { base: 0.75, userId: "user_d", sourceWho: "user_d" }),
+      ]),
+    );
+    const { eventBus, emits } = recordingEventBus();
+    const { recallTrace, records } = recordingRecallTrace();
+    const recall = recallWithObs(
+      {
+        memoryPort: fakeMemoryPort(input),
+        entityStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+        eventBus,
+        recallTrace,
+      },
+      baseConfig({
+        maxResults: 2,
+        entityLane: { enabled: true, seedCount: 5, perEntityCap: 200, weight: 1.0 },
+      } as Partial<MemoryRecallConfig>),
+    );
+
+    const got = await recall.recall("q", memoryScope("agent_z", "tenant_x"), SESSION_KEY_OBJ);
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value).toHaveLength(2);
+
+    const recalled = emits.find((entry) => entry.event === "memory:recalled")?.payload;
+    expect(recalled?.finalCount).toBe(2);
+    expect(recalled?.crossUserCount).toBe(
+      got.value.filter((result) => result.entry.userId !== "user_a").length,
+    );
+    expect(recalled?.distinctSources).toBe(
+      new Set(got.value.map((result) => result.entry.source?.who)).size,
+    );
+
+    const ranked = records[0]?.ranked as Array<{ id: string; reason: string }>;
+    expect(ranked.filter((entry) => entry.reason === "included")).toHaveLength(2);
+    expect(ranked.filter((entry) => entry.reason === "below_budget")).toHaveLength(3);
+  });
+
   it("emits memory:recalled once with a counts-only payload (no query text / memory body)", async () => {
     const input = [
       makeResult("a", { base: 0.9, content: "sensitive body text" }),
@@ -1506,7 +1571,7 @@ describe("createMemoryRecall — memory:recalled / memory:reranked emit", () => 
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger, eventBus },
       baseConfig(),
     );
-    await recall.recall("the raw query", SESSION_KEY, "agent_z");
+    await recall.recall("the raw query", memoryScope("agent_z"), DEFAULT_SESSION_KEY_OBJ);
     const recalled = emits.filter((e) => e.event === "memory:recalled");
     expect(recalled.length).toBe(1);
     const p = recalled[0]?.payload as Record<string, unknown>;
@@ -1539,7 +1604,7 @@ describe("createMemoryRecall — memory:recalled / memory:reranked emit", () => 
       baseConfig({ includeTrustLevels: ["learned", "system", "external", "verified", "user"] as TrustLevel[] }),
     );
     // Requester = SESSION_KEY_OBJ (userId "user_a"); 3 of the 4 final rows belong to a different user.
-    await recall.recall("q", SESSION_KEY_OBJ, "agent_z");
+    await recall.recall("q", memoryScope("agent_z", "tenant_x"), SESSION_KEY_OBJ);
     const p = emits.filter((e) => e.event === "memory:recalled")[0]?.payload as Record<string, unknown>;
     expect(p).toBeDefined();
     // The signal that answers "was cross-sender data injected into this turn?" from the event alone.
@@ -1560,7 +1625,7 @@ describe("createMemoryRecall — memory:recalled / memory:reranked emit", () => 
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger, eventBus },
       baseConfig(),
     );
-    await recall.recall("q", SESSION_KEY_OBJ, "agent_z");
+    await recall.recall("q", memoryScope("agent_z", "tenant_x"), SESSION_KEY_OBJ);
     const p = emits.filter((e) => e.event === "memory:recalled")[0]?.payload as Record<string, unknown>;
     expect(p.crossUserCount).toBe(0);
     expect(p.distinctSources).toBe(1);
@@ -1580,9 +1645,9 @@ describe("createMemoryRecall — memory:recalled / memory:reranked emit", () => 
         logger: noopLogger,
         eventBus,
       },
-      baseConfig({ rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 } }),
+      baseConfig({ rerank: { mode: "on", maxCandidates: 40, minResults: 1, timeoutMs: 800 } }),
     );
-    await recall.recall("q", SESSION_KEY, "agent_z");
+    await recall.recall("q", memoryScope("agent_z"), DEFAULT_SESSION_KEY_OBJ);
     const reranked = emits.filter((e) => e.event === "memory:reranked");
     expect(reranked.length).toBe(1);
     const p = reranked[0]?.payload as { fellBack?: boolean; timedOut?: boolean };
@@ -1597,7 +1662,7 @@ describe("createMemoryRecall — memory:recalled / memory:reranked emit", () => 
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger, eventBus },
       baseConfig(),
     );
-    await recall.recall("q", SESSION_KEY, "agent_z");
+    await recall.recall("q", memoryScope("agent_z"), DEFAULT_SESSION_KEY_OBJ);
     expect(emits.filter((e) => e.event === "memory:reranked").length).toBe(0);
     // but memory:recalled still fires once.
     expect(emits.filter((e) => e.event === "memory:recalled").length).toBe(1);
@@ -1620,7 +1685,7 @@ describe("createMemoryRecall — vec→FTS-only degradation signal", () => {
       baseConfig(),
     );
     // whitespace-only query → no vector lane.
-    const got = await recall.recall("   ", SESSION_KEY, "agent_z");
+    const got = await recall.recall("   ", memoryScope("agent_z"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     // ONE WARN with the vec→FTS errorKind + hint.
     const warnArg = warn.mock.calls.find(
@@ -1654,7 +1719,7 @@ describe("createMemoryRecall — vec→FTS-only degradation signal", () => {
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger, recallTrace },
       baseConfig(),
     );
-    await recall.recall("a perfectly normal embeddable query", SESSION_KEY, "agent_z");
+    await recall.recall("a perfectly normal embeddable query", memoryScope("agent_z"), DEFAULT_SESSION_KEY_OBJ);
     const vecWarn = warn.mock.calls.find((c) =>
       /vector lane unavailable/i.test((c[0] as { hint?: string })?.hint ?? ""),
     );
@@ -1692,7 +1757,7 @@ describe("createMemoryRecall — vec→FTS-only degradation signal", () => {
       },
       baseConfig(),
     );
-    const got = await recall.recall("q", SESSION_KEY, "agent_z");
+    const got = await recall.recall("q", memoryScope("agent_z"), DEFAULT_SESSION_KEY_OBJ);
     // recall succeeds despite the recorder + bus throwing — observability is non-fatal.
     expect(got.ok).toBe(true);
     if (!got.ok) return;
@@ -1750,7 +1815,7 @@ describe("createMemoryRecall — two-lane build from searchLanes", () => {
       { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.map((r) => r.entry.id)).toEqual(
@@ -1783,7 +1848,7 @@ describe("createMemoryRecall — two-lane build from searchLanes", () => {
       // 0, so the ONLY thing that can trim the 7-id union to 3 is the maxResults cap.
       baseConfig({ scoring: NEUTRAL, minScore: 0, maxResults: MAX, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // prior baseline: hybridSearch fused then sliced to limit=maxResults.
@@ -1826,7 +1891,7 @@ describe("createMemoryRecall — two-lane build from searchLanes", () => {
       { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, minScore: 0.5, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
-    await recall.recall("q", SESSION_KEY, "default");
+    await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(capture.laneOpts?.minScore).toBeUndefined();
   });
 
@@ -1840,7 +1905,7 @@ describe("createMemoryRecall — two-lane build from searchLanes", () => {
       { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, minScore: 0.9, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // Both fused scores < 0.9 → dropped by the post-fuse minScore re-application.
@@ -1860,7 +1925,7 @@ describe("createMemoryRecall — two-lane build from searchLanes", () => {
       { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, minScore: 0, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // Single-lane identity: exact FTS order AND the adapter scores preserved (NOT a rank-ramp).
@@ -1877,7 +1942,7 @@ describe("createMemoryRecall — two-lane build from searchLanes", () => {
       { memoryPort: fakeLaneMemoryPort({ fts, vector }), clock: fixedClock, logger: noopLogger, recallTrace },
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
-    await recall.recall("q", SESSION_KEY, "agent_z");
+    await recall.recall("q", memoryScope("agent_z"), DEFAULT_SESSION_KEY_OBJ);
     const rec = records[0] as { lanes?: { fts?: number; vector?: number } };
     expect(rec.lanes?.fts).toBe(2); // fts lane length
     expect(rec.lanes?.vector).toBe(3); // TRUE vector lane length (NOT 0)
@@ -1891,7 +1956,7 @@ describe("createMemoryRecall — two-lane build from searchLanes", () => {
       { memoryPort: fakeLaneMemoryPort({ fts, vector }), clock: fixedClock, logger: noopLogger, eventBus },
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
-    await recall.recall("q", SESSION_KEY, "agent_z");
+    await recall.recall("q", memoryScope("agent_z"), DEFAULT_SESSION_KEY_OBJ);
     const recalled = emits.find((e) => e.event === "memory:recalled");
     expect((recalled?.payload as { vectorCandidates?: number })?.vectorCandidates).toBe(2);
   });
@@ -1908,7 +1973,7 @@ describe("createMemoryRecall — two-lane build from searchLanes", () => {
       { memoryPort: fakeMemoryPort(input, capture), clock: fixedClock, logger: noopLogger, recallTrace },
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // Single-lane order preserved + minScore was applied IN search() (passed through).
@@ -1929,7 +1994,7 @@ describe("createMemoryRecall — two-lane build from searchLanes", () => {
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
       baseConfig({ scoring: NEUTRAL, minScore: 0.1, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // The 0.15-scored item (above 0.1, passed search()) survives — single-lane pass-through
@@ -2028,7 +2093,7 @@ describe("createMemoryRecall — temporal-spread lane", () => {
         lanes: { ...PARITY_LANES, temporal: TEMPORAL_ON },
       } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const ids = got.value.map((r) => r.entry.id);
@@ -2038,7 +2103,7 @@ describe("createMemoryRecall — temporal-spread lane", () => {
     // the recall scope, windowMs = windowDays*DAY, and a cap.
     expect(calls.length).toBe(1);
     expect(calls[0]?.seedOccurredAts).toEqual([SEED_T]);
-    expect(calls[0]?.scope).toEqual({ tenantId: "tenant_x", agentId: "agent_y" });
+    expect(calls[0]?.scope).toEqual(expect.objectContaining({ tenantId: "tenant_x", agentId: "agent_y" }));
     expect(calls[0]?.windowMs).toBe(7 * TEMP_DAY);
     // The trace lanes cluster reports the temporal candidate count (= lane length).
     const rec = records[0] as { lanes?: { temporal?: number } };
@@ -2068,7 +2133,7 @@ describe("createMemoryRecall — temporal-spread lane", () => {
         lanes: { ...PARITY_LANES, temporal: TEMPORAL_ON },
       } as Partial<MemoryRecallConfig>),
     );
-    await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     const recalled = emits.find((e) => e.event === "memory:recalled");
     // 2 active lanes: fts (1) + temporal (1). The pre-fix code emitted 1 (temporal omitted).
     expect((recalled?.payload as { lanes?: number })?.lanes).toBe(2);
@@ -2096,7 +2161,7 @@ describe("createMemoryRecall — temporal-spread lane", () => {
         lanes: { ...PARITY_LANES, temporal: TEMPORAL_OFF },
       } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // The load-bearing neutrality: spreadLane is NEVER called when off (the spy proves it).
@@ -2119,7 +2184,7 @@ describe("createMemoryRecall — temporal-spread lane", () => {
       // lanes carries ONLY fts/vector (the base shape) — no temporal sub-object.
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(0);
@@ -2143,7 +2208,7 @@ describe("createMemoryRecall — temporal-spread lane", () => {
         lanes: { ...PARITY_LANES, temporal: TEMPORAL_ON },
       } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(0); // no query when there are no seed times
@@ -2159,7 +2224,7 @@ describe("createMemoryRecall — temporal-spread lane", () => {
         lanes: { ...PARITY_LANES, temporal: TEMPORAL_ON },
       } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
@@ -2190,7 +2255,7 @@ describe("createMemoryRecall — temporal-spread lane", () => {
         lanes: { ...PARITY_LANES, temporal: TEMPORAL_ON },
       } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     // The search/base lanes already succeeded — recall never fails because the temporal
     // lane failed; it WARNs and ranks WITHOUT the lane (the base order is preserved).
     expect(got.ok).toBe(true);
@@ -2273,7 +2338,7 @@ describe("createMemoryRecall — causal lane", () => {
       },
       baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, causal: CAUSAL_ON } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const ids = got.value.map((r) => r.entry.id);
@@ -2282,7 +2347,7 @@ describe("createMemoryRecall — causal lane", () => {
     // Lane invoked once, lazily, with the seed ids, the recall scope, and the maxResults cap.
     expect(calls.length).toBe(1);
     expect(calls[0]?.seedMemoryIds).toContain("seed");
-    expect(calls[0]?.scope).toEqual({ tenantId: "tenant_x", agentId: "agent_y" });
+    expect(calls[0]?.scope).toEqual(expect.objectContaining({ tenantId: "tenant_x", agentId: "agent_y" }));
     expect(calls[0]?.cap).toBe(5); // baseConfig.maxResults
     // The trace lanes cluster reports the causal candidate count (= lane length).
     const rec = records[0] as { lanes?: { causal?: number } };
@@ -2303,7 +2368,7 @@ describe("createMemoryRecall — causal lane", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, causal: CAUSAL_OFF } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // The load-bearing neutrality: causalLane is NEVER called when off (the spy proves it).
@@ -2326,7 +2391,7 @@ describe("createMemoryRecall — causal lane", () => {
       // lanes carries ONLY fts/vector — no causal sub-object.
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(0);
@@ -2345,7 +2410,7 @@ describe("createMemoryRecall — causal lane", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, causal: CAUSAL_ON } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // The lane WAS queried (enabled + seeds present) but returned empty → fuse() unchanged.
@@ -2359,7 +2424,7 @@ describe("createMemoryRecall — causal lane", () => {
       { memoryPort: fakeLaneMemoryPort({ fts, vector: [] }), clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, causal: CAUSAL_ON } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
@@ -2384,7 +2449,7 @@ describe("createMemoryRecall — causal lane", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, causal: CAUSAL_ON } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     // The search/base lanes already succeeded — recall never fails because the causal lane
     // failed; it WARNs and ranks WITHOUT the lane (the base order is preserved).
     expect(got.ok).toBe(true);
@@ -2523,7 +2588,7 @@ describe("createMemoryRecall — graph-spread lane", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_ON } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.map((r) => r.entry.id)).toContain("spread");
@@ -2549,7 +2614,7 @@ describe("createMemoryRecall — graph-spread lane", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_OFF } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(0); // the spy proves the off path never queries
@@ -2569,7 +2634,7 @@ describe("createMemoryRecall — graph-spread lane", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(0);
@@ -2588,7 +2653,7 @@ describe("createMemoryRecall — graph-spread lane", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_ON } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(1); // queried (enabled + seeds) but empty
@@ -2601,7 +2666,7 @@ describe("createMemoryRecall — graph-spread lane", () => {
       { memoryPort: fakeLaneMemoryPort({ fts, vector: [] }), clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_ON } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
@@ -2626,7 +2691,7 @@ describe("createMemoryRecall — graph-spread lane", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_ON } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
@@ -2700,7 +2765,7 @@ describe("createMemoryRecall — query understanding", () => {
       { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, queryUnderstanding: QU_OFF } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("vps config db status", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("vps config db status", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // OFF ⇒ the search receives the ORIGINAL query (no synonym expansion) …
@@ -2729,7 +2794,7 @@ describe("createMemoryRecall — query understanding", () => {
       { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("auth flow", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("auth flow", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(seenQuery).toBe("auth flow");
@@ -2797,7 +2862,7 @@ describe("createMemoryRecall — query understanding", () => {
         queryUnderstanding: { intentReweight: true, synonyms: false, temporalParse: false },
       } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("the project name", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("the project name", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
@@ -2823,7 +2888,7 @@ describe("createMemoryRecall — query understanding", () => {
         queryUnderstanding: { intentReweight: false, synonyms: true, temporalParse: false },
       } as Partial<MemoryRecallConfig>),
     );
-    await recall.recall("vps", SESSION_KEY_OBJ, "agent_y");
+    await recall.recall("vps", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(seenQuery).toBe(expandSynonyms("vps"));
     expect(seenQuery).not.toBe("vps"); // the expansion genuinely changed the query
     expect(seenQuery).toContain("virtual"); // the mapped expansion is present
@@ -2849,7 +2914,7 @@ describe("createMemoryRecall — query understanding", () => {
         queryUnderstanding: { intentReweight: false, synonyms: false, temporalParse: true },
       } as Partial<MemoryRecallConfig>),
     );
-    await recall.recall("what happened last week", SESSION_KEY_OBJ, "agent_y");
+    await recall.recall("what happened last week", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     // The range is computed from deps.clock.now() (= NOW), NEVER Date.now().
     expect(capture.laneOpts?.occurredAtRange).toEqual(parseTemporalRange("what happened last week", NOW));
   });
@@ -2874,7 +2939,7 @@ describe("createMemoryRecall — query understanding", () => {
         queryUnderstanding: { intentReweight: false, synonyms: false, temporalParse: true },
       } as Partial<MemoryRecallConfig>),
     );
-    await recall.recall("what is the database name", SESSION_KEY_OBJ, "agent_y");
+    await recall.recall("what is the database name", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(capture.laneOpts?.occurredAtRange).toBeUndefined();
   });
 
@@ -2894,7 +2959,7 @@ describe("createMemoryRecall — query understanding", () => {
       { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, queryUnderstanding: QU_OFF } as Partial<MemoryRecallConfig>),
     );
-    await recall.recall("vps", SESSION_KEY_OBJ, "agent_y");
+    await recall.recall("vps", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(seenQuery).toBe("vps"); // unexpanded — the mapped term is NOT expanded when off
   });
 });
@@ -2970,7 +3035,7 @@ describe("createMemoryRecall — MMR diversity re-rank", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: false, lambda: 0.7 } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(0); // THE load-bearing proof: off path never reads
@@ -2989,7 +3054,7 @@ describe("createMemoryRecall — MMR diversity re-rank", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(0);
@@ -3014,7 +3079,7 @@ describe("createMemoryRecall — MMR diversity re-rank", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 1 } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(1); // ON ⇒ the read happens …
@@ -3033,7 +3098,7 @@ describe("createMemoryRecall — MMR diversity re-rank", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 0.5 } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(calls.length).toBe(0); // the <2 guard short-circuits before the read
@@ -3086,7 +3151,7 @@ describe("createMemoryRecall — MMR diversity re-rank", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 0.5 } } as Partial<MemoryRecallConfig>),
     );
-    await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(calls.length).toBe(1);
     // The load-bearing scope derivation: tenant from the session key, agent from the recall arg.
     expect(calls[0]?.scope).toEqual({ tenantId: "tenant_x", agentId: "agent_y" });
@@ -3113,7 +3178,7 @@ describe("createMemoryRecall — MMR diversity re-rank", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 0.5 } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true); // recall NEVER fails because the embedding read failed
     if (!got.ok) return;
     expect(failing.calls).toBe(1); // the read was attempted (live getter, read post-recall) …
@@ -3146,7 +3211,7 @@ describe("createMemoryRecall — MMR diversity re-rank", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: NEUTRAL, minScore: 0, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 0.5 } } as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     expect(got.value.map((r) => r.entry.id)).not.toContain("EXT"); // never re-surfaced
@@ -3184,10 +3249,10 @@ describe("llm-free", () => {
         clock: fixedClock,
         logger: noopLogger,
       },
-      baseConfig({ rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 } }),
+      baseConfig({ rerank: { mode: "on", maxCandidates: 40, minResults: 1, timeoutMs: 800 } }),
     );
 
-    const got = await recall.recall("what is the timezone", SESSION_KEY, "default");
+    const got = await recall.recall("what is the timezone", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
 
     // The binding constraint: recall touched NO model surface.
@@ -3277,7 +3342,7 @@ describe("createMemoryRecall — pinned-first lane (head placement, cap, MMR ded
         pinned: { enabled: true, maxPinnedInjection: 5 },
       }),
     );
-    const result = await recall.recall("some query returning high-score non-pinned entries", SESSION_KEY_OBJ, "default");
+    const result = await recall.recall("some query returning high-score non-pinned entries", memoryScope("default", "tenant_x"), SESSION_KEY_OBJ);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const ids = result.value.map((r) => r.entry.id);
@@ -3306,7 +3371,7 @@ describe("createMemoryRecall — pinned-first lane (head placement, cap, MMR ded
         pinned: { enabled: true, maxPinnedInjection: 5 },
       }),
     );
-    const result = await recall.recall("query", SESSION_KEY_OBJ, "default");
+    const result = await recall.recall("query", memoryScope("default", "tenant_x"), SESSION_KEY_OBJ);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     // Only the first 5 of 10 pinned entries should be injected (cap enforced via limit param)
@@ -3354,7 +3419,7 @@ describe("createMemoryRecall — pinned-first lane (head placement, cap, MMR ded
         mmr: { enabled: true, lambda: 0.5 },
       }),
     );
-    const result = await recall.recall("overlapping query", SESSION_KEY_OBJ, "default");
+    const result = await recall.recall("overlapping query", memoryScope("default", "tenant_x"), SESSION_KEY_OBJ);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const ids = result.value.map((r) => r.entry.id);
@@ -3377,7 +3442,7 @@ describe("createMemoryRecall — pinned-first lane (head placement, cap, MMR ded
       },
       baseConfig({ scoring: NEUTRAL_SCORING }),
     );
-    const result = await recall.recall("q", SESSION_KEY, "default");
+    const result = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.map((r) => r.entry.id)).toEqual(["a", "b"]);
@@ -3424,7 +3489,7 @@ describe("createMemoryRecall — pinned-first lane (head placement, cap, MMR ded
         pinned: { enabled: true, maxPinnedInjection: 5 },
       }),
     );
-    const result = await recall.recall("query", SESSION_KEY_OBJ, "default");
+    const result = await recall.recall("query", memoryScope("default", "tenant_x"), SESSION_KEY_OBJ);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const ids = result.value.map((r) => r.entry.id);
@@ -3453,7 +3518,7 @@ describe("createMemoryRecall — pinned-first lane (head placement, cap, MMR ded
         pinned: { enabled: true, maxPinnedInjection: 5 },
       }),
     );
-    await recall.recall("query", SESSION_KEY_OBJ, "default");
+    await recall.recall("query", memoryScope("default", "tenant_x"), SESSION_KEY_OBJ);
     expect(warnMock).toHaveBeenCalledOnce();
     const warnPayload = warnMock.mock.calls[0][0] as Record<string, unknown>;
     expect(warnPayload).toHaveProperty("durationMs"); // AGENTS.md §2.7 requirement
@@ -3549,7 +3614,7 @@ describe("createMemoryRecall — provenance down-weighting", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    const got = await recall.recall("q", memoryScope("default", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
@@ -3603,7 +3668,7 @@ describe("createMemoryRecall — provenance down-weighting", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    const got = await recall.recall("q", memoryScope("default", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const order = got.value.map((r) => r.entry.id);
@@ -3640,7 +3705,7 @@ describe("createMemoryRecall — provenance down-weighting", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    const got = await recall.recall("q", memoryScope("default", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const order = got.value.map((r) => r.entry.id);
@@ -3698,7 +3763,7 @@ describe("createMemoryRecall — provenance down-weighting", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    const got = await recall.recall("q", memoryScope("default", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
@@ -3731,7 +3796,7 @@ describe("createMemoryRecall — provenance down-weighting", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    const got = await recall.recall("q", memoryScope("default", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const order = got.value.map((r) => r.entry.id);
@@ -3761,7 +3826,7 @@ describe("createMemoryRecall — provenance down-weighting", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    const got = await recall.recall("q", memoryScope("default", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
@@ -3806,7 +3871,7 @@ describe("createMemoryRecall — provenance down-weighting", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // The port was queried for the distilled summary's id, scoped to (tenant, agent).
@@ -3846,12 +3911,12 @@ describe("createMemoryRecall — provenance down-weighting", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     const scopedCall = calls.find((c) => c.summaryId === SUMMARY_ID)!;
     expect(scopedCall).toBeDefined();
     // formatSessionKey(SESSION_KEY_OBJ) === "tenant_x:user_a:chat_1" (NOT "[object Object]").
-    expect(scopedCall.scope.sessionKey).toBe("tenant_x:user_a:chat_1");
+    expect(scopedCall.scope.sessionKey).toBe("tenant_x:agent:agent_y:user_a:chat_1");
     expect(scopedCall.scope.sessionKey).not.toBe("[object Object]");
   });
 
@@ -3866,7 +3931,7 @@ describe("createMemoryRecall — provenance down-weighting", () => {
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
       baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    const got = await recall.recall("q", memoryScope("default", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const actual = got.value.map((r) => ({ id: r.entry.id, score: r.score ?? 1 }));
@@ -3889,7 +3954,7 @@ describe("createMemoryRecall — provenance down-weighting", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    const got = await recall.recall("q", memoryScope("default", "tenant_x"), SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // Fast-path: no lcd_distilled entry → getProvenanceForSummary never called.
@@ -3915,7 +3980,7 @@ describe("createMemoryRecall — provenance down-weighting", () => {
       } as unknown as Parameters<typeof createMemoryRecall>[0],
       baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
     );
-    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    const got = await recall.recall("q", memoryScope("default", "tenant_x"), SESSION_KEY_OBJ);
     // Recall STILL succeeds (non-fatal pass).
     expect(got.ok).toBe(true);
     if (!got.ok) return;
@@ -3950,8 +4015,8 @@ describe("createMemoryRecall — provenance live-path integration (concrete LcdP
     initSchema(db, 1536); // runs ensureLcdTables (lcd_memory_provenance DDL)
     // The provenance row FKs memory_id → memories(id), so seed a real memories row.
     db.prepare(
-      "INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_session_key, tags, created_at)" +
-        " VALUES (?, ?, ?, 'user_a', 'paired content', 'learned', 'episodic', 'agent', 'sess-live', '[]', 1)",
+      "INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, source_session_key, tags, created_at)" +
+        " VALUES (?, ?, ?, 'user_a', 'agent-shared', 'paired content', 'learned', 'episodic', 'agent', 'sess-live', '[]', 1)",
     ).run(PAIRED_ID, tenantId, agentId);
     const store = createLcdStore(db);
     store.appendProvenance!({
@@ -3959,7 +4024,7 @@ describe("createMemoryRecall — provenance live-path integration (concrete LcdP
       memoryId: PAIRED_ID,
       summaryId: SUMMARY_ID,
       sourceSessionKey: "sess-live",
-      conversationId: "conv-live",
+      conversationRef: memoryScope(agentId, tenantId).conversationRef,
       agentId,
       tenantId,
       createdAt: 1,
@@ -3999,7 +4064,7 @@ describe("createMemoryRecall — provenance live-path integration (concrete LcdP
         } as unknown as Parameters<typeof createMemoryRecall>[0],
         baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
       );
-      const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_live");
+      const got = await recall.recall("q", memoryScope("agent_live", "tenant_x"), SESSION_KEY_OBJ);
       expect(got.ok).toBe(true);
       if (!got.ok) return;
       const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
@@ -4044,7 +4109,7 @@ describe("createMemoryRecall — provenance live-path integration (concrete LcdP
       );
       // Recall as a DIFFERENT agent — the precise branch reads zero rows; the paired row's
       // sessionKey also differs from the distilled summary's, so the heuristic can't fire.
-      const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_OTHER");
+      const got = await recall.recall("q", memoryScope("agent_OTHER", "tenant_x"), SESSION_KEY_OBJ);
       expect(got.ok).toBe(true);
       if (!got.ok) return;
       const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
@@ -4075,7 +4140,7 @@ describe("createMemoryRecall — provenance live-path integration (concrete LcdP
         } as unknown as Parameters<typeof createMemoryRecall>[0],
         baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
       );
-      const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_live");
+      const got = await recall.recall("q", memoryScope("agent_live", "tenant_x"), SESSION_KEY_OBJ);
       expect(got.ok).toBe(true);
       if (!got.ok) return;
       const actual = got.value.map((r) => ({ id: r.entry.id, score: r.score ?? 1 }));
@@ -4123,7 +4188,7 @@ describe("createMemoryRecall — security gates upstream of fusion (bypass-attem
         relevanceFirst: true,
       } as unknown as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const ids = got.value.map((r) => r.entry.id);
@@ -4155,7 +4220,7 @@ describe("createMemoryRecall — security gates upstream of fusion (bypass-attem
         relevanceFirst: true, // arbiter active → floor enforced at the class default
       } as unknown as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const ids = got.value.map((r) => r.entry.id);
@@ -4184,7 +4249,7 @@ describe("createMemoryRecall — security gates upstream of fusion (bypass-attem
         relevanceFirst: false,
       } as unknown as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     const ids = got.value.map((r) => r.entry.id);
@@ -4205,7 +4270,7 @@ describe("createMemoryRecall — security gates upstream of fusion (bypass-attem
       { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
       baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"], relevanceFirst: false } as unknown as Partial<MemoryRecallConfig>),
     );
-    const got = await recall.recall("q", SESSION_KEY, "default");
+    const got = await recall.recall("q", memoryScope("default"), DEFAULT_SESSION_KEY_OBJ);
     expect(got.ok).toBe(true);
     if (!got.ok) return;
     // Deep-equal the full result (ids + order) to the reference — the gate is
@@ -4250,7 +4315,7 @@ describe("createMemoryRecall — degraded-lane visibility (memory:recall_degrade
       baseConfig(),
     );
 
-    const got = await recall.recall("what is the plan", SESSION_KEY, "agent_z");
+    const got = await recall.recall("what is the plan", memoryScope("agent_z"), DEFAULT_SESSION_KEY_OBJ);
 
     // Recall SUCCEEDS on the surviving FTS lane (live incident: the old
     // whole-call err meant zero recall for hours while FTS was healthy).
@@ -4284,7 +4349,7 @@ describe("createMemoryRecall — degraded-lane visibility (memory:recall_degrade
       baseConfig(),
     );
 
-    const got = await recall.recall("what is the plan", SESSION_KEY, "agent_z");
+    const got = await recall.recall("what is the plan", memoryScope("agent_z"), DEFAULT_SESSION_KEY_OBJ);
 
     expect(got.ok).toBe(false);
     const degraded = emits.filter((e) => e.event === "memory:recall_degraded");
@@ -4317,7 +4382,7 @@ describe("recall event payloads carry the CANONICAL formatted sessionKey", () =>
       baseConfig(),
     );
 
-    const got = await recall.recall("what is the plan", SESSION_KEY_OBJ, "agent_z");
+    const got = await recall.recall("what is the plan", memoryScope("agent_z", "tenant_x"), SESSION_KEY_OBJ);
 
     expect(got.ok).toBe(true);
     const expectedKey = formatSessionKey(SESSION_KEY_OBJ);

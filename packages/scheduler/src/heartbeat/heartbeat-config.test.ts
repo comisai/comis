@@ -33,9 +33,13 @@ describe("PerAgentHeartbeatConfigSchema", () => {
       intervalMs: 900_000,
       showOk: true,
       showAlerts: false,
-      target: { channelType: "telegram", channelId: "bot1", chatId: "123" },
+      target: {
+        channelType: "telegram",
+        channelInstanceId: "bot1",
+        conversationId: "123",
+        conversationKind: "direct",
+      },
       prompt: "Custom heartbeat prompt",
-      session: "heartbeat-session",
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -43,7 +47,6 @@ describe("PerAgentHeartbeatConfigSchema", () => {
       expect(result.data.intervalMs).toBe(900_000);
       expect(result.data.target?.channelType).toBe("telegram");
       expect(result.data.prompt).toBe("Custom heartbeat prompt");
-      expect(result.data.session).toBe("heartbeat-session");
     }
   });
 
@@ -62,13 +65,12 @@ describe("PerAgentHeartbeatConfigSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("accepts all newer fields (allowDm, lightContext, ackMaxChars, responsePrefix, skipHeartbeatOnlyDelivery)", () => {
+  it("accepts every surviving heartbeat visibility and context field", () => {
     const result = PerAgentHeartbeatConfigSchema.safeParse({
       allowDm: true,
       lightContext: true,
       ackMaxChars: 500,
       responsePrefix: "Agent: ",
-      skipHeartbeatOnlyDelivery: true,
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -76,13 +78,17 @@ describe("PerAgentHeartbeatConfigSchema", () => {
       expect(result.data.lightContext).toBe(true);
       expect(result.data.ackMaxChars).toBe(500);
       expect(result.data.responsePrefix).toBe("Agent: ");
-      expect(result.data.skipHeartbeatOnlyDelivery).toBe(true);
     }
   });
 
   it("rejects unknown model key (strictObject enforcement)", () => {
     const result = PerAgentHeartbeatConfigSchema.safeParse({ model: "x" });
     expect(result.success).toBe(false);
+  });
+
+  it("rejects removed session and heartbeat-only delivery leaves", () => {
+    expect(PerAgentHeartbeatConfigSchema.safeParse({ session: "heartbeat-session" }).success).toBe(false);
+    expect(PerAgentHeartbeatConfigSchema.safeParse({ skipHeartbeatOnlyDelivery: true }).success).toBe(false);
   });
 
   it("rejects non-positive ackMaxChars", () => {
@@ -95,35 +101,30 @@ describe("PerAgentHeartbeatConfigSchema", () => {
 });
 
 describe("HeartbeatTargetSchema", () => {
-  it("requires all three fields (channelType, channelId, chatId)", () => {
+  it("requires the exact adapter instance conversation and conversation kind", () => {
     expect(HeartbeatTargetSchema.safeParse({}).success).toBe(false);
     expect(HeartbeatTargetSchema.safeParse({ channelType: "telegram" }).success).toBe(false);
     expect(
-      HeartbeatTargetSchema.safeParse({ channelType: "telegram", channelId: "bot1" }).success,
+      HeartbeatTargetSchema.safeParse({
+        channelType: "telegram", channelInstanceId: "bot1", conversationId: "123",
+      }).success,
     ).toBe(false);
   });
 
-  it("accepts valid target with all three fields", () => {
+  it("accepts an exact thread-narrowed target", () => {
     const result = HeartbeatTargetSchema.safeParse({
       channelType: "telegram",
-      channelId: "bot1",
-      chatId: "123",
+      channelInstanceId: "bot1",
+      conversationId: "123",
+      threadId: "topic-4",
+      conversationKind: "shared",
     });
     expect(result.success).toBe(true);
   });
 
-  it("rejects empty strings", () => {
+  it("rejects old partial target field names instead of inferring authority", () => {
     expect(
-      HeartbeatTargetSchema.safeParse({ channelType: "", channelId: "bot1", chatId: "123" })
-        .success,
-    ).toBe(false);
-    expect(
-      HeartbeatTargetSchema.safeParse({ channelType: "telegram", channelId: "", chatId: "123" })
-        .success,
-    ).toBe(false);
-    expect(
-      HeartbeatTargetSchema.safeParse({ channelType: "telegram", channelId: "bot1", chatId: "" })
-        .success,
+      HeartbeatTargetSchema.safeParse({ channelType: "telegram", channelId: "bot1", chatId: "123" }).success,
     ).toBe(false);
   });
 });
@@ -167,7 +168,6 @@ describe("resolveEffectiveHeartbeatConfig", () => {
       showAlerts: true,
       target: undefined,
       prompt: undefined,
-      session: undefined,
     });
   });
 
@@ -192,15 +192,23 @@ describe("resolveEffectiveHeartbeatConfig", () => {
     expect(result.showAlerts).toBe(false);
   });
 
-  it("per-agent-only fields (target, prompt, session) come through", () => {
+  it("per-agent-only exact target and prompt come through", () => {
     const result = resolveEffectiveHeartbeatConfig(globalDefaults, {
-      target: { channelType: "telegram", channelId: "bot1", chatId: "123" },
+      target: {
+        channelType: "telegram",
+        channelInstanceId: "bot1",
+        conversationId: "123",
+        conversationKind: "direct",
+      },
       prompt: "Custom prompt",
-      session: "hb-session",
     });
-    expect(result.target).toEqual({ channelType: "telegram", channelId: "bot1", chatId: "123" });
+    expect(result.target).toEqual({
+      channelType: "telegram",
+      channelInstanceId: "bot1",
+      conversationId: "123",
+      conversationKind: "direct",
+    });
     expect(result.prompt).toBe("Custom prompt");
-    expect(result.session).toBe("hb-session");
   });
 
   it("omitted per-agent fields inherit from global (field-level merge, not block replace)", () => {

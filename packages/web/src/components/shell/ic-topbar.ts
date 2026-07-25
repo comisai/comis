@@ -4,6 +4,8 @@ import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { ConnectionStatus } from "../../api/types/index.js";
 
+const ASSET_BASE_URL = (import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/";
+
 /**
  * Top bar component for the Comis operator console.
  *
@@ -320,7 +322,7 @@ export class IcTopbar extends LitElement {
           \u2630
         </button>
         <div class="brand">
-          <img class="brand-icon" src="${import.meta.env.BASE_URL}comis-logo.png" alt="Comis" />
+          <img class="brand-icon" src="${ASSET_BASE_URL}comis-logo.png" alt="Comis" />
         </div>
         <div class="spacer"></div>
         <aside role="complementary" aria-label="System status">

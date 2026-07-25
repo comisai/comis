@@ -124,7 +124,7 @@ function lanesOnRecallConfig(): MemoryRecallConfig {
     maxResults: 10,
     minScore: 0,
     includeTrustLevels: ["system", "learned"],
-    rerank: { enabled: false, maxCandidates: 20, minResults: 2, timeoutMs: 5000 },
+    rerank: { mode: "off", maxCandidates: 20, minResults: 2, timeoutMs: 5000 },
     scoring: { recency: 0, temporal: 0, proof: 0, trust: 0 },
     lanes: {
       fts: { weight: 1.0 },
@@ -147,7 +147,7 @@ function explicitOffBaseline(): MemoryRecallConfig {
     maxResults: 10,
     minScore: 0,
     includeTrustLevels: ["system", "learned"],
-    rerank: { enabled: false, maxCandidates: 20, minResults: 2, timeoutMs: 5000 },
+    rerank: { mode: "off", maxCandidates: 20, minResults: 2, timeoutMs: 5000 },
     scoring: { recency: 0, temporal: 0, proof: 0, trust: 0 },
     lanes: {
       fts: { weight: 1.0 },

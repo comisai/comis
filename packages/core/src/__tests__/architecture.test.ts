@@ -354,16 +354,17 @@ describe("port-DTO residency text-level checks", () => {
   const PORTS_DIR_P31 = resolve(SRC_ROOT, "ports");
   const DOMAIN_DIR_P31 = resolve(SRC_ROOT, "domain");
 
-  it("session-store.ts declares SessionStorePort with exactly 7 methods", () => {
+  it("session-store.ts declares the eight explicit-authority methods", () => {
     const portFile = readFileSync(resolve(PORTS_DIR_P31, "session-store.ts"), "utf8");
     expect(portFile).toMatch(/export\s+interface\s+SessionStorePort\b/);
     const expectedMethods = [
       "save",
       "load",
+      "loadByRef",
       "list",
       "delete",
+      "deleteByRef",
       "deleteStale",
-      "loadByFormattedKey",
       "listDetailed",
     ];
     for (const m of expectedMethods) {

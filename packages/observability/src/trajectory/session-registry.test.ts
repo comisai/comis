@@ -17,15 +17,22 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TypedEventBus } from "@comis/core";
 
-import { createSessionTrajectoryHandleRegistry } from "./session-registry.js";
+import {
+  createSessionTrajectoryHandleRegistry,
+  type SessionTrajectoryFilter,
+  type SessionTrajectoryHandleRegistry,
+} from "./session-registry.js";
+import type { TrajectoryRecorderInit } from "./types.js";
 
 let tmpDir: string;
 
@@ -45,6 +52,18 @@ function readLines(filePath: string): Array<Record<string, unknown>> {
     .map((l) => JSON.parse(l) as Record<string, unknown>);
 }
 
+function getOrCreate(
+  registry: SessionTrajectoryHandleRegistry,
+  formattedKey: string,
+  init: TrajectoryRecorderInit,
+  bus: TypedEventBus,
+  filter?: SessionTrajectoryFilter,
+): { recorder: ReturnType<SessionTrajectoryHandleRegistry["getRecorder"]> } {
+  const result = registry.getOrCreate(formattedKey, init, bus, filter);
+  if (!result.ok) throw result.error;
+  return result.value;
+}
+
 describe("createSessionTrajectoryHandleRegistry — handle lifecycle", () => {
   it("getOrCreate_returns_same_recorder_across_multiple_calls", () => {
     const reg = createSessionTrajectoryHandleRegistry();
@@ -54,8 +73,8 @@ describe("createSessionTrajectoryHandleRegistry — handle lifecycle", () => {
       sessionId: "sid-1",
       trajectoryDir: tmpDir,
     };
-    const first = reg.getOrCreate("k1", init, bus);
-    const second = reg.getOrCreate("k1", init, bus);
+    const first = getOrCreate(reg, "k1", init, bus);
+    const second = getOrCreate(reg, "k1", init, bus);
     expect(first.recorder).not.toBeNull();
     expect(second.recorder).toBe(first.recorder);
   });
@@ -75,8 +94,8 @@ describe("createSessionTrajectoryHandleRegistry — handle lifecycle", () => {
       trajectoryDir: tmpDir,
       model: { provider: "openai" },
     };
-    const { recorder: r1 } = reg.getOrCreate("k1", init1, bus);
-    const { recorder: r2 } = reg.getOrCreate("k1", init2, bus);
+    const { recorder: r1 } = getOrCreate(reg, "k1", init1, bus);
+    const { recorder: r2 } = getOrCreate(reg, "k1", init2, bus);
     expect(r1).toBe(r2);
     // Behavioral proof: emit one event, inspect the recorder's
     // envelope — must reflect init1's agentId.
@@ -93,7 +112,8 @@ describe("createSessionTrajectoryHandleRegistry — handle lifecycle", () => {
   it("close_flushes_and_unsubscribes_then_subsequent_emits_do_not_land", async () => {
     const reg = createSessionTrajectoryHandleRegistry();
     const bus = new TypedEventBus();
-    const { recorder } = reg.getOrCreate(
+    const { recorder } = getOrCreate(
+      reg,
       "k1",
       { agentId: "a", sessionId: "sid-c", trajectoryDir: tmpDir },
       bus,
@@ -147,7 +167,8 @@ describe("createSessionTrajectoryHandleRegistry — handle lifecycle", () => {
       const dir = join(tmpDir, key);
       // mkdir inline via the trajectoryDir absorption — the recorder
       // creates the parent at write time.
-      const { recorder } = reg.getOrCreate(
+      const { recorder } = getOrCreate(
+        reg,
         key,
         { agentId: "a", sessionId: key, trajectoryDir: tmpDir },
         bus,
@@ -164,7 +185,8 @@ describe("createSessionTrajectoryHandleRegistry — handle lifecycle", () => {
       const lines = readLines(f);
       expect(lines.length).toBeGreaterThanOrEqual(1);
     }
-    const { recorder: fresh } = reg.getOrCreate(
+    const { recorder: fresh } = getOrCreate(
+      reg,
       "k0",
       { agentId: "a", sessionId: "fresh", trajectoryDir: tmpDir },
       bus,
@@ -181,10 +203,35 @@ describe("createSessionTrajectoryHandleRegistry — handle lifecycle", () => {
       trajectoryDir: tmpDir,
       enabled: false,
     };
-    const r1 = reg.getOrCreate("k1", init, bus).recorder;
-    const r2 = reg.getOrCreate("k1", init, bus).recorder;
+    const r1 = getOrCreate(reg, "k1", init, bus).recorder;
+    const r2 = getOrCreate(reg, "k1", init, bus).recorder;
     expect(r1).toBeNull();
     expect(r2).toBeNull();
+  });
+
+  it("does not cache a persisted-state failure as an intentionally disabled recorder", () => {
+    const reg = createSessionTrajectoryHandleRegistry();
+    const bus = new TypedEventBus();
+    const sessionFile = join(tmpDir, "retry.jsonl");
+    writeFileSync(sessionFile, "", { mode: 0o600 });
+    const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
+    writeFileSync(trajectoryFile, "not-json\n", { mode: 0o600 });
+    const init = {
+      agentId: "a",
+      sessionId: "sid-retry",
+      sessionFile,
+      confinedBaseDir: tmpDir,
+    };
+
+    const failed = reg.getOrCreate("k-retry", init, bus);
+    expect(failed.ok).toBe(false);
+    expect(reg.getRecorder("k-retry")).toBeUndefined();
+
+    writeFileSync(trajectoryFile, "", { mode: 0o600 });
+    const recovered = reg.getOrCreate("k-retry", init, bus);
+    expect(recovered.ok).toBe(true);
+    if (!recovered.ok) throw recovered.error;
+    expect(recovered.value.recorder).not.toBeNull();
   });
 });
 
@@ -193,14 +240,14 @@ describe("SessionTrajectoryHandleRegistry — session:started latch", () => {
     const reg = createSessionTrajectoryHandleRegistry();
     const bus = new TypedEventBus();
     // Entry must exist (latch lives on SessionEntry) before consultation.
-    reg.getOrCreate("k-latch", { agentId: "a", sessionId: "sid-latch", trajectoryDir: tmpDir }, bus);
+    getOrCreate(reg, "k-latch", { agentId: "a", sessionId: "sid-latch", trajectoryDir: tmpDir }, bus);
     expect(reg.hasSessionStartedBeenEmitted("k-latch")).toBe(false);
   });
 
   it("mark_session_started_flips_the_latch_and_is_idempotent", () => {
     const reg = createSessionTrajectoryHandleRegistry();
     const bus = new TypedEventBus();
-    reg.getOrCreate("k-latch", { agentId: "a", sessionId: "sid-latch", trajectoryDir: tmpDir }, bus);
+    getOrCreate(reg, "k-latch", { agentId: "a", sessionId: "sid-latch", trajectoryDir: tmpDir }, bus);
     expect(reg.hasSessionStartedBeenEmitted("k-latch")).toBe(false);
     reg.markSessionStarted("k-latch");
     expect(reg.hasSessionStartedBeenEmitted("k-latch")).toBe(true);
@@ -219,18 +266,120 @@ describe("SessionTrajectoryHandleRegistry — session:started latch", () => {
   });
 
   it("close_resets_the_latch_so_a_fresh_getOrCreate_re_emits", async () => {
-    // A daemon restart re-creates the registry from scratch; this
-    // covers the per-process case where close() + re-getOrCreate
-    // resets the latch within the SAME registry lifetime (operator
-    // /reset followed by a new message).
+    // A close drops the in-memory entry. With no persisted active start,
+    // re-creation begins false; the restart test below covers restoration.
     const reg = createSessionTrajectoryHandleRegistry();
     const bus = new TypedEventBus();
-    reg.getOrCreate("k-reset", { agentId: "a", sessionId: "sid-reset", trajectoryDir: tmpDir }, bus);
+    getOrCreate(reg, "k-reset", { agentId: "a", sessionId: "sid-reset", trajectoryDir: tmpDir }, bus);
     reg.markSessionStarted("k-reset");
     expect(reg.hasSessionStartedBeenEmitted("k-reset")).toBe(true);
     await reg.close("k-reset");
-    reg.getOrCreate("k-reset", { agentId: "a", sessionId: "sid-reset", trajectoryDir: tmpDir }, bus);
+    getOrCreate(reg, "k-reset", { agentId: "a", sessionId: "sid-reset", trajectoryDir: tmpDir }, bus);
     expect(reg.hasSessionStartedBeenEmitted("k-reset")).toBe(false);
+  });
+
+  it("close_and_reopen_resets_the_latch_when_the_operator_filter_omits_session_ended", async () => {
+    const reg = createSessionTrajectoryHandleRegistry();
+    const bus = new TypedEventBus();
+    const init = {
+      agentId: "a",
+      sessionId: "sid-filtered-reset",
+      trajectoryDir: tmpDir,
+    };
+    const filter: SessionTrajectoryFilter = (eventName) =>
+      eventName === "session:started";
+    const first = getOrCreate(
+      reg,
+      "k-filtered-reset",
+      init,
+      bus,
+      filter,
+    ).recorder;
+    expect(first).not.toBeNull();
+
+    bus.emit("session:started", {
+      agentId: "a",
+      sessionKey: "k-filtered-reset",
+      traceId: "trace-filtered-reset",
+      channelType: "telegram",
+      channelId: "chat",
+      timestamp: 1,
+    });
+    reg.markSessionStarted("k-filtered-reset");
+    bus.emit("session:ended", {
+      agentId: "a",
+      sessionKey: "k-filtered-reset",
+      traceId: "trace-filtered-reset",
+      totalTurns: 1,
+      totalInputTokens: 1,
+      totalOutputTokens: 1,
+      durationMs: 1,
+      exitReason: "destroyed",
+      timestamp: 2,
+    });
+    await reg.close("k-filtered-reset");
+
+    const persistedTypes = readLines(first!.filePath).map((line) => line.type);
+    expect(persistedTypes).toEqual(["session.started", "session.ended"]);
+
+    getOrCreate(reg, "k-filtered-reset", init, bus, filter);
+    expect(
+      reg.hasSessionStartedBeenEmitted("k-filtered-reset"),
+    ).toBe(false);
+  });
+
+  it("fresh daemon registry restores an active session-start latch from the real trajectory layout", async () => {
+    const channelDir = join(
+      tmpDir,
+      "workspace",
+      "sessions",
+      "default",
+      "telegram",
+    );
+    mkdirSync(channelDir, { recursive: true });
+    const sessionFile = join(channelDir, "chat.jsonl");
+    writeFileSync(sessionFile, "", { mode: 0o600 });
+    writeFileSync(
+      sessionFile.replace(/\.jsonl$/, "_session-metadata.json"),
+      JSON.stringify({ sessionId: "sid-restart" }),
+      { mode: 0o600 },
+    );
+    const init = {
+      agentId: "a",
+      sessionId: "sid-restart",
+      sessionFile,
+      confinedBaseDir: tmpDir,
+    };
+    const firstRegistry = createSessionTrajectoryHandleRegistry();
+    const firstBus = new TypedEventBus();
+    const first = getOrCreate(firstRegistry, "k-restart", init, firstBus).recorder;
+    expect(first).not.toBeNull();
+    firstBus.emit("session:started", {
+      agentId: "a",
+      sessionKey: "k-restart",
+      traceId: "trace-before-restart",
+      channelType: "telegram",
+      channelId: "chat",
+      timestamp: 1,
+    });
+    firstRegistry.markSessionStarted("k-restart");
+    await first!.flush();
+    await firstRegistry.closeAll();
+
+    const restartedRegistry = createSessionTrajectoryHandleRegistry();
+    const restartedBus = new TypedEventBus();
+    const restarted = getOrCreate(
+      restartedRegistry,
+      "k-restart",
+      init,
+      restartedBus,
+    ).recorder;
+
+    expect(restarted).not.toBeNull();
+    expect(restartedRegistry.hasSessionStartedBeenEmitted("k-restart")).toBe(
+      true,
+    );
+    expect(existsSync(`${sessionFile}.trajectory-path.json`)).toBe(true);
   });
 
   it("mark_session_started_on_unknown_key_is_silent_noop", () => {
@@ -249,7 +398,8 @@ describe("createSessionTrajectoryHandleRegistry — monotonic seq + single sessi
     // registry's getOrCreate guarantees.
     const reg = createSessionTrajectoryHandleRegistry();
     const bus = new TypedEventBus();
-    const { recorder } = reg.getOrCreate(
+    const { recorder } = getOrCreate(
+      reg,
       "k-monot",
       { agentId: "a", sessionId: "sid-monot", trajectoryDir: tmpDir },
       bus,
@@ -261,7 +411,8 @@ describe("createSessionTrajectoryHandleRegistry — monotonic seq + single sessi
       recorder!.recordEvent("tool.call", { i });
     }
     // Turn 2 (no re-construction in between) — 4 events.
-    const { recorder: same } = reg.getOrCreate(
+    const { recorder: same } = getOrCreate(
+      reg,
       "k-monot",
       { agentId: "a", sessionId: "sid-monot", trajectoryDir: tmpDir },
       bus,
@@ -280,7 +431,8 @@ describe("createSessionTrajectoryHandleRegistry — monotonic seq + single sessi
   it("exactly_one_session_started_and_zero_session_ended_before_close", async () => {
     const reg = createSessionTrajectoryHandleRegistry();
     const bus = new TypedEventBus();
-    const { recorder } = reg.getOrCreate(
+    const { recorder } = getOrCreate(
+      reg,
       "k-life",
       { agentId: "a", sessionId: "sid-life", trajectoryDir: tmpDir },
       bus,

@@ -1,167 +1,271 @@
 // SPDX-License-Identifier: Apache-2.0
+import {
+  ChannelEndpointSchema,
+  ConversationLocatorSchema,
+} from "@comis/core";
 import { z } from "zod";
 
-/**
- * Cron schedule: discriminated union on `kind`.
- *
- * - "cron": standard cron expression with optional timezone
- * - "every": interval-based (everyMs milliseconds, optional anchor)
- * - "at": one-shot at a specific ISO 8601 datetime
- * - "in": one-shot a RELATIVE number of seconds from now (no timezone math).
- *   Exists so "remind me in 2 minutes" resolves deterministically as now+N —
- *   small models reliably botch the absolute "at" + IANA-tz conversion (a
- *   keyless qwen3.6:35b scheduled "in 2 minutes" ~7h off by pairing the injected
- *   UTC hour with the user's display timezone).
- */
-export const CronScheduleSchema = z.discriminatedUnion("kind", [
+const MAX_IDENTIFIER_BYTES = 256;
+const MAX_MODEL_BYTES = 512;
+export const MAX_CRON_TEXT_BYTES = 64 * 1024;
+export const MAX_WAKE_GATE_SCRIPT_BYTES = 256 * 1024;
+
+function utf8Bytes(value: string): number {
+  return Buffer.byteLength(value, "utf8");
+}
+
+function boundedString(maxBytes: number, label: string) {
+  return z.string().min(1).refine(
+    (value) => utf8Bytes(value) <= maxBytes,
+    `${label} exceeds ${maxBytes} UTF-8 bytes`,
+  );
+}
+
+const IdentifierSchema = boundedString(MAX_IDENTIFIER_BYTES, "identifier");
+const EpochMsSchema = z.number().int().nonnegative().safe();
+const PositiveSafeIntegerSchema = z.number().int().positive().safe();
+const NonnegativeSafeIntegerSchema = z.number().int().nonnegative().safe();
+
+/** Store-ready schedules are fully resolved and host-timezone independent. */
+export const CronPersistedScheduleSchema = z.discriminatedUnion("kind", [
   z.strictObject({
-      kind: z.literal("cron"),
-      /** Standard cron expression (5 or 6 fields) */
-      expr: z.string().min(1),
-      /** IANA timezone (e.g. "America/New_York"), omit for UTC */
-      tz: z.string().optional(),
-    }),
+    kind: z.literal("cron"),
+    expr: boundedString(1_024, "cron expression"),
+    tz: boundedString(128, "timezone"),
+  }),
   z.strictObject({
-      kind: z.literal("every"),
-      /** Interval in milliseconds */
-      everyMs: z.number().int().positive(),
-      /** Optional anchor timestamp in ms (first tick aligned to this) */
-      anchorMs: z.number().int().nonnegative().optional(),
-    }),
+    kind: z.literal("every"),
+    everyMs: PositiveSafeIntegerSchema,
+    anchorMs: EpochMsSchema,
+  }),
   z.strictObject({
-      kind: z.literal("at"),
-      /** ISO 8601 datetime string for one-shot execution */
-      at: z.string().min(1),
-      /**
-       * IANA timezone (e.g. "America/Los_Angeles") in which a NAIVE `at`
-       * datetime (no offset) is interpreted; omit for UTC/system-local. Mirrors
-       * the "cron" kind's `tz`. Without this, "remind me at 9am" for a Pacific
-       * user fired at 9am UTC (= 2am Pacific) — the wrong wall-clock time.
-       */
-      tz: z.string().optional(),
-    }),
-  z.strictObject({
-      kind: z.literal("in"),
-      /** Seconds from the scheduling instant (now) — deterministic, timezone-free. */
-      seconds: z.number().int().positive(),
-    }),
+    kind: z.literal("at"),
+    atMs: EpochMsSchema,
+  }),
 ]);
 
-export type CronSchedule = z.infer<typeof CronScheduleSchema>;
+export type CronPersistedSchedule = z.infer<typeof CronPersistedScheduleSchema>;
+export type CronSchedule = CronPersistedSchedule;
 
-/**
- * Cron payload: discriminated union on `kind`.
- *
- * - "system_event": emit a system event with text
- * - "agent_turn": trigger an agent turn with a message
- */
-export const CronPayloadSchema = z.discriminatedUnion("kind", [
+/** Public authoring schedules are resolved exactly once before persistence. */
+export const CronAuthoringScheduleSchema = z.discriminatedUnion("kind", [
   z.strictObject({
-      kind: z.literal("system_event"),
-      /** Event text to emit */
-      text: z.string().min(1),
-    }),
+    kind: z.literal("cron"),
+    expr: boundedString(1_024, "cron expression"),
+    tz: boundedString(128, "timezone").optional(),
+  }),
   z.strictObject({
-      kind: z.literal("agent_turn"),
-      /** Message to send to the agent */
-      message: z.string().min(1),
-      /** Optional model override for this turn */
-      model: z.string().optional(),
-      /** Optional timeout in seconds for this turn */
-      timeoutSeconds: z.number().int().positive().optional(),
-    }),
+    kind: z.literal("every"),
+    everyMs: PositiveSafeIntegerSchema,
+    anchorMs: EpochMsSchema.optional(),
+  }),
+  z.strictObject({
+    kind: z.literal("at"),
+    at: boundedString(128, "wall-clock timestamp"),
+    tz: boundedString(128, "timezone").optional(),
+    fold: z.enum(["earlier", "later"]).optional(),
+  }),
+  z.strictObject({
+    kind: z.literal("in"),
+    seconds: PositiveSafeIntegerSchema,
+  }),
 ]);
 
-export type CronPayload = z.infer<typeof CronPayloadSchema>;
+export type CronAuthoringSchedule = z.infer<typeof CronAuthoringScheduleSchema>;
 
-/**
- * Session target for cron job execution.
- */
-export const CronSessionTargetSchema = z.enum(["main", "isolated"]);
+export const CronJobLifecycleSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("scheduled"),
+    nextRunAtMs: EpochMsSchema,
+    consecutiveDependencyErrors: NonnegativeSafeIntegerSchema,
+  }),
+  z.strictObject({
+    status: z.literal("paused"),
+    nextRunAtMs: EpochMsSchema,
+    consecutiveDependencyErrors: NonnegativeSafeIntegerSchema,
+    reason: z.enum(["operator", "dependency_errors"]),
+  }),
+  z.strictObject({
+    status: z.literal("one_shot_claimed"),
+    executionId: IdentifierSchema,
+    scheduledForMs: EpochMsSchema,
+    claimedAtMs: EpochMsSchema,
+  }),
+  z.strictObject({
+    status: z.literal("one_shot_terminal"),
+    terminalExecutionId: IdentifierSchema,
+    terminalAtMs: EpochMsSchema,
+  }),
+]);
 
-export type CronSessionTarget = z.infer<typeof CronSessionTargetSchema>;
+export type CronJobLifecycle = z.infer<typeof CronJobLifecycleSchema>;
 
-/**
- * Session strategy for cron job execution.
- *
- * - "fresh": expire existing session before each execution (default for isolated jobs)
- * - "rolling": prune session to last N turns after each execution
- * - "accumulate": keep all history (existing unbounded behavior)
- */
-export const CronSessionStrategySchema = z.enum(["fresh", "rolling", "accumulate"]);
+export const CronAuthorablePayloadSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("heartbeat_event"),
+    text: boundedString(MAX_CRON_TEXT_BYTES, "heartbeat-event text"),
+    wakeMode: z.enum(["now", "next-heartbeat"]),
+  }),
+  z.strictObject({
+    kind: z.literal("delivery"),
+    text: boundedString(MAX_CRON_TEXT_BYTES, "delivery text"),
+  }),
+  z.strictObject({
+    kind: z.literal("agent_turn"),
+    message: boundedString(MAX_CRON_TEXT_BYTES, "agent-turn message"),
+    model: boundedString(MAX_MODEL_BYTES, "model override").optional(),
+    timeoutSeconds: PositiveSafeIntegerSchema.max(86_400).optional(),
+  }),
+]);
 
-export type CronSessionStrategy = z.infer<typeof CronSessionStrategySchema>;
+export type CronAuthorablePayload = z.infer<typeof CronAuthorablePayloadSchema>;
 
-/**
- * Delivery target for routing cron job results back to the originating channel.
- * Captured at job creation time from the agent's current context.
- */
+export const CronInternalActionNameSchema = z.enum([
+  "memory_review",
+  "memory_lifecycle",
+  "reflection",
+]);
+export type CronInternalActionName = z.infer<typeof CronInternalActionNameSchema>;
+
+export const CronAgentSessionPolicySchema = z.discriminatedUnion("strategy", [
+  z.strictObject({ strategy: z.literal("fresh") }),
+  z.strictObject({
+    strategy: z.literal("rolling"),
+    maxHistoryTurns: PositiveSafeIntegerSchema.max(20),
+  }),
+]);
+export type CronAgentSessionPolicy = z.infer<typeof CronAgentSessionPolicySchema>;
+
+export const CronWakeGateSchema = z.strictObject({
+  script: boundedString(MAX_WAKE_GATE_SCRIPT_BYTES, "wake-gate script"),
+  language: z.enum(["js", "ts"]),
+  timeoutSeconds: PositiveSafeIntegerSchema.max(300),
+});
+export type CronWakeGate = z.infer<typeof CronWakeGateSchema>;
+
 export const CronDeliveryTargetSchema = z.strictObject({
-    channelId: z.string().min(1),
-    userId: z.string().min(1),
-    tenantId: z.string().min(1),
-    channelType: z.string().optional(),
-  });
-
+  conversation: ConversationLocatorSchema,
+  destinationEndpoint: ChannelEndpointSchema,
+}).superRefine((value, ctx) => {
+  const partition = value.conversation.conversationScope.partition;
+  const endpoint = value.destinationEndpoint;
+  if (partition.kind === "channel-principal" && partition.channelType !== endpoint.channelType) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["destinationEndpoint", "channelType"],
+      message: "destination channel type must match the conversation partition",
+    });
+  }
+  if (
+    (partition.kind === "endpoint-conversation"
+      || partition.kind === "endpoint-conversation-principal")
+    && !channelEndpointsEqual(partition.endpoint, endpoint)
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["destinationEndpoint"],
+      message: "destination endpoint must match the conversation partition",
+    });
+  }
+});
 export type CronDeliveryTarget = z.infer<typeof CronDeliveryTargetSchema>;
 
-/**
- * Full cron job definition.
- */
-export const CronJobSchema = z.strictObject({
-    /** Unique job identifier */
-    id: z.string().min(1),
-    /** Human-readable job name */
-    name: z.string().max(200),
-    /** Agent ID that owns this job */
-    agentId: z.string().min(1),
-    /** Schedule definition */
-    schedule: CronScheduleSchema,
-    /** Payload to execute */
-    payload: CronPayloadSchema,
-    /** Session target for execution */
-    sessionTarget: CronSessionTargetSchema.default("isolated"),
-    /** Wake mode: when to trigger heartbeat after enqueuing a system event. */
-    wakeMode: z.enum(["now", "next-heartbeat"]).default("next-heartbeat"),
-    /** Whether to forward isolated session results back to main heartbeat session. */
-    forwardToMain: z.boolean().default(false),
-    /** Session history strategy for cron executions. Default: fresh. */
-    sessionStrategy: CronSessionStrategySchema.default("fresh"),
-    /** Number of recent turns to keep for rolling strategy (default 3). */
-    maxHistoryTurns: z.number().int().positive().default(3).optional(),
-    /** Per-job cache retention override. Default inherits OPERATION_CACHE_DEFAULTS["cron"] = "short". */
-    cacheRetention: z.enum(["none", "short", "long"]).optional(),
-    /** Per-job tool policy override -- matches AgentConfig.toolPolicy shape.
-     *
-     *  Resolution order: job.toolPolicy > agentConfig.toolPolicy > passthrough
-     *  (no filtering). Opt-in: omitting this field preserves existing tool set
-     *  for the job. No silent defaults -- operators explicitly request
-     *  conservative presets like `{ profile: "cron-minimal" }`. */
-    toolPolicy: z.object({
-      profile: z.string().default("full"),
-      allow: z.array(z.string()).default([]),
-      deny: z.array(z.string()).default([]),
-    }).optional(),
-    /** Optional pre-run wake-gate: a jailed script that decides whether to invoke the model. */
-    wakeGate: z.strictObject({
-      script: z.string().min(1),
-      language: z.enum(["js", "ts"]).default("js"),
-      timeoutSeconds: z.number().int().positive().max(300).default(30),
-    }).optional(),
-    /** Delivery target for routing results to originating channel */
-    deliveryTarget: CronDeliveryTargetSchema.optional(),
-    /** Whether this job is currently enabled */
-    enabled: z.boolean().default(true),
-    /** Next scheduled run timestamp (ms since epoch) */
-    nextRunAtMs: z.number().int().nonnegative().optional(),
-    /** Last completed run timestamp (ms since epoch) */
-    lastRunAtMs: z.number().int().nonnegative().optional(),
-    /** Number of consecutive errors */
-    consecutiveErrors: z.number().int().nonnegative().default(0),
-    /** Maximum consecutive errors before auto-suspend. Per-job override of scheduler default. */
-    maxConsecutiveErrors: z.number().int().positive().optional(),
-    /** Job creation timestamp (ms since epoch) */
-    createdAtMs: z.number().int().positive(),
-  });
+const ToolPolicySchema = z.strictObject({
+  profile: z.enum(["minimal", "coding", "messaging", "supervisor", "full"]),
+  allow: z.array(IdentifierSchema).max(256),
+  deny: z.array(IdentifierSchema).max(256),
+});
 
-export type CronJob = z.infer<typeof CronJobSchema>;
+const CronJobBaseShape = {
+  id: IdentifierSchema,
+  name: boundedString(1_024, "job name").max(200),
+  agentId: IdentifierSchema,
+  schedule: CronPersistedScheduleSchema,
+  lifecycle: CronJobLifecycleSchema,
+  maxConsecutiveDependencyErrors: NonnegativeSafeIntegerSchema.optional(),
+};
+
+export const AuthoredHeartbeatCronJobSchema = z.strictObject({
+  ...CronJobBaseShape,
+  source: z.literal("authored"),
+  payload: CronAuthorablePayloadSchema.options[0],
+});
+
+export const AuthoredDeliveryCronJobSchema = z.strictObject({
+  ...CronJobBaseShape,
+  source: z.literal("authored"),
+  payload: CronAuthorablePayloadSchema.options[1],
+  deliveryTarget: CronDeliveryTargetSchema,
+});
+
+export const AuthoredAgentTurnCronJobSchema = z.strictObject({
+  ...CronJobBaseShape,
+  source: z.literal("authored"),
+  payload: CronAuthorablePayloadSchema.options[2],
+  sessionPolicy: CronAgentSessionPolicySchema,
+  continuationMode: z.enum(["none", "heartbeat_excerpt", "origin_history"]),
+  deliveryTarget: CronDeliveryTargetSchema.optional(),
+  wakeGate: CronWakeGateSchema.optional(),
+  cacheRetention: z.enum(["none", "short", "long"]).optional(),
+  toolPolicy: ToolPolicySchema.optional(),
+}).superRefine((value, ctx) => {
+  if (value.continuationMode === "origin_history" && value.deliveryTarget === undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["deliveryTarget"],
+      message: "origin_history continuation requires a delivery target",
+    });
+  }
+});
+
+export const BuiltInCronJobSchema = z.strictObject({
+  ...CronJobBaseShape,
+  source: z.literal("built_in"),
+  payload: z.strictObject({
+    kind: z.literal("internal_action"),
+    action: CronInternalActionNameSchema,
+  }),
+});
+
+export const CronPersistedJobSchema = z.union([
+  AuthoredHeartbeatCronJobSchema,
+  AuthoredDeliveryCronJobSchema,
+  AuthoredAgentTurnCronJobSchema,
+  BuiltInCronJobSchema,
+]).superRefine((job, ctx) => {
+  if ("deliveryTarget" in job && job.deliveryTarget !== undefined
+    && job.deliveryTarget.conversation.conversationScope.agentId !== job.agentId) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["deliveryTarget", "conversation", "conversationScope", "agentId"],
+      message: "delivery conversation must belong to the job owner",
+    });
+  }
+  const oneShotLifecycle = job.lifecycle.status === "one_shot_claimed"
+    || job.lifecycle.status === "one_shot_terminal";
+  if (oneShotLifecycle && job.schedule.kind !== "at") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["lifecycle", "status"],
+      message: "one-shot lifecycle is legal only for an at schedule",
+    });
+  }
+});
+
+export type CronPersistedJob = z.infer<typeof CronPersistedJobSchema>;
+export type CronJob = CronPersistedJob;
+export type AuthoredHeartbeatCronJob = z.infer<typeof AuthoredHeartbeatCronJobSchema>;
+export type AuthoredDeliveryCronJob = z.infer<typeof AuthoredDeliveryCronJobSchema>;
+export type AuthoredAgentTurnCronJob = z.infer<typeof AuthoredAgentTurnCronJobSchema>;
+export type BuiltInCronJob = z.infer<typeof BuiltInCronJobSchema>;
+
+function channelEndpointsEqual(
+  left: z.infer<typeof ChannelEndpointSchema>,
+  right: z.infer<typeof ChannelEndpointSchema>,
+): boolean {
+  return left.channelType === right.channelType
+    && left.channelInstanceId === right.channelInstanceId
+    && left.conversationId === right.conversationId
+    && left.threadId === right.threadId
+    && left.conversationKind === right.conversationKind;
+}

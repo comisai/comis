@@ -18,6 +18,8 @@
  *     immediate when an outbound already exists; block-then-resolve when one is
  *     recorded mid-wait; and — the PRIME DIRECTIVE — `[]` on timeout (an
  *     honest "no reply within Nms", NEVER a fabricated success).
+ *   - POST /control/chats/:id/reset → clears only that chat's pending inbound
+ *     updates and recorded outbounds; another chat and global faults survive.
  *   - in-process == HTTP parity: the typed `ControlClient` calls the SAME
  *     handlers without a socket and returns the SAME results.
  *   - `/control/*` is namespaced (never confused with `/bot<token>/*`)
@@ -217,6 +219,61 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
   });
 
   // -------------------------------------------------------------------------
+  // POST /control/chats/:id/reset — clear one chat without contaminating others
+  // -------------------------------------------------------------------------
+  describe("POST /control/chats/:id/reset (isolated chat reset)", () => {
+    it("clears that chat's outbounds and pending inbounds while preserving another chat and global faults", async () => {
+      const otherChatId = CHAT_ID + 1;
+
+      // Queue one inbound and record one outbound for each chat. Neither inbound
+      // has been consumed by getUpdates yet, so the reset must filter the shared
+      // bot-global pending queue by chat rather than clearing it wholesale.
+      await postControl(apiRoot, `/control/chats/${CHAT_ID}/messages`, {
+        fromUserId: USER_ID,
+        text: "reset me",
+      });
+      await postControl(apiRoot, `/control/chats/${otherChatId}/messages`, {
+        fromUserId: USER_ID,
+        text: "keep me",
+      });
+      await callBotMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "discarded reply" });
+      await callBotMethod(apiRoot, "sendMessage", { chat_id: otherChatId, text: "preserved reply" });
+
+      // Faults have a separate documented lifecycle (`DELETE /control/faults`),
+      // so a per-chat state reset must not silently clear them.
+      await postControl(apiRoot, "/control/faults", {
+        method: "sendMessage",
+        error: { error_code: 403, description: "synthetic persistent fault" },
+        opts: { matchChat: CHAT_ID },
+      });
+
+      const reset = await postControl(apiRoot, `/control/chats/${CHAT_ID}/reset`, {});
+      expect(reset.status).toBe(200);
+      expect(reset.json).toEqual({ ok: true });
+
+      expect((await getControl(apiRoot, `/control/chats/${CHAT_ID}/outbound?waitMs=0`)).json).toEqual([]);
+      const otherOutbounds = (await getControl(
+        apiRoot,
+        `/control/chats/${otherChatId}/outbound?waitMs=0`,
+      )).json as RecordedOutbound[];
+      expect(otherOutbounds.map((outbound) => outbound.text)).toEqual(["preserved reply"]);
+
+      const pending = (await callBotMethod(apiRoot, "getUpdates", { timeout: 0 })).result as Array<{
+        message?: { chat: { id: number }; text?: string };
+      }>;
+      expect(pending.map((update) => ({ chatId: update.message?.chat.id, text: update.message?.text }))).toEqual([
+        { chatId: otherChatId, text: "keep me" },
+      ]);
+
+      const stillFaulted = await callBotMethod(apiRoot, "sendMessage", {
+        chat_id: CHAT_ID,
+        text: "fault remains",
+      });
+      expect(stillFaulted.ok).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // in-process == HTTP parity (the typed ControlClient calls the SAME handlers)
   // -------------------------------------------------------------------------
   describe("in-process ControlClient == HTTP path (behavioral parity)", () => {
@@ -242,6 +299,16 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
       expect(viaClient.map((o) => ({ messageId: o.messageId, text: o.text }))).toEqual(
         viaHttp.map((o) => ({ messageId: o.messageId, text: o.text })),
       );
+    });
+
+    it("resetChat via the client clears the same chat state as the HTTP route", async () => {
+      await client.injectMessage({ chatId: CHAT_ID, fromUserId: USER_ID, text: "client reset" });
+      await callBotMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "client reset reply" });
+
+      client.resetChat({ chatId: CHAT_ID });
+
+      expect(emu.outbound({ chatId: CHAT_ID })).toEqual([]);
+      expect((await callBotMethod(apiRoot, "getUpdates", { timeout: 0 })).result).toEqual([]);
     });
 
     it("waitForOutbound times out into [] in-process exactly as the HTTP path does (no false success)", async () => {

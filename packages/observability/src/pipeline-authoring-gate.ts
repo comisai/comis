@@ -8,7 +8,7 @@
  * `test/architecture/globals.test.ts` gate enforces this repo-wide), so the same
  * aggregate reproduces the same verdict forever (determinism makes the decision
  * reproducible and non-repudiable). It mirrors the ordered first-match-wins
- * determinism of `fleetRootCause` / `likelyRootCause`.
+ * determinism of `systemRootCause` / `likelyRootCause`.
  *
  * The pre-committed thresholds (committed BEFORE the data exists — the
  * measure-first discipline):
@@ -39,7 +39,7 @@ export const MATERIAL_GAP_PP = 15;
 
 /**
  * The small-vs-frontier pipeline-authoring aggregate the gate consumes. This is
- * the CANONICAL home of this type — the reducer in fleet-findings.ts imports it
+ * the CANONICAL home of this type — the reducer in system-findings.ts imports it
  * from here, so `@comis/observability` is the single source. Field names + order
  * are load-bearing (the reducer returns this exact shape):
  * `smallTierInvocations`, `smallTierValidRate`, `frontierValidRate`.
@@ -60,7 +60,7 @@ export interface PipelineAuthoringVerdict {
 }
 
 /**
- * The pre-committed decision rule. PURE + deterministic (mirror `fleetRootCause`):
+ * The pre-committed decision rule. PURE + deterministic (mirror `systemRootCause`):
  * same aggregate -> the same verdict, forever. Ordered first-match-wins —
  * insufficient sample defers before the gap is even considered.
  */

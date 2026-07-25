@@ -45,6 +45,21 @@ web           Lit + Vite + Tailwind standalone SPA
 
 Dependency direction: inward to `core`. `daemon` depends on everything; `shared` depends on nothing. Use public exports (`packages/*/dist/index.js`) only — no cross-package internal imports.
 
+### 1.1 Generic agent runtime invariant
+
+Comis production runtime is a domain-neutral agent platform. Before every production-code change, read `docs/developer-guide/generic-agent-architecture.md` and classify the requested behavior before choosing a layer. The generic runtime owns mechanisms shared across domains: orchestration, models, tools, memory, channels, scheduling, approvals, delivery, observability, security, typed prompt compilation, locale policy, and immutable workspace-policy loading. It must not own an application's industry, persona, business rules, preferred human language, vendor workflow, response script, or task-specific evaluation criteria.
+
+Route specialization through the existing extension boundaries:
+
+- Deployment-specific persona, scope, tone, and business policy belong in operator workspace policy.
+- Reusable task expertise, procedures, examples, and tool-selection guidance belong in an opt-in prompt skill. If the expertise should ship with Comis, add a repository-shipped skill under `skills/<name>/SKILL.md`; do not inject it into the engine kernel or default workspace starters.
+- External product or API behavior belongs behind an MCP server or a capability adapter with typed schemas, attributed bounded instructions, explicit side-effect metadata, and the normal approval/security path.
+- Only behavior that remains valid across unrelated agents and applications may enter core runtime code. A concrete caller is still required; "generic" is not permission for a speculative abstraction.
+
+Never hard-code vertical nouns, personas, fixed task flows, closed language lists, provider-specific prompt prose, or application-specific tool advice into `packages/core`, `packages/agent`, default config, workspace templates, or the stable engine prompt. Skills and external instructions are advisory context: they cannot grant capabilities, raise trust, bypass approvals, weaken engine/operator policy, or become silently active for every agent.
+
+Every runtime change must pass this review before implementation and again during diff review: **could an unrelated Comis deployment use the changed runtime without inheriting the requester's domain assumptions?** If not, keep the runtime unchanged and implement the behavior as workspace policy, a skill, an MCP integration, or an adapter. Do not land a temporary runtime special case with a plan to extract it later. `test/architecture/generic-runtime-boundary.test.ts` is the enforcement floor; extend it whenever a specialization regression would otherwise be able to return.
+
 ## 2) Engineering Principles (Normative)
 
 ### 2.1 Result<T, E> everywhere
@@ -52,7 +67,7 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 - Chain by early-return: `if (!result.ok) return result;`. No `Result.map`/`flatMap` helpers exist. Use `tryCatch`/`fromPromise` only at boundaries with throwing APIs (Node fs, `new URL()`, third-party SDKs).
 - `err()` for unsupported/unsafe states — never silently succeed, never silently broaden permissions.
 - ERROR/WARN logs require `hint` (operator-actionable next step) and `errorKind`.
-- `errorKind` is the closed union from `LogFields.ErrorKind` in `@comis/core`: `config | network | auth | validation | precondition | timeout | resource | dependency | internal | platform` (10 members). Write literals as `"validation" as const`. Heuristic: bad input → `validation`; unmet precondition / guard → `precondition`; external API → `dependency`; chat platform → `platform`; bad config → `config`; assertion → `internal`.
+- `errorKind` is the closed union from `LogFields.ErrorKind` in `@comis/core`: `config | network | auth | validation | precondition | timeout | resource | dependency | internal | platform | sandbox_unavailable` (11 members). Write literals as `"validation" as const`. Heuristic: bad input → `validation`; unmet precondition / guard → `precondition`; external API → `dependency`; chat platform → `platform`; bad config → `config`; assertion → `internal`; no materializable OS sandbox jail → `sandbox_unavailable`.
 
 ### 2.2 Security (ESLint-enforced — violations fail CI; rules apply to `packages/*/src/**` only)
 - No `path.join()` — use `safePath(base, ...segments)` from `@comis/core/security`. `base` must be absolute; every dynamic segment (including filenames) goes through `safePath`. Compose: `safePath(safePath(dataDir, agentId), file)`.
@@ -72,7 +87,7 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 - No config keys, port methods, or feature flags without a concrete caller.
 - No speculative abstractions. Duplicate small local logic when it preserves clarity.
 - Extract shared helpers only after the rule of three; preserve package boundaries.
-- Before adding a dependency, climb the ladder: stdlib / Node built-in → native platform or language feature → a dep already in the tree → a few lines of our own. A new package must clear a bar those rungs can't — every dependency is supply-chain attack surface (see CLAUDE.md "Supply-chain invariants"). "Saves a few lines" is not that bar.
+- Before adding a dependency, climb the ladder: stdlib / Node built-in → native platform or language feature → a dep already in the tree → a few lines of our own. A new package must clear a bar those rungs can't — every dependency is supply-chain attack surface (§2.15). "Saves a few lines" is not that bar.
 - Minimalism never buys simplicity with correctness. YAGNI deletes speculative features and abstractions — never input validation, error/`Result` handling, edge cases, or the security/observability floor (§2.1, §2.2, §2.7). Between two equally small options, take the one that's correct on the edges.
 
 ### 2.4 Composition root + factories
@@ -111,6 +126,31 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 
 **Contract vs implementation.** `ComisLogger`, `LogFields`, and `ErrorKind` are **structural type contracts** that live in `@comis/core/src/logging/log-fields.ts`. The Pino-backed runtime implementation lives in `@comis/infra` and is assignable to the contract (`expectTypeOf<PinoComisLogger>().toExtend<ComisLogger>()` proves this in `packages/infra/src/logging/__tests__/logger-contract.test.ts`). Type-only consumers (agent, channels, gateway, skills, scheduler) import the contract from `@comis/core`. Only the daemon (composition root) and infra itself import the Pino runtime. Pino's auto-redaction (`apiKey`, `token`, `password`, etc., 3 levels deep) is a runtime feature of the Pino implementation; the structural contract does not (and cannot) enforce redaction.
 
+#### Diagnosing a degraded session or the daemon (read-order)
+
+Start with the observability surfaces, not a raw log grep — they exist so one call replaces a four-file hand-join. The CLI is **not on PATH**; prefix with `node packages/cli/dist/cli.js`.
+
+- **Daemon-wide** ("review the production logs", cross-session health): `system-health --since <hours>` — degraded rate, top `errorKind`s, breaker trips, cost, plus health/model/config-posture signals. Content-free counts and hints only, so it is safe to paste into a review.
+- **One session** (you have a `sessionKey` or `traceId`): `explain "<ref>"` — deterministic `likelyRootCause`, outcome, cost, per-tool pass/fail, breaker timeline, context budget.
+- **Two-tier workflow:** `system-health` to find the recurring pattern → `explain` on the worst session it names.
+- **Ground-truth read-order:** surface reply → session trajectory + metadata rollup → `explain` → `system-health` → **only then** a raw `daemon.log` grep. Drop to raw files only when debugging the observability layer itself. A false "verified" is the worst outcome — corroborate every claim against the trajectory or store, never a surface reply alone.
+- **Multi-agent:** cron and session RPCs take an optional `agentId` — pass it explicitly, or the default agent is silently resolved and you diagnose the wrong one. Sub-agent history keys on the **durable** `conversation_ref`, not the human-readable `sessionKey`, which cannot recover it.
+- **Restart before verifying a change against live data.** The running daemon holds its `dist/` in memory; `pnpm build` does not hot-reload it. Checking a fix against a stale process produces a confident wrong answer.
+
+#### Closing instrumentation gaps (troubleshooting retro)
+
+An investigation is not finished when the root cause is found — it is finished when the next occurrence of that class is diagnosable in one or two calls. Do this **unprompted**, in the same change when small, as an immediate follow-up when structural. The scope includes the tooling you investigated *with*: if a harness or script drifted or misled you, fix it too. Convert each friction into a change, test-first, citing the incident:
+
+- **You grepped raw logs or hand-joined files** → thread that data into the trajectory and onto the incident/health report, and make the verdict consume it.
+- **An error said WHAT but not WHICH KNOB** → name the exact config key and the actual conflicting values in the message.
+- **A message pointed the wrong way** → branch it by failure class so each class gets the hint that fits.
+- **Load-bearing evidence was DEBUG-only** → promote a once-per-operation summary to INFO. Diagnosability must not depend on debug logging having been enabled before the incident.
+- **One field name meant different things on different lines, or two lenses double-counted** → rename or dedupe until the numbers reconcile.
+- **A tool was unreachable in the exact failure mode it exists to diagnose** (daemon down, token broken) → give it an offline path with honest coverage degradation, never a silent empty result.
+- **The verdict ranked chronic noise above the acute event** → fix the ordering or severity classification.
+
+If you cannot say "next time, one command answers this", the loop is not closed.
+
 #### User-authored channel message retrieval
 
 When asked to retrieve prompts or messages sent by users through a channel, use the offline `comis messages` CLI instead of grepping daemon or session logs manually. For Telegram:
@@ -126,7 +166,7 @@ Eight allowlist arrays live in `test/support/architecture-allowlist.ts` and are 
 | Rule | Test | What it forbids | Escape hatches |
 |------|------|------------------|----------------|
 | `ALLOWLIST` (boundary) | `source-rules.test.ts` and friends | Cross-package internal imports and other boundary violations | Empty — closed set. New L-ID requires shrink-test allowance. |
-| `fileSizeAllowlist` | `file-size.test.ts` | Production `.ts` files >800 lines (and tighter caps inside `agent/executor/`: request-body ≤600L, pi-executor ≤400L, prompt-runner ≤500L, cache-detection ≤350L) | `*.generated.ts` rule (excludes `web/src/api/contracts.generated.ts`); allowlist entry tagged with closing phase |
+| `fileSizeAllowlist` | `file-size.test.ts` | Production `.ts` files above the global or directory-specific caps defined in `test/architecture/file-size.test.ts` | `*.generated.ts` rule (excludes `web/src/api/contracts.generated.ts`); allowlist entry tagged with closing phase |
 | `rawThrowAllowlist` | `raw-throw.test.ts` | `throw new Error(...)` / `throw err` outside `security/`, `safety/`, `error-mapper.ts` boundary modules | `// @allow-throw: <reason>` file-level annotation for sanctioned boundary throws |
 | `untypedSqliteAllowlist` | `untyped-sqlite.test.ts` | `db.prepare(...).all() as Foo[]` and similar untyped SQLite casts in `packages/memory/` | None — go through `createRowMapper(schema)` instead |
 | `optionalFieldAllowlist` | `optional-field-bloat.test.ts` | Interfaces with ≥12 optional fields without justification | Allowlist entry classifying each as (a) genuinely conditional or (b) cluster-split candidate |
@@ -153,7 +193,7 @@ Not supported. Per the project's no-BC policy, never add migration code, default
 Every behavior change in production source (`packages/*/src/**`) starts with a failing test. Bug fixes get a regression test that fails on the current codebase; new features get a contract test that pins the new behavior. The test is written, runs RED, and then the production patch flips it to GREEN — in that order, never the reverse.
 
 - **Scope.** Applies to fixes and feature work. Pure docs, comments, formatting, and build-tooling-only changes (CI YAML, tsconfig, `.vscode`) are exempt because they have nothing to assert against. When in doubt, the change needs a test.
-- **Commit ordering.** Prefer landing the RED commit first (test-only, failing on current `main`) and the GREEN commit second (the production patch). Combining RED + GREEN into one commit is acceptable when the test would not compile against the pre-patch code, when the bug is too narrow to surface from a separate commit, or when shipping a security patch — the rationale belongs in the commit message either way.
+- **Commit ordering.** Land the RED commit first (test-only, failing on current `main`) and the GREEN commit second (the production patch). Combining RED + GREEN into one commit is acceptable when the test would not compile against the pre-patch code, when the bug is too narrow to surface from a separate commit, or when shipping a security patch — the rationale belongs in the commit message either way. This ordering is only observable if the work is actually committed as it is produced; see §2.13.
 - **What the test must prove.** A test that passes both before and after the patch proves nothing — it must demonstrably FAIL on the pre-patch code. If a reviewer cannot reproduce the RED state by checking out the test commit alone, the test does not satisfy this rule.
 - **Refactor (optional third step).** After GREEN, simplify if the patch leaves duplication or awkward seams. Refactor commits keep all tests green; if behavior shifts, that is a new fix or feature and the cycle restarts.
 - **Pure refactor PRs.** A refactor that does not change behavior preserves the existing tests as the green signal. New tests are not required, but no existing test may be deleted or weakened to make a refactor pass.
@@ -175,6 +215,37 @@ Comments, docs, test titles, and runtime strings (log messages, `hint`s, tool/CL
 - **Reference-project names** — Hermes, OpenClaw / clawdbot, Deer-Flow. Keep any license-required attribution in `NOTICE`, not in a source comment.
 
 **Runtime strings carry ZERO of the above** — a residue-carrying string is a behavior change: clean it and its asserting test in the same commit. **Keep-list** (these are API/contracts, not prose): third-party/dependency/model versions, standards tokens (SHA-256, TLS-1.3, ES2023, BCP-47), GitHub `#refs`, and real code identifiers such as the `SEC-GW-003` security-check codes, live-test scenario IDs, and the `architecture-allowlist` `phase-X` template types.
+
+### 2.13 Commit discipline (the working tree is not a deliverable)
+
+Uncommitted work does not exist. A session ends with `git status --short` empty — every change either committed on a working branch or explicitly reported as abandoned. Leaving finished work as a dirty working tree is a protocol violation independent of code quality: it erases the RED → GREEN evidence §2.10 requires, cannot be read as a diff by a reviewer, and is destroyed by a single `git checkout` / `git stash` / branch switch. "The code is good and it builds" does not satisfy this rule.
+
+- **Commit locally as you go; push only when asked.** Committing to a working branch is local, reversible, and required. Pushing, opening a PR, or merging is outward-facing and needs explicit approval (§9). Do not conflate the two — waiting for permission to *push* is never a reason to leave work *uncommitted*.
+- **One commit per RED → GREEN pair.** Commit each pair before starting the next concern. If `git status` shows changes spanning more than one concern, the commit is already overdue. A multi-part change lands as an ordered sequence of small commits a reviewer can read in order — never one undifferentiated tree.
+- **Deletions and replacements need a commit trail.** Removing or replacing an existing test or module is a reviewable event: commit it with the rationale in the message (module replaced by `<file>`, coverage moved to `<file>`). A test deleted inside a large uncommitted tree is indistinguishable from silent coverage loss.
+- **Never destroy uncommitted work.** Do not run `git checkout -- .`, `git stash`, `git reset --hard`, or switch branches over a dirty tree — yours or pre-existing. Commit first, then move.
+- **Report tree state when the task ends.** State the branch, the commit sequence (`git log --oneline <base>..HEAD`), and that the tree is clean. If anything is intentionally left uncommitted, say so and why — silence is not acceptable.
+
+An agent that produces a large, correct, fully-passing change set and leaves it uncommitted has not completed the task.
+
+### 2.14 Docs-current (docs change in the same commit)
+
+`docs/**/*.mdx` is updated in the **same change** that alters anything it describes. A patch that leaves the docs describing the old behavior is incomplete, not "a follow-up".
+
+The docs sit **outside every code gate** — build, lint, cycles, and coverage all scope to `packages/*` — so documentation drift **fails silently** rather than breaking a check. `COMIS_LOG_PATH`'s documented default stayed wrong for months because nothing compared it to the code. Treat that as the default outcome of skipping this rule.
+
+In scope whenever you touch them: user-facing behavior, config keys and defaults, CLI commands and flags, file paths and the `~/.comis` data-dir layout (`docs/operations/data-directory.mdx`), environment variables (`docs/reference/environment-variables.mdx`), logging fields, and install/release steps.
+
+- Renaming or moving a path, flag, or key: `grep -rn '<old-name>' docs/` and fix **every** hit in the same commit.
+- Run `pnpm docs:check` — it compiles every MDX file and catches a bare `<` or `{` in prose that would otherwise fail only at deploy time. It is cheap and needs no build.
+
+### 2.15 Dependency and supply-chain invariants
+
+These are load-bearing for `npm install -g comisai`; breaking one is a release-blocking defect, not a style issue.
+
+- **Every `dependencies` / `devDependencies` entry is exact-pinned** — no `^`, no `~`, no ranges — across every `packages/*/package.json` and `website/package.json`. `workspace:*` is the only permitted non-numeric specifier; the pack step rewrites it to a literal version.
+- **`@comis/*` workspace packages are `"private": true` and shipped via `bundledDependencies`.** Never publish them to the npm registry and never convert one to a registry dependency.
+- Adding a dependency at all is the last rung of the §2.3 ladder — every package is supply-chain attack surface.
 
 ## 3) Naming Contract
 
@@ -200,11 +271,13 @@ When uncertain, classify higher.
 ## 5) Workflow
 
 1. **Read before write** — inspect existing port interfaces, adapter patterns, and adjacent tests before editing.
-2. **Define scope** — one concern per change; no mixed feature+refactor+infra patches.
-3. **Test-first (TDD)** — write the failing test before the production patch (regression test for bugs, contract test for new behavior). Co-located unit test by default; integration test only for daemon-level flows. RED must be reproducible on the pre-patch code; the patch is the GREEN step.
-4. **Implement minimal patch** — make the test pass. Apply KISS/YAGNI/rule-of-three explicitly.
-5. **Validate** — `pnpm validate` (= `pnpm build && pnpm test && pnpm lint:security && pnpm cycles`) must all pass.
-6. **Document impact** — update comments/docs for behavior changes, risk, side effects.
+2. **Enforce the generic-runtime boundary** — classify domain-specific behavior before editing; route it to workspace policy, a prompt skill, MCP, or an adapter instead of the engine/runtime.
+3. **Define scope** — one concern per change; no mixed feature+refactor+infra patches.
+4. **Test-first (TDD)** — write the failing test before the production patch (regression test for bugs, contract test for new behavior). Co-located unit test by default; integration test only for daemon-level flows. RED must be reproducible on the pre-patch code; the patch is the GREEN step.
+5. **Implement minimal patch** — make the test pass. Apply KISS/YAGNI/rule-of-three explicitly.
+6. **Validate** — `pnpm validate` (= `pnpm build && pnpm test && pnpm lint:security && pnpm cycles`) must all pass.
+7. **Document impact** — update comments/docs for behavior changes, risk, side effects.
+8. **Commit the slice** — commit this RED → GREEN pair on the working branch before starting the next concern (§2.13). Steps 4–8 repeat per concern; the task is not done until `git status --short` is empty.
 
 ## 6) Change Playbooks
 
@@ -237,7 +310,9 @@ Define interface in `core/src/ports/` → export from core index → add to `App
 `schema-*.ts` in `core/src/config/` with `.default()` on every field → wire into parent (typically `AppConfigSchema`) → export from config index. Consumers see a fully-defaulted `AppConfig` — never `config.x ?? fallback` at call sites; fallbacks belong in `.default()`. Layer precedence: schema defaults < env-layer projection < YAML (later YAML wins). Keys in `immutable-keys.ts` are rejected by `config.write`. New top-level sections register a single entry in the `SECTION_REGISTRY` in `core/src/config/section-registry.ts` (the consolidated source of truth). Per-view derivations (`SECTION_SCHEMAS` in `schema-serializer.ts`, the metadata map in `field-metadata.ts`, the managed-section redirect map in `managed-sections.ts`) are derived from the registry — no per-file edit needed beyond the registry entry.
 
 ### 6.5 Add a Skill
-Skills are Markdown files with manifest frontmatter. Add to `packages/skills/`, validate frontmatter against manifest Zod schema, test loading + manifest validation.
+Use a prompt skill when a request adds reusable task expertise, a domain procedure, a persona playbook, examples, or task-specific tool guidance rather than a universal runtime mechanism. Repository-shipped prompt skills live under `skills/<name>/SKILL.md`; skill-system implementation code lives under `packages/skills/`. Skills are Markdown files with manifest frontmatter: validate frontmatter against the manifest Zod schema and test discovery, eligibility, loading, sanitization, and representative selection behavior.
+
+A repository-shipped skill must remain opt-in and discoverable, not part of the stable engine prefix or default workspace policy. Its description must state the narrow trigger accurately. A skill may recommend tools, but capability and approval enforcement remains in code and agent tool policy; skill metadata or prose never grants authority. If the specialization needs a new external capability rather than instructions, implement the MCP/tool adapter and its security contract separately, then let the skill describe how to use that capability.
 
 ### 6.6 Security / Gateway / Daemon
 Include threat/risk notes in commit message. Add boundary + failure-mode tests. Changes in `core/src/security/` require reviewing all downstream consumers. `injection-patterns.ts` changes require both detection accuracy and false-positive tests.
@@ -247,7 +322,7 @@ Include threat/risk notes in commit message. Add boundary + failure-mode tests. 
 **Diagnosing an autonomous/unattended run (the capability-observability surface).** Every capability-gated call (allow AND deny) emits a content-free per-cap audit at the single gate chokepoint, riding the durable `obs_audit_events` sink — query it with `node packages/cli/dist/cli.js security audit-log` (filter by kind/agent/outcome). The same emit also lands a `capability.audited` trajectory record, which `obs.explain` folds into the `spawnTree` IncidentReport section: `node packages/cli/dist/cli.js explain "<sessionKey|traceId>"` reconstructs the run's root→children authorization topology offline — one node per `leaseId`, each surfacing its attenuated caps, the tool NAMES it invoked, and any `CapabilityDeniedError` cap. That is **"one call to root-cause an unattended run"** (the post-mortem TOPOLOGY — what it was allowed to do and what it tried). For an **in-flight** run's *remaining* budget/quota — which is live in-memory daemon state, never on disk, so the offline tree omits it — use `node packages/cli/dist/cli.js whoami` (the `capabilities.introspect` read: self-scoped resolved caps + remaining tokens/wall-clock/$/outward-quota; LIVE-only, no `--offline`). Read-order: `explain` for the finished-run topology and verdicts → `whoami` for an active run's headroom → `security audit-log` for the durable per-decision trail.
 
 ### 6.7 Add or Change an Agent Tool
-Register metadata via `registerToolMetadata(name, meta)` in `packages/skills/src/bridge/tool-metadata-registry.ts`. The `ComisToolMetadata` shape (`packages/core/src/tool-metadata.ts`) covers: `maxResultSizeChars` (result cap), `isReadOnly` / `isConcurrencySafe` (parallel-execution safety), `searchHint` (BM25 deferred-discovery), `validActions` / `validKeys` / `requiredByAction` (action-discriminated tool gating — shape mirrors `ManagedSectionRedirect.schemaFragment` in `config/managed-sections.ts`), `validateInput` (pre-flight validator), `outputSchema` (structured output), `coDiscoverWith` (paired discovery). When the tool manages a config section, add the redirect to `config/managed-sections.ts` so immutable-path rejections include a parameter-correct example.
+Register metadata via `registerToolMetadata(name, meta)` in `packages/skills/src/skills/bridge/tool-metadata-registry.ts`. The `ComisToolMetadata` shape (`packages/core/src/tool-metadata.ts`) covers: `maxResultSizeChars` (result cap), `isReadOnly` / `isConcurrencySafe` (parallel-execution safety), `searchHint` (BM25 deferred-discovery), `validActions` / `validKeys` / `requiredByAction` (action-discriminated tool gating — shape mirrors `ManagedSectionRedirect.schemaFragment` in `config/managed-sections.ts`), `validateInput` (pre-flight validator), `outputSchema` (structured output), `coDiscoverWith` (paired discovery), and `failureFallbacks` (structured failure code → model-visible alternative guidance). Failure alternatives must name an existing tool, match a structured `details.error` code, and remain capability-aware: the runtime filters out any alternative absent from the live tool set. When the tool manages a config section, add the redirect to `config/managed-sections.ts` so immutable-path rejections include a parameter-correct example.
 
 ### 6.8 SQLite reads / discord.js narrowing
 
@@ -257,10 +332,26 @@ Register metadata via `registerToolMetadata(name, meta)` in `packages/skills/src
 
 ## 7) Validation
 
-Required before any commit:
+The full gate — required before declaring a task complete, and before any push or PR:
 ```bash
-pnpm validate  # = pnpm build && pnpm test && pnpm lint:security && pnpm cycles
+pnpm validate
+# = pnpm docs:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage
 ```
+
+Each step is deliberate — do not substitute a cheaper one and call it validated:
+
+- **`docs:check`** runs first because it is cheap and needs no build. It compiles every `docs/**/*.mdx`; the docs are otherwise outside every gate (§2.14).
+- **`build:clean`** (not incremental `build`) — a stale `dist/` hides workspace-dependency cycles.
+- **`cycles`** (madge, dist `.d.ts`) and **`cycles:refs`** (`tsc -b --dry`, project-reference/TS6202) are **two different checks**; running only the first misses reference cycles.
+- **`test:coverage`** (not bare `test`) — the per-package coverage floors only run under coverage. Skipping incremental-vs-clean build and coverage is exactly what let a build-cycle + coverage cascade reach `main`.
+
+`pnpm test` alone is `vitest` in **watch mode** and will hang a non-interactive session — use `CI=true pnpm test` for a single run, or `pnpm test:coverage`.
+
+**Per commit** (§2.13), run the targeted tests for the slice you are committing — `pnpm vitest run <path>` — not the full gate; `build:clean` plus coverage is far too slow to repeat per commit. The full `pnpm validate` runs once at the end.
+
+A **pre-push hook** (`.githooks/pre-push`, installed by the `prepare` script) runs `pnpm validate` and blocks the push on failure. Bypass a single push with `git push --no-verify` only for docs-only changes.
+
+**Local green ≠ CI green.** `pnpm validate` is the cross-platform *floor*, not the full surface. Three CI classes cannot run on macOS: (1) the **Docker image build** — its hand-maintained selective `COPY packages/<n>/package.json` list drifts, so a package missing from it fails only in the image build; (2) **`*.linux.test.ts`**, which silently **skip** on macOS (real-`bwrap` gated); (3) **integration tests**, which run from a separate config via `pnpm validate:full`, not `validate`. Before merging anything touching sandboxing, packaging, or daemon behavior, run `pnpm validate:full` on Linux. Never report "validate passed" as if it meant CI-green — say which tiers actually ran.
 
 By change type:
 - Security/gateway/daemon: include at least one boundary/failure-mode test.
@@ -270,7 +361,7 @@ By change type:
 - Injection patterns: test detection accuracy and false positives.
 - Integration tests: `pnpm build` first; run via `pnpm test:integration` (or `:mock` / `test:orchestrate`). Required per-commit when retargeting a production caller from a global to a port, and when splitting executor files.
 
-Coverage: `pnpm test --coverage` enforces `lines: 90 / branches: 85 / functions: 90` on `packages/*/src/**/*.ts` via `@vitest/coverage-v8`; integration tier ≥80% line. `coverageWaiver` is for test-impractical files only.
+Coverage: `pnpm test:coverage` enforces `lines: 90 / branches: 85 / functions: 90` on `packages/*/src/**/*.ts` via `@vitest/coverage-v8`; integration tier ≥80% line. `coverageWaiver` is for test-impractical files only.
 
 If full validation is impractical, document what was run and what was skipped.
 
@@ -296,11 +387,16 @@ If full validation is impractical, document what was run and what was skipped.
 - Add entries to architecture allowlists (`test/support/architecture-allowlist.ts`) — they are shrink-only. Closing a violation requires deleting the entry, not adding a new one.
 - Patch a symptom at a convenient layer (a parallel guard/allowlist/special-case) instead of root-causing across layers and fixing the authoritative one (§2.11) — a fix that leaves two layers disagreeing is not a fix.
 - Land a fix or feature commit without a test that demonstrably failed on the pre-patch code. "I tested it locally" is not a substitute for an automated RED → GREEN cycle.
+- End a task with uncommitted changes in the working tree (§2.13). A passing build is not a substitute for a commit; work that only exists as a dirty tree is unreviewable and one command away from being lost.
+- Accumulate an entire multi-concern change as a single uncommitted tree, or as one giant commit. Commit each RED → GREEN pair as it completes.
+- Delete or replace an existing test file without a dedicated commit stating why — an unexplained deletion reads as coverage loss.
+- Treat "commit only when asked" as license to skip committing — that gate applies to **pushing**, not to local commits (§9).
 
 ## 9) Conventions
 
 - **Commits**: Conventional Commits — `feat(agent): description`, `fix(channels): description`.
-- **Branches (branch-first)**: never commit directly to the default branch (`main`). Cut a working branch off `main` before the first change — `feature/<desc>`, `fix/<desc>`, `docs/<desc>` — and land the work via PR. Commit or push only when the user asks; approval to make a change is not approval to push it. If you find yourself on `main` with uncommitted work, branch before committing.
+- **Branches (branch-first)**: never commit directly to the default branch (`main`). Cut a working branch off `main` before the first change — `feature/<desc>`, `fix/<desc>`, `docs/<desc>` — and land the work via PR. If you find yourself on `main` with uncommitted work, branch before committing.
+- **Commit vs. push**: commit to the working branch continuously as work is produced (§2.13) — this is local, reversible, and required, not something to wait for permission on. **Pushing**, opening a PR, or merging is outward-facing and happens **only when the user asks**; approval to make a change is never approval to push it, and approval in one turn does not carry to the next.
 - **Modules**: ES modules only (`"type": "module"`).
 - **TypeScript**: Strict mode, ES2023 target, NodeNext resolution, `composite: true` with project references, `isolatedModules: true`.
 - **Project references**: list every cross-package import in the importing package's `tsconfig.json` `references` array — missing entries break `tsc --build` ordering silently.
@@ -313,4 +409,17 @@ If full validation is impractical, document what was run and what was skipped.
 - `AGENTS.md` is the authoritative protocol for all coding agents in this repository.
 - `CLAUDE.md` may contain Claude-specific operational shortcuts, daemon notes, or release notes, but it must not weaken or override this file.
 - If `CLAUDE.md` and `AGENTS.md` conflict, follow `AGENTS.md` and update the stale companion file.
+- **This file must be self-contained.** No rule here may delegate a normative requirement to `CLAUDE.md` ("see CLAUDE.md for X") — agents other than Claude never read it, so a delegated rule is an unenforced rule. If a requirement belongs to all agents, state it here in full and let the companion file cross-reference *this* file, not the reverse.
 - **Self-correction loop**: when the user corrects an approach in a way that would apply to future sessions, propose the `AGENTS.md` or `CLAUDE.md` edit before moving on.
+
+## 11) Release and Worktree Hygiene
+
+**Releasing `vX.Y.Z`** (maintainer operation — never performed without an explicit request):
+
+1. Bump **all 16 `packages/*/package.json` to the same version** — they move together. The umbrella package bundles the others, so drift surfaces at publish time, not in a local build.
+2. Sweep for stray pins: `grep -rn '<old-version>' --include='*.json' --include='*.mdx' --include='*.md' .` (excluding `node_modules`, `dist/`, lockfiles, changelog). Docs are intentionally un-pinned; a version appearing there is usually a regression.
+3. `pnpm validate`, plus `pnpm validate:full` on Linux for the integration and tarball tiers.
+4. Commit, push, tag. The `vX.Y.Z` tag triggers npm publish (with provenance) and the multi-arch image builds.
+5. **Verify the publish actually landed** — `npm view comisai dist-tags` must show the new version. The publish job has silently drifted before; a green workflow is not proof.
+
+**Worktrees.** After merging a worktree branch back, remove the worktree and delete its tracking branch in the same step — do not leave stale worktrees behind.

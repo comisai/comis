@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { MemoryEntry, MemoryConfig, SessionKey } from "@comis/core";
+import type { ConversationRef, ConversationScope, MemoryEntry, MemoryConfig, MemoryRecallScope, SessionKey } from "@comis/core";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createMemoryApi, type MemoryApi } from "./memory-api.js";
 import { createSessionStore, type SessionStore } from "./session-store.js";
-import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
+import { ScopedMemoryTestAdapter as SqliteMemoryAdapter } from "../../../test/support/scoped-memory-adapter.js";
 
 /** Default test config using in-memory SQLite. */
 const testConfig: MemoryConfig = {
@@ -23,6 +23,19 @@ const testConfig: MemoryConfig = {
   rerankerThreads: 4,
 };
 
+const conversationScope: ConversationScope = {
+  tenantId: "default",
+  agentId: "default",
+  partition: { kind: "principal", principalId: "user-1" },
+};
+const recallScope: MemoryRecallScope = {
+  tenantId: "default",
+  agentId: "default",
+  conversationRef: `cv_${"A".repeat(43)}` as ConversationRef,
+  principalId: "user-1",
+  includeAgentShared: true,
+};
+
 /** Create a minimal valid MemoryEntry for testing. */
 function makeEntry(
   overrides?: Partial<MemoryEntry> & { memoryType?: string },
@@ -32,6 +45,7 @@ function makeEntry(
     tenantId: overrides?.tenantId ?? "default",
     agentId: overrides?.agentId ?? "default",
     userId: overrides?.userId ?? "user-1",
+    visibility: overrides?.visibility ?? { kind: "agent-shared" },
     content: overrides?.content ?? "test memory content",
     trustLevel: overrides?.trustLevel ?? "learned",
     source: overrides?.source ?? { who: "agent", channel: "telegram" },
@@ -135,8 +149,8 @@ describe("MemoryApi", () => {
     }
 
     // Add a session for stats testing
-    const sessionKey: SessionKey = { tenantId: "default", userId: "user-1", channelId: "test" };
-    sessionStore.save(sessionKey, [{ role: "user", content: "hello" }]);
+    const saved = sessionStore.save(conversationScope, [{ role: "user", content: "hello" }]);
+    expect(saved.ok).toBe(true);
   });
 
   afterEach(() => {
@@ -259,14 +273,14 @@ describe("MemoryApi", () => {
       // Store an entry with past expiry directly via raw SQL
       const expiredId = crypto.randomUUID();
       adapter.getDb().prepare(
-        `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, expires_at, has_embedding)
-         VALUES (?, 'default', 'default', 'user-1', 'expired inspect content', 'learned', 'semantic', 'agent', '[]', ?, ?, 0)`,
+        `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at, expires_at, has_embedding)
+         VALUES (?, 'default', 'default', 'user-1', 'agent-shared', 'expired inspect content', 'learned', 'semantic', 'agent', '[]', ?, ?, 0)`,
       ).run(expiredId, Date.now() - 20000, Date.now() - 10000);
 
       const freshId = crypto.randomUUID();
       adapter.getDb().prepare(
-        `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, expires_at, has_embedding)
-         VALUES (?, 'default', 'default', 'user-1', 'fresh inspect content', 'learned', 'semantic', 'agent', '[]', ?, ?, 0)`,
+        `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at, expires_at, has_embedding)
+         VALUES (?, 'default', 'default', 'user-1', 'agent-shared', 'fresh inspect content', 'learned', 'semantic', 'agent', '[]', ?, ?, 0)`,
       ).run(freshId, Date.now() - 20000, Date.now() + 60000);
 
       const entries = api.inspect({ tenantId: "default" });
@@ -286,19 +300,19 @@ describe("MemoryApi", () => {
 
   describe("search", () => {
     it("finds entries by text query", async () => {
-      const results = await api.search("cats");
+      const results = await api.search("cats", { scope: recallScope });
       expect(results.length).toBeGreaterThanOrEqual(1);
       expect(results[0]!.entry.content).toContain("cats");
     });
 
     it("respects limit option", async () => {
       // All entries contain "memory" or related terms
-      const results = await api.search("data", { limit: 1 });
+      const results = await api.search("data", { limit: 1, scope: recallScope });
       expect(results.length).toBeLessThanOrEqual(1);
     });
 
     it("returns empty for no matches", async () => {
-      const results = await api.search("xyznonexistent");
+      const results = await api.search("xyznonexistent", { scope: recallScope });
       expect(results).toHaveLength(0);
     });
   });
@@ -307,11 +321,11 @@ describe("MemoryApi", () => {
 
   describe("clear", () => {
     it("throws on empty scope (safety)", () => {
-      expect(() => api.clear({} as any)).toThrow("requires at least one scope field");
+      expect(() => api.clear({} as any)).toThrow("requires an explicit tenantId");
     });
 
     it("clears by memoryType", () => {
-      const removed = api.clear({ memoryType: "working" });
+      const removed = api.clear({ tenantId: "default", memoryType: "working" });
       expect(removed).toBe(2); // external api response + working memory scratch pad
 
       const remaining = api.inspect();
@@ -323,7 +337,7 @@ describe("MemoryApi", () => {
     });
 
     it("clears by trustLevel (only external allowed)", () => {
-      const removed = api.clear({ trustLevel: "external" });
+      const removed = api.clear({ tenantId: "default", trustLevel: "external" });
       expect(removed).toBe(2); // external web data + external api response
 
       const remaining = api.inspect();
@@ -360,7 +374,7 @@ describe("MemoryApi", () => {
         userId: "user-1",
         channelId: "test",
       };
-      const removed = api.clear({ sessionKey });
+      const removed = api.clear({ tenantId: "tenant-b", sessionKey });
       expect(removed).toBe(1); // tenant-b data point (learned, not system)
     });
 
@@ -374,8 +388,8 @@ describe("MemoryApi", () => {
       // The WHERE clause must carry `AND pinned != 1` so clear() skips pinned rows.
       const id = crypto.randomUUID();
       adapter.getDb().prepare(
-        `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
-         VALUES (?, 'default', 'default', 'user-1', 'pinned standing instruction', 'learned', 'semantic', 'agent', '[]', ?, 0)`,
+        `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
+         VALUES (?, 'default', 'default', 'user-1', 'agent-shared', 'pinned standing instruction', 'learned', 'semantic', 'agent', '[]', ?, 0)`,
       ).run(id, Date.now());
       adapter.getDb().prepare("UPDATE memories SET pinned = 1 WHERE id = ?").run(id);
 
@@ -390,49 +404,49 @@ describe("MemoryApi", () => {
 
   describe("stats", () => {
     it("returns accurate total entries count", () => {
-      const s = api.stats();
-      expect(s.totalEntries).toBe(10);
+      const s = api.stats("default", "default");
+      expect(s.totalEntries).toBe(9);
     });
 
     it("returns accurate counts by type", () => {
-      const s = api.stats();
-      expect(s.byType["semantic"]).toBe(5);
+      const s = api.stats("default", "default");
+      expect(s.byType["semantic"]).toBe(4);
       expect(s.byType["episodic"]).toBe(2);
       expect(s.byType["working"]).toBe(2);
       expect(s.byType["procedural"]).toBe(1);
     });
 
     it("returns accurate counts by trust level", () => {
-      const s = api.stats();
+      const s = api.stats("default", "default");
       expect(s.byTrustLevel["system"]).toBe(3);
-      expect(s.byTrustLevel["learned"]).toBe(5);
+      expect(s.byTrustLevel["learned"]).toBe(4);
       expect(s.byTrustLevel["external"]).toBe(2);
     });
 
     it("returns total sessions count", () => {
-      const s = api.stats();
+      const s = api.stats("default", "default");
       expect(s.totalSessions).toBe(1);
     });
 
     it("returns embedded entries count", () => {
-      const s = api.stats();
+      const s = api.stats("default", "default");
       // No embeddings stored in test seed
       expect(s.embeddedEntries).toBe(0);
     });
 
     it("returns database size in bytes", () => {
-      const s = api.stats();
+      const s = api.stats("default", "default");
       expect(s.dbSizeBytes).toBeGreaterThan(0);
     });
 
     it("filters by tenantId when provided", () => {
-      const s = api.stats("tenant-b");
+      const s = api.stats("tenant-b", "default");
       expect(s.totalEntries).toBe(1);
       expect(s.byTrustLevel["learned"]).toBe(1);
     });
 
     it("returns oldestCreatedAt as earliest entry timestamp", () => {
-      const s = api.stats();
+      const s = api.stats("default", "default");
       // Oldest seeded entry has createdAt = now - 10000
       expect(s.oldestCreatedAt).toBeTypeOf("number");
       // Should be within 1000ms of (now - 10000)
@@ -444,7 +458,7 @@ describe("MemoryApi", () => {
       const emptyAdapter = new SqliteMemoryAdapter(testConfig);
       const emptySessionStore = createSessionStore(emptyAdapter.getDb());
       const emptyApi = createMemoryApi(emptyAdapter.getDb(), emptyAdapter, emptySessionStore, testConfig);
-      const s = emptyApi.stats();
+      const s = emptyApi.stats("default", "default");
       expect(s.oldestCreatedAt).toBeNull();
       emptyAdapter.close();
     });
@@ -510,24 +524,24 @@ describe("MemoryApi", () => {
     });
 
     it("stats scoped to agentId", () => {
-      const coderStats = multiApi.stats(undefined, "coder");
+      const coderStats = multiApi.stats("default", "coder");
       expect(coderStats.totalEntries).toBe(2);
       expect(coderStats.byTrustLevel["learned"]).toBe(1);
       expect(coderStats.byTrustLevel["system"]).toBe(1);
 
-      const dashStats = multiApi.stats(undefined, "dash");
+      const dashStats = multiApi.stats("default", "dash");
       expect(dashStats.totalEntries).toBe(1);
       expect(dashStats.byType["episodic"]).toBe(1);
     });
 
-    it("stats returns byAgent breakdown", () => {
-      const allStats = multiApi.stats();
-      expect(allStats.byAgent["coder"]).toBe(2);
-      expect(allStats.byAgent["dash"]).toBe(1);
+    it("stats never includes another agent in its byAgent breakdown", () => {
+      const coderStats = multiApi.stats("default", "coder");
+      expect(coderStats.byAgent["coder"]).toBe(2);
+      expect(coderStats.byAgent["dash"]).toBeUndefined();
     });
 
     it("returns agent-scoped oldestCreatedAt", () => {
-      const coderStats = multiApi.stats(undefined, "coder");
+      const coderStats = multiApi.stats("default", "coder");
       // Oldest coder entry has createdAt = now - 3000
       expect(coderStats.oldestCreatedAt).toBeTypeOf("number");
       const expected = Date.now() - 3000;
@@ -536,7 +550,7 @@ describe("MemoryApi", () => {
 
     it("clear scoped to agentId", () => {
       // Clear only coder's memories
-      const removed = multiApi.clear({ agentId: "coder" });
+      const removed = multiApi.clear({ tenantId: "default", agentId: "coder" });
       // Only learned entries removed (system protected by default)
       expect(removed).toBe(1);
 
@@ -556,13 +570,13 @@ describe("MemoryApi", () => {
     it("pin returns ok(true) when the memory entry exists in scope", async () => {
       const entry = makeEntry({ tenantId: "tenant-a", agentId: "agent-1" });
       await adapter.store(entry as MemoryEntry);
-      const result = await api.pin(entry.id, "tenant-a");
+      const result = await api.pin(entry.id, "tenant-a", "agent-1");
       expect(result.ok).toBe(true);
       expect(result.ok && result.value).toBe(true);
     });
 
     it("pin returns ok(false) when the id is not found (idempotent no-op)", async () => {
-      const result = await api.pin("nonexistent-id-99", "tenant-a");
+      const result = await api.pin("nonexistent-id-99", "tenant-a", "agent-1");
       expect(result.ok).toBe(true);
       expect(result.ok && result.value).toBe(false);
     });
@@ -570,32 +584,30 @@ describe("MemoryApi", () => {
     it("unpin returns ok(true) when a pinned memory entry is unpinned", async () => {
       const entry = makeEntry({ tenantId: "tenant-b", agentId: "agent-2" });
       await adapter.store(entry as MemoryEntry);
-      await api.pin(entry.id, "tenant-b");
-      const result = await api.unpin(entry.id, "tenant-b");
+      await api.pin(entry.id, "tenant-b", "agent-2");
+      const result = await api.unpin(entry.id, "tenant-b", "agent-2");
       expect(result.ok).toBe(true);
       expect(result.ok && result.value).toBe(true);
     });
 
     it("unpin returns ok(false) when the id is not found (idempotent no-op)", async () => {
-      const result = await api.unpin("nonexistent-id-99", "tenant-b");
+      const result = await api.unpin("nonexistent-id-99", "tenant-b", "agent-2");
       expect(result.ok).toBe(true);
       expect(result.ok && result.value).toBe(false);
     });
 
-    it("pin/unpin with id only (no tenant/agent scope) match the row by id alone", async () => {
-      // Exercises the broadest-scope branch: tenantId === undefined → the
-      // `WHERE id = ?` single-arg SQL path of pin() and unpin().
+    it("pin and unpin require the row's explicit tenant scope", async () => {
       const entry = makeEntry({ tenantId: "tenant-c", agentId: "agent-3" });
       await adapter.store(entry as MemoryEntry);
 
-      const pinned = await api.pin(entry.id);
+      const pinned = await api.pin(entry.id, "tenant-c", "agent-3");
       expect(pinned.ok && pinned.value).toBe(true);
       const afterPin = adapter.getDb()
         .prepare("SELECT pinned FROM memories WHERE id = ?")
         .get(entry.id) as { pinned: number } | undefined;
       expect(afterPin?.pinned).toBe(1);
 
-      const unpinned = await api.unpin(entry.id);
+      const unpinned = await api.unpin(entry.id, "tenant-c", "agent-3");
       expect(unpinned.ok && unpinned.value).toBe(true);
       const afterUnpin = adapter.getDb()
         .prepare("SELECT pinned FROM memories WHERE id = ?")
@@ -636,6 +648,16 @@ describe("MemoryApi", () => {
         .get(entry.id) as { pinned: number } | undefined;
       expect(row?.pinned).toBe(0);
     });
+
+    it("pin rejects omitted agent authority instead of widening to the tenant", async () => {
+      const entry = makeEntry({ tenantId: "tenant-d", agentId: "agent-4" });
+      await adapter.store(entry as MemoryEntry);
+
+      const result = await api.pin(entry.id, "tenant-d", undefined as unknown as string);
+      expect(result.ok).toBe(false);
+      expect(adapter.getDb().prepare("SELECT pinned FROM memories WHERE id = ?").get(entry.id))
+        .toEqual(expect.objectContaining({ pinned: 0 }));
+    });
   });
 
   // ── clear() pin immunity unconditional ─────────────────────────────────────
@@ -647,9 +669,9 @@ describe("MemoryApi", () => {
       const db = adapter.getDb();
       const pinnedExternalId = crypto.randomUUID();
       db.prepare(
-        `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type,
+        `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type,
           source_who, tags, created_at, has_embedding)
-         VALUES (?, 'default', 'default', 'user-1', 'pinned external', 'external', 'semantic', 'agent', '[]', ?, 0)`,
+         VALUES (?, 'default', 'default', 'user-1', 'agent-shared', 'pinned external', 'external', 'semantic', 'agent', '[]', ?, 0)`,
       ).run(pinnedExternalId, Date.now());
       db.prepare("UPDATE memories SET pinned = 1 WHERE id = ?").run(pinnedExternalId);
 

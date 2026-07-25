@@ -125,6 +125,11 @@ of one run. Replace run-specific literals (a particular file name, id, value, or
 description of what to substitute. The doc is ADVISORY markdown guidance only — it contains
 NO executable code and NO commands to run blindly.
 
+Do not generalize away details that made the successful procedure work. Preserve decision boundaries,
+stopping conditions, ordering constraints, and quantitative acceptance thresholds when the successful
+trajectories show they are load-bearing. State how to obtain or adapt a threshold from the current task
+when it varies; copy a literal number only when the successful evidence establishes it as stable.
+
 You are given the doc's CURRENT structured body as a list of sections, each
 { "id", "heading", "body" }. The "id" is a stable handle you address when editing.
 

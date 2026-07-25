@@ -14,87 +14,30 @@ import type {
   MemoryPinnedStore,
   MemorySearchOptions,
   MemorySearchResult,
+  MemoryRecallScope,
+  MemoryWriteEntry,
+  MemoryWriteScope,
   MemoryEntry,
-  SessionKey,
   MemoryConfig,
   EmbeddingPort,
 } from "@comis/core";
+import { MemoryWriteScopeSchema } from "@comis/core";
 import { ok, err, fromPromise, type Result } from "@comis/shared";
 import type Database from "better-sqlite3";
-import { z } from "zod";
 import { hybridSearch, searchByText, searchByVector } from "./hybrid-search.js";
 import { initSchema } from "./schema.js";
 import { isVecDimensionMismatch, type VecTableRebuild } from "./vec-dimension.js";
-import { rowToEntry, insertMemoryRow, storeEmbedding, parseTags, createRowMapper } from "./row-mapper.js";
-import { MemoryRowSchema, IdProjectionRowSchema } from "./row-schemas.js";
+import { rowToEntry, insertMemoryRow, storeEmbedding, parseTags } from "./row-mapper.js";
 import { truncateForEmbedding } from "./embedding-batch-indexer.js";
 import { openSqliteDatabase } from "./sqlite-adapter-base.js";
-import { systemNowMs, normalizeForSearch, validateMemoryWrite } from "@comis/core";
-
-/**
- * The decided branch of a {@link SqliteMemoryAdapter.supersede} call,
- * returned to the caller and logged as metadata (never the content body). A closed
- * string-literal union (no `kind: string`): `"superseded"` = the incumbent's content
- * was updated to the new value and its prior state appended to `memories.history`;
- * `"not-found"` = no incumbent matched the scoped (id, tenant, agent[, user]) key, so
- * NO row was written (the no-op — e.g. a cross-scope correction the V4 WHERE rejects).
- */
-export type MemorySupersedeOutcome = "superseded" | "not-found";
-
-/**
- * The scope a {@link SqliteMemoryAdapter.supersede} runs under. `tenantId` +
- * `agentId` are the load-bearing 2-way isolation boundary (mirrors store/delete +
- * the user-rep `revise()` scope); `userId` narrows further when the caller knows it
- * (a correction targeting one user's fact must not touch another's same-content row).
- */
-export interface MemorySupersedeScope {
-  tenantId: string;
-  agentId: string;
-  /** Optional 3rd isolation axis; ANDed into every statement when present. */
-  userId?: string;
-}
-
-// Row mappers
-const memoryRowMapper = createRowMapper(MemoryRowSchema);
-// Id-projection mapper — the sanctioned typed-read path for the
-// session-scoped id capture (no `as Foo[]` cast — untyped-sqlite gate).
-const idProjectionRowMapper = createRowMapper(IdProjectionRowSchema);
-
-// The canonical `memories.history` JSON shape — an ordered array of
-// prior contents (MemoryEntrySchema.history + the growObservation precedent). Built
-// once at module scope; parses the nullable TEXT column on read-back inside
-// supersede(). A strictObject mirrors the row-mapper's HistorySchema (the read path),
-// so a malformed/legacy column degrades to "absent" (→ a fresh array) instead of
-// throwing — never blocking a correction on a corrupt history payload.
-const SupersedeHistorySchema = z.array(
-  z.strictObject({ previousContent: z.string(), changedAt: z.number().int().positive() }),
-);
-
-/**
- * Parse the incumbent's `memories.history` column (JSON TEXT or NULL) into the
- * typed prior-state array, or `undefined` when the column is NULL / corrupt /
- * oversized (mirrors row-mapper.ts parseHistory — degrade to "field absent", never
- * throw). supersede() then starts a fresh array, so a damaged column self-heals on
- * the next correction rather than aborting it.
- */
-function parseHistoryColumn(raw: string | null): MemoryEntry["history"] | undefined {
-  if (raw === null) return undefined;
-  try {
-    const parsed = SupersedeHistorySchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** Minimal pino-compatible logger interface for memory subsystem logging. */
-interface MemoryLogger {
-  info(obj: Record<string, unknown>, msg: string): void;
-  warn(obj: Record<string, unknown>, msg: string): void;
-  debug(obj: Record<string, unknown>, msg: string): void;
-}
-
-// ── SqliteMemoryAdapter ──────────────────────────────────────────────
+import { systemNowMs, normalizeForSearch, resolveMemoryVisibility, validateMemoryWrite } from "@comis/core";
+import {
+  memoryAuthorityToken,
+  requireMemoryAuthorityPartitionForMemory,
+} from "./memory-authority.js";
+import { randomUUID } from "node:crypto";
+import { idProjectionRowMapper, memoryRowMapper, parseHistoryColumn, type MemoryLogger, type MemorySupersedeOutcome, type MemorySupersedeScope } from "./sqlite-memory-adapter-support.js";
+export type { MemorySupersedeOutcome, MemorySupersedeScope } from "./sqlite-memory-adapter-support.js";
 
 export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
   private readonly db: Database.Database;
@@ -159,9 +102,26 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
 
   // ── store ────────────────────────────────────────────────────────
 
-  async store(entry: MemoryEntry): Promise<Result<MemoryEntry, Error>> {
+  async store(entry: MemoryWriteEntry, scope: MemoryWriteScope): Promise<Result<MemoryEntry, Error>> {
     const startMs = systemNowMs();
     try {
+      const visibility = resolveMemoryVisibility(scope, entry.trustLevel);
+      if (!visibility.ok) {
+        this.logger?.audit?.({
+          step: "memory-visibility",
+          decision: "deny",
+          requestedVisibility: scope.visibility.kind,
+          errorKind: visibility.error.errorKind,
+        }, "Memory visibility write denied");
+        return err(visibility.error);
+      }
+      const resolvedEntry: MemoryEntry = {
+        ...entry,
+        tenantId: scope.turnScope.conversation.tenantId,
+        agentId: scope.turnScope.conversation.agentId,
+        userId: scope.turnScope.principal.principalId,
+        visibility: visibility.value,
+      };
       // memoryType is a first-class optional MemoryEntry field. The
       // `?? "semantic"` fallback is belt-and-braces: an omitting write still satisfies
       // the column's NOT NULL DEFAULT 'semantic' CHECK.
@@ -169,9 +129,9 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
 
       const vecAvailable = this.vecAvailable;
       const tx = this.db.transaction(() => {
-        insertMemoryRow(this.db, entry, memoryType);
-        if (entry.embedding) {
-          storeEmbedding(this.db, entry.id, entry.embedding, vecAvailable);
+        insertMemoryRow(this.db, resolvedEntry, memoryType);
+        if (resolvedEntry.embedding) {
+          storeEmbedding(this.db, resolvedEntry.id, resolvedEntry.embedding, vecAvailable);
         }
       });
       tx();
@@ -179,7 +139,73 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
       const durationMs = systemNowMs() - startMs;
       // hasEmbedding=false implies embedding will be queued for background generation
       this.logger?.info({ step: "memory-store", durationMs, op: "store", hasEmbedding: !!entry.embedding, embeddingQueued: !entry.embedding, memoryType }, "Memory store complete");
-      return ok(entry);
+      return ok(resolvedEntry);
+    } catch (e: unknown) {
+      return err(e instanceof Error ? e : new Error(String(e)));
+    }
+  }
+
+  async changeVisibility(
+    id: string,
+    scope: MemoryWriteScope,
+  ): Promise<Result<MemoryEntry | undefined, Error>> {
+    const startMs = systemNowMs();
+    const parsedScope = MemoryWriteScopeSchema.safeParse(scope);
+    if (!parsedScope.success) return err(new Error("Memory visibility change requires resolved operator authority"));
+    const permission = parsedScope.data.operatorPermission;
+    const tenantId = parsedScope.data.turnScope.conversation.tenantId;
+    const agentId = parsedScope.data.turnScope.conversation.agentId;
+    if (
+      permission === undefined
+      || permission.tenantId !== tenantId
+      || permission.agentId !== agentId
+    ) {
+      this.logger?.audit?.({
+        step: "memory-visibility",
+        decision: "deny",
+        requestedVisibility: parsedScope.data.visibility.kind,
+        errorKind: "precondition" as const,
+      }, "Memory visibility change denied");
+      return err(new Error("Memory visibility change requires matching operator permission"));
+    }
+
+    try {
+      const parsedRow = memoryRowMapper.parseOptionalRow(
+        this.db.prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ?")
+          .get(id, tenantId, agentId),
+      );
+      if (!parsedRow.ok) return err(new Error(parsedRow.error.message));
+      if (parsedRow.value === undefined) return ok(undefined);
+      const incumbent = rowToEntry(parsedRow.value);
+      const visibility = resolveMemoryVisibility(parsedScope.data, incumbent.trustLevel);
+      if (!visibility.ok) return visibility;
+      const replacement: MemoryEntry = {
+        ...incumbent,
+        id: randomUUID(),
+        tenantId,
+        agentId,
+        userId: parsedScope.data.turnScope.principal.principalId,
+        visibility: visibility.value,
+      };
+      this.db.transaction(() => {
+        if (this.vecAvailable) {
+          this.db.prepare("DELETE FROM vec_memories WHERE memory_id = ?").run(id);
+        }
+        this.db.prepare("DELETE FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ?")
+          .run(id, tenantId, agentId);
+        insertMemoryRow(this.db, replacement, replacement.memoryType ?? "semantic");
+      })();
+      this.logger?.audit?.({
+        step: "memory-visibility",
+        decision: "allow",
+        requestedVisibility: parsedScope.data.visibility.kind,
+      }, "Memory visibility changed");
+      this.logger?.info({
+        step: "memory-visibility-change",
+        durationMs: systemNowMs() - startMs,
+        op: "change-visibility",
+      }, "Memory visibility change complete");
+      return ok(replacement);
     } catch (e: unknown) {
       return err(e instanceof Error ? e : new Error(String(e)));
     }
@@ -188,7 +214,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
   // ── search ───────────────────────────────────────────────────────
 
   async search(
-    sessionKey: SessionKey,
+    scope: MemoryRecallScope,
     query: string | number[],
     options?: MemorySearchOptions,
   ): Promise<Result<MemorySearchResult[], Error>> {
@@ -196,7 +222,9 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     const queryLen = typeof query === "string" ? query.length : 0;
     try {
       const limit = options?.limit ?? 10;
-      const tenantId = sessionKey.tenantId;
+      const tenantId = scope.tenantId;
+      const agentId = scope.agentId;
+      const authorityScope = scope;
 
       if (Array.isArray(query)) {
         // Vector-only search (per-instance vec state)
@@ -206,7 +234,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
           return ok([]);
         }
 
-        const vecResults = searchByVector(this.db, query, limit);
+        const vecResults = searchByVector(this.db, query, limit, authorityScope);
 
         const now = systemNowMs();
         const results: MemorySearchResult[] = [];
@@ -217,8 +245,12 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
           // inspect/asOf raw reads stay UNFILTERED (eviction is soft + asOf-resolvable).
           const parsed = memoryRowMapper.parseOptionalRow(
             this.db
-              .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND evicted_at IS NULL")
-              .get(vr.id, tenantId),
+              .prepare(`SELECT * FROM memories
+                WHERE id = ? AND tenant_id = ? AND agent_id = ? AND evicted_at IS NULL
+                  AND ((visibility = 'conversation' AND conversation_ref = ?)
+                    OR (visibility = 'principal' AND principal_id = ?)
+                    ${scope.includeAgentShared ? "OR visibility = 'agent-shared'" : ""})`)
+              .get(vr.id, tenantId, agentId, scope.conversationRef, scope.principalId),
           );
           const row = parsed.ok ? parsed.value : undefined;
 
@@ -228,7 +260,6 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
           if (row.expires_at !== null && row.expires_at <= now) continue;
 
           // Apply filters
-          if (options?.agentId && row.agent_id !== options.agentId) continue;
           if (options?.trustLevel && row.trust_level !== options.trustLevel) continue;
 
           // Convert cosine distance to similarity score (0-1)
@@ -281,8 +312,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
       const hybridResults = hybridSearch(this.db, query, queryEmbedding, {
         limit,
         trustLevel: options?.trustLevel,
-        tenantId,
-        agentId: options?.agentId,
+        scope,
         // Forward the NL temporal range into the post-fusion WHERE
         // (occurred_at BETWEEN ? AND ?, ANDed onto the scope — never widens).
         ...(options?.occurredAtRange ? { occurredAtRange: options.occurredAtRange } : {}),
@@ -298,8 +328,12 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
         // (defense in depth; the two halves of the soft-eviction guarantee stay coupled).
         const parsed = memoryRowMapper.parseOptionalRow(
           this.db
-            .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND evicted_at IS NULL")
-            .get(hr.id, tenantId),
+            .prepare(`SELECT * FROM memories
+              WHERE id = ? AND tenant_id = ? AND agent_id = ? AND evicted_at IS NULL
+                AND ((visibility = 'conversation' AND conversation_ref = ?)
+                  OR (visibility = 'principal' AND principal_id = ?)
+                  ${scope.includeAgentShared ? "OR visibility = 'agent-shared'" : ""})`)
+            .get(hr.id, tenantId, agentId, scope.conversationRef, scope.principalId),
         );
         const row = parsed.ok ? parsed.value : undefined;
 
@@ -397,7 +431,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
    */
   private hydrateLane(
     ids: string[],
-    tenantId: string,
+    scope: MemoryRecallScope,
     now: number,
     options?: MemorySearchOptions,
   ): MemorySearchResult[] {
@@ -411,13 +445,16 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
       // The inspect/asOf raw reads stay UNFILTERED (eviction is soft + asOf-resolvable).
       const parsed = memoryRowMapper.parseOptionalRow(
         this.db
-          .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND evicted_at IS NULL")
-          .get(id, tenantId),
+          .prepare(`SELECT * FROM memories
+            WHERE id = ? AND tenant_id = ? AND agent_id = ? AND evicted_at IS NULL
+              AND ((visibility = 'conversation' AND conversation_ref = ?)
+                OR (visibility = 'principal' AND principal_id = ?)
+                ${scope.includeAgentShared ? "OR visibility = 'agent-shared'" : ""})`)
+          .get(id, scope.tenantId, scope.agentId, scope.conversationRef, scope.principalId),
       );
       const row = parsed.ok ? parsed.value : undefined;
       if (!row) continue;
       if (row.expires_at !== null && row.expires_at <= now) continue;
-      if (options?.agentId && row.agent_id !== options.agentId) continue;
       if (options?.trustLevel && row.trust_level !== options.trustLevel) continue;
       // The NL temporal range ANDs onto the ALREADY-(tenant, agent)-scoped
       // per-id read above — it can only NARROW (never widens scope). A NULL
@@ -437,7 +474,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
   }
 
   async searchLanes(
-    sessionKey: SessionKey,
+    scope: MemoryRecallScope,
     query: string | number[],
     options?: MemorySearchOptions,
   ): Promise<
@@ -457,7 +494,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
       // Match hybridSearch's per-lane over-fetch (hybrid-search.ts:284) so the
       // candidate pools entering fuse() are byte-identical to today's fused pools.
       const overfetchLimit = limit * 2;
-      const tenantId = sessionKey.tenantId;
+      const authorityScope = scope;
       const now = systemNowMs();
 
       // Resolve the FTS query text + the vector embedding. A vector (number[])
@@ -466,7 +503,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
       let ftsIds: Array<{ id: string }> = [];
       let queryEmbedding: number[] | undefined;
       if (typeof query === "string") {
-        ftsIds = searchByText(this.db, query, overfetchLimit);
+        ftsIds = searchByText(this.db, query, overfetchLimit, authorityScope);
         queryEmbedding = await this.resolveQueryEmbedding(query, queryLen);
       } else {
         // Vector-only query: no FTS lane; the array IS the embedding.
@@ -482,7 +519,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
       let vectorLaneDegraded: { errorKind: string } | undefined;
       if (this.vecAvailable && queryEmbedding !== undefined && queryEmbedding.length > 0) {
         try {
-          vecIds = searchByVector(this.db, queryEmbedding, overfetchLimit);
+          vecIds = searchByVector(this.db, queryEmbedding, overfetchLimit, authorityScope);
         } catch (e: unknown) {
           // Branch the hint by failure class: a vec dimension mismatch is an
           // embedder/table drift (config), not database corruption — the
@@ -509,8 +546,8 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
 
       // Hydrate each lane independently (rank order preserved). NO RRF fusion,
       // NO minScore — fusion + minScore move to the agent's recall layer.
-      const fts = this.hydrateLane(ftsIds.map((r) => r.id), tenantId, now, options);
-      const vector = this.hydrateLane(vecIds.map((r) => r.id), tenantId, now, options);
+      const fts = this.hydrateLane(ftsIds.map((r) => r.id), scope, now, options);
+      const vector = this.hydrateLane(vecIds.map((r) => r.id), scope, now, options);
 
       const durationMs = systemNowMs() - startMs;
       this.logger?.debug(
@@ -552,20 +589,31 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
 
   // ── delete ───────────────────────────────────────────────────────
 
-  async delete(id: string, tenantId?: string): Promise<Result<boolean, Error>> {
+  async delete(
+    id: string,
+    scope: { tenantId: string; agentId: string },
+  ): Promise<Result<boolean, Error>> {
     const startMs = systemNowMs();
     try {
-      const tid = tenantId ?? "default";
+      const result = this.db.transaction(() => {
+        // vec0 has no FK cascade. Select through the authoritative source row so
+        // an out-of-scope caller cannot even remove another agent's derived vector.
+        if (this.vecAvailable) {
+          this.db
+            .prepare(
+              `DELETE FROM vec_memories
+               WHERE memory_id IN (
+                 SELECT id FROM memories
+                 WHERE id = ? AND tenant_id = ? AND agent_id = ?
+               )`,
+            )
+            .run(id, scope.tenantId, scope.agentId);
+        }
 
-      // Delete from vec_memories first (no cascade on virtual tables, per-instance)
-      if (this.vecAvailable) {
-        this.db.prepare("DELETE FROM vec_memories WHERE memory_id = ?").run(id);
-      }
-
-      // Delete from memories (FTS5 trigger handles memory_fts cleanup)
-      const result = this.db
-        .prepare("DELETE FROM memories WHERE id = ? AND tenant_id = ?")
-        .run(id, tid);
+        return this.db
+          .prepare("DELETE FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ?")
+          .run(id, scope.tenantId, scope.agentId);
+      })();
 
       const durationMs = systemNowMs() - startMs;
       this.logger?.debug({ durationMs, op: "delete" }, "Memory delete complete");
@@ -718,11 +766,12 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
           //      the authoritative content update — the fail-safe direction is
           //      de-indexed, never stale-indexed).
           try {
+            const partitionId = requireMemoryAuthorityPartitionForMemory(this.db, id);
             this.db
               .prepare(
-                "INSERT INTO memory_fts_tri(rowid, content) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?)",
+                "INSERT INTO memory_fts_tri(rowid, content, authority_token) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?, ?)",
               )
-              .run(id, normalizeForSearch(newContent));
+              .run(id, normalizeForSearch(newContent), memoryAuthorityToken(partitionId));
           } catch {
             // Trigram twin absent on this host, or an exceptional twin insert failure
             // → leave the row de-indexed in the trigram lane (fail-safe). The content
@@ -878,40 +927,24 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
 
   // ── pin ──────────────────────────────────────────────────────────
 
-  async pin(id: string, tenantId?: string, agentId?: string): Promise<Result<boolean, Error>> {
+  async pin(id: string, tenantId: string, agentId: string): Promise<Result<boolean, Error>> {
     return fromPromise((async () => {
-      const sql =
-        tenantId !== undefined && agentId !== undefined
-          ? "UPDATE memories SET pinned = 1 WHERE id = ? AND tenant_id = ? AND agent_id = ?"
-          : tenantId !== undefined
-          ? "UPDATE memories SET pinned = 1 WHERE id = ? AND tenant_id = ?"
-          : "UPDATE memories SET pinned = 1 WHERE id = ?";
-      const info =
-        tenantId !== undefined && agentId !== undefined
-          ? this.db.prepare(sql).run(id, tenantId, agentId)
-          : tenantId !== undefined
-          ? this.db.prepare(sql).run(id, tenantId)
-          : this.db.prepare(sql).run(id);
+      if (!tenantId || !agentId) throw new Error("Memory pin requires explicit tenant and agent authority");
+      const info = this.db
+        .prepare("UPDATE memories SET pinned = 1 WHERE id = ? AND tenant_id = ? AND agent_id = ?")
+        .run(id, tenantId, agentId);
       return info.changes > 0;
     })());
   }
 
   // ── unpin ────────────────────────────────────────────────────────
 
-  async unpin(id: string, tenantId?: string, agentId?: string): Promise<Result<boolean, Error>> {
+  async unpin(id: string, tenantId: string, agentId: string): Promise<Result<boolean, Error>> {
     return fromPromise((async () => {
-      const sql =
-        tenantId !== undefined && agentId !== undefined
-          ? "UPDATE memories SET pinned = 0 WHERE id = ? AND tenant_id = ? AND agent_id = ?"
-          : tenantId !== undefined
-          ? "UPDATE memories SET pinned = 0 WHERE id = ? AND tenant_id = ?"
-          : "UPDATE memories SET pinned = 0 WHERE id = ?";
-      const info =
-        tenantId !== undefined && agentId !== undefined
-          ? this.db.prepare(sql).run(id, tenantId, agentId)
-          : tenantId !== undefined
-          ? this.db.prepare(sql).run(id, tenantId)
-          : this.db.prepare(sql).run(id);
+      if (!tenantId || !agentId) throw new Error("Memory unpin requires explicit tenant and agent authority");
+      const info = this.db
+        .prepare("UPDATE memories SET pinned = 0 WHERE id = ? AND tenant_id = ? AND agent_id = ?")
+        .run(id, tenantId, agentId);
       return info.changes > 0;
     })());
   }

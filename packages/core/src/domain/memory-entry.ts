@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ok, err, type Result } from "@comis/shared";
 import { z } from "zod";
+import { MemoryVisibilitySchema } from "./memory-scope.js";
+import { TrustLevelSchema } from "./memory-trust.js";
+export { TrustLevelSchema } from "./memory-trust.js";
+export type { TrustLevel } from "./memory-trust.js";
 
 /**
  * Trust levels for memory entries.
@@ -11,9 +15,6 @@ import { z } from "zod";
  *
  * Trust partitioning prevents memory poisoning via indirect prompt injection.
  */
-export const TrustLevelSchema = z.enum(["system", "learned", "external"]);
-export type TrustLevel = z.infer<typeof TrustLevelSchema>;
-
 /**
  * Source provenance: who created this entry and through which channel.
  */
@@ -31,10 +32,11 @@ export const MemorySourceSchema = z.strictObject({
  */
 export const MemoryEntrySchema = z.strictObject({
     id: z.guid(),
-    tenantId: z.string().min(1).default("default"),
+    tenantId: z.string().min(1),
     /** Agent that created this memory entry (enables per-agent memory isolation) */
-    agentId: z.string().min(1).default("default"),
+    agentId: z.string().min(1),
     userId: z.string().min(1),
+    visibility: MemoryVisibilitySchema,
     content: z.string().min(1),
     embedding: z.array(z.number()).optional(),
     trustLevel: TrustLevelSchema,

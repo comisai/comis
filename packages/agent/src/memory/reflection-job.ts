@@ -34,22 +34,15 @@
  *     proofCount: LOW_PROOF_COUNT, ... })` — at `trust=learned`/`state=candidate`
  *     (store-forced) and idempotent on the deterministic id.
  *
- * Kind-generic: the SELECT/GROUP/REFLECT seams are kind-agnostic, so the
- * profile/topic doc families ride the SAME engine by varying select/group/prompt,
- * not by adding a new engine.
- *
- * Closed graph: this job consumes `@comis/core` PORT TYPES + the static
- * `validateLearnedDocBody` keystone + the pure `applyDeltaOps`/`renderStructuredBody`
- * (agent→core is ALLOWED) + the injected source/store/adapter/clock. It imports NO
- * `@comis/memory` / `@comis/skills` value (the agent↛memory / agent↛skills build
- * cut). It emits NO `learning:skill_*` bus event — the daemon emits the counts
- * after the job returns.
+ * Kind-generic: SELECT/GROUP/REFLECT vary through injected selection, grouping,
+ * and prompts. The closed dependency graph consumes core ports and pure document
+ * helpers, imports no memory or skills adapter, and leaves event emission to the daemon.
  *
  * @module
  */
 
 import { createHash } from "node:crypto";
-import { ok, fromPromise, type Result } from "@comis/shared";
+import { err, ok, fromPromise, type Result } from "@comis/shared";
 import type {
   LearningScope,
   MentalModelStorePort,
@@ -68,19 +61,10 @@ import type { ReflectionAdapter } from "./llm-reflection-adapter.js";
 // Defaults
 // ---------------------------------------------------------------------------
 
-/** Max topics reflected (one LLM call each) per run — the DoS ceiling. */
-const DEFAULT_MAX_DOCS_PER_RUN = 10;
-
 /**
- * The token-set Jaccard floor at/above which two exact-token-SET groups MERGE into
- * one corroboration cluster. The exact-hash group
- * key requires IDENTICAL token sets, so differently-worded successes for the SAME
- * task never corroborate; this floor lets near-identical task signatures (sharing
- * ≥50% of their unique content tokens) merge — differently-worded analogues reach
- * the ≥2 gate, while genuinely-different tasks (low overlap) stay separate. Keyless,
- * deterministic, NO embeddings (embeddings are deliberately out of scope here). 0.5
- * is the collision-maximizing midpoint the topic-key SET decision already favors;
- * a higher value merges less (more conservative).
+ * Jaccard floor for merging exact-token-set groups into a corroboration cluster.
+ * Near-identical signatures sharing at least half their unique content tokens merge;
+ * unrelated low-overlap tasks remain separate. This is deterministic and keyless.
  */
 const DEFAULT_MERGE_SIMILARITY_THRESHOLD = 0.5;
 
@@ -165,7 +149,7 @@ export interface ReflectionSourceTrajectory {
 export interface RunReflectionConfig {
   enabled: boolean;
   minConfidence: number;
-  /** Max topics reflected per run (defaults to 10). */
+  /** Max topics reflected per run, already resolved by the config schema. */
   maxDocsPerRun: number;
   /**
    * How a topic must corroborate before it can seed a doc. `single_owner` (the PRODUCT
@@ -225,6 +209,8 @@ export interface RunReflectionDeps {
   config: RunReflectionConfig;
   /** The LCD-merged source history the daemon injects (with the daemon-derived trustedOrigin). */
   sourceTrajectories: ReflectionSourceTrajectory[];
+  /** Scheduler-owned cancellation for the enclosing reflection occurrence. */
+  signal?: AbortSignal;
   /** The cheap-model reflect adapter (wraps the untrusted trajectory; ONE call per topic). */
   reflectionAdapter: Pick<ReflectionAdapter, "reflect">;
   /** The outcome-signal port (the fail-closed success gate). */
@@ -292,7 +278,7 @@ export interface RunReflectionResult {
   /**
    * How many topics corroborated via the `single_owner` REPETITION path (an
    * explicitly-trusted owner repeating a topic ≥`minObservations` times) rather than the
-   * distinct-sessions gate (0 in `distinct_sessions` mode). Lets `comis fleet` / `comis explain`
+   * distinct-sessions gate (0 in `distinct_sessions` mode). Lets `comis system-health` / `comis explain`
    * show the single-owner mode is active and how much it learned. Content-free (a count).
    */
   singleOwnerCorroborated: number;
@@ -314,6 +300,8 @@ export interface RunReflectionResult {
    * aggregates to `empty_reflection`, not a mis-attributed `rejected_validation`. Counts only.
    */
   emptyReflections: number;
+  /** Model/store faults; also in `skipped`, never in `emptyReflections`. */
+  dependencyFailures: number;
   /**
    * How many `success` sources were dropped at SELECT for an
    * untrusted origin (axis 1) or external-trust source (axis 2). Counts only.
@@ -503,6 +491,10 @@ function defaultGroupKey(t: ReflectionSourceTrajectory): string {
   return normalizeOpeningRequest(t.signature);
 }
 
+function reflectionAbortRequested(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
+
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
@@ -519,8 +511,10 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   // The per-kind group function — defaults to the skill behavior.
   const groupKey = deps.groupKey ?? defaultGroupKey;
 
+  if (reflectionAbortRequested(deps.signal)) return err(new Error("Reflection aborted"));
+
   const startMs = clock.now();
-  const maxDocsPerRun = config.maxDocsPerRun ?? DEFAULT_MAX_DOCS_PER_RUN;
+  const maxDocsPerRun = config.maxDocsPerRun;
 
   // 1. SELECT (fail-closed): keep only trusted-origin `success` >= minConfidence.
   const selected: ReflectionSourceTrajectory[] = [];
@@ -538,6 +532,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   // validation; the outcome gate is the skill belt.
   const outcomeGated = (deps.kind ?? "skill") === "skill";
   for (const t of sourceTrajectories) {
+    if (reflectionAbortRequested(deps.signal)) return err(new Error("Reflection aborted"));
     // ANTI-POISON AXIS 1 (the session-origin belt): an untrusted-origin
     // success NEVER seeds a doc. Filter FIRST (cheap, before the outcome resolve) — a
     // planted/untrusted trajectory cannot even reach the corroboration gate.
@@ -620,8 +615,8 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
     // When nothing survived SELECT, the acute reason is `untrusted_origin` if
     // some success was dropped for an untrusted origin / external-trust source, else `no_successes`.
     const emptyOutcome = classifyReflectOutcome({ selected: 0, maxTopicCardinality: 0, admitted: 0, emptyReflections: 0, untrustedDrops });
-    logRunComplete(deps, startMs, { selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0, singleOwnerCorroborated: 0 });
-    return ok({ admissionOutcome: emptyOutcome, selected: 0, admitted: 0, maxTopicCardinality: 0, singleOwnerCorroborated: 0, distinctTopicKeys: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0, sourceTrajectoryCount, totalSourceChars });
+    logRunComplete(deps, startMs, { selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, dependencyFailures: 0, untrustedDrops, nameLengthRejections: 0, singleOwnerCorroborated: 0 });
+    return ok({ admissionOutcome: emptyOutcome, selected: 0, admitted: 0, maxTopicCardinality: 0, singleOwnerCorroborated: 0, distinctTopicKeys: 0, skipped: 0, emptyReflections: 0, dependencyFailures: 0, untrustedDrops, nameLengthRejections: 0, sourceTrajectoryCount, totalSourceChars });
   }
 
   // 2. GROUP: Map<topicKey, members[]> via the per-kind
@@ -676,6 +671,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   let admitted = 0;
   let skipped = 0;
   let emptyReflections = 0;
+  let dependencyFailures = 0;
   // Corroborated topics whose reflected doc NAME was over-cap.
   let nameLengthRejections = 0;
   let maxTopicCardinality = 0;
@@ -685,6 +681,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   const corroboration = config.corroboration;
 
   for (const [topicKey, members] of corroborationGroups) {
+    if (reflectionAbortRequested(deps.signal)) return err(new Error("Reflection aborted"));
     const cardinality = distinctSenderCardinality(members);
     maxTopicCardinality = Math.max(maxTopicCardinality, cardinality);
     // Corroboration gate: the anti-domination distinct-sessions path (≥2 distinct
@@ -705,8 +702,12 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
     reflectedTopics += 1;
 
     const r = await reflectTopic({ deps, topicKey, members });
+    if (reflectionAbortRequested(deps.signal)) return err(new Error("Reflection aborted"));
     if (r === "empty") {
       emptyReflections += 1;
+      skipped += 1;
+    } else if (r === "dependency_failure") {
+      dependencyFailures += 1;
       skipped += 1;
     } else if (r === "rejected") {
       skipped += 1;
@@ -717,22 +718,19 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
       skipped += 1;
     } else if (r === "admitted") {
       admitted += 1;
-    }
-    // "skipped" (a per-topic reflect/admit fault) increments neither admit nor empty.
+    } else if (r === "skipped") { skipped += 1; }
   }
 
   const admissionOutcome = classifyReflectOutcome({ selected: selected.length, maxTopicCardinality, admitted, emptyReflections, untrustedDrops, nameLengthRejections });
-
-  logRunComplete(deps, startMs, { selected: selected.length, admitted, maxTopicCardinality, skipped, emptyReflections, untrustedDrops, nameLengthRejections, singleOwnerCorroborated });
-
-  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, singleOwnerCorroborated, distinctTopicKeys: corroborationGroups.length, skipped, emptyReflections, untrustedDrops, nameLengthRejections, sourceTrajectoryCount, totalSourceChars });
+  logRunComplete(deps, startMs, { selected: selected.length, admitted, maxTopicCardinality, skipped, emptyReflections, dependencyFailures, untrustedDrops, nameLengthRejections, singleOwnerCorroborated });
+  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, singleOwnerCorroborated, distinctTopicKeys: corroborationGroups.length, skipped, emptyReflections, dependencyFailures, untrustedDrops, nameLengthRejections, sourceTrajectoryCount, totalSourceChars });
 }
 
 // ---------------------------------------------------------------------------
 // Per-topic reflect + guard + admit
 // ---------------------------------------------------------------------------
 
-type TopicOutcome = "admitted" | "empty" | "rejected" | "rejected_name_length" | "skipped";
+type TopicOutcome = "admitted" | "empty" | "dependency_failure" | "rejected" | "rejected_name_length" | "skipped";
 
 interface ReflectTopicArgs {
   deps: RunReflectionDeps;
@@ -766,10 +764,11 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
       },
       "reflection: prior-doc read faulted, skipping topic",
     );
-    return "skipped";
+    return "dependency_failure";
   }
   const prior = priorRes.value.value; // MentalModel | undefined
   const priorSections: DocSection[] = prior?.structuredBody?.sections ?? [];
+  if (reflectionAbortRequested(deps.signal)) return "skipped";
 
   // 4b. ONE cheap LLM call per topic (the adapter wraps the UNTRUSTED transcript).
   //     The procedure run augments the tool-STRIPPED transcript with the ordered
@@ -781,15 +780,14 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
     }),
   );
   if (!reflectRes.ok || !reflectRes.value.ok) {
-    // A per-topic reflect fault (transport / model error). NON-FATAL: the topic is
-    // skipped and the prior doc survives (the adapter already WARNed with the
-    // network/dependency errorKind). Treated as empty-content: NO admit.
+    // A model fault is non-fatal to other topics, distinct from empty output, and preserves the prior doc.
     logger.debug(
       { agentId, step: "reflect" as const, topicKey, hint: "reflect call faulted — topic skipped, prior doc survives" },
       "reflection call faulted for topic, skipping",
     );
-    return "empty";
+    return "dependency_failure";
   }
+  if (reflectionAbortRequested(deps.signal)) return "skipped";
   const reflection = reflectRes.value.value;
 
   // 4c. Build the next structured body: delta-ops over the prior AST (existing doc)
@@ -870,7 +868,7 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
         { agentId, step: "admit" as const, errorKind: "dependency" as const, topicKey, hint: "store.supersede faulted — topic skipped (prior doc intact)" },
         "reflection supersede faulted, skipping topic",
       );
-      return "skipped";
+      return "dependency_failure";
     }
     if (supersedeRes.value.value === "superseded") {
       // A profile/topic correction landed in history (the prior body preserved).
@@ -918,7 +916,7 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
       { agentId, step: "admit" as const, errorKind: "dependency" as const, topicKey, hint: "store.admit faulted — topic skipped" },
       "reflection admit faulted, skipping topic",
     );
-    return "skipped";
+    return "dependency_failure";
   }
   // `admitted:false` (an idempotent re-admit of an unchanged doc) is not a NEW doc.
   return admitRes.value.value.admitted ? "admitted" : "skipped";
@@ -962,6 +960,7 @@ function logRunComplete(
     maxTopicCardinality: number;
     skipped: number;
     emptyReflections: number;
+    dependencyFailures: number;
     untrustedDrops: number;
     nameLengthRejections: number;
     singleOwnerCorroborated: number;
@@ -986,6 +985,7 @@ function logRunComplete(
       // an operator can see the mode is active without turning on debug (the §2.7 litmus test).
       singleOwnerCorroborated: counts.singleOwnerCorroborated,
       skipped: counts.skipped,
+      dependencyFailures: counts.dependencyFailures,
       admissionOutcome, // the readable "why 0 admitted" verdict, grep-able in the log
       durationMs: deps.clock.now() - startMs,
     },

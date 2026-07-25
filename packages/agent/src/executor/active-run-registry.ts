@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ActiveRunRegistry: Tracks running PiExecutor sessions by session key,
+ * ActiveRunRegistry: Tracks running PiExecutor sessions by conversation ref,
  * exposing SDK AgentSession steer/followUp/abort/streaming/compacting
  * handles to external consumers (e.g., channel manager).
  *
@@ -11,6 +11,8 @@
  *
  * @module
  */
+
+import type { ConversationRef } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -30,16 +32,16 @@ export interface RunHandle {
   isCompacting(): boolean;
 }
 
-/** Registry tracking active PiExecutor runs by formatted session key. */
+/** Registry tracking active PiExecutor runs by opaque conversation authority. */
 export interface ActiveRunRegistry {
-  /** Register an active run. Returns false if session is already registered. */
-  register(sessionKey: string, handle: RunHandle): boolean;
+  /** Register an active run. Returns false if the conversation is already registered. */
+  register(conversationRef: ConversationRef, handle: RunHandle): boolean;
   /** Deregister an active run. No-op if not registered. */
-  deregister(sessionKey: string): void;
+  deregister(conversationRef: ConversationRef): void;
   /** Get the RunHandle for an active session, or undefined if not running. */
-  get(sessionKey: string): RunHandle | undefined;
+  get(conversationRef: ConversationRef): RunHandle | undefined;
   /** Check if a session has an active run. */
-  has(sessionKey: string): boolean;
+  has(conversationRef: ConversationRef): boolean;
   /** Number of active runs. */
   readonly size: number;
 }
@@ -57,27 +59,27 @@ export interface ActiveRunRegistry {
  * - `deregister()` deletes the key silently (no error if missing).
  */
 export function createActiveRunRegistry(): ActiveRunRegistry {
-  const runs = new Map<string, RunHandle>();
+  const runs = new Map<ConversationRef, RunHandle>();
 
   return {
-    register(sessionKey: string, handle: RunHandle): boolean {
-      if (runs.has(sessionKey)) {
+    register(conversationRef: ConversationRef, handle: RunHandle): boolean {
+      if (runs.has(conversationRef)) {
         return false;
       }
-      runs.set(sessionKey, handle);
+      runs.set(conversationRef, handle);
       return true;
     },
 
-    deregister(sessionKey: string): void {
-      runs.delete(sessionKey);
+    deregister(conversationRef: ConversationRef): void {
+      runs.delete(conversationRef);
     },
 
-    get(sessionKey: string): RunHandle | undefined {
-      return runs.get(sessionKey);
+    get(conversationRef: ConversationRef): RunHandle | undefined {
+      return runs.get(conversationRef);
     },
 
-    has(sessionKey: string): boolean {
-      return runs.has(sessionKey);
+    has(conversationRef: ConversationRef): boolean {
+      return runs.has(conversationRef);
     },
 
     get size(): number {

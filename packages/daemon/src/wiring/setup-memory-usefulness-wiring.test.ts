@@ -52,6 +52,7 @@ describe("wireMemoryUsefulness — bus → usefulnessStore.recordUsage write-bac
     };
 
     wireMemoryUsefulness({
+      tenantId: "tenant-configured",
       eventBus: bus,
       usefulnessStore,
       clock: createFakeClock(NOW),
@@ -80,6 +81,7 @@ describe("wireMemoryUsefulness — bus → usefulnessStore.recordUsage write-bac
     };
 
     wireMemoryUsefulness({
+      tenantId: "tenant-configured",
       eventBus: bus,
       usefulnessStore,
       clock: createFakeClock(NOW),
@@ -106,6 +108,7 @@ describe("wireMemoryUsefulness — bus → usefulnessStore.recordUsage write-bac
     };
 
     wireMemoryUsefulness({
+      tenantId: "tenant-configured",
       eventBus: bus,
       usefulnessStore,
       clock: createFakeClock(NOW),
@@ -124,7 +127,7 @@ describe("wireMemoryUsefulness — bus → usefulnessStore.recordUsage write-bac
     expect("intent" in scope).toBe(false);
   });
 
-  it("derives the scope per-agent: agentId from the event, tenantId from the sessionKey (no cross-agent collapse)", async () => {
+  it("uses configured tenant authority instead of parsing the display session key", async () => {
     const bus = new TypedEventBus();
     const recordUsage = vi.fn(async (): Promise<Result<void, Error>> => ok(undefined));
     const usefulnessStore = {
@@ -133,6 +136,7 @@ describe("wireMemoryUsefulness — bus → usefulnessStore.recordUsage write-bac
     };
 
     wireMemoryUsefulness({
+      tenantId: "tenant-configured",
       eventBus: bus,
       usefulnessStore,
       clock: createFakeClock(NOW),
@@ -147,8 +151,8 @@ describe("wireMemoryUsefulness — bus → usefulnessStore.recordUsage write-bac
     await Promise.resolve();
 
     const scope = recordUsage.mock.calls[0]![2] as { tenantId: string; agentId: string };
-    expect(scope.agentId).toBe("agent-2"); // from the event — NOT a fixed/global agent
-    expect(scope.tenantId).toBe("tenant-y"); // first segment of the formatted sessionKey
+    expect(scope.agentId).toBe("agent-2");
+    expect(scope.tenantId).toBe("tenant-configured");
   });
 
   it("default-off: feedbackEnabled() === false → recordUsage is NOT called", async () => {
@@ -160,6 +164,7 @@ describe("wireMemoryUsefulness — bus → usefulnessStore.recordUsage write-bac
     };
 
     wireMemoryUsefulness({
+      tenantId: "tenant-configured",
       eventBus: bus,
       usefulnessStore,
       clock: createFakeClock(NOW),
@@ -182,6 +187,7 @@ describe("wireMemoryUsefulness — bus → usefulnessStore.recordUsage write-bac
     };
 
     wireMemoryUsefulness({
+      tenantId: "tenant-configured",
       eventBus: bus,
       usefulnessStore,
       clock: createFakeClock(NOW),
@@ -210,6 +216,7 @@ describe("wireMemoryUsefulness — bus → usefulnessStore.recordUsage write-bac
     const logger = createMockLogger();
 
     wireMemoryUsefulness({
+      tenantId: "tenant-configured",
       eventBus: bus,
       usefulnessStore,
       clock: createFakeClock(NOW),
@@ -237,6 +244,7 @@ describe("wireMemoryUsefulness — bus → usefulnessStore.recordUsage write-bac
     };
 
     wireMemoryUsefulness({
+      tenantId: "tenant-configured",
       eventBus: bus,
       usefulnessStore,
       clock: createFakeClock(NOW),

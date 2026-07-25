@@ -43,7 +43,7 @@ export const recallMissVerdict = (s: IncidentSignals): RecallVerdict | null => {
       "context and no tool/context/breaker cause matched",
     suggestedNextSteps: [
       "verify the recall SCOPE (agent- vs user-scoped) matches where the memory was written",
-      "for non-Latin queries confirm the trigram-twin lanes fired (comis fleet → health_signal); for weak semantic recall check comis fleet config_posture for the embedder",
+      "for non-Latin queries confirm the trigram-twin lanes fired (comis system-health → health_signal); for weak semantic recall check comis system-health config_posture for the embedder",
       "obs.explain depth=full for the per-recall lane/candidate counts",
     ],
   };

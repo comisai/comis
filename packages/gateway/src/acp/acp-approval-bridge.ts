@@ -9,9 +9,8 @@
  * `ActivityStreamPort` (the same seam as the activity bridge),
  * and for each `kind:"approval"` event:
  *
- *   - resolves the ACP session id from `event.sessionKey` via
- *     `parseFormattedSessionKey(...).peerId` (the AcpSessionMap keys
- *     `peerId === acpSessionId`), no-opping if no connection is retained;
+ *   - receives the ACP session id explicitly at turn subscription and no-ops
+ *     if no connection is retained;
  *   - builds a {@link RequestPermissionRequest} whose `options` are derived
  *     from `event.approval.choices` (`id→optionId`, `defaultLabel→name`,
  *     `id→kind`), and calls `connection.requestPermission(req)` exactly once;
@@ -39,7 +38,6 @@ import type {
   ComisLogger,
   TurnActivityContext,
 } from "@comis/core";
-import { parseFormattedSessionKey } from "@comis/core";
 import type {
   AgentSideConnection,
   PermissionOption,
@@ -74,7 +72,7 @@ export interface AcpApprovalBridge {
    * `requestPermission(...)` round-trips. Returns an `unsubscribe()` that
    * detaches the underlying activity-stream subscription (cleanup symmetry).
    */
-  subscribe(ctx: TurnActivityContext): () => void;
+  subscribe(ctx: TurnActivityContext, acpSessionId: string): () => void;
 }
 
 /**
@@ -137,7 +135,7 @@ export function createAcpApprovalBridge(
   deps: CreateAcpApprovalBridgeDeps,
 ): AcpApprovalBridge {
   return {
-    subscribe(ctx: TurnActivityContext): () => void {
+    subscribe(ctx: TurnActivityContext, acpSessionId: string): () => void {
       // Serialize the async requestPermission round-trips so concurrent
       // approval events do not interleave their SDK calls out of order.
       let chain: Promise<void> = Promise.resolve();
@@ -150,15 +148,14 @@ export function createAcpApprovalBridge(
 
         // 2) Resolve the ACP session id and the retained connection. A dropped
         //    / unknown session (getConnection === undefined) is a no-op.
-        const acpSessionId = parseFormattedSessionKey(e.sessionKey)?.peerId;
-        if (acpSessionId === undefined) {
+        if (acpSessionId.length === 0 || e.sessionKey !== ctx.sessionKey) {
           deps.logger?.debug?.(
             {
               sessionKey: e.sessionKey,
               submodule: "acp-approval-bridge",
               step: "resolve-session",
             },
-            "approval event sessionKey has no acp peerId — dropping",
+            "approval event does not match the subscribed ACP turn — dropping",
           );
           return;
         }

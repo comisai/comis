@@ -4,6 +4,7 @@ import {
   LEAN_TOOL_DESCRIPTIONS,
   TOOL_SUMMARIES,
   TOOL_GUIDES,
+  SYSTEM_PROMPT_GUIDES,
   TOOL_ORDER,
   resolveDescription,
   getToolGuideWithSchema,
@@ -68,6 +69,11 @@ describe("TOOL_GUIDES", () => {
     for (const [name, guide] of Object.entries(TOOL_GUIDES)) {
       expect(guide.length, `${name} is ${guide.length} chars`).toBeGreaterThanOrEqual(50);
     }
+  });
+
+  it("routes BOOTSTRAP.md completion through a full empty write", () => {
+    expect(TOOL_GUIDES.write).toMatch(/BOOTSTRAP\.md.*write.*empty.*never.*edit/isu);
+    expect(TOOL_GUIDES.edit).toMatch(/never.*edit.*clear.*BOOTSTRAP\.md.*write/isu);
   });
 
   // Credential Discovery rule — appended to the gateway guide so the LLM
@@ -166,9 +172,14 @@ describe("TOOL_GUIDES", () => {
     expect(TOOL_GUIDES.exec).toMatch(/## Sandbox-Forbidden Paths/);
   });
 
+  it("rejects cross-sandbox process-id polling in the exec guide", () => {
+    expect(TOOL_GUIDES.exec).toMatch(/process status.*only authoritative completion signal/i);
+    expect(TOOL_GUIDES.exec).toMatch(/process IDs are isolated/i);
+  });
+
   // -------------------------------------------------------------------------
   // Prescriptive 2-step creation flow + workspace.profile enum guardrail.
-  // Production trace showed 18 fleet-creation failures across 9 agents because
+  // Production trace showed 18 system-creation failures across 9 agents because
   // the LLM:
   //   (a) embedded persona/role text inside the create config (Zod
   //       unrecognized_keys rejection on z.strictObject), and
@@ -197,7 +208,7 @@ describe("TOOL_GUIDES", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Single-call creation is the PREFERRED path for batch fleet creation;
+  // Single-call creation is the PREFERRED path for batch system creation;
   // the 2-step flow is labeled FALLBACK and ordered after the single-call
   // section.
   //
@@ -214,7 +225,7 @@ describe("TOOL_GUIDES", () => {
   describe("TOOL_GUIDES.agents_manage (single-call PREFERRED)", () => {
     it("contains a 'Single-call creation' PREFERRED block with workspace.role/identity example", () => {
       expect(TOOL_GUIDES.agents_manage).toContain("Single-call creation");
-      expect(TOOL_GUIDES.agents_manage).toContain("PREFERRED for batch fleet creation");
+      expect(TOOL_GUIDES.agents_manage).toContain("PREFERRED for batch system creation");
       expect(TOOL_GUIDES.agents_manage).toContain("workspace:");
       expect(TOOL_GUIDES.agents_manage).toMatch(/role:\s*"/);
       expect(TOOL_GUIDES.agents_manage).toMatch(/identity:\s*"/);
@@ -233,6 +244,11 @@ describe("TOOL_GUIDES", () => {
       expect(singleCallIdx).toBeGreaterThan(-1);
       expect(fallbackIdx).toBeGreaterThan(-1);
       expect(singleCallIdx).toBeLessThan(fallbackIdx);
+    });
+
+    it("uses BOOTSTRAP.md content as the sole interactive-onboarding signal", () => {
+      expect(TOOL_GUIDES.agents_manage).not.toMatch(/identity.*auto-skips onboarding/iu);
+      expect(TOOL_GUIDES.agents_manage).toMatch(/BOOTSTRAP\.md.*empty.*complete onboarding/isu);
     });
   });
 
@@ -313,6 +329,14 @@ describe("TOOL_GUIDES", () => {
       // ambiguity.
       expect(TOOL_GUIDES.providers_manage).toContain("Credential Workflow Summary");
     });
+  });
+});
+
+describe("SYSTEM_PROMPT_GUIDES", () => {
+  it("binds sub-agent delivery without model-selected route identifiers", () => {
+    expect(SYSTEM_PROMPT_GUIDES.sessions_spawn).toContain("bound automatically");
+    expect(SYSTEM_PROMPT_GUIDES.sessions_spawn).not.toContain("announce_channel_type");
+    expect(SYSTEM_PROMPT_GUIDES.sessions_spawn).not.toContain("announce_channel_id");
   });
 });
 

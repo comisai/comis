@@ -37,6 +37,25 @@ gateway:
     - id: test-token
       secret: pi-defense-memrate-test-secret-token-xyz789
       scopes: ["rpc", "ws", "admin", "sse"]
+    # The injection rate limiter keys each throttle bucket by the AUTHENTICATED
+    # principal (gateway binds identity to the token's client id, never a
+    # caller-asserted sessionKey.userId — an attacker must not evade the
+    # throttle by rotating a claimed user id). Each principal is one token, so
+    # the rate-limiter tests below use a dedicated token per bucket to stay
+    # hermetic (a fresh, unpolluted counter) and to exercise cross-principal
+    # isolation end-to-end.
+    - id: test-token-rl-warn
+      secret: pi-defense-memrate-ratelimit-warn-secret-token-01
+      scopes: ["rpc", "ws", "admin", "sse"]
+    - id: test-token-rl-audit
+      secret: pi-defense-memrate-ratelimit-audit-secret-token-02
+      scopes: ["rpc", "ws", "admin", "sse"]
+    - id: test-token-rl-user-a
+      secret: pi-defense-memrate-ratelimit-user-a-secret-token-03
+      scopes: ["rpc", "ws", "admin", "sse"]
+    - id: test-token-rl-user-b
+      secret: pi-defense-memrate-ratelimit-user-b-secret-token-04
+      scopes: ["rpc", "ws", "admin", "sse"]
   rateLimit:
     windowMs: 60000
     maxRequests: 10000

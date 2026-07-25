@@ -35,7 +35,7 @@ describe("message tool", () => {
       channel_type: "discord",
       channel_id: "ch-1",
       text: "Hello",
-    });
+    }, { outwardOperationId: "call-1" });
   });
 
   it("reply action delegates to rpcCall('message.reply') with message_id", async () => {
@@ -62,7 +62,7 @@ describe("message tool", () => {
       channel_id: "ch-2",
       text: "Reply text",
       message_id: "msg-1",
-    });
+    }, { outwardOperationId: "call-2" });
   });
 
   it("react action delegates to rpcCall('message.react') with emoji", async () => {
@@ -89,7 +89,7 @@ describe("message tool", () => {
       channel_id: "ch-3",
       message_id: "msg-2",
       emoji: "thumbsup",
-    });
+    }, { outwardOperationId: "call-3" });
   });
 
   it("edit action delegates to rpcCall('message.edit')", async () => {

@@ -9,19 +9,24 @@ import { createTelegramResolver, type TelegramResolverDeps } from "./telegram-re
 // Helpers
 // ---------------------------------------------------------------------------
 
-function mockDeps(overrides: Partial<TelegramResolverDeps> = {}): TelegramResolverDeps {
+function depsBot(token: string): ReturnType<TelegramResolverDeps["getBot"]> {
   return {
-    bot: {
-      api: {
-        getFile: vi.fn().mockResolvedValue({
-          file_id: "test-file-id",
-          file_unique_id: "unique",
-          file_path: "photos/file_0.jpg",
-          file_size: 1024,
-        }),
-      },
-    } as unknown as TelegramResolverDeps["bot"],
-    botToken: "123456:ABC-DEF1234",
+    token,
+    api: {
+      getFile: vi.fn().mockResolvedValue({
+        file_id: "test-file-id",
+        file_unique_id: "unique",
+        file_path: "photos/file_0.jpg",
+        file_size: 1024,
+      }),
+    },
+  } as unknown as ReturnType<TelegramResolverDeps["getBot"]>;
+}
+
+function mockDeps(overrides: Partial<TelegramResolverDeps> = {}): TelegramResolverDeps {
+  const bot = depsBot("123456:ABC-DEF1234");
+  return {
+    getBot: () => bot,
     maxBytes: 10 * 1024 * 1024, // 10 MB
     ssrfFetcher: {
       fetch: vi.fn().mockResolvedValue(
@@ -55,6 +60,16 @@ describe("telegram-resolver / createTelegramResolver", () => {
     expect(resolver.schemes).toEqual(["tg-file"]);
   });
 
+  it("does not resolve media when no connected Telegram Bot is available", async () => {
+    const deps = mockDeps({ getBot: () => undefined });
+    const resolver = createTelegramResolver(deps);
+
+    const result = await resolver.resolve(makeAttachment("tg-file://abc123"));
+
+    expect(result.ok).toBe(false);
+    expect(deps.ssrfFetcher.fetch).not.toHaveBeenCalled();
+  });
+
   it("resolves a tg-file:// URL to buffer with correct mimeType and sizeBytes", async () => {
     const deps = mockDeps();
     const resolver = createTelegramResolver(deps);
@@ -69,7 +84,7 @@ describe("telegram-resolver / createTelegramResolver", () => {
     }
 
     // Verify getFile was called with the extracted fileId
-    expect(deps.bot.api.getFile).toHaveBeenCalledWith("abc123");
+    expect(deps.getBot().api.getFile).toHaveBeenCalledWith("abc123");
 
     // Verify SSRF fetcher was called with constructed download URL
     expect(deps.ssrfFetcher.fetch).toHaveBeenCalledWith(
@@ -86,6 +101,48 @@ describe("telegram-resolver / createTelegramResolver", () => {
     expect(deps.logger.debug).toHaveBeenCalledWith(
       expect.objectContaining({ platform: "telegram", fileId: "abc123", filePath: "photos/file_0.jpg", sizeBytes: 1024 }),
       "Telegram media resolved",
+    );
+  });
+
+  it("uses the Bot owned by the latest polling generation", async () => {
+    const firstGetFile = vi.fn();
+    const secondGetFile = vi.fn().mockResolvedValue({
+      file_id: "test-file-id",
+      file_unique_id: "unique",
+      file_path: "photos/file_0.jpg",
+      file_size: 1024,
+    });
+    let activeBot = {
+      token: "123:first-token",
+      api: { getFile: firstGetFile },
+    } as unknown as ReturnType<TelegramResolverDeps["getBot"]>;
+    const deps = mockDeps({ getBot: () => activeBot });
+    const resolver = createTelegramResolver(deps);
+    activeBot = {
+      token: "123:second-token",
+      api: { getFile: secondGetFile },
+    } as unknown as ReturnType<TelegramResolverDeps["getBot"]>;
+
+    const result = await resolver.resolve(makeAttachment("tg-file://abc123"));
+
+    expect(result.ok).toBe(true);
+    expect(firstGetFile).not.toHaveBeenCalled();
+    expect(secondGetFile).toHaveBeenCalledWith("abc123");
+  });
+
+  it("uses the credential paired with the latest polling generation", async () => {
+    const firstBot = depsBot("123:first-token");
+    const secondBot = depsBot("123:second-token");
+    let activeBot = firstBot;
+    const deps = mockDeps({ getBot: () => activeBot });
+    const resolver = createTelegramResolver(deps);
+    activeBot = secondBot;
+
+    const result = await resolver.resolve(makeAttachment("tg-file://abc123"));
+
+    expect(result.ok).toBe(true);
+    expect(deps.ssrfFetcher.fetch).toHaveBeenCalledWith(
+      "https://api.telegram.org/file/bot123:second-token/photos/file_0.jpg",
     );
   });
 
@@ -108,7 +165,8 @@ describe("telegram-resolver / createTelegramResolver", () => {
 
   it("returns err when file size exceeds maxBytes", async () => {
     const deps = mockDeps({
-      bot: {
+      getBot: () => ({
+        token: "123456:ABC-DEF1234",
         api: {
           getFile: vi.fn().mockResolvedValue({
             file_id: "big-file",
@@ -117,7 +175,7 @@ describe("telegram-resolver / createTelegramResolver", () => {
             file_size: 20 * 1024 * 1024, // 20 MB
           }),
         },
-      } as unknown as TelegramResolverDeps["bot"],
+      }) as unknown as ReturnType<TelegramResolverDeps["getBot"]>,
       maxBytes: 10 * 1024 * 1024, // 10 MB
     });
     const resolver = createTelegramResolver(deps);
@@ -135,11 +193,12 @@ describe("telegram-resolver / createTelegramResolver", () => {
 
   it("returns err when getFile fails", async () => {
     const deps = mockDeps({
-      bot: {
+      getBot: () => ({
+        token: "123456:ABC-DEF1234",
         api: {
           getFile: vi.fn().mockRejectedValue(new Error("Telegram API error")),
         },
-      } as unknown as TelegramResolverDeps["bot"],
+      }) as unknown as ReturnType<TelegramResolverDeps["getBot"]>,
     });
     const resolver = createTelegramResolver(deps);
 
@@ -178,7 +237,7 @@ describe("telegram-resolver / createTelegramResolver", () => {
     // Use a realistic-length bot token (20+ chars after colon) so sanitizeLogString regex matches
     const botToken = "123456789:AABBCCDDEEFFGGHHIIJJkkll";
     const deps = mockDeps({
-      botToken,
+      getBot: () => depsBot(botToken),
       ssrfFetcher: {
         fetch: vi.fn().mockResolvedValue(
           err(new Error(`Failed to fetch https://api.telegram.org/file/bot${botToken}/photos/file.jpg: connection refused`)),
@@ -201,14 +260,14 @@ describe("telegram-resolver / createTelegramResolver", () => {
     // Use a realistic-length bot token (20+ chars after colon) so sanitizeLogString regex matches
     const botToken = "123456789:AABBCCDDEEFFGGHHIIJJkkll";
     const deps = mockDeps({
-      botToken,
-      bot: {
+      getBot: () => ({
+        token: botToken,
         api: {
           getFile: vi.fn().mockRejectedValue(
             new Error(`Request to https://api.telegram.org/bot${botToken}/getFile failed: 401 Unauthorized`),
           ),
         },
-      } as unknown as TelegramResolverDeps["bot"],
+      }) as unknown as ReturnType<TelegramResolverDeps["getBot"]>,
     });
     const resolver = createTelegramResolver(deps);
 
@@ -224,14 +283,15 @@ describe("telegram-resolver / createTelegramResolver", () => {
 
   it("returns err when getFile returns no file_path", async () => {
     const deps = mockDeps({
-      bot: {
+      getBot: () => ({
+        token: "123456:ABC-DEF1234",
         api: {
           getFile: vi.fn().mockResolvedValue({
             file_id: "no-path",
             file_unique_id: "unp",
           }),
         },
-      } as unknown as TelegramResolverDeps["bot"],
+      }) as unknown as ReturnType<TelegramResolverDeps["getBot"]>,
     });
     const resolver = createTelegramResolver(deps);
 

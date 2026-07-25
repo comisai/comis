@@ -110,7 +110,7 @@ export const TOOL_CAPABILITY_MAP = {
   // caps (checkpoint→orch:write, resume→orch:read) rather than a new
   // orch:checkpoint cap — the authoritative gate is NOT the cap (both are floor
   // caps held in standard+) but the daemon-side `orchestrateResumeEnabled` surface
-  // predicate (default-off `autonomy.durability.orchestrateResume`), mirroring how
+  // predicate (`autonomy.durability.orchestrateResume`, default-on after config parsing), mirroring how
   // `write` sits behind `autonomy.write`. Reusing floor caps avoids the 5-consumer
   // AGENT_CAPABILITIES fan-out + capability-scope-disjoint churn a bespoke cap
   // would force, and keeps the durability toggle the single authoritative gate.

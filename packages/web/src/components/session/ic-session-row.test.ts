@@ -6,16 +6,11 @@ import type { SessionListItem } from "../../api/types/index.js";
 // Side-effect import to register custom element
 import "./ic-session-row.js";
 
-/** Create a session with a parseable key.
- *  Session keys do not carry an `agent:<agentId>:` prefix; the agent
- *  identity is sourced from the session row's `agentId` field instead. */
 function makeSession(overrides: Partial<SessionListItem> = {}): SessionListItem {
   return {
-    sessionKey: "myTenant:user123:telegram",
+    conversationRef: "cv-user123-telegram",
     agentId: "default",
-    userId: "user123",
-    channelId: "telegram",
-    kind: "telegram",
+    kind: "dm",
     messageCount: 47,
     totalTokens: 23400,
     createdAt: Date.now() - 7200000,
@@ -43,41 +38,39 @@ afterEach(() => {
 });
 
 describe("IcSessionRow", () => {
-  it("renders parsed session key as display name", async () => {
+  it("renders a bounded conversation reference as display name", async () => {
     const el = await createElement<IcSessionRow>("ic-session-row", {
       session: makeSession(),
     });
     const displayName = el.shadowRoot?.querySelector(".display-name");
-    expect(displayName?.textContent).toBe("user123");
+    expect(displayName?.textContent).toBe("cv-user123-t...");
   });
 
-  it("falls back to truncated key on parse failure", async () => {
+  it("truncates long conversation references", async () => {
     const el = await createElement<IcSessionRow>("ic-session-row", {
       session: makeSession({
-        sessionKey: "some-unparseable-raw-key-string",
+        conversationRef: "some-unparseable-raw-key-string",
       }),
     });
     const displayName = el.shadowRoot?.querySelector(".display-name");
-    // Key is > 15 chars, so it should be truncated to 12 + "..."
     expect(displayName?.textContent).toBe("some-unparse...");
   });
 
-  it("shows short unparseable key without truncation", async () => {
+  it("shows short conversation references without truncation", async () => {
     const el = await createElement<IcSessionRow>("ic-session-row", {
-      session: makeSession({ sessionKey: "short" }),
+      session: makeSession({ conversationRef: "short" }),
     });
     const displayName = el.shadowRoot?.querySelector(".display-name");
     expect(displayName?.textContent).toBe("short");
   });
 
-  it("shows channel tag element inside the IcSessionRow shadow-DOM for the session", async () => {
+  it("shows kind tag element inside the session row", async () => {
     const el = await createElement<IcSessionRow>("ic-session-row", {
       session: makeSession(),
     });
     const tags = el.shadowRoot?.querySelectorAll("ic-tag");
     expect(tags?.length).toBeGreaterThanOrEqual(1);
-    // First tag should be the channel
-    expect(tags?.[0]?.textContent).toContain("telegram");
+    expect(tags?.[0]?.textContent).toContain("dm");
   });
 
   it("shows agent tag when agentId is present", async () => {
@@ -85,7 +78,6 @@ describe("IcSessionRow", () => {
       session: makeSession(),
     });
     const tags = el.shadowRoot?.querySelectorAll("ic-tag");
-    // Should have both channel and agent tags
     expect(tags?.length).toBe(2);
     expect(tags?.[1]?.textContent).toContain("default");
   });
@@ -129,7 +121,7 @@ describe("IcSessionRow", () => {
 
     expect(handler).toHaveBeenCalledOnce();
     const detail = (handler.mock.calls[0][0] as CustomEvent<SessionListItem>).detail;
-    expect(detail.sessionKey).toBe(session.sessionKey);
+    expect(detail.conversationRef).toBe(session.conversationRef);
   });
 
   it("fires composed event that crosses shadow DOM boundary", async () => {

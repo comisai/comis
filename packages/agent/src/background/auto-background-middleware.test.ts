@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { safePath } from "@comis/core";
+import { createConversationRef, safePath } from "@comis/core";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { wrapToolForAutoBackground, type ToolDefinition } from "./auto-background-middleware.js";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
@@ -59,15 +59,47 @@ function toolOk(text: string, details: Record<string, unknown> = {}): AgentToolR
   };
 }
 
-function buildOrigin(overrides: Partial<BackgroundTaskOrigin> = {}): BackgroundTaskOrigin {
-  return {
-    agentId: "default",
-    sessionKey: "default:echo:test:user1",
+function buildOrigin(
+  overrides: Partial<BackgroundTaskOrigin> & { agentId?: string; sessionKey?: string } = {},
+): BackgroundTaskOrigin {
+  const agentId = overrides.agentId ?? "default";
+  const tenantId = overrides.sessionKey?.split(":")[0] ?? "default";
+  const endpoint = {
     channelType: "echo",
-    channelId: "test",
+    channelInstanceId: "test-instance",
+    conversationId: "test",
+    conversationKind: "direct" as const,
+  };
+  const turnScope = {
+    conversation: {
+      tenantId,
+      agentId,
+      partition: {
+        kind: "endpoint-conversation-principal" as const,
+        endpoint,
+        principalId: "user1",
+      },
+    },
+    principal: { principalId: "user1" },
+    endpoint,
+  };
+  const conversationRef = createConversationRef(turnScope.conversation);
+  if (!conversationRef.ok) throw conversationRef.error;
+  return {
+    turnScope,
+    conversationRef: conversationRef.value,
+    deliveryOrigin: {
+      channelType: "echo",
+      channelId: "test",
+      userId: "user1",
+      tenantId,
+    },
     traceId: null,
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
-    ...overrides,
+    ...Object.fromEntries(
+      Object.entries(overrides).filter(([key]) => key !== "agentId" && key !== "sessionKey"),
+    ),
   };
 }
 
@@ -160,6 +192,9 @@ describe("wrapToolForAutoBackground", () => {
     const firstBlock = result.content[0]!;
     expect(firstBlock.type).toBe("text");
     expect((firstBlock as { text: string }).text).toContain("moved to the background");
+    expect((firstBlock as { text: string }).text).toContain('Call background_tasks once with action "read_output"');
+    expect((firstBlock as { text: string }).text).toContain('Do not call "test_tool" again or sleep');
+    expect((firstBlock as { text: string }).text).not.toContain("Use background_tasks");
 
     const details = result.details as {
       status: string;
@@ -174,6 +209,51 @@ describe("wrapToolForAutoBackground", () => {
     const tasks = manager.getAllTasks();
     expect(tasks).toHaveLength(1);
     expect(tasks[0]!.status).toBe("running");
+  });
+
+  it("marks deferred work exactly when background ownership is accepted", async () => {
+    const tool = createMockTool({ resolveAfterMs: 200, result: toolOk("slow-result") });
+    const onPromoted = vi.fn();
+    const wrapped = wrapToolForAutoBackground(
+      tool,
+      manager,
+      config,
+      () => buildOrigin({ agentId: "agent-1" }),
+      onPromoted,
+    );
+
+    expect(onPromoted).not.toHaveBeenCalled();
+    await wrapped.execute("call-accepted", {}, undefined, undefined, undefined);
+
+    expect(onPromoted).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mark deferred work for foreground completion or rejected promotion", async () => {
+    const onForegroundPromoted = vi.fn();
+    const foreground = wrapToolForAutoBackground(
+      createMockTool({ resolveAfterMs: 5 }),
+      manager,
+      config,
+      () => buildOrigin({ agentId: "agent-1" }),
+      onForegroundPromoted,
+    );
+    await foreground.execute("call-foreground", {}, undefined, undefined, undefined);
+    expect(onForegroundPromoted).not.toHaveBeenCalled();
+
+    const rejectingManager = {
+      ...manager,
+      promote: vi.fn().mockReturnValue({ ok: false, error: "limit" }),
+    } as unknown as BackgroundTaskManager;
+    const onRejectedPromoted = vi.fn();
+    const rejected = wrapToolForAutoBackground(
+      createMockTool({ resolveAfterMs: 75 }),
+      rejectingManager,
+      config,
+      () => buildOrigin({ agentId: "agent-1" }),
+      onRejectedPromoted,
+    );
+    await rejected.execute("call-rejected", {}, undefined, undefined, undefined);
+    expect(onRejectedPromoted).not.toHaveBeenCalled();
   });
 
   it("completes the background task when the tool eventually resolves", async () => {
@@ -340,14 +420,17 @@ describe("wrapToolForAutoBackground", () => {
       );
     });
 
-    it("placeholder text contains \"I'll continue when it completes.\" and not \"user will be notified\"", async () => {
+    it("placeholder directs one blocking result read instead of repeating the original tool", async () => {
       const tool = createMockTool({ resolveAfterMs: 200 });
       const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-7" }));
 
       const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);
 
       const text = (result.content[0] as { text: string }).text;
-      expect(text).toContain("I'll continue when it completes.");
+      expect(text).toContain('Call background_tasks once with action "read_output"');
+      expect(text).toContain('Do not call "test_tool" again or sleep');
+      expect(text).toContain("unrelated earlier data");
+      expect(text).not.toContain("Automatic completion re-entry");
       expect(text).not.toContain("user will be notified");
     });
   });

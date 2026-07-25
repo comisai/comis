@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import { parseFormattedSessionKey, type TypedEventBus, type EventMap, systemNowMs, systemNowDate } from "@comis/core";
+import {
+  CanonicalLocaleSchema,
+  type TypedEventBus,
+  type EventMap,
+  systemNowMs,
+  systemNowDate,
+} from "@comis/core";
 import type { Env } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -7,6 +13,7 @@ import { cors } from "hono/cors";
 import type { TokenStore } from "../auth/token-auth.js";
 import type { RpcAdapterDeps } from "../rpc/rpc-adapters.js";
 import { extractBearerToken, checkScope } from "../auth/token-auth.js";
+import { projectActivityPayload } from "./activity-projection.js";
 
 interface RestApiEnv extends Env {
   Variables: { clientScopes: string[]; clientId: string };
@@ -36,7 +43,7 @@ export class ActivityRingBuffer {
     this.entries.push({
       id: this.nextId++,
       event,
-      payload,
+      payload: projectActivityPayload(event, payload),
       timestamp: systemNowMs(),
     });
 
@@ -72,9 +79,11 @@ const ACTIVITY_EVENTS: ReadonlyArray<keyof EventMap> = [
   "skill:loaded",
   "skill:executed",
   "skill:rejected",
-  "scheduler:job_started",
-  "scheduler:job_completed",
-  "scheduler:heartbeat_check",
+  "scheduler:cron_execution_started",
+  "scheduler:cron_execution_terminal",
+  "scheduler:heartbeat_wake_admitted",
+  "scheduler:heartbeat_wake_deferred",
+  "scheduler:heartbeat_wake_terminal",
   "system:error",
 ];
 
@@ -191,7 +200,8 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
     if (c.req.path.endsWith("/health")) {
       return next();
     }
-    // Skip auth for paths handled by SSE endpoint (has its own auth with query param support)
+    // Skip auth for paths handled by the SSE endpoint, which enforces its own
+    // Authorization bearer-header and scope checks.
     if (
       c.req.path.includes("/chat/stream") ||
       c.req.path.endsWith("/events")
@@ -285,9 +295,14 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
 
     const limitParam = c.req.query("limit");
     const limit = limitParam ? Math.min(Math.max(1, parseInt(limitParam, 10) || 10), 100) : 10;
+    const tenantId = c.req.query("tenant") ?? "";
+    const agentId = c.req.query("agent") ?? "";
+    if (!tenantId || !agentId) {
+      return c.json({ error: "Missing required query parameters: tenant and agent" }, 400);
+    }
 
     try {
-      const result = await rpcAdapterDeps.searchMemory({ query, limit });
+      const result = await rpcAdapterDeps.searchMemory({ query, limit, tenantId, agentId });
       return c.json(result);
     } catch (err) {
       deps.logger?.error({ err, hint: "Verify memory database path and search index integrity", errorKind: "internal" as const }, "GET /memory/search error");
@@ -297,8 +312,13 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
 
   // GET /memory/stats - Memory statistics
   api.get("/memory/stats", async (c) => {
+    const tenantId = c.req.query("tenant") ?? "";
+    const agentId = c.req.query("agent") ?? "";
+    if (!tenantId || !agentId) {
+      return c.json({ error: "Missing required query parameters: tenant and agent" }, 400);
+    }
     try {
-      const result = await rpcAdapterDeps.inspectMemory({});
+      const result = await rpcAdapterDeps.inspectMemory({ tenantId, agentId });
       return c.json(result);
     } catch (err) {
       deps.logger?.error({ err, hint: "Verify memory database path and entry existence", errorKind: "internal" as const }, "GET /memory/stats error");
@@ -310,7 +330,12 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
   api.get("/chat/history", async (c) => {
     try {
       const channelId = c.req.query("channelId") ?? undefined;
-      const result = await rpcAdapterDeps.getSessionHistory({ channelId });
+      const peerId = c.req.query("peerId") ?? undefined;
+      const result = await rpcAdapterDeps.getSessionHistory({
+        channelId,
+        peerId,
+        clientId: c.get("clientId"),
+      });
       return c.json(result);
     } catch (err) {
       deps.logger?.error({ err, hint: "Check session history adapter and channel ID validity", errorKind: "internal" as const }, "GET /chat/history error");
@@ -347,15 +372,19 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
 
     const agentId = typeof body.agentId === "string" ? body.agentId : undefined;
     const rawSessionKey = typeof body.sessionKey === "string" ? body.sessionKey : undefined;
+    const localeResult = body.locale === undefined
+      ? undefined
+      : CanonicalLocaleSchema.safeParse(body.locale);
+    if (localeResult !== undefined && !localeResult.success) {
+      return c.json({ error: "Field locale must be a canonical BCP-47 language tag" }, 400);
+    }
+    const locale = localeResult?.data;
 
-    // If the incoming key is a previously-formatted session key (from a prior round-trip),
-    // parse it to extract the original channelId — prevents session key snowball growth.
-    const parsed = rawSessionKey ? parseFormattedSessionKey(rawSessionKey) : undefined;
     const sessionKey = rawSessionKey
       ? {
-          userId: parsed?.userId ?? "web-user",
-          channelId: parsed?.channelId ?? rawSessionKey,
-          peerId: parsed?.peerId ?? "web-user",
+          userId: "web-user",
+          channelId: rawSessionKey,
+          peerId: "web-user",
         }
       : undefined;
 
@@ -366,13 +395,26 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
     const scopes = c.get("clientScopes") as readonly string[] | undefined;
     const clientId = c.get("clientId");
 
-    const cmdResult = await rpcAdapterDeps.handleSlashCommand?.({ message, agentId, scopes });
+    const cmdResult = await rpcAdapterDeps.handleSlashCommand?.({
+      message,
+      agentId,
+      sessionKey,
+      clientId,
+      scopes,
+    });
     if (cmdResult?.handled && cmdResult.response) {
       return c.json({ response: cmdResult.response, tokensUsed: { input: 0, output: 0, total: 0 }, finishReason: "command" });
     }
 
     try {
-      const result = await rpcAdapterDeps.executeAgent({ message, agentId, sessionKey, clientId, scopes });
+      const result = await rpcAdapterDeps.executeAgent({
+        message,
+        ...(locale === undefined ? {} : { locale }),
+        agentId,
+        sessionKey,
+        clientId,
+        scopes,
+      });
       return c.json(result);
     } catch (err) {
       deps.logger?.error({ err, hint: "Check agent executor logs for details or verify LLM provider connectivity", errorKind: "internal" as const }, "POST /chat error");

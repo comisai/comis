@@ -7,8 +7,8 @@
  * loop_detected).
  * Fail-closed: always returns a non-empty honest line even when partial text is empty.
  *
- * Each builder takes an optional resolved `language` tag
- * (en|he|ar|ru) and DELEGATES the actual string selection to
+ * Each builder takes an optional resolved BCP-47 locale tag and delegates the
+ * actual string selection to
  * `degraded-reply-i18n.ts` — the single source of the phrase strings. With no
  * `language` (or "en") the canonical English reply is returned byte-identical:
  * the i18n `en` row IS today's literals, so there is no duplicate and no
@@ -23,6 +23,7 @@ import {
   selectOutputStarvedAnnotation,
   selectContextExhaustedReply,
   selectLoopDetectedReply,
+  type LocaleCatalog,
 } from "./degraded-reply-i18n.js";
 
 // CAP_KNOB_BY_CLASS lives in degraded-reply-i18n.ts as an internal diagnostic
@@ -40,18 +41,22 @@ export interface ContextExhaustedReplyOpts {
   /** Why the fit failed — branches the advice so it names the remedy
    *  that actually applies. Omitted/aggregate → the default reply. */
   cause?: ContextExhaustionCause;
-  /** The resolved reply language (en|he|ar|ru). Omitted/"en"
-   *  → the canonical English reply byte-identical. */
+  /** The resolved response locale. Missing packs fall back to English. */
   language?: string;
+  /** Application-injected deterministic locale strings. */
+  localeCatalog?: LocaleCatalog;
 }
 
 /**
  * Returns the annotation string to APPEND for an output_starved turn.
  * Starts with "\n\n⚠️ " so appending to partial text is visually separated.
- * Localized when `language` is a he/ar/ru tag; en byte-identical otherwise.
+ * Localized when the injected catalog contains a matching locale pack.
  */
-export function buildOutputStarvedAnnotation(language?: string): string {
-  return selectOutputStarvedAnnotation(language ?? "en");
+export function buildOutputStarvedAnnotation(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectOutputStarvedAnnotation(language, localeCatalog);
 }
 
 /**
@@ -62,11 +67,11 @@ export function buildOutputStarvedAnnotation(language?: string): string {
  * returned byte-identical.
  */
 export function buildContextExhaustedReply(opts?: ContextExhaustedReplyOpts): string {
-  return selectContextExhaustedReply(opts?.language ?? "en", {
+  return selectContextExhaustedReply(opts?.language, {
     capabilityClass: opts?.capabilityClass,
     traceId: opts?.traceId,
     cause: opts?.cause,
-  });
+  }, opts?.localeCatalog);
 }
 
 /**
@@ -79,7 +84,9 @@ export function buildDegradedReply(
   endReason: string,
   opts?: ContextExhaustedReplyOpts,
 ): string | undefined {
-  if (endReason === "output_starved") return buildOutputStarvedAnnotation(opts?.language);
+  if (endReason === "output_starved") {
+    return buildOutputStarvedAnnotation(opts?.language, opts?.localeCatalog);
+  }
   if (endReason === "context_exhausted") return buildContextExhaustedReply(opts);
   if (endReason === "loop_detected") return buildLoopDetectedReply(opts);
   return undefined;
@@ -93,7 +100,7 @@ export function buildDegradedReply(
  * text (a pure tool-loop). PURE: same opts → same string.
  */
 export function buildLoopDetectedReply(opts?: ContextExhaustedReplyOpts): string {
-  return selectLoopDetectedReply(opts?.language ?? "en", {
+  return selectLoopDetectedReply(opts?.language, {
     traceId: opts?.traceId,
-  });
+  }, opts?.localeCatalog);
 }

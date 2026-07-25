@@ -316,6 +316,7 @@ export {
   runJailedScript,
   scrubSecretEnv,
   createResultRefStore,
+  safeResultRunId,
   // The durable checkpoint TTL (RESUME-05) — the daemon boot wiring threads it as
   // MaterializeContext.ttlMs for the checkpoint materialize bridge.
   CHECKPOINT_TTL_MS,
@@ -338,6 +339,8 @@ export type {
   OrchestrateResultStore,
   // The durable-run store port the daemon threads to make the runner resumable.
   OrchestrateDurableRuns,
+  ResumeAuthority,
+  ResumePrincipal,
   // The deterministic-replay re-spawn seam types (the daemon assembles the closure).
   OrchestrateReplayRespawnDeps,
   OrchestrateReplayRespawnFn,

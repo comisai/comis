@@ -7,17 +7,14 @@
  * session row component and session list views to display human-readable session labels.
  *
  * Session key format:
- *   {tenantId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]
- *
- * The legacy `agent:<agentId>:` prefix is no longer recognized
- * here — both the daemon parser and emitter dropped it. This parser
- * mirrors the daemon.
+ *   {tenantId}:agent:{agentId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]
  */
 
 /** Parsed fields from a formatted session key string. */
 import { systemNowMs } from "@comis/core";
 export interface ParsedSessionKey {
   tenantId: string;
+  agentId: string;
   userId: string;
   channelId: string;
   peerId?: string;
@@ -45,24 +42,51 @@ const IDLE_THRESHOLD_MS = 60 * 60 * 1000;
 export function parseSessionKeyString(formatted: string): ParsedSessionKey | undefined {
   if (!formatted || typeof formatted !== "string") return undefined;
   const parts = formatted.split(":");
+  if (parts.length < 5 || parts.at(1) !== "agent") return undefined;
+  const tenantId = parts.at(0);
+  const agentId = parts.at(2);
+  const userId = parts.at(3);
+  if (!tenantId || !agentId || !userId) return undefined;
 
-  if (parts.length < 3) return undefined;
-
-  const key: ParsedSessionKey = {
-    tenantId: parts[0]!,
-    userId: parts[1]!,
-    channelId: parts[2]!,
+  const suffixOrder = (part: string): 0 | 1 | 2 | undefined => {
+    if (part === "peer") return 0;
+    if (part === "guild") return 1;
+    if (part === "thread") return 2;
+    return undefined;
   };
 
-  // Parse optional peer:, guild:, thread: segments
-  for (let i = 3; i < parts.length; i++) {
-    if (parts[i] === "peer" && i + 1 < parts.length) {
-      key.peerId = parts[++i];
-    } else if (parts[i] === "guild" && i + 1 < parts.length) {
-      key.guildId = parts[++i];
-    } else if (parts[i] === "thread" && i + 1 < parts.length) {
-      key.threadId = parts[++i];
+  let suffixStart = parts.length;
+  for (let index = 4; index < parts.length; index += 1) {
+    if (suffixOrder(parts.at(index)!) !== undefined) {
+      suffixStart = index;
+      break;
     }
+  }
+  const channelId = parts.slice(4, suffixStart).join(":");
+  if (!channelId) return undefined;
+
+  const key: ParsedSessionKey = { tenantId, agentId, userId, channelId };
+  let cursor = suffixStart;
+  let previousOrder = -1;
+  while (cursor < parts.length) {
+    const marker = parts.at(cursor)!;
+    const order = suffixOrder(marker);
+    if (order === undefined || order <= previousOrder) return undefined;
+    let nextMarker = cursor + 1;
+    while (
+      nextMarker < parts.length
+      && suffixOrder(parts.at(nextMarker)!) === undefined
+    ) {
+      nextMarker += 1;
+    }
+    if (nextMarker === cursor + 1) return undefined;
+    const value = parts.slice(cursor + 1, nextMarker).join(":");
+    if (!value) return undefined;
+    if (marker === "peer") key.peerId = value;
+    else if (marker === "guild") key.guildId = value;
+    else key.threadId = value;
+    previousOrder = order;
+    cursor = nextMarker;
   }
 
   return key;

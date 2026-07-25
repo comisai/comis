@@ -27,6 +27,10 @@ export { TRAILING_INSTRUCTION } from "../spawn/narrative-caster.js";
 /** NormalizedMessageSchema.text caps at 32768 chars. Reserve headroom for header + trailing instruction. */
 const MAX_ANNOUNCEMENT_CHARS = 32768;
 const TRUNCATION_MARKER = "\n…[truncated]";
+const COMPLETION_FOLLOWUP_INSTRUCTION =
+  "Before answering, inspect the result for continuation metadata such as next-page cursors or incomplete markers. " +
+  "When present, use the available tools to retrieve every remaining result page. Preserve large complete results " +
+  "with the available file tools before summarizing.";
 
 /** Recovery announcement body for tasks failed via recoverOnStartup. */
 const RESTART_RECOVERY_BODY =
@@ -69,6 +73,10 @@ export function formatCompletionAnnouncement(task: BackgroundTask): string {
   sections.push("");
   sections.push(body);
   sections.push("");
+  if (!isFailure) {
+    sections.push(COMPLETION_FOLLOWUP_INSTRUCTION);
+    sections.push("");
+  }
   sections.push(TRAILING_INSTRUCTION);
   let assembled = sections.join("\n");
 
@@ -76,7 +84,8 @@ export function formatCompletionAnnouncement(task: BackgroundTask): string {
   // ONLY if needed; header and trailing instruction are byte-identical guarantees.
   if (assembled.length > MAX_ANNOUNCEMENT_CHARS) {
     const headerSection = `${header}\n\n`;
-    const tailSection = `\n\n${TRAILING_INSTRUCTION}`;
+    const followupSection = isFailure ? "" : `${COMPLETION_FOLLOWUP_INSTRUCTION}\n\n`;
+    const tailSection = `\n\n${followupSection}${TRAILING_INSTRUCTION}`;
     const reservedChars = headerSection.length + tailSection.length + TRUNCATION_MARKER.length;
     const allowedBodyChars = MAX_ANNOUNCEMENT_CHARS - reservedChars;
     const truncatedBody = body.slice(0, Math.max(0, allowedBodyChars)) + TRUNCATION_MARKER;

@@ -9,7 +9,7 @@
  */
 
 import { fromPromise } from "@comis/shared";
-import { systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
+import { systemNowMs, systemSetTimeout, systemClearTimeout, toSafeErrorLogString } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -150,7 +150,7 @@ export async function preWarmGraphCache(
   if (!callResult.ok) {
     const errorMsg = callResult.error instanceof Error ? callResult.error.message : String(callResult.error);
     deps.logger?.warn(
-      { provider: deps.provider, modelId: deps.modelId, err: callResult.error, hint: "Pre-warm failed; graph proceeds with event-driven stagger", errorKind: "network" as const },
+      { provider: deps.provider, modelId: deps.modelId, err: toSafeErrorLogString(callResult.error), hint: "Pre-warm failed; graph proceeds with event-driven stagger", errorKind: "network" as const },
       `Pre-warm API call failed: ${errorMsg}`,
     );
     return { success: false, cacheWriteTokens: 0, tokensUsed: 0, cost: 0, error: errorMsg };

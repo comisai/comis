@@ -39,6 +39,8 @@ export interface RpcDispatchToolConfig<T extends TSchema> {
   /** Pre-execute hook for action gates or validation (optional).
    *  Return an AgentToolResult to short-circuit, or undefined to continue. */
   preExecute?: (params: Record<string, unknown>) => AgentToolResult<unknown> | undefined;
+  /** Thread the framework tool-call id as the logical outward operation identity. */
+  useToolCallIdAsOperationId?: boolean;
 }
 
 /**
@@ -62,7 +64,7 @@ export function createRpcDispatchTool<T extends TSchema>(
     parameters: config.parameters,
 
     async execute(
-      _toolCallId: string,
+      toolCallId: string,
       params: unknown,
     ): Promise<AgentToolResult<unknown>> {
       try {
@@ -76,7 +78,9 @@ export function createRpcDispatchTool<T extends TSchema>(
 
         // Transform params if needed, otherwise pass through
         const rpcParams = config.transformParams ? config.transformParams(p) : p;
-        const result = await rpcCall(config.rpcMethod, rpcParams);
+        const result = config.useToolCallIdAsOperationId
+          ? await rpcCall(config.rpcMethod, rpcParams, { outwardOperationId: toolCallId })
+          : await rpcCall(config.rpcMethod, rpcParams);
         return jsonResult(result);
       } catch (err) {
         if (err instanceof Error && err.message.startsWith("[")) throw err;
@@ -110,6 +114,7 @@ export interface MultiActionDispatchConfig<T extends TSchema> {
     action: string,
     params: Record<string, unknown>,
     rpcCall: RpcCall,
+    toolCallId: string,
   ) => Promise<unknown>;
   /**
    * Optional per-action callback to AUGMENT the `details` field of the returned
@@ -152,7 +157,7 @@ export function createMultiActionDispatchTool<T extends TSchema>(
     parameters: config.parameters,
 
     async execute(
-      _toolCallId: string,
+      toolCallId: string,
       params: unknown,
     ): Promise<AgentToolResult<unknown>> {
       try {
@@ -162,7 +167,7 @@ export function createMultiActionDispatchTool<T extends TSchema>(
           "action",
           config.validActions as unknown as readonly string[],
         );
-        const result = await config.actionHandler(action, p, rpcCall);
+        const result = await config.actionHandler(action, p, rpcCall, toolCallId);
         const wrapped = jsonResult(result);
         // Opt-in details augmentation. Caller registers a per-action
         // augmenter; the factory merges its output into details.

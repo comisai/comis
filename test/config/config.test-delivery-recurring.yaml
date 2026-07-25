@@ -33,6 +33,12 @@ agents:
     # default would reject ~70. Raise the ceiling well above the burst.
     notification:
       maxPerHour: 100000
+      # Exercises the primaryChannel-fallback resolution path: a notification.send
+      # with no channel params resolves to this channel and delivers via the same
+      # echo adapter the explicit-channel tests register.
+      primaryChannel:
+        channelType: "echo"
+        channelId: "delivery-recurring-test"
     rag:
       enabled: false
     scheduler:

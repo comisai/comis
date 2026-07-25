@@ -9,7 +9,7 @@
  * The second top-level `describe` block ("DeliveryService — full pipeline
  * behavior") covers the complete outbound pipeline (chunking, formatting,
  * queueing, retries, events). Each test calls
- * `service.deliverToChannel(adapter, ..., options)` where
+ * `deliver(service, adapter, ..., options)` where
  * `service: DeliveryService` is constructed via `makeDeliveryService(...)`
  * from `test/support/factories.ts`.
  *
@@ -28,18 +28,30 @@ import {
 import * as secretEgressGuard from "../security/secret-egress-guard.js";
 import { createNoOpDeliveryQueue } from "./no-op-delivery-queue.js";
 import type { HookRunner } from "../hooks/hook-runner.js";
-import { runWithContext } from "../context/context.js";
+import { runWithContext, tryGetContext } from "../context/context.js";
 import { ok, err } from "@comis/shared";
 import type { Result } from "@comis/shared";
 import type {
   DeliveryAdapter,
   DeliverToChannelOptions,
 } from "./types.js";
-import type { RetryEngine } from "./retry-engine.js";
+import {
+  AMBIGUOUS_SEND_OUTCOME_ERROR,
+  EXPLICIT_SEND_REJECTION_ERROR,
+  RETRY_EXHAUSTED_SEND_ERROR,
+  type RetryEngine,
+} from "./retry-engine.js";
 import type { DeliveryQueuePort } from "../ports/delivery-queue.js";
+import type { DeliveryAuthority } from "../ports/delivery-queue.js";
+import type { ChannelEndpoint, ConversationRef } from "../domain/conversation-scope.js";
 import type { ComisLogger } from "../logging/log-fields.js";
-import { makeDeliveryService } from "../../../../test/support/factories.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
+import { TypedEventBus } from "../event-bus/bus.js";
+
+const TEST_CLOCK = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
 
 /**
  * Build a no-op HookRunner with vi.fn() spies on every method. The fields
@@ -77,7 +89,7 @@ function makeAdapter(
     .mockResolvedValue(ok("msg-1")),
   channelType = "echo",
 ): DeliveryAdapter {
-  return { sendMessage, channelType };
+  return { channelId: "test-instance", sendMessage, channelType };
 }
 
 function makeDeps(
@@ -87,8 +99,15 @@ function makeDeps(
     hookRunner: makeNoopHookRunner(),
     deliveryQueue: createNoOpDeliveryQueue(),
     logger: makeLogger(),
+    clock: TEST_CLOCK,
     ...overrides,
   };
+}
+
+function makeDeliveryService(
+  overrides: Partial<DeliveryServiceDeps> = {},
+): DeliveryService {
+  return createDeliveryService(makeDeps(overrides));
 }
 
 function makeLogger(): ComisLogger {
@@ -105,6 +124,42 @@ function makeLogger(): ComisLogger {
   } as unknown as ComisLogger;
   vi.mocked(logger.child).mockReturnValue(logger);
   return logger;
+}
+
+const TEST_DELIVERY_AUTHORITY = {
+  tenantId: "tenant-test",
+  agentId: "agent-test",
+  conversationRef: `cv_${"A".repeat(43)}` as ConversationRef,
+} satisfies DeliveryAuthority;
+
+function deliver(
+  service: DeliveryService,
+  adapter: DeliveryAdapter,
+  channelId: string,
+  text: string,
+  options: Partial<DeliverToChannelOptions> = {},
+) {
+  const context = tryGetContext();
+  const authority = context?.agentId === undefined
+    ? TEST_DELIVERY_AUTHORITY
+    : {
+        tenantId: context.tenantId,
+        agentId: context.agentId,
+        conversationRef: TEST_DELIVERY_AUTHORITY.conversationRef,
+      };
+  const destinationEndpoint: ChannelEndpoint = {
+    channelType: adapter.channelType,
+    channelInstanceId: adapter.channelId,
+    conversationId: channelId,
+    ...(options.threadId === undefined ? {} : { threadId: options.threadId }),
+    conversationKind: "direct",
+  };
+  return service.deliverToChannel(adapter, channelId, text, {
+    completionMode: "settled",
+    authority,
+    destinationEndpoint,
+    ...options,
+  });
 }
 
 describe("createDeliveryService — factory contract (smoke-level)", () => {
@@ -132,23 +187,16 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     expect(() => createDeliveryService(makeDeps())).not.toThrow();
   });
 
-  it("empty text short-circuits with ok({ totalChunks: 0 }) and does NOT invoke runBeforeDelivery", async () => {
+  it("empty text returns a not-attempted error and does NOT invoke runBeforeDelivery", async () => {
     const runBeforeDelivery = vi.fn().mockResolvedValue({});
     const hookRunner = makeNoopHookRunner({ runBeforeDelivery });
     const service = createDeliveryService(makeDeps({ hookRunner }));
     const adapter = makeAdapter();
-    const result = await service.deliverToChannel(adapter, "chat-1", "");
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value).toEqual({
-        ok: true,
-        totalChunks: 0,
-        deliveredChunks: 0,
-        failedChunks: 0,
-        chunks: [],
-        totalChars: 0,
-      });
-    }
+    const result = await deliver(service, adapter, "chat-1", "");
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "delivery_not_attempted", reason: "empty_text" },
+    });
     // The empty-text branch runs BEFORE the hook block, so before_delivery
     // hooks never observe empty deliveries.
     expect(runBeforeDelivery).not.toHaveBeenCalled();
@@ -159,7 +207,7 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     const hookRunner = makeNoopHookRunner({ runBeforeDelivery });
     const service = createDeliveryService(makeDeps({ hookRunner }));
     const adapter = makeAdapter();
-    await service.deliverToChannel(adapter, "chat-1", "hi");
+    await deliver(service, adapter, "chat-1", "hi");
     expect(runBeforeDelivery).toHaveBeenCalledTimes(1);
   });
 
@@ -174,14 +222,13 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     });
     const adapter = makeAdapter();
     const service = createDeliveryService(makeDeps({ hookRunner }));
-    const result = await service.deliverToChannel(adapter, "chat-1", "hi");
+    const result = await deliver(service, adapter, "chat-1", "hi");
     expect(adapter.sendMessage).not.toHaveBeenCalled();
     expect(runAfterDelivery).not.toHaveBeenCalled();
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.totalChunks).toBe(0);
-      expect(result.value.ok).toBe(false);
-    }
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "delivery_not_attempted", reason: "hook_cancelled" },
+    });
   });
 
   it("runAfterDelivery rejection does NOT corrupt the request (suppressError wrap preserved)", async () => {
@@ -191,7 +238,7 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     const hookRunner = makeNoopHookRunner({ runAfterDelivery });
     const service = createDeliveryService(makeDeps({ hookRunner }));
     const adapter = makeAdapter();
-    const result = await service.deliverToChannel(adapter, "chat-1", "hi");
+    const result = await deliver(service, adapter, "chat-1", "hi");
     // suppressError fires-and-forgets the rejection — give the microtask
     // queue a tick so the .catch() runs before the test ends (clean shutdown
     // / no unhandled rejection).
@@ -220,7 +267,7 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
         trustLevel: "admin",
       },
       async () => {
-        await service.deliverToChannel(adapter, "chat-1", "hi");
+        await deliver(service, adapter, "chat-1", "hi");
       },
     );
 
@@ -243,8 +290,8 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     const deps = makeDeps();
     const service = createDeliveryService(deps);
     const adapter = makeAdapter();
-    await service.deliverToChannel(adapter, "chat-1", "one");
-    await service.deliverToChannel(adapter, "chat-2", "two");
+    await deliver(service, adapter, "chat-1", "one");
+    await deliver(service, adapter, "chat-2", "two");
     expect(deps.hookRunner.runBeforeDelivery).toHaveBeenCalledTimes(2);
   });
 });
@@ -253,7 +300,7 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
 // Full pipeline behaviour
 // =============================================================================
 //
-// Each test calls `await service.deliverToChannel(adapter, channelId, text,
+// Each test calls `await deliver(service, adapter, channelId, text,
 // options)` where `service` is constructed via `makeDeliveryService(...)` in a
 // describe-level `beforeEach` (DRY) or inline for special-case factory-deps
 // tests. Construction-time deps (`{deliveryQueue, eventBus, retryEngine, ...}`)
@@ -268,6 +315,7 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
 
 function createMockAdapter(channelType = "telegram"): DeliveryAdapter & { sendMessage: ReturnType<typeof vi.fn> } {
   return {
+    channelId: "test-instance",
     channelType,
     sendMessage: vi.fn().mockResolvedValue(ok("msg-id-123")),
   };
@@ -300,6 +348,7 @@ function makeLongMarkdown(charTarget: number): string {
 function createMockDeliveryQueue(): DeliveryQueuePort & {
   enqueue: ReturnType<typeof vi.fn>;
   enqueueInFlight: ReturnType<typeof vi.fn>;
+  claim: ReturnType<typeof vi.fn>;
   ack: ReturnType<typeof vi.fn>;
   nack: ReturnType<typeof vi.fn>;
   fail: ReturnType<typeof vi.fn>;
@@ -312,6 +361,7 @@ function createMockDeliveryQueue(): DeliveryQueuePort & {
   return {
     enqueue: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
     enqueueInFlight: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
+    claim: vi.fn().mockResolvedValue(ok(true)),
     ack: vi.fn().mockResolvedValue(ok(undefined)),
     nack: vi.fn().mockResolvedValue(ok(undefined)),
     fail: vi.fn().mockResolvedValue(ok(undefined)),
@@ -326,6 +376,142 @@ function createMockDeliveryQueue(): DeliveryQueuePort & {
 }
 
 describe("DeliveryService — full pipeline behavior", () => {
+  describe("observational subscriber isolation", () => {
+    it("preserves a successful receipt and reaches later delivery observers", async () => {
+      const eventBus = new TypedEventBus();
+      const logger = makeLogger();
+      const queue = createMockDeliveryQueue();
+      const laterAckObserver = vi.fn();
+      const laterChunkObserver = vi.fn();
+      const laterCompleteObserver = vi.fn();
+      const observedEvents = [
+        ["delivery:acked", laterAckObserver],
+        ["delivery:chunk_sent", laterChunkObserver],
+        ["delivery:complete", laterCompleteObserver],
+      ] as const;
+      for (const [event, laterObserver] of observedEvents) {
+        eventBus.on(event, () => {
+          throw new Error(`${event} subscriber failed`);
+        });
+        eventBus.on(event, laterObserver);
+      }
+      const service = createDeliveryService(makeDeps({
+        deliveryQueue: queue,
+        eventBus,
+        logger,
+      }));
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(ok("platform-message-1"));
+
+      const result = await deliver(service, adapter, "chat-1", "Hello");
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toMatchObject({
+          platform: { status: "accepted", deliveredChunks: 1 },
+          chunks: [{ status: "accepted", messageId: "platform-message-1" }],
+        });
+      }
+      expect(adapter.sendMessage).toHaveBeenCalledOnce();
+      expect(laterAckObserver).toHaveBeenCalledOnce();
+      expect(laterChunkObserver).toHaveBeenCalledOnce();
+      expect(laterCompleteObserver).toHaveBeenCalledOnce();
+      expect(logger.warn).toHaveBeenCalledTimes(3);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventName: "delivery:acked",
+          subscriberFailurePhase: "sync",
+          subscriberFailureCount: 1,
+          firstListenerIndex: 0,
+          errorKind: "internal",
+          hint: expect.any(String),
+        }),
+        expect.any(String),
+      );
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(
+        "delivery:acked subscriber failed",
+      );
+    });
+
+    it("logs a rejected async delivery subscriber without changing the receipt", async () => {
+      const eventBus = new TypedEventBus();
+      const logger = makeLogger();
+      const laterObserver = vi.fn();
+      eventBus.on("delivery:complete", async () => {
+        await Promise.resolve();
+        throw new Error("async completion observer failed");
+      });
+      eventBus.on("delivery:complete", laterObserver);
+      const service = createDeliveryService(makeDeps({ eventBus, logger }));
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(ok("platform-message-async"));
+
+      const result = await deliver(service, adapter, "chat-1", "Hello");
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(result.ok).toBe(true);
+      expect(laterObserver).toHaveBeenCalledOnce();
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventName: "delivery:complete",
+          subscriberFailurePhase: "async",
+          subscriberFailureCount: 1,
+          firstListenerIndex: 0,
+          errorKind: "internal",
+          hint: expect.any(String),
+        }),
+        "Observational event subscriber failed",
+      );
+    });
+
+    it("contains outbound trajectory-binding failure after a successful send", async () => {
+      const credential = `xoxb-${"b".repeat(32)}`;
+      const eventBus = new TypedEventBus();
+      const logger = makeLogger();
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(ok("platform-message-2"));
+      const recordOutboundMessage = vi.fn(() => {
+        throw new Error(`trajectory binding failed ${credential}`);
+      });
+      const replyBoundObserver = vi.fn();
+      eventBus.on("delivery:reply_bound", replyBoundObserver);
+      const service = createDeliveryService(makeDeps({
+        deliveryQueue: createMockDeliveryQueue(),
+        eventBus,
+        logger,
+        recordOutboundMessage,
+      }));
+
+      const result = await runWithContext(
+        {
+          traceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          tenantId: "tenant-1",
+          userId: "user-1",
+          agentId: "agent-1",
+          startedAt: 1_000,
+        },
+        () => deliver(service, adapter, "chat-1", "Hello", { origin: "agent" }),
+      );
+
+      expect(result.ok).toBe(true);
+      expect(adapter.sendMessage).toHaveBeenCalledOnce();
+      expect(recordOutboundMessage).toHaveBeenCalledOnce();
+      expect(replyBoundObserver).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "delivery-reply-bind",
+          errorKind: "internal",
+          hint: expect.any(String),
+        }),
+        expect.any(String),
+      );
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(credential);
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Empty text
   // -------------------------------------------------------------------------
@@ -336,19 +522,14 @@ describe("DeliveryService — full pipeline behavior", () => {
       service = makeDeliveryService();
     });
 
-    it("handles empty text (returns ok with 0 chunks)", async () => {
+    it("returns not-attempted for empty text", async () => {
       const adapter = createMockAdapter();
-      const result = await service.deliverToChannel(adapter, "chat-1", "");
+      const result = await deliver(service, adapter, "chat-1", "");
 
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value.ok).toBe(true);
-        expect(result.value.totalChunks).toBe(0);
-        expect(result.value.deliveredChunks).toBe(0);
-        expect(result.value.failedChunks).toBe(0);
-        expect(result.value.chunks).toEqual([]);
-        expect(result.value.totalChars).toBe(0);
-      }
+      expect(result).toMatchObject({
+        ok: false,
+        error: { kind: "delivery_not_attempted", reason: "empty_text" },
+      });
       expect(adapter.sendMessage).not.toHaveBeenCalled();
     });
   });
@@ -365,21 +546,19 @@ describe("DeliveryService — full pipeline behavior", () => {
 
     it("delivers short text in a single chunk (telegram)", async () => {
       const adapter = createMockAdapter("telegram");
-      const result = await service.deliverToChannel(adapter, "chat-1", "Hello **world**");
+      const result = await deliver(service, adapter, "chat-1", "Hello **world**");
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.totalChunks).toBe(1);
-        expect(result.value.deliveredChunks).toBe(1);
-        expect(result.value.failedChunks).toBe(0);
-        expect(result.value.ok).toBe(true);
+        expect(result.value.chunks).toHaveLength(1);
+        expect(result.value.platform).toMatchObject({ status: "accepted", deliveredChunks: 1 });
       }
       expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
     });
 
     it("converts markdown to HTML for telegram before sending", async () => {
       const adapter = createMockAdapter("telegram");
-      await service.deliverToChannel(adapter, "chat-1", "**bold text**");
+      await deliver(service, adapter, "chat-1", "**bold text**");
 
       const sentText = adapter.sendMessage.mock.calls[0][1] as string;
       // formatForChannel converts **bold** to <b>bold</b> for telegram
@@ -389,7 +568,7 @@ describe("DeliveryService — full pipeline behavior", () => {
 
     it("passes markdown through unchanged for discord", async () => {
       const adapter = createMockAdapter("discord");
-      await service.deliverToChannel(adapter, "chat-1", "**bold text**");
+      await deliver(service, adapter, "chat-1", "**bold text**");
 
       const sentText = adapter.sendMessage.mock.calls[0][1] as string;
       expect(sentText).toContain("**bold text**");
@@ -397,7 +576,7 @@ describe("DeliveryService — full pipeline behavior", () => {
 
     it("renders mrkdwn for slack via IR pipeline (not passthrough)", async () => {
       const adapter = createMockAdapter("slack");
-      await service.deliverToChannel(adapter, "chat-1", "**bold text**");
+      await deliver(service, adapter, "chat-1", "**bold text**");
 
       const sentText = adapter.sendMessage.mock.calls[0][1] as string;
       // Slack goes through formatForChannel -> IR renderer -> mrkdwn
@@ -417,11 +596,11 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createMockAdapter("telegram");
       const longText = makeLongMarkdown(10000);
 
-      const result = await service.deliverToChannel(adapter, "chat-1", longText);
+      const result = await deliver(service, adapter, "chat-1", longText);
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.totalChunks).toBeGreaterThan(1);
+        expect(result.value.chunks.length).toBeGreaterThan(1);
         expect(adapter.sendMessage.mock.calls.length).toBeGreaterThan(1);
       }
     });
@@ -433,11 +612,11 @@ describe("DeliveryService — full pipeline behavior", () => {
       // Use short limit to force chunking on moderate text
       const text = makeLongMarkdown(500);
 
-      const result = await service.deliverToChannel(adapter, "chat-1", text);
+      const result = await deliver(service, adapter, "chat-1", text);
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.totalChunks).toBeGreaterThan(1);
+        expect(result.value.chunks.length).toBeGreaterThan(1);
       }
     });
 
@@ -446,11 +625,11 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createMockAdapter("gateway");
       const longText = makeLongMarkdown(10000);
 
-      const result = await service.deliverToChannel(adapter, "chat-1", longText);
+      const result = await deliver(service, adapter, "chat-1", longText);
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.totalChunks).toBe(1);
+        expect(result.value.chunks).toHaveLength(1);
         expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
       }
     });
@@ -471,7 +650,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createMockAdapter("discord");
       const text = makeLongMarkdown(500);
 
-      await service.deliverToChannel(adapter, "chat-1", text, { replyTo: "msg-99" });
+      await deliver(service, adapter, "chat-1", text, { replyTo: "msg-99" });
 
       const calls = adapter.sendMessage.mock.calls;
       expect(calls.length).toBeGreaterThan(1);
@@ -487,7 +666,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createMockAdapter("discord");
       const text = makeLongMarkdown(500);
 
-      await service.deliverToChannel(adapter, "chat-1", text, { threadId: "thread-42" });
+      await deliver(service, adapter, "chat-1", text, { threadId: "thread-42" });
 
       const calls = adapter.sendMessage.mock.calls;
       expect(calls.length).toBeGreaterThan(1);
@@ -500,7 +679,8 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createMockAdapter("discord");
       const text = makeLongMarkdown(500);
 
-      await service.deliverToChannel(
+      await deliver(
+        service,
         adapter,
         "chat-1",
         text,
@@ -525,7 +705,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const retryEngine = createMockRetryEngine();
       const service = makeDeliveryService({ retryEngine });
 
-      await service.deliverToChannel(adapter, "chat-1", "Hello");
+      await deliver(service, adapter, "chat-1", "Hello");
 
       expect(retryEngine.sendWithRetry).toHaveBeenCalledTimes(1);
       expect(adapter.sendMessage).not.toHaveBeenCalled();
@@ -535,7 +715,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createMockAdapter("telegram");
       const service = makeDeliveryService();
 
-      await service.deliverToChannel(adapter, "chat-1", "Hello");
+      await deliver(service, adapter, "chat-1", "Hello");
 
       expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
     });
@@ -546,19 +726,21 @@ describe("DeliveryService — full pipeline behavior", () => {
   // -------------------------------------------------------------------------
 
   describe("failure handling", () => {
-    it("returns ok:false in DeliveryResult when send fails without retryEngine", async () => {
+    it("returns an unknown platform outcome when an unclassified send fails", async () => {
       const adapter = createMockAdapter("telegram");
       adapter.sendMessage.mockResolvedValue(err(new Error("Send failed")));
       const service = makeDeliveryService();
 
-      const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+      const result = await deliver(service, adapter, "chat-1", "Hello");
 
       expect(result.ok).toBe(true); // Result itself is ok (no exception)
       if (result.ok) {
-        expect(result.value.ok).toBe(false); // But delivery failed
-        expect(result.value.failedChunks).toBe(1);
-        expect(result.value.deliveredChunks).toBe(0);
-        expect(result.value.chunks[0].ok).toBe(false);
+        expect(result.value.platform).toMatchObject({
+          status: "unknown",
+          failedChunks: 1,
+          deliveredChunks: 0,
+        });
+        expect(result.value.chunks[0]?.status).toBe("unknown");
         expect(result.value.chunks[0].error).toBeInstanceOf(Error);
       }
     });
@@ -569,20 +751,21 @@ describe("DeliveryService — full pipeline behavior", () => {
       adapter.sendMessage.mockImplementation(async (): Promise<Result<string, Error>> => {
         callCount++;
         if (callCount === 1) return ok("msg-1");
-        return err(new Error("Send failed on chunk 2"));
+        return err(new Error("400 Bad Request: chunk 2 rejected"));
       });
       const service = makeDeliveryService({ maxCharsOverride: 150 });
 
       const text = makeLongMarkdown(500);
-      const result = await service.deliverToChannel(adapter, "chat-1", text);
+      const result = await deliver(service, adapter, "chat-1", text);
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.ok).toBe(false); // Overall delivery failed
-        expect(result.value.deliveredChunks).toBeGreaterThanOrEqual(1);
-        expect(result.value.failedChunks).toBeGreaterThanOrEqual(1);
+        expect(result.value.platform.status).toBe("partial");
+        expect(result.value.platform.deliveredChunks).toBeGreaterThanOrEqual(1);
+        if (result.value.platform.status !== "partial") return;
+        expect(result.value.platform.failedChunks).toBeGreaterThanOrEqual(1);
         // all-or-abort (default): aborted after first failure, but at least 2 chunks processed
-        expect(result.value.totalChunks).toBeGreaterThan(1);
+        expect(result.value.chunks.length).toBeGreaterThan(1);
       }
     });
   });
@@ -602,7 +785,7 @@ describe("DeliveryService — full pipeline behavior", () => {
     it("emits delivery:chunk_sent per chunk when eventBus provided", async () => {
       const adapter = createMockAdapter("telegram");
 
-      await service.deliverToChannel(adapter, "chat-1", "Hello");
+      await deliver(service, adapter, "chat-1", "Hello");
 
       const chunkEvents = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
         (call: unknown[]) => call[0] === "delivery:chunk_sent",
@@ -614,7 +797,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(payload.channelType).toBe("telegram");
       expect(payload.chunkIndex).toBe(0);
       expect(payload.totalChunks).toBe(1);
-      expect(payload.ok).toBe(true);
+      expect(payload.status).toBe("accepted");
       expect(typeof payload.charCount).toBe("number");
       expect(typeof payload.timestamp).toBe("number");
     });
@@ -622,7 +805,7 @@ describe("DeliveryService — full pipeline behavior", () => {
     it("emits delivery:complete with totals when eventBus provided", async () => {
       const adapter = createMockAdapter("telegram");
 
-      await service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "test" });
+      await deliver(service, adapter, "chat-1", "Hello", { origin: "test" });
 
       const completeEvents = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
         (call: unknown[]) => call[0] === "delivery:complete",
@@ -647,7 +830,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const localService = makeDeliveryService({ eventBus, maxCharsOverride: 150 });
       const text = makeLongMarkdown(500);
 
-      await localService.deliverToChannel(adapter, "chat-1", text);
+      await deliver(localService, adapter, "chat-1", text);
 
       const chunkEvents = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
         (call: unknown[]) => call[0] === "delivery:chunk_sent",
@@ -666,7 +849,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createMockAdapter("telegram");
 
       // Should not throw
-      const result = await localService.deliverToChannel(adapter, "chat-1", "Hello");
+      const result = await deliver(localService, adapter, "chat-1", "Hello");
       expect(result.ok).toBe(true);
     });
   });
@@ -686,7 +869,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       // Send pre-formatted HTML directly
       const htmlText = "<b>Already formatted</b>";
 
-      await service.deliverToChannel(adapter, "chat-1", htmlText, { skipFormat: true });
+      await deliver(service, adapter, "chat-1", htmlText, { skipFormat: true });
 
       const sentText = adapter.sendMessage.mock.calls[0][1] as string;
       // Should pass through unchanged (not double-format)
@@ -697,7 +880,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createMockAdapter("telegram");
       const longText = makeText(10000);
 
-      await service.deliverToChannel(adapter, "chat-1", longText, {
+      await deliver(service, adapter, "chat-1", longText, {
         skipChunking: true,
         skipFormat: true,
       });
@@ -720,7 +903,7 @@ describe("DeliveryService — full pipeline behavior", () => {
 
     it("returns Result<DeliveryResult, Error> (ok() wrapper)", async () => {
       const adapter = createMockAdapter("telegram");
-      const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+      const result = await deliver(service, adapter, "chat-1", "Hello");
 
       // Result wrapper
       expect(result).toHaveProperty("ok");
@@ -728,10 +911,8 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       // DeliveryResult inside
       if (result.ok) {
-        expect(result.value).toHaveProperty("ok");
-        expect(result.value).toHaveProperty("totalChunks");
-        expect(result.value).toHaveProperty("deliveredChunks");
-        expect(result.value).toHaveProperty("failedChunks");
+        expect(result.value).toHaveProperty("platform");
+        expect(result.value).toHaveProperty("queueDisposition");
         expect(result.value).toHaveProperty("chunks");
         expect(result.value).toHaveProperty("totalChars");
         expect(Array.isArray(result.value.chunks)).toBe(true);
@@ -745,7 +926,7 @@ describe("DeliveryService — full pipeline behavior", () => {
         throw new Error("Unexpected crash");
       });
 
-      const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+      const result = await deliver(service, adapter, "chat-1", "Hello");
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
@@ -769,12 +950,12 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createMockAdapter("telegram");
       const text = makeLongMarkdown(10000);
 
-      const result = await service.deliverToChannel(adapter, "chat-1", text);
+      const result = await deliver(service, adapter, "chat-1", text);
 
       expect(result.ok).toBe(true);
       if (result.ok) {
         // Should have chunked the HTML output
-        expect(result.value.totalChunks).toBeGreaterThan(1);
+        expect(result.value.chunks.length).toBeGreaterThan(1);
       }
     });
 
@@ -782,11 +963,11 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createMockAdapter("discord");
       const text = makeLongMarkdown(10000);
 
-      const result = await service.deliverToChannel(adapter, "chat-1", text);
+      const result = await deliver(service, adapter, "chat-1", text);
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.totalChunks).toBeGreaterThan(1);
+        expect(result.value.chunks.length).toBeGreaterThan(1);
         // Discord chunks should still contain markdown
         const firstChunkText = adapter.sendMessage.mock.calls[0][1] as string;
         // Should be raw text (not HTML-converted)
@@ -798,11 +979,11 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createMockAdapter("slack");
       const text = makeLongMarkdown(10000);
 
-      const result = await service.deliverToChannel(adapter, "chat-1", text);
+      const result = await deliver(service, adapter, "chat-1", text);
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.totalChunks).toBeGreaterThan(1);
+        expect(result.value.chunks.length).toBeGreaterThan(1);
       }
     });
   });
@@ -817,12 +998,12 @@ describe("DeliveryService — full pipeline behavior", () => {
       adapter.sendMessage.mockResolvedValue(ok("msg-abc-123"));
       const service = makeDeliveryService();
 
-      const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+      const result = await deliver(service, adapter, "chat-1", "Hello");
 
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value.chunks[0].messageId).toBe("msg-abc-123");
-        expect(result.value.chunks[0].ok).toBe(true);
+        expect(result.value.chunks[0]?.status).toBe("accepted");
         expect(result.value.chunks[0].error).toBeUndefined();
       }
     });
@@ -832,11 +1013,11 @@ describe("DeliveryService — full pipeline behavior", () => {
       adapter.sendMessage.mockResolvedValue(err(new Error("API error")));
       const service = makeDeliveryService();
 
-      const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+      const result = await deliver(service, adapter, "chat-1", "Hello");
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.chunks[0].ok).toBe(false);
+        expect(result.value.chunks[0]?.status).toBe("unknown");
         expect(result.value.chunks[0].messageId).toBeUndefined();
         expect(result.value.chunks[0].error?.message).toBe("API error");
       }
@@ -847,7 +1028,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const retryEngine = createMockRetryEngine();
       const service = makeDeliveryService({ retryEngine });
 
-      const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+      const result = await deliver(service, adapter, "chat-1", "Hello");
 
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -859,7 +1040,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createMockAdapter("telegram");
       const service = makeDeliveryService();
 
-      const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+      const result = await deliver(service, adapter, "chat-1", "Hello");
 
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -870,7 +1051,7 @@ describe("DeliveryService — full pipeline behavior", () => {
     it("reports charCount per chunk", async () => {
       const adapter = createMockAdapter("telegram");
       const service = makeDeliveryService();
-      const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+      const result = await deliver(service, adapter, "chat-1", "Hello");
 
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -895,7 +1076,7 @@ describe("DeliveryService — full pipeline behavior", () => {
     it("passes origin to delivery:complete event", async () => {
       const adapter = createMockAdapter("telegram");
 
-      await service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "announcement" });
+      await deliver(service, adapter, "chat-1", "Hello", { origin: "announcement" });
 
       const completeEvent = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
         (call: unknown[]) => call[0] === "delivery:complete",
@@ -907,7 +1088,9 @@ describe("DeliveryService — full pipeline behavior", () => {
     it("defaults origin to unknown when not provided", async () => {
       const adapter = createMockAdapter("telegram");
 
-      await service.deliverToChannel(adapter, "chat-1", "Hello");
+      await deliver(service, adapter, "chat-1", "Hello", {
+        completionMode: "deferred_retry",
+      });
 
       const completeEvent = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
         (call: unknown[]) => call[0] === "delivery:complete",
@@ -928,11 +1111,73 @@ describe("DeliveryService — full pipeline behavior", () => {
       eventBus = createMockEventBus();
     });
 
+    it("uses explicit delivery authority outside request context", async () => {
+      const adapter = createMockAdapter("telegram");
+      const service = createDeliveryService({
+        ...makeDeps({ deliveryQueue: queue, eventBus }),
+      } as DeliveryServiceDeps);
+
+      await deliver(service, adapter, "chat-1", "Hello");
+
+      expect(queue.enqueueInFlight.mock.calls[0]?.[0]).toMatchObject(TEST_DELIVERY_AUTHORITY);
+    });
+
+    it("rejects a destination snapshot that does not identify the requested channel", async () => {
+      const adapter = createMockAdapter("telegram");
+      const service = createDeliveryService(makeDeps({ deliveryQueue: queue, eventBus }));
+
+      const result = await service.deliverToChannel(adapter, "chat-1", "Hello", {
+        completionMode: "settled",
+        authority: TEST_DELIVERY_AUTHORITY,
+        destinationEndpoint: {
+          channelType: "telegram",
+          channelInstanceId: "test-instance",
+          conversationId: "different-chat",
+          conversationKind: "direct",
+        },
+      });
+
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+      expect(queue.enqueueInFlight).not.toHaveBeenCalled();
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toContain("does not match");
+      }
+    });
+
+    it("rejects a destination snapshot for another adapter instance before side effects", async () => {
+      const adapter = createMockAdapter("telegram");
+      const hookRunner = makeNoopHookRunner({
+        runBeforeDelivery: vi.fn().mockResolvedValue(undefined),
+      });
+      const service = createDeliveryService(makeDeps({
+        deliveryQueue: queue,
+        eventBus,
+        hookRunner,
+      }));
+
+      const result = await service.deliverToChannel(adapter, "chat-1", "Hello", {
+        completionMode: "settled",
+        authority: TEST_DELIVERY_AUTHORITY,
+        destinationEndpoint: {
+          channelType: "telegram",
+          channelInstanceId: "another-account",
+          conversationId: "chat-1",
+          conversationKind: "direct",
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(hookRunner.runBeforeDelivery).not.toHaveBeenCalled();
+      expect(queue.enqueueInFlight).not.toHaveBeenCalled();
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+    });
+
     it("calls enqueueInFlight before send and ack after successful send", async () => {
       const adapter = createMockAdapter("telegram");
       const service = makeDeliveryService({ deliveryQueue: queue, eventBus });
 
-      await service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "test" });
+      await deliver(service, adapter, "chat-1", "Hello", { origin: "test" });
 
       // enqueueInFlight called once (1 chunk); enqueue (pending insert) NOT called
       expect(queue.enqueueInFlight).toHaveBeenCalledTimes(1);
@@ -955,7 +1200,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(queue.fail).not.toHaveBeenCalled();
     });
 
-    it("persists the request-context agentId into the enqueued optionsJson (so the drain attributes the reaction to the REAL agent, not the tenant)", async () => {
+    it("persists the resolved agent in the queue authority column instead of options JSON", async () => {
       const adapter = createMockAdapter("telegram");
       // Construct via the SOURCE factory so the SUT reads the SAME source
       // AsyncLocalStorage module the test's runWithContext writes to (the dist-
@@ -975,16 +1220,15 @@ describe("DeliveryService — full pipeline behavior", () => {
           trustLevel: "admin",
         },
         async () => {
-          await service.deliverToChannel(adapter, "chat-1", "agent reply", { origin: "agent" });
+          await deliver(service, adapter, "chat-1", "agent reply", { origin: "agent" });
         },
       );
 
       expect(queue.enqueueInFlight).toHaveBeenCalledTimes(1);
       const enqueueArg = queue.enqueueInFlight.mock.calls[0][0];
       const persistedOptions = JSON.parse(enqueueArg.optionsJson) as Record<string, unknown>;
-      // The drain (setup-delivery.ts) reads options.agentId; it must be the REAL
-      // agent, never absent (which would force the tenantId fallback).
-      expect(persistedOptions.agentId).toBe("mldag");
+      expect(enqueueArg.agentId).toBe("mldag");
+      expect(persistedOptions.agentId).toBeUndefined();
     });
 
     it("does NOT leak agentId into the SendMessageOptions handed to the channel adapter (persistence-only metadata)", async () => {
@@ -1001,12 +1245,11 @@ describe("DeliveryService — full pipeline behavior", () => {
           trustLevel: "admin",
         },
         async () => {
-          await service.deliverToChannel(adapter, "chat-1", "agent reply", { origin: "agent" });
+          await deliver(service, adapter, "chat-1", "agent reply", { origin: "agent" });
         },
       );
 
-      // agentId is queue-persistence metadata for the reaction trajectory map;
-      // it must NOT ride into the platform send options.
+      // Structured queue authority must not ride into platform send options.
       const sendOpts = adapter.sendMessage.mock.calls[0]?.[2] as Record<string, unknown> | undefined;
       expect(sendOpts?.agentId).toBeUndefined();
     });
@@ -1016,10 +1259,13 @@ describe("DeliveryService — full pipeline behavior", () => {
       adapter.sendMessage.mockResolvedValue(err(new Error("Bad Request: chat not found")));
       const service = makeDeliveryService({ deliveryQueue: queue, eventBus });
 
-      await service.deliverToChannel(adapter, "chat-1", "Hello");
+      await deliver(service, adapter, "chat-1", "Hello", { completionMode: "deferred_retry" });
 
       expect(queue.fail).toHaveBeenCalledTimes(1);
-      expect(queue.fail).toHaveBeenCalledWith("entry-uuid-1", "Bad Request: chat not found");
+      expect(queue.fail).toHaveBeenCalledWith(
+        "entry-uuid-1",
+        EXPLICIT_SEND_REJECTION_ERROR,
+      );
 
       // Verify delivery:failed event emitted with permanent_error reason
       const failedEvents = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
@@ -1036,13 +1282,16 @@ describe("DeliveryService — full pipeline behavior", () => {
     it("calls fail with retries_exhausted when retryEngine exhausts retries", async () => {
       const adapter = createMockAdapter("telegram");
       const retryEngine = createMockRetryEngine();
-      retryEngine.sendWithRetry.mockResolvedValue(err(new Error("500 Server Error")));
+      retryEngine.sendWithRetry.mockResolvedValue(err(new Error("429 Too Many Requests")));
       const service = makeDeliveryService({ deliveryQueue: queue, retryEngine, eventBus });
 
-      await service.deliverToChannel(adapter, "chat-1", "Hello");
+      await deliver(service, adapter, "chat-1", "Hello");
 
       expect(queue.fail).toHaveBeenCalledTimes(1);
-      expect(queue.fail).toHaveBeenCalledWith("entry-uuid-1", "500 Server Error");
+      expect(queue.fail).toHaveBeenCalledWith(
+        "entry-uuid-1",
+        RETRY_EXHAUSTED_SEND_ERROR,
+      );
 
       // Verify delivery:failed event emitted with retries_exhausted reason
       const failedEvents = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
@@ -1052,29 +1301,54 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(failedEvents[0][1].reason).toBe("retries_exhausted");
     });
 
-    it("calls nack with backoff when send fails transiently without retryEngine", async () => {
+    it("parks an ambiguous send outcome without retrying when no retry engine is configured", async () => {
       const adapter = createMockAdapter("telegram");
-      adapter.sendMessage.mockResolvedValue(err(new Error("500 Server Error")));
-      const service = makeDeliveryService({ deliveryQueue: queue, eventBus });
-
-      await service.deliverToChannel(adapter, "chat-1", "Hello");
-
-      expect(queue.nack).toHaveBeenCalledTimes(1);
-      const [entryId, errorMsg, nextRetryAt] = queue.nack.mock.calls[0];
-      expect(entryId).toBe("entry-uuid-1");
-      expect(errorMsg).toBe("500 Server Error");
-      // nextRetryAt should be roughly now + 5000ms (first backoff level)
-      expect(nextRetryAt).toBeGreaterThan(Date.now() - 2000);
-
-      // Verify delivery:nacked event emitted
-      const nackedEvents = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
-        (call: unknown[]) => call[0] === "delivery:nacked",
+      const credential = "sk-abcdefghijklmnopqrstuvwxyz1234567890";
+      adapter.sendMessage.mockResolvedValue(
+        err(new Error(`500 Server Error ${credential}`)),
       );
-      expect(nackedEvents.length).toBe(1);
-      expect(nackedEvents[0][1].attemptCount).toBe(1);
-      expect(typeof nackedEvents[0][1].nextRetryAt).toBe("number");
+      const service = createDeliveryService(makeDeps({ deliveryQueue: queue, eventBus }));
+
+      await deliver(service, adapter, "chat-1", "Hello");
+
+      expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
+      expect(queue.fail).toHaveBeenCalledWith(
+        "entry-uuid-1",
+        AMBIGUOUS_SEND_OUTCOME_ERROR,
+      );
+      expect(queue.nack).not.toHaveBeenCalled();
+
+      const failedEvents = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => call[0] === "delivery:failed",
+      );
+      expect(failedEvents).toHaveLength(1);
+      expect(failedEvents[0][1]).toMatchObject({
+        error: AMBIGUOUS_SEND_OUTCOME_ERROR,
+        reason: "uncertain_outcome",
+      });
+      expect(JSON.stringify({
+        failCalls: queue.fail.mock.calls,
+        eventCalls: eventBus.emit.mock.calls,
+      })).not.toContain(credential);
 
       expect(queue.ack).not.toHaveBeenCalled();
+    });
+
+    it("nacks an explicit rate-limit rejection for a later safe retry without a retry engine", async () => {
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(err(new Error("429 Too Many Requests")));
+      const service = createDeliveryService(makeDeps({ deliveryQueue: queue, eventBus }));
+
+      await deliver(service, adapter, "chat-1", "Hello", {
+        completionMode: "deferred_retry",
+      });
+
+      expect(queue.nack).toHaveBeenCalledTimes(1);
+      expect(queue.nack).toHaveBeenCalledWith(
+        "entry-uuid-1",
+        EXPLICIT_SEND_REJECTION_ERROR,
+        expect.any(Number),
+      );
       expect(queue.fail).not.toHaveBeenCalled();
     });
 
@@ -1083,13 +1357,16 @@ describe("DeliveryService — full pipeline behavior", () => {
       queue.enqueueInFlight.mockResolvedValue(err(new Error("SQLite busy")));
       const service = makeDeliveryService({ deliveryQueue: queue });
 
-      const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+      const result = await deliver(service, adapter, "chat-1", "Hello");
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error).toMatchObject({
           kind: "queue_transition_failed",
-          platformResult: { ok: true, deliveredChunks: 1 },
+          platformResult: {
+            platform: { status: "accepted", deliveredChunks: 1 },
+            queueDisposition: "transition_failed",
+          },
         });
       }
       expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
@@ -1116,7 +1393,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       // failure/retry signals leak through.
       const service = makeDeliveryService({ eventBus });
 
-      const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+      const result = await deliver(service, adapter, "chat-1", "Hello");
 
       expect(result.ok).toBe(true);
 
@@ -1134,7 +1411,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createMockAdapter("telegram");
       const service = makeDeliveryService({ deliveryQueue: queue, eventBus });
 
-      await service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "pipeline" });
+      await deliver(service, adapter, "chat-1", "Hello", { origin: "pipeline" });
 
       // delivery:enqueued is not emitted by the delivery pipeline; the
       // SqliteDeliveryQueueAdapter emits it inside enqueueInFlight (single
@@ -1167,7 +1444,7 @@ describe("DeliveryService — full pipeline behavior", () => {
         adapter.sendMessage.mockResolvedValue(ok("msg-1"));
         const service = makeDeliveryService({ deliveryQueue: queue, eventBus });
 
-        await service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "test" });
+        await deliver(service, adapter, "chat-1", "Hello", { origin: "test" });
 
         expect(queue.enqueueInFlight).toHaveBeenCalledTimes(1);
         expect(queue.enqueue).not.toHaveBeenCalled();
@@ -1178,7 +1455,7 @@ describe("DeliveryService — full pipeline behavior", () => {
         adapter.sendMessage.mockResolvedValue(ok("msg-1"));
         const service = makeDeliveryService({ deliveryQueue: queue, eventBus });
 
-        await service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "test" });
+        await deliver(service, adapter, "chat-1", "Hello", { origin: "test" });
 
         const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
           (c: unknown[]) => c[0] === "delivery:enqueued",
@@ -1192,7 +1469,7 @@ describe("DeliveryService — full pipeline behavior", () => {
         adapter.sendMessage.mockResolvedValue(ok("platform-msg-1"));
         const service = makeDeliveryService({ deliveryQueue: queue, eventBus });
 
-        await service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "test" });
+        await deliver(service, adapter, "chat-1", "Hello", { origin: "test" });
 
         expect(queue.ack).toHaveBeenCalledWith("entry-42", "platform-msg-1");
       });
@@ -1217,7 +1494,7 @@ describe("DeliveryService — full pipeline behavior", () => {
             startedAt: Date.now(),
             trustLevel: "admin",
           },
-          () => service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "test" }),
+          () => deliver(service, adapter, "chat-1", "Hello", { origin: "test" }),
         );
 
         expect(adapter.sendMessage).toHaveBeenCalledOnce();
@@ -1234,9 +1511,8 @@ describe("DeliveryService — full pipeline behavior", () => {
               },
             ],
             platformResult: {
-              ok: true,
-              deliveredChunks: 1,
-              failedChunks: 0,
+              platform: { status: "accepted", deliveredChunks: 1 },
+              queueDisposition: "transition_failed",
             },
           });
           const retained = result.error as Error & {
@@ -1298,7 +1574,7 @@ describe("DeliveryService — full pipeline behavior", () => {
             startedAt: Date.now(),
             trustLevel: "admin",
           },
-          () => service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "agent" }),
+          () => deliver(service, adapter, "chat-1", "Hello", { origin: "agent" }),
         );
 
         expect(result.ok).toBe(false);
@@ -1313,9 +1589,8 @@ describe("DeliveryService — full pipeline behavior", () => {
               },
             ],
             platformResult: {
-              ok: true,
-              deliveredChunks: 1,
-              failedChunks: 0,
+              platform: { status: "accepted", deliveredChunks: 1 },
+              queueDisposition: "transition_failed",
             },
           });
         }
@@ -1341,14 +1616,16 @@ describe("DeliveryService — full pipeline behavior", () => {
       it("reports nack failure without emitting a nacked success state", async () => {
         queue.nack.mockResolvedValue(err(new Error("nack write failed")));
         const adapter = createMockAdapter("telegram");
-        adapter.sendMessage.mockResolvedValue(err(new Error("500 Server Error")));
+        adapter.sendMessage.mockResolvedValue(err(new Error("429 Too Many Requests")));
         const logger = makeLogger();
         const service = createDeliveryService({
           ...makeDeps({ deliveryQueue: queue, eventBus }),
           logger,
         } as DeliveryServiceDeps);
 
-        const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+        const result = await deliver(service, adapter, "chat-1", "Hello", {
+          completionMode: "deferred_retry",
+        });
 
         expect(result.ok).toBe(false);
         if (!result.ok) {
@@ -1362,9 +1639,8 @@ describe("DeliveryService — full pipeline behavior", () => {
               },
             ],
             platformResult: {
-              ok: false,
-              deliveredChunks: 0,
-              failedChunks: 1,
+              platform: { status: "rejected", deliveredChunks: 0, failedChunks: 1 },
+              queueDisposition: "transition_failed",
             },
           });
         }
@@ -1391,7 +1667,7 @@ describe("DeliveryService — full pipeline behavior", () => {
           logger,
         } as DeliveryServiceDeps);
 
-        const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+        const result = await deliver(service, adapter, "chat-1", "Hello");
 
         expect(result.ok).toBe(false);
         if (!result.ok) {
@@ -1405,9 +1681,8 @@ describe("DeliveryService — full pipeline behavior", () => {
               },
             ],
             platformResult: {
-              ok: false,
-              deliveredChunks: 0,
-              failedChunks: 1,
+              platform: { status: "rejected", deliveredChunks: 0, failedChunks: 1 },
+              queueDisposition: "transition_failed",
             },
           });
         }
@@ -1430,7 +1705,7 @@ describe("DeliveryService — full pipeline behavior", () => {
         adapter.sendMessage.mockResolvedValue(ok("msg-1"));
         const service = makeDeliveryService({ deliveryQueue: queue, eventBus });
 
-        const result = await service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "test" });
+        const result = await deliver(service, adapter, "chat-1", "Hello", { origin: "test" });
 
         expect(adapter.sendMessage).toHaveBeenCalled();
         expect(result.ok).toBe(false);
@@ -1487,7 +1762,7 @@ describe("DeliveryService — full pipeline behavior", () => {
           trustLevel: "admin",
         },
         async () => {
-          await service.deliverToChannel(adapter, "chat-1", "agent reply", { origin: "agent" });
+          await deliver(service, adapter, "chat-1", "agent reply", { origin: "agent" });
         },
       );
 
@@ -1517,7 +1792,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       // No runWithContext → tryGetContext() is undefined → traceId is null. The
       // drain fails closed here (it would mis-attribute to the tenantId), so the
       // direct path must too: record NOTHING rather than bind a bad scope.
-      await service.deliverToChannel(adapter, "chat-1", "system reply", { origin: "system" });
+      await deliver(service, adapter, "chat-1", "system reply", { origin: "system" });
 
       expect(recordOutboundMessage).not.toHaveBeenCalled();
     });
@@ -1540,7 +1815,7 @@ describe("DeliveryService — full pipeline behavior", () => {
           trustLevel: "admin",
         },
         async () => {
-          await service.deliverToChannel(adapter, "chat-1", "agent reply", { origin: "agent" });
+          await deliver(service, adapter, "chat-1", "agent reply", { origin: "agent" });
         },
       );
 
@@ -1571,7 +1846,7 @@ describe("DeliveryService — full pipeline behavior", () => {
           trustLevel: "admin",
         },
         async () => {
-          await service.deliverToChannel(adapter, "chat-1", text, { origin: "agent" });
+          await deliver(service, adapter, "chat-1", text, { origin: "agent" });
         },
       );
 
@@ -1634,7 +1909,7 @@ describe("DeliveryService — full pipeline behavior", () => {
           trustLevel: "admin",
         },
         async () => {
-          await service.deliverToChannel(adapter, "chat-1", "agent reply", { origin: "agent" });
+          await deliver(service, adapter, "chat-1", "agent reply", { origin: "agent" });
         },
       );
 
@@ -1669,7 +1944,7 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       // No runWithContext → traceId is null → the bind fails closed, so the
       // observability event MUST fail closed too (no false "bind fired" signal).
-      await service.deliverToChannel(adapter, "chat-1", "system reply", { origin: "system" });
+      await deliver(service, adapter, "chat-1", "system reply", { origin: "system" });
 
       expect(recordOutboundMessage).not.toHaveBeenCalled();
       expect(replyBoundEvents()).toEqual([]);
@@ -1693,7 +1968,7 @@ describe("DeliveryService — full pipeline behavior", () => {
           trustLevel: "admin",
         },
         async () => {
-          await service.deliverToChannel(adapter, "chat-1", "agent reply", { origin: "agent" });
+          await deliver(service, adapter, "chat-1", "agent reply", { origin: "agent" });
         },
       );
 
@@ -1719,7 +1994,7 @@ describe("DeliveryService — full pipeline behavior", () => {
           trustLevel: "admin",
         },
         async () => {
-          await service.deliverToChannel(adapter, "chat-1", "agent reply", { origin: "agent" });
+          await deliver(service, adapter, "chat-1", "agent reply", { origin: "agent" });
         },
       );
 
@@ -1746,7 +2021,7 @@ describe("DeliveryService — full pipeline behavior", () => {
           trustLevel: "admin",
         },
         async () => {
-          await service.deliverToChannel(adapter, "chat-1", text, { origin: "agent" });
+          await deliver(service, adapter, "chat-1", text, { origin: "agent" });
         },
       );
 
@@ -1795,7 +2070,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       // Create 3-chunk text with skipFormat + small limit
       const text = "A".repeat(101) + "\n\n" + "B".repeat(101) + "\n\n" + "C".repeat(101);
 
-      await service.deliverToChannel(adapter, "chat-1", text, {
+      await deliver(service, adapter, "chat-1", text, {
         skipFormat: true,
         abortSignal: abortController.signal,
       });
@@ -1822,7 +2097,7 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       const text = "A".repeat(101) + "\n\n" + "B".repeat(101);
 
-      await service.deliverToChannel(adapter, "chat-1", text, {
+      await deliver(service, adapter, "chat-1", text, {
         skipFormat: true,
         abortSignal: abortController.signal,
       });
@@ -1843,7 +2118,7 @@ describe("DeliveryService — full pipeline behavior", () => {
     it("pre-aborted signal sends zero chunks", async () => {
       const adapter = createMockAdapter("telegram");
 
-      await service.deliverToChannel(adapter, "chat-1", "Hello world", {
+      await deliver(service, adapter, "chat-1", "Hello world", {
         abortSignal: AbortSignal.abort("pre-aborted"),
       });
 
@@ -1866,6 +2141,7 @@ describe("DeliveryService — full pipeline behavior", () => {
     function createMockQueue(): DeliveryQueuePort & {
       enqueue: ReturnType<typeof vi.fn>;
       enqueueInFlight: ReturnType<typeof vi.fn>;
+      claim: ReturnType<typeof vi.fn>;
       ack: ReturnType<typeof vi.fn>;
       nack: ReturnType<typeof vi.fn>;
       fail: ReturnType<typeof vi.fn>;
@@ -1878,6 +2154,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       return {
         enqueue: vi.fn().mockImplementation(async () => ok(`entry-${++entryCounter}`)),
         enqueueInFlight: vi.fn().mockImplementation(async () => ok(`entry-${++entryCounter}`)),
+        claim: vi.fn().mockResolvedValue(ok(true)),
         ack: vi.fn().mockResolvedValue(ok(undefined)),
         nack: vi.fn().mockResolvedValue(ok(undefined)),
         fail: vi.fn().mockResolvedValue(ok(undefined)),
@@ -1897,11 +2174,12 @@ describe("DeliveryService — full pipeline behavior", () => {
     function createFailingAdapter(failOnCalls: number[]): DeliveryAdapter & { sendMessage: ReturnType<typeof vi.fn> } {
       let callCount = 0;
       return {
+        channelId: "test-instance",
         channelType: "discord",
         sendMessage: vi.fn().mockImplementation(async (): Promise<Result<string, Error>> => {
           const idx = callCount++;
           if (failOnCalls.includes(idx)) {
-            return err(new Error(`Chunk ${idx} failed`));
+            return err(new Error(`400 Bad Request: chunk ${idx} rejected`));
           }
           return ok(`msg-${idx}`);
         }),
@@ -1917,7 +2195,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createFailingAdapter([1]);
       const service = makeDeliveryService({ maxCharsOverride: 100 });
 
-      const result = await service.deliverToChannel(adapter, "chat-1", THREE_CHUNK_TEXT, {
+      const result = await deliver(service, adapter, "chat-1", THREE_CHUNK_TEXT, {
         skipFormat: true,
       });
 
@@ -1925,10 +2203,12 @@ describe("DeliveryService — full pipeline behavior", () => {
       if (result.ok) {
         // Should have stopped after 2 calls (1 success + 1 fail), not 3
         expect(adapter.sendMessage.mock.calls.length).toBe(2);
-        expect(result.value.deliveredChunks).toBe(1);
-        expect(result.value.failedChunks).toBe(1);
+        expect(result.value.platform.deliveredChunks).toBe(1);
+        expect(result.value.platform.status).toBe("partial");
+        if (result.value.platform.status !== "partial") return;
+        expect(result.value.platform.failedChunks).toBe(1);
         // totalChunks in result reflects chunks actually processed, not total planned
-        expect(result.value.totalChunks).toBe(2);
+        expect(result.value.chunks).toHaveLength(2);
       }
     });
 
@@ -1937,7 +2217,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const adapter = createFailingAdapter([1]);
       const service = makeDeliveryService({ maxCharsOverride: 100 });
 
-      const result = await service.deliverToChannel(adapter, "chat-1", THREE_CHUNK_TEXT, {
+      const result = await deliver(service, adapter, "chat-1", THREE_CHUNK_TEXT, {
         skipFormat: true,
         strategy: "best-effort",
       });
@@ -1946,8 +2226,10 @@ describe("DeliveryService — full pipeline behavior", () => {
       if (result.ok) {
         // All 3 chunks should have been attempted
         expect(adapter.sendMessage.mock.calls.length).toBeGreaterThanOrEqual(3);
-        expect(result.value.deliveredChunks).toBeGreaterThanOrEqual(2);
-        expect(result.value.failedChunks).toBeGreaterThanOrEqual(1);
+        expect(result.value.platform.deliveredChunks).toBeGreaterThanOrEqual(2);
+        expect(result.value.platform.status).toBe("partial");
+        if (result.value.platform.status !== "partial") return;
+        expect(result.value.platform.failedChunks).toBeGreaterThanOrEqual(1);
       }
     });
 
@@ -1956,7 +2238,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const onChunkError = vi.fn();
       const service = makeDeliveryService({ maxCharsOverride: 100 });
 
-      await service.deliverToChannel(adapter, "chat-1", THREE_CHUNK_TEXT, {
+      await deliver(service, adapter, "chat-1", THREE_CHUNK_TEXT, {
         skipFormat: true,
         strategy: "best-effort",
         onChunkError,
@@ -1965,7 +2247,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(onChunkError).toHaveBeenCalledTimes(1);
       const [error, chunkIndex, totalChunks] = onChunkError.mock.calls[0];
       expect(error).toBeInstanceOf(Error);
-      expect(error.message).toBe("Chunk 1 failed");
+      expect(error.message).toBe("400 Bad Request: chunk 1 rejected");
       expect(chunkIndex).toBe(1);
       expect(typeof totalChunks).toBe("number");
       expect(totalChunks).toBeGreaterThanOrEqual(3);
@@ -1976,7 +2258,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const queue = createMockQueue();
       const service = makeDeliveryService({ deliveryQueue: queue, maxCharsOverride: 100 });
 
-      await service.deliverToChannel(adapter, "chat-1", THREE_CHUNK_TEXT, {
+      await deliver(service, adapter, "chat-1", THREE_CHUNK_TEXT, {
         skipFormat: true,
         strategy: "best-effort",
       });
@@ -1993,7 +2275,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const service = makeDeliveryService({ eventBus });
 
       // Test best-effort strategy
-      await service.deliverToChannel(adapter, "chat-1", "Hello", {
+      await deliver(service, adapter, "chat-1", "Hello", {
         strategy: "best-effort",
       });
 
@@ -2009,7 +2291,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const eventBus = createMockEventBus();
       const service = makeDeliveryService({ eventBus });
 
-      await service.deliverToChannel(adapter, "chat-1", "Hello");
+      await deliver(service, adapter, "chat-1", "Hello");
 
       const completeEvents = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
         (call: unknown[]) => call[0] === "delivery:complete",
@@ -2033,6 +2315,7 @@ describe("DeliveryService — full pipeline behavior", () => {
     function makeServiceWithControllableAdapter() {
       const pending: Array<(v: Result<string, Error>) => void> = [];
       const adapter: DeliveryAdapter = {
+        channelId: "test-instance",
         channelType: "telegram",
         sendMessage: vi.fn().mockImplementation(
           () =>
@@ -2063,8 +2346,8 @@ describe("DeliveryService — full pipeline behavior", () => {
 
     it("drains all in-flight sends when they complete before the deadline", async () => {
       const { service, adapter, resolveAllSends } = makeServiceWithControllableAdapter();
-      const p1 = service.deliverToChannel(adapter, "chan", "hello 1");
-      const p2 = service.deliverToChannel(adapter, "chan", "hello 2");
+      const p1 = deliver(service, adapter, "chan", "hello 1");
+      const p2 = deliver(service, adapter, "chan", "hello 2");
 
       // Yield microtasks so deliverToChannel reaches the inFlightSends.add(...)
       // line BEFORE we resolve adapter sends.
@@ -2087,7 +2370,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const { service, adapter, resolveAllSends } = makeServiceWithControllableAdapter();
       // Start a delivery and do NOT resolve the adapter — the underlying
       // sendMessage promise hangs, so the inFlightSends Set holds onto it.
-      const _hung = service.deliverToChannel(adapter, "chan", "hung");
+      const _hung = deliver(service, adapter, "chan", "hung");
       void _hung;
       await Promise.resolve();
       await Promise.resolve();
@@ -2110,14 +2393,14 @@ describe("DeliveryService — full pipeline behavior", () => {
 
     it("permits subsequent deliverToChannel after drainInFlight resolves", async () => {
       const { service, adapter, resolveAllSends } = makeServiceWithControllableAdapter();
-      const p1 = service.deliverToChannel(adapter, "chan", "first");
+      const p1 = deliver(service, adapter, "chan", "first");
       await Promise.resolve();
       await Promise.resolve();
       resolveAllSends();
       await service.drainInFlight(5000);
 
       // Internal Set must be empty + reusable.
-      const p2 = service.deliverToChannel(adapter, "chan", "second");
+      const p2 = deliver(service, adapter, "chan", "second");
       await Promise.resolve();
       await Promise.resolve();
       resolveAllSends();
@@ -2126,6 +2409,32 @@ describe("DeliveryService — full pipeline behavior", () => {
       const final = await service.drainInFlight(5000);
       expect(final.drained).toBe(0);
       expect(final.remaining).toBe(0);
+    });
+
+    it("does not create a secondary unhandled rejection when an adapter send rejects", async () => {
+      const primary = new Error("adapter transport rejected");
+      const adapter = makeAdapter(vi.fn().mockRejectedValue(primary), "telegram");
+      const service = createDeliveryService(makeDeps());
+      const unhandled: unknown[] = [];
+      const captureUnhandled = (reason: unknown): void => {
+        unhandled.push(reason);
+      };
+      process.on("unhandledRejection", captureUnhandled);
+
+      try {
+        const result = await deliver(service, adapter, "chat-1", "hello");
+        expect(result).toEqual(err(primary));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(unhandled).toEqual([]);
+        expect(await service.drainInFlight(100)).toEqual({
+          drained: 0,
+          remaining: 0,
+          durationMs: 0,
+        });
+      } finally {
+        process.off("unhandledRejection", captureUnhandled);
+      }
     });
 
     it("createDeliveryService rejects an inFlightSends deps field at compile time", () => {
@@ -2165,7 +2474,7 @@ describe("delivery egress scan", () => {
     const adapter = makeAdapter(sendMessage, "telegram");
     const service = createDeliveryService(makeDeps());
     const rawToken = "Bearer hf_" + "a".repeat(44);
-    await service.deliverToChannel(adapter, "chat-tg", `Here is your token: ${rawToken}`);
+    await deliver(service, adapter, "chat-tg", `Here is your token: ${rawToken}`);
     expect(sendMessage).toHaveBeenCalled();
     const sentText: string = sendMessage.mock.calls[0]![1] as string;
     expect(sentText).not.toContain(rawToken);
@@ -2177,7 +2486,7 @@ describe("delivery egress scan", () => {
     const adapter = makeAdapter(sendMessage, "discord");
     const service = createDeliveryService(makeDeps());
     const rawToken = "Bearer hf_" + "b".repeat(44);
-    await service.deliverToChannel(adapter, "chat-dc", `Token value: ${rawToken} end`);
+    await deliver(service, adapter, "chat-dc", `Token value: ${rawToken} end`);
     expect(sendMessage).toHaveBeenCalled();
     const sentText: string = sendMessage.mock.calls[0]![1] as string;
     expect(sentText).not.toContain(rawToken);
@@ -2194,7 +2503,7 @@ describe("delivery egress scan", () => {
     const adapter = makeAdapter(vi.fn().mockResolvedValue(ok("msg-chunk")), "telegram");
     // 10k chars triggers multiple chunks; scrub must be called only once.
     const longText = "a".repeat(10_000);
-    await service.deliverToChannel(adapter, "chat-chunk", longText);
+    await deliver(service, adapter, "chat-chunk", longText);
     expect(spy).toHaveBeenCalledTimes(1);
   });
 

@@ -266,7 +266,7 @@ different evidence strength:
 
 The `reflect:funnel` telemetry carries a `singleOwnerCorroborated` count (how many topics
 corroborated via repetition this run), so [`comis explain`](/reference/cli#comis-explain) and
-[`comis fleet`](/reference/cli#comis-fleet) show the mode is active. An `admitted > 0` run with
+[`comis system-health`](/reference/cli#comis-system-health) show the mode is active. An `admitted > 0` run with
 `maxClusterCardinality: 1` reads as single-owner learning, not a contradiction.
 
 See [`learning` in config-yaml](/reference/config-yaml#learning-agents-learning) for every key
@@ -275,7 +275,7 @@ and [`memory_usefulness` / `evicted_at`](/operations/data-directory#ranking--for
 storage, and the **counts-only** trajectory telemetry (`reflect:admitted` / `reflect:funnel`
 for the reflection funnel; `learning:memory_demoted` / `learning:memory_evicted` for the
 forget sweep) surfaced through [`comis explain`](/reference/cli#comis-explain) and
-[`comis fleet`](/reference/cli#comis-fleet).
+[`comis system-health`](/reference/cli#comis-system-health).
 
 ## Strict config schema
 

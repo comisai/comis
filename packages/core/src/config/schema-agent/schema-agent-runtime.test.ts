@@ -139,27 +139,22 @@ describe("per-agent memoryLifecycle config block", () => {
 });
 
 // ---------------------------------------------------------------------------
-// agents.<id>.language — the reply
-// language hint for deterministic degraded replies. `.optional()` loose string
-// mirroring the transcription `language` hint (schema-integrations.ts):
-// BCP-47 ("he") OR an English display name ("Hebrew"); auto-detect when omitted.
-// A default agent registers NO language (byte-identical). The AGENTS.md §7
-// config-test triplet: defaults (absent) / valid / invalid (non-string).
+// agents.<id>.language — canonical open BCP-47 response locale policy.
 // ---------------------------------------------------------------------------
 describe("agents.<id>.language config key", () => {
-  it("is optional — absent on a bare config (auto-detect, byte-identical default)", () => {
+  it("is optional on a bare config", () => {
     const cfg = PerAgentConfigSchema.parse({});
     expect(cfg.language).toBeUndefined();
   });
 
-  it("accepts a BCP-47 tag (e.g. 'he')", () => {
-    const cfg = PerAgentConfigSchema.parse({ language: "he" });
-    expect(cfg.language).toBe("he");
+  it("accepts an open canonical BCP-47 locale", () => {
+    const cfg = PerAgentConfigSchema.parse({ language: "sr-Latn-RS" });
+    expect(cfg.language).toBe("sr-Latn-RS");
   });
 
-  it("accepts a BCP-47 region tag and an English display name (loose string — normalization is the resolver's job)", () => {
-    expect(PerAgentConfigSchema.parse({ language: "he-IL" }).language).toBe("he-IL");
-    expect(PerAgentConfigSchema.parse({ language: "Hebrew" }).language).toBe("Hebrew");
+  it("rejects display names and non-canonical locale tags", () => {
+    expect(PerAgentConfigSchema.safeParse({ language: "French" }).success).toBe(false);
+    expect(PerAgentConfigSchema.safeParse({ language: "sr-latn-rs" }).success).toBe(false);
   });
 
   it("rejects a non-string language (number)", () => {

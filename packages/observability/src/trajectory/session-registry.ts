@@ -30,12 +30,14 @@
  */
 
 import type { TypedEventBus } from "@comis/core";
+import { ok, type Result } from "@comis/shared";
 
 import {
   attachTrajectoryToEventBus,
   type TrajectoryBridgedEventName,
 } from "./event-bus-bridge.js";
 import { createTrajectoryRecorder } from "./runtime.js";
+import type { TrajectoryResumeError } from "./persisted-state.js";
 import type {
   TrajectoryRecorder,
   TrajectoryRecorderInit,
@@ -51,10 +53,9 @@ interface SessionEntry {
    * per-turn `session:started` re-emits (mapping table —
    * `session.started` fires once per session, NOT once per pi-mono turn).
    * The bridge is created per turn, but the registry survives every turn,
-   * so the latch lives here. Defaults to `false`; flipped to `true` by
-   * `markSessionStarted(formattedKey)`. Reset implicitly by `close()`
-   * dropping the entry — a fresh `getOrCreate` on the same key starts
-   * with `false` again.
+   * so the latch lives here. New files start `false`; reopened files restore
+   * whether a start remains unmatched by session.ended. The bridge flips it
+   * with `markSessionStarted(formattedKey)` after the first emit.
    */
   sessionStartedEmitted: boolean;
 }
@@ -62,7 +63,9 @@ interface SessionEntry {
 /**
  * Optional bridge filter forwarded to `attachTrajectoryToEventBus`.
  * Production callers (pi-executor) thread the
- * `diagnostics.trajectory.eventTypes` allowlist through here.
+ * `diagnostics.trajectory.eventTypes` allowlist through here. Session start
+ * and end boundaries remain mandatory because they are the durable authority
+ * for lifecycle-latch recovery after restart.
  */
 export type SessionTrajectoryFilter = (
   eventName: TrajectoryBridgedEventName,
@@ -86,16 +89,16 @@ export interface SessionTrajectoryHandleRegistry {
    * later calls IGNORE the passed `init` (subsequent turns can't
    * change provider/modelId mid-session without an explicit reset).
    *
-   * Returns `{ recorder: null }` when the recorder factory short-circuits
-   * (env-disabled or `init.enabled === false`); the registry remembers
-   * the null entry so subsequent calls don't re-attempt construction.
+   * Returns `ok({ recorder: null })` when the recorder is intentionally
+   * disabled and remembers that entry. A persisted-state failure returns
+   * `err` and is not cached, so a corrected artifact can recover next turn.
    */
   getOrCreate(
     formattedKey: string,
     init: TrajectoryRecorderInit,
     eventBus: TypedEventBus,
     filter?: SessionTrajectoryFilter,
-  ): { recorder: TrajectoryRecorder | null };
+  ): Result<{ recorder: TrajectoryRecorder | null }, TrajectoryResumeError>;
 
   /**
    * Drain one session. Unsubscribe + flushAndClose + drop the map
@@ -164,9 +167,11 @@ export function createSessionTrajectoryHandleRegistry(): SessionTrajectoryHandle
     getOrCreate(formattedKey, init, eventBus, filter) {
       const existing = entries.get(formattedKey);
       if (existing !== undefined) {
-        return { recorder: existing.recorder };
+        return ok({ recorder: existing.recorder });
       }
-      const recorder = createTrajectoryRecorder(init);
+      const recorderResult = createTrajectoryRecorder(init);
+      if (!recorderResult.ok) return recorderResult;
+      const recorder = recorderResult.value;
       let unsubscribe: (() => void) | undefined;
       if (recorder !== null) {
         unsubscribe = attachTrajectoryToEventBus({
@@ -179,16 +184,16 @@ export function createSessionTrajectoryHandleRegistry(): SessionTrajectoryHandle
           ...(filter !== undefined ? { filter } : {}),
         });
       }
-      // sessionStartedEmitted intentionally starts as `false`. Bridge
-      // flips it via markSessionStarted on the first emit; close()
-      // drops the entry so a future getOrCreate re-starts at `false`.
+      // Restore the active lifecycle latch from durable state on daemon
+      // restart. A trajectory closed by session.ended resumes false; a
+      // shutdown with an unmatched session.started resumes true.
       const entry: SessionEntry = {
         recorder,
         unsubscribe,
-        sessionStartedEmitted: false,
+        sessionStartedEmitted: recorder?.sessionStartedActive ?? false,
       };
       entries.set(formattedKey, entry);
-      return { recorder };
+      return ok({ recorder });
     },
 
     async close(formattedKey) {

@@ -286,6 +286,7 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
       eventBus,
       tokenStore: deps.tokenStore,
       rpcAdapterDeps,
+      bodyLimitBytes: config.httpBodyLimitBytes,
     });
     app.route("", sseEndpoint);
 
@@ -350,7 +351,7 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
       );
     } else {
       // Plain HTTP on a LOOPBACK bind has no off-host exposure — the default
-      // install posture, benign per the same judgment the fleet `tlsOff`
+      // install posture, benign per the same judgment the system `tlsOff`
       // config-posture finding and the gateway-exposure security check apply
       // (both flag only non-loopback binds). Warn ONLY when the listener is
       // actually reachable off-host.

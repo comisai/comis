@@ -6,8 +6,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 // Track middleware handlers registered on the bot
-let messageHandler: ((ctx: any) => void) | null = null;
-let editedMessageHandler: ((ctx: any) => void) | null = null;
+let messageHandler: ((ctx: any) => unknown) | null = null;
+let editedMessageHandler: ((ctx: any) => unknown) | null = null;
 let callbackQueryHandler: ((ctx: any) => Promise<void>) | null = null;
 
 const mockSendMessage = vi.fn();
@@ -39,9 +39,21 @@ const mockCreateForumTopic = vi.fn();
 const mockEditForumTopic = vi.fn();
 const mockCloseForumTopic = vi.fn();
 const mockReopenForumTopic = vi.fn();
+const mockBotStart = vi.fn();
+const mockBotStop = vi.fn();
+const mockBotIsRunning = vi.fn();
+const mockBotCatch = vi.fn();
+const mockBotInstances: unknown[] = [];
+const mockBotTokens: string[] = [];
 
-vi.mock("grammy", () => {
+vi.mock("grammy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("grammy")>();
   class MockBot {
+    constructor(token: string) {
+      mockBotInstances.push(this);
+      mockBotTokens.push(token);
+    }
+
     api = {
       sendMessage: mockSendMessage,
       editMessageText: mockEditMessageText,
@@ -76,7 +88,7 @@ vi.mock("grammy", () => {
       },
     };
 
-    on(event: string, handler: (ctx: any) => void) {
+    on(event: string, handler: (ctx: any) => unknown) {
       if (event === "message") {
         messageHandler = handler;
       } else if (event === "edited_message") {
@@ -85,9 +97,29 @@ vi.mock("grammy", () => {
         callbackQueryHandler = handler as unknown as (ctx: any) => Promise<void>;
       }
     }
+
+    start(options?: unknown) {
+      return mockBotStart(options);
+    }
+
+    stop() {
+      return mockBotStop();
+    }
+
+    isRunning() {
+      return mockBotIsRunning();
+    }
+
+    catch(handler: unknown) {
+      return mockBotCatch(handler);
+    }
   }
 
-  return { Bot: MockBot, InputFile: class MockInputFile { constructor(public source: unknown) {} } };
+  return {
+    ...actual,
+    Bot: MockBot,
+    InputFile: class MockInputFile { constructor(public source: unknown) {} },
+  };
 });
 
 vi.mock("@grammyjs/auto-retry", () => ({
@@ -96,15 +128,6 @@ vi.mock("@grammyjs/auto-retry", () => ({
 
 vi.mock("@grammyjs/files", () => ({
   hydrateFiles: vi.fn(() => "hydrate-files-transformer"),
-}));
-
-const mockRunnerHandle = {
-  isRunning: vi.fn(() => true),
-  stop: vi.fn(),
-};
-
-vi.mock("@grammyjs/runner", () => ({
-  run: vi.fn(() => mockRunnerHandle),
 }));
 
 vi.mock("./credential-validator.js", () => ({
@@ -127,8 +150,8 @@ vi.mock("./voice-sender.js", () => ({
 // Imports (after mocks)
 // ---------------------------------------------------------------------------
 
-import { run } from "@grammyjs/runner";
 import { ok, err } from "@comis/shared";
+import { GrammyError } from "grammy";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { validateBotToken, validateWebhookSecret } from "./credential-validator.js";
 import { mapGrammyToNormalized } from "./message-mapper.js";
@@ -140,10 +163,30 @@ import { createTelegramAdapter, type TelegramAdapterDeps } from "./telegram-adap
 
 function makeDeps(overrides?: Partial<TelegramAdapterDeps>): TelegramAdapterDeps {
   return {
-    botToken: "123456:ABC-DEF",
+    getBotToken: () => "123456:ABC-DEF",
     logger: createMockLogger(),
     ...overrides,
   };
+}
+
+async function createStartedTelegramAdapter(deps = makeDeps()) {
+  const adapter = createTelegramAdapter(deps);
+  const started = await adapter.start();
+  if (!started.ok) throw started.error;
+  return adapter;
+}
+
+function makeGrammyError(
+  description: string,
+  errorCode = 400,
+  method = "sendMessage",
+): GrammyError {
+  return new GrammyError(
+    `Call to '${method}' failed!`,
+    { ok: false, error_code: errorCode, description },
+    method,
+    {},
+  );
 }
 
 function makeNormalized() {
@@ -166,10 +209,28 @@ function makeNormalized() {
 describe("createTelegramAdapter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockBotInstances.length = 0;
+    mockBotTokens.length = 0;
+    let pollingResolve: (() => void) | undefined;
+    let pollingRunning = false;
+    mockBotStart.mockImplementation((options?: { onStart?: (botInfo: unknown) => void | Promise<void> }) => {
+      pollingRunning = true;
+      const task = new Promise<void>((resolve) => { pollingResolve = resolve; });
+      void options?.onStart?.({ id: 123, username: "test_bot", is_bot: true });
+      return task;
+    });
+    mockBotStop.mockImplementation(async () => {
+      pollingRunning = false;
+      pollingResolve?.();
+    });
+    mockBotIsRunning.mockImplementation(() => pollingRunning);
     messageHandler = null;
     editedMessageHandler = null;
     callbackQueryHandler = null;
     mockSetMyCommands.mockResolvedValue(true);
+    vi.mocked(validateBotToken).mockResolvedValue(
+      ok({ id: 123, username: "test_bot", isBot: true }),
+    );
   });
 
   describe("start()", () => {
@@ -228,7 +289,7 @@ describe("createTelegramAdapter", () => {
       );
     });
 
-    it("starts runner for polling mode", async () => {
+    it("starts one-update-at-a-time polling mode", async () => {
       vi.mocked(validateBotToken).mockResolvedValue(
         ok({ id: 123, username: "test_bot", isBot: true }),
       );
@@ -236,18 +297,91 @@ describe("createTelegramAdapter", () => {
       const adapter = createTelegramAdapter(makeDeps());
       await adapter.start();
 
-      expect(run).toHaveBeenCalled();
+      expect(mockBotStart).toHaveBeenCalledWith(expect.objectContaining({ limit: 1 }));
     });
 
-    it("skips runner when webhookUrl is set", async () => {
+    it("coalesces repeated starts while the polling generation is running", async () => {
+      vi.mocked(validateBotToken).mockResolvedValue(
+        ok({ id: 123, username: "test_bot", isBot: true }),
+      );
+
+      const adapter = createTelegramAdapter(makeDeps());
+      const [first, second] = await Promise.all([adapter.start(), adapter.start()]);
+
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      expect(mockBotStart).toHaveBeenCalledOnce();
+    });
+
+    it("publishes a fresh grammY Bot after a stopped generation restarts", async () => {
+      vi.mocked(validateBotToken).mockResolvedValue(
+        ok({ id: 123, username: "test_bot", isBot: true }),
+      );
+
+      const adapter = createTelegramAdapter(makeDeps());
+      const firstBot = adapter.bot;
+      await adapter.start();
+      await adapter.stop();
+      await adapter.start();
+
+      expect(adapter.bot).not.toBe(firstBot);
+      expect(mockBotInstances).toHaveLength(3);
+    });
+
+    it("resolves the current credential for every polling generation", async () => {
+      vi.mocked(validateBotToken).mockResolvedValue(
+        ok({ id: 123, username: "test_bot", isBot: true }),
+      );
+      let currentToken = "123:first-token";
+      const adapter = createTelegramAdapter(makeDeps({
+        getBotToken: () => currentToken,
+      }));
+
+      currentToken = "123:second-token";
+      await adapter.start();
+      await adapter.stop();
+      currentToken = "123:third-token";
+      await adapter.start();
+
+      expect(mockBotTokens).toEqual([
+        "123:first-token",
+        "123:second-token",
+        "123:third-token",
+      ]);
+      expect(validateBotToken).toHaveBeenLastCalledWith("123:third-token", undefined);
+    });
+
+    it("does not send with the old Bot after a rotated credential fails validation", async () => {
+      let currentToken = "123:first-token";
+      vi.mocked(validateBotToken)
+        .mockResolvedValueOnce(ok({ id: 123, username: "test_bot", isBot: true }))
+        .mockResolvedValueOnce(err(new Error("rotated token rejected")));
+      mockSendMessage.mockResolvedValue({ message_id: 88 });
+      const adapter = createTelegramAdapter(makeDeps({
+        getBotToken: () => currentToken,
+      }));
+
+      expect((await adapter.start()).ok).toBe(true);
+      expect((await adapter.stop()).ok).toBe(true);
+      currentToken = "123:rejected-token";
+      expect((await adapter.start()).ok).toBe(false);
+
+      const sent = await adapter.sendMessage("12345", "must not use the old token");
+
+      expect(sent.ok).toBe(false);
+      expect(mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it("rejects webhook mode when no receiver is wired", async () => {
       vi.mocked(validateBotToken).mockResolvedValue(
         ok({ id: 123, username: "test_bot", isBot: true }),
       );
 
       const adapter = createTelegramAdapter(makeDeps({ webhookUrl: "https://example.com/hook" }));
-      await adapter.start();
+      const result = await adapter.start();
 
-      expect(run).not.toHaveBeenCalled();
+      expect(result.ok).toBe(false);
+      expect(mockBotStart).not.toHaveBeenCalled();
     });
 
     it("validates webhook secret when provided", async () => {
@@ -303,6 +437,27 @@ describe("createTelegramAdapter", () => {
       const result = await adapter.start();
 
       expect(result.ok).toBe(true);
+    });
+
+    it("redacts credentials from command-registration failures before logging", async () => {
+      const credential = `xoxb-${"s".repeat(32)}`;
+      vi.mocked(validateBotToken).mockResolvedValue(
+        ok({ id: 123, username: "test_bot", isBot: true }),
+      );
+      mockSetMyCommands.mockRejectedValue(new Error(`command registration failed with ${credential}`));
+      const deps = makeDeps();
+
+      const adapter = createTelegramAdapter(deps);
+      const result = await adapter.start();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(result.ok).toBe(true);
+      const warning = vi.mocked(deps.logger.warn).mock.calls.find(
+        (call) => call[1] === "Failed to register bot commands",
+      );
+      const payload = warning?.[0] as { err?: unknown };
+      expect(typeof payload.err).toBe("string");
+      expect(String(payload.err)).not.toContain(credential);
     });
   });
 
@@ -392,7 +547,7 @@ describe("createTelegramAdapter", () => {
       expect(handler).toHaveBeenCalledWith(normalized);
     });
 
-    it("logs error when handler throws (fire-and-forget)", async () => {
+    it("rejects middleware when the durable message handler fails", async () => {
       vi.mocked(validateBotToken).mockResolvedValue(
         ok({ id: 123, username: "test_bot", isBot: true }),
       );
@@ -405,7 +560,7 @@ describe("createTelegramAdapter", () => {
       });
       await adapter.start();
 
-      messageHandler!({
+      await expect(messageHandler!({
         message: {
           message_id: 42,
           chat: { id: 12345, type: "private" },
@@ -413,9 +568,7 @@ describe("createTelegramAdapter", () => {
           date: 1700000000,
           text: "Hello",
         },
-      });
-
-      await new Promise((r) => setTimeout(r, 10));
+      })).rejects.toThrow("Handler failed");
 
       expect(deps.logger.error).toHaveBeenCalled();
     });
@@ -425,7 +578,7 @@ describe("createTelegramAdapter", () => {
     it("calls bot.api.sendMessage with HTML parse_mode and returns message ID", async () => {
       mockSendMessage.mockResolvedValue({ message_id: 99 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.sendMessage("12345", "Hello <b>world</b>");
 
       expect(result.ok).toBe(true);
@@ -440,7 +593,7 @@ describe("createTelegramAdapter", () => {
     it("passes reply_parameters when replyTo is set", async () => {
       mockSendMessage.mockResolvedValue({ message_id: 100 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       await adapter.sendMessage("12345", "Reply", { replyTo: "42" });
 
       expect(mockSendMessage).toHaveBeenCalledWith(12345, "Reply", {
@@ -452,7 +605,7 @@ describe("createTelegramAdapter", () => {
     it("passes link_preview_options when disableLinkPreview is true", async () => {
       mockSendMessage.mockResolvedValue({ message_id: 101 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       await adapter.sendMessage("12345", "No preview", { disableLinkPreview: true });
 
       expect(mockSendMessage).toHaveBeenCalledWith(12345, "No preview", {
@@ -464,7 +617,7 @@ describe("createTelegramAdapter", () => {
     it("returns err on failure", async () => {
       mockSendMessage.mockRejectedValue(new Error("Network error"));
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.sendMessage("12345", "Hello");
 
       expect(result.ok).toBe(false);
@@ -473,13 +626,55 @@ describe("createTelegramAdapter", () => {
       }
     });
 
+    it("redacts credentials from send failures in logs status and returned errors", async () => {
+      const credential = `xoxb-${"s".repeat(32)}`;
+      mockSendMessage.mockRejectedValue(new Error(`network failure with ${credential}`));
+      const deps = makeDeps();
+      const adapter = await createStartedTelegramAdapter(deps);
+
+      const result = await adapter.sendMessage("12345", "Hello");
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).not.toContain(credential);
+      expect(adapter.getStatus?.().error).not.toContain(credential);
+      const warning = vi.mocked(deps.logger.warn).mock.calls.find(
+        (call) => call[1] === "Send message failed",
+      );
+      const payload = warning?.[0] as { err?: unknown };
+      expect(typeof payload.err).toBe("string");
+      expect(String(payload.err)).not.toContain(credential);
+    });
+
+    it("redacts credentials from HTML parse fallback warnings", async () => {
+      const credential = `xoxb-${"s".repeat(32)}`;
+      mockSendMessage
+        .mockRejectedValueOnce(makeGrammyError(
+          `Bad Request: can't parse entities: unsupported tag with ${credential}`,
+        ))
+        .mockResolvedValueOnce({ message_id: 200 });
+      const deps = makeDeps();
+      const adapter = await createStartedTelegramAdapter(deps);
+
+      const result = await adapter.sendMessage("12345", "Low max drawdown (<2.1%)");
+
+      expect(result.ok).toBe(true);
+      const warning = vi.mocked(deps.logger.warn).mock.calls.find(
+        (call) => call[1] === "HTML parse fallback triggered",
+      );
+      const payload = warning?.[0] as { err?: unknown };
+      expect(typeof payload.err).toBe("string");
+      expect(String(payload.err)).not.toContain(credential);
+    });
+
     it("retries without parse_mode on HTML parse error", async () => {
-      const parseErr = new Error("Call to 'sendMessage' failed! (400: Bad Request: can't parse entities: Unsupported start tag \"2.1%)\" at byte offset 882)");
+      const parseErr = makeGrammyError(
+        "Bad Request: can't parse entities: Unsupported start tag \"2.1%)\" at byte offset 882",
+      );
       mockSendMessage
         .mockRejectedValueOnce(parseErr)
         .mockResolvedValueOnce({ message_id: 200 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.sendMessage("12345", "Low max drawdown (<2.1%)");
 
       expect(result.ok).toBe(true);
@@ -492,13 +687,13 @@ describe("createTelegramAdapter", () => {
     });
 
     it("returns error if plain text fallback also fails", async () => {
-      const parseErr = new Error("can't parse entities: bad tag");
+      const parseErr = makeGrammyError("Bad Request: can't parse entities: bad tag");
       const plainErr = new Error("some other error");
       mockSendMessage
         .mockRejectedValueOnce(parseErr)
         .mockRejectedValueOnce(plainErr);
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.sendMessage("12345", "text");
 
       expect(result.ok).toBe(false);
@@ -509,7 +704,7 @@ describe("createTelegramAdapter", () => {
     it("does not retry on non-parse errors", async () => {
       mockSendMessage.mockRejectedValue(new Error("403: Forbidden: bot blocked by user"));
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.sendMessage("12345", "text");
 
       expect(result.ok).toBe(false);
@@ -521,7 +716,7 @@ describe("createTelegramAdapter", () => {
     it("calls bot.api.editMessageText with HTML parse_mode", async () => {
       mockEditMessageText.mockResolvedValue({});
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.editMessage("12345", "99", "Updated <i>text</i>");
 
       expect(result.ok).toBe(true);
@@ -533,7 +728,7 @@ describe("createTelegramAdapter", () => {
     it("returns err on failure", async () => {
       mockEditMessageText.mockRejectedValue(new Error("Message not modified"));
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.editMessage("12345", "99", "Same text");
 
       expect(result.ok).toBe(false);
@@ -543,12 +738,12 @@ describe("createTelegramAdapter", () => {
     });
 
     it("retries without parse_mode on HTML parse error", async () => {
-      const parseErr = new Error("can't parse entities: Unsupported start tag");
+      const parseErr = makeGrammyError("Bad Request: can't parse entities: Unsupported start tag");
       mockEditMessageText
         .mockRejectedValueOnce(parseErr)
         .mockResolvedValueOnce({});
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.editMessage("12345", "99", "text with <bad> html");
 
       expect(result.ok).toBe(true);
@@ -565,7 +760,7 @@ describe("createTelegramAdapter", () => {
       const chatData = { id: -100123, title: "My Group", type: "supergroup", description: "A group" };
       mockGetChat.mockResolvedValue(chatData);
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.platformAction("chat_info", { chat_id: "-100123" });
 
       expect(result.ok).toBe(true);
@@ -578,7 +773,7 @@ describe("createTelegramAdapter", () => {
     it("pin calls bot.api.pinChatMessage with correct args", async () => {
       mockPinChatMessage.mockResolvedValue(true);
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.platformAction("pin", {
         chat_id: "-100123",
         message_id: "42",
@@ -592,7 +787,7 @@ describe("createTelegramAdapter", () => {
     });
 
     it("unsupported action returns error", async () => {
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.platformAction("does_not_exist", {});
 
       expect(result.ok).toBe(false);
@@ -604,7 +799,7 @@ describe("createTelegramAdapter", () => {
     it("SDK error returns descriptive failure", async () => {
       mockGetChat.mockRejectedValue(new Error("Bad Request: chat not found"));
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.platformAction("chat_info", { chat_id: "999" });
 
       expect(result.ok).toBe(false);
@@ -618,7 +813,7 @@ describe("createTelegramAdapter", () => {
     describe("sendTyping thread params", () => {
       it("passes message_thread_id to sendChatAction for forum topic", async () => {
         mockSendChatAction.mockResolvedValue(true);
-        const adapter = createTelegramAdapter(makeDeps());
+        const adapter = await createStartedTelegramAdapter();
         const result = await adapter.platformAction("sendTyping", {
           chatId: "-1001234",
           threadId: "42",
@@ -631,7 +826,7 @@ describe("createTelegramAdapter", () => {
 
       it("passes message_thread_id=1 to sendChatAction for General Topic (asymmetric behavior)", async () => {
         mockSendChatAction.mockResolvedValue(true);
-        const adapter = createTelegramAdapter(makeDeps());
+        const adapter = await createStartedTelegramAdapter();
         const result = await adapter.platformAction("sendTyping", {
           chatId: "-1001234",
           threadId: "1",
@@ -644,7 +839,7 @@ describe("createTelegramAdapter", () => {
 
       it("omits message_thread_id from sendChatAction when threadId is undefined", async () => {
         mockSendChatAction.mockResolvedValue(true);
-        const adapter = createTelegramAdapter(makeDeps());
+        const adapter = await createStartedTelegramAdapter();
         const result = await adapter.platformAction("sendTyping", {
           chatId: "-1001234",
         });
@@ -654,7 +849,7 @@ describe("createTelegramAdapter", () => {
 
       it("sendTyping with chat_id param alias works", async () => {
         mockSendChatAction.mockResolvedValue(true);
-        const adapter = createTelegramAdapter(makeDeps());
+        const adapter = await createStartedTelegramAdapter();
         await adapter.platformAction("sendTyping", {
           chat_id: "-1001234",
           threadId: "42",
@@ -672,7 +867,7 @@ describe("createTelegramAdapter", () => {
           name: "Bug Reports",
           icon_color: 0x6FB9F0,
         });
-        const adapter = createTelegramAdapter(makeDeps());
+        const adapter = await createStartedTelegramAdapter();
         const result = await adapter.platformAction("createForumTopic", {
           chat_id: "-100123",
           name: "Bug Reports",
@@ -694,7 +889,7 @@ describe("createTelegramAdapter", () => {
           name: "General",
           icon_color: 0x6FB9F0,
         });
-        const adapter = createTelegramAdapter(makeDeps());
+        const adapter = await createStartedTelegramAdapter();
         const result = await adapter.platformAction("createForumTopic", {
           chat_id: "-100123",
           name: "General",
@@ -708,7 +903,7 @@ describe("createTelegramAdapter", () => {
 
       it("editForumTopic edits topic name", async () => {
         mockEditForumTopic.mockResolvedValue(true);
-        const adapter = createTelegramAdapter(makeDeps());
+        const adapter = await createStartedTelegramAdapter();
         const result = await adapter.platformAction("editForumTopic", {
           chat_id: "-100123",
           message_thread_id: "42",
@@ -726,7 +921,7 @@ describe("createTelegramAdapter", () => {
 
       it("closeForumTopic closes a topic", async () => {
         mockCloseForumTopic.mockResolvedValue(true);
-        const adapter = createTelegramAdapter(makeDeps());
+        const adapter = await createStartedTelegramAdapter();
         const result = await adapter.platformAction("closeForumTopic", {
           chat_id: "-100123",
           message_thread_id: "7",
@@ -740,7 +935,7 @@ describe("createTelegramAdapter", () => {
 
       it("reopenForumTopic reopens a closed topic", async () => {
         mockReopenForumTopic.mockResolvedValue(true);
-        const adapter = createTelegramAdapter(makeDeps());
+        const adapter = await createStartedTelegramAdapter();
         const result = await adapter.platformAction("reopenForumTopic", {
           chat_id: "-100123",
           message_thread_id: "7",
@@ -754,7 +949,7 @@ describe("createTelegramAdapter", () => {
 
       it("forum topic SDK error returns descriptive failure", async () => {
         mockCreateForumTopic.mockRejectedValue(new Error("Bad Request: not enough rights to create a topic"));
-        const adapter = createTelegramAdapter(makeDeps());
+        const adapter = await createStartedTelegramAdapter();
         const result = await adapter.platformAction("createForumTopic", {
           chat_id: "-100123",
           name: "Test",
@@ -869,7 +1064,27 @@ describe("createTelegramAdapter", () => {
   });
 
   describe("stop()", () => {
-    it("calls runner handle.stop() when running", async () => {
+    it("blocks new outbound sends as soon as shutdown begins", async () => {
+      mockSendMessage.mockResolvedValue({ message_id: 99 });
+      let releaseStop!: () => void;
+      const stopGate = new Promise<void>((resolve) => { releaseStop = resolve; });
+      const completeStop = mockBotStop.getMockImplementation();
+      mockBotStop.mockImplementation(async () => {
+        await stopGate;
+        await completeStop?.();
+      });
+      const adapter = await createStartedTelegramAdapter();
+
+      const stopping = adapter.stop();
+      const sent = await adapter.sendMessage("12345", "must not use a stopping Bot");
+      releaseStop();
+      await stopping;
+
+      expect(sent.ok).toBe(false);
+      expect(mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it("stops built-in polling when running", async () => {
       vi.mocked(validateBotToken).mockResolvedValue(
         ok({ id: 123, username: "test_bot", isBot: true }),
       );
@@ -880,7 +1095,7 @@ describe("createTelegramAdapter", () => {
       const result = await adapter.stop();
 
       expect(result.ok).toBe(true);
-      expect(mockRunnerHandle.stop).toHaveBeenCalled();
+      expect(mockBotStop).toHaveBeenCalled();
     });
 
     it("logs standardized 'Adapter stopped' on success", async () => {
@@ -899,7 +1114,7 @@ describe("createTelegramAdapter", () => {
       );
     });
 
-    it("returns ok when runner is not running", async () => {
+    it("returns ok when polling is not running", async () => {
       const adapter = createTelegramAdapter(makeDeps());
       const result = await adapter.stop();
 
@@ -911,7 +1126,7 @@ describe("createTelegramAdapter", () => {
     it("passes message_thread_id when threadId is set in options", async () => {
       mockSendMessage.mockResolvedValue({ message_id: 99 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.sendMessage("12345", "Hello", {
         threadId: "42",
         extra: { telegramThreadScope: "forum" },
@@ -928,7 +1143,7 @@ describe("createTelegramAdapter", () => {
     it("omits message_thread_id for General Topic (ID=1) in forum scope", async () => {
       mockSendMessage.mockResolvedValue({ message_id: 99 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       await adapter.sendMessage("12345", "Hello", {
         threadId: "1",
         extra: { telegramThreadScope: "forum" },
@@ -941,7 +1156,7 @@ describe("createTelegramAdapter", () => {
     it("includes message_thread_id=1 for DM scope", async () => {
       mockSendMessage.mockResolvedValue({ message_id: 99 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       await adapter.sendMessage("12345", "Hello", {
         threadId: "1",
         extra: { telegramThreadScope: "dm" },
@@ -957,7 +1172,7 @@ describe("createTelegramAdapter", () => {
     it("omits message_thread_id when threadId is undefined", async () => {
       mockSendMessage.mockResolvedValue({ message_id: 99 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       await adapter.sendMessage("12345", "Hello");
 
       const callOpts = mockSendMessage.mock.calls[0][2];
@@ -968,10 +1183,10 @@ describe("createTelegramAdapter", () => {
   describe("sendMessage thread fallback", () => {
     it("retries without message_thread_id on thread-not-found error", async () => {
       mockSendMessage
-        .mockRejectedValueOnce(new Error("Bad Request: message thread not found"))
+        .mockRejectedValueOnce(makeGrammyError("Bad Request: message thread not found"))
         .mockResolvedValueOnce({ message_id: 200 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.sendMessage("12345", "Hello", {
         threadId: "42",
         extra: { telegramThreadScope: "forum" },
@@ -994,13 +1209,15 @@ describe("createTelegramAdapter", () => {
       //        -> sendWithThreadFallback catches -> doSend(undefined) -> HTML, no thread -> success
       mockSendMessage
         // Call 1: HTML+thread -> parse error
-        .mockRejectedValueOnce(new Error("can't parse entities: Unsupported start tag"))
+        .mockRejectedValueOnce(makeGrammyError(
+          "Bad Request: can't parse entities: Unsupported start tag",
+        ))
         // Call 2: text+thread (HTML fallback inside doSend) -> thread-not-found
-        .mockRejectedValueOnce(new Error("Bad Request: message thread not found"))
+        .mockRejectedValueOnce(makeGrammyError("Bad Request: message thread not found"))
         // Call 3: HTML, no thread (doSend retried without thread) -> success
         .mockResolvedValueOnce({ message_id: 300 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.sendMessage("12345", "Hello", {
         threadId: "42",
         extra: { telegramThreadScope: "forum" },
@@ -1027,7 +1244,7 @@ describe("createTelegramAdapter", () => {
     it("non-thread error is not retried", async () => {
       mockSendMessage.mockRejectedValue(new Error("403: Forbidden: bot blocked by user"));
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.sendMessage("12345", "Hello", {
         threadId: "42",
         extra: { telegramThreadScope: "forum" },
@@ -1042,7 +1259,7 @@ describe("createTelegramAdapter", () => {
     it("passes message_thread_id to sendPhoto for image attachment", async () => {
       mockSendPhoto.mockResolvedValue({ message_id: 101 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.sendAttachment(
         "12345",
         { type: "image", url: "https://example.com/img.jpg", caption: "pic" },
@@ -1060,7 +1277,7 @@ describe("createTelegramAdapter", () => {
     it("passes message_thread_id to sendAudio for audio attachment", async () => {
       mockSendAudio.mockResolvedValue({ message_id: 102 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.sendAttachment(
         "12345",
         { type: "audio", url: "https://example.com/audio.mp3", caption: "sound" },
@@ -1078,7 +1295,7 @@ describe("createTelegramAdapter", () => {
     it("passes message_thread_id to sendVideo for video attachment", async () => {
       mockSendVideo.mockResolvedValue({ message_id: 103 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.sendAttachment(
         "12345",
         { type: "video", url: "https://example.com/video.mp4", caption: "clip" },
@@ -1096,7 +1313,7 @@ describe("createTelegramAdapter", () => {
     it("passes message_thread_id to sendDocument for document attachment", async () => {
       mockSendDocument.mockResolvedValue({ message_id: 104 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.sendAttachment(
         "12345",
         { type: "file", url: "https://example.com/file.pdf", caption: "doc" },
@@ -1113,10 +1330,14 @@ describe("createTelegramAdapter", () => {
 
     it("sendAttachment retries without thread on thread-not-found", async () => {
       mockSendPhoto
-        .mockRejectedValueOnce(new Error("Bad Request: message thread not found"))
+        .mockRejectedValueOnce(makeGrammyError(
+          "Bad Request: message thread not found",
+          400,
+          "sendPhoto",
+        ))
         .mockResolvedValueOnce({ message_id: 105 });
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       const result = await adapter.sendAttachment(
         "12345",
         { type: "image", url: "https://example.com/img.jpg", caption: "pic" },
@@ -1137,9 +1358,11 @@ describe("createTelegramAdapter", () => {
 
   describe("sendAttachment voice thread params", () => {
     it("sendAttachment voice path passes threadParams to voice sender", async () => {
-      mockVoiceSendVoice.mockResolvedValue(ok("99"));
+      mockVoiceSendVoice.mockResolvedValue(
+        ok({ kind: "tracked", messageId: "99" }),
+      );
 
-      const adapter = createTelegramAdapter(makeDeps());
+      const adapter = await createStartedTelegramAdapter();
       await adapter.sendAttachment(
         "12345",
         { type: "audio", url: "/tmp/voice.ogg", isVoiceNote: true, durationSecs: 5 },

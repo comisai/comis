@@ -3,11 +3,11 @@
 /**
  * `obs.audit.query` RPC handler — the read surface onto the durable
  * `obs_audit_events` table. The SIBLING of
- * `obs-explain.ts` / `fleet-health.ts`: a bounded, admin-gated, content-free
+ * `obs-explain.ts` / `system-health.ts`: a bounded, admin-gated, content-free
  * query over the persisted security-decision audit (the audit sink + the
  * store's `queryAuditEvents` read).
  *
- * Dual-layer admin gate (cloned verbatim from `fleet-health.ts` /
+ * Dual-layer admin gate (cloned verbatim from `system-health.ts` /
  * `obs-explain.ts`): the contract is `scopes:["admin"]` (gateway-router primary)
  * AND the handler re-checks `_trustLevel === "admin"` (defense-in-depth).
  * `stripInternalFields` runs BEFORE the contract parse so `_trustLevel` can never
@@ -19,7 +19,7 @@
  * field on the row — structural, not a runtime filter.
  *
  * Soft-fail: when `obsStore` is absent (in-memory-only builds) the handler
- * returns an empty `{ rows: [] }` rather than throwing — the `obs.fleet.health`
+ * returns an empty `{ rows: [] }` rather than throwing — the `obs.system.health`
  * empty-store posture.
  *
  * @module
@@ -36,7 +36,7 @@ import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
  * the `queryAuditEvents` read. COMPUTED-KEY form (`[ObsAuditQueryContract.method]`)
  * is MANDATORY — `api-contracts-bidirectional.test.ts` + `contract-handler-parity`
  * only recognize the computed key, not a `"obs.audit.query":` string literal
- * (the `fleet-health.ts` precedent).
+ * (the `system-health.ts` precedent).
  *
  * @param deps - the shared obs-handler deps; `deps.obsStore` exposes the
  *   `queryAuditEvents(params)` read. Absent ⇒ an empty result.
@@ -52,7 +52,7 @@ export function bindObsAuditHandlers(deps: ObsHandlerDeps): Record<string, RpcHa
       // smuggled into the parsed params (or the result).
       const params = ObsAuditQueryContract.request.parse(stripInternalFields(rawParams));
 
-      // Soft-fail: no store ⇒ an honest empty result (the fleet-health posture).
+      // Soft-fail: no store ⇒ an honest empty result (the system-health posture).
       if (deps.obsStore === undefined) {
         return { rows: [] };
       }

@@ -207,7 +207,7 @@ export class IcCacheHealthView extends LitElement {
 
     try {
       // The cache-break-by-reason RPC ($-lost SUM) — the primary surface.
-      const raw = await rpc.call<{ rows?: unknown[] }>("obs.cacheBreaks.byReason", { since });
+      const raw = await rpc.call("obs.cacheBreaks.byReason", { since });
       const wireRows = Array.isArray(raw?.rows) ? raw.rows : [];
       this._rows = wireRows.map((r) => this._narrowRow(r as Record<string, unknown>));
 
@@ -224,7 +224,7 @@ export class IcCacheHealthView extends LitElement {
   /** Fetch the hit/write ratio from obs.cacheStats.window; null on any failure. */
   private async _loadHitWriteRatio(rpc: RpcClient, since: number): Promise<number | null> {
     try {
-      const stats = await rpc.call<{ window?: Record<string, unknown> } & Record<string, unknown>>(
+      const stats = await rpc.call(
         "obs.cacheStats.window",
         { sinceMs: since },
       );

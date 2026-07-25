@@ -1,5 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
+import { tryCatch } from "@comis/shared";
+
+const SafePositiveIntegerSchema = z.number().int().positive().safe();
+const SafeNonnegativeIntegerSchema = z.number().int().nonnegative().safe();
+const TimeOfDaySchema = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u);
+const MAX_CRON_JOBS = 10_000;
+const MAX_EXECUTION_LOG_BYTES = 32 * 1_024 * 1_024;
+const CRON_TERMINAL_RESERVATION_BYTES = 64 * 1_024;
+
+function isIanaTimezone(value: string): boolean {
+  return tryCatch(() => new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0)).ok;
+}
+
+const TimezoneSchema = z.string()
+  .transform((value) => value === "" ? "UTC" : value)
+  .refine(isIanaTimezone, { message: "Expected a valid IANA timezone" });
 
 /**
  * Scheduler configuration schema.
@@ -15,16 +31,16 @@ import { z } from "zod";
 const CronConfigSchema = z.strictObject({
     /** Enable cron job scheduling */
     enabled: z.boolean().default(true),
-    /** Directory for cron job state persistence */
-    storeDir: z.string().default("./data/scheduler"),
-    /** Maximum concurrent cron job runs */
-    maxConcurrentRuns: z.number().int().positive().default(3),
-    /** Default timezone for cron expressions (empty = UTC) */
-    defaultTimezone: z.string().default(""),
-    /** Maximum number of cron jobs allowed (0 = unlimited) */
-    maxJobs: z.number().int().nonnegative().default(100),
-    /** Maximum consecutive errors before auto-suspending a cron job (0 = never suspend) */
-    maxConsecutiveErrors: z.number().int().nonnegative().default(5),
+    /** Maximum due cron occurrences admitted by one scheduler tick */
+    maxRunsPerTick: SafePositiveIntegerSchema.default(3),
+    /** Authoring timezone used when a cron expression omits an explicit zone */
+    defaultTimezone: TimezoneSchema.default("UTC"),
+    /** Positive authored-job cap; config-owned and retained terminal rows are separate */
+    maxJobs: SafePositiveIntegerSchema.max(MAX_CRON_JOBS).default(100),
+    /** Provider/dependency failures before suspension (zero disables suspension) */
+    maxConsecutiveDependencyErrors: SafeNonnegativeIntegerSchema.default(5),
+    /** Stable per-job eligibility spread applied only to recurring scheduled fires */
+    staggerWindowMs: SafeNonnegativeIntegerSchema.default(0),
     /**
      * Operator toggle for scheduler-initiated wake gates. Tri-state via
      * `.optional()` — NOT a boolean `.default()`, because the absent state is
@@ -78,39 +94,40 @@ const QuietHoursConfigSchema = z.strictObject({
     /** Enable quiet hours (suppress non-critical automation) */
     enabled: z.boolean().default(false),
     /** Quiet hours start time (HH:MM format) */
-    start: z.string().default("22:00"),
+    start: TimeOfDaySchema.default("22:00"),
     /** Quiet hours end time (HH:MM format) */
-    end: z.string().default("07:00"),
-    /** Timezone for quiet hours (empty = system local) */
-    timezone: z.string().default(""),
+    end: TimeOfDaySchema.default("07:00"),
+    /** Explicit timezone for deterministic quiet-hour evaluation */
+    timezone: TimezoneSchema.default("UTC"),
     /** Allow critical-priority items to bypass quiet hours */
     criticalBypass: z.boolean().default(true),
   });
 
 const ExecutionConfigSchema = z.strictObject({
-    /** Directory for execution lock files */
-    lockDir: z.string().default("./data/scheduler/locks"),
-    /** Lock stale timeout in milliseconds */
-    staleMs: z.number().int().positive().default(600_000),
-    /** Lock update interval in milliseconds */
-    updateMs: z.number().int().positive().default(30_000),
-    /** Directory for execution log files */
-    logDir: z.string().default("./data/scheduler/logs"),
     /** Maximum log file size in bytes */
-    maxLogBytes: z.number().int().positive().default(2_000_000),
-    /** Maximum lines to keep in ring-buffer log */
-    keepLines: z.number().int().positive().default(2_000),
+    maxLogBytes: SafePositiveIntegerSchema.max(MAX_EXECUTION_LOG_BYTES).default(2_000_000),
+    /** Complete start/terminal execution groups retained when capacity permits */
+    retainedExecutions: SafePositiveIntegerSchema.max(100_000).default(1_000),
   });
 
 const TasksConfigSchema = z.strictObject({
-    /** Enable task extraction from conversations. Default TRUE — the agent is
-     * fully capable out of the box (proactive follow-up extraction on by
-     * default; the operator can set false to opt out). */
-    enabled: z.boolean().default(true),
+    /** Enable model-inferred follow-up tasks. Explicit opt-in because this
+     * capability creates autonomous work from delivered conversations. */
+    enabled: z.boolean().default(false),
     /** Minimum confidence threshold for extracted tasks (0-1) */
     confidenceThreshold: z.number().min(0).max(1).default(0.8),
-    /** Directory for task state persistence */
-    storeDir: z.string().default("./data/scheduler/tasks"),
+    /** Per-agent delay used to form a bounded extraction batch */
+    debounceMs: SafePositiveIntegerSchema.min(1_000).max(300_000).default(15_000),
+    /** Maximum delivered turns in one extraction batch */
+    batchMax: SafePositiveIntegerSchema.max(64).default(8),
+    /** Maximum exact-origin tasks considered in one proactive check */
+    maxPerCheck: SafePositiveIntegerSchema.max(8).default(3),
+    /** Rolling visible-send cap for one conversation */
+    maxPerDayPerConversation: SafePositiveIntegerSchema.max(24).default(3),
+    /** Default slack after the minimum due instant */
+    defaultWindowMs: SafePositiveIntegerSchema.max(30 * 24 * 60 * 60 * 1_000).default(43_200_000),
+    /** Additional pre-acceptance attempts allowed after the initial attempt */
+    preAcceptanceRetryLimit: SafeNonnegativeIntegerSchema.max(3).default(3),
   });
 
 export type HeartbeatConfig = z.infer<typeof HeartbeatConfigSchema>;
@@ -126,6 +143,15 @@ export const SchedulerConfigSchema = z.strictObject({
     execution: ExecutionConfigSchema.default(() => ExecutionConfigSchema.parse({})),
     /** Task extraction from conversations */
     tasks: TasksConfigSchema.default(() => TasksConfigSchema.parse({})),
+  }).superRefine((config, ctx) => {
+    const requiredLedgerBytes = (config.cron.maxRunsPerTick + 1) * CRON_TERMINAL_RESERVATION_BYTES;
+    if (!Number.isSafeInteger(requiredLedgerBytes) || config.execution.maxLogBytes < requiredLedgerBytes) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["execution", "maxLogBytes"],
+        message: "Execution log capacity cannot reserve the configured per-tick admissions",
+      });
+    }
   });
 
 export type SchedulerConfig = z.infer<typeof SchedulerConfigSchema>;

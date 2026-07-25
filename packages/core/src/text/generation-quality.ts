@@ -9,7 +9,7 @@
  * A weak local model that silently translates non-Latin source memories into a
  * Latin output (e.g. a user-representation pass translating Hebrew facts into
  * an English profile — a failure otherwise invisible to observability) becomes
- * a counted fleet signal.
+ * a counted system signal.
  *
  * VISIBILITY ONLY — pure function, NO gating, no rejection (a mixed code-heavy
  * chunk legitimately skews Latin via the 0.3 dominance threshold in

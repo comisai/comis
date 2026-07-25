@@ -31,6 +31,8 @@
  */
 
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
+import { REDACTED_TOOL_RESULT_USER_MESSAGE } from "./synthetic-user-messages.js";
+import { getSessionFileEntries } from "./session-manager-internals.js";
 
 /** Literal placeholder written by sanitizeSessionSecrets. */
 // eslint-disable-next-line no-restricted-syntax -- session-scrub placeholder constant (not the Pino censor literal)
@@ -55,12 +57,12 @@ export interface RedactedScrubResult {
 export function scrubRedactedToolCalls(
   sessionManager: SessionManager,
 ): RedactedScrubResult {
-  /* eslint-disable @typescript-eslint/no-explicit-any -- SessionManager internals */
-  const sm = sessionManager as any;
-  const fileEntries = sm?.fileEntries;
-  if (!Array.isArray(fileEntries)) {
+  /* eslint-disable @typescript-eslint/no-explicit-any -- persisted-entry payloads are untyped JSONL shapes */
+  const rawEntries = getSessionFileEntries(sessionManager);
+  if (!rawEntries) {
     return { scrubbed: false, blocksRewritten: 0, resultsRewritten: 0 };
   }
+  const fileEntries = rawEntries as any[];
 
   // Pass 1: find assistant messages whose tool_use blocks are ALL poisoned.
   // Mixed messages (some poisoned, some not) are skipped: rewriting a single
@@ -153,7 +155,7 @@ export function scrubRedactedToolCalls(
 
     msg.role = "user";
     msg.content = [
-      { type: "text", text: "(prior secret operation — no output shown)" },
+      { type: "text", text: REDACTED_TOOL_RESULT_USER_MESSAGE },
     ];
     delete msg.toolCallId;
     delete msg.toolName;
@@ -214,4 +216,3 @@ function buildSummaryText(
     `reuse a [REDACTED] placeholder.)`
   );
 }
-

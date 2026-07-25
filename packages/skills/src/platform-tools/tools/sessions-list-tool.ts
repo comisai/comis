@@ -20,6 +20,8 @@ import type { RpcCall } from "./cron-tool.js";
 // ── Parameter Schema ────────────────────────────────────────────────
 
 const SessionsListParams = Type.Object({
+  tenant_id: Type.String({ description: "Tenant that owns the sessions" }),
+  agent_id: Type.String({ description: "Agent that owns the sessions" }),
   kind: Type.Optional(
     Type.Union(
       [
@@ -60,6 +62,8 @@ export function createSessionsListTool(rpcCall: RpcCall): AgentTool<typeof Sessi
       try {
         const p = params as unknown as Record<string, unknown>;
         const result = await rpcCall("session.list", {
+          tenant_id: readStringParam(p, "tenant_id"),
+          agent_id: readStringParam(p, "agent_id"),
           kind: readStringParam(p, "kind", false) ?? "all",
           since_minutes: readNumberParam(p, "since_minutes", false),
         });

@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+import { unwrapExternalContent } from "@comis/core";
+import { isMcpValidationError } from "../bridge/bridge-event-handlers.js";
+
 /**
  * Tool retry circuit breaker: per-tool-signature consecutive failure tracking.
  *
@@ -138,8 +141,8 @@ export function extractErrorTag(errorText: string): string {
   const bracketMatch = /\[(\w+)\]/.exec(unwrapped);
   if (bracketMatch) return bracketMatch[1]!;
 
-  // 2. "Validation failed" prefix
-  if (/^validation failed/i.test(unwrapped)) return "validation_failed";
+  // 2. Caller-correctable schema/argument validation failures.
+  if (isMcpValidationError(unwrapped)) return "validation_failed";
 
   // 3. Fallback: normalize first 80 chars of the unwrapped text
   return unwrapped
@@ -156,6 +159,11 @@ export function extractErrorTag(errorText: string): string {
  * message (which starts with prose then embeds the next envelope in quotes).
  */
 function peelEnvelope(text: string): string {
+  const external = unwrapExternalContent(text);
+  if (external !== null) {
+    return external.content;
+  }
+
   // Shape A: raw JSON envelope — `{"content":[{"type":"text","text":"..."}], ...}`
   // Use prefix sniff to avoid JSON.parse cost on non-envelope errors.
   const trimmed = text.trimStart();
@@ -179,13 +187,15 @@ function peelEnvelope(text: string): string {
   //   `Tool "exec" has failed 2 consecutive times with the same error:
   //    "{\"content\":[...]}". This tool appears to be unavailable. ...`
   // Peel the quoted JSON substring, if present.
-  const quoted = /same error: "([^]+?)"\.\s/.exec(text);
-  if (quoted) {
+  const quotedStart = text.indexOf('same error: "');
+  const contentStart = quotedStart === -1 ? -1 : quotedStart + 'same error: "'.length;
+  const quotedEnd = contentStart === -1 ? -1 : text.indexOf('". ', contentStart);
+  if (quotedEnd !== -1) {
     // The captured group is JSON with escaped quotes. Unescape by parsing
     // the outer quoted string as JSON (wrap in extra quotes so JSON.parse
     // handles the escapes).
     try {
-      const inner = JSON.parse(`"${quoted[1]!}"`) as string;
+      const inner = JSON.parse(`"${text.slice(contentStart, quotedEnd)}"`) as string;
       return inner;
     } catch {
       // Fall through — return prefix + match unchanged.

@@ -161,6 +161,10 @@ not be merged. Remove an allowlist entry only when you have fixed the underlying
    change limited to documentation, typos, formatting, or neutral test fixtures
    may use `N/A: <reason>` when it cannot change runtime behavior or security
    expectations.
+7. Automation that updates an existing PR body must retain the template's exact
+   `## Description`, `## Related Issue`, `## Type of Change`, `## Checklist`,
+   and `## RED Test Proof` headings. Put generated reports under an optional
+   section instead of replacing or renaming the required sections.
 
 ## AI-Generated and Bulk PRs
 

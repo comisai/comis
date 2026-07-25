@@ -1,40 +1,64 @@
 // SPDX-License-Identifier: Apache-2.0
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createBackgroundCompletionRunner } from "./completion-runner.js";
+import { err, ok, type Result } from "@comis/shared";
+import {
+  createBackgroundCompletionRunner,
+  type BackgroundCompletionRunnerDeps,
+} from "./completion-runner.js";
 import type { BackgroundTask } from "./background-task-types.js";
-import type { BackgroundTaskOrigin } from "@comis/core";
+import {
+  getContext,
+  createConversationRef,
+  conversationScopeToSessionKey,
+  formatSessionKey,
+  RequestContextSchema,
+  runWithContext,
+  TypedEventBus,
+  type BackgroundTaskOrigin,
+  type RequestContext,
+} from "@comis/core";
 
 // Build a real-ish event bus so on()/off()/emit() work end-to-end. We
 // mock the executor, sessionStore, taskManager.getTask, fallbackNotifyFn,
 // and logger.
 function createFakeEventBus() {
-  const handlers = new Map<string, Set<(data: unknown) => void>>();
-  return {
-    on(event: string, handler: (data: unknown) => void) {
-      if (!handlers.has(event)) handlers.set(event, new Set());
-      handlers.get(event)!.add(handler);
-      return this;
-    },
-    off(event: string, handler: (data: unknown) => void) {
-      handlers.get(event)?.delete(handler);
-      return this;
-    },
-    emit(event: string, data: unknown) {
-      for (const h of handlers.get(event) ?? []) h(data);
-    },
-  } as unknown as import("@comis/core").TypedEventBus;
+  return new TypedEventBus();
 }
 
-function buildOrigin(over: Partial<BackgroundTaskOrigin> = {}): BackgroundTaskOrigin {
-  return {
-    agentId: "default",
-    sessionKey: "default:echo:test:user1",
-    channelType: "echo",
-    channelId: "test",
-    traceId: null,
-    backgroundHopCount: 0,
-    ...over,
+function buildOrigin(over: Partial<BackgroundTaskOrigin> & { agentId?: string; sessionKey?: string; channelType?: string; channelId?: string; userId?: string } = {}): BackgroundTaskOrigin {
+  const agentId = over.agentId ?? "default";
+  const sessionParts = over.sessionKey?.split(":") ?? [];
+  const tenantId = sessionParts[0] ?? "default";
+  const userId = over.userId ?? sessionParts[1] ?? "user1";
+  const channelType = over.channelType ?? "echo";
+  const channelId = over.channelId ?? "test";
+  const referenceEndpoint = { channelType, channelInstanceId: "test-instance", conversationId: channelId || "invalid-route", conversationKind: "direct" as const };
+  const turnScope = {
+    conversation: { tenantId, agentId, partition: { kind: "endpoint-conversation-principal" as const, endpoint: referenceEndpoint, principalId: userId } },
+    principal: { principalId: userId }, endpoint: referenceEndpoint,
   };
+  const conversationRef = createConversationRef(turnScope.conversation);
+  if (!conversationRef.ok) throw conversationRef.error;
+  if (channelId === "") {
+    turnScope.endpoint = { ...referenceEndpoint, conversationId: "" };
+    turnScope.conversation.partition.endpoint = turnScope.endpoint;
+  }
+  return {
+    turnScope,
+    conversationRef: conversationRef.value,
+    deliveryOrigin: { channelType, channelId, userId, tenantId },
+    traceId: null,
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
+    backgroundHopCount: 0,
+    ...Object.fromEntries(Object.entries(over).filter(([key]) => !["agentId", "sessionKey", "channelType", "channelId", "userId"].includes(key))),
+  };
+}
+
+function originSessionKey(origin: BackgroundTaskOrigin): string {
+  const projected = conversationScopeToSessionKey(origin.turnScope.conversation);
+  if (!projected.ok) throw projected.error;
+  return formatSessionKey(projected.value);
 }
 
 function buildTask(over: Partial<BackgroundTask> = {}): BackgroundTask {
@@ -45,6 +69,9 @@ function buildTask(over: Partial<BackgroundTask> = {}): BackgroundTask {
     startedAt: 1,
     completedAt: 2,
     origin: buildOrigin(),
+    continuationExecutionId: "task-1",
+    dispatchAttempts: 0,
+    dispatchState: "pending",
     ...over,
   };
 }
@@ -59,73 +86,361 @@ function makeLogger() {
   } as unknown as import("@comis/core").ComisLogger;
 }
 
+function executeFinalized(result: Record<string, unknown>) {
+  return async (...args: unknown[]) => {
+    const overrides = args[7] as {
+      onProviderStart?: () => Result<void, Error>;
+      onFinalizedResult?: (
+        value: Record<string, unknown>,
+        phase: "cleanup_pending" | "ready",
+      ) => Promise<void>;
+      onJournalFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+    } | undefined;
+    const started = overrides?.onProviderStart?.();
+    if (started !== undefined && !started.ok) return Promise.reject(started.error);
+    await overrides?.onJournalFinalizedResult?.(result);
+    await overrides?.onFinalizedResult?.(result, "ready");
+    return result;
+  };
+}
+
+async function acceptDelivery(input: Parameters<BackgroundCompletionRunnerDeps["deliverCompletion"]>[0]) {
+  const started = input.onSendStart();
+  return started.ok
+    ? { kind: "accepted" as const }
+    : { kind: "retryable_pre_send" as const, errorKind: "resource" as const, message: started.error.message };
+}
+
 describe("createBackgroundCompletionRunner", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
-  let sessionStore: { loadByFormattedKey: ReturnType<typeof vi.fn> };
-  let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn> };
+  let sessionStore: { loadByRef: ReturnType<typeof vi.fn> };
+  let taskManager: {
+    getTask: ReturnType<typeof vi.fn>;
+    commitDispatchState: ReturnType<typeof vi.fn>;
+    persistContinuationOutbox: ReturnType<typeof vi.fn>;
+    persistCleanupPendingOutbox: ReturnType<typeof vi.fn>;
+    persistFinalizedResult: ReturnType<typeof vi.fn>;
+    recordRecoveryIncident: ReturnType<typeof vi.fn>;
+    scheduleDispatchRetry: ReturnType<typeof vi.fn>;
+    scheduleStateRetry: ReturnType<typeof vi.fn>;
+  };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
-  let transitionDispatchState: ReturnType<typeof vi.fn>;
+  let commitDispatchState: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     eventBus = createFakeEventBus();
-    executor = { execute: vi.fn().mockResolvedValue({ ok: true }) };
-    sessionStore = { loadByFormattedKey: vi.fn().mockReturnValue({ messages: [] }) };
-    transitionDispatchState = vi.fn().mockReturnValue(true);
+    executor = {
+      execute: vi.fn(executeFinalized({
+        response: "continued",
+        executionId: "execution-default",
+        finishReason: "stop",
+      })),
+    };
+    sessionStore = { loadByRef: vi.fn().mockReturnValue(ok({ messages: [] })) };
+    commitDispatchState = vi.fn((_taskId, next, expected) => {
+      const task = taskManager.getTask();
+      const current = task?.dispatchState ?? "pending";
+      if (!task || (expected && !expected.includes(current))) return ok(false);
+      task.dispatchState = next;
+      return ok(true);
+    });
     taskManager = {
       getTask: vi.fn(),
-      transitionDispatchState,
+      commitDispatchState,
+      persistContinuationOutbox: vi.fn((_taskId, outbox, expected) => {
+        const task = taskManager.getTask();
+        const current = task?.dispatchState ?? "pending";
+        if (!task || (expected && !expected.includes(current))) {
+          return { ok: false, error: new Error("outbox transition rejected") };
+        }
+        task.continuationOutbox = outbox;
+        task.dispatchState = "ready_to_deliver";
+        return ok(undefined);
+      }),
+      persistCleanupPendingOutbox: vi.fn(),
+      persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+      recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
+      scheduleDispatchRetry: vi.fn(),
+      scheduleStateRetry: vi.fn(),
     };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
   });
 
-  function build(maxBackgroundHops = 3, isTurnInFlight?: (key: string) => boolean) {
+  function build(
+    maxBackgroundHops = 3,
+    isTurnInFlight?: (key: string) => boolean,
+    assembleToolsForAgent?: BackgroundCompletionRunnerDeps["assembleToolsForAgent"],
+    deliverCompletion: BackgroundCompletionRunnerDeps["deliverCompletion"] = vi.fn(async (input) => {
+      const started = input.onSendStart();
+      return started.ok
+        ? { kind: "accepted" as const }
+        : { kind: "retryable_pre_send" as const, errorKind: "resource" as const, message: started.error.message };
+    }),
+    resolveMaxBackgroundHops: (agentId: string) => number = () => maxBackgroundHops,
+  ) {
     return createBackgroundCompletionRunner({
       eventBus,
       getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
-      fallbackNotifyFn,
-      maxBackgroundHops,
+      recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
+      cleanupFinalizedSession: vi.fn().mockResolvedValue(ok(undefined)),
+      reconcileDelivery: vi.fn().mockResolvedValue(ok({ kind: "accepted" })),
+      deliverFallback: async (input) => {
+        const started = input.onSendStart();
+        if (!started.ok) {
+          return { kind: "retryable_pre_send" as const, errorKind: "resource" as const, message: started.error.message };
+        }
+        const { origin, response } = input;
+        await fallbackNotifyFn({
+          agentId: origin.turnScope.conversation.agentId,
+          message: response,
+          priority: "normal",
+          origin: "background_task",
+        });
+        return { kind: "accepted" };
+      },
+      deliveryProtection: "ledger",
+      resolveMaxBackgroundHops,
       ...(isTurnInFlight ? { isTurnInFlight } : {}),
+      ...(assembleToolsForAgent ? { assembleToolsForAgent } : {}),
+      deliverCompletion,
       logger: makeLogger(),
     });
   }
 
-  it("LIVE-TURN skip: origin turn in flight → NO re-entry turn (the live turn owns consumption)", async () => {
-    // Mirrors the dispatcher's suppression (live incident: an auto-backgrounded
-    // MCP call completed mid-turn; the live turn consumed it via background_tasks).
-    // A re-entry now would serialize a redundant continuation behind the live turn.
+  it("keeps a live-turn completion pending until explicit consumption", async () => {
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);
-    const runner = build(3, (key) => key === task.origin.sessionKey);
+    const runner = build(3, (key) => key === originSessionKey(task.origin));
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     expect(executor.execute).not.toHaveBeenCalled();
     expect(fallbackNotifyFn).not.toHaveBeenCalled();
+    expect(task.dispatchState).toBe("pending");
+    expect(taskManager.scheduleDispatchRetry).toHaveBeenCalledWith(task.id);
+    await runner.shutdown();
+  });
+
+  it("delivers a pending completion after its origin turn ends", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    let turnInFlight = true;
+    const runner = build(3, () => turnInFlight);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(executor.execute).not.toHaveBeenCalled();
+    expect(task.dispatchState).toBe("pending");
+
+    turnInFlight = false;
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 2,
+      origin: task.origin,
+      timestamp: 4,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(executor.execute).toHaveBeenCalledOnce();
+    await runner.shutdown();
+  });
+
+  it("retries a failed silent terminal commit without continuation execution", async () => {
+    const task = buildTask({ result: "ok", notificationPolicy: "silent" });
+    taskManager.getTask.mockReturnValue(task);
+    commitDispatchState.mockImplementation((_taskId, next, expected) => {
+      const current = task.dispatchState ?? "pending";
+      if (expected && !expected.includes(current)) return ok(false);
+      if (next === "delivered") return err(new Error("storage unavailable"));
+      task.dispatchState = next;
+      return ok(true);
+    });
+    const runner = build();
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(taskManager.scheduleStateRetry).toHaveBeenCalledWith(
+      task.id,
+      "delivered",
+      ["execution_claimed"],
+    );
+    expect(taskManager.recordRecoveryIncident).toHaveBeenCalledWith(task.id);
+    expect(executor.execute).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
+  it("retries a completion claim after acknowledged storage failure", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    commitDispatchState.mockReturnValueOnce(err(new Error("storage unavailable")));
+    const outcomes: Array<{ reason: string }> = [];
+    eventBus.on("background_task:notified", (event) => outcomes.push(event));
+    const runner = build();
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(task.dispatchState).toBe("pending");
+    expect(taskManager.scheduleDispatchRetry).toHaveBeenCalledWith(task.id);
+    expect(outcomes).toContainEqual(expect.objectContaining({ reason: "retry_scheduled" }));
+    expect(executor.execute).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
+  it("delivers a visible result finalized before provider dispatch", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    executor.execute.mockImplementation(async (...args: unknown[]) => {
+      const overrides = args[7] as {
+        onJournalFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+        onFinalizedResult?: (
+          value: Record<string, unknown>,
+          phase: "cleanup_pending" | "ready",
+        ) => Promise<void>;
+      } | undefined;
+      const result = {
+        response: "pre-provider response",
+        executionId: "execution-pre-provider",
+        finishReason: "error",
+      };
+      await overrides?.onJournalFinalizedResult?.(result);
+      await overrides?.onFinalizedResult?.(result, "ready");
+      return result;
+    });
+    const deliverCompletion = vi.fn(acceptDelivery);
+    const runner = build(3, undefined, undefined, deliverCompletion);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(commitDispatchState).not.toHaveBeenCalledWith(
+      task.id,
+      "executing",
+      expect.anything(),
+    );
+    expect(taskManager.persistContinuationOutbox).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({ response: "pre-provider response" }),
+      ["execution_claimed", "executing"],
+    );
+    expect(taskManager.persistFinalizedResult).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({
+        response: "pre-provider response",
+        executionId: "execution-pre-provider",
+      }),
+      ["execution_claimed", "executing"],
+    );
+    expect(deliverCompletion).toHaveBeenCalledOnce();
+    expect(task.dispatchState).toBe("delivered");
+    await runner.shutdown();
+  });
+
+  it("terminalizes a silent result finalized before provider dispatch", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    executor.execute.mockImplementation(async (...args: unknown[]) => {
+      const overrides = args[7] as {
+        onJournalFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+        onFinalizedResult?: (
+          value: Record<string, unknown>,
+          phase: "cleanup_pending" | "ready",
+        ) => Promise<void>;
+      } | undefined;
+      const result = {
+        response: "NO_REPLY",
+        executionId: "execution-silent-pre-provider",
+        finishReason: "stop",
+      };
+      await overrides?.onJournalFinalizedResult?.(result);
+      await overrides?.onFinalizedResult?.(result, "ready");
+      return result;
+    });
+    const deliverCompletion = vi.fn();
+    const runner = build(3, undefined, undefined, deliverCompletion);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(commitDispatchState).toHaveBeenCalledWith(
+      task.id,
+      "delivered",
+      ["execution_claimed", "executing"],
+    );
+    expect(taskManager.persistContinuationOutbox).not.toHaveBeenCalled();
+    expect(deliverCompletion).not.toHaveBeenCalled();
+    expect(task.dispatchState).toBe("delivered");
     await runner.shutdown();
   });
 
   it("completed event triggers executor.execute with synthetic message AND emits background_task:reentered", async () => {
     const reenteredEvents: unknown[] = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data));
+    const tools = [{ name: "next_report_page" }] as unknown as NonNullable<
+      Parameters<import("../executor/types.js").AgentExecutor["execute"]>[2]
+    >;
+    const assembleToolsForAgent = vi.fn().mockResolvedValue(tools);
 
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);
-    const runner = build();
+    const runner = build(3, undefined, assembleToolsForAgent);
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     // Wait for handler microtask chain.
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     expect(executor.execute).toHaveBeenCalledTimes(1);
-    const [msg, parsedKey, , , passedAgentId] = executor.execute.mock.calls[0]!;
+    const [msg, parsedKey, passedTools, , passedAgentId] = executor.execute.mock.calls[0]!;
     expect(msg.text.startsWith("[Background Task: exec]")).toBe(true);
     expect(msg.channelType).toBe("background_task");
     expect(msg.senderId).toBe("background-task-runner");
@@ -133,13 +448,266 @@ describe("createBackgroundCompletionRunner", () => {
     expect(msg.metadata.backgroundHopCount).toBe(1);
     expect(passedAgentId).toBe("default");
     expect(parsedKey).toBeDefined();
+    expect(assembleToolsForAgent).toHaveBeenCalledWith("default", { sessionKey: parsedKey });
+    expect(passedTools).toBe(tools);
     // reentered event fired exactly once with hopCount = 1.
     expect(reenteredEvents).toHaveLength(1);
     const reentered = reenteredEvents[0] as { taskId: string; hopCount: number; sessionKey: string };
     expect(reentered.taskId).toBe(task.id);
     expect(reentered.hopCount).toBe(1);
-    expect(reentered.sessionKey).toBe(task.origin.sessionKey);
+    expect(reentered.sessionKey).toBe(originSessionKey(task.origin));
     await runner.shutdown();
+  });
+
+  it("delivers the finalized re-entry response to the exact origin with its captured locale", async () => {
+    const responseLocalePolicy = {
+      locale: "he",
+      source: "request" as const,
+      enforceLocale: true,
+    };
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ responseLocalePolicy } as Partial<BackgroundTaskOrigin>),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    executor.execute.mockImplementation(executeFinalized({
+      response: "תוצאת הרקע הושלמה",
+      executionId: "execution-1",
+      finishReason: "stop",
+    }));
+    const deliverCompletion = vi.fn(acceptDelivery);
+    const runner = build(3, undefined, undefined, deliverCompletion);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await runner.shutdown();
+
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      undefined,
+      undefined,
+      "default",
+      undefined,
+      undefined,
+      expect.objectContaining({
+        operationType: "interactive",
+        responseLocalePolicy,
+        onFinalizedResult: expect.any(Function),
+      }),
+    );
+    expect(deliverCompletion).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: task.id,
+      origin: task.origin,
+      response: "תוצאת הרקע הושלמה",
+      executionId: "execution-1",
+      idempotencyKey: "background-continuation:task-1",
+    }));
+  });
+
+  it("continues re-entry execution and reaches later observers when the first re-entry subscriber throws", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    const laterObserver = vi.fn();
+    eventBus.on("background_task:reentered", () => {
+      throw new Error("private completion payload from subscriber");
+    });
+    eventBus.on("background_task:reentered", laterObserver);
+    const runner = build();
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(laterObserver).toHaveBeenCalledOnce();
+    expect(executor.execute).toHaveBeenCalledOnce();
+    await runner.shutdown();
+  });
+
+  it("re-entry ignores a mismatched ambient admin context and uses the persisted physical route at guest trust", async () => {
+    const originTraceId = randomUUID();
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({
+        agentId: "agent_a",
+        sessionKey: "tenant_a:user_a:session-channel:thread:thread_a",
+        channelType: "telegram",
+        channelId: "chat_a",
+        traceId: originTraceId,
+      }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+
+    let reenteredContext: RequestContext | undefined;
+    let executorContext: RequestContext | undefined;
+    eventBus.on("background_task:reentered", () => {
+      reenteredContext = getContext();
+    });
+    executor.execute.mockImplementation(async (...args) => {
+      await Promise.resolve();
+      executorContext = getContext();
+      return executeFinalized({
+        response: "continued",
+        executionId: "execution-context",
+        finishReason: "stop",
+      })(...args);
+    });
+
+    const ambientAdmin = RequestContextSchema.parse({
+      tenantId: "tenant_admin",
+      userId: "admin_user",
+      sessionKey: "tenant_admin:admin_user:admin-channel",
+      agentId: "admin_agent",
+      traceId: randomUUID(),
+      startedAt: 100,
+      trustLevel: "admin",
+      channelType: "gateway",
+      deliveryOrigin: {
+        channelType: "gateway",
+        channelId: "admin-channel",
+        userId: "admin_user",
+        tenantId: "tenant_admin",
+      },
+    });
+
+    const runner = build();
+    await runWithContext(ambientAdmin, async () => {
+      eventBus.emit("background_task:completed", {
+        agentId: task.origin.turnScope.conversation.agentId,
+        taskId: task.id,
+        toolName: task.toolName,
+        durationMs: 1,
+        origin: task.origin,
+        timestamp: 3,
+      });
+      await runner.shutdown();
+    });
+
+    expect(reenteredContext).toBeDefined();
+    expect(executorContext).toBe(reenteredContext);
+    expect(executorContext).toMatchObject({
+      tenantId: "tenant_a",
+      userId: "user_a",
+      sessionKey: originSessionKey(task.origin),
+      agentId: "agent_a",
+      traceId: originTraceId,
+      trustLevel: "guest",
+      channelType: "telegram",
+      deliveryOrigin: {
+        channelType: "telegram",
+        channelId: "chat_a",
+        userId: "user_a",
+        tenantId: "tenant_a",
+      },
+    });
+    expect(executorContext?.startedAt).not.toBe(ambientAdmin.startedAt);
+    expect(Object.isFrozen(executorContext?.deliveryOrigin)).toBe(true);
+    expect(Reflect.set(executorContext!, "trustLevel", "admin")).toBe(false);
+    expect(Reflect.set(executorContext!, "agentId", "admin_agent")).toBe(false);
+  });
+
+  it("invalid persisted physical route is contained and falls back without executor re-entry", async () => {
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({
+        sessionKey: "tenant_a:user_a:session-channel",
+        channelType: "telegram",
+        channelId: "",
+        traceId: randomUUID(),
+      }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+
+    const runner = build();
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await runner.shutdown();
+
+    expect(executor.execute).not.toHaveBeenCalled();
+    expect(task.dispatchState).toBe("delivered");
+    expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("restart re-entry without ambient context creates one valid guest scope for the event and executor", async () => {
+    const task = buildTask({
+      status: "failed",
+      error: "Daemon restarted while task was running",
+      result: undefined,
+      origin: buildOrigin({
+        agentId: "agent_restart",
+        sessionKey: "tenant_restart:user_restart:session-channel",
+        channelType: "telegram",
+        channelId: "chat_restart",
+        traceId: "not-a-valid-trace-id",
+      }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+
+    let reenteredContext: RequestContext | undefined;
+    let executorContext: RequestContext | undefined;
+    eventBus.on("background_task:reentered", () => {
+      reenteredContext = getContext();
+    });
+    executor.execute.mockImplementation(async (...args) => {
+      await Promise.resolve();
+      executorContext = getContext();
+      return executeFinalized({
+        response: "continued",
+        executionId: "execution-restart-context",
+        finishReason: "stop",
+      })(...args);
+    });
+
+    const runner = build();
+    eventBus.emit("background_task:failed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      error: task.error!,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await runner.shutdown();
+
+    expect(reenteredContext).toBeDefined();
+    expect(executorContext).toBe(reenteredContext);
+    expect(RequestContextSchema.safeParse(executorContext).success).toBe(true);
+    expect(executorContext).toMatchObject({
+      tenantId: "tenant_restart",
+      userId: "user_restart",
+      sessionKey: originSessionKey(task.origin),
+      agentId: "agent_restart",
+      trustLevel: "guest",
+      channelType: "telegram",
+      deliveryOrigin: {
+        channelType: "telegram",
+        channelId: "chat_restart",
+        userId: "user_restart",
+        tenantId: "tenant_restart",
+      },
+    });
+    expect(executorContext?.traceId).not.toBe(task.origin.traceId);
+    expect(Object.isFrozen(executorContext?.deliveryOrigin)).toBe(true);
   });
 
   it("failed event triggers executor.execute with failure header", async () => {
@@ -147,7 +715,7 @@ describe("createBackgroundCompletionRunner", () => {
     taskManager.getTask.mockReturnValue(task);
     const runner = build();
     eventBus.emit("background_task:failed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       error: "boom", durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
@@ -158,24 +726,22 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  it("missing session skips re-entry and fallback (session expired)", async () => {
+  it("missing SQLite session still re-enters from persisted origin authority", async () => {
     const reenteredEvents: unknown[] = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data));
 
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);
-    sessionStore.loadByFormattedKey.mockReturnValue(undefined); // session gone
+    sessionStore.loadByRef.mockReturnValue(ok(undefined)); // session gone
     const runner = build();
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    expect(executor.execute).not.toHaveBeenCalled();
-    // Reentered event should NOT have fired -- the runner short-circuits before emit.
-    expect(reenteredEvents).toHaveLength(0);
-    // No fallback either -- expired session has no channel to deliver to.
+    expect(executor.execute).toHaveBeenCalledTimes(1);
+    expect(reenteredEvents).toHaveLength(1);
     expect(fallbackNotifyFn).not.toHaveBeenCalled();
     await runner.shutdown();
   });
@@ -184,40 +750,56 @@ describe("createBackgroundCompletionRunner", () => {
     // Seed task.origin with backgroundHopCount = maxBackgroundHops - 1 so
     // the increment lands at the cap. With maxBackgroundHops = 3 and
     // incoming = 2, nextHopCount = 3 = cap -> fallback fires.
-    const task = buildTask({ origin: buildOrigin({ backgroundHopCount: 2 }) });
+    const task = buildTask({ origin: buildOrigin({ agentId: "worker", backgroundHopCount: 2 }) });
     taskManager.getTask.mockReturnValue(task);
-    const runner = build(3);
+    const resolveMaxBackgroundHops = vi.fn((agentId: string) => agentId === "worker" ? 3 : 9);
+    const runner = build(3, undefined, undefined, undefined, resolveMaxBackgroundHops);
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     expect(executor.execute).not.toHaveBeenCalled();
+    expect(resolveMaxBackgroundHops).toHaveBeenCalledWith("worker");
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
     const opts = fallbackNotifyFn.mock.calls[0]![0]!;
     expect(opts.message).toContain("recursion limit reached");
     await runner.shutdown();
   });
 
-  it("subscription survives a handler error", async () => {
+  it("parks an ambiguous executor rejection without replaying it", async () => {
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);
-    executor.execute.mockRejectedValueOnce(new Error("transient")).mockResolvedValue({});
+    executor.execute
+      .mockImplementationOnce(async (...args: unknown[]) => {
+        const overrides = args[7] as {
+          onProviderStart?: () => Result<void, Error>;
+        } | undefined;
+        const started = overrides?.onProviderStart?.();
+        if (started !== undefined && !started.ok) return Promise.reject(started.error);
+        return Promise.reject(new Error("transient"));
+      })
+      .mockImplementationOnce(executeFinalized({
+        response: "continued",
+        executionId: "execution-retry",
+        finishReason: "stop",
+      }));
     const runner = build();
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 4,
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    expect(executor.execute).toHaveBeenCalledTimes(2);
+    expect(executor.execute).toHaveBeenCalledOnce();
+    expect(task.dispatchState).toBe("parked_uncertain");
     await runner.shutdown();
   });
 
@@ -227,7 +809,7 @@ describe("createBackgroundCompletionRunner", () => {
     const runner = build();
     await runner.shutdown();
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
@@ -243,7 +825,7 @@ describe("createBackgroundCompletionRunner", () => {
     taskManager.getTask.mockReturnValue(task);
     const runner = build();
     eventBus.emit("background_task:failed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       error: task.error!, durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
@@ -268,17 +850,7 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  // -------------------------------------------------------------------------
-  // Two-phase commit on fallbackForTask.
-  //
-  // fallbackForTask persists dispatchState="notified" via
-  // taskManager.transitionDispatchState BEFORE invoking fallbackNotifyFn.
-  // The persist runs synchronously (persistTaskSync) so any SIGKILL after
-  // the persist returns leaves the on-disk state at "notified" -> recovery
-  // sees the at-most-once gate fire -> no duplicate. Without this ordering,
-  // the gate would miss and the user would see a duplicate notification.
-  // -------------------------------------------------------------------------
-  it("fallbackForTask persists dispatchState='notified' BEFORE firing fallbackNotifyFn (two-phase commit)", async () => {
+  it("fallbackForTask persists the exact outbox before firing fallback delivery", async () => {
     // Hop cap path is the simplest reach to fallbackForTask. With
     // maxBackgroundHops=3 and origin.backgroundHopCount=99, nextHopCount
     // exceeds the cap -> fallback fires.
@@ -290,86 +862,87 @@ describe("createBackgroundCompletionRunner", () => {
     const runner = build(3);
 
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    // Both must have been called once.
-    expect(transitionDispatchState).toHaveBeenCalledTimes(1);
-    expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "notified");
+    expect(taskManager.persistContinuationOutbox).toHaveBeenCalledOnce();
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
 
-    // Critical ordering assertion: invocationCallOrder is a global counter
-    // across all vitest mocks; smaller = earlier. transitionDispatchState's
-    // call MUST precede fallbackNotifyFn's.
-    const persistOrder = transitionDispatchState.mock.invocationCallOrder[0]!;
+    const persistOrder = taskManager.persistContinuationOutbox.mock.invocationCallOrder[0]!;
     const fireOrder = fallbackNotifyFn.mock.invocationCallOrder[0]!;
     expect(persistOrder).toBeLessThan(fireOrder);
 
     await runner.shutdown();
   });
 
-  it("SIGKILL between persist and fire — recovery's at-most-once gate fires (no duplicate)", async () => {
-    // Simulate the crash: transitionDispatchState succeeds (state lands on
-    // disk via persistTaskSync), then fallbackNotifyFn rejects (modeling
-    // \"daemon dies during the network call\"). The runner WARNs but does
-    // not retry. A FRESH runner instance receiving the same task with
-    // dispatchState=\"notified\" (the persisted state) MUST skip via the
-    // at-most-once gate at completion-runner.ts handleEvent's early-return
-    // when task.dispatchState === \"notified\".
+  it("retries fallback outbox persistence before any outward send", async () => {
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ backgroundHopCount: 99 }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    taskManager.persistContinuationOutbox.mockReturnValueOnce(
+      err(new Error("protected storage unavailable")),
+    );
+    const outcomes: Array<{ reason: string }> = [];
+    eventBus.on("background_task:notified", (event) => outcomes.push(event));
+    const runner = build(3);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(task.dispatchState).toBe("pending");
+    expect(taskManager.scheduleDispatchRetry).toHaveBeenCalledWith(task.id);
+    expect(outcomes).toContainEqual(expect.objectContaining({ reason: "retry_scheduled" }));
+    expect(fallbackNotifyFn).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
+  it("parks a rejected fallback delivery as uncertain and does not replay it", async () => {
     fallbackNotifyFn.mockRejectedValueOnce(new Error("simulated SIGKILL during fire"));
     const task = buildTask({
       result: "ok",
       origin: buildOrigin({ backgroundHopCount: 99 }),
     });
     taskManager.getTask.mockReturnValue(task);
-    // Mirror what the real BackgroundTaskManager.transitionDispatchState
-    // does: mutate the in-memory task object BEFORE persistTaskSync. This
-    // mirrors the on-disk state for the subsequent recovery-instance
-    // assertion below.
-    transitionDispatchState.mockImplementation((tid: string, next: string) => {
-      if (tid === task.id) (task as unknown as { dispatchState: string }).dispatchState = next;
-      return true;
-    });
-
     const runner = build(3);
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    // Persist step ran.
-    expect(transitionDispatchState).toHaveBeenCalledTimes(1);
-    // Fire step was attempted and rejected.
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
-    // task.dispatchState is now "notified" on the in-memory task object,
-    // mirroring the on-disk state that recovery would load.
-    expect((task as unknown as { dispatchState: string }).dispatchState).toBe("notified");
+    expect(task.dispatchState).toBe("parked_uncertain");
     await runner.shutdown();
 
-    // Now simulate "daemon recovers" — fresh runner instance, same task
-    // object (dispatchState="notified" already set above).
     taskManager.getTask.mockReset();
     taskManager.getTask.mockReturnValue(task);
-    transitionDispatchState.mockReset();
+    commitDispatchState.mockReset();
     fallbackNotifyFn.mockReset();
     executor.execute.mockReset();
     const recoveredRunner = build(3);
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    // At-most-once gate (handleEvent: if task.dispatchState === "notified") returns
-    // immediately -> nothing fires.
     expect(fallbackNotifyFn).not.toHaveBeenCalled();
-    expect(transitionDispatchState).not.toHaveBeenCalled();
+    expect(commitDispatchState).not.toHaveBeenCalled();
     expect(executor.execute).not.toHaveBeenCalled();
     await recoveredRunner.shutdown();
   });
@@ -378,18 +951,39 @@ describe("createBackgroundCompletionRunner", () => {
 describe("trace continuity sub-tests", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
-  let sessionStore: { loadByFormattedKey: ReturnType<typeof vi.fn> };
-  let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn> };
+  let sessionStore: { loadByRef: ReturnType<typeof vi.fn> };
+  let taskManager: {
+    getTask: ReturnType<typeof vi.fn>;
+    commitDispatchState: ReturnType<typeof vi.fn>;
+    persistContinuationOutbox: ReturnType<typeof vi.fn>;
+    persistCleanupPendingOutbox: ReturnType<typeof vi.fn>;
+    persistFinalizedResult: ReturnType<typeof vi.fn>;
+    recordRecoveryIncident: ReturnType<typeof vi.fn>;
+    scheduleDispatchRetry: ReturnType<typeof vi.fn>;
+    scheduleStateRetry: ReturnType<typeof vi.fn>;
+  };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
   let logger: ReturnType<typeof makeLogger>;
 
   beforeEach(() => {
     eventBus = createFakeEventBus();
-    executor = { execute: vi.fn().mockResolvedValue({ ok: true }) };
-    sessionStore = { loadByFormattedKey: vi.fn().mockReturnValue({ messages: [] }) };
+    executor = {
+      execute: vi.fn(executeFinalized({
+        response: "continued",
+        executionId: "execution-trace",
+        finishReason: "stop",
+      })),
+    };
+    sessionStore = { loadByRef: vi.fn().mockReturnValue(ok({ messages: [] })) };
     taskManager = {
       getTask: vi.fn(),
-      transitionDispatchState: vi.fn().mockReturnValue(true),
+      commitDispatchState: vi.fn().mockReturnValue(ok(true)),
+      persistContinuationOutbox: vi.fn().mockReturnValue(ok(undefined)),
+      persistCleanupPendingOutbox: vi.fn().mockReturnValue(ok(undefined)),
+      persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+      recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
+      scheduleDispatchRetry: vi.fn(),
+      scheduleStateRetry: vi.fn(),
     };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
     logger = makeLogger();
@@ -401,14 +995,37 @@ describe("trace continuity sub-tests", () => {
       getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
-      fallbackNotifyFn,
-      maxBackgroundHops,
+      recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
+      cleanupFinalizedSession: vi.fn().mockResolvedValue(ok(undefined)),
+      reconcileDelivery: vi.fn().mockResolvedValue(ok({ kind: "accepted" })),
+      deliverCompletion: async (input) => {
+        const started = input.onSendStart();
+        return started.ok
+          ? { kind: "accepted" }
+          : { kind: "retryable_pre_send", errorKind: "resource", message: started.error.message };
+      },
+      deliverFallback: async (input) => {
+        const started = input.onSendStart();
+        if (!started.ok) {
+          return { kind: "retryable_pre_send", errorKind: "resource", message: started.error.message };
+        }
+        const { origin, response } = input;
+        await fallbackNotifyFn({
+          agentId: origin.turnScope.conversation.agentId,
+          message: response,
+          priority: "normal",
+          origin: "background_task",
+        });
+        return { kind: "accepted" };
+      },
+      deliveryProtection: "ledger",
+      resolveMaxBackgroundHops: () => maxBackgroundHops,
       logger,
     });
   }
 
   it("traceId from task.origin propagates into the synthetic NormalizedMessage.metadata.traceId", async () => {
-    const traceId = "trace-29a";
+    const traceId = randomUUID();
     const task = buildTask({
       result: "ok",
       origin: buildOrigin({ traceId }),
@@ -416,7 +1033,7 @@ describe("trace continuity sub-tests", () => {
     taskManager.getTask.mockReturnValue(task);
     const runner = buildRunner();
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       durationMs: 1,
@@ -432,7 +1049,7 @@ describe("trace continuity sub-tests", () => {
   });
 
   it("background_task:reentered event payload includes traceId from origin", async () => {
-    const traceId = "trace-29b";
+    const traceId = randomUUID();
     const reenteredEvents: Array<Record<string, unknown>> = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data as Record<string, unknown>));
     const task = buildTask({
@@ -442,7 +1059,7 @@ describe("trace continuity sub-tests", () => {
     taskManager.getTask.mockReturnValue(task);
     const runner = buildRunner();
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       durationMs: 1,
@@ -457,9 +1074,10 @@ describe("trace continuity sub-tests", () => {
   });
 
   it("operator-facing log lines on completion-runner WARN/INFO paths include traceId from origin", async () => {
-    const traceId = "trace-29c";
-    // Force a path that emits an INFO log: session expired (sessionStore returns undefined).
-    sessionStore.loadByFormattedKey.mockReturnValue(undefined);
+    const traceId = randomUUID();
+    // The persisted origin remains authoritative when the SQLite session store
+    // has no row, so the invocation DEBUG line must carry the originating trace.
+    sessionStore.loadByRef.mockReturnValue(ok(undefined));
     const task = buildTask({
       result: "ok",
       origin: buildOrigin({ traceId }),
@@ -467,7 +1085,7 @@ describe("trace continuity sub-tests", () => {
     taskManager.getTask.mockReturnValue(task);
     const runner = buildRunner();
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       durationMs: 1,
@@ -488,6 +1106,37 @@ describe("trace continuity sub-tests", () => {
       return obj && typeof obj === "object" && (obj as Record<string, unknown>).traceId === traceId;
     });
     expect(sawTraceId).toBe(true);
+    await runner.shutdown();
+  });
+
+  it("redacts executor rejection details from completion warning logs", async () => {
+    const credential = `xoxb-${"s".repeat(32)}`;
+    executor.execute.mockRejectedValueOnce(
+      new Error(`request https://private.example failed with ${credential}`),
+    );
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    const runner = buildRunner();
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const childLogger = (logger as unknown as { child: ReturnType<typeof vi.fn> }).child.mock.results[0]?.value;
+    const warning = childLogger?.warn.mock.calls.find(
+      (call: unknown[]) => call[1] === "Background completion: executor.execute() rejected",
+    );
+    expect(typeof warning?.[0].err).toBe("string");
+    const calls = JSON.stringify(childLogger?.warn.mock.calls ?? []);
+    expect(calls).not.toContain(credential);
+    expect(calls).not.toContain("private.example");
     await runner.shutdown();
   });
 });

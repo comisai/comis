@@ -9,6 +9,8 @@
  * @module
  */
 
+import { getTelegramBadRequest } from "./telegram-api-error.js";
+
 /**
  * The Telegram-assigned ID for the General Topic in forum groups.
  * All forum groups have this topic implicitly, even when no custom
@@ -129,21 +131,14 @@ export function buildTypingThreadParams(
 /**
  * Detect Telegram API errors related to missing or closed forum topics.
  *
- * Matches: "message thread not found", "TOPIC_CLOSED", "TOPIC_DELETED"
+ * Matches Telegram's exact terminal-topic descriptions after a definitive
+ * Bot API 400 rejection.
  */
 export function isTelegramThreadNotFoundError(err: unknown): boolean {
-  const message =
-    err instanceof Error
-      ? err.message
-      : typeof err === "string"
-        ? err
-        : "";
-
-  return (
-    /message thread not found/i.test(message) ||
-    /TOPIC_CLOSED/i.test(message) ||
-    /TOPIC_DELETED/i.test(message)
-  );
+  const description = getTelegramBadRequest(err)?.description;
+  return description === "Bad Request: message thread not found" ||
+    description === "Bad Request: TOPIC_CLOSED" ||
+    description === "Bad Request: TOPIC_DELETED";
 }
 
 /**

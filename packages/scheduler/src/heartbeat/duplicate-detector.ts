@@ -1,80 +1,92 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * DuplicateDetector: TTL-based deduplication for heartbeat notification text.
- *
- * Suppresses identical notification text for the same agent+channel compound
- * key within a configurable TTL window (default 24 hours). Used by the delivery
- * bridge to prevent notification spam when heartbeat checks repeatedly produce
- * the same result text.
- *
- */
+/** Process-lifetime duplicate evidence recorded only after possible user visibility. */
+import { createHash } from "node:crypto";
+import {
+  ChannelEndpointSchema,
+  type ChannelEndpoint,
+  type ClockPort,
+} from "@comis/core";
 
-/** DuplicateDetector public interface. */
+const DUPLICATE_TTL_MS = 24 * 60 * 60 * 1_000;
+const MAX_DUPLICATE_ENTRIES = 500;
+const MAX_IDENTIFIER_BYTES = 256;
+const MAX_TEXT_BYTES = 64 * 1024;
+
+export interface HeartbeatDuplicateCandidate {
+  readonly agentId: string;
+  readonly destinationEndpoint: ChannelEndpoint;
+  readonly text: string;
+}
+
 export interface DuplicateDetector {
-  /**
-   * Returns true if key+text combination was seen within TTL.
-   * Marks as seen if new or expired.
-   */
-  isDuplicate(key: string, text: string): boolean;
-
-  /** Clear all tracked entries. */
+  /** Pure check: never records rejected or merely attempted delivery. */
+  check(candidate: HeartbeatDuplicateCandidate): boolean;
+  /** Record only accepted, partial, unknown, or otherwise possibly visible text. */
+  recordPossiblyVisible(candidate: HeartbeatDuplicateCandidate): void;
   clear(): void;
 }
 
-/**
- * Create a DuplicateDetector with TTL-based expiration and injectable clock.
- *
- * @param opts.ttlMs - Time-to-live in milliseconds (default: 24 hours)
- * @param opts.maxEntries - Maximum entries before FIFO eviction (default: 500)
- * @param opts.nowMs - Injectable clock for deterministic testing (default: Date.now)
- */
-export function createDuplicateDetector(opts?: {
-  ttlMs?: number;
-  maxEntries?: number;
-  nowMs?: () => number;
-}): DuplicateDetector {
-  const ttlMs = opts?.ttlMs ?? 24 * 60 * 60 * 1000;
-  const getNow = opts?.nowMs ?? Date.now;
-  const maxEntries = opts?.maxEntries ?? 500;
-
-  /** Map from compound key ("key:text") to firstSeenMs timestamp. */
+export function createDuplicateDetector(deps: { clock: ClockPort }): DuplicateDetector {
   const seen = new Map<string, number>();
 
-  function compoundKey(key: string, text: string): string {
-    return `${key}\0${text}`;
+  function check(candidate: HeartbeatDuplicateCandidate): boolean {
+    const key = candidateKey(candidate);
+    if (key === undefined) return false;
+    const nowMs = deps.clock.now();
+    pruneExpired(nowMs);
+    const recordedAtMs = seen.get(key);
+    return recordedAtMs !== undefined && nowMs - recordedAtMs < DUPLICATE_TTL_MS;
   }
 
-  /** Evict oldest entry when at capacity (FIFO via Map insertion order). */
-  function evictIfNeeded(): void {
-    if (seen.size >= maxEntries) {
-      const oldestKey = seen.keys().next().value as string;
-      seen.delete(oldestKey);
+  function recordPossiblyVisible(candidate: HeartbeatDuplicateCandidate): void {
+    const key = candidateKey(candidate);
+    if (key === undefined) return;
+    const nowMs = deps.clock.now();
+    pruneExpired(nowMs);
+    seen.delete(key);
+    while (seen.size >= MAX_DUPLICATE_ENTRIES) {
+      const oldest = seen.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      seen.delete(oldest);
+    }
+    seen.set(key, nowMs);
+  }
+
+  function pruneExpired(nowMs: number): void {
+    for (const [key, recordedAtMs] of seen) {
+      if (nowMs - recordedAtMs >= DUPLICATE_TTL_MS) seen.delete(key);
     }
   }
 
-  return {
-    isDuplicate(key: string, text: string): boolean {
-      const compound = compoundKey(key, text);
-      const now = getNow();
-      const firstSeen = seen.get(compound);
+  return { check, recordPossiblyVisible, clear: () => seen.clear() };
+}
 
-      if (firstSeen !== undefined) {
-        if (now - firstSeen < ttlMs) {
-          // Still within TTL -- this is a duplicate
-          return true;
-        }
-        // Expired -- delete and fall through to re-record
-        seen.delete(compound);
-      }
+function candidateKey(candidate: HeartbeatDuplicateCandidate): string | undefined {
+  const endpoint = ChannelEndpointSchema.safeParse(candidate.destinationEndpoint);
+  if (
+    !endpoint.success
+    || !byteBounded(candidate.agentId, MAX_IDENTIFIER_BYTES)
+    || !byteBounded(candidate.text, MAX_TEXT_BYTES)
+  ) return undefined;
+  const value = endpoint.data;
+  const textDigest = createHash("sha256").update(candidate.text, "utf8").digest("hex");
+  return [
+    "heartbeat-duplicate-v1",
+    candidate.agentId,
+    value.channelType,
+    value.channelInstanceId,
+    value.conversationId,
+    value.threadId === undefined ? "thread:absent" : `thread:present:${value.threadId}`,
+    value.conversationKind,
+    textDigest,
+  ].map(lengthDelimited).join("");
+}
 
-      // New entry or expired -- record and return false
-      evictIfNeeded();
-      seen.set(compound, now);
-      return false;
-    },
+function byteBounded(value: string, maxBytes: number): boolean {
+  const bytes = Buffer.byteLength(value, "utf8");
+  return bytes > 0 && bytes <= maxBytes;
+}
 
-    clear(): void {
-      seen.clear();
-    },
-  };
+function lengthDelimited(value: string): string {
+  return `${Buffer.byteLength(value, "utf8")}:${value}`;
 }

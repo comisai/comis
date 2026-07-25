@@ -6,7 +6,7 @@ icon: "terminal"
 
 **What this is for:** the `comis` command is how you set up your daemon, manage agents and channels, browse memory, audit security, and operate the running system from the terminal. **Who it's for:** operators and developers running Comis on their own machine or a server.
 
-Comis currently ships **30 top-level command groups**. Some commands call the
+Comis currently ships **32 top-level command groups**. Some commands call the
 running daemon over JSON-RPC; others inspect or update local state. The built-in
 `--help` output is authoritative for the installed version.
 
@@ -275,6 +275,81 @@ comis cache stats --since 7d --provider anthropic
 # Machine-readable output
 comis cache stats --format json
 ```
+
+---
+
+### `comis cron`
+
+Inspect persisted cron jobs, force a named job to run, and read immutable execution history through the running daemon's strict JSON-RPC contracts. The CLI does not parse scheduler files and has no offline mode; an unreachable daemon is an error.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `cron list` | List persisted jobs for one agent, or all agents with admin trust |
+| `cron run <jobName>` | Force one unambiguous named job to run |
+| `cron runs <jobName>` | Show immutable execution groups for one named job |
+| `cron status` | Show whether one agent's scheduler is active and its job count |
+
+All subcommands accept `--agent <id>` and `--format table|json`. `cron list` additionally accepts `--all`; it sends the explicit all-agent selector and requires an admin operator token. `--all` and `--agent` cannot be combined. `cron runs` accepts `--limit <n>` from 1 through 10,000 and otherwise uses the daemon's bounded default.
+
+```bash
+# Inspect one agent's schedules without displaying job payload text
+comis cron list --agent default
+
+# Admin inventory across every active agent scheduler
+comis cron list --all --format json
+
+# Force one named job and retain its execution id
+comis cron run "Daily status" --agent default --format json
+
+# Inspect terminal status and delivery outcome for recent fires
+comis cron runs "Daily status" --agent default --limit 20
+
+# Confirm scheduler activation and persisted job count
+comis cron status --agent default
+```
+
+Cross-agent selection is authorized by the daemon, not trusted from CLI arguments. Agent-origin RPC calls remain self-scoped. Table inventory deliberately omits payload bodies; JSON is the complete typed operator projection.
+
+---
+
+### `comis tasks`
+
+Inspect, cancel, and recover inferred follow-up tasks through the running daemon's strict admin JSON-RPC contracts. Like `comis cron`, the CLI never parses scheduler files and has no offline mode; an unreachable daemon is an error. Records are content-free: identifiers, states, and timestamps only, never the task text.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `tasks status` | Show content-free task authority status, digest, quarantine, and counts |
+| `tasks list` | List content-free task records |
+| `tasks cancel [taskId]` | Cancel one pending task, or every pending task for the selected agent |
+| `tasks reset` | Archive and replace a disabled task authority after digest review |
+
+All subcommands accept `--agent <id>` and `--format table|json`. `tasks list` additionally accepts `--status <state>` (an exact task state: `pending`, `checking`, `delivering`, `delivered`, `delivery_partial`, `dismissed`, `delivery_unknown`, `expired`, `cancelled`) and `--limit <n>` from 1 through 256. `tasks cancel` takes either a `taskId` or `--all-pending`, never both; the bulk form also requires `--confirm`. `tasks reset` requires `--expected-digest <sha256>` (a lowercase SHA-256 of the current raw authority, as reported by `tasks status`) plus `--confirm`, and replaces the authority irreversibly after archiving it.
+
+```bash
+# Authority state, file digest, quarantine, and pending/active/terminal counts
+comis tasks status --agent default
+
+# Content-free inventory, newest-bounded
+comis tasks list --agent default --limit 50
+
+# Only the records still awaiting a due check
+comis tasks list --status pending --format json
+
+# Cancel one task by id
+comis tasks cancel task_01hx8n4k --agent default
+
+# Cancel every pending task for one agent
+comis tasks cancel --all-pending --agent default --confirm
+
+# Recover a quarantined authority after reviewing the digest from `tasks status`
+comis tasks reset --agent default --expected-digest <sha256> --confirm
+```
+
+Cancellation reports whether the scheduler must rescan, so a terminal state is never inferred from CLI output alone. A reset that does not match `--expected-digest` fails instead of overwriting an authority you have not reviewed.
 
 ---
 
@@ -770,7 +845,7 @@ Memory management and recall-diagnostics commands for searching, inspecting, and
 | `memory recall-trace <session>` | Inspect a session's hybrid-recall trace — **admin** |
 | `memory observations` | List observation provenance (sources + history) — **admin** |
 | `memory entities` | List an agent's entity graph, most-mentioned first — **admin** |
-| `memory clear` | Clear memory entries matching a filter |
+| `memory clear` | Clear non-system, non-pinned memory for a tenant or agent |
 | `memory export` | Export agent memory to a secret-scrubbed versioned JSON file — **admin** |
 | `memory import <file>` | Import memory from a `comis-memory-export-v1` JSON envelope — **admin** |
 | `memory pin <id>` | Pin a memory entry so it is always injected in recall — **admin** |
@@ -821,7 +896,7 @@ comis memory learning --format json
 <Note>
 Outcome capture is **per-agent default-off** (`agents.<id>.learningOutcome.enabled`, gated by the master switch `memory.enabled`). With no recorded events the command prints an honest "no outcome events recorded yet" message naming the config keys to enable, rather than a misleading empty table. The same `learning` signal is reconstructable per session via [`comis explain`](#comis-explain).
 
-The wrongness-based **forgetting** sweep emits its own **counts-only** trajectory signals — `learning:memory_demoted` / `learning:memory_evicted` (soft-eviction counts), a once-per-run `learning:lifecycle_swept` summary (`scanned`/`promoted`/`demoted`/`evicted`), and `learning:memory_failure_attributed` (the corroborated-failure accrual that precedes eviction) — surfaced through [`comis explain`](#comis-explain) (per session), [`comis fleet`](#comis-fleet) (the daemon-wide `memory_lifecycle` finding, fleet-wide), and `cron.runs jobName "Memory lifecycle"` (the per-sweep `scanned/evicted/demoted` counts). It is part of the one learning layer (`agents.<id>.learning.enabled`, also under `memory.enabled`), reads `learning.forget.*`, and carries **no memory body** — see [Learning](/reference/config-yaml#learning-agents-learning). (Recall ranking is the fixed `rag.scoring` fusion — there is no learned recall weight.)
+The wrongness-based **forgetting** sweep emits its own **counts-only** trajectory signals — `learning:memory_demoted` / `learning:memory_evicted` (soft-eviction counts), a once-per-run `learning:lifecycle_swept` summary (`scanned`/`promoted`/`demoted`/`evicted`), and `learning:memory_failure_attributed` (the corroborated-failure accrual that precedes eviction) — surfaced through [`comis explain`](#comis-explain) (per session), [`comis system-health`](#comis-system-health) (the daemon-wide `memory_lifecycle` finding, deployment-wide), and `cron.runs jobName "Memory lifecycle"` (the per-sweep `scanned/evicted/demoted` counts). It is part of the one learning layer (`agents.<id>.learning.enabled`, also under `memory.enabled`), reads `learning.forget.*`, and carries **no memory body** — see [Learning](/reference/config-yaml#learning-agents-learning). (Recall ranking is the fixed `rag.scoring` fusion — there is no learned recall weight.)
 </Note>
 
 #### `memory skills`
@@ -838,7 +913,7 @@ comis memory skills --format json
 ```
 
 <Note>
-The reflection engine is **per-agent default-off** (`agents.<id>.learning.enabled`, gated by the master switch `memory.enabled`). With no learned docs the command prints an honest "no learned skills yet" message naming the config keys to enable, rather than a misleading empty table. Each reflection run emits **counts-only** trajectory signals — `reflect:admitted` (the admitted-doc count) and `reflect:funnel` (the whole funnel: `synthesized` / `validated` / `admitted` / `maxClusterCardinality` plus a content-free **`admissionOutcome`** closed enum — `reflectOutcome` ∈ {`admitted`, `no_successes`, `untrusted_origin`, `uncorroborated`, `empty_reflection`, `rejected_name_length`, `rejected_validation`} — so `comis explain` answers "why was 0 admitted" from one field) — surfaced through [`comis explain`](#comis-explain) (per session) and [`comis fleet`](#comis-fleet) (fleet-wide); a learned procedure used in a failed/corrected trajectory or a low-capability **abstain** is named by the `learned_skill_failing` / `synthesis_abstained_low_capability` root-cause verdicts (the abstain is **benign** — Defer ≠ Retry).
+The reflection engine is **per-agent default-off** (`agents.<id>.learning.enabled`, gated by the master switch `memory.enabled`). With no learned docs the command prints an honest "no learned skills yet" message naming the config keys to enable, rather than a misleading empty table. Each reflection run emits **counts-only** trajectory signals — `reflect:admitted` (the admitted-doc count) and `reflect:funnel` (the whole funnel: `synthesized` / `validated` / `admitted` / `maxClusterCardinality` plus a content-free **`admissionOutcome`** closed enum — `reflectOutcome` ∈ {`admitted`, `no_successes`, `untrusted_origin`, `uncorroborated`, `empty_reflection`, `rejected_name_length`, `rejected_validation`} — so `comis explain` answers "why was 0 admitted" from one field) — surfaced through [`comis explain`](#comis-explain) (per session) and [`comis system-health`](#comis-system-health) (deployment-wide); a learned procedure used in a failed/corrected trajectory or a low-capability **abstain** is named by the `learned_skill_failing` / `synthesis_abstained_low_capability` root-cause verdicts (the abstain is **benign** — Defer ≠ Retry).
 </Note>
 
 #### `memory recall-trace <session>`
@@ -880,11 +955,11 @@ List an agent's entity graph, most-mentioned first. **Admin-gated** and (tenant,
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--filter <filter>` | `string` | - | Filter expression (e.g. `memoryType=conversation`) |
-| `--tenant <tenantId>` | `string` | - | Filter by tenant ID |
+| `--tenant <tenantId>` | `string` | - | Tenant scope |
+| `--agent <agentId>` | `string` | - | Agent scope within the selected or configured tenant |
 | `-y, --yes` | `boolean` | `false` | Skip confirmation prompt |
 
-<Warning>At least one filter (`--filter` or `--tenant`) is required. This safety check prevents accidental blanket clears.</Warning>
+<Warning>At least one scope (`--tenant` or `--agent`) is required. The command removes every non-system, non-pinned memory in that scope; it does not support content or memory-type filters.</Warning>
 
 #### `memory export`
 
@@ -982,8 +1057,8 @@ comis memory observations --agent default --limit 50
 # List an agent's entity graph (most-mentioned first)
 comis memory entities --agent default --limit 100
 
-# Clear conversation memory for a specific tenant
-comis memory clear --tenant default --filter memoryType=conversation --yes
+# Clear non-system, non-pinned memory for a specific agent
+comis memory clear --tenant default --agent system --yes
 
 # Export an agent's memory to a file (secrets scrubbed, 0600 permissions)
 comis memory export --agent default --output backup.json
@@ -1032,7 +1107,7 @@ When the daemon is running, the commands fetch via the `models.list` RPC. When t
 | `-c, --config <path>` | `string` | Auto-detected | Config file path |
 
 ```bash
-# List all available models (~1,057 entries across 35 providers as of pi-ai 0.80.6)
+# List all available models (~1,072 entries across 35 providers as of pi-ai 0.80.10)
 comis models list
 
 # Filter by provider
@@ -1097,27 +1172,37 @@ Provider management commands. Like `comis models`, the provider list is sourced 
 
 | Subcommand | Description |
 |------------|-------------|
-| `providers list` | List all available providers with model counts and key status |
+| `providers list` | List all available providers with model counts and credential status |
 
 #### `providers list`
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--format <format>` | `table` \| `json` | `table` | Output format |
+| `--agent <id>` | string | default agent | Resolve credential availability for this agent |
 
 The output includes three columns:
 
 - **Provider** — pi-ai provider id (e.g., `anthropic`, `openrouter`, `groq`)
 - **Models** — count of models the provider exposes in the catalog
-- **Status** — `configured` (canonical env key resolved), `missing key` (provider listed but key not in env), or `keyless` (local providers like ollama / lm-studio that don't need a key)
+- **Status** — `configured` when the daemon's runtime credential chain resolves for the selected agent, `not configured` when that authoritative chain has no usable credential, `keyless` for providers such as Ollama / LM Studio, or `unknown` when the daemon is unavailable and the local CLI cannot inspect encrypted credentials
+
+JSON output also includes `credentialSource`, a value-free category such as
+`secret_store_canonical`, `oauth_profile`, `env_canonical`, or `none`. It never
+includes a credential value. When the daemon is unavailable, the CLI can still
+recognize keyless and ambient-environment credentials; every encrypted-store
+case is reported as `unknown` with `credentialSource: "daemon_unavailable"`.
 
 ```bash
 # Default table output
 comis providers list
 
+# Inspect a specific agent
+comis providers list --agent research
+
 # Machine-readable
 comis providers list --format json
-# → [{"provider":"anthropic","modelCount":23,"status":"configured"}, ...]
+# → [{"provider":"anthropic","modelCount":14,"status":"configured","credentialSource":"secret_store_canonical"}, ...]
 ```
 
 To switch an agent to a different provider, use [`comis agent configure`](#comis-agent) with `--provider <id> --model <id>`.
@@ -1410,19 +1495,19 @@ Use `sessions reset` (not `sessions delete`) when you want the model to explicit
 comis sessions list
 
 # Inspect a specific session
-comis sessions inspect "default:user123:telegram"
+comis sessions inspect "default:agent:default:user123:telegram"
 
 # Delete a session
-comis sessions delete "default:user123:telegram" --yes
+comis sessions delete "default:agent:default:user123:telegram" --yes
 
 # Full conversation reset (clears LCD history + session transcript — irreversible, requires --yes)
-comis sessions reset "default:user123:telegram" --yes
+comis sessions reset "default:agent:default:user123:telegram" --yes
 
 # Also clear RAG memories for this session (the full-forget path — prints deleted count)
-comis sessions reset "default:user123:telegram" --memory --yes
+comis sessions reset "default:agent:default:user123:telegram" --memory --yes
 
 # Nuclear forget — also purge consolidated observations derived from this session
-comis sessions reset "default:user123:telegram" --memory --purge-derived --yes
+comis sessions reset "default:agent:default:user123:telegram" --memory --purge-derived --yes
 ```
 
 #### `sessions backup`
@@ -1548,13 +1633,20 @@ comis cost export --provider openai --model gpt-4o-mini
 
 Assemble an `IncidentReport` for a single agent session — a bounded, causal post-mortem (outcome, cost, per-tool stats, normalized failures, circuit-breaker timeline, large-result offloads, recall health — including degraded/failed recall lanes — session-wide activity-finalize tallies, and a deterministic likely root cause). The report is derived from log evidence only; no LLM is invoked, so the same session always yields the same verdict. Backed by `ObsExplainContract` (`obs.explain`).
 
-The positional argument is routed automatically by shape: a **`root-` run id** (an autonomy run's `rootRunId` — the synthetic in-process `root-session-<sessionKey>` or a real spawned-run lease id; checked **first** because a synthetic root contains `:` but must route as a run id, not a session key) is passed as `rootRunId`; otherwise a **session key** (`tenant:user:channel:ts`, contains `:`) is passed as `sessionKey`; otherwise a **trace ID** (a UUID, no `:`) is passed as `traceId`. The daemon canonicalizes a trace ID *or* a `rootRunId` to its session key first, so all three forms produce the identical report. A `rootRunId` is the **`comis fleet` → `comis explain` drill-down target**: paste the `worstRootRunId` that [`comis fleet`](#comis-fleet)'s autonomy block names straight in, and the report renders that run's `spawnTree` (an unresolvable id surfaces an honest `session_not_found`, never a clean-looking empty report).
+The positional argument is routed automatically by shape: a **`root-` run id** (an autonomy run's `rootRunId` — the synthetic in-process `root-session-<sessionKey>` or a real spawned-run lease id; checked **first** because a synthetic root contains `:` but must route as a run id, not a session key) is passed as `rootRunId`; otherwise a **session key** (the [current agent-scoped format](/agents/sessions#session-scope-key), containing `:`) is passed as `sessionKey`; otherwise a **trace ID** (a UUID, no `:`) is passed as `traceId`. The daemon canonicalizes a trace ID *or* a `rootRunId` to its session key first, so all three forms produce the identical report. A `rootRunId` is the **`comis system-health` → `comis explain` drill-down target**: paste the `worstRootRunId` that [`comis system-health`](#comis-system-health)'s autonomy block names straight in, and the report renders that run's `spawnTree` (an unresolvable id surfaces an honest `session_not_found`, never a clean-looking empty report).
+
+The live daemon resolves session artifacts across every configured agent
+workspace, preferring the workspace owned by the agent encoded in the session
+key before checking the default and other registered workspaces. This keeps
+named-agent sessions explainable when their files do not live under the default
+workspace. `--offline` has no live workspace registry and reads only
+`<dataDir>/workspace`; use the live command for custom workspace paths.
 
 When the session included a transcription or synthesis, the report carries a `voice` block reconstructing that turn: the `provider`, whether it ran `keyless`, the `model`, `durationMs`, the `outcome`, the resolved selection `source` rung (with the `onSkip` reasons when `auto` skipped a higher rung), the `costUsd` (`0` for a keyless turn; omitted for a keyed turn — the audio ports return no per-call cost), and the failure `errorKind`. Content-free — ids, labels, and numbers only, never the audio or transcript text. See [Voice → Observability and cost](/media/voice#observability-and-cost).
 
 When the session made capability-gated calls (an autonomous agent, or one that spawned children via `orchestrate`), the report carries a `spawnTree` block reconstructing the run's authorization topology — the **one call to root-cause an unattended run**. Each node is a `leaseId` (the in-process root groups under its synthetic `rootRunId`) and surfaces its `parentLeaseId` (the child→root edge; absent on the root), the `agentId`, the attenuated `caps` it held, the tool NAMES it invoked (`toolsInvoked`), and any capability it was DENIED (`denials` — each a `CapabilityDeniedError` cap). In the table view a node renders as `<leaseId> ←<parent>  caps=[…] tools=[…] DENIED=[…]`; `--format json` emits the full `spawnTree` array. The tree is reconstructed offline from the session's `capability.audited` trajectory records, so `--offline` shows it too. **Multi-agent graph (DAG) nodes appear as leaves too**: a graph node spawns in-process and never crosses the socket chokepoint that emits `capability.audited`, so each node also emits a `graph.node_spawned` record — reconstructed as a leaf keyed by `<graphId>:<nodeId>` (its stable node identity, not a socket lease), nested under the graph root via `parentLeaseId`, carrying its child `agentId` and `caps:["orch:graph"]` (without this the spawn-tree showed only the root while N graph children ran). Content-free — ids, caps, tool NAMES, and decision-derived denials only, never a tool argument, a message body, or a secret. Per-node remaining **budget** is *not* on the offline tree (it is live daemon state) — use `comis whoami` for an in-flight run's remaining budget; the spawn tree is the post-mortem topology.
 
-When a scheduled job's [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) **woke** the model, the report folds a content-free `cronWakeGate` fact for that fire — the job id, the `wake` verdict, the gate's `durationMs`, its tool-call count, and the model turns it saved (ids and counts only, never the gate's gathered finding). A **skipped** fire is different: it runs no model and opens no session, so it never reaches `comis explain`. The argument is a session key, trace ID, or `rootRunId` — **never a cron job id**. To inspect a job's skipped fires read its run history (`cron.runs`), and for the cross-job skip-rate and turns-saved use [`comis fleet`](#comis-fleet).
+When a scheduled job's [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) **woke** the model, the report folds a content-free `cronWakeGate` fact for that fire — the job id, the `wake` verdict, the gate's `durationMs`, its tool-call count, and the model turns it saved (ids and counts only, never the gate's gathered finding). A **skipped** fire is different: it runs no model and opens no session, so it never reaches `comis explain`. The argument is a session key, trace ID, or `rootRunId` — **never a cron job id**. To inspect a job's skipped fires read its run history (`cron.runs`), and for the cross-job skip-rate and turns-saved use [`comis system-health`](#comis-system-health).
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
@@ -1564,20 +1656,20 @@ When a scheduled job's [wake-gate](/agent-tools/scheduling#wake-gate-run-the-mod
 
 ```bash
 # Explain a session by session key
-comis explain "default:user123:telegram:1717000000"
+comis explain "default:agent:default:user123:telegram"
 
 # Explain by trace ID, with the uncapped (full) report
 comis explain 6ba7b810-9dad-11d1-80b4-00c04fd430c8 --depth full
 
-# Drill into an autonomy run by its rootRunId (the `comis fleet` worstRootRunId) —
+# Drill into an autonomy run by its rootRunId (the `comis system-health` worstRootRunId) —
 # resolves the run to its session and renders the run's spawn-tree
-comis explain "root-session-default:user123:telegram:1717000000"
+comis explain "root-session-default:agent:default:user123:telegram"
 
 # Machine-readable output (includes the spawnTree array for an autonomous run)
-comis explain "default:user123:telegram:1717000000" --format json
+comis explain "default:agent:default:user123:telegram" --format json
 
 # No daemon required — assemble from the local files
-comis explain "default:user123:telegram:1717000000" --offline
+comis explain "default:agent:default:user123:telegram" --offline
 ```
 
 Requires an admin-scoped gateway token (same as `comis trace`) — unless `--offline`. When the gateway is **unreachable** (daemon down / wrong port) the command automatically falls back to the offline assembly with a notice. When the gateway **rejects the token** it does NOT silently fall back — the daemon is demonstrably running, so the error names `COMIS_GATEWAY_TOKEN` (env var or `~/.comis/.env`) and suggests `--offline` as the explicit out.
@@ -1614,27 +1706,27 @@ comis orchestrate replay orch-abc123 --format json
 
 ---
 
-### `comis fleet`
+### `comis system-health`
 
-Assemble a `FleetHealthReport` — a bounded, **cross-session** triage over a recent window: the session count and degradation rate, the **degraded-by-cause breakdown** (degraded sessions bucketed by named `endReason` cause, e.g. `context_exhausted` / `output_starved`), the recurring `WARN` findings (recurring `lcd_divergence` / model / config-posture signals, counts + hints only), the total circuit-breaker trips, the window cost, and a deterministic likely root cause. Like `comis explain`, the report is derived from log + diagnostics evidence only; no LLM is invoked, so the same window yields the same verdict. Backed by `ObsFleetHealthContract` (`obs.fleet.health`).
+Assemble a `SystemHealthReport` — a bounded, **cross-session** triage over a recent window: the session count and degradation rate, the **degraded-by-cause breakdown** (degraded sessions bucketed by named `endReason` cause, e.g. `context_exhausted` / `output_starved`), the recurring `WARN` findings (recurring `lcd_divergence` / model / config-posture signals, counts + hints only), the total circuit-breaker trips, the window cost, and a deterministic likely root cause. Like `comis explain`, the report is derived from log + diagnostics evidence only; no LLM is invoked, so the same window yields the same verdict. Backed by `ObsSystemHealthContract` (`obs.system.health`).
 
-`cost.costUsd` is the per-session spend (the session-summary rollup). `cost.offSessionUsd` is the **background-job** spend in the window — reflection/learning cron runs et al. that key their token usage to a synthetic `__PREFIX__` session with no session_summary, so their cost is **absent** from `costUsd`. The two are distinct and never double-count: the operator's full provider bill is `costUsd + offSessionUsd`. The table view appends `+ $Z off-session (reflection/background)` only when it is non-zero. This closes a reconciliation gap where reflection spend hit the provider console but was invisible to the fleet lens.
+`cost.costUsd` is the per-session spend (the session-summary rollup). `cost.offSessionUsd` is the **background-job** spend in the window — reflection/learning cron runs et al. that key their token usage to a synthetic `__PREFIX__` session with no session_summary, so their cost is **absent** from `costUsd`. The two are distinct and never double-count: the operator's full provider bill is `costUsd + offSessionUsd`. The table view appends `+ $Z off-session (reflection/background)` only when it is non-zero. This closes a reconciliation gap where reflection spend hit the provider console but was invisible to the system health view.
 
 The table view prints the degraded-by-cause spread as a `Degraded by cause: context_exhausted=13, output_starved=9` line (sorted highest-count first; counts + closed-set labels only, no raw bodies) — omitted when no degraded session carried a named cause. The full per-cause map is also on the `--format json` output (`degradedByCause`).
 
-A `health_signal:cache_prefix_churn` finding fires when a session's Anthropic prompt-cache prefix **collapsed** on a recurring basis — a cached-region message mutated across turns on 3+ calls within a recent window, wasting the cache write (up to hundreds of thousands of cache-creation tokens over a session). The finding names the recurring **mutation class** (`structural-shift` = a message index shifted below the cache fence, e.g. from LCD condense/re-admit; `datetime-preamble` / `thinking-cleared` / `content-cleared` = an in-place edit). This closes a fleet-blindness gap where the churn was visible only as a daemon.log `Unstable prefix detected` WARN. Counts + the closed class label only — never message text.
+A `health_signal:cache_prefix_churn` finding fires when a session's Anthropic prompt-cache prefix **collapsed** on a recurring basis — a cached-region message mutated across turns on 3+ calls within a recent window, wasting the cache write (up to hundreds of thousands of cache-creation tokens over a session). The finding names the recurring **mutation class** (`structural-shift` = a message index shifted below the cache fence, e.g. from LCD condense/re-admit; `datetime-preamble` / `thinking-cleared` / `content-cleared` = an in-place edit). This closes a system-blindness gap where the churn was visible only as a daemon.log `Unstable prefix detected` WARN. Counts + the closed class label only — never message text.
 
 A dedicated `config_posture:served_below_configured` finding fires when an Ollama provider serves a smaller `num_ctx` than the configured `contextWindow` — the agents on that provider silently run with the smaller window. The count is the number of providers affected at the **latest** boot (posture is standing state, not cumulative — a healthy restart clears it). Fix by raising the served window (`OLLAMA_CONTEXT_LENGTH=<configured> ollama serve`, or Modelfile `PARAMETER num_ctx <configured>` — see the [served-window section](/reference/config-yaml#local-model-context-window) for the VRAM caveat), then run `comis explain` on a served-bound session for the numbers-backed budget verdict — and see the [Local models playbook](/operations/local-models) for the full local-deployment triage map.
 
-A dedicated `config_posture:media_credential_gap` finding fires when a configured media pipeline (`imageGeneration` / `transcription` / `tts` / `videoGeneration`) has a **pinned** provider whose credential is absent — the pipeline authenticates fine for the main completion path but fails at first media use, so it was previously invisible to the fleet lens (you had to hit it or grep the log). The count is the number of affected pipelines at the **latest** boot (standing state; a login/key + restart clears it). Fix by setting the provider's credential (`OPENAI_API_KEY` / `GOOGLE_API_KEY` / `FAL_KEY` / …), logging in for `openai-codex` (`comis auth login --provider openai-codex`), or switching the pipeline's `provider` to one whose credential is present (or `auto` to follow the main provider). Counts only — never a provider name or credential value.
+A dedicated `config_posture:media_credential_gap` finding fires when a configured media pipeline (`imageGeneration` / `transcription` / `tts` / `videoGeneration`) has a **pinned** provider whose credential is absent — the pipeline authenticates fine for the main completion path but fails at first media use, so it was previously invisible to the system health view (you had to hit it or grep the log). The count is the number of affected pipelines at the **latest** boot (standing state; a login/key + restart clears it). Fix by setting the provider's credential (`OPENAI_API_KEY` / `GOOGLE_API_KEY` / `FAL_KEY` / …), logging in for `openai-codex` (`comis auth login --provider openai-codex`), or switching the pipeline's `provider` to one whose credential is present (or `auto` to follow the main provider). Counts only — never a provider name or credential value.
 
 A dedicated `config_posture:unresolved_model` finding fires when one or more agents are configured with a `model` id that does **not** resolve in the model catalog for its provider (and is not an operator-declared custom model under `providers.entries.<provider>.models`) — e.g. `openai-codex: gpt-5.6` when the real ids are `gpt-5.6-terra` / `-luna` / `-sol`. An unresolved model collapses the whole model profile to the **fail-closed nano profile** (an ~8K-token window), so every non-trivial turn context-exhausts — and neither the `chimeric_model` nor the `pricing_gap` finding catches it (a non-native provider resolves `"free"` for an unknown model, and the model family still parses). The count is the number of affected agents at the **latest** boot (standing state; a valid model id + restart clears it). Fix by setting `agents.<id>.model` to a valid catalog id for its provider — the `daemon.log` unresolved-model WARN names the provider's available ids — or declare the model under `providers.entries.<provider>.models`. Counts only — never a model id in the finding body.
 
 A `voice_health` finding fires when transcriptions/syntheses degraded across the window: the count of degraded STT/TTS turns and the dominant voice `errorKind` (e.g. `model_load_failed` → check the local whisper model cache, `auth_required` → set the provider's audio key). Counts + a closed errorKind label + a static hint only — no raw provider body or secret, safe to paste. Drill into the worst voice session it points at with `comis explain`. See [Voice → Observability and cost](/media/voice#observability-and-cost).
 
-The acute-degradation root cause (`fleet_acute_degradation`) names the **worst degraded session's key** inline (`worst: <sessionKey>`) and in its suggested next step (`comis explain <sessionKey>`), so you paste it straight in rather than hunting for "the worst session".
+The acute-degradation root cause (`system_acute_degradation`) names the **worst degraded session's key** inline (`worst: <sessionKey>`) and in its suggested next step (`comis explain <sessionKey>`), so you paste it straight in rather than hunting for "the worst session".
 
-When the daemon runs **unattended/durable** runs, the report carries an `autonomy` block: the cross-run run count + degraded rate (sourced from the **crash-surviving** `durable_runs` table, so it survives a hard crash), the `orphaned` / `resumed` / `revoked` / `killed` counts (`killed` is separable from `revoked` because a hard `run.kill` and a cooperative `lease.revoke` emit distinct events), the autonomy breaker-trip + budget-breach counts, the window cost, and the worst degraded run's `worstRootRunId` (orphaned > killed > revoked) so you can paste it straight into `comis explain` for its spawn-tree. The orphaned/revoked/killed counts also surface as dedicated `durable_orphaned` / `autonomy_revoked` / `autonomy_killed` findings, and a degraded autonomy run drives the top-ranked `fleet_autonomy_degradation` root cause. Counts + the worst run's id only — never a lease bearer, an orphan-reason body, or a secret; safe to paste. The block is **absent** under `--offline` (the daemon-less CLI has no durable-store edge) or on a non-durability boot — an honest coverage degradation, not a silent zero.
+When the daemon runs **unattended/durable** runs, the report carries an `autonomy` block: the cross-run run count + degraded rate (sourced from the **crash-surviving** `durable_run_checkpoints` table, so it survives a hard crash), the `orphaned` / `resumed` / `revoked` / `killed` counts (`killed` is separable from `revoked` because a hard `run.kill` and a cooperative `lease.revoke` emit distinct events), the autonomy breaker-trip + budget-breach counts, the window cost, and the worst degraded run's `worstRootRunId` (orphaned > killed > revoked) so you can paste it straight into `comis explain` for its spawn-tree. The orphaned/revoked/killed counts also surface as dedicated `durable_orphaned` / `autonomy_revoked` / `autonomy_killed` findings, and a degraded autonomy run drives the top-ranked `system_autonomy_degradation` root cause. Counts + the worst run's id only — never a lease bearer, an orphan-reason body, or a secret; safe to paste. The block is **absent** under `--offline` (the daemon-less CLI has no durable-store edge) or on a non-durability boot — an honest coverage degradation, not a silent zero.
 
 When cron jobs ran a [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) over the window, the report carries a `cronWakeGate` efficiency block and a `cron_wake_gate_efficiency` finding: the gated-fire total, the skip count and **skip-rate**, the **fail-open count and rate**, the model **turns saved**, and the gate's own **tool-call cost**, rolled up per agent (counts and agent ids only — never the gate's gathered findings or script, safe to paste). A high skip-rate is usually the gate *working* (most polls found nothing), not a fault; the three signals worth inspecting are a **100% skip-rate on a monitor you expect to fire**, a **high fail-open rate** (the gate crashed/timed-out/over-capped every fire — it saves nothing and costs its own run, yet reads `skipRate 0` like a busy monitor), and **tool calls exceeding turns saved** (a gate that costs more than it saves). Because a skip opens no session, this is the cross-job lens for it — pair it with `cron.runs jobName "<job>"` for a single job's per-fire decisions.
 
@@ -1647,8 +1739,8 @@ This is the cross-session **sibling** of `comis explain` (single-session). It is
 | `--offline` | `boolean` | `false` | Assemble from the local `~/.comis` files without contacting the daemon. Without `memory.db` access the session-summary half degrades and `coverage.sessionSummary.found` reports it honestly |
 
 ```bash
-# Fleet-health triage over the last 24h (default window)
-comis fleet
+# System-health triage over the last 24h (default window)
+comis system-health
 #   …
 #   Breaker:    3 trips
 #   Autonomy:   20 run(s) (3 degraded, 15%) · orphaned=2 resumed=4 revoked=1 killed=0 · breaker=1 budgetBreaches=0
@@ -1658,13 +1750,13 @@ comis fleet
 #  durable/unattended runs; absent under --offline / a non-durability boot)
 
 # Widen the window to 72h
-comis fleet --since 72
+comis system-health --since 72
 
 # Machine-readable output
-comis fleet --since 24 --format json
+comis system-health --since 24 --format json
 
 # No daemon required — assemble from the local files
-comis fleet --since 24 --offline
+comis system-health --since 24 --offline
 ```
 
 Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`) — unless `--offline`. Unreachable-gateway calls fall back to the offline assembly automatically; a token rejection surfaces the auth error (with the `--offline` tip) instead of masking the misconfiguration.
@@ -1673,13 +1765,17 @@ Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`)
 
 ### `comis messages`
 
-Extract the **inbound messages users typed**, per channel, from the local session logs — the conversation-export lens. It reads the raw session `.jsonl` message logs under every agent workspace tree (`<dataDir>/workspace[-<agentId>]/sessions/...`) and parses each user turn's inbound envelope (`[<channelType>] <senderId> (<time>):`), so one command answers "what did users send us on Telegram yesterday" without hand-joining session files.
+Extract the **inbound messages users typed**, per channel, from the local session logs — the conversation-export lens. It reads the raw session `.jsonl` message logs under every agent workspace tree (`<dataDir>/workspace[-<agentId>]/sessions/...`). Immediately after authorization and session-key resolution, current sessions commit one immutable, model-context-free provenance plan to an append-only `~ledger~inbound.jsonl` sidecar, before preprocessing or executor lookup. The exact same plan and timestamp are then carried through queueing into every SDK custom-entry mirror. Each batch contains every physical inbound represented by a turn, including each message id, channel/chat, sender, timestamp, and initial body. Rapid messages therefore remain separate even when ingress debounce or queue collection combines them into one model turn, and a missing executor or first-turn setup failure remains recoverable. For session records without structured provenance, the command parses the stored inbound envelope (`[<channelType>] <senderId> (<time>):`) only at the exact producer-owned wrapper boundary.
 
-The command runs **fully offline and has no RPC sibling — on purpose**. Unlike `comis explain` / `comis fleet` (bounded digests, counts + hints only), its output is **content-bearing**: message bodies are the payload. The obs network surfaces stay content-free, so this read never crosses the gateway — it only reads local files the operator already owns.
+The command runs **fully offline and has no RPC sibling — on purpose**. Unlike `comis explain` / `comis system-health` (bounded digests, counts + hints only), its output is **content-bearing**: message bodies are the payload. The obs network surfaces stay content-free, so this read never crosses the gateway — it only reads local files the operator already owns.
 
-Internal dispatch turns are excluded by default and **counted, not hidden**: cron, sub-agent, and heartbeat sessions plus the reserved `system` sender are agent-/scheduler-authored prompts, not humans — a summary note reports how many were excluded, and `--include-internal` shows them tagged `origin: "internal"`. Two more honest-coverage notes: user turns with **no parsable envelope** (e.g. `envelope.showProvider: false` produces headerless turns) are counted instead of silently dropped, and when `--limit` cuts the result the **latest N** are kept and the truncation is announced.
+Internal dispatch turns are excluded by default and **counted, not hidden**: cron, sub-agent, heartbeat, cross-session, background-task, and restart-continuation turns plus the reserved `system` sender are agent-/scheduler-authored prompts, not humans — a summary note reports how many were excluded, and `--include-internal` shows them tagged `origin: "internal"`. Durable compaction summaries are counted separately. Provider-hidden and headerless records are returned as full messages only when the session identity and real trajectory pointer supply unique, matching sender and channel evidence; unresolved or conflicting records remain fail-closed. Coverage also records missing data/workspace/session roots, unreadable files and directories, corrupt or oversized records, malformed provenance, transcript/sidecar mirror differences, same-source identity conflicts, expected or missing sidecars, unparsed records, ambiguous physical boundaries, and every scan/output cap. Unparsed evidence is bounded, credential-redacted, digest-addressed, and classified as authoritative, inferred, or unresolved by following the real trajectory pointer or using successfully parsed records from the same session; channel names are never inferred from filesystem paths.
 
-`<when>` values for `--since` / `--until` accept **epoch ms** (`1783900800000`), **relative-ago** (`30m`, `24h`, `7d`), or an **ISO date/datetime** (`2026-07-12`, `2026-07-12T10:00:00Z`). An unparsable bound is an **error naming the accepted forms** — never a silent widen-to-everything. `--date` is one-UTC-day sugar and cannot be combined with `--since`/`--until`.
+The reader scans JSONL backward in 64 KiB chunks, keeps the latest 5,000 logical nonblank records plus up to 32 predecessor records so one maximum-size chunk sequence can cross the boundary, caps any one record at 1 MiB, reads at most 16 MiB from one file and 256 MiB per command, and inspects at most 5,000 session files. Coverage reports the actual bytes read and every cap that made source coverage incomplete. Matches are retained in a bounded global latest-message heap while scanning; structured batches use their persisted provenance-record timestamp for filtering and ordering, while fallback messages use the SDK session-record timestamp. When `--limit` cuts the result, the latest N by that authoritative session-record time are kept and the truncation is announced without accumulating every historical match in memory.
+
+Every user-controlled displayed field — including evidence previews — passes through one canonical, overlap-safe output redactor **before any table, text, JSON, or JSONL renderer sees it**. It covers authorization schemes regardless of case, Telegram bot tokens, provider keys, GitHub OAuth tokens, database URLs, and credentials spanning internal scan boundaries. Each record's `redactions` value counts matches, `coverage.secretRedactions` aggregates them, and human formats print a redaction note.
+
+`<when>` values for `--since` / `--until` accept **safe-integer epoch ms** (`1783900800000`), **relative-ago** (`30m`, `24h`, `7d`), or an **ISO date/datetime** (`2026-07-12`, `2026-07-12T10:00:00Z`). Non-finite/unsafe epochs and invalid calendar dates are errors — never a silent widen-to-everything. `--date` is strict one-UTC-day sugar (impossible dates are rejected) and cannot be combined with `--since`/`--until`. `--limit` must be a positive safe integer no greater than 10,000. `--format json` emits the versioned `comis-offline-channel-messages-report` schema version 2 envelope with `messages`, `coverage`, `completeness`, and `redaction`; `jsonl` remains one redacted message per line.
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
@@ -1690,9 +1786,9 @@ Internal dispatch turns are excluded by default and **counted, not hidden**: cro
 | `--since <when>` | `string` | — | Lower bound (inclusive) |
 | `--until <when>` | `string` | — | Upper bound (exclusive) |
 | `--date <YYYY-MM-DD>` | `string` | — | One UTC day (sugar for `--since <day> --until <next day>`) |
-| `--limit <n>` | `number` | `500` | Max messages returned (the latest N are kept) |
-| `--include-internal` | `boolean` | `false` | Include cron/sub-agent/heartbeat/`system` dispatch messages |
-| `--format <format>` | `table` \| `text` \| `json` \| `jsonl` | `table` | `table` previews the first line; `text` is the full chat log; `json`/`jsonl` carry the full records |
+| `--limit <n>` | `number` | `500` | Max messages returned, 1–10,000 (the latest N are kept) |
+| `--include-internal` | `boolean` | `false` | Include cron/sub-agent/heartbeat/cross-session/background/`system`/restart-continuation dispatch messages |
+| `--format <format>` | `table` \| `text` \| `json` \| `jsonl` | `table` | `table` previews the first line; `text` is the full chat log; `json` is the versioned completeness report; `jsonl` emits one full message per line |
 
 ```bash
 # Everything users sent, newest window last (first-line preview table)
@@ -1714,7 +1810,7 @@ Reads `COMIS_DATA_DIR` (falling back to `~/.comis`) like the other offline comma
 
 ### `comis support-bundle`
 
-Assemble a **paste-ready support bundle** — a single directory to hand to a maintainer or attach to a bug report. Each run writes up to nine content-free files (plus a `trace-exports/` directory with `--deep`) under `<dataDir>/support-bundles/comis-support-<ts>/`: a machine-readable triage verdict, the full health-check findings, a human-readable issue summary, an AI-fillable issue draft, a cross-session fleet health digest, a config-posture digest (config section membership only), a window-scoped audit-summary digest, and a manifest carrying the redaction fingerprint. Focusing on one session with `--session` adds a per-session `explain.json` incident digest; `--deep` additionally embeds that session's redacted trace bundle under `trace-exports/`. The fleet digest, config-posture digest, and audit-summary digest are each omitted when their source cannot be read — a thrown fleet assembly, an unparseable config, or an absent observability store — and the manifest records the gap. The verdict is derived from the local health checks only — no LLM is invoked, so the same install state always yields the same verdict.
+Assemble a **paste-ready support bundle** — a single directory to hand to a maintainer or attach to a bug report. Each run writes up to nine content-free files (plus a `trace-exports/` directory with `--deep`) under `<dataDir>/support-bundles/comis-support-<ts>/`: a machine-readable triage verdict, the full health-check findings, a human-readable issue summary, an AI-fillable issue draft, a cross-session system health digest, a config-posture digest (config section membership only), a window-scoped audit-summary digest, and a manifest carrying the redaction fingerprint. Focusing on one session with `--session` adds a per-session `explain.json` incident digest; `--deep` additionally embeds that session's redacted trace bundle under `trace-exports/`. The system digest, config-posture digest, and audit-summary digest are each omitted when their source cannot be read — a thrown system assembly, an unparseable config, or an absent observability store — and the manifest records the gap. The verdict is derived from the local health checks only — no LLM is invoked, so the same install state always yields the same verdict.
 
 The command runs **fully offline**: it composes the same checks as `comis doctor` against a stopped daemon, folds them into the triage verdict, and writes the bundle without contacting the gateway. A **degraded or partial** triage is still a written bundle — the degraded verdict is the content, not a failure — so the command exits `0` on any bundle it manages to write. It is safe to run the moment something looks wrong.
 
@@ -1722,7 +1818,7 @@ The bundle is content-free by construction: it excludes secrets, message bodies,
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--since <hours>` | `number` | `24` | Diagnostic window in hours (same unit as `comis fleet`) |
+| `--since <hours>` | `number` | `24` | Diagnostic window in hours (same unit as `comis system-health`) |
 | `--format <format>` | `table` \| `json` | `table` | Output format |
 | `-c, --config <paths...>` | `string[]` | auto | Config file paths; defaults to `COMIS_CONFIG_PATHS` or the standard `~/.comis` / `/etc/comis` locations |
 | `--session <sessionKeyOrTraceId>` | `string` | — | Focus the bundle on one session — embeds its `explain.json` digest (valid on its own; add `--deep` for the full trace bundle) |
@@ -1736,7 +1832,7 @@ The bundle is content-free by construction: it excludes secrets, message bodies,
 | `ai-issue-draft.md` | A GitHub issue draft with the auto-known facts (versions, triage status, active signals, doctor summary) pre-filled and `<REQUIRED: … — do not invent>` placeholders for repro steps and expected-vs-actual, so an AI assistant can file a faithful issue without inventing missing facts |
 | `triage.json` | Machine-readable triage verdict (status, active signals, doctor summary) |
 | `doctor.json` | Full diagnostic findings from the health checks |
-| `fleet.json` | Cross-session fleet health digest — degraded rate, top error kinds, and findings — over the `--since` window |
+| `system-health.json` | Cross-session system health digest — degraded rate, top error kinds, and findings — over the `--since` window |
 | `config-posture.json` | Which top-level config sections are present, plus any flagged-key labels — section names only, never config values |
 | `audit-summary.json` | Window-scoped security-audit digest — total and per-kind event counts over the `--since` window, read from the offline observability store; omitted when that store is absent |
 | `explain.json` | _With `--session`._ The per-session incident digest — the same content-free `IncidentReport` as [`comis explain`](#comis-explain), embedded verbatim |
@@ -1790,7 +1886,7 @@ Show the run's **resolved orchestration capabilities** plus the **remaining per-
 
 The `Caps:` line is the resolved [autonomy-profile](/agents/autonomy) capabilities (`orch:*` strings). When the run has an in-flight root (an active agent turn / spawn tree) the `Budget:` line shows the remaining `tokensRemaining` · `wallClockMsRemaining` (· `$usdRemaining` when the model is priced, `$ uncountable` for a zero-price subscription/Codex model — the token and wall-clock limbs are authoritative regardless), and the `Outward:` line the remaining per-hour outward-send allowance. With no live root (an idle agent, pre-spawn) the budget/quota lines are **omitted** rather than shown as zero.
 
-**`comis whoami` is LIVE-only.** Unlike [`comis explain`](#comis-explain) / [`comis fleet`](#comis-fleet) there is **no `--offline` mode**: the remaining budget/quota lives only in the running daemon's in-memory autonomy state, never on disk, so there is nothing to reconstruct offline. When the daemon is unreachable (or rejects the token) the command **fails clearly** with a non-zero exit — it never fabricates an empty/zero snapshot (a false posture). Use [`comis explain`](#comis-explain)'s `spawnTree` for the post-mortem authorization topology of a *finished* run; `whoami` is for an *in-flight* run's remaining budget.
+**`comis whoami` is LIVE-only.** Unlike [`comis explain`](#comis-explain) / [`comis system-health`](#comis-system-health) there is **no `--offline` mode**: the remaining budget/quota lives only in the running daemon's in-memory autonomy state, never on disk, so there is nothing to reconstruct offline. When the daemon is unreachable (or rejects the token) the command **fails clearly** with a non-zero exit — it never fabricates an empty/zero snapshot (a false posture). Use [`comis explain`](#comis-explain)'s `spawnTree` for the post-mortem authorization topology of a *finished* run; `whoami` is for an *in-flight* run's remaining budget.
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
@@ -1808,7 +1904,7 @@ comis whoami --caps
 comis whoami --format json
 ```
 
-Requires a gateway token (the `rpc` scope — any valid token works; no admin scope needed, unlike `comis explain` / `comis fleet`). There is no offline fallback — the daemon must be running.
+Requires a gateway token (the `rpc` scope — any valid token works; no admin scope needed, unlike `comis explain` / `comis system-health`). There is no offline fallback — the daemon must be running.
 
 ---
 

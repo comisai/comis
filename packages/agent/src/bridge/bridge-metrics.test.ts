@@ -32,6 +32,12 @@ describe("bridge-metrics shape regression guard", () => {
     expect(m.totalPendingCacheInvestmentUsd).toBe(0);
     // Cumulative cost-correction delta
     expect(m.totalCostCorrectionDeltaUsd).toBe(0);
+    expect(m.sideEffectSummary).toEqual({
+      schedulingCapabilityInvoked: false,
+      outboundDeliveryCapabilityInvoked: false,
+      deferredWorkCapabilityInvoked: false,
+      unclassifiedInvocationObserved: false,
+    });
   });
 
   it("buildBridgeResult builds a stable shape from a fresh metrics state", () => {
@@ -60,6 +66,26 @@ describe("bridge-metrics shape regression guard", () => {
     expect(r.totalPendingCacheInvestmentUsd).toBe(0);
     // Cumulative cost-correction delta surfaced unconditionally.
     expect(r.totalCostCorrectionDeltaUsd).toBe(0);
+    expect(r.sideEffectSummary).toEqual({
+      schedulingCapabilityInvoked: false,
+      outboundDeliveryCapabilityInvoked: false,
+      deferredWorkCapabilityInvoked: false,
+      unclassifiedInvocationObserved: false,
+    });
+  });
+
+  it("buildBridgeResult copies all monotonic side-effect facts", () => {
+    const m = createBridgeMetrics();
+    m.sideEffectSummary.schedulingCapabilityInvoked = true;
+    const snapshot = buildBridgeResult(m, 4).sideEffectSummary;
+    m.sideEffectSummary.outboundDeliveryCapabilityInvoked = true;
+
+    expect(snapshot).toEqual({
+      schedulingCapabilityInvoked: true,
+      outboundDeliveryCapabilityInvoked: false,
+      deferredWorkCapabilityInvoked: false,
+      unclassifiedInvocationObserved: false,
+    });
   });
 
   it("buildBridgeResult projects totalCostCorrectionDeltaUsd from metrics state", () => {

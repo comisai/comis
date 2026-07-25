@@ -8,6 +8,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$HERE/.live-env" ] && . "$HERE/.live-env"
+# shellcheck source=./_remote-root.sh
+. "$HERE/_remote-root.sh"
 VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or the env}"
 COMIS_USER="${COMIS_USER:-comis}"
 COMIS_HOME="${COMIS_HOME:-/home/$COMIS_USER}"
@@ -47,7 +49,7 @@ echo "gwport=$(ss -ltn 2>/dev/null | grep -c ":$GW_PORT ")"
 echo "emuwire=$(tr -d '\n' < /tmp/comis-emu.json 2>/dev/null)"
 echo "cfgapiroot=$(grep -oE 'apiRoot: .*' "$DATA/config.yaml" 2>/dev/null | head -1 | sed 's/apiRoot: //; s/"//g')"
 FACTS
-facts="$(ssh -o ConnectTimeout=15 "$VPS" "SERVICE='$SERVICE' PKG='$PKG' DATA='$DATA' GW_PORT='$GW_PORT' bash -s" < "$FACTS_SCRIPT")"
+facts="$(remote_root "SERVICE='$SERVICE' PKG='$PKG' DATA='$DATA' GW_PORT='$GW_PORT' bash -s" < "$FACTS_SCRIPT")"
 get() { printf '%s\n' "$facts" | sed -n "s/^$1=//p" | head -1; }
 
 [ "$(get service)" = "active" ] && pass "service" "$SERVICE active" || fail "service" "$SERVICE is '$(get service)'"
@@ -73,7 +75,7 @@ if [ -n "${GWTOKEN:-}" ] && [ "${boxlen:-0}" -ge 32 ] 2>/dev/null; then
 fi
 
 # THE load-bearing probe: the token the box helpers actually use must open a live RPC.
-rpc="$(ssh -o ConnectTimeout=15 "$VPS" 'node /root/revoke.mjs capabilities.introspect 2>/dev/null' | head -c 40)"
+rpc="$(remote_root 'node /root/revoke.mjs capabilities.introspect 2>/dev/null' | head -c 40)"
 case "$rpc" in
 RESULT:*) pass "rpc-token" "capabilities.introspect answers (box token live)" ;;
 ERROR:*) fail "rpc-token" "RPC rejected — token rotated/wrong? re-run deploy-scripts.sh (auto-fetch), then retry" ;;

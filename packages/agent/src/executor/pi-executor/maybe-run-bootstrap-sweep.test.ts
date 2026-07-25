@@ -40,13 +40,14 @@ function makeState(overrides: Partial<MaybeRunBootstrapSweepState> = {}): MaybeR
     isFirstMessageInSession: true,
     contextStore: fakeStore(),
     formattedKey: "tenant-a:chan_a:user_a",
+    conversationRef: `cv_${"b".repeat(43)}` as MaybeRunBootstrapSweepState["conversationRef"],
     tenantId: "tenant-a",
     agentId: "agent-a",
     live: [{ role: "user", content: "hi" }] as unknown as AgentMessage[],
     clock: { now: () => 1_700_000_000_000 } as MaybeRunBootstrapSweepState["clock"],
     logger: noopLogger as unknown as MaybeRunBootstrapSweepState["logger"],
     eventBus: { emit: vi.fn() } as unknown as MaybeRunBootstrapSweepState["eventBus"],
-    config: { contextEngine: { version: "dag" } },
+    config: { contextEngine: { enabled: true } },
     ...overrides,
   };
 }
@@ -60,20 +61,14 @@ describe("maybeRunBootstrapSweep — run-once gate", () => {
     expect(bootstrapLcdSweep).not.toHaveBeenCalled();
   });
 
-  it("does NOT run the sweep when no contextStore is wired (pipeline / store-absent)", async () => {
-    await maybeRunBootstrapSweep(makeState({ contextStore: undefined }));
-    expect(bootstrapLcdSweep).not.toHaveBeenCalled();
-  });
-
-  it("runs the sweep ONCE on the first message with the well-formed read==write scope", async () => {
+  it("runs the sweep ONCE on the first message with opaque read authority", async () => {
     await maybeRunBootstrapSweep(makeState());
     expect(bootstrapLcdSweep).toHaveBeenCalledTimes(1);
     const arg = bootstrapLcdSweep.mock.calls[0]![0] as {
-      scope: { conversationId: string; sessionKey: string; agentId: string; tenantId: string };
+      scope: { conversationRef: string; sessionKey: string; agentId: string; tenantId: string };
     };
-    // Read scope must equal write scope: conversationId === sessionKey === formattedKey, agentId threaded.
     expect(arg.scope).toEqual({
-      conversationId: "tenant-a:chan_a:user_a",
+      conversationRef: `cv_${"b".repeat(43)}`,
       sessionKey: "tenant-a:chan_a:user_a",
       agentId: "agent-a",
       tenantId: "tenant-a",

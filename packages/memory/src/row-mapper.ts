@@ -8,14 +8,20 @@
  * eliminate duplicate rowToEntry implementations and INSERT SQL.
  */
 
-import type { MemoryEntry } from "@comis/core";
+import type { ConversationRef, MemoryEntry } from "@comis/core";
 import { normalizeForSearch } from "@comis/core";
+import {
+  memoryAuthorityToken,
+  requireMemoryAuthorityPartitionForMemory,
+} from "./memory-authority.js";
 import type Database from "better-sqlite3";
-import { z, type ZodType } from "zod";
-import type { Result } from "@comis/shared";
-import { ok, err } from "@comis/shared";
+import { z } from "zod";
 import type { MemoryRow } from "./types.js";
 import { isVecAvailable } from "./schema.js";
+import { createRowMapper } from "./sqlite-row-mapper.js";
+
+export { createRowMapper } from "./sqlite-row-mapper.js";
+export type { MapperError, RowMapper } from "./sqlite-row-mapper.js";
 
 const TagsSchema = z.array(z.string());
 
@@ -86,6 +92,11 @@ export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry {
     tenantId: row.tenant_id,
     agentId: row.agent_id,
     userId: row.user_id,
+    visibility: row.visibility === "conversation"
+      ? { kind: "conversation", conversationRef: row.conversation_ref as ConversationRef }
+      : row.visibility === "principal"
+        ? { kind: "principal", principalId: row.principal_id as string }
+        : { kind: "agent-shared" },
     content: row.content,
     trustLevel: row.trust_level as MemoryEntry["trustLevel"],
     source: {
@@ -137,13 +148,16 @@ export function insertMemoryRow(
   memoryType: string,
 ): void {
   db.prepare(
-    `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_channel, source_session_key, tags, created_at, occurred_at, proof_count, source_ids, consolidated_at, confidence, history, updated_at, expires_at, observation_kind, pattern_type, has_embedding)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, conversation_ref, principal_id, content, trust_level, memory_type, source_who, source_channel, source_session_key, tags, created_at, occurred_at, proof_count, source_ids, consolidated_at, confidence, history, updated_at, expires_at, observation_kind, pattern_type, has_embedding)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
   ).run(
     entry.id,
     entry.tenantId,
-    entry.agentId ?? "default",
+    entry.agentId,
     entry.userId,
+    entry.visibility.kind,
+    entry.visibility.kind === "conversation" ? entry.visibility.conversationRef : null,
+    entry.visibility.kind === "principal" ? entry.visibility.principalId : null,
     entry.content,
     entry.trustLevel,
     memoryType,
@@ -179,9 +193,10 @@ export function insertMemoryRow(
   // systemNowMs cross-package value-import precedent) so the index side folds
   // through the EXACT symbol the query side (searchByText routing) uses.
   try {
+    const partitionId = requireMemoryAuthorityPartitionForMemory(db, entry.id);
     db.prepare(
-      "INSERT INTO memory_fts_tri(rowid, content) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?)",
-    ).run(entry.id, normalizeForSearch(entry.content));
+      "INSERT INTO memory_fts_tri(rowid, content, authority_token) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?, ?)",
+    ).run(entry.id, normalizeForSearch(entry.content), memoryAuthorityToken(partitionId));
   } catch {
     // The trigram twin is absent on this host (FTS5 present but the trigram
     // tokenizer is not compiled in → ensureTrigramTwins skipped it), or a
@@ -211,9 +226,13 @@ export function storeEmbedding(
   if (!vecIsAvailable) return;
 
   const float32 = new Float32Array(embedding);
-  db.prepare("INSERT INTO vec_memories(memory_id, embedding) VALUES (?, ?)").run(
+  const partitionId = requireMemoryAuthorityPartitionForMemory(db, entryId);
+  db.prepare(
+    "INSERT INTO vec_memories(memory_id, embedding, authority_partition_id) VALUES (?, ?, ?)",
+  ).run(
     entryId,
     float32,
+    BigInt(partitionId),
   );
   db.prepare("UPDATE memories SET has_embedding = 1 WHERE id = ?").run(entryId);
 }
@@ -369,122 +388,10 @@ export function groupCountRows(
     // The group key is string|number|null per buildGroupCountSchema; SQLite
     // never returns a value outside that range for our ALLOWED_GROUP_COLUMNS.
     const stringKey = key === null ? "" : String(key);
-    // eslint-disable-next-line security/detect-object-injection -- stringKey
-    // is bounded by ALLOWED_GROUP_COLUMNS-typed values (memory_type, trust_level,
-    // agent_id); no attacker control over the index.
+    // stringKey is bounded by ALLOWED_GROUP_COLUMNS-typed values
+    // (memory_type, trust_level, agent_id); no attacker controls the index.
+    // eslint-disable-next-line security/detect-object-injection -- bounded database enum value, not a user-selected property name.
     result[stringKey] = typeof row.count === "number" ? row.count : 0;
   }
   return result;
-}
-
-// ===== Generic RowMapper factory ===================================
-// Generic factory for typed SQLite row parsing. Domain-specific helpers
-// above (rowToEntry, parseTags, etc.) stay. Consumed at every SQLite
-// call-site to replace `db.prepare(...).all() as Foo[]` casts with
-// `mapper.parseRows(stmt.all(...))` + Result-handling.
-
-/**
- * Error value returned by RowMapper.parse* methods. NOT thrown — this is a
- * Result.err payload.
- *
- * The `path` field includes the row index on per-row failures
- * (e.g. "row[3].column_name") so error messages pinpoint the failing column
- * in a multi-row result set.
- */
-export interface MapperError {
-  readonly code: "row-validation-failed";
-  readonly message: string;
-  /** Includes row index on per-row failures (e.g. "row[3].column_name"). */
-  readonly path: string;
-  readonly issues: readonly { path: (string | number)[]; message: string }[];
-}
-
-/**
- * Generic typed row mapper. Wraps a Zod schema with Result-returning
- * parseOptionalRow / parseRows methods.
- *
- * Created via createRowMapper(schema). Used at every memory-package SQLite
- * call site to replace `db.prepare(...).all() as Foo[]` casts.
- *
- * @template TRow The parsed row type (matches the Zod schema's output).
- */
-export interface RowMapper<TRow> {
-  /**
-   * Parse a single row that may be absent (`Statement.get()` returns
-   * `undefined` when no row matched). Distinguishes:
-   * - `raw === undefined` → `ok(undefined)` (no row matched).
-   * - Row present but malformed → `err(MapperError)`.
-   * - Row present and valid → `ok(row)`.
-   */
-  parseOptionalRow(raw: unknown | undefined): Result<TRow | undefined, MapperError>;
-  /**
-   * Parse an array of rows from `Statement.all()`. On per-row failure,
-   * `MapperError.path` includes the row index (e.g. "row[3].column_name").
-   */
-  parseRows(raw: unknown[]): Result<TRow[], MapperError>;
-}
-
-function issuesFromZod(
-  zodError: z.ZodError,
-): readonly { path: (string | number)[]; message: string }[] {
-  return zodError.issues.map((iss) => ({
-    path: iss.path as (string | number)[],
-    message: iss.message,
-  }));
-}
-
-/**
- * Build a RowMapper<TRow> from a Zod schema.
- *
- * The schema is run via `safeParse` — never throws.
- * Failures are surfaced as `Result.err(MapperError)`; callers chain via
- * early-return pattern.
- *
- * @example
- * ```ts
- * const mapper = createRowMapper(MemoryRowSchema);
- * const result = mapper.parseRows(stmt.all(tenantId, limit));
- * if (!result.ok) return err(result.error);
- * return ok(result.value);
- * ```
- */
-export function createRowMapper<TRow>(schema: ZodType<TRow>): RowMapper<TRow> {
-  return {
-    parseOptionalRow(raw) {
-      // Undefined input → ok(undefined) (no row matched).
-      // Malformed-but-present → err.
-      if (raw === undefined) return ok(undefined);
-      const parsed = schema.safeParse(raw);
-      if (!parsed.success) {
-        const issues = issuesFromZod(parsed.error);
-        const path = issues[0]?.path.join(".") ?? "<root>";
-        return err({
-          code: "row-validation-failed",
-          message: `Row validation failed at ${path}`,
-          path,
-          issues,
-        });
-      }
-      return ok(parsed.data);
-    },
-    parseRows(raw) {
-      const out: TRow[] = [];
-      for (let i = 0; i < raw.length; i++) {
-        const parsed = schema.safeParse(raw[i]);
-        if (!parsed.success) {
-          const issues = issuesFromZod(parsed.error);
-          const firstIssuePath = issues[0]?.path.join(".") ?? "<root>";
-          const path = `row[${i}].${firstIssuePath}`;
-          return err({
-            code: "row-validation-failed",
-            message: `Row validation failed at ${path}`,
-            path,
-            issues,
-          });
-        }
-        out.push(parsed.data);
-      }
-      return ok(out);
-    },
-  };
 }

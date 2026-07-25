@@ -18,9 +18,21 @@
  */
 
 import type { AppContainer, AppConfig } from "@comis/core";
-import { systemDateFrom } from "@comis/core";
+import {
+  systemDateFrom,
+  createResolvedRequestContext,
+  runWithContext,
+  createDeliveryOrigin,
+  systemNowMs,
+} from "@comis/core";
+import { randomUUID } from "node:crypto";
 import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor, CostTracker } from "@comis/agent";
+import type {
+  AgentExecutor,
+  BackgroundSessionResolver,
+  ComisSessionManager,
+  CostTracker,
+} from "@comis/agent";
 import type { MemoryApi, SqliteMemoryAdapter, createEmbeddingQueue, createSessionStore } from "@comis/memory";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import { dirname, resolve } from "node:path";
@@ -35,9 +47,10 @@ import {
 } from "@comis/gateway";
 import type { SessionKey } from "@comis/core";
 import { mountGatewayRoutes } from "../setup-gateway-routes.js";
-import { buildGreetingGenerator } from "./setup-gateway-admin.js";
+import { buildGreetingGenerator, deriveTrustLevel } from "./setup-gateway-admin.js";
 import { buildRpcAdapterDeps, buildDynamicRouterAndRegister } from "./setup-gateway-rpc.js";
-import { buildMcpServerForClient } from "../../api/mcp-server-handlers.js";
+import { resolveGatewayTurnIdentity } from "./gateway-session-principal.js";
+import { buildMcpServerForClient, applyMcpClientIdentity } from "../../api/mcp-server-handlers.js";
 
 // ---------------------------------------------------------------------------
 // MCP server dispatch constants
@@ -119,6 +132,8 @@ export interface GatewayDeps {
   sessionStore: ReturnType<typeof createSessionStore>;
   /** Resolver for per-agent executors. */
   getExecutor: (agentId: string) => AgentExecutor;
+  /** Resolver for exact live-run cancellation on HTTP disconnect. */
+  sessionResolver: BackgroundSessionResolver;
   /** Deterministic unattended honest-fail backstop (webhook-claude-cli-tdd-20260701): reap the LIVE
    *  never-tasked drives a webhook turn left behind so the delivery is an honest failure, not a silent
    *  success. Threaded into the webhook route. Absent ⇒ inert. */
@@ -143,22 +158,13 @@ export interface GatewayDeps {
   /** Daemon startup timestamp (ms since epoch) -- surfaced as ISO on /health. */
   startupStartMs: number;
   /** Per-agent JSONL session adapters for pi-executor /new /reset /status commands. */
-  piSessionAdapters?: Map<string, {
-    destroySession(key: SessionKey): Promise<void>;
-    getSessionStats(key: SessionKey): {
-      messageCount: number;
-      createdAt?: number;
-      tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
-      cost?: number;
-      userMessages?: number;
-      assistantMessages?: number;
-      toolCalls?: number;
-      toolResults?: number;
-    } | undefined;
-  }>;
+  piSessionAdapters?: Map<
+    string,
+    Pick<ComisSessionManager, "destroySession" | "getSessionStats" | "persistInboundMessage">
+  >;
   /** Complete three-layer conversation forget for slash /new + /reset
    *  (createConversationReset — live finding 2026-06-11). */
-  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
+  destroyConversation?: (scope: import("@comis/core").ConversationScope, key: SessionKey) => Promise<unknown>;
   /** Pre-resolved gateway tokens with secrets (config -> env -> auto-generated).
    *  Optional `mcpClient` block survives resolution so the
    *  TokenStore can surface it on verified TokenClient instances. */
@@ -184,16 +190,16 @@ export interface GatewayDeps {
    *  Optional — an obsStore-less boot leaves it undefined and the dispatch
    *  branch fails closed with a generic dispatch_error sentinel. */
   obsExplainForMcpClient?: (params: Record<string, unknown>) => Promise<unknown>;
-  /** 161-02: trust-flag-FREE obs.fleet.health assembler closure for the
-   *  operator-allowlisted `obs_fleet_health` MCP tool — the cross-session fleet
+  /** Trust-flag-free obs.system.health assembler closure for the operator-allowlisted
+   *  `obs_system_health` MCP tool — the cross-session system
    *  sibling of `obsExplainForMcpClient`. Built at the composition root over the
    *  obsStore + dataDir + boot.clock; threaded into `buildMcpServerForClient` so
-   *  the obs_fleet_health dispatch branch invokes it DIRECTLY under daemon
+   *  the obs_system_health dispatch branch invokes it DIRECTLY under daemon
    *  authority (NOT `daemonRpcForMcpClient` → the admin-gated RPC; NO admin
    *  trust). Its boundary is the per-client `mcpClient.allowlist` + the
    *  digest-only report. Optional — an obsStore-less boot leaves it undefined and
    *  the dispatch branch fails closed with a generic dispatch_error sentinel. */
-  obsFleetHealthForMcpClient?: (params: Record<string, unknown>) => Promise<unknown>;
+  obsSystemHealthForMcpClient?: (params: Record<string, unknown>) => Promise<unknown>;
   /** Set of suspended agent IDs for REST API status reporting. */
   suspendedAgents?: ReadonlySet<string>;
   /** Interactive-callback wiring (73-10): the single-use email approval-token map
@@ -244,6 +250,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     cachedPort,
     sessionStore,
     getExecutor,
+    sessionResolver,
     reapNeverTaskedDrives,
     assembleToolsForAgent,
     preprocessMessageText,
@@ -363,10 +370,68 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
   // mcpExportPolicy classification of all admin tools as `never-export`
   // means admin RPC methods are never registered on the McpServer in the
   // first place, this indirection is the belt-and-suspenders enforcer.
+  // The MCP client is an authenticated principal with NO turn context, but
+  // tenant-scoped RPC methods (e.g. memory.search_files) now require BOTH the
+  // explicit `_tenantId`/`_agentId` authority params AND a resolved turn scope
+  // in AsyncLocalStorage that matches them. So each MCP RPC call is bound to
+  // THIS daemon's tenant + the resolved agent and run inside a resolved request
+  // context — the SAME pattern the gateway executeAgent path uses
+  // (resolveGatewayTurnIdentity → createResolvedRequestContext → runWithContext).
+  //
+  // SECURITY: this grants IDENTITY, never new TRUST. The context trust level is
+  // the non-admin tier an mcp-client token maps to (mcp-client tokens can never
+  // be admin — the endpoint's Gate 4 + GatewayTokenSchema disjointness reject
+  // admin/wildcard co-issuance); `_trustLevel:"admin"` is never injected. The
+  // agent is a FALLBACK — an explicitly-supplied `agentId` tool arg wins
+  // (per-agent routing); otherwise the default agent is bound. `applyMcpClientIdentity`
+  // strips any forged internal fields, and `_tenantId` stays authoritative so a
+  // client can never widen the tenant boundary.
+  const mcpTenantId = container.config.tenantId;
+  const mcpTrustLevel = deriveTrustLevel(["mcp-client"]);
   const daemonRpcForMcpClient = (
     method: string,
     params: Record<string, unknown>,
-  ): Promise<unknown> => rpcCall(method, params);
+  ): Promise<unknown> => {
+    const explicitAgentId =
+      typeof params.agentId === "string" && params.agentId.length > 0
+        ? params.agentId
+        : undefined;
+    const effectiveAgentId = explicitAgentId ?? defaultAgentId;
+
+    const identity = resolveGatewayTurnIdentity({
+      tenantId: mcpTenantId,
+      agentId: effectiveAgentId,
+    });
+    if (!identity.ok) return Promise.reject(identity.error);
+
+    const sk = identity.value.displaySessionKey;
+    const requestContext = createResolvedRequestContext({
+      traceId: randomUUID(),
+      tenantId: sk.tenantId,
+      userId: sk.userId,
+      agentId: effectiveAgentId,
+      sessionKey: sk,
+      startedAt: systemNowMs(),
+      trustLevel: mcpTrustLevel,
+      channelType: "gateway",
+      deliveryOrigin: createDeliveryOrigin({
+        channelType: "gateway",
+        channelId: sk.channelId,
+        userId: sk.userId,
+        tenantId: sk.tenantId,
+      }),
+      turnScope: identity.value.turnScope,
+    });
+    if (!requestContext.ok) return Promise.reject(requestContext.error);
+
+    const authorized = applyMcpClientIdentity(params, {
+      tenantId: mcpTenantId,
+      defaultAgentId,
+    });
+    return runWithContext(requestContext.value, () =>
+      rpcCall(method, authorized),
+    );
+  };
 
   const buildMcpServerForClientFactory = (client: TokenClient) =>
     buildMcpServerForClient(
@@ -377,14 +442,19 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
         defaultToolRateLimit: MCP_DEFAULT_TOOL_RATE_LIMIT,
         toolNameToRpcMethod: mcpToolNameToRpcMethod,
         resourceReadLimit: MCP_RESOURCE_READ_LIMIT,
+        // Session-query authority for the resources/read path: the daemon
+        // tenant + resolved default agent, matching what daemonRpcForMcpClient
+        // binds each call to.
+        tenantId: mcpTenantId,
+        defaultAgentId,
         // 154-03: obs_explain runs THIS directly under daemon authority — it is
         // NOT wired to mcpToolNameToRpcMethod / daemonRpcForMcpClient (it has its
         // own dispatch branch). The never-inject-admin indirection above is
         // untouched.
         obsExplainForMcpClient: deps.obsExplainForMcpClient,
-        // 161-02: obs_fleet_health — same direct-assembler posture as obs_explain
+        // obs_system_health uses the same direct-assembler posture as obs_explain
         // (its own dispatch branch; NOT mcpToolNameToRpcMethod / daemonRpcForMcpClient).
-        obsFleetHealthForMcpClient: deps.obsFleetHealthForMcpClient,
+        obsSystemHealthForMcpClient: deps.obsSystemHealthForMcpClient,
       },
       client,
     );
@@ -414,6 +484,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     gwConfig,
     tokenStore,
     getExecutor,
+    sessionResolver,
     reapNeverTaskedDrives,
     assembleToolsForAgent,
     preprocessMessageText,

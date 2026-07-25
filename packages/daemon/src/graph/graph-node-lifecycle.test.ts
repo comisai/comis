@@ -22,6 +22,8 @@ function makeGraphRunState(overrides?: Partial<GraphRunState>): GraphRunState {
   return {
     graphId: "test-graph",
     graphTraceId: "trace-1",
+    callerTrustLevel: "user",
+    callerCaps: ["orch:read"],
     graph: {
       graph: { label: "test", nodes: [], edges: [] },
     } as any,
@@ -376,7 +378,7 @@ describe("spawnNode: mcpServers pre-seeding", () => {
     );
   });
 
-  it("does NOT pass discoveredDeferredTools when mcpServers is undefined (legacy node)", () => {
+  it("does NOT pass discoveredDeferredTools when mcpServers is undefined", () => {
     const gs = makeGraphRunState({
       graphToolNames: ["mcp__yfinance--get_price"],
       graph: {

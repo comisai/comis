@@ -31,20 +31,27 @@ export interface ActivityEntry {
 
 /** Delivery statistics from observability */
 export interface DeliveryStats {
-  readonly successRate: number;
+  readonly total: number;
+  readonly attempted: number;
+  readonly success: number;
+  readonly error: number;
+  readonly timeout: number;
+  readonly filtered: number;
+  readonly aborted: number;
   readonly avgLatencyMs: number;
-  readonly totalDelivered: number;
-  readonly failed: number;
 }
 
 /** Single delivery trace entry from obs.delivery.recent */
 export interface DeliveryTrace {
   readonly traceId: string;
   readonly timestamp: number;          // epoch ms
-  readonly channelType: string;
-  readonly messagePreview: string;     // truncated message text
-  readonly status: "success" | "failed" | "timeout";
-  readonly latencyMs: number | null;   // null if failed before response
+  readonly sourceChannelType: string;
+  readonly targetChannelType: string;
+  readonly status: "success" | "error" | "timeout" | "filtered" | "aborted";
+  readonly latencyMs: number | null;   // null if execution ended before delivery
+  readonly error: string | null;
+  readonly failureStage: "execution" | "delivery" | null;
+  readonly errorKind: string | null;
   readonly stepCount: number;
   readonly steps?: ReadonlyArray<DeliveryStep>;
 }
@@ -207,7 +214,7 @@ export function deriveDiagnosticLevel(evt: DiagnosticsEvent): "info" | "warn" | 
     case "retry:attempted":
       return "warn";
     case "diagnostic:message_processed":
-      return data.success === false ? "error" : "info";
+      return data.status === "error" || data.status === "timeout" ? "error" : "info";
     default:
       return "info";
   }

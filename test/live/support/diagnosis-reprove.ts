@@ -71,7 +71,7 @@ export function countObsExplainCalls(transcript: AgentTurn[]): number {
 // the FROZEN assembler. FIELD-LEVEL, NOT compareToAnswerKey (the 678 token gap).
 // ---------------------------------------------------------------------------
 
-/** The frozen 678 sessionCostUsd reference. */
+/** The recorded sessionCostUsd reference. */
 const COST_678_USD = 1.320669;
 
 /**

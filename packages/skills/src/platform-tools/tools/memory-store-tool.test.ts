@@ -9,12 +9,14 @@ describe("memory_store tool", () => {
 
     const result = await tool.execute("call-1", {
       content: "User likes TypeScript",
+      visibility: "principal",
       tags: ["preference", "tech"],
     });
 
     expect(rpcCall).toHaveBeenCalledWith("memory.store", {
       content: "User likes TypeScript",
       tags: ["preference", "tech"],
+      visibility: "principal",
     });
     expect(result.details).toEqual(
       expect.objectContaining({ stored: true, id: "mem-001" }),
@@ -37,12 +39,14 @@ describe("memory_store tool", () => {
 
     await tool.execute("call-3", {
       content: "Test content",
+      visibility: "principal",
       tags: ["valid", 123, null, "also-valid", undefined],
     });
 
     expect(rpcCall).toHaveBeenCalledWith("memory.store", {
       content: "Test content",
       tags: ["valid", "also-valid"],
+      visibility: "principal",
     });
   });
 
@@ -52,7 +56,7 @@ describe("memory_store tool", () => {
     });
     const tool = createMemoryStoreTool(rpcCall);
 
-    await expect(tool.execute("call-4", { content: "test" })).rejects.toThrow(
+    await expect(tool.execute("call-4", { content: "test", visibility: "principal" })).rejects.toThrow(
       "Memory service unavailable",
     );
   });
@@ -61,11 +65,12 @@ describe("memory_store tool", () => {
     const rpcCall = vi.fn(async () => ({ stored: true }));
     const tool = createMemoryStoreTool(rpcCall);
 
-    await tool.execute("call-5", { content: "No tags provided" });
+    await tool.execute("call-5", { content: "No tags provided", visibility: "principal" });
 
     expect(rpcCall).toHaveBeenCalledWith("memory.store", {
       content: "No tags provided",
       tags: [],
+      visibility: "principal",
     });
   });
 
@@ -78,6 +83,7 @@ describe("memory_store tool", () => {
 
     const result = await tool.execute("call-6", {
       content: "Here is my Gemini API key AIzaFAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_X",
+      visibility: "principal",
     });
 
     // Should store it (tool-level warning is retired; daemon validates)
@@ -93,6 +99,7 @@ describe("memory_store tool", () => {
 
     const result = await tool.execute("call-7", {
       content: "My OpenAI key is sk-abcdefghij1234567890abcdefghij",
+      visibility: "principal",
     });
 
     expect(rpcCall).toHaveBeenCalledOnce();
@@ -106,6 +113,7 @@ describe("memory_store tool", () => {
 
     const result = await tool.execute("call-8", {
       content: "User prefers dark mode and TypeScript",
+      visibility: "principal",
     });
 
     expect(result.details).toEqual(

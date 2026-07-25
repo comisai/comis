@@ -20,6 +20,7 @@ import type { SecretManager, ToolCapabilityPort, ApprovalGate, TypedEventBus } f
 import type { ExecSandboxConfig } from "../sandbox/types.js";
 import { resolvePaths } from "../file/safe-path-wrapper.js";
 import { throwToolError } from "../../../platform-tools/tool-helpers.js";
+import { resolveApprovalRequestContext } from "../../../platform-tools/approval-request-context.js";
 import { parseInstallDetour, type InstallDetourDecision, type DetourOverlap } from "../install-detour.js";
 import { SECRET_REF_NAME_PATTERN, type ToolLogger } from "./exec-types.js";
 
@@ -318,12 +319,9 @@ function buildInstallDetourEventPayload(
 } {
   const ctx = tryGetContext();
   return {
-    // RequestContext has no `agentId` field — `userId` is the agent
-    // identity (matches evaluateInstallDetourGate's approval-gate precedent
-    // below). sessionKey is a separate formatted key and must not shadow it.
-    agentId: ctx?.userId ?? "unknown",
-    sessionKey: ctx?.sessionKey ?? "unknown",
-    traceId: ctx?.traceId,
+    ...(ctx?.agentId === undefined ? {} : { agentId: ctx.agentId }),
+    ...(ctx?.sessionKey === undefined ? {} : { sessionKey: ctx.sessionKey }),
+    ...(ctx?.traceId === undefined ? {} : { traceId: ctx.traceId }),
     packageManager: decision.packageManager,
     commandDigest: decision.commandDigest,
     packages: decision.packages.map((p) => ({
@@ -407,8 +405,8 @@ export async function evaluateInstallDetourGate(deps: {
           errorMessage = built;
         }
       } else {
-        const ctx = tryGetContext();
-        if (!approvalGate || !ctx) {
+        const approvalContext = resolveApprovalRequestContext();
+        if (!approvalGate || !approvalContext.ok) {
           eventBus?.emit("tool:install_detour_detected",
             buildInstallDetourEventPayload(installDetourDecision, "soft-stop", "override_denied"));
           terminalAction = "override_denied";
@@ -421,20 +419,19 @@ export async function evaluateInstallDetourGate(deps: {
           // event-bus emit is the observable signal of the override-request.
           eventBus?.emit("tool:install_detour_detected",
             buildInstallDetourEventPayload(installDetourDecision, "soft-stop", "override_requested"));
+          const approvalParams = {
+            packageManager: installDetourDecision.packageManager,
+            packages: installDetourDecision.packages,
+            overlaps: installDetourDecision.overlaps,
+            mode: "soft-stop",
+            commandDigest: installDetourDecision.commandDigest,
+          };
           const resolution = await approvalGate.requestApproval({
             toolName: "exec",
             action: `exec.install_detour.override:${installDetourDecision.commandDigest}`,
-            params: {
-              packageManager: installDetourDecision.packageManager,
-              packages: installDetourDecision.packages,
-              overlaps: installDetourDecision.overlaps,
-              mode: "soft-stop",
-              commandDigest: installDetourDecision.commandDigest,
-            },
-            agentId: ctx.userId ?? "unknown",
-            sessionKey: ctx.sessionKey ?? "",
-            trustLevel: (ctx.trustLevel ?? "admin") as "admin" | "user" | "guest",
-            channelType: ctx.channelType,
+            params: approvalParams,
+            fingerprintParams: approvalParams,
+            ...approvalContext.value,
           });
           if (!resolution.approved) {
             eventBus?.emit("tool:install_detour_detected",

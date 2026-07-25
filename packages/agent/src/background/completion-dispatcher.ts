@@ -1,30 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Completion dispatcher: routes background_task:completed/failed events
- * through the BackgroundSessionState machine.
- *
- * Subscribes to background_task:completed and background_task:failed BEFORE
- * the existing BackgroundCompletionRunner. On each event:
- *  1. Reads `task.dispatchState`.
- *  2. If "pending": transitions to "notified" only when the runner cannot
- *     re-enter the originating session (no active session for the formatted
- *     key, or recursion limit reached). Otherwise transitions to "dispatched"
- *     and lets the completion-runner perform re-entry.
- *  3. If already "notified" or "dispatched": no-op (at-most-once).
- *
- * The runner is wired AFTER the dispatcher in setup-background-completion-
- * runner.ts so its handler reads the updated `task.dispatchState` and skips
- * its own work when state is "notified" (the dispatcher already fired
- * fallback). This single-owner contract ensures the completion runner does
- * not double-fire user-visible notifications: the dispatcher routes via
- * persistent state instead of an in-memory event handler, and gates on
- * state instead of unconditionally firing.
- *
- * **State persistence:** every transition calls `manager.transitionDispatch
- * State(taskId, next)` (when the manager exposes it) which mutates the
- * in-memory task AND calls persistTaskSync. Recovery-after-SIGKILL reads
- * the persisted state and the manager skips re-emitting completion events
- * for already-dispatched / already-notified tasks.
+ * Completion dispatcher: observes background_task terminal events while the
+ * completion runner exclusively owns durable execution and delivery state.
  *
  * **Failure isolation:** each handler is wrapped in suppressError so a
  * single dispatch's failure does not tear down the subscription
@@ -33,9 +10,8 @@
  * @module
  */
 
-import { suppressError } from "@comis/shared";
-import { systemNowMs } from "@comis/core";
-import type { TypedEventBus, BackgroundTaskOrigin } from "@comis/core";
+import { suppressError, type Result } from "@comis/shared";
+import type { TypedEventBus, BackgroundTaskOrigin, SessionQueryScope, SessionStoreError } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type {
   BackgroundTask,
@@ -48,17 +24,19 @@ import type { NotifyFn } from "./background-task-manager.js";
 // Runtime constants exported for downstream consumers (test surface + ops).
 // ---------------------------------------------------------------------------
 
-/**
- * The 3-state typed enum as a runtime array. Order matches transition order:
- *   pending → (notified | dispatched).
- *
- * Exported as a `readonly string[]` so tests can assert
- * `STATES === ["pending", "notified", "dispatched"]`.
- */
+/** Closed durable completion lifecycle exposed for diagnostics and tests. */
 export const STATES: readonly BackgroundSessionState[] = [
   "pending",
-  "notified",
-  "dispatched",
+  "execution_claimed",
+  "executing",
+  "cleanup_pending",
+  "ready_to_deliver",
+  "pre_send",
+  "delivering",
+  "delivered",
+  "parked_permanent",
+  "parked_uncertain",
+  "consumed_live",
 ] as const;
 
 /**
@@ -89,29 +67,16 @@ export interface CompletionDispatcher {
   shutdown(): Promise<void>;
 }
 
-/** Minimal session-store contract the dispatcher needs (active-session check). */
+/** Session-store dependency retained by daemon composition; it is not routing authority. */
 export interface DispatcherSessionStore {
-  loadByFormattedKey(sessionKey: string): unknown | undefined;
+  loadByRef(scope: SessionQueryScope, conversationRef: BackgroundTaskOrigin["conversationRef"]): Result<unknown | undefined, SessionStoreError>;
 }
 
 /**
- * Minimal taskManager contract: read + (optionally) persist transitions.
- *
- * `transitionDispatchState` is optional so the dispatcher composes cleanly
- * with the test fixture in completion-dispatcher.test.ts (which constructs
- * `taskManager: { getTask: vi.fn() }` and asserts the at-most-once gate
- * without exercising state persistence). Production wiring adds
- * `transitionDispatchState` on the real BackgroundTaskManager so the
- * recovery-after-SIGKILL contract is binding.
+ * Minimal read-only task-manager contract for the routing observer.
  */
 export interface DispatcherTaskManager {
   getTask(taskId: string): BackgroundTask | undefined;
-  /**
-   * Atomically transition the in-memory task's dispatchState AND persist.
-   * Returns true on success; false if task does not exist. Optional —
-   * when absent, the dispatcher routes purely via in-memory state.
-   */
-  transitionDispatchState?(taskId: string, next: BackgroundSessionState): boolean;
 }
 
 /**
@@ -134,20 +99,16 @@ export interface CompletionDispatcherDeps {
    * the originating session.
    */
   fallbackNotifyFn?: NotifyFn;
-  /** Active-session check (production wiring). When absent, the dispatcher
-   *  defers to the runner without firing fallback. */
+  /** SQLite session rows are not authoritative for JSONL-backed conversations. */
   sessionStore?: DispatcherSessionStore;
   /**
    * LIVE-TURN oracle: returns true while the given FORMATTED sessionKey has a
-   * turn currently executing. Load-bearing for the auto-background stub
-   * protocol: a task promoted mid-turn is consumed by ITS OWN still-running
-   * turn (which polls `background_tasks`), so a completion that lands while
-   * the origin turn is in flight must fire NO user-visible fallback — the
-   * live incident was a raw 'Background task "…" completed.' message landing
-   * mid-conversation because the `sessionStore` check below (the persistent
-   * store, near-EMPTY in DAG mode) mis-read a live conversation as "no active
-   * session". When absent, behavior is unchanged (the sessionStore check
-   * decides alone).
+   * turn currently executing. A task promoted mid-turn is consumed by its own
+   * still-running turn through one blocking `background_tasks read_output`
+   * call, so a completion that lands while the origin turn is in flight must
+   * fire no user-visible fallback. The persistent session store does not
+   * represent live execution for JSONL-backed conversations. When this oracle
+   * is absent, the session-store check decides alone.
    */
   isTurnInFlight?: (formattedSessionKey: string) => boolean;
   /** Recursion limit for background-task hop counting. When absent, the
@@ -164,17 +125,12 @@ export interface CompletionDispatcherDeps {
  * Wire the completion dispatcher against an event bus + task manager.
  * Subscriptions are installed synchronously; call shutdown() to remove them.
  *
- * At-most-once fallback: the state-machine transitions on
- * `task.dispatchState` are the single source of truth. The dispatcher's
- * synchronous transitionDispatchState runs BEFORE the completion-runner's
- * handler reads the updated state, by virtue of the event-bus subscribing
- * the dispatcher first (see setup-background-completion-runner.ts).
+ * The completion runner is the sole owner of durable routing transitions.
  */
 export function createCompletionDispatcher(
   deps: CompletionDispatcherDeps,
 ): CompletionDispatcher {
   const log = deps.logger.child({ submodule: "completion-dispatcher" });
-  const fallback = deps.fallbackNotifyFn;
   let stopped = false;
   let inflight: Promise<void> = Promise.resolve();
 
@@ -227,183 +183,17 @@ export function createCompletionDispatcher(
       return;
     }
 
-    const current: BackgroundSessionState = task.dispatchState ?? "pending";
-
-    // At-most-once: state machine is the single source of truth.
-    if (current === "notified" || current === "dispatched") {
-      log.debug(
-        {
-          taskId,
-          dispatchState: current,
-          // traceId from task.origin so dispatcher logs stay threaded with
-          // the originating request even when the dispatcher runs from a
-          // background ALS context.
-          traceId: task.origin?.traceId ?? undefined,
-          hint: "Task already dispatched/notified; no-op (at-most-once)",
-        },
-        "Completion dispatcher: at-most-once gate",
-      );
-      return;
-    }
-
-    // task.dispatchState === "pending". Decide which transition to make.
-    // origin is producer-required; read it directly.
-    const origin = task.origin;
-
-    // Hop cap (when configured). Recursion limit reached → fallback.
-    if (typeof deps.maxBackgroundHops === "number") {
-      const nextHopCount = (origin.backgroundHopCount ?? 0) + 1;
-      if (nextHopCount >= deps.maxBackgroundHops) {
-        transitionTo(taskId, "notified");
-        emitNotified(task, origin, true, "hop_cap");
-        await fireFallback(
-          task,
-          `Background task "${task.toolName}" completed but follow-up was skipped — recursion limit reached. Run again or check the result manually.`,
-        );
-        return;
-      }
-    }
-
-    // LIVE-TURN suppression (when wired): the origin turn is STILL EXECUTING —
-    // it promoted this task mid-turn and consumes the result itself via the
-    // background_tasks stub protocol. A user-visible fallback here is pure
-    // noise landing mid-conversation (the live incident: a raw
-    // 'Background task "…" completed.' followed by the turn's real answer).
-    // Transition to "dispatched" — no notice; the runner's own in-flight
-    // check also skips re-entry (the live turn owns consumption; an
-    // unconsumed result stays readable via `background_tasks`).
-    if (deps.isTurnInFlight?.(origin.sessionKey) === true) {
-      transitionTo(taskId, "dispatched");
-      emitNotified(task, origin, false, "live_turn_suppressed");
-      log.debug(
-        {
-          taskId,
-          sessionKey: origin.sessionKey,
-          agentId: origin.agentId,
-          toolName: task.toolName,
-          traceId: origin.traceId ?? undefined,
-          hint: "Origin turn in flight — live turn consumes the result; no fallback notice",
-        },
-        "Completion dispatcher: suppressed fallback (origin turn live)",
-      );
-      return;
-    }
-
-    // Active-session check (when configured). No active session → fallback.
-    if (deps.sessionStore) {
-      const sessionExists =
-        deps.sessionStore.loadByFormattedKey(origin.sessionKey) !== undefined;
-      if (!sessionExists) {
-        // The originating session is not currently registered. The
-        // completion-runner would skip re-entry (no streaming channel) —
-        // fire fallback so the user still sees a notification. The
-        // dispatcher transitions to "notified" so the runner does NOT
-        // also fire (single-owner contract).
-        transitionTo(taskId, "notified");
-        emitNotified(task, origin, true, "no_session");
-        await fireFallback(
-          task,
-          `Background task "${task.toolName}" completed.`,
-        );
-        return;
-      }
-    }
-
-    // Active session exists (or sessionStore not wired): the runner will
-    // dispatch via re-entry. Transition to "dispatched" so the runner's
-    // handler — which reads task.dispatchState — sees the updated state.
-    // We do NOT fire fallback here (zero spurious outbound).
-    transitionTo(taskId, "dispatched");
     log.debug(
       {
         taskId,
-        sessionKey: origin.sessionKey,
-        agentId: origin.agentId,
+        kind,
+        dispatchState: task.dispatchState ?? "pending",
         toolName: task.toolName,
-        // traceId from origin for log continuity.
-        traceId: origin.traceId ?? undefined,
-        hint: "Runner will re-enter the originating session",
+        traceId: task.origin.traceId ?? undefined,
+        hint: "The durable completion runner owns execution and delivery state",
       },
-      "Completion dispatcher: marked dispatched",
+      "Completion dispatcher observed terminal task",
     );
-  }
-
-  function transitionTo(taskId: string, next: BackgroundSessionState): void {
-    if (typeof deps.taskManager.transitionDispatchState === "function") {
-      deps.taskManager.transitionDispatchState(taskId, next);
-      return;
-    }
-    // No persistent transition wired — mutate the in-memory task directly so
-    // the runner (which receives the same event in the same tick) reads the
-    // updated state. Test fixtures take this branch.
-    const task = deps.taskManager.getTask(taskId);
-    if (task) task.dispatchState = next;
-  }
-
-  /**
-   * Emit the content-free `background_task:notified` OBSERVABILITY signal for
-   * the fallback-notice decision, so `comis explain` shows whether a raw
-   * completion notice fired and whether it was correct (a `notified:true` with
-   * the origin turn live is the leak class this makes diagnosable in one call —
-   * previously wire-grep-only). Best-effort — a bus fault must never abort the
-   * dispatch.
-   */
-  function emitNotified(
-    task: BackgroundTask,
-    origin: BackgroundTaskOrigin,
-    notified: boolean,
-    reason: "no_session" | "hop_cap" | "live_turn_suppressed",
-  ): void {
-    try {
-      deps.eventBus.emit("background_task:notified", {
-        agentId: origin.agentId,
-        taskId: task.id,
-        toolName: task.toolName,
-        sessionKey: origin.sessionKey,
-        notified,
-        reason,
-        traceId: origin.traceId ?? null,
-        timestamp: systemNowMs(),
-      });
-    } catch {
-      // A bus emit fault must never abort the completion dispatch.
-    }
-  }
-
-  async function fireFallback(task: BackgroundTask, message: string): Promise<void> {
-    if (!fallback) {
-      log.debug(
-        {
-          taskId: task.id,
-          // traceId from origin keeps log lines threaded.
-          traceId: task.origin?.traceId ?? undefined,
-          hint: "No fallbackNotifyFn wired; dispatcher cannot fire user-visible notification",
-        },
-        "Completion dispatcher: fallback skipped (no fallbackNotifyFn)",
-      );
-      return;
-    }
-    try {
-      await fallback({
-        agentId: task.origin.agentId,
-        message,
-        priority: "normal",
-        origin: "background_task",
-      });
-    } catch (err) {
-      log.warn(
-        {
-          taskId: task.id,
-          agentId: task.origin.agentId,
-          err,
-          // traceId from origin keeps the WARN line threaded.
-          traceId: task.origin?.traceId ?? undefined,
-          hint: "fallbackNotifyFn rejected; user will not see the completion notification for this task",
-          errorKind: "internal" as const,
-        },
-        "Completion dispatcher: fallbackNotifyFn rejected",
-      );
-    }
   }
 
   return {

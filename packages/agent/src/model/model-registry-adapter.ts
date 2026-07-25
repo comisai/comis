@@ -3,18 +3,21 @@
  * ModelRegistry adapter -- bridges Comis's model configuration to
  * pi-coding-agent's ModelRegistry with allowlist enforcement.
  *
- * Creates a ModelRegistry from AuthStorage and wraps model resolution
- * to enforce Comis's ModelAllowlist on top of pi-coding-agent's
+ * Creates a ModelRuntime over Comis's credential store (offline, built-in
+ * catalog only) with its synchronous ModelRegistry facade, and wraps model
+ * resolution to enforce Comis's ModelAllowlist on top of pi-coding-agent's
  * built-in model catalog.
  *
  * @module
  */
 
-import { ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { AuthStorage } from "@earendil-works/pi-coding-agent";
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
-import type { Api, Model, KnownProvider } from "@earendil-works/pi-ai";
+import type { BuiltinProvider } from "@earendil-works/pi-ai/compat";
+import { clampThinkingLevel } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ComisCredentialStore } from "./auth-storage-adapter.js";
 import type { SecretManager } from "@comis/core";
 import { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "@comis/core";
 import type { ModelAllowlist } from "./model-allowlist.js";
@@ -44,15 +47,34 @@ export interface InitialModelResult {
   fallbackMessage: string | undefined;
 }
 
+/** Result of createModelRegistryAdapter — the sync facade plus its runtime. */
+export interface ModelRegistryAdapter {
+  /** Synchronous registry facade (find/getAll/registerProvider/…). */
+  registry: ModelRegistry;
+  /** The ModelRuntime backing the registry — createAgentSession consumes it. */
+  modelRuntime: ModelRuntime;
+}
+
 /**
- * Create a ModelRegistry from an AuthStorage instance.
+ * Create a ModelRegistry (and its backing ModelRuntime) from a
+ * ComisCredentialStore.
  *
- * Uses built-in models only (no models.json loading).
- * The registry discovers available models based on which providers
- * have API keys configured in AuthStorage.
+ * Uses built-in models only (`modelsPath: null` — no models.json loading)
+ * and never fetches remote model catalogs (`allowModelNetwork: false`; the
+ * SDK default refreshes over the network, which a daemon must not inherit).
+ * The registry discovers available models based on which providers have
+ * credentials in the store; request auth resolves live through the store on
+ * every dispatch.
  */
-export function createModelRegistryAdapter(authStorage: AuthStorage): ModelRegistry {
-  return ModelRegistry.inMemory(authStorage);
+export async function createModelRegistryAdapter(
+  store: ComisCredentialStore,
+): Promise<ModelRegistryAdapter> {
+  const modelRuntime = await ModelRuntime.create({
+    credentials: store,
+    modelsPath: null,
+    allowModelNetwork: false,
+  });
+  return { registry: new ModelRegistry(modelRuntime), modelRuntime };
 }
 
 const _builtInProviders = new Set<string>(getProviders());
@@ -72,7 +94,7 @@ const _builtInProviders = new Set<string>(getProviders());
  */
 function inferApiFromCatalog(type: string): Api | undefined {
   if (!_builtInProviders.has(type)) return undefined;
-  const models = getModels(type as KnownProvider);
+  const models = getModels(type as BuiltinProvider);
   return models[0]?.api as Api | undefined;
 }
 
@@ -99,7 +121,7 @@ const FALLBACK_API_FOR_CUSTOM_TYPES: Record<string, Api> = {
 
 function getBuiltInBaseUrl(type: string): string | undefined {
   if (!_builtInProviders.has(type)) return undefined;
-  const models = getModels(type as KnownProvider);
+  const models = getModels(type as BuiltinProvider);
   return models[0]?.baseUrl;
 }
 
@@ -140,7 +162,7 @@ export function normalizeOpenAICompatBaseUrl(
 
 function getBuiltInModelIds(type: string): Set<string> {
   if (!_builtInProviders.has(type)) return new Set();
-  return new Set(getModels(type as KnownProvider).map((m) => m.id));
+  return new Set(getModels(type as BuiltinProvider).map((m) => m.id));
 }
 
 /** Subset of `ProviderEntry` (from `@comis/core`) we read for pi registration. */
@@ -249,7 +271,7 @@ export function registerCustomProviders(
 
     if (shouldInheritCatalog) {
       // Inherit the full native catalog -- no dedup, no fallback values.
-      const catalogModels = getModels(entry.type as KnownProvider);
+      const catalogModels = getModels(entry.type as BuiltinProvider);
       workingModels = catalogModels.map((m) => ({
         id: m.id,
         name: m.name,
@@ -265,7 +287,7 @@ export function registerCustomProviders(
       );
     } else if (isBuiltInType) {
       // Sparse list: enrich each user model with catalog data, then dedup.
-      const catalog = getModels(entry.type as KnownProvider);
+      const catalog = getModels(entry.type as BuiltinProvider);
       const enriched = entry.models.map((m) => {
         const cat = catalog.find((c) => c.id === m.id);
         if (!cat) {
@@ -412,12 +434,17 @@ export function registerCustomProviders(
  * @param registry - ModelRegistry to search
  * @param config - Agent model configuration (provider + model ID)
  * @param allowlist - Optional model allowlist for enforcement
+ * @param providerAliases - Optional custom-provider alias map
+ * @param requestedThinkingLevel - Desired thinking level; clamped to the
+ *   resolved model's capability (defaults to "medium", which non-reasoning
+ *   models clamp to "off")
  */
 export async function resolveInitialModel(
   registry: ModelRegistry,
   config: { provider: string; model: string },
   allowlist?: ModelAllowlist,
   providerAliases?: Map<string, string>,
+  requestedThinkingLevel?: ThinkingLevel,
 ): Promise<InitialModelResult> {
   let model = registry.find(config.provider, config.model);
 
@@ -464,7 +491,10 @@ export async function resolveInitialModel(
 
   return {
     model,
-    thinkingLevel: model.reasoning ? "medium" : "off",
+    // SDK clamp: pass-through when the model supports the requested level,
+    // nearest supported tier otherwise (xhigh/max are per-model opt-ins),
+    // "off" on non-reasoning models. Default request stays "medium".
+    thinkingLevel: clampThinkingLevel(model, requestedThinkingLevel ?? "medium"),
     fallbackMessage: undefined,
   };
 }

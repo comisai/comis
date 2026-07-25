@@ -7,10 +7,8 @@
  *   - INBOUND messages (role "user") are ALWAYS confirmed -- they were received
  *     from the channel, not sent. No queue lookup needed.
  *   - OUTBOUND messages (role "assistant" / "tool") are confirmed when there is
- *     NO matching pending/in_flight/failed delivery-queue entry for the session's
- *     channelId + the message body text. They are "pending" iff a matching queue
- *     entry exists -- meaning the channel-adapter has not yet successfully
- *     delivered that outbound message.
+ *     NO matching pending/in_flight/failed delivery-queue entry for the same
+ *     tenant, agent, conversation, endpoint, and message body text.
  *   - When `deliveryQueue` dep is absent (legacy / non-channel-bound deployments),
  *     every message is reported as `confirmed` -- nothing to mark pending.
  *   - The join is opaque on the session.history handler interface: the field
@@ -27,16 +25,76 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { bindSessionReadHandlers } from "./session-read.js";
+import { bindSessionReadHandlers as bindSessionReadHandlersRaw } from "./session-read.js";
 import type { SessionHandlerDeps } from "./session-helpers.js";
 import { ok } from "@comis/shared";
-import type { DeliveryQueueEntry, DeliveryQueuePort } from "@comis/core";
+import {
+  createConversationRef,
+  conversationScopeToSessionKey,
+  formatSessionKey,
+  messageToParts,
+  type ContextStoreScope,
+  type ConversationScope,
+  type DeliveryQueueEntry,
+  type DeliveryQueuePort,
+  type LcdMessage,
+} from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 const SESSION_KEY = "test:user-1:chan-A";
+const SESSION_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "telegram-account",
+  conversationId: "chan-A",
+  conversationKind: "direct" as const,
+};
+const scopeFor = (agentId: string): ConversationScope => ({
+  tenantId: "test",
+  agentId,
+  partition: {
+    kind: "endpoint-conversation-principal",
+    principalId: "user-1",
+    endpoint: SESSION_ENDPOINT,
+  },
+});
+const referenceFor = (agentId: string) => {
+  const result = createConversationRef(scopeFor(agentId));
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+const canonicalSessionKeyFor = (agentId: string) => {
+  const result = conversationScopeToSessionKey(scopeFor(agentId));
+  if (!result.ok) throw result.error;
+  return formatSessionKey(result.value);
+};
+
+function bindSessionReadHandlers(deps: SessionHandlerDeps): ReturnType<typeof bindSessionReadHandlersRaw> {
+  const rawStore = deps.sessionStore as any;
+  const store = {
+    ...rawStore,
+    loadByRef: (scope: { tenantId: string; agentId: string }, conversationRef: string) => {
+      const raw = rawStore.loadByRef?.(scope, conversationRef) ?? rawStore.loadByFormattedKey?.(SESSION_KEY);
+      const normalized = raw && typeof raw === "object" && "ok" in raw ? raw : ok(raw);
+      if (!normalized.ok || normalized.value === undefined) return normalized;
+      const conversationScope = scopeFor(scope.agentId);
+      return ok({ ...normalized.value, conversationScope, conversationRef: referenceFor(scope.agentId) });
+    },
+  };
+  const handlers = bindSessionReadHandlersRaw({ ...deps, sessionStore: store });
+  const history = handlers["session.history"]!;
+  return {
+    ...handlers,
+    "session.history": (params) => history({
+      tenant_id: "test",
+      agent_id: "default",
+      conversation_ref: referenceFor("default"),
+      ...params,
+    }),
+  };
+}
 
 interface SeededSession {
   messages: unknown[];
@@ -70,6 +128,7 @@ function makeQueueEntry(
   text: string,
   channelId: string,
   status: DeliveryQueueEntry["status"],
+  overrides: Partial<DeliveryQueueEntry> = {},
 ): DeliveryQueueEntry {
   return {
     id: `q-${text}`,
@@ -77,6 +136,9 @@ function makeQueueEntry(
     channelType: "telegram",
     channelId,
     tenantId: "test",
+    agentId: "default",
+    conversationRef: referenceFor("default"),
+    destinationEndpoint: SESSION_ENDPOINT,
     optionsJson: "{}",
     origin: "agent",
     status,
@@ -89,6 +151,7 @@ function makeQueueEntry(
     nextRetryAt: null,
     lastError: null,
     traceId: null,
+    ...overrides,
   };
 }
 
@@ -96,6 +159,7 @@ function makeQueuePort(entries: DeliveryQueueEntry[]): DeliveryQueuePort {
   return {
     enqueue: vi.fn(),
     enqueueInFlight: vi.fn(),
+    claim: vi.fn(),
     ack: vi.fn(),
     nack: vi.fn(),
     fail: vi.fn(),
@@ -215,6 +279,45 @@ describe("session.history deliveryStatus join", () => {
     expect(failed?.deliveryStatus).toBe("pending");
   });
 
+  it("session.history isolates pending status by complete delivery authority", async () => {
+    const queue = makeQueuePort([
+      makeQueueEntry("pending-outbound", "chan-A", "pending", { tenantId: "other-tenant" }),
+      makeQueueEntry("pending-outbound", "chan-A", "pending", {
+        agentId: "other-agent",
+        conversationRef: referenceFor("other-agent"),
+      }),
+      makeQueueEntry("pending-outbound", "chan-A", "pending", {
+        conversationRef: referenceFor("other-agent"),
+      }),
+      makeQueueEntry("pending-outbound", "chan-A", "pending", {
+        destinationEndpoint: {
+          ...SESSION_ENDPOINT,
+          channelInstanceId: "other-account",
+        },
+      }),
+      makeQueueEntry("pending-outbound", "chan-A", "pending", {
+        destinationEndpoint: {
+          ...SESSION_ENDPOINT,
+          threadId: "other-thread",
+        },
+      }),
+      makeQueueEntry("pending-outbound", "chan-A", "pending", {
+        destinationEndpoint: {
+          ...SESSION_ENDPOINT,
+          conversationKind: "shared",
+        },
+      }),
+    ]);
+    const handlers = bindSessionReadHandlers(makeDeps({ deliveryQueue: queue }));
+
+    const result = (await handlers["session.history"]!({ session_key: SESSION_KEY })) as {
+      messages: Array<{ content: string; deliveryStatus: "confirmed" | "pending" }>;
+    };
+
+    expect(result.messages.find((message) => message.content === "pending-outbound")?.deliveryStatus)
+      .toBe("confirmed");
+  });
+
   it("session.history handler emits deliveryStatus on every messages entry none missing derived field is mandatory after computation", async () => {
     // With an empty pendingEntries() result, every message must still carry
     // a definite deliveryStatus (all confirmed). The downstream MCP
@@ -264,6 +367,22 @@ describe("session.history deliveryStatus join", () => {
 // preserved.
 // ---------------------------------------------------------------------------
 describe("session.history agent-origin self-scoping", () => {
+  it("session.history returns the exact caller session without a serialized agent field", async () => {
+    const deps = makeDeps({ deliveryQueue: makeQueuePort([]) });
+    const handlers = bindSessionReadHandlers(deps);
+
+    const r = (await handlers["session.history"]!({
+      session_key: SESSION_KEY,
+      tenant_id: "test",
+      agent_id: "caller-agent",
+      conversation_ref: referenceFor("caller-agent"),
+      _agentId: "caller-agent",
+      _callerSessionKey: SESSION_KEY,
+    })) as { messages: Array<{ role: string; content: string }> };
+
+    expect(r.messages.length).toBeGreaterThan(0);
+  });
+
   it("session.history denies an agent-origin caller reading a session that is not the caller's own", async () => {
     // _agentId is injected (agent-origin). The seeded session key
     // "test:user-1:chan-A" does not belong to the caller agent, so the read
@@ -275,8 +394,9 @@ describe("session.history agent-origin self-scoping", () => {
       handlers["session.history"]!({
         session_key: SESSION_KEY,
         _agentId: "attacker-agent",
+        _callerSessionKey: "test:attacker-user:attacker-channel",
       }),
-    ).rejects.toThrow(/not found/i);
+    ).rejects.toThrow(/does not match the authenticated caller/i);
   });
 
   it("session.history still returns the full transcript for an admin/operator call with NO _agentId injected", async () => {
@@ -291,5 +411,210 @@ describe("session.history agent-origin self-scoping", () => {
     };
 
     expect(r.messages.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session.history stats over pi-format sessions
+// ---------------------------------------------------------------------------
+
+describe("session.history stats over pi-format session files", () => {
+  function makePiSession(): SeededSession {
+    return {
+      messages: [
+        { role: "user", content: "run it", timestamp: 1_700_000_000_000 },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "running the tool" },
+            { type: "toolCall", id: "call-1", name: "exec", arguments: { cmd: "ls" } },
+          ],
+          usage: {
+            input: 100, output: 50, cacheRead: 0, cacheWrite: 0, totalTokens: 150,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          timestamp: 1_700_000_001_000,
+        },
+        {
+          role: "toolResult", toolCallId: "call-1",
+          content: [{ type: "text", text: "ok" }],
+          timestamp: 1_700_000_002_000,
+        },
+      ],
+      metadata: {},
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_002_000,
+    };
+  }
+
+  function makePiDeps(): SessionHandlerDeps {
+    const piSession = makePiSession();
+    return makeDeps({
+      sessionStore: {
+        listDetailed: () => [],
+        loadByFormattedKey: (key: string) => (key === SESSION_KEY ? piSession : undefined),
+        deleteByFormattedKey: () => false,
+        saveByFormattedKey: vi.fn(),
+      } as never,
+    });
+  }
+
+  it("counts pi-native toolCall blocks — sessions written by the SDK never carry tool_use", async () => {
+    const handlers = bindSessionReadHandlers(makePiDeps());
+    const r = (await handlers["session.history"]!({ session_key: SESSION_KEY })) as {
+      session: { toolCalls: number };
+    };
+    // One tool invocation: the toolCall block. The toolResult reply message
+    // is the result of the SAME invocation, not a second call.
+    expect(r.session.toolCalls).toBe(1);
+  });
+
+  it("reads pi usage keys (input/output) instead of estimating from content length", async () => {
+    const handlers = bindSessionReadHandlers(makePiDeps());
+    const r = (await handlers["session.history"]!({ session_key: SESSION_KEY })) as {
+      session: { inputTokens: number; outputTokens: number; totalTokens: number };
+    };
+    expect(r.session.inputTokens).toBe(100);
+    expect(r.session.outputTokens).toBe(50);
+    expect(r.session.totalTokens).toBe(150);
+  });
+});
+
+describe("session.history LCD transcript recovery", () => {
+  it("returns scoped LCD messages with normal projections when session metadata has no transcript", async () => {
+    const conversationRef = referenceFor("default");
+    const createdAt = 1_700_000_100_000;
+    const assistantAt = 1_700_000_102_000;
+    const updatedAt = 1_700_000_104_000;
+    const lcdRows: LcdMessage[] = [
+      {
+        id: "lcd-user",
+        conversationRef,
+        seq: 1,
+        role: "user",
+        tokenCount: 5,
+        createdAt,
+        parts: messageToParts({
+          role: "user",
+          content: "scoped request",
+          timestamp: createdAt,
+        }),
+      },
+      {
+        id: "lcd-assistant",
+        conversationRef,
+        seq: 2,
+        role: "assistant",
+        tokenCount: 150,
+        createdAt: assistantAt,
+        parts: messageToParts({
+          role: "assistant",
+          content: [
+            { type: "text", text: "scoped response" },
+            { type: "toolCall", id: "call-lcd", name: "exec", arguments: { cmd: "pwd" } },
+          ],
+          api: "openai-responses",
+          provider: "openai",
+          model: "test-model",
+          usage: {
+            input: 100,
+            output: 50,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 150,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "toolUse",
+          timestamp: assistantAt,
+        }),
+      },
+    ];
+    const getMessages = vi.fn((_scope: ContextStoreScope) => lcdRows);
+    const queue = makeQueuePort([
+      makeQueueEntry("scoped response", "chan-A", "pending"),
+    ]);
+    const deps = makeDeps({
+      deliveryQueue: queue,
+      lcdStore: { getMessages } as unknown as SessionHandlerDeps["lcdStore"],
+      sessionStore: {
+        listDetailed: () => [],
+        loadByFormattedKey: (key: string) => key === SESSION_KEY
+          ? { messages: [], metadata: {}, createdAt, updatedAt }
+          : undefined,
+        deleteByFormattedKey: () => false,
+        saveByFormattedKey: vi.fn(),
+      } as never,
+    });
+
+    const handlers = bindSessionReadHandlers(deps);
+    const result = (await handlers["session.history"]!({
+      session_key: SESSION_KEY,
+      limit: 100,
+    })) as {
+      session: {
+        messageCount: number;
+        inputTokens: number;
+        outputTokens: number;
+        totalTokens: number;
+        toolCalls: number;
+        createdAt: number;
+        lastActiveAt: number;
+      };
+      messages: Array<{
+        role: string;
+        content: string;
+        timestamp: number;
+        deliveryStatus: "confirmed" | "pending";
+      }>;
+      total: number;
+    };
+
+    expect(getMessages).toHaveBeenCalledWith({
+      tenantId: "test",
+      agentId: "default",
+      conversationRef,
+      sessionKey: canonicalSessionKeyFor("default"),
+    });
+    expect(result.messages).toEqual([
+      {
+        role: "user",
+        content: "scoped request",
+        timestamp: createdAt,
+        deliveryStatus: "confirmed",
+      },
+      {
+        role: "assistant",
+        content: "scoped response",
+        timestamp: assistantAt,
+        deliveryStatus: "pending",
+      },
+    ]);
+    expect(result.total).toBe(2);
+    expect(result.session).toMatchObject({
+      messageCount: 2,
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      toolCalls: 1,
+      createdAt,
+      lastActiveAt: updatedAt,
+      endpoint: {
+        channelType: "telegram",
+        channelInstanceId: "telegram-account",
+        conversationId: "chan-A",
+        conversationKind: "direct",
+      },
+    });
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageSource: "lcd",
+        sourceMessageCount: 2,
+        visibleMessageCount: 2,
+        durationMs: expect.any(Number),
+      }),
+      "Session history read complete",
+    );
+    expect(JSON.stringify((deps.logger.info as ReturnType<typeof vi.fn>).mock.calls)).not.toContain("scoped request");
+    expect(JSON.stringify((deps.logger.info as ReturnType<typeof vi.fn>).mock.calls)).not.toContain("scoped response");
   });
 });

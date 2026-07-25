@@ -1,0 +1,90 @@
+{
+  "__comis_note": "Comis dashboards-as-code. Every panel expr references an emitted METRIC_CATALOG metric (CI drift guard: test/architecture/grafana-dashboard-metrics.test.ts). Trace drill-down keys on the comis.trace_id span attribute (PROMETHEUS_EXEMPLARS_SUPPORTED===false) — see docs/operations/prometheus-grafana.mdx.",
+  "uid": "comis-system-health",
+  "title": "Comis — System Health",
+  "tags": ["comis", "system", "reliability"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      { "name": "datasource", "type": "datasource", "query": "prometheus", "label": "Data source", "current": {} },
+      { "name": "tenant", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cost_usd_total, tenant)", "includeAll": true, "multi": true, "label": "Tenant" },
+      { "name": "agent", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_sessions_total, agent)", "includeAll": true, "multi": true, "label": "Agent" },
+      { "name": "provider", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cost_usd_total, provider)", "includeAll": true, "multi": true, "label": "Provider" },
+      { "name": "model", "type": "query", "datasource": "${datasource}", "query": "label_values(comis_cost_usd_total, model)", "includeAll": true, "multi": true, "label": "Model" }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Degraded-session rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "links": [ { "title": "Explain the worst session", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ] }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum(rate(comis_sessions_degraded_total{agent=~\"$agent\"}[5m])) / clamp_min(sum(rate(comis_sessions_total{agent=~\"$agent\"}[5m])), 1)", "legendFormat": "degraded rate" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 2,
+      "title": "Top errorKinds (tool calls by error_kind)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "topk(10, sum by (error_kind) (rate(comis_tool_calls_total{agent=~\"$agent\", outcome=\"failure\"}[5m])))", "legendFormat": "{{error_kind}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 3,
+      "title": "Circuit-breaker trips",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (tool) (rate(comis_breaker_trips_total{agent=~\"$agent\"}[5m]))", "legendFormat": "{{tool}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 4,
+      "title": "Throughput (turns/min by outcome)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "sum by (outcome) (rate(comis_turns_total{agent=~\"$agent\"}[5m]) * 60)", "legendFormat": "{{outcome}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 5,
+      "title": "Turn duration p50 / p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "histogram_quantile(0.5, sum by (le) (rate(comis_run_duration_seconds_bucket{agent=~\"$agent\"}[5m])))", "legendFormat": "p50" },
+        { "refId": "B", "datasource": "${datasource}", "expr": "histogram_quantile(0.95, sum by (le) (rate(comis_run_duration_seconds_bucket{agent=~\"$agent\"}[5m])))", "legendFormat": "p95" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    },
+    {
+      "id": 6,
+      "title": "Daemon up / build info",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "${datasource}", "expr": "comis_up", "legendFormat": "up" },
+        { "refId": "B", "datasource": "${datasource}", "expr": "comis_build_info", "legendFormat": "build {{version}}" }
+      ],
+      "links": [ { "title": "comis explain (drill-down)", "url": "/observe/explain?ref=${__data.fields.comis_trace_id}", "targetBlank": true } ]
+    }
+  ]
+}

@@ -28,9 +28,12 @@ export interface SetupNotificationDeps {
   agents: Record<string, PerAgentConfig>;
   quietHoursConfig: { enabled: boolean; start: string; end: string; timezone: string };
   criticalBypass: boolean;
-  activeAdapterTypes: ReadonlySet<string>;
-  logger: ComisLogger;
+  activeAdapterTypes: Pick<ReadonlySet<string>, "has">;
+  /** The tenant every minted notification authority is bound to. */
   tenantId: string;
+  /** Resolve a channel type to its registered adapter's instance id (ChannelPort.channelId). */
+  resolveChannelInstanceId: (channelType: string) => string | undefined;
+  logger: ComisLogger;
 }
 
 /**
@@ -62,10 +65,12 @@ export function setupNotifications(deps: SetupNotificationDeps): NotificationCon
 
   const channelResolverDeps: ChannelResolverDeps = {
     activeAdapterTypes: deps.activeAdapterTypes,
-    getRecentSessionChannel: (agentId, channelType) =>
+    getRecentSessionEndpoint: (agentId, channelType) =>
       sessionTracker.getRecentForPlatform(agentId, channelType),
-    getMostRecentSession: (agentId) =>
+    getMostRecentSessionEndpoint: (agentId) =>
       sessionTracker.getMostRecent(agentId),
+    findSessionEndpoint: (agentId, channelType, conversationId) =>
+      sessionTracker.findEndpoint(agentId, channelType, conversationId),
   };
 
   const notificationService = createNotificationService({
@@ -76,8 +81,9 @@ export function setupNotifications(deps: SetupNotificationDeps): NotificationCon
     notificationConfigs,
     defaultConfig,
     channelResolverDeps,
-    logger: deps.logger,
     tenantId: deps.tenantId,
+    resolveChannelInstanceId: deps.resolveChannelInstanceId,
+    logger: deps.logger,
   });
 
   return { notificationService, sessionTracker };

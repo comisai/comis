@@ -123,6 +123,7 @@ describe("signal-adapter -- SSE poll loop runWithContext wrap", () => {
   it("runs handlers inside runWithContext({ traceId, channelType: \"signal\" })", async () => {
     let ctxTraceId: string | undefined;
     let ctxChannelType: string | undefined;
+    let ctxTrustLevel: string | undefined;
     let stampedTraceId: string | undefined;
     const normalized = makeNormalized();
     vi.mocked(mapSignalToNormalized).mockReturnValue(normalized);
@@ -135,6 +136,7 @@ describe("signal-adapter -- SSE poll loop runWithContext wrap", () => {
       const ctx = tryGetContext();
       ctxTraceId = ctx?.traceId;
       ctxChannelType = ctx?.channelType;
+      ctxTrustLevel = ctx?.trustLevel;
       stampedTraceId = m.metadata.traceId as string | undefined;
     });
     await adapter.start();
@@ -144,5 +146,6 @@ describe("signal-adapter -- SSE poll loop runWithContext wrap", () => {
     expect(ctxTraceId).toBeDefined();
     expect(ctxTraceId).toBe(stampedTraceId);
     expect(ctxChannelType).toBe("signal");
+    expect(ctxTrustLevel).toBe("user");
   });
 });

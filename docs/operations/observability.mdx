@@ -5,7 +5,7 @@ icon: "chart-line"
 ---
 
 Comis correlates structured events, traces, and diagnostic artifacts so an
-operator can investigate a fleet-wide failure from one workflow.
+operator can investigate a deployment-wide failure from one workflow.
 
 This page documents the observability foundations. It covers the trajectory layer, the 66-entry bridge mapping, lifecycle envelopes, forensic INFO promotions, the dedup detector, boot invariants, the alert budget, `step:` discipline, log rotation, the memory & recall diagnostics (recall-trace artifact, recall events, degradation signals), and the bundle export entry point. If you are new to Comis observability, start here; then follow the cross-links for operator workflows.
 
@@ -26,10 +26,10 @@ Every inbound message receives a `traceId` at channel ingress — before the que
 
 **Practical consequence:** `grep "traceId=<id>" ~/.comis/logs/daemon.log` returns the complete causal chain for a single message — channel ingress, queue enqueue, agent execution, and outbound delivery — without any cross-file correlation.
 
-The on-wire field is `normalized.metadata.traceId`; the helper `getMessageTraceId()` reads it. All 11 channel adapters wrap their dispatch loops in `runWithContext`, and the orchestrator's `adapter.onMessage` handler applies a defense-in-depth second wrap so no adapter can silently skip propagation.
+The on-wire field is `normalized.metadata.traceId`; the helper `getMessageTraceId()` reads it. Channel adapters establish the inbound request scope around their dispatch loops. The orchestrator inherits that exact scope, verifies that its channel and trace match the message, and establishes a fallback boundary only for an unscoped custom adapter.
 
 <Info>
-**Architecture invariant:** `test/architecture/trace-propagation.test.ts` asserts that every `adapter.onMessage(...)` registration site is wrapped in `runWithContext`. This test is shrink-only — violations are caught at CI time, not at incident time.
+**Architecture invariant:** `test/architecture/trace-propagation.test.ts` asserts that every adapter handler fanout runs inside `runWithContext` and that execution stages do not shadow the inherited scope. This test is shrink-only — violations are caught at CI time, not at incident time.
 </Info>
 
 ---
@@ -302,7 +302,7 @@ When a user reports an issue, the operator workflow is:
 2. `comis trace export <sessionId>` to produce a self-contained bundle directory.
 3. Share the bundle with the diagnosing engineer.
 
-Users can also trigger export via the `/export-trajectory` slash command in a direct message (or in a group channel, where the result is DM'd to the owner).
+Users can also trigger export via the `/export-trajectory` slash command in an authenticated direct message. Group invocations are rejected before a bundle is created.
 
 <Warning>
 **Privacy:** bundle contents reflect the raw session and runtime trajectory at export time. Redaction applies platform-aware patterns (Telegram chat IDs, JWTs, AWS keys, URL userinfo, basic-auth, cookie headers, emails), substitutes paths, and omits identified PII fields — but redaction is heuristic. Always treat exported bundles as containing sensitive content; share only with authorized engineers, prefer DM/secure channels, and delete after triage.
@@ -475,7 +475,7 @@ Read the trace with [`comis memory recall-trace <session>`](/reference/cli#comis
 
 ### 15.2 Recall & curation events
 
-Typed events report recall, generation-quality, and curation activity on the event bus. Three of them — **`memory:recalled`**, **`memory:reranked`**, and **`memory:generation_quality`** — are part of the [§4 bridge mapping](#4-bridge-mapping-66-entries): they cross onto the per-session **trajectory timeline** as `memory.recalled` / `memory.reranked` / `memory.generation_quality`. A recall shows up in `comis explain` (its lane/candidate/final counts and the rerank outcome) and aggregates into the report's [`recall` section](/reference/json-rpc#obs-explain). A memory-generation pass whose output diverged from its source fires `memory:generation_quality` (only on an issue) and rolls up into the `comis fleet` `generation_quality` finding. The remaining recall/curation events (`memory:entities_linked`, `memory:consolidated`, `memory:recall_used`, `memory:review_completed`) are emitted **directly** at a single canonical site each and are **not** bridge-mapped — `test/architecture/trajectory-event-types-known.test.ts` allowlists those four as not-trajectory-mapped, and asserts the disjoint-set invariant (no event is both bridged and direct-emit).
+Typed events report recall, generation-quality, and curation activity on the event bus. Three of them — **`memory:recalled`**, **`memory:reranked`**, and **`memory:generation_quality`** — are part of the [§4 bridge mapping](#4-bridge-mapping-66-entries): they cross onto the per-session **trajectory timeline** as `memory.recalled` / `memory.reranked` / `memory.generation_quality`. A recall shows up in `comis explain` (its lane/candidate/final counts and the rerank outcome) and aggregates into the report's [`recall` section](/reference/json-rpc#obs-explain). A memory-generation pass whose output diverged from its source fires `memory:generation_quality` (only on an issue) and rolls up into the `comis system-health` `generation_quality` finding. The remaining recall/curation events (`memory:entities_linked`, `memory:consolidated`, `memory:recall_used`, `memory:review_completed`) are emitted **directly** at a single canonical site each and are **not** bridge-mapped — `test/architecture/trajectory-event-types-known.test.ts` allowlists those four as not-trajectory-mapped, and asserts the disjoint-set invariant (no event is both bridged and direct-emit).
 
 Every payload is **counts, booleans, and IDs only** — never query text, memory bodies, or entity names (AGENTS.md §2.7). The per-recall ranking detail lives in the opt-in recall-trace artifact above, not on the bus.
 
@@ -505,7 +505,7 @@ Recall degrades gracefully, and **every degradation path is explicit** — it em
 | Candidate missing embedding | A candidate had no embedding to score on the vector lane — it is handled, not dropped silently | WARN with `errorKind` + `hint` |
 | Invalid extraction / consolidation | An extraction or consolidation step produced an unusable result — skipped with an explicit signal | WARN with `errorKind` + `hint` |
 
-For **aggregate** health (rather than a single recall), point at the `comis memory stats` recall-counter overlay: lane usage, rerank-fallback rate, consolidation throughput, and recall hit-rate. A climbing rerank-fallback rate, for instance, says the reranker is timing out across the fleet, not just on one turn. The overlay is best-effort — a daemon that has not wired the counters still renders base stats.
+For **aggregate** health (rather than a single recall), point at the `comis memory stats` recall-counter overlay: lane usage, rerank-fallback rate, consolidation throughput, and recall hit-rate. A climbing rerank-fallback rate, for instance, says the reranker is timing out across the system, not just on one turn. The overlay is best-effort — a daemon that has not wired the counters still renders base stats.
 
 ```bash
 # Aggregate recall health (lane usage, rerank-fallback rate, hit-rate)
@@ -573,9 +573,9 @@ Three typed events fire on the bus. All are **content-free** per the [§5 boundi
 jq 'select(.event | startswith("observability:spend_"))' ~/.comis/logs/daemon.log
 ```
 
-### Fleet finding — `config_posture:pricing_gap`
+### System finding — `config_posture:pricing_gap`
 
-`comis fleet` surfaces a `config_posture:pricing_gap` finding when one or more agents are burning tokens on **remote, unknown-priced** models — telling an operator their pricing coverage *before* they trust the ceiling. It is a **count plus a remediation hint only** (no model id or token in the body); free/local and priced agents are never counted. A newer healthy boot supersedes an older flag. If you see it, spend is being under-counted for those agents (honest `$0` applies only to local/free providers) — close the gap before relying on `action: abort`.
+`comis system-health` surfaces a `config_posture:pricing_gap` finding when one or more agents are burning tokens on **remote, unknown-priced** models — telling an operator their pricing coverage *before* they trust the ceiling. It is a **count plus a remediation hint only** (no model id or token in the body); free/local and priced agents are never counted. A newer healthy boot supersedes an older flag. If you see it, spend is being under-counted for those agents (honest `$0` applies only to local/free providers) — close the gap before relying on `action: abort`.
 
 ---
 

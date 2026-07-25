@@ -9,11 +9,12 @@
  *
  * Cache: persistent JSON at
  * `node_modules/.cache/architecture-walker/log-payload-checker.json`.
- * Composite key (mtime + sha256) — both must match for a cache hit, otherwise
- * recompute. `version: 1` invalidates old caches when walker logic changes.
+ * Composite key (program context + file mtime + file sha256) — every part must
+ * match for a cache hit, otherwise recompute. The program context covers
+ * transitive declarations so rebuilt workspace packages cannot leave stale
+ * TypeChecker results behind.
  *
- * The valid 9-member closed union mirrors the canonical ErrorKind union (`config | network |
- * auth | validation | timeout | resource | dependency | internal | platform`).
+ * The valid 11-member closed union mirrors the canonical ErrorKind union.
  *
  * @module
  */
@@ -73,17 +74,13 @@ interface CacheEntry {
 }
 
 /**
- * Cache file shape. `version: 1` is the schema-version field; mismatch (or
- * corrupted JSON) drops the cache and recomputes every entry — guards against
- * cache poisoning.
+ * Cache file shape. A schema-version or program-context mismatch drops the
+ * cache and recomputes every entry. Version 5 adds the complete TypeScript
+ * program context to prevent stale results when imported declarations change.
  */
 interface CacheFile {
-  // Bumped 1 → 2 when `precondition` joined the closed ErrorKind union;
-  // 2 → 3 when `sandbox_unavailable` joined.
-  // Older caches contain stale flags for files that legitimately use the
-  // new literal — drop them on read so the next walker pass recomputes
-  // against the updated VALID_ERROR_KINDS.
-  readonly version: 3;
+  readonly version: 5;
+  readonly programContextSha256: string;
   readonly entries: Record<string, CacheEntry>;
 }
 
@@ -94,18 +91,21 @@ const CACHE_PATH = resolve(
 
 let cache: CacheFile | null = null;
 
-function loadCache(): CacheFile {
-  if (cache) return cache;
+function loadCache(programContextSha256: string): CacheFile {
+  if (cache?.programContextSha256 === programContextSha256) return cache;
   if (!existsSync(CACHE_PATH)) {
-    cache = { version: 3, entries: {} };
+    cache = { version: 5, programContextSha256, entries: {} };
     return cache;
   }
   try {
     const raw = JSON.parse(readFileSync(CACHE_PATH, "utf8")) as CacheFile;
-    cache = raw.version === 3 ? raw : { version: 3, entries: {} };
+    cache =
+      raw.version === 5 && raw.programContextSha256 === programContextSha256
+        ? raw
+        : { version: 5, programContextSha256, entries: {} };
   } catch {
     // Corrupted JSON or unreadable file — drop cache and recompute.
-    cache = { version: 3, entries: {} };
+    cache = { version: 5, programContextSha256, entries: {} };
   }
   return cache;
 }
@@ -140,6 +140,26 @@ function fileHash(filePath: string): { mtimeMs: number; sha256: string } {
   return { mtimeMs: stat.mtimeMs, sha256 };
 }
 
+function programContextHash(program: ts.Program): string {
+  const hash = createHash("sha256");
+  hash.update(ts.version);
+  const compilerOptions = Object.entries(program.getCompilerOptions()).sort(
+    ([a], [b]) => a.localeCompare(b),
+  );
+  hash.update(JSON.stringify(compilerOptions));
+  const sourceFiles = program
+    .getSourceFiles()
+    .slice()
+    .sort((a, b) => a.fileName.localeCompare(b.fileName));
+  for (const sourceFile of sourceFiles) {
+    hash.update(sourceFile.fileName);
+    hash.update("\0");
+    hash.update(sourceFile.text);
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
 /**
  * One detected off-union `errorKind` literal in a logger payload.
  *
@@ -158,22 +178,34 @@ export interface LogPayloadViolation {
   readonly snippet: string;
 }
 
+function literalHiddenByAssertions(expression: ts.Expression): string | undefined {
+  let current = expression;
+  while (
+    ts.isAsExpression(current)
+    || ts.isTypeAssertionExpression(current)
+    || ts.isSatisfiesExpression(current)
+    || ts.isParenthesizedExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return ts.isStringLiteralLike(current) ? current.text : undefined;
+}
+
 /**
  * Walk the given root files, build a single TS Program with the
  * TypeChecker, and report every WARN/ERROR/FATAL log-call whose payload's
- * `errorKind` resolves to a literal NOT in the closed 9-member union (or
+ * `errorKind` resolves to a literal NOT in the closed 11-member union (or
  * to the open `string` type — also reported as `<unresolved type>`).
  *
- * Cache: per-file mtime+sha256 composite key. On hit, the walker
- * re-renders snippets from the live source but reuses the stored
- * `line` / `character` / `literal` triples. On miss (or first run) the
+ * Cache: the full TypeScript program context plus per-file mtime+sha256.
+ * On hit, the walker re-renders snippets from the live source but reuses the
+ * stored `line` / `character` / `literal` triples. On miss (or first run) the
  * walker recomputes and writes the entry.
  */
 export function checkLogPayloads(
   rootFiles: readonly string[],
   compilerOptions: ts.CompilerOptions = {},
 ): readonly LogPayloadViolation[] {
-  const c = loadCache();
   const program = ts.createProgram({
     rootNames: [...rootFiles],
     options: {
@@ -189,6 +221,7 @@ export function checkLogPayloads(
       allowJs: false,
     },
   });
+  const c = loadCache(programContextHash(program));
   const checker = program.getTypeChecker();
   const violations: LogPayloadViolation[] = [];
 
@@ -223,6 +256,19 @@ export function checkLogPayloads(
       character: number;
       literal: string;
     }> = [];
+    const violationKeys = new Set<string>();
+
+    const recordViolation = (node: ts.Node, literal: string): void => {
+      const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+      const key = `${line}:${character}:${literal}`;
+      if (violationKeys.has(key)) return;
+      violationKeys.add(key);
+      fileViolations.push({
+        line: line + 1,
+        character: character + 1,
+        literal,
+      });
+    };
 
     ts.forEachChild(sourceFile, function visit(node) {
       if (ts.isCallExpression(node) && isLoggerWarnOrError(node)) {
@@ -234,6 +280,13 @@ export function checkLogPayloads(
           const payloadType = checker.getTypeAtLocation(payloadArg);
           const errorKindProp = payloadType.getProperty("errorKind");
           if (errorKindProp) {
+            for (const declaration of errorKindProp.getDeclarations() ?? []) {
+              if (!ts.isPropertyAssignment(declaration)) continue;
+              const literal = literalHiddenByAssertions(declaration.initializer);
+              if (literal !== undefined && !VALID_ERROR_KINDS.has(literal)) {
+                recordViolation(declaration.initializer, literal);
+              }
+            }
             const errorKindType = checker.getTypeOfSymbolAtLocation(
               errorKindProp,
               payloadArg,
@@ -246,29 +299,13 @@ export function checkLogPayloads(
             for (const t of constituents) {
               if (t.isStringLiteral()) {
                 if (!VALID_ERROR_KINDS.has(t.value)) {
-                  const { line, character } =
-                    sourceFile.getLineAndCharacterOfPosition(
-                      payloadArg.getStart(),
-                    );
-                  fileViolations.push({
-                    line: line + 1,
-                    character: character + 1,
-                    literal: t.value,
-                  });
+                  recordViolation(payloadArg, t.value);
                 }
               } else {
                 // Open `string` (or any non-literal type) at this position
                 // is itself a violation — the TypeChecker proved the value
                 // is not narrowed to the closed union.
-                const { line, character } =
-                  sourceFile.getLineAndCharacterOfPosition(
-                    payloadArg.getStart(),
-                  );
-                fileViolations.push({
-                  line: line + 1,
-                  character: character + 1,
-                  literal: "<unresolved type>",
-                });
+                recordViolation(payloadArg, "<unresolved type>");
               }
             }
           }

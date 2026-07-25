@@ -16,6 +16,7 @@
 
 import type {
   AttachmentPayload,
+  AttachmentSendReceipt,
   ChannelPort,
   ChannelStatus,
   FetchedMessage,
@@ -23,14 +24,11 @@ import type {
   MessageHandler,
   NormalizedMessage,
   ReactionHandler,
-  ReconcileSendQuery,
-  ReconcileSendOutcome,
   SendMessageOptions,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { createHash } from "node:crypto";
 import {
   Client,
   Events,
@@ -48,7 +46,12 @@ import { createDiscordVoiceSender } from "./voice-sender.js";
 // / deleteMessage / fetchMessages all use asTextLike, the structural-subset
 // narrowing helper that discord-actions.ts also uses.
 import { asTextLike } from "./discord-adapter-types.js";
-import { runWithContext, systemNowMs } from "@comis/core";
+import {
+  createAttachmentSendReceipt,
+  runWithContext,
+  systemNowMs,
+  toSafeErrorLogString,
+} from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -105,10 +108,6 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
   // discord-reaction-binder.ts to hold the 800-line cap).
   const reactionHandlers: ReactionHandler[] = [];
   let _channelId = "discord-pending";
-  // The bot's own user id, captured at start() from validateDiscordToken. Used
-  // by reconcileSend to match author=bot — a same-digest message from another
-  // author must never count as the bot's own send; empty until start.
-  let _botUserId = "";
   let reconnectAttempt = 0;
 
   // Health tracking
@@ -134,7 +133,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
         deps.logger.error(
           {
             channelType: "discord",
-            err: tokenResult.error,
+            err: toSafeErrorLogString(tokenResult.error),
             hint: "Verify DISCORD_TOKEN in developer portal and ensure bot has Message Content intent enabled",
             errorKind: "auth" as const,
           },
@@ -145,7 +144,6 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
 
       const botInfo = tokenResult.value;
       _channelId = `discord-${botInfo.id}`;
-      _botUserId = botInfo.id;
 
       // TODO: Wire poll result normalization when Discord poll events are implemented.
       // Use normalizeDiscordPollResult() from ../shared/poll-normalizer.js
@@ -177,7 +175,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
             startedAt: systemNowMs(),
             channelType: "discord",
             tenantId: "default",
-            trustLevel: "admin",
+            trustLevel: "user",
           },
           () => {
             for (const handler of handlers) {
@@ -185,7 +183,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
                 Promise.resolve(handler(normalized)).catch((handlerErr) => {
                   deps.logger.error(
                     {
-                      err: handlerErr,
+                      err: toSafeErrorLogString(handlerErr),
                       channelId: msg.channelId,
                       hint: "Check Discord bot permissions and message handler logic",
                       errorKind: "internal" as const,
@@ -196,7 +194,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
               } catch (handlerErr) {
                 deps.logger.error(
                   {
-                    err: handlerErr,
+                    err: toSafeErrorLogString(handlerErr),
                     channelId: msg.channelId,
                     hint: "Check Discord bot permissions and message handler logic",
                     errorKind: "internal" as const,
@@ -274,7 +272,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
               startedAt: systemNowMs(),
               channelType: "discord",
               tenantId: "default",
-              trustLevel: "admin",
+              trustLevel: "user",
             },
             () => {
               for (const handler of handlers) {
@@ -282,7 +280,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
                   Promise.resolve(handler(normalized)).catch((handlerErr) => {
                     deps.logger.error(
                       {
-                        err: handlerErr,
+                        err: toSafeErrorLogString(handlerErr),
                         channelId: interaction.channelId,
                         hint: "Check message callback handler for unhandled errors",
                         errorKind: "internal" as const,
@@ -293,7 +291,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
                 } catch (handlerErr) {
                   deps.logger.error(
                     {
-                      err: handlerErr,
+                      err: toSafeErrorLogString(handlerErr),
                       channelId: interaction.channelId,
                       hint: "Check message callback handler for unhandled errors",
                       errorKind: "internal" as const,
@@ -308,7 +306,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
           deps.logger.warn(
             {
               channelType: "discord",
-              err: error instanceof Error ? error : new Error(String(error)),
+              err: toSafeErrorLogString(error),
               hint: "Button interaction acknowledgement or forwarding failed",
               errorKind: "platform" as const,
             },
@@ -357,7 +355,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
             {
               channelType: "discord",
               chatId: channelId,
-              err: channelErr,
+              err: toSafeErrorLogString(channelErr),
               hint: "Verify bot has Send Messages permission in the target channel",
               errorKind: "validation" as const,
             },
@@ -374,7 +372,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
             {
               channelType: "discord",
               chatId: channelId,
-              err: emptyErr,
+              err: toSafeErrorLogString(emptyErr),
               hint: "Message content is empty after processing; check input text",
               errorKind: "validation" as const,
             },
@@ -446,7 +444,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
           {
             channelType: "discord",
             chatId: channelId,
-            err: sendErr,
+            err: toSafeErrorLogString(sendErr),
             hint: "Verify bot has Send Messages permission in the target channel",
             errorKind: "platform" as const,
           },
@@ -598,7 +596,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
       channelId: string,
       attachment: AttachmentPayload,
       options?: SendMessageOptions,
-    ): Promise<Result<string, Error>> {
+    ): Promise<Result<AttachmentSendReceipt, Error>> {
       // Voice note dispatch: use 3-step upload protocol for native voice bubbles
       if (attachment.isVoiceNote && attachment.type === "audio") {
         const voiceSender = createDiscordVoiceSender({ botToken: deps.botToken, logger: deps.logger });
@@ -618,7 +616,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
             {
               channelType: "discord",
               chatId: channelId,
-              err: channelErr,
+              err: toSafeErrorLogString(channelErr),
               hint: "Verify bot has Attach Files permission in the target channel",
               errorKind: "validation" as const,
             },
@@ -639,25 +637,39 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
             : {}),
         });
 
+        const receipt = createAttachmentSendReceipt(msg.id);
+        if (receipt.kind === "delivered_untracked") {
+          deps.logger.warn(
+            {
+              channelType: "discord",
+              chatId: channelId,
+              hint: "Discord accepted the attachment without returning its ID. Do not retry; wait for platform reconciliation",
+              errorKind: "platform" as const,
+            },
+            "Attachment delivered without platform tracking",
+          );
+        }
+
         deps.logger.debug(
           {
             channelType: "discord",
-            messageId: msg.id,
             chatId: channelId,
+            tracking: receipt.kind,
+            ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
             attachmentType: attachment.type,
             captionLength: attachment.caption?.length ?? 0,
             hasFileName: attachment.fileName !== undefined,
           },
           "Outbound attachment",
         );
-        return ok(msg.id);
+        return ok(receipt);
       } catch (error) {
         const sendErr = error instanceof Error ? error : new Error(String(error));
         deps.logger.warn(
           {
             channelType: "discord",
             chatId: channelId,
-            err: sendErr,
+            err: toSafeErrorLogString(sendErr),
             hint: "Verify bot has Attach Files permission in the target channel",
             errorKind: "platform" as const,
           },
@@ -680,68 +692,6 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
 
     onReaction(handler: ReactionHandler): void {
       reactionHandlers.push(handler);
-    },
-
-    async reconcileSend(query: ReconcileSendQuery): Promise<Result<ReconcileSendOutcome, Error>> {
-      // We can only prove a bot send if we know who the bot is. If start() has
-      // not captured the bot user id, we cannot tell -> unresolved (never a
-      // guess).
-      if (!_botUserId) {
-        deps.logger.debug(
-          { channelType: "discord", hint: "reconcileSend called before start(): bot id unknown" },
-          "reconcileSend unresolved",
-        );
-        return ok({ kind: "unresolved" });
-      }
-
-      let tc: ReturnType<typeof asTextLike>;
-      try {
-        const channel = await client.channels.fetch(query.channelId);
-        tc = asTextLike(channel);
-      } catch {
-        // A failed channel resolution cannot prove absence -> unresolved.
-        return ok({ kind: "unresolved" });
-      }
-      if (!tc) {
-        // Not a text-like channel: we cannot read history -> unresolved.
-        return ok({ kind: "unresolved" });
-      }
-
-      // discord.js throws on fetch failure / rate-limit. A failed or partial
-      // fetch can NEVER prove the message is absent — any throw is
-      // `unresolved`, never `not_sent`.
-      let fetched: Awaited<ReturnType<typeof tc.messages.fetch>>;
-      try {
-        fetched = await tc.messages.fetch({ limit: 50 });
-      } catch (error) {
-        deps.logger.warn(
-          {
-            channelType: "discord",
-            chatId: query.channelId,
-            err: error instanceof Error ? error : new Error(String(error)),
-            hint: "messages.fetch failed; reconcile cannot prove absence",
-            errorKind: "platform" as const,
-          },
-          "reconcileSend unresolved",
-        );
-        return ok({ kind: "unresolved" });
-      }
-
-      // fetch({limit}) returns a Collection<Snowflake, Message> (Map-iterable).
-      for (const [, m] of fetched) {
-        if (m.author?.id !== _botUserId) continue; // author=bot required — other authors never count
-        if (m.createdTimestamp < query.sentAfterMs || m.createdTimestamp > query.sentBeforeMs) {
-          continue;
-        }
-        const digest = createHash("sha256").update(m.content ?? "").digest("hex").slice(0, 16);
-        if (digest === query.contentDigest) {
-          return ok({ kind: "sent", platformMessageId: m.id });
-        }
-      }
-
-      // Full successful fetch, no bot-authored digest match in the window:
-      // definitively absent from the queried window.
-      return ok({ kind: "not_sent" });
     },
 
     getStatus(): ChannelStatus {

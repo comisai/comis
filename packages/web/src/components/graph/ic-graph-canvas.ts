@@ -450,7 +450,7 @@ export class IcGraphCanvas extends LitElement {
 
     // Register wheel with { passive: false } so preventDefault() works
     this.updateComplete.then(() => {
-      const container = this.renderRoot.querySelector(".canvas-container");
+      const container = this.renderRoot.querySelector<HTMLElement>(".canvas-container");
       this._wheelHandler = this._onWheel.bind(this);
       container?.addEventListener("wheel", this._wheelHandler, {
         passive: false,

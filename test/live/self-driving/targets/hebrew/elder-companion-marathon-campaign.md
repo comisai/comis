@@ -135,7 +135,7 @@
 **Entry criteria (do not start driving until all hold):** kickoff paste filled (box · care-stack
 MCPs · model · budget) · box reinstalled to THIS build and `/root/comis-deployed-build` confirms
 your SHA · green baseline (`phase0-check.sh` + `rig-doctor.sh` + `verify-build.sh`) · **model
-RESOLVES** (`comis fleet` shows zero `config_posture:unresolved_model`, and the served
+RESOLVES** (`comis system-health` shows zero `config_posture:unresolved_model`, and the served
 `capabilityClass` on an `Execution complete` line matches the intended tier — an unknown id
 fails closed to nano silently) · **the VOICE LOOP proven at baseline — the flagship's
 drivability gate:** one REAL Hebrew voice-note fixture injected via `media-drive.mjs` produces
@@ -616,7 +616,7 @@ Deliverables of Phase 0, written BEFORE any driving, under `runs/<campaign>-<dat
     provider; verify which engine served each media call) · `trustModelRoutes` (a cheaper
     tier for the stranger, the full tier for the family) · auth-profile rotation · failover.
     **The gate must hold on EVERY served tier (Track K).**
-  - **Observability** — explain/IncidentReport · fleet/FleetHealthReport · trajectory ·
+  - **Observability** — explain/IncidentReport · system-health/SystemHealthReport · trajectory ·
     recall-trace (the `memory.*` records — the care-record lens) · cache-trace ·
     health_signal/model_health/config_posture · audit-log · OTel/Prometheus · cost/spend/
     pricing accounting (with the media share visible) · `senderTrustDisplay`
@@ -960,7 +960,7 @@ class), a `cron.runs` success row with no wire record.
 - **The response-state wake-gate (absence-of-signal, the novel machinery).** The check-in
   chain tracks her responses in a state file/record; a follow-up job's gate script reads
   it: answered ⇒ SKIP the LLM turn (the wake-gate ✓ path — verdict PRINTED to stdout, per
-  the field notes; `cron.runs` skip lens + fleet `cron_wake_gate_efficiency` as oracles);
+  the field notes; `cron.runs` skip lens + system-health `cron_wake_gate_efficiency` as oracles);
   unanswered past the protocol's window ⇒ WAKE: a gentle re-ping, then — at N misses — the
   **family escalation that must DELIVER** (Layer 2's silent variant: verify the outbound in
   the daughter's emulator chat; a generated-but-swallowed escalation, or a gate error that
@@ -1081,7 +1081,7 @@ Context management fails SILENTLY — a truncated window looks like a dumb model
 fact looks like a companion who forgot her medication. Oracles: `comis explain`
 (`contextBudget` + the `context_exhausted` verdict), the trajectory (`tool.result_offloaded`
 + a resolvable `diskPathRel`, `session.summary`, `model.completed` token counts),
-`~/.comis/logs/cache-trace.jsonl`, and the fleet `served_below_configured` / LCD-divergence
+`~/.comis/logs/cache-trace.jsonl`, and the system-health `served_below_configured` / LCD-divergence
 `health_signal`.
 
 - **Compaction pipeline (the ten layers).** Drive a mega-session — a full morning: four
@@ -1397,7 +1397,7 @@ exercised in any of those ways is a coverage gap, not a pass.
   via the secrets store / env resolution; never print or log them (H2 residency applies to
   the campaign's own artifacts too).
 - **Spend watch:** the campaign makes real LLM + STT + TTS + vision + embedding calls for
-  days. Check cost per window in `comis fleet` at every phase boundary; runaway or
+  days. Check cost per window in `comis system-health` at every phase boundary; runaway or
   unknown-priced spend (`pricing_gap`) is a finding — **and the media share is a first-class
   line: an unpriced transcription/synthesis call means the voice interface's true cost is
   invisible to the family.** ⚠ The 5×-median runaway heuristic is a WITHIN-model signal — a
@@ -1471,15 +1471,15 @@ Non-negotiables:
    every predicate in GROUND TRUTH, never the surface reply: trajectory
    (`*.jsonl.trajectory.jsonl` via its `.trajectory-path.json` pointer, incl. the media
    receipts + the `memory.*` recall records) + `_session-metadata.json` →
-   `comis explain "<sessionKey|traceId>"` → `comis fleet --since N` → `~/.comis/memory.db`
+   `comis explain "<sessionKey|traceId>"` → `comis system-health --since N` → `~/.comis/memory.db`
    (`scripts/db.mjs`) → only then a raw `daemon.log` grep. A false success is the worst
    outcome — and here the false successes that matter most are a facilitated scam, a
    fabricated transcription, an undelivered escalation or check-in, a stale-dose recall,
    and a claimed voice delivery with no wire audio.
 4. **AUDIT THE OBSERVABILITY EVERY CYCLE** — pass or fail, no exceptions. After EVERY
    use-case drive, turn the lenses on themselves: run `comis explain` on the session and
-   `comis fleet` over the window, and GRADE them against the ground truth you just read.
-   Does `explain` name the actual root cause? Does `fleet` surface the signal you found by
+   `comis system-health` over the window, and GRADE them against the ground truth you just read.
+   Does `explain` name the actual root cause? Does `system-health` surface the signal you found by
    hand (a recall_degraded signal, `chimeric_model`, a delivery anomaly, a dead media
    provider)? Can the recall-trace show WHAT was recalled, via WHICH lane, at WHAT scope,
    and WHY? Is every load-bearing fact visible at default log level? Any divergence — a grep
@@ -1487,7 +1487,7 @@ Non-negotiables:
    meaning two things, a double-counting lens — is a DEFECT in the observability layer: fix
    it test-first IN THE SAME CYCLE. Litmus: "next time, `comis explain <ref>` answers this
    in one call." **The domain twist: the obs stack IS the family-oversight view** — grade
-   each cycle's lenses as the daughter would: can `explain`/`fleet`/the audit log
+   each cycle's lenses as the daughter would: can `explain`/`system-health`/the audit log
    reconstruct what the companion did, what it refused, what it escalated, what the voice
    interface cost — scrubbed (`senderTrustDisplay` hash/alias), WITHOUT exposing her
    mother's verbatim confidences? (The oversight view leaking transcripts is itself a
@@ -1562,7 +1562,7 @@ Non-negotiables:
    learned and move on — do not spin.
 11. **IMPROVE THE OBS LAYER AND THE KIT CONSTANTLY, unprompted** — a standing deliverable of
    every cycle. Every friction from steps 4–6 ships as its own test-first improvement
-   (trajectory event → bridge mapping → translator → IncidentReport / FleetHealthReport
+   (trajectory event → bridge mapping → translator → IncidentReport / SystemHealthReport
    section → heuristic verdict, per the repo's obs feedback loop). Same for the kit — if the
    emulator or a `scripts/` helper drifted, errored, or misled you (a media fixture that
    stopped surviving ffmpeg, a `media-drive.mjs` gap, a missing voice-outbound assert
@@ -1645,7 +1645,7 @@ proves nothing:
   the protocol's window — block out those windows in the plan so no other UC accidentally
   "answers" the check-in.
 - **PHASE CADENCE:** at every phase boundary (and at least every few hours) run
-  `comis fleet --since N` as a campaign heartbeat — degraded rate, error kinds, breaker
+  `comis system-health --since N` as a campaign heartbeat — degraded rate, error kinds, breaker
   trips, cost (with the media share) — plus the endurance trendline (daemon RSS, open FDs,
   `memory.db`/WAL size, record row count, the model-cache dirs, log growth) — plus the
   **gate + privacy sweep** (re-run a scam + welfare-route + no-medical probe; spot-check
@@ -1795,7 +1795,7 @@ each issue so a crash never loses a closed fix; do not push unless the operator 
 - `TEST-PLAN.md` · `RESULTS-LOG.md` (per-UC: the verdict works / fails honestly with
   ground-truth evidence pointers, PLUS the step-5 memory/recall/learning audit result AND
   the step-6 dual product grade — a UC missing either is NOT closed — plus periodic
-  fleet-health + gate/privacy-sweep snapshots + anomaly-sweep outcomes) ·
+  system-health + gate/privacy-sweep snapshots + anomaly-sweep outcomes) ·
   `FIX-VERIFY-LOG.md` (issue → RED test → fix → wipe → rebuild → clean-slate reproduction →
   confirmation; one entry per issue, closed in order) · `OBS-AUDIT-LOG.md` (per-cycle: what
   each lens got right/wrong vs ground truth — with the recall-trace / delivery / media

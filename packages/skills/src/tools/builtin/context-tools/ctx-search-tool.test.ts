@@ -4,7 +4,7 @@
  *
  * The tool consumes the widened `LcdSearchResult`
  * (`scriptZeroHit`/`lane`/`matchErrored`/`scanCapped`) and:
- *   - emits `context:script_zero_hit { conversationId, agentId, sessionKey,
+ *   - emits `context:script_zero_hit { conversationRef, agentId, sessionKey,
  *     scriptClass, lane, timestamp }` on a CLEAN non-Latin zero-hit, instead of
  *     a `cjkZeroHit` DEBUG line;
  *   - NEVER emits when `matchErrored` is true (a `safeAll`-swallowed FTS5 error
@@ -25,6 +25,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   runWithContext,
+  createConversationRef,
   type RequestContext,
   type ContextStorePort,
   type ContextStoreScope,
@@ -88,7 +89,7 @@ function makeThrowingBus(): { emit: (event: string, data: unknown) => void } {
 
 /** A neutral RequestContext with a live, fully-scoped session. */
 function liveCtx(overrides: Partial<RequestContext> = {}): RequestContext {
-  return {
+  const context: RequestContext = {
     tenantId: "default",
     userId: "user_a",
     sessionKey: "default:user_a:chan_a",
@@ -99,6 +100,29 @@ function liveCtx(overrides: Partial<RequestContext> = {}): RequestContext {
     contentDelimiter: "test-delimiter-0123456789",
     ...overrides,
   };
+  return {
+    ...context,
+    turnScope: overrides.turnScope ?? {
+      conversation: {
+        tenantId: context.tenantId,
+        agentId: context.agentId ?? "agent_a",
+        partition: { kind: "agent" },
+      },
+      principal: { principalId: context.userId ?? "user_a" },
+      endpoint: {
+        channelType: "test",
+        channelInstanceId: "test-instance",
+        conversationId: context.sessionKey ?? "test-conversation",
+        conversationKind: "direct",
+      },
+    },
+  };
+}
+
+function testConversationRef() {
+  const result = createConversationRef({ tenantId: "default", agentId: "agent_a", partition: { kind: "agent" } });
+  if (!result.ok) throw result.error;
+  return result.value;
 }
 
 /**
@@ -162,7 +186,7 @@ describe("ctx_search — context:script_zero_hit emit", () => {
     expect(zeroHits).toHaveLength(1);
     const payload = zeroHits[0]!.data as Record<string, unknown>;
     // Exact contract (events-messaging.ts): ids + closed enums + lane + timestamp.
-    expect(payload.conversationId).toBe("default:user_a:chan_a");
+    expect(payload.conversationRef).toBe(testConversationRef());
     expect(payload.agentId).toBe("agent_a");
     expect(payload.sessionKey).toBe("default:user_a:chan_a");
     expect(payload.scriptClass).toBe("hebrew");
@@ -171,7 +195,7 @@ describe("ctx_search — context:script_zero_hit emit", () => {
     expect(payload.timestamp).toBe(1_700_000_000_000);
     // Content-free: the payload carries NO query text and NO extra fields.
     expect(Object.keys(payload).sort()).toEqual(
-      ["agentId", "conversationId", "lane", "scriptClass", "sessionKey", "timestamp"].sort(),
+      ["agentId", "conversationRef", "lane", "scriptClass", "sessionKey", "timestamp"].sort(),
     );
   });
 

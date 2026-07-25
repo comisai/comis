@@ -166,10 +166,10 @@ describe("Gateway: Concurrent HTTP and Mixed Protocol", () => {
         fetch(`${handle.gatewayUrl}/api/agents`, {
           headers: makeAuthHeaders(handle.authToken),
         }),
-        fetch(`${handle.gatewayUrl}/api/memory/stats`, {
+        fetch(`${handle.gatewayUrl}/api/memory/stats?tenant=test&agent=default`, {
           headers: makeAuthHeaders(handle.authToken),
         }),
-        fetch(`${handle.gatewayUrl}/api/memory/search?q=test`, {
+        fetch(`${handle.gatewayUrl}/api/memory/search?q=test&tenant=test&agent=default`, {
           headers: makeAuthHeaders(handle.authToken),
         }),
         fetch(`${handle.gatewayUrl}/api/activity`, {

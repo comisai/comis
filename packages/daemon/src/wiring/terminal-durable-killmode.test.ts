@@ -50,6 +50,10 @@ describe("durable terminal sessions survive a daemon restart (KillMode=process)"
     expect(daemonUnit).not.toMatch(/^WatchdogSec=/m);
     expect(daemonUnit).not.toMatch(/^NotifyAccess=/m);
   });
+
+  it("applies an owner-only mode to new private artifacts in the deployed daemon unit", () => {
+    expect(readDeployedDaemonUnit()).toMatch(/^UMask=0077\s*$/m);
+  });
 });
 
 // The terminal driver's `filesystem: home` scope gives a driven

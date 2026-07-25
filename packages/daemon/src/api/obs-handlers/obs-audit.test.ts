@@ -4,7 +4,7 @@
  *
  * Drives the REAL handler over a seeded `:memory:` ObservabilityStore (the real
  * `insertAuditEvent` / `queryAuditEvents` store methods), mirroring the
- * `fleet-health.test.ts` seam.
+ * `system-health.test.ts` seam.
  *
  * Cases pinned:
  *   1. ROUND-TRIP — seeded rows come back through `obs.audit.query`.

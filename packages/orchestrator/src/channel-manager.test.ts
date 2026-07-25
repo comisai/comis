@@ -4,10 +4,12 @@ import type { AgentExecutor, SessionLifecycle } from "@comis/agent";
 // because orchestrator cannot import its own published name.
 import type { MessageRouter } from "./routing/message-router.js";
 import type { CommandQueue } from "./queue/command-queue.js";
-import type { ChannelPort, NormalizedMessage, MessageHandler, DeliveryService } from "@comis/core";
+import { type ChannelPort, type NormalizedMessage, type MessageHandler, type DeliveryService, tryGetContext } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockLogger } from "../../../test/support/mock-logger.js";
+import { createFakePrincipalResolver } from "../../../test/support/fake-principal-resolver.js";
+import { createFakeClock } from "../../../test/support/fake-clock.js";
 import { createChannelManager, type ChannelManagerDeps } from "./channel-manager.js";
 import { processInboundMessage as realProcessInboundMessage } from "./inbound/inbound-pipeline.js";
 
@@ -34,18 +36,14 @@ function makeFakeDeliveryService(): DeliveryService {
       const finalOpts = options ? sendOpts : undefined;
       const result = await adapter.sendMessage(channelId, text, finalOpts);
       return ok({
-        ok: result.ok,
-        totalChunks: 1,
-        deliveredChunks: result.ok ? 1 : 0,
-        failedChunks: result.ok ? 0 : 1,
-        chunks: [{
-          ok: result.ok,
-          messageId: result.ok ? result.value : undefined,
-          error: result.ok ? undefined : result.error,
-          charCount: text.length,
-          retried: false,
-        }],
+        chunks: result.ok
+          ? [{ status: "accepted" as const, messageId: result.value, charCount: text.length, retried: false }]
+          : [{ status: "rejected" as const, error: result.error, errorKind: "platform" as const, charCount: text.length, retried: false }],
         totalChars: text.length,
+        platform: result.ok
+          ? { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: result.value }
+          : { status: "rejected" as const, errorKind: "platform" as const, deliveredChunks: 0 as const, failedChunks: 1, settledAtMs: 2_000 },
+        queueDisposition: "settled" as const,
       });
     }),
     drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
@@ -72,12 +70,10 @@ function makeFakeDeliveryServiceWithTracker(): {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only stub
     deliverToChannel: vi.fn(async (_adapter: any, _channelId: string, _text: string, _options?: any) => {
       return ok({
-        ok: true,
-        totalChunks: 1,
-        deliveredChunks: 1,
-        failedChunks: 0,
-        chunks: [{ ok: true, messageId: "stub", charCount: _text.length, retried: false }],
+        chunks: [{ status: "accepted" as const, messageId: "stub", charCount: _text.length, retried: false }],
         totalChars: _text.length,
+        platform: { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: "stub" },
+        queueDisposition: "settled" as const,
       });
     }),
     drainInFlight: async (deadlineMs = 5000) => {
@@ -166,11 +162,11 @@ function makeRouter(): MessageRouter {
 
 function makeSessionManager(): SessionLifecycle {
   return {
-    loadOrCreate: vi.fn(() => []),
-    save: vi.fn(),
+    loadOrCreate: vi.fn(() => ok([])),
+    save: vi.fn(() => ok(undefined)),
     isExpired: vi.fn(() => false),
-    expire: vi.fn(() => true),
-    cleanStale: vi.fn(() => 0),
+    expire: vi.fn(() => ok(undefined)),
+    cleanStale: vi.fn(() => ok(0)),
   };
 }
 
@@ -207,8 +203,13 @@ function makeFakeChannelRegistry(): any {
 }
 
 function makeEventBus() {
+  const emit = vi.fn(() => true);
   return {
-    emit: vi.fn(() => true),
+    emit,
+    emitSafely: vi.fn((event, payload) => {
+      emit(event, payload);
+      return { hadListeners: false, failures: [] };
+    }),
     on: vi.fn().mockReturnThis(),
     off: vi.fn().mockReturnThis(),
     once: vi.fn().mockReturnThis(),
@@ -220,11 +221,37 @@ function makeEventBus() {
 
 function makeDeps(overrides?: Partial<ChannelManagerDeps>): ChannelManagerDeps {
   const executor = makeExecutor();
+  const principalResolver = createFakePrincipalResolver();
   return {
+    tenantId: "default",
     eventBus: makeEventBus(),
+    clock: createFakeClock(2_000),
     messageRouter: makeRouter(),
+    principalResolver,
+    getDmScope: () => ({ mode: "per-account-channel-peer", threadIsolation: true }),
     sessionManager: makeSessionManager(),
     createExecutor: vi.fn(() => executor),
+    persistInboundMessage: vi.fn(async (_agentId, message) => ({
+      ok: true as const,
+      value: {
+        payloads: [{
+            schemaVersion: 1 as const,
+            batchId: message.id,
+            chunkIndex: 0,
+            chunkCount: 1,
+            recordedAt: message.timestamp,
+            messages: [{
+              id: message.id,
+              channelId: message.channelId,
+              channelType: message.channelType,
+              senderId: message.senderId,
+              text: message.text,
+              timestamp: message.timestamp,
+            }],
+        }],
+        ledgerContent: "test-ledger-record\n",
+      },
+    })),
     adapters: [makeAdapter()],
     logger: createMockLogger(),
     // DeliveryService is required on ChannelManagerDeps. The fake delegates
@@ -357,16 +384,20 @@ describe("createChannelManager", () => {
         msg,
         expect.objectContaining({
           tenantId: "default",
-          userId: "user-42",
-          channelId: "chat-99",
-          peerId: "user-42",
+          agentId: "agent-default",
+          userId: expect.stringMatching(/^platform_/),
+          channelId: "telegram:telegram-123:chat-99",
+          peerId: expect.stringMatching(/^platform_/),
         }),
         undefined, // no assembleToolsForAgent provided
         expect.any(Function), // onDelta
         "agent-default", // agentId from messageRouter.resolve()
         undefined, // no directives
         undefined, // prevTimestamp
-        { operationType: "interactive" }, // overrides
+        expect.objectContaining({
+          operationType: "interactive",
+          inboundProvenancePlans: [expect.objectContaining({ payloads: expect.any(Array) })],
+        }),
       );
     });
 
@@ -398,7 +429,10 @@ describe("createChannelManager", () => {
         "agent-default",
         undefined, // no directives
         undefined, // prevTimestamp
-        { operationType: "interactive" }, // overrides
+        expect.objectContaining({
+          operationType: "interactive",
+          inboundProvenancePlans: [expect.objectContaining({ payloads: expect.any(Array) })],
+        }),
       );
     });
 
@@ -471,7 +505,7 @@ describe("createChannelManager", () => {
       expect(sentTexts.join("")).toBe("Final text");
     });
 
-    it("warns and skips when no executor is configured for agent", async () => {
+    it("rejects acknowledgement when no executor is configured for the agent", async () => {
       const adapter = makeAdapter();
       const deps = makeDeps({
         adapters: [adapter],
@@ -480,7 +514,9 @@ describe("createChannelManager", () => {
       const manager = createChannelManager(deps);
       await manager.startAll();
 
-      await adapter._handlers[0](makeMessage());
+      await expect(adapter._handlers[0](makeMessage())).rejects.toThrow(
+        "No executor configured",
+      );
 
       expect(deps.logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({ agentId: "agent-default" }),
@@ -488,7 +524,7 @@ describe("createChannelManager", () => {
       );
     });
 
-    it("catches and logs errors in executor.execute (does not crash)", async () => {
+    it("logs executor failures and rejects the channel acknowledgement", async () => {
       const adapter = makeAdapter();
       const executor = makeExecutor({
         execute: vi.fn(async () => {
@@ -502,10 +538,39 @@ describe("createChannelManager", () => {
       const manager = createChannelManager(deps);
       await manager.startAll();
 
-      // Should not throw
-      await adapter._handlers[0](makeMessage());
+      await expect(adapter._handlers[0](makeMessage())).rejects.toThrow("Execution failed");
 
       expect(deps.logger.error).toHaveBeenCalled();
+    });
+
+    it("reprocesses persisted provenance because receipt does not prove completed handling", async () => {
+      const adapter = makeAdapter();
+      const createExecutor = vi.fn(() => makeExecutor());
+      const deps = makeDeps({
+        adapters: [adapter],
+        createExecutor,
+        persistInboundMessage: vi.fn(async (_agentId, message) => ({
+          ok: true as const,
+          value: {
+            payloads: [{
+              schemaVersion: 1 as const,
+              batchId: message.id,
+              chunkIndex: 0,
+              chunkCount: 1,
+              recordedAt: message.timestamp - 1_000,
+              messages: [],
+            }],
+            ledgerContent: "persisted-provenance\n",
+          },
+        })),
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+      const message = makeMessage();
+
+      await expect(adapter._handlers[0](message)).resolves.toBeUndefined();
+
+      expect(createExecutor).toHaveBeenCalledOnce();
     });
 
     it("chunks long responses into multiple blocks via sendMessage", async () => {
@@ -605,8 +670,13 @@ describe("createChannelManager", () => {
       const msg = makeMessage({ text: "original text" });
       await adapter._handlers[0](msg);
 
-      // preprocessMessage should have been called with the original message
-      expect(mockPreprocess).toHaveBeenCalledWith(msg);
+      // Preprocessing receives the original message plus the resolved turn authority.
+      expect(mockPreprocess).toHaveBeenCalledWith(
+        msg,
+        expect.objectContaining({
+          conversation: expect.objectContaining({ tenantId: "default", agentId: "agent-default" }),
+        }),
+      );
 
       // executor should receive the enriched message
       const executeCall = vi.mocked(executor.execute).mock.calls[0];
@@ -897,6 +967,29 @@ describe("createChannelManager", () => {
   });
 
   describe("injectMessage()", () => {
+    it("seeds a trusted response language for a synthetic injected turn", async () => {
+      const adapter = makeAdapter();
+      let observedLanguage: string | undefined;
+      const processInboundMessage = vi.fn(async () => {
+        observedLanguage = tryGetContext()?.resolvedLanguage;
+      });
+      const deps = makeDeps({
+        adapters: [adapter],
+        processInboundMessage: processInboundMessage as unknown as ChannelManagerDeps["processInboundMessage"],
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      const injectWithContext = manager.injectMessage as unknown as (
+        channelType: string,
+        msg: NormalizedMessage,
+        context: { resolvedLanguage?: string },
+      ) => Promise<void>;
+      await injectWithContext("telegram", makeMessage(), { resolvedLanguage: "und-Hebr" });
+
+      expect(observedLanguage).toBe("und-Hebr");
+    });
+
     it("invokes onMessageProcessed after successful injection", async () => {
       const onMessageProcessed = vi.fn();
       const adapter = makeAdapter();
@@ -911,7 +1004,7 @@ describe("createChannelManager", () => {
       expect(onMessageProcessed).toHaveBeenCalledWith(msg, "telegram");
     });
 
-    it("does not invoke onMessageProcessed for graph-report intercept", async () => {
+    it("does not intercept unsigned graph-report text before the inbound pipeline", async () => {
       const onMessageProcessed = vi.fn();
       const onGraphReportRequest = vi.fn(async () => {});
       const adapter = makeAdapter();
@@ -925,8 +1018,8 @@ describe("createChannelManager", () => {
       });
       await manager.injectMessage("telegram", msg);
 
-      expect(onGraphReportRequest).toHaveBeenCalledTimes(1);
-      expect(onMessageProcessed).not.toHaveBeenCalled();
+      expect(onGraphReportRequest).not.toHaveBeenCalled();
+      expect(onMessageProcessed).toHaveBeenCalledTimes(1);
     });
 
     it("does not invoke onMessageProcessed when adapter is missing", async () => {
@@ -1105,7 +1198,7 @@ describe("createChannelManager", () => {
       expect(calls).toEqual(["received", "processed"]);
     });
 
-    it("graph-report intercept on injectMessage bypasses BOTH callbacks", async () => {
+    it("unsigned graph-report text on injectMessage passes through both lifecycle callbacks", async () => {
       const onMessageReceived = vi.fn();
       const onMessageProcessed = vi.fn();
       const onGraphReportRequest = vi.fn(async () => {});
@@ -1125,9 +1218,9 @@ describe("createChannelManager", () => {
       });
       await manager.injectMessage("telegram", msg);
 
-      expect(onGraphReportRequest).toHaveBeenCalledTimes(1);
-      expect(onMessageReceived).not.toHaveBeenCalled();
-      expect(onMessageProcessed).not.toHaveBeenCalled();
+      expect(onGraphReportRequest).not.toHaveBeenCalled();
+      expect(onMessageReceived).toHaveBeenCalledWith(msg, "telegram");
+      expect(onMessageProcessed).toHaveBeenCalledWith(msg, "telegram");
     });
 
     it("no-adapter intercept on injectMessage bypasses BOTH callbacks", async () => {
@@ -1148,7 +1241,7 @@ describe("createChannelManager", () => {
       expect(deps.logger.warn).toHaveBeenCalled();
     });
 
-    it("graph-report intercept on the normal inbound path bypasses BOTH callbacks", async () => {
+    it("unsigned graph-report text on normal inbound passes through both lifecycle callbacks", async () => {
       const onMessageReceived = vi.fn();
       const onMessageProcessed = vi.fn();
       const onGraphReportRequest = vi.fn(async () => {});
@@ -1168,9 +1261,9 @@ describe("createChannelManager", () => {
       });
       await adapter._handlers[0](msg);
 
-      expect(onGraphReportRequest).toHaveBeenCalledTimes(1);
-      expect(onMessageReceived).not.toHaveBeenCalled();
-      expect(onMessageProcessed).not.toHaveBeenCalled();
+      expect(onGraphReportRequest).not.toHaveBeenCalled();
+      expect(onMessageReceived).toHaveBeenCalledWith(msg, "telegram");
+      expect(onMessageProcessed).toHaveBeenCalledWith(msg, "telegram");
     });
 
     it("regression pin: onMessageReceived fires while processing is still in flight", async () => {
@@ -1370,7 +1463,15 @@ describe("createChannelManager", () => {
         enqueue: vi.fn(async (_sk, _msg, _ct, handler) => {
           // Still execute the handler so streaming delivery works
           if (enqueueResult.ok) {
-            await handler([makeMessage()]);
+            await handler([makeMessage()], {
+              signal: new AbortController().signal,
+              receivedAt: 1,
+              sourceTerminalScope: {
+                publish: () => 0,
+                isPublished: false,
+              },
+              inboundProvenancePlans: [],
+            });
           }
           return enqueueResult;
         }),
@@ -1435,6 +1536,182 @@ describe("createChannelManager", () => {
   });
 
   describe("credential-rotation targeted reconnect", () => {
+    it("does not start or report success when adapter stop returns an error Result", async () => {
+      let listener: ((ev: { name: string; action: "upserted" | "removed"; timestamp: number }) => void) | undefined;
+      const eventBus = {
+        ...makeEventBus(),
+        on: vi.fn((event: string, callback: (...args: unknown[]) => void) => {
+          if (event === "secret:changed") listener = callback as typeof listener;
+          return eventBus;
+        }),
+      } as any;
+      const start = vi.fn(async () => ok(undefined));
+      const stop = vi.fn(async () => err(new Error("stop result failed")));
+      const adapter = makeAdapter({ channelType: "telegram", start, stop });
+      const deps = makeDeps({
+        eventBus,
+        adapters: [adapter],
+        channelCredentialMap: new Map([["TELEGRAM_BOT_TOKEN", "telegram"]]),
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+      vi.clearAllMocks();
+
+      listener?.({ name: "TELEGRAM_BOT_TOKEN", action: "upserted", timestamp: 1 });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(stop).toHaveBeenCalledOnce();
+      expect(start).not.toHaveBeenCalled();
+      expect(deps.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ errorKind: "platform", hint: expect.any(String) }),
+        "Channel adapter reconnect failed after credential rotation",
+      );
+      expect(deps.logger.info).not.toHaveBeenCalledWith(
+        expect.anything(),
+        "Channel adapter reconnected after credential rotation",
+      );
+    });
+
+    it("marks a running adapter inactive when credential restart fails", async () => {
+      let listener: ((ev: { name: string; action: "upserted" | "removed"; timestamp: number }) => void) | undefined;
+      const eventBus = {
+        ...makeEventBus(),
+        on: vi.fn((event: string, callback: (...args: unknown[]) => void) => {
+          if (event === "secret:changed") listener = callback as typeof listener;
+          return eventBus;
+        }),
+      } as any;
+      const start = vi.fn()
+        .mockResolvedValueOnce(ok(undefined))
+        .mockResolvedValueOnce(err(new Error("start result failed")));
+      const stop = vi.fn(async () => ok(undefined));
+      const adapter = makeAdapter({ channelType: "telegram", start, stop });
+      const deps = makeDeps({
+        eventBus,
+        adapters: [adapter],
+        channelCredentialMap: new Map([["TELEGRAM_BOT_TOKEN", "telegram"]]),
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+      expect(manager.activeCount).toBe(1);
+      vi.clearAllMocks();
+
+      listener?.({ name: "TELEGRAM_BOT_TOKEN", action: "upserted", timestamp: 1 });
+      await vi.waitFor(() => expect(start).toHaveBeenCalledOnce());
+
+      expect(stop).toHaveBeenCalledOnce();
+      expect(manager.activeCount).toBe(0);
+      expect(deps.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ errorKind: "platform", hint: expect.any(String) }),
+        "Channel adapter reconnect failed after credential rotation",
+      );
+      expect(deps.logger.info).not.toHaveBeenCalledWith(
+        expect.anything(),
+        "Channel adapter reconnected after credential rotation",
+      );
+    });
+
+    it("marks an initially failed adapter active after credential reconnect succeeds", async () => {
+      let listener: ((ev: { name: string; action: "upserted" | "removed"; timestamp: number }) => void) | undefined;
+      const eventBus = {
+        ...makeEventBus(),
+        on: vi.fn((event: string, callback: (...args: unknown[]) => void) => {
+          if (event === "secret:changed") listener = callback as typeof listener;
+          return eventBus;
+        }),
+      } as any;
+      const start = vi.fn()
+        .mockResolvedValueOnce(err(new Error("initial start failed")))
+        .mockResolvedValueOnce(ok(undefined));
+      const stop = vi.fn(async () => ok(undefined));
+      const adapter = makeAdapter({ channelType: "telegram", start, stop });
+      const manager = createChannelManager(makeDeps({
+        eventBus,
+        adapters: [adapter],
+        channelCredentialMap: new Map([["TELEGRAM_BOT_TOKEN", "telegram"]]),
+      }));
+
+      await manager.startAll();
+      expect(manager.activeCount).toBe(0);
+      vi.clearAllMocks();
+
+      listener?.({ name: "TELEGRAM_BOT_TOKEN", action: "upserted", timestamp: 1 });
+      await vi.waitFor(() => expect(start).toHaveBeenCalledOnce());
+
+      expect(stop).toHaveBeenCalledOnce();
+      expect(manager.activeCount).toBe(1);
+    });
+
+    it("serializes repeated credential reconnect events for the same adapter", async () => {
+      let listener: ((ev: { name: string; action: "upserted" | "removed"; timestamp: number }) => void) | undefined;
+      let releaseFirstStop: (() => void) | undefined;
+      const firstStop = new Promise<void>((resolve) => { releaseFirstStop = resolve; });
+      const eventBus = {
+        ...makeEventBus(),
+        on: vi.fn((event: string, callback: (...args: unknown[]) => void) => {
+          if (event === "secret:changed") listener = callback as typeof listener;
+          return eventBus;
+        }),
+      } as any;
+      const stop = vi.fn()
+        .mockImplementationOnce(async () => {
+          await firstStop;
+          return ok(undefined);
+        })
+        .mockResolvedValue(ok(undefined));
+      const start = vi.fn(async () => ok(undefined));
+      const adapter = makeAdapter({ channelType: "telegram", start, stop });
+      const manager = createChannelManager(makeDeps({
+        eventBus,
+        adapters: [adapter],
+        channelCredentialMap: new Map([["TELEGRAM_BOT_TOKEN", "telegram"]]),
+      }));
+      await manager.startAll();
+      vi.clearAllMocks();
+
+      listener?.({ name: "TELEGRAM_BOT_TOKEN", action: "upserted", timestamp: 1 });
+      listener?.({ name: "TELEGRAM_BOT_TOKEN", action: "upserted", timestamp: 2 });
+      await Promise.resolve();
+
+      expect(stop).toHaveBeenCalledOnce();
+      releaseFirstStop?.();
+      await vi.waitFor(() => {
+        expect(stop).toHaveBeenCalledTimes(2);
+        expect(start).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it("does not resurrect an adapter from credential events after shutdown starts", async () => {
+      let listener: ((ev: { name: string; action: "upserted" | "removed"; timestamp: number }) => void) | undefined;
+      const eventBus = {
+        ...makeEventBus(),
+        on: vi.fn((event: string, callback: (...args: unknown[]) => void) => {
+          if (event === "secret:changed") listener = callback as typeof listener;
+          return eventBus;
+        }),
+        off: vi.fn().mockReturnThis(),
+      } as any;
+      const start = vi.fn(async () => ok(undefined));
+      const stop = vi.fn(async () => ok(undefined));
+      const adapter = makeAdapter({ channelType: "telegram", start, stop });
+      const manager = createChannelManager(makeDeps({
+        eventBus,
+        adapters: [adapter],
+        channelCredentialMap: new Map([["TELEGRAM_BOT_TOKEN", "telegram"]]),
+      }));
+      await manager.startAll();
+      await manager.stopAll();
+      vi.clearAllMocks();
+
+      listener?.({ name: "TELEGRAM_BOT_TOKEN", action: "upserted", timestamp: 1 });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(stop).not.toHaveBeenCalled();
+      expect(start).not.toHaveBeenCalled();
+    });
+
     it("rotated channel token triggers targeted stop+start for the matching adapter only", async () => {
       // Capture the secret:changed listener registered by createChannelManager.
       // The makeEventBus() mock records all on() calls — we look up the listener
@@ -1506,7 +1783,7 @@ describe("createChannelManager", () => {
       expect(discordStart).not.toHaveBeenCalled();
     });
 
-    it("action=removed does not trigger reconnect (deletion is handled by delete plan)", async () => {
+    it("credential removal stops the adapter and marks it inactive without restarting", async () => {
       let secretChangedListener: ((ev: { name: string; action: "upserted" | "removed"; timestamp: number }) => void) | undefined;
       const captureEventBus = {
         ...makeEventBus(),
@@ -1530,16 +1807,16 @@ describe("createChannelManager", () => {
         processInboundMessage: vi.fn(async () => {}) as unknown as ChannelManagerDeps["processInboundMessage"],
       });
 
-      createChannelManager(deps);
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+      expect(manager.activeCount).toBe(1);
       vi.clearAllMocks();
 
-      // Emit "removed" action — should not trigger stop()+start()
       secretChangedListener!({ name: "TELEGRAM_BOT_TOKEN", action: "removed", timestamp: Date.now() });
-      await Promise.resolve();
-      await Promise.resolve();
+      await vi.waitFor(() => expect(telegramStop).toHaveBeenCalledOnce());
 
-      expect(telegramStop).not.toHaveBeenCalled();
       expect(telegramStart).not.toHaveBeenCalled();
+      expect(manager.activeCount).toBe(0);
     });
 
     it("unknown credential name in secret:changed does not reconnect any adapter", async () => {
@@ -1592,7 +1869,9 @@ describe("createChannelManager", () => {
         }),
       } as any;
 
-      const stopError = new Error("stop failed");
+      const stopError = new Error(
+        "stop failed Authorization: Bearer PRIVATE_RECONNECT_SENTINEL",
+      );
       const telegramStop = vi.fn(async () => { throw stopError; });
       const telegramStart = vi.fn(async () => ok(undefined));
       const telegramAdapter = makeAdapter({ channelType: "telegram", channelId: "tg-1", stop: telegramStop, start: telegramStart });
@@ -1630,6 +1909,8 @@ describe("createChannelManager", () => {
         typeof c[1] === "string" && c[1].includes("Channel adapter reconnect failed"),
       );
       expect(reconnectWarn).toBeDefined();
+      expect(typeof reconnectWarn?.[0].err).toBe("string");
+      expect(JSON.stringify(reconnectWarn)).not.toContain("PRIVATE_RECONNECT_SENTINEL");
     });
   });
 

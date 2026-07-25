@@ -51,6 +51,18 @@ export function clearAllTimers(
   gs.syntheticRunResults.clear();
 }
 
+/** Remove a graph that never acquired runnable durable authority. */
+export function discardGraphState(
+  state: CoordinatorSharedState,
+  deps: Pick<GraphCoordinatorDeps, "eventBus">,
+  gs: GraphRunState,
+  releaseRetention: (gs: GraphRunState) => void,
+): void {
+  clearAllTimers(deps, gs);
+  state.graphs.delete(gs.graphId);
+  releaseRetention(gs);
+}
+
 // ---------------------------------------------------------------------------
 // Graph sweep
 // ---------------------------------------------------------------------------

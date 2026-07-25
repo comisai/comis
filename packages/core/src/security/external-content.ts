@@ -112,8 +112,8 @@ function getProcessDelimiterSalt(): Buffer {
  * then uses a fresh random delimiter (the prior behavior for that case).
  */
 function sessionStableDelimiter(ctx: ReturnType<typeof tryGetContext>): string | undefined {
-  if (!ctx?.sessionKey) return undefined;
-  const scopeKey = `${ctx.tenantId ?? "default"}:${ctx.sessionKey}:${ctx.agentId ?? ""}`;
+  if (!ctx?.sessionKey || !ctx.tenantId) return undefined;
+  const scopeKey = `${ctx.tenantId}:${ctx.sessionKey}:${ctx.agentId ?? ""}`;
   return createHmac("sha256", getProcessDelimiterSalt()).update(scopeKey).digest("hex").slice(0, 24);
 }
 
@@ -145,6 +145,7 @@ export type ExternalContentSource =
   | "vision"
   | "video_description"
   | "mcp_tool"
+  | "mcp_instructions"
   | "mcp_resource"
   | "orchestrate_checkpoint"
   | "outcome_judge"
@@ -168,6 +169,7 @@ const EXTERNAL_SOURCE_LABELS: Record<ExternalContentSource, string> = {
   vision: "Vision analysis",
   video_description: "Video description",
   mcp_tool: "MCP tool result",
+  mcp_instructions: "MCP server instructions",
   mcp_resource: "MCP resource content",
   orchestrate_checkpoint: "Orchestrate checkpoint state",
   outcome_judge: "Outcome judge input",
@@ -343,7 +345,8 @@ export function wrapExternalContent(content: string, options: WrapExternalConten
  * {@link unwrapExternalContent} keys on.
  */
 function flattenMetadataValue(value: string): string {
-  return value.replace(/\s*\r?\n\s*/g, " ");
+  const lines = value.split(/\r?\n/);
+  return lines.map((line) => line.trim()).join(" ");
 }
 
 /** Reverse of {@link EXTERNAL_SOURCE_LABELS}: human label → source key. */

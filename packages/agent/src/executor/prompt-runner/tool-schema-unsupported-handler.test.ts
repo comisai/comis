@@ -82,7 +82,7 @@ function makeParams(overrides?: {
 
   const params = {
     session: { getLastAssistantText, messages: [] },
-    sessionKey: { tenantId: "t1", userId: "u1", channelId: overrides?.channelId ?? "c1" },
+    sessionKey: { tenantId: "t1", agentId: "agent-1", userId: "u1", channelId: overrides?.channelId ?? "c1" },
     agentId: "agent-1",
     bridge: { getResult: bridgeGetResult },
     mergedCustomTools: tools,
@@ -204,7 +204,7 @@ describe("handleToolSchemaUnsupported — strip-and-retry contract", () => {
     expect(schemaEvents).toHaveLength(1);
     expect(schemaEvents[0][1]).toEqual({
       agentId: "agent-1",
-      sessionKey: "t1:u1:c1",
+      sessionKey: "t1:agent:agent-1:u1:c1",
       toolNames: ["schedule_task"],
       strippedKeywords: ["pattern", "format"],
       retried: true,

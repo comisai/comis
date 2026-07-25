@@ -33,7 +33,7 @@ const M = "mem-1";
  *  scope are not load-bearing for the read (it filters on summary_id arg +
  *  scope.tenantId + scope.agentId), but the port takes a full scope. */
 const SCOPE_MATCH: ContextStoreScope = {
-  conversationId: "conv-p",
+  conversationRef: "conv-p",
   tenantId: T,
   agentId: A,
   sessionKey: "sess-p",
@@ -46,8 +46,8 @@ describe("buildProvenanceReadStore — tenant/agent-scoped getProvenanceForSumma
   /** Insert a minimal memories row so the provenance FK (memory_id → memories.id) resolves. */
   function seedMemoryRow(id: string, tenantId = T, agentId = A, sessionKey = "sess-p"): void {
     db.prepare(
-      "INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_session_key, tags, created_at)" +
-        " VALUES (?, ?, ?, 'user-p', 'distilled content', 'learned', 'episodic', 'agent', ?, '[]', 1)",
+      "INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, source_session_key, tags, created_at)" +
+        " VALUES (?, ?, ?, 'user-p', 'agent-shared', 'distilled content', 'learned', 'episodic', 'agent', ?, '[]', 1)",
     ).run(id, tenantId, agentId, sessionKey);
   }
 
@@ -66,7 +66,7 @@ describe("buildProvenanceReadStore — tenant/agent-scoped getProvenanceForSumma
       memoryId: M,
       summaryId: S,
       sourceSessionKey: "sess-p",
-      conversationId: "conv-p",
+      conversationRef: "conv-p",
       agentId: A,
       tenantId: T,
       createdAt: 123,
@@ -90,7 +90,7 @@ describe("buildProvenanceReadStore — tenant/agent-scoped getProvenanceForSumma
       memoryId: M,
       summaryId: S,
       sourceSessionKey: "sess-p",
-      conversationId: "conv-p",
+      conversationRef: "conv-p",
       agentId: A,
       tenantId: T,
       createdAt: 123,
@@ -109,7 +109,7 @@ describe("buildProvenanceReadStore — tenant/agent-scoped getProvenanceForSumma
       memoryId: M,
       summaryId: S,
       sourceSessionKey: "sess-p",
-      conversationId: "conv-p",
+      conversationRef: "conv-p",
       agentId: A,
       tenantId: T,
       createdAt: 123,
@@ -134,7 +134,7 @@ describe("buildProvenanceReadStore — tenant/agent-scoped getProvenanceForSumma
       memoryId: M,
       summaryId: S,
       sourceSessionKey: "sess-p",
-      conversationId: "conv-p",
+      conversationRef: "conv-p",
       agentId: A,
       tenantId: T,
       createdAt: 1,
@@ -144,7 +144,7 @@ describe("buildProvenanceReadStore — tenant/agent-scoped getProvenanceForSumma
       memoryId: "mem-2",
       summaryId: S,
       sourceSessionKey: "sess-p",
-      conversationId: "conv-p",
+      conversationRef: "conv-p",
       agentId: A,
       tenantId: T,
       createdAt: 2,

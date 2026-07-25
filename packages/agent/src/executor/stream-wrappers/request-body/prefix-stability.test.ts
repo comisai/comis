@@ -9,9 +9,9 @@
  *     edit; it must classify as "structural-shift" instead of being mislabeled
  *     "datetime-preamble" just because the current message carries the dynamic
  *     preamble string (which every historical user turn carries).
- *  2. Fleet plumbing — when the WARN fires, the `onPrefixUnstable` callback is
+ *  2. System plumbing — when the WARN fires, the `onPrefixUnstable` callback is
  *     invoked with a content-free payload so the daemon can emit the
- *     `agent:prefix_unstable` event that surfaces as a `comis fleet`
+ *     `agent:prefix_unstable` event that surfaces as a `comis system-health`
  *     cache_prefix_churn health signal.
  *
  * @module
@@ -53,7 +53,7 @@ describe("classifyPrefixMutation — diagnostic honesty", () => {
   });
 });
 
-describe("runPrefixStabilityDiagnostic — onPrefixUnstable fleet callback", () => {
+describe("runPrefixStabilityDiagnostic — onPrefixUnstable system callback", () => {
   const sessionKey = "tenant:user:chan";
 
   beforeEach(() => {

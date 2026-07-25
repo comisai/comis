@@ -2,8 +2,8 @@
 /**
  * Sessions Spawn Tool: spawn a sub-agent session for background work.
  *
- * Delegates to the daemon-side session.spawn RPC method. Supports sync
- * (blocks until done) and async (returns runId immediately) modes.
+ * Delegates to the daemon-side async-only session.spawn RPC method, which
+ * returns a run ID immediately.
  * Spawn action is gated via createActionGate for action classification.
  *
  * @module
@@ -24,19 +24,13 @@ import type { RpcCall } from "./cron-tool.js";
 const SessionsSpawnParams = Type.Object({
   task: Type.String({ description: "Task description for the sub-agent" }),
   async: Type.Optional(
-    Type.Boolean({ description: "Spawn asynchronously, returns runId immediately (default: false)" }),
+    Type.Boolean({ description: "Optional explicit async intent; every spawn returns runId immediately" }),
   ),
   agent: Type.Optional(
     Type.String({ description: "Target agent ID for cross-agent spawning" }),
   ),
   model: Type.Optional(
     Type.String({ description: "Optional model override for the sub-agent" }),
-  ),
-  announce_channel_type: Type.Optional(
-    Type.String({ description: "Channel type for result announcement" }),
-  ),
-  announce_channel_id: Type.Optional(
-    Type.String({ description: "Channel ID for result announcement" }),
   ),
   max_steps: Type.Optional(
     Type.Integer({
@@ -94,7 +88,7 @@ export function createSessionsSpawnTool(rpcCall: RpcCall): AgentTool<typeof Sess
       name: "sessions_spawn",
       label: "Sessions Spawn",
       description:
-        "Spawn sub-agent session for background work. Supports sync and async modes.",
+        "Start a background sub-agent and return its run ID immediately.",
       parameters: SessionsSpawnParams,
       rpcMethod: "session.spawn",
       preExecute(p) {
@@ -114,8 +108,6 @@ export function createSessionsSpawnTool(rpcCall: RpcCall): AgentTool<typeof Sess
           model: readStringParam(p, "model", false),
           agent: readStringParam(p, "agent", false),
           async: p.async === true,
-          announce_channel_type: readStringParam(p, "announce_channel_type", false),
-          announce_channel_id: readStringParam(p, "announce_channel_id", false),
           max_steps: typeof p.max_steps === "number" ? p.max_steps : undefined,
           expected_outputs: Array.isArray(p.expected_outputs) ? p.expected_outputs : undefined,
           artifact_refs: Array.isArray(p.artifact_refs) ? p.artifact_refs : undefined,

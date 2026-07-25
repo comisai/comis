@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { createGraphStateMachine } from "./graph-state-machine.js";
+import { createGraphStateMachine, restoreGraphStateMachine } from "./graph-state-machine.js";
 import {
   type ExecutionGraph,
   type ValidatedGraph,
@@ -43,6 +43,37 @@ function buildGraph(nodes: SimpleNode[], opts?: Partial<ExecutionGraph>): Valida
 // ---------------------------------------------------------------------------
 
 describe("createGraphStateMachine", () => {
+  it("restores terminal outputs and retry counters while resetting only running nodes", () => {
+    const restored = restoreGraphStateMachine(
+      buildGraph([
+        { nodeId: "A", retries: 1 },
+        { nodeId: "B", dependsOn: ["A"], retries: 2 },
+        { nodeId: "C", dependsOn: ["B"] },
+      ]),
+      [
+        { nodeId: "A", status: "completed", output: "artifact", retryAttempt: 1, retriesRemaining: 0 },
+        { nodeId: "B", status: "running", runId: "old-b", startedAt: 10, retryAttempt: 1, retriesRemaining: 1 },
+        { nodeId: "C", status: "pending", retryAttempt: 0, retriesRemaining: 0 },
+      ],
+    );
+
+    expect(restored.ok).toBe(true);
+    if (!restored.ok) return;
+    expect(restored.value.getNodeState("A")).toEqual(expect.objectContaining({
+      status: "completed",
+      output: "artifact",
+      retryAttempt: 1,
+      retriesRemaining: 0,
+    }));
+    expect(restored.value.getNodeState("B")).toEqual(expect.objectContaining({
+      status: "ready",
+      retryAttempt: 1,
+      retriesRemaining: 1,
+    }));
+    expect(restored.value.getNodeState("B")?.runId).toBeUndefined();
+    expect(restored.value.getNodeState("C")?.status).toBe("pending");
+  });
+
   describe("initialization", () => {
     it("root nodes start as ready", () => {
       const sm = createGraphStateMachine(buildGraph([

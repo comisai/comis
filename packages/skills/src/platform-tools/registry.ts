@@ -104,7 +104,11 @@ import {
  * Signature mirrors daemon's `createAgentRpcCall(agentId)` return shape and
  * the per-tool `RpcCall` type re-exported from `./tools/cron-tool.js`.
  */
-export type RpcCall = (method: string, params: Record<string, unknown>) => Promise<unknown>;
+export type RpcCall = (
+  method: string,
+  params: Record<string, unknown>,
+  metadata?: { outwardOperationId?: string; signal?: AbortSignal },
+) => Promise<unknown>;
 
 /**
  * Runtime context passed to each descriptor's `build` callback. Daemon
@@ -154,14 +158,10 @@ export interface PlatformToolBuildContext {
   readonly videoStatusEnabled?: unknown;
   /** `background_tasks` tool's conditional predicate signal (truthy when manager wired). */
   readonly backgroundTaskManager?: unknown;
+  /** Progress heartbeat derived from the owning agent's prompt stall budget. */
+  readonly backgroundTaskWaitHeartbeatMs?: number;
   /** Per-agent tool capability port (resolved via daemon's deps map). */
   readonly toolCapabilityPort?: unknown;
-  /** Per-agent context-engine version signal (`"pipeline"` | `"dag"`). Set by
-   *  setup-tools but currently unconsumed — its only reader, the `unified_context`
-   *  conditional, has been removed. Retained as a harmless optional so the
-   *  daemon's BuildContext literal stays valid; a future governed LCD expansion
-   *  surface may re-read it. */
-  readonly contextEngineVersion?: string;
   /** `browser` tool's conditional predicate. */
   readonly builtinToolsBrowserEnabled?: boolean;
   /** `memory_ask` (the dialectic) tool's conditional predicate. Fed from
@@ -277,6 +277,7 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
         createBackgroundTasksTool({
           manager: ctx.backgroundTaskManager as never,
           agentId: ctx.agentId,
+          waitHeartbeatMs: ctx.backgroundTaskWaitHeartbeatMs,
         }),
     },
 

@@ -126,7 +126,7 @@ describe("Memory REST API", () => {
   it(
     "GET /api/memory/stats returns 200 with stats shape on empty DB",
     async () => {
-      const res = await fetch(`${gatewayUrl}/api/memory/stats`, {
+      const res = await fetch(`${gatewayUrl}/api/memory/stats?tenant=default&agent=default`, {
         headers: makeAuthHeaders(authToken),
       });
       expect(res.status).toBe(200);
@@ -180,7 +180,7 @@ describe("Memory REST API", () => {
   it(
     "GET /api/memory/search with q returns 200 + results shape",
     async () => {
-      const res = await fetch(`${gatewayUrl}/api/memory/search?q=test`, {
+      const res = await fetch(`${gatewayUrl}/api/memory/search?q=test&tenant=default&agent=default`, {
         headers: makeAuthHeaders(authToken),
       });
       expect(res.status).toBe(200);
@@ -198,7 +198,7 @@ describe("Memory REST API", () => {
 
       // explicit limit=5
       const res1 = await fetch(
-        `${gatewayUrl}/api/memory/search?q=test&limit=5`,
+        `${gatewayUrl}/api/memory/search?q=test&limit=5&tenant=default&agent=default`,
         { headers },
       );
       expect(res1.status).toBe(200);
@@ -207,21 +207,21 @@ describe("Memory REST API", () => {
 
       // limit=0 (clamped to 1)
       const res2 = await fetch(
-        `${gatewayUrl}/api/memory/search?q=test&limit=0`,
+        `${gatewayUrl}/api/memory/search?q=test&limit=0&tenant=default&agent=default`,
         { headers },
       );
       expect(res2.status).toBe(200);
 
       // limit=999 (clamped to 100)
       const res3 = await fetch(
-        `${gatewayUrl}/api/memory/search?q=test&limit=999`,
+        `${gatewayUrl}/api/memory/search?q=test&limit=999&tenant=default&agent=default`,
         { headers },
       );
       expect(res3.status).toBe(200);
 
       // limit=abc (NaN, defaults to 10)
       const res4 = await fetch(
-        `${gatewayUrl}/api/memory/search?q=test&limit=abc`,
+        `${gatewayUrl}/api/memory/search?q=test&limit=abc&tenant=default&agent=default`,
         { headers },
       );
       expect(res4.status).toBe(200);

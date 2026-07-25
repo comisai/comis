@@ -16,10 +16,11 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, expectTypeOf, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, unrecoveredFailedToolNames, recoveredFailedToolNames, type PostExecutionParams } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, settleExecutionResult, unrecoveredFailedToolNames, recoveredFailedToolNames, type PostExecutionParams } from "./executor-post-execution.js";
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildDegradedReply } from "./degraded-reply.js";
-import { resolveReplyLanguage } from "./resolve-reply-language.js";
+import { resolveResponseLocalePolicy } from "./resolve-response-locale-policy.js";
 import {
+  createLocaleCatalog,
   selectOutputStarvedAnnotation,
   selectContextExhaustedReply,
   selectLoopDetectedReply,
@@ -29,8 +30,64 @@ import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // Learned-recall write side: the turn-end emit threads classifyIntent(msg.text).
 // Imported here for the deterministic-bucket behavior probe (the emit's intent source).
 import { classifyIntent } from "../rag/query-understanding.js";
+import type { ConversationRef } from "@comis/core";
+import type { ExecutionResult } from "./types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+describe("settleExecutionResult", () => {
+  const emptySummary = {
+    schedulingCapabilityInvoked: false,
+    outboundDeliveryCapabilityInvoked: false,
+    deferredWorkCapabilityInvoked: false,
+    unclassifiedInvocationObserved: false,
+  };
+
+  function makeResult(): ExecutionResult {
+    return {
+      response: "done",
+      sessionKey: {} as never,
+      executionId: "exec-settle",
+      responseLocalePolicy: { source: "unset", enforceLocale: false },
+      sideEffectSummary: emptySummary,
+      tokensUsed: { input: 0, output: 0, total: 0 },
+      cost: { total: 0 },
+      stepsExecuted: 0,
+      llmCalls: 0,
+      finishReason: "stop",
+    };
+  }
+
+  it("publishes the authoritative promoted reason and bridge side-effect summary", () => {
+    const result = makeResult();
+    const summary = { ...emptySummary, deferredWorkCapabilityInvoked: true };
+
+    settleExecutionResult(result, "background_pending", {
+      sideEffectSummary: summary,
+      toolExecResults: [],
+    });
+
+    expect(result.finishReason).toBe("background_pending");
+    expect(result.sideEffectSummary).toEqual(summary);
+  });
+
+  it("uses the first failed tool classification for completed_with_tool_errors", () => {
+    const result = makeResult();
+
+    settleExecutionResult(result, "completed_with_tool_errors", {
+      sideEffectSummary: emptySummary,
+      toolExecResults: [
+        { toolName: "first", success: false, durationMs: 1, errorKind: "dependency" },
+        { toolName: "second", success: false, durationMs: 2, errorKind: "internal" },
+      ],
+    });
+
+    expect(result.finishReason).toBe("completed_with_tool_errors");
+    expect(result.terminalErrorKind).toBe("dependency");
+  });
+});
+const conversationRefForTest = (seed: string): ConversationRef =>
+  `cv_${seed.padEnd(43, "x").slice(0, 43)}` as ConversationRef;
 
 async function loadSilentTokens(): Promise<
   | {
@@ -83,6 +140,21 @@ describe("silent-sentinel response is not stored in memory.db", () => {
     const userText = "Show me the comparison chart for Q1 vs Q2";
     const agentResponse = "Here is the chart you requested. The Q1 numbers are…";
     expect(shouldStorePairedMemory(userText, agentResponse)).toBe(true);
+  });
+
+  it("requires the request context to remain eligible before storing paired memory", () => {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("//"))
+      .join("\n");
+    const pairedMemoryBlock = stripped.slice(
+      stripped.indexOf("const operationType"),
+      stripped.indexOf("await storePairedConversationMemory"),
+    );
+
+    expect(pairedMemoryBlock).toMatch(/learningEligible\s*!==\s*false/);
   });
 });
 
@@ -257,8 +329,8 @@ describe("buildSessionEndMetadata", () => {
   it("END_REASON_MAP maps prompt_timeout → the 'timeout' endReason, its only source", () => {
     // A PromptTimeoutError terminal carries its OWN named cause
     // instead of flattening into generic "error", so a timeout-heavy session
-    // attributes correctly in obs.explain / obs.fleet.health
-    // (HARD_FAILURE_END_REASONS and fleet degradedByCause carry "timeout").
+    // attributes correctly in obs.explain / obs.system.health
+    // (HARD_FAILURE_END_REASONS and system degradedByCause carry "timeout").
     expect(END_REASON_MAP["prompt_timeout"]).toBe("timeout");
     // "timeout" reaches the map through EXACTLY this one entry — no stray
     // mapping re-introduces it for any other finishReason.
@@ -276,7 +348,7 @@ describe("buildSessionEndMetadata", () => {
     // Collapsing BOTH context-exhaustion
     // finish reasons to the generic "error" bucket would make a context-exhausted
     // session indistinguishable from a tool crash in obs.explain /
-    // obs.fleet.health. The map folds the two related reasons into ONE named cause:
+    // obs.system.health. The map folds the two related reasons into ONE named cause:
     // context_exhausted (the bridge actively sets finishReason:"context_exhausted"
     // at the block guard) and context_loop (the related loop-on-exhaustion abort)
     // both map to the SINGLE "context_exhausted" endReason.
@@ -304,14 +376,14 @@ describe("buildSessionEndMetadata", () => {
     // (bridge-safety-controls.checkSpendLimit). Without its own END_REASON_MAP
     // key the reason would fall through the `?? "error"`
     // catch-all → a spend-killed session indistinguishable from a tool crash
-    // in obs.explain / obs.fleet.health. It
+    // in obs.explain / obs.system.health. It
     // must carry its OWN named endReason (an in-union reason mapped
     // EXPLICITLY, never the catch-all).
     expect(END_REASON_MAP.spend_exceeded).toBe("spend_exceeded");
     // The value reaches sessionEnd.endReason through the real builder.
     expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "spend_exceeded" }).sessionEnd?.endReason).toBe("spend_exceeded");
     // Still degraded (the named cause is not "success") — restores the CAUSE the
-    // fleet degradedByCause record buckets on (degraded was already true).
+    // system degradedByCause record buckets on (degraded was already true).
     expect(buildSessionHealthRollup({}, "spend_exceeded").degraded).toBe(true);
   });
 
@@ -530,10 +602,10 @@ describe("emitSessionSummary emits session:summary, fire-and-forget", () => {
     clock: { now: () => 4242, nowDate: () => new Date(4242) },
   };
 
-  it("CARRIES the named endReason cause on the emitted event payload (fleet aggregates by cause)", () => {
+  it("CARRIES the named endReason cause on the emitted event payload (system aggregates by cause)", () => {
     // The mapped endReason (e.g. context_exhausted / output_starved) is the
     // headline cause. It must ride the session:summary event so the daemon row
-    // (sessionSummaryEventToRow) persists it and obs.fleet.health can aggregate
+    // (sessionSummaryEventToRow) persists it and obs.system.health can aggregate
     // degradedByCause WITHOUT opening per-session _session-metadata.json.
     const emit = vi.fn();
     const eventBus = { emit, on: vi.fn(), off: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
@@ -563,7 +635,7 @@ describe("emitSessionSummary emits session:summary, fire-and-forget", () => {
   });
 
   it("CARRIES topErrorKinds + source:'runtime' on the emitted event payload", () => {
-    // The fleet aggregate needs topErrorKinds + source
+    // The system aggregate needs topErrorKinds + source
     // on the row, and the row is written from this event payload. Production
     // emits the constant "runtime"; tests inject "test" by building the payload.
     const emit = vi.fn();
@@ -777,7 +849,7 @@ describe("tool-failure endReason and notice", () => {
   // Live: pipeline attempt-1 (validation) failed, attempt-2 launched the graph,
   // yet the user still saw "[tool failure] pipeline reported an error". The notice
   // must surface only UNRECOVERED failures (a failed tool with no same-name
-  // success this turn). Observability (effectiveFinishReason/logs/fleet) still
+  // success this turn). Observability (effectiveFinishReason/logs/system) still
   // records the failure — only the user-facing reply is gated.
   // See design/small-model-orchestration-fidelity.md §4.
   it("source-grep — failure notice gated on unrecoveredFailedToolNames (recovered failures suppressed)", () => {
@@ -1166,60 +1238,27 @@ describe("modelAcknowledgedFailure word-boundary regression", () => {
 // decision MIRRORS the READ side exactly: the executor resolves an absent
 // `config.contextEngine` via `ContextEngineConfigSchema.parse({})` whose
 // `version` defaults to "dag" (executor-context-engine-setup.ts:265), so an
-// ABSENT contextEngine is treated as dag (the assembler reads the dag engine in
-// that case). Pipeline is skipped ONLY when `version === "pipeline"` is set.
-//
-// Invariants preserved:
-//   - dag agents still ingest + compact exactly as before (predicate true).
-//   - storeless ⇒ pipeline fallback unchanged (the outer `if (deps.contextStore)`
-//     presence guard stays; the version gate is ANDed onto it).
-//   - switching pipeline→dag later still works: the gate reads per-turn config,
-//     so the next turn after a `version: "dag"` flip ingests; the first dag turn
-//     catches up via the ingest delta (live.slice(persisted)) from an empty store.
-//
-// The decision is extracted into the pure exported predicate
-// `shouldRunLcdStorePasses(config)` so the dag-vs-pipeline branch is unit-testable
-// without scaffolding all 30+ postExecution deps (mirrors shouldStorePairedMemory).
-// A source-grep locks the predicate into the `if (deps.contextStore)` gate.
+// The decision is extracted into a pure predicate so the canonical enabled gate
+// is unit-testable without scaffolding all postExecution dependencies.
 // ---------------------------------------------------------------------------
-describe("LCD store passes run only when the effective engine is dag", () => {
-  it("behavior — pipeline version (explicit) does NOT run the store passes", () => {
-    // An explicit pipeline agent must NOT ingest/leaf/condense — the store is
-    // injected unconditionally but nothing reads it in pipeline mode.
-    expect(shouldRunLcdStorePasses({ contextEngine: { version: "pipeline" } })).toBe(false);
+describe("canonical context-store pass gate", () => {
+  it("runs store passes unless context assembly is explicitly disabled", () => {
+    expect(shouldRunContextStorePasses({})).toBe(true);
+    expect(shouldRunContextStorePasses({ contextEngine: undefined })).toBe(true);
+    expect(shouldRunContextStorePasses({ contextEngine: { enabled: true } })).toBe(true);
+    expect(shouldRunContextStorePasses({ contextEngine: { enabled: false } })).toBe(false);
   });
 
-  it("behavior — dag version (explicit) DOES run the store passes (dag path unchanged)", () => {
-    expect(shouldRunLcdStorePasses({ contextEngine: { version: "dag" } })).toBe(true);
-  });
-
-  it("behavior — absent contextEngine is treated as dag (mirrors the executor's parse({}) default)", () => {
-    // executor-context-engine-setup.ts:265 resolves an absent contextEngine via
-    // ContextEngineConfigSchema.parse({}) → version "dag". The write gate must
-    // agree with that read-side resolution: absent ⇒ run the passes.
-    expect(shouldRunLcdStorePasses({})).toBe(true);
-    expect(shouldRunLcdStorePasses({ contextEngine: undefined })).toBe(true);
-  });
-
-  it("behavior — absent version within a present contextEngine is treated as dag", () => {
-    // A contextEngine object with other knobs set but no explicit version still
-    // resolves to the schema default ("dag") on the read side.
-    expect(shouldRunLcdStorePasses({ contextEngine: { freshTailTurns: 8 } as never })).toBe(true);
-  });
-
-  it("source-grep — the predicate gates the `if (deps.contextStore)` block (write/read symmetry)", () => {
+  it("source-grep — the predicate gates the context-store block", () => {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const stripped = src
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .split("\n")
       .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
       .join("\n");
-    // The contextStore block guard must reference the version predicate — the
-    // presence-only `if (deps.contextStore)` is no longer sufficient on its own.
-    expect(stripped).toMatch(/shouldRunLcdStorePasses/);
-    // The guard ANDs the predicate with the store-presence check (either order).
+    expect(stripped).toMatch(/shouldRunContextStorePasses/);
     expect(stripped).toMatch(
-      /if\s*\(\s*deps\.contextStore\s*&&\s*shouldRunLcdStorePasses\(config\)\s*\)|if\s*\(\s*shouldRunLcdStorePasses\(config\)\s*&&\s*deps\.contextStore\s*\)/,
+      /if\s*\(\s*shouldRunContextStorePasses\(config\)/,
     );
     // The ingest + both passes still live behind that single guard.
     expect(stripped).toMatch(/ingestTurnGuarded/);
@@ -1244,7 +1283,7 @@ describe("LCD store passes run only when the effective engine is dag", () => {
 // persists; with getSummarizerDeps absent it is gated off (no summary). A
 // source-grep locks the call into the `if (deps.contextStore)` block.
 // ---------------------------------------------------------------------------
-describe("LCD afterTurn leaf-pass wiring inside the contextStore block", () => {
+describe("context-store afterTurn leaf-pass wiring", () => {
   function readPostExec(): { src: string; stripped: string } {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const stripped = src
@@ -1255,14 +1294,11 @@ describe("LCD afterTurn leaf-pass wiring inside the contextStore block", () => {
     return { src, stripped };
   }
 
-  it("source-grep — the thin gated call to maybeRunLeafPass/runLeafPassAfterTurn lives inside the if (deps.contextStore) block", () => {
+  it("source-grep — the leaf pass remains inside the canonical context gate", () => {
     const { stripped } = readPostExec();
     // The call site must reference the trigger (via the wiring helper or directly).
     expect(stripped).toMatch(/maybeRunLeafPass|runLeafPassAfterTurn/);
-    // … and it must sit INSIDE the `if (deps.contextStore)` block: between the
-    // block open and the next top-level statement after the ingest. We slice from
-    // the `if (deps.contextStore)` to the recall-attribution block that follows it.
-    const blockStart = stripped.indexOf("if (deps.contextStore");
+    const blockStart = stripped.indexOf("if (shouldRunContextStorePasses");
     expect(blockStart).toBeGreaterThan(-1);
     const afterBlock = stripped.indexOf("attributeRecallUsage", blockStart);
     const block = stripped.slice(blockStart, afterBlock > -1 ? afterBlock : undefined);
@@ -1298,7 +1334,7 @@ describe("LCD afterTurn leaf-pass wiring inside the contextStore block", () => {
     initSchema(db, 1536);
     const store = createLcdStore(db);
     const scope: import("@comis/core").ContextStoreScope = {
-      conversationId: "conv-wire",
+      conversationRef: conversationRefForTest("wire"),
       tenantId: "tenant_a",
       agentId: "agent_a",
       sessionKey: "sess-a",
@@ -1394,7 +1430,7 @@ describe("LCD afterTurn leaf-pass wiring inside the contextStore block", () => {
     initSchema(db, 1536);
     const store = createLcdStore(db);
     const scope: import("@comis/core").ContextStoreScope = {
-      conversationId: "conv-gated",
+      conversationRef: conversationRefForTest("gated"),
       tenantId: "tenant_a",
       agentId: "agent_a",
       sessionKey: "sess-a",
@@ -1464,7 +1500,7 @@ describe("LCD afterTurn deferred compaction + serializer interlock", () => {
   }
 
   function contextStoreBlock(stripped: string): string {
-    const blockStart = stripped.indexOf("if (deps.contextStore");
+    const blockStart = stripped.indexOf("if (shouldRunContextStorePasses");
     expect(blockStart).toBeGreaterThan(-1);
     const afterBlock = stripped.indexOf("attributeRecallUsage", blockStart);
     return stripped.slice(blockStart, afterBlock > -1 ? afterBlock : undefined);
@@ -1538,20 +1574,20 @@ describe("LCD afterTurn deferred compaction + serializer interlock", () => {
     } as unknown as import("@comis/core").ContextStorePort;
 
     const scope: import("@comis/core").ContextStoreScope = {
-      conversationId: "conv-c4",
+      conversationRef: conversationRefForTest("c4"),
       tenantId: "tenant_a",
       agentId: "agent_a",
-      sessionKey: "conv-c4",
+      sessionKey: "tenant_a:agent_a:user_a:channel_a",
     };
 
     // Reproduce the inline afterTurn pattern verbatim (the production seam):
     // 1. ingest routed through runOnConversation (awaited — claims the seq slot);
-    await store.runOnConversation("conv-c4", () =>
+    await store.runOnConversation(scope.conversationRef, () =>
       ingestTurnGuarded(store, scope, [], 7000, createMockLogger()),
     );
     // 2. deferred passes enqueued onto the SAME queue, NOT awaited, suppressError-wrapped.
     let deferredDone = false;
-    const deferred = store.runOnConversation("conv-c4", async () => {
+    const deferred = store.runOnConversation(scope.conversationRef, async () => {
       deferredDone = true;
     });
     suppressError(deferred, "postExecution deferred LCD compaction");
@@ -1564,7 +1600,7 @@ describe("LCD afterTurn deferred compaction + serializer interlock", () => {
     // Both writers (ingest + deferred compaction) routed through the queue for
     // the SAME conversation (the serializer interlock).
     expect(calls.length).toBeGreaterThanOrEqual(2);
-    expect(calls.every((c) => c === "conv-c4")).toBe(true);
+    expect(calls.every((c) => c === scope.conversationRef)).toBe(true);
 
     // Releasing the latch lets the deferred compaction run (eventually).
     release?.();
@@ -1596,9 +1632,9 @@ describe("LCD afterTurn deferred compaction + serializer interlock", () => {
     bus.on("context:dag_degraded", (e) => events.push(e as unknown as Record<string, unknown>));
 
     const store = { append: () => {}, getMessages: () => [] } as unknown as import("@comis/core").ContextStorePort;
-    // Malformed: conversationId !== sessionKey → fail-closed → onFailClosed fires.
+    // Malformed opaque authority → fail-closed → onFailClosed fires.
     const scope: import("@comis/core").ContextStoreScope = {
-      conversationId: "conv-x",
+      conversationRef: "conv-x" as ConversationRef,
       tenantId: "tenant_a",
       agentId: "agent_a",
       sessionKey: "different",
@@ -1608,7 +1644,7 @@ describe("LCD afterTurn deferred compaction + serializer interlock", () => {
     const start = 6000;
     ingestTurnGuarded(store, scope, [], 7000, createMockLogger(), () => {
       bus.emit("context:dag_degraded", {
-        conversationId: scope.conversationId,
+        conversationId: scope.conversationRef,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
         reason: "fail_closed_rollover",
@@ -1680,7 +1716,7 @@ describe("LCD afterTurn deferred compaction + serializer interlock", () => {
     initSchema(db, 1536);
     const store = createLcdStore(db);
     const scope: import("@comis/core").ContextStoreScope = {
-      conversationId: "conv-dispose",
+      conversationRef: conversationRefForTest("dispose"),
       tenantId: "tenant_a",
       agentId: "agent_a",
       sessionKey: "sess-a",
@@ -1876,6 +1912,27 @@ describe("paired-conversation memory store applies the secret-egress guard", () 
     // The secret-bearing paired memory NEVER reaches the store …
     expect(memoryPort.store).not.toHaveBeenCalled();
     // … and is never enqueued for embedding (no vector-index recall path either).
+    expect(enqueued).toHaveLength(0);
+  });
+
+  it("behavior — a paired memory containing a labelled password is not stored or embedded", async () => {
+    const { storePairedConversationMemory } = await loadHelper();
+    const memoryPort = makeCapturingMemoryPort();
+    const enqueued: Array<{ id: string; content: string }> = [];
+
+    await storePairedConversationMemory({
+      memoryPort,
+      pairedContent: "[user] install with SERVICE_PASSWORD='ordinary-password-value'\n[agent] installed",
+      effectiveAgentId: "agent_a",
+      sessionKey: { tenantId: "tenant_a", userId: "user_a" },
+      channelType: "telegram",
+      formattedKey: "agent_a:telegram:chan-1",
+      now: clock.now(),
+      logger: makeSilentLogger(),
+      embeddingEnqueue: (id: string, content: string) => enqueued.push({ id, content }),
+    });
+
+    expect(memoryPort.store).not.toHaveBeenCalled();
     expect(enqueued).toHaveLength(0);
   });
 
@@ -2360,67 +2417,53 @@ describe("onCondensed callback seam (built-not-wired guard)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// USER.md-language plumbing: PostExecutionParams.userMdLanguage threads from
-// prompt assembly so the degraded-reply resolver can
-// read the USER.md preferred language. The en/undefined path must stay
-// byte-identical: the field is optional, so a config that never sets it is
-// unchanged.
+// Typed locale policy plumbing from prompt assembly through post-execution.
 // ---------------------------------------------------------------------------
-describe("userMdLanguage threads into PostExecutionParams", () => {
-  it("PostExecutionParams declares userMdLanguage as an optional string (type contract)", () => {
+describe("response locale policy threads into PostExecutionParams", () => {
+  it("PostExecutionParams declares the exact typed locale policy", () => {
     // expectTypeOf is the repo's type-contract convention (see
     // executor-tool-assembly-types.test.ts); enforced under vitest --typecheck.
-    expectTypeOf<PostExecutionParams["userMdLanguage"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<PostExecutionParams["responseLocalePolicy"]>()
+      .toEqualTypeOf<import("@comis/core").ResponseLocalePolicy>();
     expect(true).toBe(true);
   });
 
-  it("source-grep — PostExecutionParams interface declares an optional userMdLanguage field", () => {
-    // The interface must carry `userMdLanguage?: string`.
+  it("source-grep — PostExecutionParams interface declares responseLocalePolicy", () => {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const ifaceBlock = src.match(/export interface PostExecutionParams \{[\s\S]*?\n\}/);
     expect(ifaceBlock, "PostExecutionParams interface must exist").not.toBeNull();
-    expect(ifaceBlock![0]).toMatch(/userMdLanguage\?\s*:\s*string/);
+    expect(ifaceBlock![0]).toMatch(/responseLocalePolicy\s*:\s*ResponseLocalePolicy/);
   });
 
-  it("source-grep — assembleExecutionPrompt returns userLanguage (so pi-executor can thread it)", () => {
-    const src = readFileSync(resolve(here, "prompt-assembly.ts"), "utf-8");
+  it("source-grep — assembleExecutionPrompt returns responseLocalePolicy", () => {
+    const src = readFileSync(resolve(here, "prompt-assembly-runtime.ts"), "utf-8");
     const stripped = src
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .split("\n")
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
-    // The function's return object literal must carry userLanguage.
-    expect(stripped).toMatch(/return\s*\{[^}]*\buserLanguage\b/);
+    expect(stripped).toMatch(/return\s*\{[^}]*\bresponseLocalePolicy\b/);
   });
 
-  it("source-grep — pi-executor threads userLanguage into the postExecution call as userMdLanguage", () => {
+  it("source-grep — pi-executor threads responseLocalePolicy into postExecution", () => {
     const src = readFileSync(resolve(here, "pi-executor/pi-executor.ts"), "utf-8");
     const stripped = src
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .split("\n")
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
-    // promptResult destructure surfaces userLanguage …
-    expect(stripped).toMatch(/const\s*\{[^}]*\buserLanguage\b[^}]*\}\s*=\s*promptResult/);
-    // … and the postExecution({...}) call passes it as userMdLanguage.
-    expect(stripped).toMatch(/userMdLanguage\s*:\s*userLanguage/);
+    expect(stripped).toMatch(/const\s*\{[^}]*\bresponseLocalePolicy\b[^}]*\}\s*=\s*promptResult/);
+    expect(stripped).toMatch(/postExecution\(\{[\s\S]*?\bresponseLocalePolicy\b/);
   });
 });
 
 // ---------------------------------------------------------------------------
-// The degraded-reply chokepoint resolves the reply
-// language ONCE (resolveReplyLanguage) and passes the tag to all three
-// builders, so a Hebrew turn yields a Hebrew degraded reply with the knob path
-// and incident ref verbatim. The en/Latin path stays byte-identical.
+// The degraded-reply chokepoint consumes the turn's typed locale policy.
 //
-// Strategy (the load-bearing mode here — postExecution has 30+ deps, see the
-// markRead/degraded-reply blocks above): a SOURCE-GREP locks the wiring invariants
-// (resolveReplyLanguage imported + called once in the degraded block; the tag
-// reaches each of the 3 builders); BEHAVIOR PROBES simulate exactly what the
-// chokepoint does — resolve the language from the same {msg.text, config, USER.md}
-// inputs and build the reply — asserting the localized/byte-identical outputs.
+// A source-level gate locks the typed locale-policy wiring into all three
+// deterministic builders, while behavior probes cover open locale packs.
 // ---------------------------------------------------------------------------
-describe("degraded-reply chokepoint resolves language once + passes the tag", () => {
+describe("degraded-reply chokepoint consumes the typed locale policy", () => {
   function readDegradedBlock(): string {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const stripped = src
@@ -2429,47 +2472,34 @@ describe("degraded-reply chokepoint resolves language once + passes the tag", ()
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
     // Scope to the degraded-reply section (the 3 endReason gates). Anchor on
-    // CODE that survives comment-stripping: the resolve line is emitted just
-    // before the first gate, so start at the resolveReplyLanguage call (or,
-    // when that call is absent, the first effectiveFinishReason gate) and end
-    // at the resolveScaffoldDefaults block that follows the loop_detected gate.
-    const resolveStart = stripped.indexOf("resolveReplyLanguage(");
     const gateStart = stripped.indexOf('effectiveFinishReason === "output_starved"');
-    const candidates = [resolveStart, gateStart].filter((p) => p >= 0);
-    const startPos = candidates.length > 0 ? Math.min(...candidates) : 0;
+    const startPos = gateStart >= 0 ? gateStart : 0;
     const endMarker = stripped.indexOf("resolveScaffoldDefaults", startPos);
     return endMarker > startPos ? stripped.slice(startPos, endMarker) : stripped.slice(startPos);
   }
 
-  // A predominantly-Hebrew inbound message → the inbound-script tier resolves "he"
-  // (Hebrew letters are non-neutral; ASCII punct/space are excluded from the
-  // share denominator, so the Hebrew share is a strict majority).
-  const HEBREW_INBOUND = "שלום, אני צריך עזרה עם הקוד שלי";
-
-  it("source-grep — executor-post-execution imports resolveReplyLanguage", () => {
+  it("source-grep — executor-post-execution does not resolve locale from message text", () => {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const stripped = src
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .split("\n")
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
-    expect(stripped).toMatch(/import\s*\{[^}]*\bresolveReplyLanguage\b[^}]*\}\s*from\s*["']\.\/resolve-reply-language\.js["']/);
+    expect(stripped).not.toContain("resolveReplyLanguage");
+    expect(stripped).not.toContain("dominantScript");
   });
 
-  it("source-grep — resolveReplyLanguage is called exactly ONCE in the degraded block", () => {
+  it("source-grep — the degraded block reads the supplied locale once", () => {
     const block = readDegradedBlock();
-    const calls = block.match(/resolveReplyLanguage\s*\(/g) ?? [];
-    expect(calls.length).toBe(1);
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    expect(src.match(/params\.responseLocalePolicy\.locale/g)).toHaveLength(1);
+    expect(block).toContain("replyLanguage");
   });
 
-  it("source-grep — the resolve call threads msg.text, config.language, and userMdLanguage", () => {
+  it("source-grep — the degraded block does not infer locale from request content", () => {
     const block = readDegradedBlock();
-    // The three language-tier inputs must all feed the single resolve call.
-    expect(block).toMatch(/inboundText\s*:/);
-    expect(block).toMatch(/configLanguage\s*:/);
-    expect(block).toMatch(/userMdLanguage\s*:/);
-    expect(block).toMatch(/params\.msg\.text/);
-    expect(block).toMatch(/params\.config\.language/);
+    expect(block).not.toMatch(/inboundText\s*:/);
+    expect(block).not.toContain("userMdLanguage");
   });
 
   it("source-grep — the resolved tag reaches all three builders (language passed in)", () => {
@@ -2482,71 +2512,45 @@ describe("degraded-reply chokepoint resolves language once + passes the tag", ()
     expect(languageFields.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("behavior probe — a Hebrew turn resolves 'he' and yields the Hebrew context-exhausted reply", () => {
-    // Exactly what the chokepoint computes: resolve once from the 3 inputs…
-    const replyLanguage = resolveReplyLanguage({
-      inboundText: HEBREW_INBOUND,
-      configLanguage: undefined,
-      userMdLanguage: undefined,
+  it("behavior probe — an injected locale pack localizes a degraded reply", () => {
+    const policy = resolveResponseLocalePolicy({ explicitLocale: "fr-CA" });
+    const localeCatalog = createLocaleCatalog({
+      "fr-CA": {
+        context_exhausted: "localized base ",
+        cause_oversized_input: "localized cause ",
+        advice_default: "localized advice",
+      },
     });
-    expect(replyLanguage).toBe("he");
-    // …then build the reply with the tag (the context_exhausted gate).
     const reply = buildContextExhaustedReply({
       capabilityClass: "small",
-      traceId: "tid-he",
+      traceId: "tid-locale",
       cause: "oversized_input",
-      language: replyLanguage,
+      language: policy.locale,
+      localeCatalog,
     });
-    // Equals the he selector (the localized reply)…
-    expect(reply).toBe(
-      selectContextExhaustedReply("he", {
-        capabilityClass: "small",
-        traceId: "tid-he",
-        cause: "oversized_input",
-      }),
-    );
-    // …and keeps internal config paths out of the user-visible reply while
-    // preserving the incident reference for operator correlation.
+    expect(reply).toBe("localized base localized cause localized advice (incident tid-locale)");
     expect(reply).not.toContain("contextEngine.");
-    expect(reply).toContain("(incident tid-he)");
   });
 
-  it("behavior probe — config.language 'he' wins (tier-1) even with a Latin inbound message", () => {
-    const replyLanguage = resolveReplyLanguage({
-      inboundText: "please help me debug this",
-      configLanguage: "he",
-      userMdLanguage: undefined,
-    });
-    expect(replyLanguage).toBe("he");
-    expect(buildOutputStarvedAnnotation(replyLanguage)).toBe(selectOutputStarvedAnnotation("he"));
+  it("behavior probe — explicit locale accepts an open canonical tag", () => {
+    const policy = resolveResponseLocalePolicy({ explicitLocale: "sr-latn-rs" });
+    expect(policy.locale).toBe("sr-Latn-RS");
   });
 
-  it("behavior probe — all three endReasons carry the resolved tag (he)", () => {
-    const replyLanguage = resolveReplyLanguage({
-      inboundText: HEBREW_INBOUND,
-      configLanguage: undefined,
-      userMdLanguage: undefined,
-    });
-    // output_starved
-    expect(buildOutputStarvedAnnotation(replyLanguage)).toBe(selectOutputStarvedAnnotation("he"));
-    // context_exhausted
+  it("behavior probe — all three endReasons consume the same resolved locale", () => {
+    const replyLanguage = resolveResponseLocalePolicy({ explicitLocale: "fr-CA" }).locale;
+    expect(buildOutputStarvedAnnotation(replyLanguage)).toBe(selectOutputStarvedAnnotation("fr-CA"));
     expect(
       buildContextExhaustedReply({ capabilityClass: "nano", language: replyLanguage }),
-    ).toBe(selectContextExhaustedReply("he", { capabilityClass: "nano" }));
-    // loop_detected
+    ).toBe(selectContextExhaustedReply("fr-CA", { capabilityClass: "nano" }));
     expect(buildLoopDetectedReply({ traceId: "z", language: replyLanguage })).toBe(
-      selectLoopDetectedReply("he", { traceId: "z" }),
+      selectLoopDetectedReply("fr-CA", { traceId: "z" }),
     );
   });
 
-  it("behavior probe — no config.language + Latin inbound + no USER.md → English byte-identical", () => {
-    const replyLanguage = resolveReplyLanguage({
-      inboundText: "Here is the plan you requested.",
-      configLanguage: undefined,
-      userMdLanguage: undefined,
-    });
-    expect(replyLanguage).toBe("en");
-    // The three builders with the resolved "en" tag === the historical English replies.
+  it("behavior probe — an unset policy uses the English platform fallback", () => {
+    const replyLanguage = resolveResponseLocalePolicy({}).locale;
+    expect(replyLanguage).toBeUndefined();
     expect(buildOutputStarvedAnnotation(replyLanguage)).toBe(buildOutputStarvedAnnotation());
     expect(buildContextExhaustedReply({ capabilityClass: "small", language: replyLanguage })).toBe(
       buildContextExhaustedReply({ capabilityClass: "small" }),

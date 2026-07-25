@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createSessionsManageTool } from "./sessions-manage-tool.js";
-import { runWithContext } from "@comis/core";
+import { createDeliveryOrigin, runWithContext } from "@comis/core";
 import type { RequestContext, ApprovalGate } from "@comis/core";
 
 // Mock @comis/core: preserve real implementations, override safePath
@@ -23,10 +23,23 @@ function makeContext(trustLevel: "admin" | "user" | "guest"): RequestContext {
   return {
     tenantId: "default",
     userId: "test-user",
-    sessionKey: "test-session",
+    agentId: "test-agent",
+    sessionKey: "default:agent:test-agent:test-user:chat-1",
+    turnScope: {
+      conversation: { tenantId: "default", agentId: "test-agent", partition: { kind: "agent" } },
+      principal: { principalId: "test-user" },
+      endpoint: { channelType: "telegram", channelInstanceId: "test-instance", conversationId: "chat-1", conversationKind: "direct" },
+    },
     traceId: crypto.randomUUID(),
     startedAt: Date.now(),
     trustLevel,
+    channelType: "telegram",
+    deliveryOrigin: createDeliveryOrigin({
+      tenantId: "default",
+      userId: "test-user",
+      channelType: "telegram",
+      channelId: "chat-1",
+    }),
   };
 }
 
@@ -45,6 +58,12 @@ function createMockApprovalGate(): ApprovalGate {
 // ---------------------------------------------------------------------------
 
 describe("sessions_manage tool", () => {
+  const target = {
+    tenant_id: "default",
+    agent_id: "test-agent",
+    conversation_ref: "conversation-a",
+  } as const;
+
   let mockRpcCall: ReturnType<typeof vi.fn<RpcCall>>;
   let mockApprovalGate: ApprovalGate;
 
@@ -75,7 +94,7 @@ describe("sessions_manage tool", () => {
 
       await expect(
         runWithContext(makeContext("guest"), () =>
-          tool.execute("call-1", { action: "export", session_key: "s1" } as never),
+          tool.execute("call-1", { action: "export", ...target } as never),
         ),
       ).rejects.toThrow(/Insufficient trust level/);
       expect(mockRpcCall).not.toHaveBeenCalled();
@@ -86,7 +105,7 @@ describe("sessions_manage tool", () => {
 
       await expect(
         runWithContext(makeContext("user"), () =>
-          tool.execute("call-2", { action: "export", session_key: "s1" } as never),
+          tool.execute("call-2", { action: "export", ...target } as never),
         ),
       ).rejects.toThrow(/Insufficient trust level/);
       expect(mockRpcCall).not.toHaveBeenCalled();
@@ -96,7 +115,7 @@ describe("sessions_manage tool", () => {
       const tool = createSessionsManageTool(mockRpcCall);
 
       const result = await runWithContext(makeContext("admin"), () =>
-        tool.execute("call-3", { action: "export", session_key: "s1" } as never),
+        tool.execute("call-3", { action: "export", ...target } as never),
       );
 
       expect(result.details).not.toHaveProperty("error");
@@ -114,12 +133,12 @@ describe("sessions_manage tool", () => {
         approved: true,
         approvedBy: "operator",
       });
-      mockRpcCall.mockResolvedValue({ sessionKey: "s1", deleted: true });
+      mockRpcCall.mockResolvedValue({ conversationRef: "conversation-a", deleted: true });
 
       const tool = createSessionsManageTool(mockRpcCall, mockApprovalGate);
 
       const result = await runWithContext(makeContext("admin"), () =>
-        tool.execute("call-d1", { action: "delete", session_key: "s1" } as never),
+        tool.execute("call-d1", { action: "delete", ...target } as never),
       );
 
       expect(mockApprovalGate.requestApproval).toHaveBeenCalledWith(
@@ -128,9 +147,9 @@ describe("sessions_manage tool", () => {
           action: "session.delete",
         }),
       );
-      expect(mockRpcCall).toHaveBeenCalledWith("session.delete", { session_key: "s1", _trustLevel: "admin" });
+      expect(mockRpcCall).toHaveBeenCalledWith("session.delete", { ...target, _trustLevel: "admin" });
       expect(result.details).toEqual(
-        expect.objectContaining({ sessionKey: "s1", deleted: true }),
+        expect.objectContaining({ conversationRef: "conversation-a", deleted: true }),
       );
     });
 
@@ -144,25 +163,25 @@ describe("sessions_manage tool", () => {
 
       await expect(
         runWithContext(makeContext("admin"), () =>
-          tool.execute("call-d2", { action: "delete", session_key: "s1" } as never),
+          tool.execute("call-d2", { action: "delete", ...target } as never),
         ),
       ).rejects.toThrow(/not approved/);
       expect(mockRpcCall).not.toHaveBeenCalled();
     });
 
     it("calls rpcCall without approval gate when approvalGate is undefined", async () => {
-      mockRpcCall.mockResolvedValue({ sessionKey: "s1", deleted: true });
+      mockRpcCall.mockResolvedValue({ conversationRef: "conversation-a", deleted: true });
 
       const tool = createSessionsManageTool(mockRpcCall); // no approval gate
 
       const result = await runWithContext(makeContext("admin"), () =>
-        tool.execute("call-d3", { action: "delete", session_key: "s1" } as never),
+        tool.execute("call-d3", { action: "delete", ...target } as never),
       );
 
       expect(result.details).toEqual(
-        expect.objectContaining({ sessionKey: "s1", deleted: true }),
+        expect.objectContaining({ conversationRef: "conversation-a", deleted: true }),
       );
-      expect(mockRpcCall).toHaveBeenCalledWith("session.delete", { session_key: "s1", _trustLevel: "admin" });
+      expect(mockRpcCall).toHaveBeenCalledWith("session.delete", { ...target, _trustLevel: "admin" });
     });
   });
 
@@ -176,12 +195,12 @@ describe("sessions_manage tool", () => {
         approved: true,
         approvedBy: "operator",
       });
-      mockRpcCall.mockResolvedValue({ sessionKey: "s1", reset: true, previousMessageCount: 5 });
+      mockRpcCall.mockResolvedValue({ conversationRef: "conversation-a", reset: true, previousMessageCount: 5 });
 
       const tool = createSessionsManageTool(mockRpcCall, mockApprovalGate);
 
       const result = await runWithContext(makeContext("admin"), () =>
-        tool.execute("call-r1", { action: "reset", session_key: "s1" } as never),
+        tool.execute("call-r1", { action: "reset", ...target } as never),
       );
 
       expect(mockApprovalGate.requestApproval).toHaveBeenCalledWith(
@@ -190,9 +209,9 @@ describe("sessions_manage tool", () => {
           action: "session.reset",
         }),
       );
-      expect(mockRpcCall).toHaveBeenCalledWith("session.reset", { session_key: "s1", _trustLevel: "admin" });
+      expect(mockRpcCall).toHaveBeenCalledWith("session.reset", { ...target, _trustLevel: "admin" });
       expect(result.details).toEqual(
-        expect.objectContaining({ sessionKey: "s1", reset: true }),
+        expect.objectContaining({ conversationRef: "conversation-a", reset: true }),
       );
     });
 
@@ -206,7 +225,7 @@ describe("sessions_manage tool", () => {
 
       await expect(
         runWithContext(makeContext("admin"), () =>
-          tool.execute("call-r2", { action: "reset", session_key: "s1" } as never),
+          tool.execute("call-r2", { action: "reset", ...target } as never),
         ),
       ).rejects.toThrow(/not approved/);
       expect(mockRpcCall).not.toHaveBeenCalled();
@@ -218,9 +237,9 @@ describe("sessions_manage tool", () => {
   // -----------------------------------------------------------------------
 
   describe("export action", () => {
-    it("calls rpcCall('session.export') with session_key (no approval)", async () => {
+    it("calls rpcCall('session.export') with an explicit target", async () => {
       mockRpcCall.mockResolvedValue({
-        sessionKey: "s1",
+        conversationRef: "conversation-a",
         messages: [],
         messageCount: 0,
       });
@@ -228,13 +247,13 @@ describe("sessions_manage tool", () => {
       const tool = createSessionsManageTool(mockRpcCall, mockApprovalGate);
 
       const result = await runWithContext(makeContext("admin"), () =>
-        tool.execute("call-e1", { action: "export", session_key: "s1" } as never),
+        tool.execute("call-e1", { action: "export", ...target } as never),
       );
 
-      expect(mockRpcCall).toHaveBeenCalledWith("session.export", { session_key: "s1", _trustLevel: "admin" });
+      expect(mockRpcCall).toHaveBeenCalledWith("session.export", { ...target, _trustLevel: "admin" });
       expect(mockApprovalGate.requestApproval).not.toHaveBeenCalled();
       expect(result.details).toEqual(
-        expect.objectContaining({ sessionKey: "s1" }),
+        expect.objectContaining({ conversationRef: "conversation-a" }),
       );
     });
   });
@@ -244,9 +263,9 @@ describe("sessions_manage tool", () => {
   // -----------------------------------------------------------------------
 
   describe("compact action", () => {
-    it("calls rpcCall('session.compact') with session_key (no approval)", async () => {
+    it("calls rpcCall('session.compact') with an explicit target", async () => {
       mockRpcCall.mockResolvedValue({
-        sessionKey: "s1",
+        conversationRef: "conversation-a",
         compactionTriggered: true,
         instructions: null,
       });
@@ -254,11 +273,11 @@ describe("sessions_manage tool", () => {
       const tool = createSessionsManageTool(mockRpcCall, mockApprovalGate);
 
       const result = await runWithContext(makeContext("admin"), () =>
-        tool.execute("call-cp1", { action: "compact", session_key: "s1" } as never),
+        tool.execute("call-cp1", { action: "compact", ...target } as never),
       );
 
       expect(mockRpcCall).toHaveBeenCalledWith("session.compact", {
-        session_key: "s1",
+        ...target,
         instructions: undefined,
         _trustLevel: "admin",
       });
@@ -270,7 +289,7 @@ describe("sessions_manage tool", () => {
 
     it("passes instructions parameter when provided", async () => {
       mockRpcCall.mockResolvedValue({
-        sessionKey: "s1",
+        conversationRef: "conversation-a",
         compactionTriggered: true,
         instructions: "Keep only summaries",
       });
@@ -280,37 +299,29 @@ describe("sessions_manage tool", () => {
       await runWithContext(makeContext("admin"), () =>
         tool.execute("call-cp2", {
           action: "compact",
-          session_key: "s1",
+          ...target,
           instructions: "Keep only summaries",
         } as never),
       );
 
       expect(mockRpcCall).toHaveBeenCalledWith("session.compact", {
-        session_key: "s1",
+        ...target,
         instructions: "Keep only summaries",
         _trustLevel: "admin",
       });
     });
 
-    it("omits session_key when not provided so the daemon self-resolves the caller's session (COMPACT-KEY)", async () => {
-      mockRpcCall.mockResolvedValue({
-        sessionKey: "caller-session",
-        compactionTriggered: true,
-        instructions: null,
-      });
-
+    it("rejects compact when the conversation reference is missing", async () => {
       const tool = createSessionsManageTool(mockRpcCall);
 
-      await runWithContext(makeContext("admin"), () =>
-        tool.execute("call-cp3", { action: "compact" } as never),
-      );
-
-      // No session_key in the RPC payload → the handler falls back to the
-      // dispatcher-injected _callerSessionKey (the agent never constructs a key).
-      expect(mockRpcCall).toHaveBeenCalledWith("session.compact", {
-        instructions: undefined,
-        _trustLevel: "admin",
-      });
+      await expect(runWithContext(makeContext("admin"), () =>
+        tool.execute("call-cp3", {
+          action: "compact",
+          tenant_id: target.tenant_id,
+          agent_id: target.agent_id,
+        } as never),
+      )).rejects.toThrow("conversation_ref");
+      expect(mockRpcCall).not.toHaveBeenCalled();
     });
   });
 
@@ -324,7 +335,7 @@ describe("sessions_manage tool", () => {
 
       await expect(
         runWithContext(makeContext("admin"), () =>
-          tool.execute("call-u1", { action: "unknown_action", session_key: "s1" } as never),
+          tool.execute("call-u1", { action: "unknown_action", ...target } as never),
         ),
       ).rejects.toThrow(/\[invalid_value\]/);
       expect(mockRpcCall).not.toHaveBeenCalled();
@@ -343,7 +354,7 @@ describe("sessions_manage tool", () => {
 
       await expect(
         runWithContext(makeContext("admin"), () =>
-          tool.execute("call-err1", { action: "export", session_key: "s1" } as never),
+          tool.execute("call-err1", { action: "export", ...target } as never),
         ),
       ).rejects.toThrow("Session service unavailable");
     });
@@ -355,7 +366,7 @@ describe("sessions_manage tool", () => {
 
       await expect(
         runWithContext(makeContext("admin"), () =>
-          tool.execute("call-err2", { action: "export", session_key: "s1" } as never),
+          tool.execute("call-err2", { action: "export", ...target } as never),
         ),
       ).rejects.toThrow("string error");
     });

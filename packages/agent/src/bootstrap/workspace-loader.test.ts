@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { WORKSPACE_FILE_NAMES } from "../workspace/templates.js";
+import { DEFAULT_TEMPLATES, WORKSPACE_FILE_NAMES } from "@comis/core";
 import type { BootstrapFile } from "./types.js";
 import {
   truncateFileContent,
@@ -87,6 +87,16 @@ describe("truncateFileContent", () => {
 // ---------------------------------------------------------------------------
 
 describe("loadWorkspaceBootstrapFiles", () => {
+  it("omits untouched starter templates so they add zero prompt content", async () => {
+    const dir = await makeTempDir();
+    await Promise.all(Object.entries(DEFAULT_TEMPLATES).map(([name, content]) => (
+      fs.writeFile(path.join(dir, name), content, "utf-8")
+    )));
+
+    const files = await loadWorkspaceBootstrapFiles(dir);
+
+    expect(files).toEqual([]);
+  });
   it("loads all existing workspace files from directory", async () => {
     const dir = await makeTempDir();
 

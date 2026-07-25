@@ -164,6 +164,25 @@ describe("createExecTool", () => {
       expect(typeof details.pid).toBe("number");
     });
 
+    it("does not expose a host pid for a sandboxed background session", async () => {
+      registry = createProcessRegistry();
+      const tool = createExecTool({
+        workspacePath: tmpdir(),
+        registry,
+        secretManager: STUB_SM,
+        platformSecretNames: STUB_PLATFORM_NAMES,
+        sandboxConfig: createPidIsolatingTestSandbox(),
+        toolCapabilityPort: createCapabilityPortStub(),
+      });
+      const result = await tool.execute("tc-sandbox-background", {
+        command: "sleep 5",
+        background: true,
+      });
+
+      expect(result.details).toMatchObject({ status: "started", sessionId: expect.any(String) });
+      expect(result.details).not.toHaveProperty("pid");
+    });
+
     it("process is registered in the ProcessRegistry", async () => {
       const tool = setup();
       const result = await tool.execute("tc1", {
@@ -228,7 +247,7 @@ describe("createExecTool", () => {
       await expect(tool.execute("tc1", { command: "rm -rf ~" })).rejects.toThrow(/blocked/);
     });
 
-    it("mkfs is rejected", async () => {
+    it("rejects filesystem formatting commands", async () => {
       const tool = setup();
       await expect(tool.execute("tc1", { command: "mkfs /dev/sda1" })).rejects.toThrow(/blocked.*Filesystem format/);
     });
@@ -617,6 +636,25 @@ describe("createExecTool", () => {
       expect(registry.size()).toBe(1);
     });
 
+    it("does not expose a host pid after sandboxed auto-background escalation", { timeout: 15_000 }, async () => {
+      registry = createProcessRegistry();
+      const tool = createExecTool({
+        workspacePath: tmpdir(),
+        registry,
+        secretManager: STUB_SM,
+        platformSecretNames: STUB_PLATFORM_NAMES,
+        sandboxConfig: createPidIsolatingTestSandbox(),
+        toolCapabilityPort: createCapabilityPortStub(),
+      });
+      const result = await tool.execute("tc-sandbox-auto-background", {
+        command: "sleep 5",
+        autoBackgroundMs: 20,
+      });
+
+      expect(result.details).toMatchObject({ status: "backgrounded", sessionId: expect.any(String) });
+      expect(result.details).not.toHaveProperty("pid");
+    });
+
     it("auto-backgrounded startedAt is wall-clock so runtimeMs reports elapsed time", { timeout: 15_000 }, async () => {
       // Regression: escalateToBackground previously stored performance.now()
       // (monotonic clock relative to process start, ~10^5 ms) into
@@ -935,6 +973,19 @@ function createMockSandboxConfig(overrides?: Partial<ExecSandboxConfig>): ExecSa
     readOnlyPaths: [],
     configReadOnlyPaths: [],
     ...overrides,
+  };
+}
+
+function createPidIsolatingTestSandbox(): ExecSandboxConfig {
+  return {
+    sandbox: createMockSandboxProvider({
+      name: "pid-isolating-test-sandbox",
+      buildArgs: () => ["/usr/bin/env"],
+      wrapEnv: (env) => env,
+    }),
+    sharedPaths: [],
+    readOnlyPaths: [],
+    configReadOnlyPaths: [],
   };
 }
 
@@ -1628,7 +1679,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
       expect(details.exitCode).toBe(42);
     });
 
-    it("background mode works through sandbox", { timeout: 15_000 }, async () => {
+    it("background mode exposes only its session handle through sandbox", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
       const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
@@ -1636,9 +1687,10 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
         command: "sleep 0.1",
         background: true,
       });
-      const details = result.details as { status: string; pid: number };
+      const details = result.details as { status: string; sessionId: string };
       expect(details.status).toBe("started");
-      expect(details.pid).toBeDefined();
+      expect(details.sessionId).toBeDefined();
+      expect(details).not.toHaveProperty("pid");
     });
 
     it("streaming onUpdate works through sandbox", { timeout: 15_000 }, async () => {
@@ -2224,10 +2276,29 @@ function makeApprovalContext(): RequestContext {
   return {
     tenantId: "default",
     userId: "test-user",
-    sessionKey: "test-session",
+    agentId: "test-agent",
+    sessionKey: "default:test-user:chat-1",
     traceId: crypto.randomUUID(),
     startedAt: Date.now(),
     trustLevel: "admin",
+    channelType: "telegram",
+    turnScope: {
+      conversation: {
+        tenantId: "default",
+        agentId: "test-agent",
+        partition: { kind: "principal", principalId: "principal-test-user" },
+      },
+      principal: { principalId: "principal-test-user" },
+      endpoint: {
+        channelType: "telegram",
+        channelInstanceId: "telegram-account",
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      },
+    },
+    deliveryOrigin: Object.freeze({
+      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+    }),
   };
 }
 
@@ -2315,14 +2386,7 @@ describe("install-detour mode: observe", () => {
     );
   }, 30_000);
 
-  it("install-detour event payload populates agentId from ctx.userId, not ctx.sessionKey", async () => {
-    // Regression: buildInstallDetourEventPayload previously set
-    // `agentId: ctx.sessionKey` — meaning downstream consumers (audit
-    // aggregators, per-agent install-detour rate limits) would see a
-    // formatted session key instead of an agent identifier. The two are
-    // distinct: sessionKey is e.g. "telegram:chan:user:tenant"; agentId is
-    // the agent's user-facing identifier (matches `ctx.userId` per the
-    // existing evaluateInstallDetourGate precedent at exec-shared.ts:448).
+  it("install-detour event attributes the resolved agent instead of the human user", async () => {
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const eventBus = makeMockEventBus(events);
     const port = createCapabilityPortStub({
@@ -2349,11 +2413,9 @@ describe("install-detour mode: observe", () => {
 
     const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
     expect(installEvents).toHaveLength(1);
-    // ctx.userId === "test-user", ctx.sessionKey === "test-session"
-    // Before the fix: agentId would be "test-session" (the bug).
-    // After the fix: agentId is "test-user".
-    expect(installEvents[0]!.payload.agentId).toBe("test-user");
-    expect(installEvents[0]!.payload.sessionKey).toBe("test-session");
+    expect(installEvents[0]!.payload.agentId).toBe("test-agent");
+    expect(installEvents[0]!.payload.agentId).not.toBe("test-user");
+    expect(installEvents[0]!.payload.sessionKey).toBe("default:test-user:chat-1");
   }, 30_000);
 });
 
@@ -2607,15 +2669,8 @@ describe("install-detour mode: soft-stop", () => {
   });
 
   it("approval for one commandDigest does NOT auto-approve a different digest in same session (cache aliasing)", async () => {
-    // The existing ApprovalGate keys its caches by `${sessionKey}::${action}`
-    // (verified at packages/core/src/approval/approval-gate.ts:135 and :194).
-    // The executor must NOT extend the gate. Instead the action string itself
-    // includes the commandDigest suffix, ensuring two distinct commands in
-    // the same session produce DIFFERENT cache keys.
-    //
-    // This test verifies the executor builds DIFFERENT action strings for
-    // two distinct command digests — the precondition that makes the
-    // gate's existing cache behavior safe under install-detour overrides.
+    // The action string carries the command digest so the operator-facing
+    // request and its exact approval key both identify the command decision.
 
     const requestApprovalMock = vi.fn().mockResolvedValue({
       approved: true,
@@ -2693,6 +2748,10 @@ describe("install-detour mode: soft-stop", () => {
     expect(digestA).toMatch(/^[0-9a-f]{16}$/);
     expect(digestB).toMatch(/^[0-9a-f]{16}$/);
     expect(digestA).not.toBe(digestB);
+    for (const [request] of requestApprovalMock.mock.calls) {
+      expect(request).toMatchObject({ agentId: "test-agent" });
+      expect(request).not.toMatchObject({ agentId: "test-user" });
+    }
   }, 30_000);
 
   it("missing approvalGate → fail-closed pre-submission (exactly 1 event: override_denied; no spawn)", async () => {
@@ -2725,7 +2784,7 @@ describe("install-detour mode: soft-stop", () => {
     expect(registry.size()).toBe(0);
   });
 
-  it("denied approval → 2-event submission pair, action sequence = ['override_requested','override_denied']", async () => {
+  it("missing resolved trust fails closed before approval submission", async () => {
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const eventBus = makeMockEventBus(events);
     const port = makeSoftStopPort();
@@ -2747,16 +2806,18 @@ describe("install-detour mode: soft-stop", () => {
       approvalGate: denyGate,
     });
     await expect(
-      runWithContext(makeApprovalContext(), () =>
+      runWithContext({
+        ...makeApprovalContext(),
+        trustLevel: undefined,
+      }, () =>
         tool.execute("tc11", { command: "pip install market-data-lib", allowInstallDetour: true }),
       ),
     ).rejects.toThrow();
+    expect(denyGate.requestApproval).not.toHaveBeenCalled();
     const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
-    // EXACTLY 2 events.
-    expect(installEvents).toHaveLength(2);
-    // Action sequence assertion (order matters per the event-pair contract).
+    expect(installEvents).toHaveLength(1);
     const actionSequence = installEvents.map((e) => e.payload.action);
-    expect(actionSequence).toEqual(["override_requested", "override_denied"]);
+    expect(actionSequence).toEqual(["override_denied"]);
     // No subprocess spawned.
     expect(registry.size()).toBe(0);
   });

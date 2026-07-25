@@ -3,8 +3,7 @@
  * Provider-boundary fake-provider harness — the PERMANENT regression gate
  * for the assembled provider array.
  *
- * This harness drives a tool turn through the REAL pipeline context engine
- * (`createContextEngine({ ...config, version: "pipeline" }).transformContext`)
+ * This harness drives a tool turn through the canonical context engine
  * and feeds the assembled array into the cache-trace wrapper
  * (`buildCacheTraceWrapper(trace)(next)`), then reads the recorded
  * `stream:context` JSONL line back and asserts the assembled-array SHAPE:
@@ -47,10 +46,11 @@ import type { Message } from "@earendil-works/pi-ai";
 import type {
   AppendMessageInput,
   ContextEngineConfig,
+  ConversationRef,
   ContextStorePort,
   ContextStoreScope,
 } from "@comis/core";
-import { messageToParts } from "@comis/core";
+import { ContextEngineConfigSchema, messageToParts } from "@comis/core";
 import Database from "better-sqlite3";
 import { createLcdStore, initSchema } from "@comis/memory";
 import {
@@ -111,8 +111,7 @@ function fakeModel(): unknown {
 const fakeNext: StreamFn = ((..._args: unknown[]) =>
   ({}) as ReturnType<StreamFn>) as StreamFn;
 
-// --- Minimal deps fixture (context-engine.test.ts:44-59). A reasoning model
-//     so the full pipeline runs; the layers are no-ops on these tiny inputs. ---
+// --- Minimal model deps fixture. ---
 function makeDeps(): ContextEngineDeps {
   const logger = createMockLogger();
   return {
@@ -125,21 +124,10 @@ function makeDeps(): ContextEngineDeps {
   };
 }
 
-const pipelineConfig: ContextEngineConfig = {
-  enabled: true,
-  thinkingKeepTurns: 10,
-  historyTurns: 15,
-  version: "pipeline",
-};
-
 // --- Message-shape builders (context-engine.test.ts:638-651,1071-1126,1969-1974).
 //     Cast `as AgentMessage` like the existing tests. ---
 function userMsg(text: string): AgentMessage {
   return { role: "user", content: [{ type: "text", text }] } as AgentMessage;
-}
-
-function assistantTextMsg(text: string): AgentMessage {
-  return { role: "assistant", content: [{ type: "text", text }] } as AgentMessage;
 }
 
 function assistantWithToolUse(id: string, name: string): AgentMessage {
@@ -158,10 +146,10 @@ function toolResultMsg(toolCallId: string): AgentMessage {
 }
 
 /**
- * Drive a raw message array straight through the cache-trace wrapper (no
- * pipeline), read back the recorded `stream:context` line. Used by the
+ * Drive a raw message array straight through the cache-trace wrapper, then
+ * read back the recorded `stream:context` line. Used by the
  * high-tool-count case: it isolates the `assembledShape` descriptor's
- * bounding behavior from the pipeline's history-window logic, so the
+ * bounding behavior from context assembly, so the
  * assertion is purely about whether the pairing/count signal survives the
  * 64-item sanitizeForPersistence array cap.
  */
@@ -182,35 +170,8 @@ async function recordRawTurn(
 }
 
 /**
- * Drive one turn through the real pipeline engine + the cache-trace wrapper,
- * read back the recorded `stream:context` line.
- */
-async function recordTurn(
-  messages: AgentMessage[],
-  filePath: string,
-): Promise<CacheTraceEvent> {
-  const engine = createContextEngine(pipelineConfig, makeDeps());
-  const assembled = await engine.transformContext(messages);
-
-  const trace = makeTrace(filePath);
-  const wrapped = buildCacheTraceWrapper(trace)(fakeNext);
-  wrapped(
-    fakeModel() as Parameters<StreamFn>[0],
-    { messages: assembled, systemPrompt: "you are an assistant" } as Parameters<StreamFn>[1],
-  );
-  await trace.flush();
-
-  const sc = readLines(filePath).find((l) => l.stage === "stream:context");
-  if (sc === undefined) throw new Error("no stream:context line recorded");
-  return sc;
-}
-
-/**
- * Drive one turn through an ALREADY-BUILT engine (e.g. the `dag`-mode LCD
- * engine) + the cache-trace wrapper, read back the recorded `stream:context`
- * line. Mirrors `recordTurn` but takes the engine as an argument instead of
- * constructing the pipeline engine — so the same record-and-read mechanism
- * exercises the LCD assembly. The pipeline path (`recordTurn`) is untouched.
+ * Drive one turn through an already-built canonical engine and record the
+ * provider-boundary context shape.
  */
 async function recordTurnWith(
   engine: ContextEngine,
@@ -232,7 +193,7 @@ async function recordTurnWith(
   return sc;
 }
 
-// --- dag-mode (LCD) fixtures + store helpers ───────────────────────────────
+// --- Canonical durable-context fixtures + store helpers ───────────────────
 //
 // The dag engine reads HISTORY from an injected ContextStorePort + the FRESH
 // TAIL from the live `transformContext` arg. To exercise it we
@@ -240,15 +201,13 @@ async function recordTurnWith(
 // messages — the shapes the core `messageToParts`/`partsToMessage` codec
 // round-trips faithfully, matching the real SDK loop) and persist them to a
 // real `createLcdStore(:memory:)` via the codec, exactly as the afterTurn
-// ingest path would. The harness's pipeline fixtures above use
-// the `tool_use`/top-level-toolResult AgentMessage casts — DISTINCT shapes for
-// the DISTINCT path; we keep the codec-faithful canonical builders here.
+// ingest path would. These builders preserve codec-faithful canonical shapes.
 
-const DAG_CONVERSATION_ID = "conv-dag-1";
+const CONTEXT_CONVERSATION_REF = `cv_${"h".repeat(43)}` as ConversationRef;
 const DAG_CREATED_AT = 1000;
 
-const dagScope: ContextStoreScope = {
-  conversationId: DAG_CONVERSATION_ID,
+const contextScope: ContextStoreScope = {
+  conversationRef: CONTEXT_CONVERSATION_REF,
   tenantId: "tenant_a",
   agentId: "agent_a",
   sessionKey: "sess-a",
@@ -299,14 +258,14 @@ function dagToolResult(toolCallId: string, name: string): AgentMessage {
  * Persist a turn into the LCD store the way the afterTurn ingest path does:
  * monotonic `seq` from 0, a full SECURITY scope (no empty column), a fixed
  * `createdAt`, `tokenCount` computed agent-side, and `parts` via the verbatim
- * codec (NEVER flattened to text). The dag engine then reconstructs history
+ * codec (NEVER flattened to text). The canonical engine then reconstructs history
  * from exactly these rows.
  */
 function appendTurnToStore(store: ContextStorePort, messages: AgentMessage[]): void {
   messages.forEach((m, seq) => {
     const msg = m as unknown as Message;
     const input: AppendMessageInput = {
-      scope: dagScope,
+      scope: contextScope,
       seq,
       role: msg.role,
       tokenCount: estimateMessageTokens(msg),
@@ -317,63 +276,23 @@ function appendTurnToStore(store: ContextStorePort, messages: AgentMessage[]): v
   });
 }
 
-/** Build the live dag-mode LCD engine wired to a store + conversationId. */
-function makeDagEngine(store: ContextStorePort, freshTailTurns: number): ContextEngine {
+/** Build the canonical engine wired to a context store. */
+function makeCanonicalEngine(store: ContextStorePort, freshTailTurns: number): ContextEngine {
   return createContextEngine(
-    { ...pipelineConfig, version: "dag", freshTailTurns } as unknown as ContextEngineConfig,
-    // Thread agentId + tenantId so the dag assembler builds the full
-    // read scope (matching dagScope's appends) — else it fails closed.
+    ContextEngineConfigSchema.parse({ freshTailTurns }) as ContextEngineConfig,
     {
       ...makeDeps(),
       contextStore: store,
-      conversationId: DAG_CONVERSATION_ID,
-      agentId: dagScope.agentId,
-      tenantId: dagScope.tenantId,
-      sessionKey: dagScope.sessionKey,
+      conversationRef: CONTEXT_CONVERSATION_REF,
+      agentId: contextScope.agentId,
+      tenantId: contextScope.tenantId,
+      sessionKey: contextScope.sessionKey,
+      clock: { now: () => DAG_CREATED_AT },
     },
   );
 }
 
 describe("provider-boundary harness — assembled array invariants", () => {
-  it("tool turn records a toolResult, pairs tool_use<->tool_result, and the array grows", async () => {
-    // Turn 1: a short user + assistant exchange.
-    const turn1 = await recordTurn(
-      [userMsg("hello"), assistantTextMsg("world")],
-      join(tmpDir, "turn1.jsonl"),
-    );
-
-    // Turn 2: a multi-step tool turn (user -> assistant-with-tool_use ->
-    // toolResult -> assistant).
-    const turn2 = await recordTurn(
-      [
-        userMsg("read the file"),
-        assistantWithToolUse("tu_1", "read"),
-        toolResultMsg("tu_1"),
-        assistantTextMsg("done"),
-      ],
-      join(tmpDir, "turn2.jsonl"),
-    );
-
-    // (presence) turn-2 messageRoles contains "toolResult".
-    expect(turn2.messageRoles).toContain("toolResult");
-
-    // (presence) turn-2 assembledShape.hasToolResult === true.
-    expect(turn2.assembledShape).toBeDefined();
-    expect(turn2.assembledShape!.hasToolResult).toBe(true);
-
-    // (pairing) every toolResultId has a matching toolUseId — no orphan.
-    expect(turn2.assembledShape!.toolResultIds.length).toBeGreaterThan(0);
-    for (const rid of turn2.assembledShape!.toolResultIds) {
-      expect(turn2.assembledShape!.toolUseIds).toContain(rid);
-    }
-
-    // (growth) the tool turn's assembled array GREW vs the short turn.
-    expect(turn1.assembledShape).toBeDefined();
-    expect(turn2.assembledShape!.totalCount).toBeGreaterThan(
-      turn1.assembledShape!.totalCount,
-    );
-  });
-
   // ── Always-on gate (no env, no provider): the SAME presence/pairing/growth
   //    invariants on the LIVE dag-mode LCD assembly, fed by REAL ingested store
   //    rows, driven through the cache-trace wrapper. ──────────────────────────
@@ -382,15 +301,14 @@ describe("provider-boundary harness — assembled array invariants", () => {
   // earlier (since deleted) dag-assembler flattened every tool_use / tool_result
   // to `content:[{type:"text"}]`, so the model never saw a provider-valid
   // pairing for its own prior action and re-issued the same call dozens of
-  // times. If the `dag` branch ever falls through to the pipeline with NO
-  // faithful toolResult reconstructed from the store, `hasToolResult` is
+  // times. If assembly loses a faithful toolResult reconstructed from the
+  // store, `hasToolResult` is
   // false / the array does not grow → this case fails.
   //
-  // It asserts via the SAME `assembledShape` fields as the pipeline case
-  // above (one contract — no new block convention), and
+  // It asserts via the provider boundary's `assembledShape` fields and
   // additionally pins `pairedToolResultCount === toolResultCount` (the
   // orphan-free count signal that survives the 64-item id cap).
-  it("dag-mode LCD assembly records a toolResult, pairs tool_use<->tool_result, and the array grows", async () => {
+  it("canonical assembly preserves ordering tool pairing growth and store reconstruction", async () => {
     // The multi-step tool turn the loop bug corrupted: user -> assistant(toolCall
     // tu_1) -> toolResult(tu_1) -> assistant(text). Canonical pi-ai shapes so the
     // codec round-trips them faithfully.
@@ -408,7 +326,7 @@ describe("provider-boundary harness — assembled array invariants", () => {
     initSchema(dbA, 1536);
     const storeA = createLcdStore(dbA);
     appendTurnToStore(storeA, toolTurn);
-    const engineA = makeDagEngine(storeA, 8);
+    const engineA = makeCanonicalEngine(storeA, 8);
 
     // Baseline turn1: a tool-free user + assistant exchange (its own store/DB so
     // history is just the short text turn).
@@ -417,7 +335,7 @@ describe("provider-boundary harness — assembled array invariants", () => {
     const storeBaseline = createLcdStore(dbBaseline);
     const textTurn: AgentMessage[] = [dagUserMsg("hello"), dagAssistantText("world")];
     appendTurnToStore(storeBaseline, textTurn);
-    const engineBaseline = makeDagEngine(storeBaseline, 8);
+    const engineBaseline = makeCanonicalEngine(storeBaseline, 8);
 
     const turn1 = await recordTurnWith(
       engineBaseline,
@@ -461,7 +379,7 @@ describe("provider-boundary harness — assembled array invariants", () => {
     initSchema(dbB, 1536);
     const storeB = createLcdStore(dbB);
     appendTurnToStore(storeB, toolTurn);
-    const engineB = makeDagEngine(storeB, 1);
+    const engineB = makeCanonicalEngine(storeB, 1);
 
     const turnFromHistory = await recordTurnWith(
       engineB,

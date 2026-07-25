@@ -71,9 +71,9 @@ describe("registerSessionsCommand", () => {
     const optionNames = deleteCmd!.options.map((o) => o.long);
     expect(optionNames).toContain("--yes");
 
-    // Should have <key> argument
+    // Should have the opaque conversation reference argument.
     const argNames = deleteCmd!.registeredArguments.map((a) => a.name());
-    expect(argNames).toContain("key");
+    expect(argNames).toContain("conversationRef");
   });
 
   it("registers the report subcommand group under sessions", () => {
@@ -305,7 +305,7 @@ const { withClient: mockedWithClient } = await import("../client/rpc-client.js")
  *  The handler omits memoriesDeleted ONLY when no MemoryPort is wired
  *  (deployment does not support the --memory clear); when wired it returns a count. */
 const RESET_CONVERSATION_RESPONSE = {
-  sessionKey: "tenant1:user1:chan1",
+  conversationRef: "conversation-ref-1",
   lcdRowsDeleted: 7,
   sessionMessagesCleared: 4,
 };
@@ -357,7 +357,7 @@ describe("sessions reset calls session.reset_conversation via callTyped", () => 
     exitSpy.restore();
   });
 
-  it("sends session.reset_conversation with session_key when --yes is passed", async () => {
+  it("sends session.reset_conversation with explicit authority when --yes is passed", async () => {
     const capturedMethods: string[] = [];
     const capturedParams: unknown[] = [];
 
@@ -378,14 +378,20 @@ describe("sessions reset calls session.reset_conversation via callTyped", () => 
     registerSessionsCommand(program);
     await program.parseAsync([
       "node", "test",
-      "sessions", "reset", "tenant1:user1:chan1",
+      "sessions", "reset", "conversation-ref-1",
       "--yes",
+      "--tenant", "tenant1",
+      "--agent", "default",
     ]);
 
     expect(vi.mocked(mockedWithClient)).toHaveBeenCalledTimes(1);
     expect(capturedMethods[0]).toBe("session.reset_conversation");
     const params = capturedParams[0] as Record<string, unknown>;
-    expect(params["session_key"]).toBe("tenant1:user1:chan1");
+    expect(params).toMatchObject({
+      tenant_id: "tenant1",
+      agent_id: "default",
+      conversation_ref: "conversation-ref-1",
+    });
   });
 
   it("output includes both lcdRowsDeleted and sessionMessagesCleared counts on success", async () => {
@@ -400,8 +406,10 @@ describe("sessions reset calls session.reset_conversation via callTyped", () => 
     registerSessionsCommand(program);
     await program.parseAsync([
       "node", "test",
-      "sessions", "reset", "tenant1:user1:chan1",
+      "sessions", "reset", "conversation-ref-1",
       "--yes",
+      "--tenant", "tenant1",
+      "--agent", "default",
     ]);
 
     const output = consoleSpy.log.mock.calls.map((c) => c.join(" ")).join("\n");
@@ -445,8 +453,10 @@ describe("sessions reset --memory threads memory: true", () => {
     registerSessionsCommand(program);
     await program.parseAsync([
       "node", "test",
-      "sessions", "reset", "tenant1:user1:chan1",
+      "sessions", "reset", "conversation-ref-1",
       "--yes",
+      "--tenant", "tenant1",
+      "--agent", "default",
       "--memory",
     ]);
 
@@ -474,8 +484,10 @@ describe("sessions reset --memory threads memory: true", () => {
     registerSessionsCommand(program);
     await program.parseAsync([
       "node", "test",
-      "sessions", "reset", "tenant1:user1:chan1",
+      "sessions", "reset", "conversation-ref-1",
       "--yes",
+      "--tenant", "tenant1",
+      "--agent", "default",
     ]);
 
     expect(capturedParams).toHaveLength(1);
@@ -502,8 +514,10 @@ describe("sessions reset --memory threads memory: true", () => {
     registerSessionsCommand(program);
     await program.parseAsync([
       "node", "test",
-      "sessions", "reset", "tenant1:user1:chan1",
+      "sessions", "reset", "conversation-ref-1",
       "--yes",
+      "--tenant", "tenant1",
+      "--agent", "default",
       "--memory",
       "--purge-derived",
     ]);
@@ -551,8 +565,10 @@ describe("sessions reset --memory not-implemented warning", () => {
     registerSessionsCommand(program);
     await program.parseAsync([
       "node", "test",
-      "sessions", "reset", "tenant1:user1:chan1",
+      "sessions", "reset", "conversation-ref-1",
       "--yes",
+      "--tenant", "tenant1",
+      "--agent", "default",
       "--memory",
     ]);
 
@@ -579,8 +595,10 @@ describe("sessions reset --memory not-implemented warning", () => {
     registerSessionsCommand(program);
     await program.parseAsync([
       "node", "test",
-      "sessions", "reset", "tenant1:user1:chan1",
+      "sessions", "reset", "conversation-ref-1",
       "--yes",
+      "--tenant", "tenant1",
+      "--agent", "default",
       "--memory",
     ]);
 

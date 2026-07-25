@@ -29,6 +29,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { requireTableInfoRows } from "./schema-introspection.js";
 
 /**
  * Idempotently ensure `memory_usefulness` carries the `failure_count` column —
@@ -44,8 +45,11 @@ import type Database from "better-sqlite3";
  */
 export function ensureUsefulnessFailureColumn(db: Database.Database): void {
   const cols = new Set(
-    (db.prepare(`PRAGMA table_info(memory_usefulness)`).all() as { name: string }[]).map(
-      (r) => r.name,
+    requireTableInfoRows(
+      db.prepare(`PRAGMA table_info(memory_usefulness)`).all(),
+      "memory_usefulness",
+    ).map(
+      (row) => row.name,
     ),
   );
   if (!cols.has("failure_count")) {

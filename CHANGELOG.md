@@ -17,6 +17,19 @@ This file records user-visible changes to Comis. Detailed release history is ava
 
 ### Fixed
 
+- Web search now derives its fallback chain from configured provider authority,
+  skips missing-key providers, and tries each eligible provider sequentially.
+  Only chain-wide exhaustion routes an enabled browser through Google Search.
+- MCP schema and JSON-RPC invalid-parameter rejections are now reported as caller-correctable validation failures with a healthy transport, and their external-content envelope no longer causes the retry breaker to mark the server unavailable.
+- New and recreated workspaces now enter first-run onboarding, and the active bootstrap state reaches prompt assembly instead of being omitted as an unchanged operator placeholder.
+- Background tasks listed for an originating conversation can now be retrieved and cancelled only from that conversation; lookup and terminal task failures are reported as tool errors, and one blocking `read_output` call acknowledges a promoted call's terminal output only after the successful tool result is journaled, without repeating the original operation or entering a polling loop.
+- Sub-agent spawns now return a run ID immediately; owner-scoped waits gather terminal results without polling, and durable exact-origin delivery retains completion, timeout, and failure reasons without contradictory notices.
+- Cron jobs and heartbeats now execute through activated proactive runtimes with strict authoring and status contracts, configured timeouts, durable run evidence, and session-level diagnostics.
+- Verified files declared in a sub-agent's `expected_outputs` are delivered as governed channel attachments when the task completes, including when the parent rewrite produces no text or fails before delivery; synthetic parent turns accept their workspace-policy hash without failing completion delivery.
+- JSONL-backed conversations now retain ownership of promoted tool completions even when the SQLite session index has no row: completions re-enter the originating conversation, pending turns cannot finalize unrelated recalled text, failed tasks are labeled accurately, and MCP results above 8 KB are offloaded for file-based analysis.
+- Promoted tool completions now retain the originating response-locale policy and deliver the finalized continuation through the exact captured channel instance and conversation authority.
+- Incomplete tool-use history is repaired without inventing a daemon-restart cause.
+- Session explanations prioritize an unfinished background continuation over incidental recall misses and point operators to its promotion, completion, re-entry, and delivery evidence.
 - Provider status, CLI setup guidance, token-limit labels, and degraded-response instructions now reflect the runtime behavior.
 - Dashboard controls have clearer accessible names and reduce accidental secret exposure.
 - Gateway RPC failures no longer return internal exception details to clients.
@@ -25,11 +38,14 @@ This file records user-visible changes to Comis. Detailed release history is ava
 ### Security
 
 - Installation guidance avoids executing remote scripts without an inspection and dry-run step.
+- Labelled password, token, secret, credential, and API-key assignments are blocked from learned memory and redacted again during recall, including ordinary credential values without a provider-specific token prefix.
 - Error responses and dashboard secret handling expose less sensitive operational detail.
 
 ### Operator action required
 
-- None currently announced for the unreleased changes.
+- Session JSON-RPC clients must identify storage partitions with
+  `tenant_id`, `agent_id`, and `conversation_ref` instead of a display
+  `session_key`; see the [JSON-RPC reference](https://docs.comis.ai/reference/json-rpc).
 
 ## [1.0.53] - 2026-07-13
 

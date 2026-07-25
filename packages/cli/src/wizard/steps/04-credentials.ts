@@ -29,11 +29,12 @@ import type { WizardPrompter } from "../prompter.js";
 import { updateState } from "../state.js";
 import { sectionSeparator, info } from "../theme.js";
 import { validateApiKey, getKeyPrefix } from "../validators/api-key.js";
-import { type KnownProvider } from "@earendil-works/pi-ai";
+import type { BuiltinProvider } from "@earendil-works/pi-ai/compat";
 import { getModels } from "@earendil-works/pi-ai/compat";
 
 import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 import { handleCodexOAuth } from "./04-oauth-helpers.js";
+import { handleBedrockAuth } from "./04-aws-helpers.js";
 
 // ---------- Provider Help URLs ----------
 
@@ -138,7 +139,7 @@ function getValidationEndpoint(
   // eslint-disable-next-line security/detect-object-injection -- read of static const map indexed by validated provider string
   const path = PROVIDER_VALIDATION_PATHS[provider];
   if (!path) return undefined;
-  const baseUrl = getModels(provider as KnownProvider)[0]?.baseUrl;
+  const baseUrl = getModels(provider as BuiltinProvider)[0]?.baseUrl;
   if (!baseUrl) return undefined;
   return { baseUrl, path };
 }
@@ -485,17 +486,11 @@ export const credentialsStep: WizardStep = {
       return handleCodexOAuth(state, prompter);
     }
 
-    // Bedrock discovers credentials through the standard AWS provider chain;
-    // asking for one opaque API key would create a configuration that cannot
-    // authenticate.
+    // Bedrock supports a managed bearer, a stored AWS profile, or the ambient
+    // credential chain. Keep this dispatch above the multi-value abort and the
+    // standard-provider auth-method selector.
     if (providerId === "amazon-bedrock") {
-      prompter.note(
-        info("Comis will use the ambient AWS credential chain and region configuration."),
-        "Amazon Bedrock credentials",
-      );
-      return updateState(state, {
-        provider: { id: providerId, validated: false } as ProviderConfig,
-      });
+      return handleBedrockAuth(state, prompter);
     }
 
     // The current wizard credential shape stores one entered value. Abort with

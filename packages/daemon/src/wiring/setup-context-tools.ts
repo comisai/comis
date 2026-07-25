@@ -119,25 +119,19 @@ export function wireContextTools(
   );
 }
 
-/** The minimal per-agent shape {@link maybeWireContextTools} reads (a slice of PerAgentConfig). */
+/** The minimal per-agent shape {@link maybeWireContextTools} reads. */
 export interface CtxToolAgentConfig {
-  contextEngine?: { version?: "pipeline" | "dag"; maxExpandTokens?: number };
+  contextEngine?: { maxExpandTokens?: number };
   model?: string;
   provider?: string;
 }
 
 /**
- * Gate + wire the dag-mode `ctx_*` tools (extracted from `setup-tools.ts` to keep that file
- * under the 800-line cap). Wires the tools when the agent's
- * `contextEngine.version` resolves to `"dag"` AND a store is present.
- *
- * The missing-version default is `"dag"` — ALIGNED with
- * `shouldRunLcdStorePasses` (which gates the LCD store WRITES + its sweep), so a bare
- * agent config that writes durable history also wires the `ctx_*` tools that read it back (was
- * `?? "pipeline"` — a pre-existing skew). The operator `capabilityClassOverride` (the
+ * Wire the canonical in-session `ctx_*` tools when a context store is present.
+ * The operator `capabilityClassOverride` (the
  * same `providers.entries.<id>.capabilities.capabilityClass` source pi-executor uses, supplied
  * by the caller) governs the tier-gated `ctx_expand` walk depth; absent ⇒ provider-family
- * heuristic. No-op (nothing pushed) when not dag mode or no store.
+ * heuristic. No-op when no store is available.
  */
 export function maybeWireContextTools(
   tools: AgentToolArray,
@@ -148,7 +142,7 @@ export function maybeWireContextTools(
     capabilityClassOverride?: CapabilityClass;
   },
 ): void {
-  if ((agentConfig?.contextEngine?.version ?? "dag") !== "dag" || !store) return;
+  if (!store) return;
   const maxExpandTokens = agentConfig?.contextEngine?.maxExpandTokens ?? 4000;
   // Tier-gated multi-hop depth (capacity knob → wiring-time; read scope per-call).
   const maxExpandDepth = resolveCtxExpandDepth(

@@ -119,6 +119,23 @@ describe("preReadStorageMode", () => {
     expect(preReadStorageMode([base, overlay])).toBe("file");
   });
 
+  it("honors layered storage selection through an injected config reader", () => {
+    const files: Record<string, string> = {
+      "/virtual/base.yaml": "security:\n  storage: encrypted\n",
+      "/virtual/local.yaml": "security:\n  storage: file\n",
+    };
+
+    expect(
+      preReadStorageMode(["/virtual/base.yaml", "/virtual/local.yaml"], {
+        readFile: (path) => {
+          const content = files[path];
+          if (content === undefined) throw new Error("missing fixture");
+          return content;
+        },
+      }),
+    ).toBe("file");
+  });
+
   it("skips missing paths in the middle of the list", () => {
     const base = writeYaml(
       "config.yaml",

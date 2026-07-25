@@ -9,14 +9,20 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { ChannelPort, NormalizedMessage, SessionKey, PerChannelStreamingConfig } from "@comis/core";
-import { formatSessionKey, runWithContext, tryGetContext, createDeliveryOrigin, systemNowMs, systemSetInterval, systemClearInterval, systemScheduleTimeout } from "@comis/core";
+import type { ChannelPort, EventMap, NormalizedMessage, SessionKey, PerChannelStreamingConfig } from "@comis/core";
+import { formatSessionKey, tryGetContext, systemNowMs, systemSetInterval, systemClearInterval, systemScheduleTimeout } from "@comis/core";
 import { withTimeout, TimeoutError } from "@comis/shared";
-import type { AgentExecutor } from "@comis/agent";
+import type {
+  AgentExecutor,
+  ExecutionResult,
+  InboundMessageProvenancePlan,
+} from "@comis/agent";
 import type { CommandDirectives } from "../commands/index.js";
 import { sanitizeAssistantResponse, createThinkingTagFilter } from "@comis/agent";
 
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";
+import { emitObservationalEvent } from "./execution-event-emitter.js";
+import { buildThreadSendOpts } from "./execution-routing-config.js";
 import type { TypingLifecycleController } from "@comis/channels";
 
 // ---------------------------------------------------------------------------
@@ -36,8 +42,7 @@ export type ExecuteDeps = Pick<
 /** Result from LLM execution. */
 export interface ExecuteResult {
   /** Raw execution result from the agent executor. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  result: any;
+  result: ExecutionResult | undefined;
   /** Accumulated delta text (streaming path). */
   accumulated: string;
   /** Tokens used. */
@@ -45,13 +50,15 @@ export interface ExecuteResult {
   /** Cost. */
   cost: number;
   /** Finish reason. */
-  finishReason: string;
+  finishReason: ExecutionResult["finishReason"] | "timeout";
   /** Delivery abort signal (used in delivery phase). */
   deliverySignal: AbortSignal;
   /** Whether this was a resource abort (budget, steps, etc.). */
   resourceAborted: boolean;
   /** The abort reason if aborted. */
-  abortReason: string | undefined;
+  abortReason: EventMap["execution:aborted"]["reason"] | undefined;
+  /** Read the latest abort reason while downstream filter/delivery work is active. */
+  currentAbortReason: () => EventMap["execution:aborted"]["reason"] | undefined;
   /** Cleanup function to remove event listeners. */
   cleanup: () => void;
   /** Whether timeout occurred (execution returned canned error). */
@@ -83,12 +90,16 @@ export async function executeLlm(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tools: any[] | undefined,
   directives: Record<string, unknown> | undefined,
+  inboundProvenancePlans: readonly InboundMessageProvenancePlan[],
 ): Promise<ExecuteResult> {
+  const executionTraceId = tryGetContext()?.traceId ?? randomUUID();
+
   // Track active tools and periodically refresh TTL while tools are in-flight
   let activeToolCount = 0;
   let toolTtlRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
-  const onToolStarted = (): void => {
+  const onToolStarted = (event: EventMap["tool:started"]): void => {
+    if (event.traceId !== executionTraceId) return;
     typingLifecycle?.controller.refreshTtl();
     activeToolCount++;
     if (!toolTtlRefreshTimer && typingLifecycle?.controller.isActive) {
@@ -98,7 +109,8 @@ export async function executeLlm(
     }
   };
 
-  const onToolExecuted = (): void => {
+  const onToolExecuted = (event: EventMap["tool:executed"]): void => {
+    if (event.traceId !== executionTraceId) return;
     activeToolCount = Math.max(0, activeToolCount - 1);
     if (activeToolCount === 0 && toolTtlRefreshTimer) {
       systemClearInterval(toolTtlRefreshTimer);
@@ -111,9 +123,22 @@ export async function executeLlm(
 
   // Delivery-scoped AbortController: cancelled when execution:aborted fires for this session
   const deliveryAbortController = new AbortController();
-  let deliveryAbortReason: string | undefined;
-  const onExecutionAborted = (event: { sessionKey: SessionKey; reason: string }): void => {
-    if (formatSessionKey(event.sessionKey) === formatSessionKey(sessionKey)) {
+  let deliveryAbortReason: EventMap["execution:aborted"]["reason"] | undefined;
+  const onExecutionAborted = (event: EventMap["execution:aborted"]): void => {
+    const eventContext = tryGetContext();
+    const sameExecution = eventContext?.traceId === executionTraceId
+      && eventContext.channelType === adapter.channelType;
+    // /stop is emitted from the stop command's trace after the composite
+    // active-session resolver aborts the one registered (agent,type,chat) run.
+    // Match that authoritative composite identity; ordinary aborts require the
+    // execution trace itself.
+    const matchingStopTarget = event.reason === "user_stop"
+      && eventContext?.channelType === adapter.channelType;
+    if (
+      event.agentId === agentId
+      && formatSessionKey(event.sessionKey) === formatSessionKey(sessionKey)
+      && (sameExecution || matchingStopTarget)
+    ) {
       deliveryAbortReason = event.reason;
       deliveryAbortController.abort(event.reason);
     }
@@ -130,7 +155,7 @@ export async function executeLlm(
   // 'thinking' mode: start typing when execution begins
   if (blockStreamCfg.typingMode === "thinking" && typingLifecycle?.controller && !typingLifecycle.controller.isActive) {
     typingLifecycle.controller.start(effectiveMsg.channelId);
-    deps.eventBus.emit("typing:started", {
+    emitObservationalEvent(deps, "typing:started", {
       channelId: adapter.channelId,
       chatId: effectiveMsg.channelId,
       mode: blockStreamCfg.typingMode,
@@ -165,38 +190,22 @@ export async function executeLlm(
     typingLifecycle?.controller.refreshTtl();
   };
 
-  let result;
+  let result: ExecutionResult;
   try {
     result = await withTimeout(
-      runWithContext({
-        // Reuse the ingress traceId from the channel-adapter runWithContext
-        // wrap. Fall back to a fresh mint only when called outside any
-        // ingress scope (scheduler heartbeats, background tasks, direct RPC
-        // entries that don't carry channel context).
-        traceId: tryGetContext()?.traceId ?? randomUUID(),
-        tenantId: sessionKey.tenantId,
-        userId: sessionKey.userId,
-        // Stamp the RESOLVED agentId onto the request ALS so
-        // the delivery stage (deliverToChannel, which runs inside this context)
-        // reads ctx.agentId and binds the outbound reply → trajectory (the
-        // reaction-attribution keystone). Without this, ctx.agentId is undefined
-        // at delivery → the reply's agentId is never persisted into the queue
-        // optionsJson and BOTH binding paths (the direct ack + the drain)
-        // fail-closed, so a reaction on the reply map-misses.
-        // agentId is the resolved-agent parameter (non-empty).
+      executor.execute(
+        effectiveMsg,
+        sessionKey,
+        tools,
+        onDelta,
         agentId,
-        sessionKey: formatSessionKey(sessionKey),
-        startedAt: systemNowMs(),
-        trustLevel,
-        channelType: adapter.channelType,
-        deliveryOrigin: createDeliveryOrigin({
-          channelType: adapter.channelType,
-          channelId: effectiveMsg.channelId,
-          userId: sessionKey.userId,
-          threadId: effectiveMsg.metadata?.threadId as string | undefined,
-          tenantId: sessionKey.tenantId,
-        }),
-      }, () => executor.execute(effectiveMsg, sessionKey, tools, onDelta, agentId, directives as CommandDirectives | undefined, undefined, { operationType: "interactive" as const })),
+        directives as CommandDirectives | undefined,
+        undefined,
+        {
+          operationType: "interactive" as const,
+          inboundProvenancePlans,
+        },
+      ),
       deps.executionTimeoutMs ?? 600_000,
       systemScheduleTimeout,
       "Agent execution",
@@ -211,7 +220,7 @@ export async function executeLlm(
         errorKind: "timeout" as const,
       }, "Execution pipeline timeout");
 
-      deps.eventBus.emit("execution:aborted", {
+      emitObservationalEvent(deps, "execution:aborted", {
         sessionKey,
         reason: "pipeline_timeout",
         agentId,
@@ -221,7 +230,7 @@ export async function executeLlm(
       await adapter.sendMessage(
         effectiveMsg.channelId,
         "I'm having trouble processing your request right now. Please try again in a moment.",
-        { replyTo },
+        { replyTo, ...buildThreadSendOpts(effectiveMsg.metadata) },
       // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
       ).catch(() => { /* adapter logs internally */ });
 
@@ -234,10 +243,12 @@ export async function executeLlm(
         deliverySignal: deliveryAbortController.signal,
         resourceAborted: false,
         abortReason: undefined,
+        currentAbortReason: () => deliveryAbortReason,
         cleanup,
         timedOut: true,
       };
     }
+    cleanup();
     // @allow-throw: re-raise non-TimeoutError to the inbound orchestrator pipeline (executeAndDeliver -> inbound-route); channel-adapter context catches and converts to user-visible degraded response. Boundary adapter pattern for channel/RPC inbound boundaries.
     throw err;
   }
@@ -260,7 +271,7 @@ export async function executeLlm(
   // response, and delivering it through the still-aborted signal made the
   // block pacer hard-skip every block — the user got permanent silence for a
   // budget stop while the delivery log read success.
-  const RESOURCE_ABORT_REASONS = new Set(["budget_exceeded", "spend_exceeded", "max_steps", "context_exhausted", "circuit_breaker"]);
+  const RESOURCE_ABORT_REASONS = new Set(["budget_exceeded", "spend_exceeded", "max_steps", "context_exhausted", "loop_detected", "circuit_breaker"]);
   const resourceAborted = deliveryAbortController.signal.aborted && deliveryAbortReason != null && RESOURCE_ABORT_REASONS.has(deliveryAbortReason);
   const recoveryAbortController = resourceAborted ? new AbortController() : undefined;
   const deliverySignal = recoveryAbortController?.signal ?? deliveryAbortController.signal;
@@ -284,6 +295,7 @@ export async function executeLlm(
     deliverySignal,
     resourceAborted,
     abortReason: deliveryAbortReason,
+    currentAbortReason: () => deliveryAbortReason,
     cleanup,
     timedOut: false,
   };

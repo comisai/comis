@@ -35,7 +35,7 @@
  *
  * @module
  */
-import type { ClockPort, TimerPort, ResolvedAutonomy } from "@comis/core";
+import type { ClockPort, TimerPort, ResolvedAutonomy, DurableRootBudget } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { LeaseManager } from "@comis/infra";
 import type { SpendGateOutcome } from "@comis/agent";
@@ -71,10 +71,21 @@ export interface BoundedAutonomy {
   ): { ok: true } | { ok: false; reason: SpawnDenyReason };
   /** Release one spawn slot for `rootRunId` (paired with a prior `tryAcquireSpawn`). */
   releaseSpawn(rootRunId: string): void;
+  /** Keep budget authority alive while a durable DAG may start a later wave. */
+  retainDurableRoot(rootRunId: string): void;
+  /**
+   * Release durable DAG retention at an authoritative terminal/revoke boundary.
+   * Idle roots are evicted immediately; a still-active root is evicted by its
+   * final `releaseSpawn`.
+   */
+  releaseDurableRoot(rootRunId: string): void;
+  /** Clear all durable retention for an explicitly revoked/killed root. */
+  revokeDurableRoot(rootRunId: string): void;
   /**
    * Re-anchor an IDLE root's wall-clock + token limbs at a turn
    * boundary (the bridge calls this once per turn). A no-op when `rootRunId` has a
-   * LIVE spawn (`activeCount > 0`) so a runaway-tree backstop is never weakened;
+   * LIVE spawn (`activeCount > 0`) or a retained durable DAG so a runaway-tree
+   * backstop and cross-wave budget are never weakened;
    * preserves the $ accumulator + the leaseId index (unlike `releaseSpawn`). Fixes
    * the interactive `root-session-*` root accumulating its wall-clock across the
    * whole conversation (it acquires no spawn slot, so `releaseSpawn` never evicts it).
@@ -114,6 +125,10 @@ export interface BoundedAutonomy {
    * budget anchor; additive on the lease index.
    */
   registerRoot(rootRunId: string, leaseId: string, parentLeaseId?: string): void;
+  /** Export absolute root budget state for a durable checkpoint. */
+  exportBudgetState(rootRunId: string): DurableRootBudget;
+  /** Idempotently restore absolute state before resumed work is admitted. */
+  rehydrateBudget(rootRunId: string, state: DurableRootBudget): void;
   /** The set of leaseIds correlated to `rootRunId` (empty for an unknown root). */
   leaseIdsForRoot(rootRunId: string): ReadonlySet<string>;
   /**
@@ -240,6 +255,20 @@ export function createBoundedAutonomy(deps: {
   // fan-out (the daemon RPC) drives the leaseManager directly; this index is the
   // audit-side correlation the chokepoint owns alongside the bound mechanisms.
   const leaseIdsByRoot = new Map<string, Set<string>>();
+  // Durable DAGs legitimately reach activeCount=0 between dependency waves.
+  // Those roots require an explicit terminal/revoke boundary before their
+  // token/wall-clock authority can be discarded.
+  const retainedDurableRoots = new Map<string, number>();
+
+  const evictIdleRoot = (rootRunId: string): void => {
+    if (
+      semaphore.activeCount(rootRunId) === 0
+      && !retainedDurableRoots.has(rootRunId)
+    ) {
+      budget.evictRoot(rootRunId);
+      leaseIdsByRoot.delete(rootRunId);
+    }
+  };
 
   return {
     tryAcquireSpawn(rootRunId, depth, fanout): { ok: true } | { ok: false; reason: SpawnDenyReason } {
@@ -248,16 +277,29 @@ export function createBoundedAutonomy(deps: {
 
     releaseSpawn(rootRunId): void {
       semaphore.releaseSpawn(rootRunId);
-      // When the tree has no live spawns left, evict ALL per-root state in
-      // one place — the semaphore already dropped its own entry inside
-      // releaseSpawn (active→0), so mirror that here for the budget meter's
-      // wall-clock/token maps AND the leaseId correlation index, so a storm of
-      // per-spawn / per-cron-fire roots that complete does not grow any of the
-      // sibling maps without bound. activeCount reads 0 for the now-evicted root.
-      if (semaphore.activeCount(rootRunId) === 0) {
-        budget.evictRoot(rootRunId);
-        leaseIdsByRoot.delete(rootRunId);
-      }
+      // When an unretained tree has no live spawns left, evict its per-root
+      // state. A durable DAG is retained explicitly because activeCount reaches
+      // zero between dependency waves; its terminal/revoke path releases it.
+      evictIdleRoot(rootRunId);
+    },
+
+    retainDurableRoot(rootRunId): void {
+      retainedDurableRoots.set(
+        rootRunId,
+        (retainedDurableRoots.get(rootRunId) ?? 0) + 1,
+      );
+    },
+
+    releaseDurableRoot(rootRunId): void {
+      const retainedCount = retainedDurableRoots.get(rootRunId) ?? 0;
+      if (retainedCount <= 1) retainedDurableRoots.delete(rootRunId);
+      else retainedDurableRoots.set(rootRunId, retainedCount - 1);
+      evictIdleRoot(rootRunId);
+    },
+
+    revokeDurableRoot(rootRunId): void {
+      retainedDurableRoots.delete(rootRunId);
+      evictIdleRoot(rootRunId);
     },
 
     evictRootIfIdle(rootRunId): void {
@@ -269,12 +311,15 @@ export function createBoundedAutonomy(deps: {
       // The bridge calls this once per turn so each turn re-anchors
       // from its own start (the next reserveBudget re-anchors via the
       // first-reserve write). GUARD: only when `activeCount === 0` — a root with a
-      // LIVE spawn is NOT reset, so the genuine runaway-TREE wall-clock backstop
-      // holds. Drops ONLY the budget meter's wall-clock + token maps (via
+      // LIVE spawn or retained durable DAG is NOT reset, so the genuine
+      // runaway-tree/cross-wave backstop holds. Drops ONLY the budget meter's wall-clock + token maps (via
       // budget.evictRoot); the $ accumulator is untouched (a per-session spend cap
       // stays cumulative) and the leaseId correlation is preserved (unlike
       // releaseSpawn — the session's live leases must survive a turn boundary).
-      if (semaphore.activeCount(rootRunId) === 0) {
+      if (
+        semaphore.activeCount(rootRunId) === 0
+        && !retainedDurableRoots.has(rootRunId)
+      ) {
         budget.evictRoot(rootRunId);
       }
     },
@@ -313,6 +358,14 @@ export function createBoundedAutonomy(deps: {
       const set = leaseIdsByRoot.get(rootRunId) ?? new Set<string>();
       set.add(leaseId);
       leaseIdsByRoot.set(rootRunId, set);
+    },
+
+    exportBudgetState(rootRunId): DurableRootBudget {
+      return budget.exportState(rootRunId);
+    },
+
+    rehydrateBudget(rootRunId, persisted): void {
+      budget.rehydrate(rootRunId, persisted);
     },
 
     leaseIdsForRoot(rootRunId): ReadonlySet<string> {

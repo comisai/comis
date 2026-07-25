@@ -2,7 +2,7 @@
 // @comis/core exports — Security utilities
 
 export { safePath, PathTraversalError } from "../security/index.js";
-// Loopback bind detection — shared by the gateway boot log + fleet config-posture.
+// Loopback bind detection — shared by the gateway boot log + system config-posture.
 export { isLoopbackHost } from "../security/index.js";
 // Bind-mount validator — consumed by the bwrap sandbox provider.
 export { validateBindMount } from "../security/index.js";
@@ -50,7 +50,12 @@ export {
   computeExpiresAt,
 } from "../security/index.js";
 export type { ResultRef } from "../security/index.js";
-export { sanitizeLogString, redactErrorMessage } from "../security/index.js";
+export {
+  redactErrorMessage,
+  sanitizeLogString,
+  toSafeErrorLogString,
+} from "../security/index.js";
+export { redactOutputText } from "../security/index.js";
 // Bounded redaction primitive (security/redact-value.ts) — surfaced on the
 // @comis/core barrel for the template engine and emit sites.
 export { redactValue, REDACT_LIMITS } from "../security/index.js";

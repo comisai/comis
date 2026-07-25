@@ -277,10 +277,22 @@ describe("runJailedScript (shared jailed-run core)", () => {
 
   it("rejects and surfaces the stderr tail when the jailed child exits non-zero", async () => {
     const stderr = "TypeError: content.trim is not a function\n    at file:///w/run.ts:5:28";
-    const { deps, cleanupRun } = makeDeps({ spawnFn: () => makeFakeChild("partial", 1, stderr) });
+    const warn = vi.fn();
+    const logger: ComisLogger = { ...makeLogger(), warn, child: () => logger };
+    const { deps, cleanupRun } = makeDeps({
+      spawnFn: () => makeFakeChild("partial", 1, stderr),
+      logger,
+    });
 
     await expect(runJailedScript(deps, { script: "1", language: "ts" })).rejects.toThrow(
       /exited with code 1[\s\S]*content\.trim is not a function/,
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "internal",
+        hint: expect.stringMatching(/inspect stderrTail.*correct.*retry/i),
+      }),
+      "orchestrate jailed child exited non-zero",
     );
     // The run lifecycle cleanup still runs in the finally on the failure path.
     expect(cleanupRun).toHaveBeenCalledTimes(1);
@@ -305,6 +317,42 @@ describe("runJailedScript (shared jailed-run core)", () => {
     await expect(
       runJailedScript(deps, { script: "1", language: "ts", timeoutMs: 25 }),
     ).rejects.toThrow(/timeout/i);
+    expect(killSpy).toHaveBeenCalledWith("SIGKILL");
+    expect(cleanupRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not spawn when the caller abort signal is already closed", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const spawnFn = vi.fn<JailedScriptSpawnFn>(() => makeFakeChild("late\n"));
+    const { deps, cleanupRun } = makeDeps({ spawnFn });
+
+    await expect(
+      runJailedScript(deps, {
+        script: "1",
+        language: "ts",
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(/aborted/i);
+
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(cleanupRun).not.toHaveBeenCalled();
+  });
+
+  it("kills the live jailed child and rejects when the caller aborts", async () => {
+    const controller = new AbortController();
+    const killSpy = vi.fn();
+    const { deps, cleanupRun } = makeDeps({ spawnFn: () => makeSilentChild(killSpy) });
+
+    const pending = runJailedScript(deps, {
+      script: "1",
+      language: "ts",
+      timeoutMs: 30_000,
+      signal: controller.signal,
+    });
+    controller.abort();
+
+    await expect(pending).rejects.toThrow(/aborted/i);
     expect(killSpy).toHaveBeenCalledWith("SIGKILL");
     expect(cleanupRun).toHaveBeenCalledTimes(1);
   });

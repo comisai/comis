@@ -34,8 +34,9 @@ const MOCK_PENDING = {
       toolName: "file_ops",
       action: "file_write",
       params: { path: "/etc/config" },
+      tenantId: "tenant-a",
       agentId: "agent-1",
-      sessionKey: "sess-1",
+      conversationRef: "conversation-a",
       trustLevel: "guest",
       createdAt: Date.now() - 60_000,
       timeoutMs: 300_000,
@@ -49,12 +50,22 @@ const MOCK_PENDING = {
 /* ------------------------------------------------------------------ */
 
 /** Security-specific mock that routes RPC methods to test data. */
-function createSecurityMockRpcClient(callImpl?: (...args: unknown[]) => unknown): RpcClient {
+function createSecurityMockRpcClient(callImpl?: (...args: never[]) => unknown): RpcClient {
   return createMockRpcClient(
     callImpl ??
       (async (method: string) => {
         if (method === "config.read")
-          return { config: { security: structuredClone(MOCK_SECURITY_CONFIG) }, sections: ["security"] };
+          return {
+            config: { tenantId: "tenant-a", security: structuredClone(MOCK_SECURITY_CONFIG) },
+            sections: ["security"],
+          };
+        if (method === "agents.list")
+          return { agents: ["agent-1"] };
+        if (method === "session.list")
+          return {
+            sessions: [{ conversationRef: "conversation-a", agentId: "agent-1" }],
+            total: 1,
+          };
         if (method === "tokens.list")
           return { tokens: structuredClone(MOCK_TOKENS) };
         if (method === "admin.approval.pending")

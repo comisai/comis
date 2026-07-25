@@ -24,35 +24,39 @@
  *      now blocks every new turn. So it sits ABOVE the breaker/degradation
  *      heuristics but BELOW #1 (the frozen misclassification). Keyed on
  *      endReason "spend_exceeded" (frozen fixtures carry it not).
- *   3. breaker_opened_repeated_failure — the 503 root cause: a real transport
+ *   3. execution_step_limit_reached — a local runtime guard exhausted the
+ *      configured call budget. It must out-rank repeated-failure inference
+ *      because each blocked call is recorded as a failure even though no
+ *      provider request was attempted.
+ *   4. breaker_opened_repeated_failure — the 503 root cause: a real transport
  *      failure (HTTP 503 → "overloaded") repeated until the per-tool breaker
  *      opened. The 503 has NO misclassification signal, so it falls through to
  *      here.
- *   3. tool_schema_unsupported — an acute, deterministic
+ *   5. tool_schema_unsupported — an acute, deterministic
  *      provider-schema rejection: upstream of any terminal state (out-ranks
- *      context_exhausted/output_starved) but downstream of the two frozen-fixture
+ *      context_exhausted/output_starved) but downstream of the two established
  *      codes, whose fixtures carry no schema-rejection records (cannot
  *      regress them). Fires only when the one-shot strip-retry did NOT
  *      recover — a recovered repair is evidence, not a verdict.
- *   4. context_bloat / exec_dependency / provider_timeout — three low-risk
+ *   6. context_bloat / exec_dependency / provider_timeout — three low-risk
  *      "insurance" codes that broaden corpus coverage. They never fire on
  *      the two frozen fixtures (the two above match first), so they cannot
  *      regress them.
- *   5. context_exhausted / output_starved — the two NAMED terminal-state
+ *   7. context_exhausted / output_starved — the two NAMED terminal-state
  *      degradation causes. They key on the
  *      metadata-derived `endReason` (threaded onto the signals by the handler),
  *      NOT a tool failure, so they sit LAST: a tool-failure cause is upstream of
  *      the terminal state and out-ranks them. They fire only when the run's
  *      mapped endReason IS the cause, and never on a clean session.
- *   6. prompt_timeout / spend_exceeded —
+ *   8. prompt_timeout / spend_exceeded —
  *      the NAMED terminal latency + SPEND causes, keyed on endReason "timeout" /
  *      "spend_exceeded". Same terminal band as #5 (the endReason keys are mutually
  *      exclusive); every tool-failure cause out-ranks them. prompt_timeout is
  *      numbers-backed from the enriched signal when present; spend_exceeded lives
- *      in the sibling obs-explain-spend-verdict.ts. The frozen 678/503 fixtures
+ *      in the sibling obs-explain-spend-verdict.ts. The established cost and breaker fixtures
  *      carry neither endReason — cannot regress them.
  *
- * The frozen 678/503 fixtures pin codes #1 and #2; every later rule must leave
+ * The established cost and breaker fixtures pin the first two verdicts; every later rule must leave
  * their verdicts unchanged.
  *
  * @module
@@ -71,6 +75,10 @@ import {
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
 import { subagentStuckKilledVerdict } from "./obs-explain-subagent-killed-verdict.js"; // health-monitor-killed sub-agent (sibling — subdir cap)
+import {
+  backgroundPendingVerdict,
+  backgroundRecoveryVerdict,
+} from "./obs-explain-background-pending-verdict.js";
 import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // recall_miss verdict (sibling — subdir cap)
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
@@ -130,7 +138,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //    noise masking the acute kill that now blocks EVERY new turn. So it
   //    out-ranks the breaker/dependency/timeout/degradation heuristics below, but
   //    stays BELOW #1, the frozen misclassification verdict. Keyed strictly on
-  //    endReason "spend_exceeded" (frozen 678/503 fixtures carry it not).
+  //    endReason "spend_exceeded" (the established fixtures do not carry it).
   spendExceededVerdict,
 
   // 2b) subagent_stuck_killed (the health monitor's ADMINISTRATIVE
@@ -138,11 +146,36 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     autonomous kill must out-rank the chronic breaker/degradation symptoms
   //     below, and the kill can even race the run's own completion so the
   //     rollup reads clean. Keyed strictly on the bridged subagentKilled signal
-  //     with killedBy health_monitor (absent on the frozen 678/503 fixtures —
+  //     with killedBy health_monitor (absent on the established fixtures —
   //     cannot regress them; deliberate parent/operator kills return null).
   subagentStuckKilledVerdict,
 
-  // 3) breaker_opened_repeated_failure (503 — real transport failure cascade).
+  backgroundRecoveryVerdict,
+
+  // 3) execution_step_limit_reached. The executor records every blocked call
+  //    as a tool failure, so count-only breaker inference would otherwise
+  //    describe a local resource guard as an upstream outage.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) =>
+        candidate.classifiedFailureBy === "runtime_guard" && candidate.matchedRule === "step_limit",
+    );
+    if (failure === undefined) return null;
+    return {
+      code: "execution_step_limit_reached",
+      detail:
+        "the local execution step limit blocked additional tool calls (endReason=" +
+        (s.endReason ?? "max_steps") +
+        "); no provider request was attempted for the guarded calls",
+      suggestedNextSteps: [
+        "simplify the workflow or use a composite tool that performs the bounded operation in one call",
+        "increase max_steps only when the task legitimately requires more independent calls",
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
+  // 4) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {
     const trippedByEvent = s.breakerOpenedTool !== undefined || s.hasDoNotRetrySignal;
     const tool = breakerTool(s);
@@ -371,7 +404,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //    table (never re-templated here — templating a non-key source name would
   //    render a nonsense knob; the only local
   //    templating is the agents.<id>.promptTimeout.* fallback, a REAL key
-  //    family). Cannot regress the frozen 678/503 fixtures (no prompt_timeout
+  //    family). Cannot regress the established cost and breaker fixtures (no prompt_timeout
   //    records, no endReason "timeout" in them).
   (s) => {
     if (s.endReason !== "timeout") return null;
@@ -429,7 +462,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     // name the cause, suggest the knob FAMILY, invent no numbers.
     return {
       code: "prompt_timeout",
-      detail: "prompt timed out (no enriched timeout record — pre-extension session)",
+      detail: "prompt timed out; no enriched timeout record was captured",
       suggestedNextSteps: [
         `raise agents.${s.agentId ?? "<id>"}.promptTimeout.promptTimeoutMs`,
         "obs.explain depth=full",
@@ -437,7 +470,12 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 9c) recall_miss. A DEGRADED session whose memory recalls ALL
+  // 9c) background_pending. The foreground turn deliberately deferred its
+  //     terminal outcome to promoted work, so incidental recall evidence must
+  //     not replace the pending completion lifecycle as the primary diagnosis.
+  backgroundPendingVerdict,
+
+  // 9d) recall_miss. A DEGRADED session whose memory recalls ALL
   //     returned zero injected memories AND that matched no tool/context/breaker
   //     cause above — the agent ran with no memory context. Low-noise by
   //     construction: requires EVERY recall to have missed (zeroHits === recalls),
@@ -446,7 +484,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     obs-explain-recall-verdict.ts module doc).
   recallMissVerdict,
 
-  // 9d) terminal_drive_opened_without_task — a coding-CLI/terminal drive was opened
+  // 9e) terminal_drive_opened_without_task — a coding-CLI/terminal drive was opened
   //     but never given a task (no terminal_session_send_text). ABOVE the
   //     completed_with_tool_errors catch-all: when a drive is opened-but-untasked, a
   //     stray failure during the stall (e.g. reading a directory → EISDIR) is
@@ -454,7 +492,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     never fires on a non-terminal session (no 678/503 regression). Sibling file.
   terminalDriveNoTaskVerdict,
 
-  // 9e) terminal_drive_evicted — a durable drive was reaped by the idle-TTL or
+  // 9f) terminal_drive_evicted — a durable drive was reaped by the idle-TTL or
   //     wall-clock cap, cutting a (possibly still-working) autonomous drive short. AFTER
   //     9d: a drive opened-but-never-tasked THEN idle-reaped is rooted in the no-task
   //     stall (the eviction is its consequence); ABOVE the catch-all: a reaper kill is a
@@ -463,12 +501,12 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     Keys only on terminalDriveEvicted (absent on 678/503), so no regression. Sibling.
   terminalDriveEvictedVerdict,
 
-  // 9f) orchestrate_failed — an orchestrate run (a jailed child script driving tools
+  // 9g) orchestrate_failed — an orchestrate run (a jailed child script driving tools
   //     through the capability socket) exited non-zero, or a tool.invoke inside the
   //     jail was denied by the run's attenuated lease. ABOVE the
   //     completed_with_tool_errors catch-all: a failed run is a specific terminal
   //     cause, more root than "some tools errored" (a stray failure during the run is
-  //     incidental). Keys only on s.orchestrate (absent on the frozen 678/503
+  //     incidental). Keys only on s.orchestrate (absent on the established
   //     fixtures — they carry no orchestrate records), so it cannot regress them.
   //     Sibling file.
   orchestrateFailedVerdict,
@@ -509,11 +547,16 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   // 13) outcome_unresolved (LOWEST-priority, BENIGN, the
   //     generic learning catch-all). A finished trajectory the learning shadow saw
   //     but where NO signal tier resolved an outcome AND neither skill verdict
-  //     fired. Defer ≠ Retry: dead-last (every acute cause + the two skill verdicts
-  //     out-rank it). Absent/resolved learning block ⇒ no verdict (no 678/503
-  //     fixture regression).
+  //     fired. An authoritative successful terminal outcome also suppresses this
+  //     advisory: a shadow observation cannot overrule the durable completion.
+  //     Defer ≠ Retry: dead-last (every acute cause + the two skill verdicts
+  //     out-rank it). Absent/resolved learning block ⇒ no verdict.
   (s) => {
-    if (s.learning === undefined || s.learning.outcomeResolved) return null;
+    if (
+      s.learning === undefined
+      || s.learning.outcomeResolved
+      || s.endReason === "success"
+    ) return null;
     return {
       code: "outcome_unresolved",
       detail:

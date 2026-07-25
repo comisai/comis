@@ -4,39 +4,34 @@ import type { IcSessionListView } from "./session-list.js";
 import type { ApiClient } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { SessionListItem } from "../api/types/index.js";
+import { createMockRpcClient } from "../test-support/mock-rpc-client.js";
 
 // Side-effect import to register custom element
 import "./session-list.js";
 
 const testSessions: SessionListItem[] = [
   {
-    sessionKey: "abc12345",
+    conversationRef: "abc12345",
     agentId: "default",
-    userId: "user1",
-    channelId: "ch1",
-    kind: "telegram",
+    kind: "dm",
     messageCount: 47,
     totalTokens: 23400,
     createdAt: Date.now() - 7200000,
     updatedAt: Date.now() - 3600000,
   },
   {
-    sessionKey: "def67890",
+    conversationRef: "def67890",
     agentId: "default",
-    userId: "user2",
-    channelId: "ch2",
-    kind: "discord",
+    kind: "group",
     messageCount: 12,
     totalTokens: 8100,
     createdAt: Date.now() - 18000000,
     updatedAt: Date.now() - 7200000,
   },
   {
-    sessionKey: "ghi11223",
+    conversationRef: "ghi11223",
     agentId: "support",
-    userId: "user3",
-    channelId: "ch3",
-    kind: "slack",
+    kind: "sub-agent",
     messageCount: 103,
     totalTokens: 67200,
     createdAt: Date.now() - 86400000,
@@ -71,6 +66,19 @@ function createMockApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
   } as ApiClient;
 }
 
+function createSessionRpcClient(searchResults: unknown[] = []): RpcClient {
+  return createMockRpcClient(undefined, {
+    call: vi.fn(async (method: string) => {
+      if (method === "config.read") return { config: { tenantId: "tenant-a" } };
+      if (method === "agents.list") return { agents: ["default"] };
+      if (method === "session.search") {
+        return { mode: "search", results: searchResults, total: searchResults.length };
+      }
+      throw new Error(`Unexpected method: ${method}`);
+    }) as never,
+  });
+}
+
 async function createElement<T extends HTMLElement>(
   tag: string,
   props?: Record<string, unknown>,
@@ -98,17 +106,22 @@ describe("IcSessionListView", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     // Wait for async load to complete
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
-    expect(api.listSessions).toHaveBeenCalled();
+    expect(api.listSessions).toHaveBeenCalledWith({
+      tenantId: "tenant-a",
+      agentId: "default",
+    });
   });
 
   it("renders ic-session-list component after loading", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -120,6 +133,7 @@ describe("IcSessionListView", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -131,6 +145,7 @@ describe("IcSessionListView", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -141,24 +156,26 @@ describe("IcSessionListView", () => {
     expect(agentSelect).toBeTruthy();
   });
 
-  it("renders channel filter dropdown", async () => {
+  it("renders kind filter dropdown", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
     const selects = el.shadowRoot?.querySelectorAll("select");
-    const channelSelect = Array.from(selects ?? []).find((s) =>
-      s.getAttribute("aria-label")?.includes("channel"),
+    const kindSelect = Array.from(selects ?? []).find((s) =>
+      s.getAttribute("aria-label")?.includes("kind"),
     );
-    expect(channelSelect).toBeTruthy();
+    expect(kindSelect).toBeTruthy();
   });
 
   it("displays sessions in the table", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -166,10 +183,11 @@ describe("IcSessionListView", () => {
     expect(sessionList?.sessions).toHaveLength(3);
   });
 
-  it("search filters sessions by key/agent/channel text match", async () => {
+  it("search filters sessions by reference agent or kind text", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -188,6 +206,7 @@ describe("IcSessionListView", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -201,27 +220,29 @@ describe("IcSessionListView", () => {
     expect(sessionList?.sessions[0].agentId).toBe("support");
   });
 
-  it("channel filter narrows sessions to matching channel", async () => {
+  it("kind filter narrows sessions to matching kind", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
 
-    (el as any)._channelFilter = "telegram";
+    (el as any)._kindFilter = "dm";
     (el as any)._applyFilters();
     await el.updateComplete;
 
     const sessionList = el.shadowRoot?.querySelector("ic-session-list") as any;
     expect(sessionList?.sessions).toHaveLength(1);
-    expect(sessionList?.sessions[0].kind).toBe("telegram");
+    expect(sessionList?.sessions[0].kind).toBe("dm");
   });
 
   it("session click navigates to session detail route", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -237,6 +258,7 @@ describe("IcSessionListView", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -249,6 +271,7 @@ describe("IcSessionListView", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -265,6 +288,7 @@ describe("IcSessionListView", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -273,13 +297,18 @@ describe("IcSessionListView", () => {
     (el as any)._confirmAction = "reset";
     await (el as any)._handleConfirm();
 
-    expect(api.resetSessionsBulk).toHaveBeenCalledWith(["abc12345"]);
+    expect(api.resetSessionsBulk).toHaveBeenCalledWith([{
+      tenantId: "tenant-a",
+      agentId: "default",
+      conversationRef: "abc12345",
+    }]);
   });
 
   it("bulk export calls exportSessionsBulk and creates download", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -295,7 +324,11 @@ describe("IcSessionListView", () => {
     (el as any)._selectedKeys = ["abc12345"];
     await (el as any)._handleBulkExport();
 
-    expect(api.exportSessionsBulk).toHaveBeenCalledWith(["abc12345"]);
+    expect(api.exportSessionsBulk).toHaveBeenCalledWith([{
+      tenantId: "tenant-a",
+      agentId: "default",
+      conversationRef: "abc12345",
+    }]);
 
     vi.unstubAllGlobals();
   });
@@ -304,6 +337,7 @@ describe("IcSessionListView", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -319,13 +353,17 @@ describe("IcSessionListView", () => {
 
     // Confirm the action
     await (el as any)._handleConfirm();
-    expect(api.deleteSessionsBulk).toHaveBeenCalledWith(["abc12345", "def67890"]);
+    expect(api.deleteSessionsBulk).toHaveBeenCalledWith([
+      { tenantId: "tenant-a", agentId: "default", conversationRef: "abc12345" },
+      { tenantId: "tenant-a", agentId: "default", conversationRef: "def67890" },
+    ]);
   });
 
   it("displays page title 'Sessions'", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -338,6 +376,7 @@ describe("IcSessionListView", () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -353,17 +392,17 @@ describe("IcSessionListView", () => {
     const sessionsWithStatus: SessionListItem[] = [
       {
         ...testSessions[0],
-        sessionKey: "active-session",
+        conversationRef: "active-session",
         updatedAt: Date.now() - 60000, // 1 min ago -> active
       },
       {
         ...testSessions[1],
-        sessionKey: "idle-session",
+        conversationRef: "idle-session",
         updatedAt: Date.now() - 30 * 60 * 1000, // 30 min ago -> idle
       },
       {
         ...testSessions[2],
-        sessionKey: "expired-session",
+        conversationRef: "expired-session",
         updatedAt: Date.now() - 2 * 60 * 60 * 1000, // 2 hours ago -> expired
       },
     ];
@@ -373,6 +412,7 @@ describe("IcSessionListView", () => {
     });
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
@@ -384,21 +424,14 @@ describe("IcSessionListView", () => {
 
     const sessionList = el.shadowRoot?.querySelector("ic-session-list") as any;
     expect(sessionList?.sessions).toHaveLength(1);
-    expect(sessionList?.sessions[0].sessionKey).toBe("active-session");
+    expect(sessionList?.sessions[0].conversationRef).toBe("active-session");
   });
 
   it("content search calls session.search RPC when rpcClient available", async () => {
     const api = createMockApiClient();
-    const mockRpcClient = {
-      call: vi.fn().mockResolvedValue([
-        { sessionKey: "abc12345", agentId: "default", channelType: "telegram", snippet: "hello", score: 0.9, timestamp: Date.now() },
-      ]),
-      connect: vi.fn(),
-      disconnect: vi.fn(),
-      onStatusChange: vi.fn().mockReturnValue(() => {}),
-      onNotification: vi.fn().mockReturnValue(() => {}),
-      status: "connected" as const,
-    } as unknown as RpcClient;
+    const mockRpcClient = createSessionRpcClient([
+      { conversationRef: "abc12345", agentId: "default", channelType: "dm", snippet: "hello", score: 0.9, timestamp: Date.now() },
+    ]);
 
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
@@ -414,24 +447,29 @@ describe("IcSessionListView", () => {
     await new Promise((r) => setTimeout(r, 350));
     await el.updateComplete;
 
-    expect(mockRpcClient.call).toHaveBeenCalledWith("session.search", { query: "hello", limit: 50 });
+    expect(mockRpcClient.call).toHaveBeenCalledWith("session.search", {
+      tenant_id: "tenant-a",
+      agent_id: "default",
+      query: "hello",
+      limit: 50,
+    });
 
     // After RPC returns, filteredSessions should only contain the matched session
     const sessionList = el.shadowRoot?.querySelector("ic-session-list") as any;
     expect(sessionList?.sessions).toHaveLength(1);
-    expect(sessionList?.sessions[0].sessionKey).toBe("abc12345");
+    expect(sessionList?.sessions[0].conversationRef).toBe("abc12345");
   });
 
   it("falls back to client-side search when rpcClient unavailable", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionListView>("ic-session-list-view", {
       apiClient: api,
-      // No rpcClient
+      rpcClient: createSessionRpcClient(),
     });
     await new Promise((r) => setTimeout(r, 10));
     await el.updateComplete;
 
-    // Trigger search without rpcClient -- should apply client-side filter immediately
+    (el as unknown as { rpcClient: RpcClient | null }).rpcClient = null;
     (el as any)._handleSearch(new CustomEvent("search", { detail: "support" }));
     await el.updateComplete;
 

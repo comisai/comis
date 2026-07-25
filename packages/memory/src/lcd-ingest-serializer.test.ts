@@ -6,14 +6,14 @@
  * The serializer is the integrity boundary the deferred compaction requires: once the
  * afterTurn leaf/condense compaction is DEFERRED off the turn, a detached
  * compaction write can race the NEXT turn's synchronous ingest on the same
- * conversation's `(conversation_id, seq)` index. Routing BOTH writers through a
+ * conversation's `(conversation_ref, seq)` index. Routing BOTH writers through a
  * per-conversation `PQueue({ concurrency: 1 })` makes them strictly one-at-a-time
  * so they can never interleave. Different conversations keep their own queue, so
  * they run concurrently (per-conversation, not a global lock).
  *
  * Contracts proven RED → GREEN:
- *  - same conversationId ⇒ strictly serialized (no overlap window);
- *  - different conversationIds ⇒ concurrent (a fast op on B finishes before a
+ *  - same conversationRef ⇒ strictly serialized (no overlap window);
+ *  - different conversationRefs ⇒ concurrent (a fast op on B finishes before a
  *    slow op on A even though A was enqueued first);
  *  - FIFO + value pass-through within one conversation;
  *  - a rejecting op does NOT wedge the queue for that conversation (it recovers).
@@ -32,7 +32,7 @@ async function yieldTicks(ticks: number): Promise<void> {
 }
 
 describe("createIngestSerializer — per-conversation single-flight", () => {
-  it("two operations enqueued for the same conversationId run strictly one-at-a-time (no overlap)", async () => {
+  it("two operations enqueued for the same conversationRef run strictly one-at-a-time (no overlap)", async () => {
     const serializer = createIngestSerializer();
     const events: string[] = [];
 
@@ -56,7 +56,7 @@ describe("createIngestSerializer — per-conversation single-flight", () => {
     expect(events).toEqual(["a-start", "a-end", "b-start", "b-end"]);
   });
 
-  it("operations for different conversationIds run concurrently (the serializer is per-conversation, not global)", async () => {
+  it("operations for different conversationRefs run concurrently (the serializer is per-conversation, not global)", async () => {
     const serializer = createIngestSerializer();
     const completed: string[] = [];
 

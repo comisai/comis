@@ -7,7 +7,14 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ok, err } from "@comis/shared";
-import type { DeliveryQueuePort, DeliveryQueueEntry, DeliveryAdapter } from "@comis/core";
+import {
+  AMBIGUOUS_SEND_OUTCOME_ERROR,
+  EXPLICIT_SEND_REJECTION_ERROR,
+  type DeliveryQueuePort,
+  type DeliveryQueueEntry,
+  type DeliveryAdapter,
+  ConversationRefSchema,
+} from "@comis/core";
 import type { DeliveryMirrorPort, DeliveryMirrorEntry, PluginPort, PluginRegistryApi } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
@@ -23,6 +30,14 @@ function makeEntry(overrides: Partial<DeliveryQueueEntry> = {}): DeliveryQueueEn
     channelType: "telegram",
     channelId: "chat-1",
     tenantId: "default",
+    agentId: "agent-default",
+    conversationRef: ConversationRefSchema.parse(`cv_${"a".repeat(43)}`),
+    destinationEndpoint: {
+      channelType: "telegram",
+      channelInstanceId: "test-instance",
+      conversationId: "chat-1",
+      conversationKind: "direct",
+    },
     optionsJson: "{}",
     origin: "test",
     status: "pending",
@@ -54,6 +69,7 @@ function createMockQueue(): DeliveryQueuePort & {
     nackCalls,
     enqueue: vi.fn(async () => ok("new-id")),
     enqueueInFlight: vi.fn(async () => ok("new-id")),
+    claim: vi.fn(async () => ok(true)),
     ack: vi.fn(async (id: string, messageId: string) => { ackCalls.push({ id, messageId }); return ok(undefined); }),
     nack: vi.fn(async (id: string, error: string, nextRetryAt: number) => { nackCalls.push({ id, error, nextRetryAt }); return ok(undefined); }),
     fail: vi.fn(async (id: string, error: string) => { failCalls.push({ id, error }); return ok(undefined); }),
@@ -68,6 +84,7 @@ function createMockQueue(): DeliveryQueuePort & {
 function createMockAdapter(channelType: string, sendResults: Array<{ ok: true; value: string } | { ok: false; error: Error }> = []): DeliveryAdapter {
   let callIndex = 0;
   return {
+    channelId: "test-instance",
     channelType,
     sendMessage: vi.fn(async () => {
       const result = sendResults[callIndex] ?? { ok: true as const, value: `msg-${callIndex}` };
@@ -91,6 +108,7 @@ function createMockMirror(): DeliveryMirrorPort & {
     record: vi.fn(async (entry: Record<string, unknown>) => { recordCalls.push(entry); return ok("test-id"); }),
     pending: vi.fn(async () => ok([] as DeliveryMirrorEntry[])),
     acknowledge: vi.fn(async () => ok(undefined)),
+    clearSession: vi.fn(async () => ok(0)),
     pruneOld: vi.fn(async () => ok(0)),
   };
 }
@@ -335,19 +353,50 @@ describe("setupDeliveryQueue", () => {
       await result.drainAndStart();
 
       expect(mockSqliteQueue.failCalls).toHaveLength(1);
-      expect(mockSqliteQueue.failCalls[0]?.error).toContain("No adapter for channel type");
+      expect(mockSqliteQueue.failCalls[0]?.error).toBe("delivery endpoint unavailable");
 
       result.shutdown();
     });
 
-    it("nacks transient errors with backoff", async () => {
+    it("parks a queued endpoint for a different adapter instance", async () => {
+      const entry = makeEntry({
+        id: "other-instance",
+        destinationEndpoint: {
+          channelType: "telegram",
+          channelInstanceId: "account-a",
+          conversationId: "chat-1",
+          threadId: "thread-a",
+          conversationKind: "shared",
+        },
+        optionsJson: JSON.stringify({ threadId: "thread-a" }),
+      });
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValueOnce(ok([entry]));
+      const adapter = createMockAdapter("telegram");
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig(),
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        channelAdapters: new Map([["telegram", adapter]]),
+      });
+
+      await result.drainAndStart();
+
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+      expect(mockSqliteQueue.failCalls).toEqual([
+        { id: "other-instance", error: "delivery endpoint unavailable" },
+      ]);
+      result.shutdown();
+    });
+
+    it("parks a network error instead of scheduling a duplicate-prone retry", async () => {
       const entries = [
         makeEntry({ id: "e1", channelType: "telegram", attemptCount: 1 }),
       ];
       vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValueOnce(ok(entries));
 
       const adapter = createMockAdapter("telegram", [
-        { ok: false, error: new Error("network timeout") }, // transient
+        { ok: false, error: new Error("network timeout") },
       ]);
       const adapters = new Map<string, DeliveryAdapter>([["telegram", adapter]]);
       const eventBus = createMockEventBus();
@@ -362,10 +411,83 @@ describe("setupDeliveryQueue", () => {
 
       await result.drainAndStart();
 
+      expect(mockSqliteQueue.nackCalls).toHaveLength(0);
+      expect(mockSqliteQueue.failCalls).toEqual([
+        { id: "e1", error: AMBIGUOUS_SEND_OUTCOME_ERROR },
+      ]);
+
+      result.shutdown();
+    });
+
+    it("nacks an explicit platform rate-limit rejection with backoff", async () => {
+      const entries = [
+        makeEntry({ id: "e1", channelType: "telegram", attemptCount: 1 }),
+      ];
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValueOnce(ok(entries));
+
+      const adapter = createMockAdapter("telegram", [
+        { ok: false, error: new Error("429 too many requests") },
+      ]);
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig(),
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        channelAdapters: new Map([["telegram", adapter]]),
+      });
+
+      await result.drainAndStart();
+
       expect(mockSqliteQueue.nackCalls).toHaveLength(1);
       expect(mockSqliteQueue.nackCalls[0]?.id).toBe("e1");
+      expect(mockSqliteQueue.nackCalls[0]?.error).toBe(EXPLICIT_SEND_REJECTION_ERROR);
       expect(mockSqliteQueue.nackCalls[0]?.nextRetryAt).toBeGreaterThan(Date.now() - 1000);
 
+      result.shutdown();
+    });
+
+    it("sanitizes a pending-row storage error before logging it", async () => {
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValueOnce(
+        err(new Error("Bearer secret-value")),
+      );
+      const logger = createMockLogger();
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig(),
+        eventBus: createMockEventBus(),
+        logger,
+        channelAdapters: new Map(),
+      });
+
+      await result.drainAndStart();
+
+      const serializedWarnings = JSON.stringify(
+        (logger.warn as ReturnType<typeof vi.fn>).mock.calls,
+      );
+      expect(serializedWarnings).not.toContain("secret-value");
+      expect(serializedWarnings).toContain("[REDACTED]");
+      result.shutdown();
+    });
+
+    it("does not call the platform when another drainer already claimed the row", async () => {
+      const entry = makeEntry({ id: "claimed-elsewhere", channelType: "telegram" });
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValueOnce(ok([entry]));
+      vi.mocked(mockSqliteQueue.claim).mockResolvedValueOnce(ok(false));
+      const adapter = createMockAdapter("telegram");
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig(),
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        channelAdapters: new Map([["telegram", adapter]]),
+      });
+
+      await result.drainAndStart();
+
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+      expect(mockSqliteQueue.ackCalls).toHaveLength(0);
+      expect(mockSqliteQueue.nackCalls).toHaveLength(0);
+      expect(mockSqliteQueue.failCalls).toHaveLength(0);
       result.shutdown();
     });
 
@@ -573,6 +695,7 @@ describe("setupDeliveryQueue", () => {
       const sendPromise = new Promise<{ ok: true; value: string }>(() => { /* never resolves */ });
       let sendCallCount = 0;
       const adapter: DeliveryAdapter = {
+        channelId: "test-instance",
         channelType: "telegram",
         sendMessage: vi.fn(async () => {
           sendCallCount++;
@@ -838,11 +961,21 @@ describe("setupDeliveryQueue", () => {
       const now = Date.now();
       const seedRow = (id: string, status: "pending" | "in_flight"): void => {
         db.prepare(
-          `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
+          `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, agent_id,
+                                         conversation_ref, destination_endpoint, options_json, origin,
                                          status, attempt_count, max_attempts,
                                          created_at, scheduled_at, expire_at)
-           VALUES (?, ?, 'telegram', 'ch-1', 'def', '{}', 'channel', ?, 0, 5, ?, ?, ?)`,
-        ).run(id, `msg-${id}`, status, now, now, now + 60_000);
+           VALUES (?, ?, 'telegram', 'ch-1', 'def', 'agent-a', ?, ?, '{}', 'channel', ?, 0, 5, ?, ?, ?)`,
+        ).run(
+          id,
+          `msg-${id}`,
+          `cv_${"a".repeat(43)}`,
+          JSON.stringify({ channelType: "telegram", channelInstanceId: "test-instance", conversationId: "ch-1", conversationKind: "direct" }),
+          status,
+          now,
+          now,
+          now + 60_000,
+        );
       };
 
       // 100 in_flight rows that the drainer MUST NOT pick.
@@ -870,6 +1003,7 @@ describe("setupDeliveryQueue", () => {
       // Spy adapter that records every entryId it was asked to send.
       const sentIds: string[] = [];
       const adapter: DeliveryAdapter = {
+        channelId: "test-instance",
         channelType: "telegram",
         sendMessage: vi.fn(async (_channelId: string, text: string) => {
           // Recover the seeded id from the text body.
@@ -931,8 +1065,8 @@ describe("setupDeliveryQueue", () => {
         channelType: "telegram",
         text: "agent reply",
         tenantId: "tenant-x",
+        agentId: "agent-1",
         traceId: "trace-abc",
-        optionsJson: JSON.stringify({ agentId: "agent-1" }),
       });
       const queue = createMockQueue();
       vi.mocked(queue.pendingEntries).mockResolvedValueOnce(ok([entry]));
@@ -956,6 +1090,7 @@ describe("setupDeliveryQueue", () => {
         tenantId: "tenant-x",
         agentId: "agent-1",
         sessionId: "trace-abc",
+        participantId: undefined,
       });
     });
 
@@ -1003,18 +1138,17 @@ describe("setupDeliveryQueue", () => {
       expect(recordOutboundMessage).not.toHaveBeenCalled();
     });
 
-    it("records a NON-'default' agentId from optionsJson (real agent, never the tenantId fallback)", async () => {
+    it("records a non-default agent from the structured queue authority", async () => {
       const { drainDeliveryQueue } = await import("./setup-delivery.js");
-      // The enqueue (delivery-service.ts) persists the request-context agentId
-      // into optionsJson. A multi-agent daemon's agent (mldag) differs from the
-      // tenant ("default") — the drain must attribute to mldag, not the tenant.
+      // A multi-agent daemon's agent differs from the tenant; the structured
+      // queue column is the authority source for drain attribution.
       const entry = makeEntry({
         id: "e1",
         channelType: "telegram",
         text: "agent reply",
         tenantId: "default",
+        agentId: "mldag",
         traceId: "trace-abc",
-        optionsJson: JSON.stringify({ agentId: "mldag" }),
       });
       const queue = createMockQueue();
       vi.mocked(queue.pendingEntries).mockResolvedValueOnce(ok([entry]));
@@ -1038,19 +1172,18 @@ describe("setupDeliveryQueue", () => {
         tenantId: "default",
         agentId: "mldag",
         sessionId: "trace-abc",
+        participantId: undefined,
       });
     });
 
-    it("fail-closed: an outbound whose optionsJson carries NO agentId is NOT mapped (never falls back to the tenantId)", async () => {
+    it("ignores optionsJson agent metadata and uses the required queue authority", async () => {
       const { drainDeliveryQueue } = await import("./setup-delivery.js");
-      // optionsJson without agentId (e.g. a pre-executor/non-agent send). The
-      // capture is fail-closed: rather than mis-attribute under the
-      // tenantId, the drain skips the mapping entirely.
       const entry = makeEntry({
         id: "e1",
         channelType: "telegram",
         text: "no-agent send",
         tenantId: "default",
+        agentId: "agent-structured",
         traceId: "trace-xyz",
         optionsJson: JSON.stringify({ replyTo: "m-1" }),
       });
@@ -1070,7 +1203,13 @@ describe("setupDeliveryQueue", () => {
         recordOutboundMessage,
       });
 
-      expect(recordOutboundMessage).not.toHaveBeenCalled();
+      expect(recordOutboundMessage).toHaveBeenCalledWith("platform-msg-8", {
+        traceId: "trace-xyz",
+        tenantId: "default",
+        agentId: "agent-structured",
+        sessionId: "trace-xyz",
+        participantId: undefined,
+      });
     });
   });
 });
@@ -1151,7 +1290,17 @@ describe("setupDeliveryMirror", () => {
       durationMs: 50,
       origin: "agent",
     };
-    const ctx = { sessionKey: "agent-1:telegram:chat-1" };
+    const conversationRef = ConversationRefSchema.parse(`cv_${"b".repeat(43)}`);
+    const destinationEndpoint = {
+      channelType: "telegram",
+      channelInstanceId: "test-instance",
+      conversationId: "chat-1",
+      conversationKind: "direct" as const,
+    };
+    const ctx = {
+      deliveryAuthority: { tenantId: "tenant-a", agentId: "agent-1", conversationRef },
+      destinationEndpoint,
+    };
 
     await hookHandler!(event, ctx);
 
@@ -1159,7 +1308,10 @@ describe("setupDeliveryMirror", () => {
     expect(mockSqliteMirror.record).toHaveBeenCalledTimes(1);
     const recordCall = mockSqliteMirror.recordCalls[0];
     expect(recordCall).toMatchObject({
-      sessionKey: "agent-1:telegram:chat-1",
+      tenantId: "tenant-a",
+      agentId: "agent-1",
+      conversationRef,
+      destinationEndpoint,
       text: "Hello world",
       mediaUrls: [],
       channelType: "telegram",
@@ -1167,7 +1319,7 @@ describe("setupDeliveryMirror", () => {
       origin: "agent",
     });
     // Verify idempotencyKey is a string with expected format
-    expect(recordCall!.idempotencyKey).toMatch(/^agent-1:telegram:chat-1:[a-f0-9]{16}:\d+$/);
+    expect(recordCall!.idempotencyKey).toMatch(/^cv_[A-Za-z0-9_-]{43}:[a-f0-9]{16}:\d+$/);
 
     result.shutdown();
   });

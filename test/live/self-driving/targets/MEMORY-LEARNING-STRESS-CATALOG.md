@@ -342,6 +342,11 @@ drive the A→B→reuse loop (≥2 corroborating successful episodes from distin
 openings** → `cron.run Reflection` → reuse on a rotated `SIM_VARIANT`). Observe via the offline oracle
 (`db.mjs` / `comis explain` / the `reflect:*` funnel), never the chat reply.
 
+For a single accumulating-store run across all 14 workloads, set
+`agents.default.learning.reflect.maxProcedureDocsSurfaced` to at least `14` (`20` is the campaign default).
+The selector intentionally prefers higher-proof procedures; an undersized surface can therefore hide a
+new candidate behind earlier active skills and make a valid transfer run unable to receive reuse credit.
+
 The `dir ↔ MCP-server ↔ skill ↔ primary-stressor` map is in [`../sim/README.md`](../sim/README.md); the
 `adaptive-threat-hunting.md` pinned spec (STEP-1 impl-state anchors, use-case→engine mapping, Must-pass
 REFL-1..5 / INV-1..6 predicates with oracles, Known traps) is the template for a *new* workload — copy

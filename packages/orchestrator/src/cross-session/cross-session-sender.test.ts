@@ -1,13 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ok, type Result } from "@comis/shared";
-import type {
-  OutwardSendLedgerPort,
-  OutwardSendRecord,
-  OutwardSendBeginInput,
-  DurableRunPort,
-  SessionKey,
-} from "@comis/core";
+import { err, ok } from "@comis/shared";
+import { createConversationLocator, conversationScopeToSessionKey, formatSessionKey } from "@comis/core";
 import {
   createCrossSessionSender,
   type CrossSessionSenderDeps,
@@ -18,27 +12,77 @@ import {
 // Mock helpers
 // ---------------------------------------------------------------------------
 
+function conversation(userId: string, channelId: string, agentId = "default") {
+  const endpoint = {
+    channelType: "test",
+    channelInstanceId: "cross-session-test",
+    conversationId: channelId,
+    conversationKind: "direct" as const,
+  };
+  const locator = createConversationLocator({
+    tenantId: "default",
+    agentId,
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint,
+      principalId: userId,
+    },
+  });
+  if (!locator.ok) throw locator.error;
+  return locator.value;
+}
+
+const TARGET_ONE = conversation("user1", "channel1");
+const TARGET_TWO = conversation("user2", "channel2");
+const TARGET_THREE = conversation("user3", "channel3");
+const PARENT_TWO = conversation("user2", "channel2", "parent-agent");
+const PARENT_TWO_ENDPOINT = {
+  channelType: "discord",
+  channelInstanceId: "cross-session-test",
+  conversationId: "guild-channel-42",
+  conversationKind: "shared" as const,
+};
+const QUERY_ONE = { tenantId: "default", agentId: "default", conversationRef: TARGET_ONE.conversationRef };
+const QUERY_TWO = { tenantId: "default", agentId: "default", conversationRef: TARGET_TWO.conversationRef };
+const QUERY_THREE = { tenantId: "default", agentId: "default", conversationRef: TARGET_THREE.conversationRef };
+const projectedTargetOne = conversationScopeToSessionKey(TARGET_ONE.conversationScope);
+if (!projectedTargetOne.ok) throw projectedTargetOne.error;
+const TARGET_ONE_DISPLAY = formatSessionKey(projectedTargetOne.value);
+
 function createMockDeps(): CrossSessionSenderDeps {
-  const sessionData = new Map<string, { messages: unknown[]; metadata: Record<string, unknown> }>();
+  const sessionData = new Map<string, ReturnType<typeof makeSessionData>>();
+
+  function makeSessionData(locator: typeof TARGET_ONE, messages: unknown[], createdAt: number) {
+    return {
+      ...locator,
+      messages,
+      metadata: { createdAt },
+      createdAt,
+      updatedAt: createdAt,
+    };
+  }
 
   // Pre-populate a target session
-  sessionData.set("default:user1:channel1", {
-    messages: [{ role: "user", content: "hello", timestamp: 1000 }],
-    metadata: { createdAt: 1000 },
-  });
+  sessionData.set(TARGET_ONE.conversationRef, makeSessionData(
+    TARGET_ONE,
+    [{ role: "user", content: "hello", timestamp: 1000 }],
+    1000,
+  ));
 
   // Pre-populate a second session for ping-pong
-  sessionData.set("default:user2:channel2", {
-    messages: [],
-    metadata: { createdAt: 2000 },
-  });
+  sessionData.set(TARGET_TWO.conversationRef, makeSessionData(TARGET_TWO, [], 2000));
 
   return {
     sessionStore: {
-      loadByFormattedKey: vi.fn((key: string) => sessionData.get(key)),
-      save: vi.fn((key, messages, metadata) => {
-        const formatted = `${key.tenantId}:${key.userId}:${key.channelId}`;
-        sessionData.set(formatted, { messages, metadata });
+      loadByRef: vi.fn((_scope, conversationRef) => ok(sessionData.get(conversationRef))),
+      save: vi.fn((scope, messages, metadata) => {
+        const locator = scope.agentId === TARGET_ONE.conversationScope.agentId
+          && scope.partition.kind === "endpoint-conversation-principal"
+          && scope.partition.principalId === "user1"
+          ? TARGET_ONE
+          : TARGET_TWO;
+        sessionData.set(locator.conversationRef, makeSessionData(locator, messages, Number(metadata.createdAt ?? 0)));
+        return ok(undefined);
       }),
     },
     executeInSession: vi.fn().mockResolvedValue({
@@ -75,9 +119,10 @@ describe("createCrossSessionSender", () => {
   it("fire-and-forget injects message and returns immediately", async () => {
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "cross-session hello",
       mode: "fire-and-forget",
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
     };
 
@@ -105,9 +150,10 @@ describe("createCrossSessionSender", () => {
   it("wait mode executes target and returns response", async () => {
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "need info",
       mode: "wait",
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
     };
 
@@ -123,7 +169,8 @@ describe("createCrossSessionSender", () => {
     expect(deps.executeInSession).toHaveBeenCalledTimes(1);
     expect(deps.executeInSession).toHaveBeenCalledWith(
       "default",
-      { tenantId: "default", userId: "user1", channelId: "channel1" },
+      expect.anything(),
+      TARGET_ONE,
       "need info",
     );
   });
@@ -134,10 +181,11 @@ describe("createCrossSessionSender", () => {
   it("ping-pong mode completes N turns", async () => {
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "start conversation",
       mode: "ping-pong",
       maxTurns: 2,
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
     };
 
@@ -163,9 +211,10 @@ describe("createCrossSessionSender", () => {
 
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "do something",
       mode: "wait",
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
       announceChannelType: "telegram",
       announceChannelId: "chat123",
@@ -185,9 +234,10 @@ describe("createCrossSessionSender", () => {
   it("self-targeting in wait mode throws deadlock error", async () => {
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "talk to myself",
       mode: "wait",
+      caller: QUERY_ONE,
       callerSessionKey: "default:user1:channel1",
     };
 
@@ -202,9 +252,10 @@ describe("createCrossSessionSender", () => {
   it("self-targeting in fire-and-forget is allowed", async () => {
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "note to self",
       mode: "fire-and-forget",
+      caller: QUERY_ONE,
       callerSessionKey: "default:user1:channel1",
     };
 
@@ -239,10 +290,11 @@ describe("createCrossSessionSender", () => {
 
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "start",
       mode: "ping-pong",
       maxTurns: 5,
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
     };
 
@@ -263,9 +315,10 @@ describe("createCrossSessionSender", () => {
   it("announce sends to channel with correct params", async () => {
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "question",
       mode: "wait",
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
       announceChannelType: "discord",
       announceChannelId: "guild-channel-42",
@@ -285,15 +338,16 @@ describe("createCrossSessionSender", () => {
     const sender = createCrossSessionSender(deps);
 
     await sender.send({
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "hello",
       mode: "fire-and-forget",
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
     });
 
     expect(deps.eventBus.emit).toHaveBeenCalledWith("session:cross_send", expect.objectContaining({
       fromSessionKey: "default:user2:channel2",
-      toSessionKey: "default:user1:channel1",
+      toSessionKey: TARGET_ONE_DISPLAY,
       mode: "fire-and-forget",
     }));
   });
@@ -302,9 +356,10 @@ describe("createCrossSessionSender", () => {
     const sender = createCrossSessionSender(deps);
 
     await sender.send({
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "hello",
       mode: "wait",
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
     });
 
@@ -317,10 +372,11 @@ describe("createCrossSessionSender", () => {
     const sender = createCrossSessionSender(deps);
 
     await sender.send({
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "ping",
       mode: "ping-pong",
       maxTurns: 2,
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
     });
 
@@ -341,118 +397,33 @@ describe("createCrossSessionSender", () => {
   // -----------------------------------------------------------------------
   // Error cases
   // -----------------------------------------------------------------------
-  it("throws when target session key is invalid", async () => {
+  it("propagates a typed target conversation lookup failure", async () => {
+    vi.mocked(deps.sessionStore.loadByRef).mockReturnValue(err(new Error("target lookup failed")) as never);
     const sender = createCrossSessionSender(deps);
 
     await expect(
       sender.send({
-        targetSessionKey: "",
+        target: QUERY_ONE,
         text: "hello",
         mode: "fire-and-forget",
       }),
-    ).rejects.toThrow("Invalid session key");
+    ).rejects.toThrow("target lookup failed");
   });
 
-  it("throws when target session not found", async () => {
+  it("throws when target conversation is not found under explicit authority", async () => {
     const sender = createCrossSessionSender(deps);
 
     await expect(
       sender.send({
-        targetSessionKey: "default:nonexistent:user",
+        target: QUERY_THREE,
         text: "hello",
         mode: "fire-and-forget",
       }),
-    ).rejects.toThrow("Session not found");
+    ).rejects.toThrow("Target conversation not found");
   });
 });
 
-// ---------------------------------------------------------------------------
-// The completion-announcement / cross-session outward send
-// (announce → deps.sendToChannel) must go through the SAME three-state ONCE
-// ledger as message.send — NOT a second un-ledgered path. A stable allocated
-// (rootRunId, stepIndex) keys the announcement so a restart-driven re-announce
-// of an already-committed announcement is a no-op (no double-notify). The text
-// is content-free at the ledger (only a sha256 digest), and the SAME injected
-// sendToChannel (the quota-gated path) is the only send — no parallel path.
-// ---------------------------------------------------------------------------
-
-/**
- * A stub ledger that records every method call (name) in `calls` so a test can
- * assert call ORDER. Per-method outcomes are overridable. The begin input is
- * captured so the content-free assertion can inspect it. Mirrors the daemon
- * outward-ledger-wrap.test.ts stub shape (one ledger contract, one test double).
- */
-function makeStubLedger(
-  overrides: Partial<{
-    lookupResult: Result<OutwardSendRecord | undefined, Error>;
-    beginResult: Result<void, Error>;
-  }> = {},
-): { ledger: OutwardSendLedgerPort; calls: string[]; readonly beginInput: OutwardSendBeginInput | undefined } {
-  const calls: string[] = [];
-  const state = { beginInput: undefined as OutwardSendBeginInput | undefined };
-  const ledger: OutwardSendLedgerPort = {
-    lookup: vi.fn(async () => {
-      calls.push("lookup");
-      return overrides.lookupResult ?? ok(undefined);
-    }),
-    begin: vi.fn(async (input: OutwardSendBeginInput) => {
-      calls.push("begin");
-      state.beginInput = input;
-      return overrides.beginResult ?? ok(undefined);
-    }),
-    markUnknown: vi.fn(async () => {
-      calls.push("markUnknown");
-      return ok(undefined);
-    }),
-    commit: vi.fn(async () => {
-      calls.push("commit");
-      return ok(undefined);
-    }),
-    markFailed: vi.fn(async () => {
-      calls.push("markFailed");
-      return ok(undefined);
-    }),
-    resolveReconcile: vi.fn(async () => ok(undefined)),
-    listUnreconciled: vi.fn(async () => ok([])),
-  };
-  return {
-    ledger,
-    calls,
-    get beginInput() {
-      return state.beginInput;
-    },
-  };
-}
-
-/** A committed ledger row for a given idempotency key (the already-landed announce). */
-function committedRow(rootRunId: string, stepIndex: number, platformMessageId?: string): OutwardSendRecord {
-  return {
-    id: `${rootRunId}:${stepIndex}`,
-    rootRunId,
-    stepIndex,
-    agentId: "default",
-    channelType: "discord",
-    channelId: "guild-channel-42",
-    state: "committed",
-    platformMessageId,
-    contentDigest: "deadbeefdeadbeef",
-    attemptCount: 1,
-  };
-}
-
-/** A DurableRunPort stub that allocates a fixed stepIndex (records every call). */
-function makeStubDurableRuns(stepIndex = 7): { durableRuns: DurableRunPort; allocCalls: string[] } {
-  const allocCalls: string[] = [];
-  const durableRuns = {
-    allocateOutwardStep: vi.fn(async (rootRunId: string) => {
-      allocCalls.push(rootRunId);
-      return ok(stepIndex);
-    }),
-  } as unknown as DurableRunPort;
-  return { durableRuns, allocCalls };
-}
-
-describe("createCrossSessionSender announce is ledgered", () => {
+describe("createCrossSessionSender uses the governed announcement port", () => {
   let deps: CrossSessionSenderDeps;
 
   beforeEach(() => {
@@ -460,139 +431,159 @@ describe("createCrossSessionSender announce is ledgered", () => {
   });
 
   const ledgeredParams: CrossSessionSendParams = {
-    targetSessionKey: "default:user1:channel1",
+    target: QUERY_ONE,
     text: "question",
     mode: "wait",
+    caller: QUERY_TWO,
     callerSessionKey: "default:user2:channel2",
+    callerConversation: PARENT_TWO,
+    callerEndpoint: PARENT_TWO_ENDPOINT,
+    callerAgentId: "parent-agent",
+    announceOperationId: "announce-tool-call-1",
     announceChannelType: "discord",
     announceChannelId: "guild-channel-42",
   };
 
-  it("ledgered happy path: announce runs lookup→begin→markUnknown→sendToChannel→commit in order; returns announced", async () => {
-    const { ledger, calls } = makeStubLedger();
-    const { durableRuns, allocCalls } = makeStubDurableRuns(7);
+  it("reports a receipt-committed governed send as announced", async () => {
+    const sendGovernedAnnouncement = vi.fn(async () => ok({
+      delivered: true as const,
+      identity: { agentId: "parent-agent", rootRunId: "root-user2", stepIndex: 7 },
+    }));
     const sender = createCrossSessionSender({
       ...deps,
-      outwardLedger: ledger,
-      durableRuns,
-      resolveRootRunId: (k: SessionKey) => `root-${k.userId}`,
+      sendGovernedAnnouncement,
     });
 
     const result = await sender.send(ledgeredParams);
 
     expect(result.announced).toBe(true);
-    // The step is allocated ONCE for this announce, keyed by the resolved rootRunId.
-    expect(allocCalls).toEqual(["root-user2"]);
-    // The three-state lifecycle ran around the (single) sendToChannel call.
-    expect(calls).toEqual(["lookup", "begin", "markUnknown", "commit"]);
-    expect(deps.sendToChannel).toHaveBeenCalledTimes(1);
-    expect(deps.sendToChannel).toHaveBeenCalledWith("discord", "guild-channel-42", "test response");
-  });
-
-  it("committed → no-op: an already-committed (rootRunId, stepIndex) does NOT call sendToChannel; still announced", async () => {
-    const { ledger, calls } = makeStubLedger({
-      lookupResult: ok(committedRow("root-user2", 7, "msg-prior")),
+    expect(sendGovernedAnnouncement).toHaveBeenCalledWith({
+      agentId: "parent-agent",
+      callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
+      destinationEndpoint: PARENT_TWO_ENDPOINT,
+      runId: "announce-tool-call-1",
+      channelType: "discord",
+      channelId: "guild-channel-42",
+      text: "test response",
     });
-    const { durableRuns } = makeStubDurableRuns(7);
-    const sender = createCrossSessionSender({
-      ...deps,
-      outwardLedger: ledger,
-      durableRuns,
-      resolveRootRunId: (k: SessionKey) => `root-${k.userId}`,
-    });
-
-    const result = await sender.send(ledgeredParams);
-
-    // The announcement already landed across a restart — never re-send (no double-notify).
     expect(deps.sendToChannel).not.toHaveBeenCalled();
-    expect(calls).toEqual(["lookup"]); // short-circuit at the dedup read
-    // It is still reported as announced (the prior send succeeded).
-    expect(result.announced).toBe(true);
   });
 
-  it("pass-through: NO ledger dep → sendToChannel called directly, no ledger usage (non-autonomy unchanged)", async () => {
-    const { durableRuns, allocCalls } = makeStubDurableRuns(7);
-    // outwardLedger omitted entirely.
+  it("does not raw-send after a governed adapter rejection", async () => {
+    const sendGovernedAnnouncement = vi.fn(async () => ok({
+      delivered: false as const,
+      identity: { agentId: "parent-agent", rootRunId: "root-user2", stepIndex: 7 },
+      failure: "transport_rejected" as const,
+    }));
     const sender = createCrossSessionSender({
       ...deps,
-      durableRuns,
-      resolveRootRunId: (k: SessionKey) => `root-${k.userId}`,
+      sendGovernedAnnouncement,
     });
 
     const result = await sender.send(ledgeredParams);
 
-    expect(result.announced).toBe(true);
-    expect(deps.sendToChannel).toHaveBeenCalledTimes(1);
-    // No ledger ⇒ no step allocation either (pure pass-through).
-    expect(allocCalls).toEqual([]);
+    expect(result.announced).toBe(false);
+    expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 
-  it("pass-through: NO callerSessionKey → no resolvable rootRunId → direct send, ledger untouched", async () => {
-    const { ledger, calls } = makeStubLedger();
-    const { durableRuns, allocCalls } = makeStubDurableRuns(7);
+  it("does not raw-send when the governed boundary loses its response", async () => {
+    const sendGovernedAnnouncement = vi.fn(async () => Promise.reject(
+      new Error("platform response unavailable"),
+    ));
     const sender = createCrossSessionSender({
       ...deps,
-      outwardLedger: ledger,
-      durableRuns,
-      resolveRootRunId: (k: SessionKey) => `root-${k.userId}`,
+      sendGovernedAnnouncement,
+    });
+
+    const result = await sender.send(ledgeredParams);
+
+    expect(result.announced).toBe(false);
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("reuses the stable originating operation on duplicate invocation", async () => {
+    const seen = new Set<string>();
+    const platformCalls: string[] = [];
+    const sendGovernedAnnouncement: NonNullable<CrossSessionSenderDeps["sendGovernedAnnouncement"]> = vi.fn(async (request) => {
+      const operation = `${request.agentId}:${request.callerSessionKey}:${request.runId}`;
+      if (!seen.has(operation)) {
+        seen.add(operation);
+        platformCalls.push(operation);
+      }
+      return ok({
+        delivered: true as const,
+        identity: { agentId: request.agentId, rootRunId: "root-user2", stepIndex: 7 },
+      });
+    });
+    const sender = createCrossSessionSender({ ...deps, sendGovernedAnnouncement });
+
+    const first = await sender.send(ledgeredParams);
+    const second = await sender.send(ledgeredParams);
+
+    expect(first.announced).toBe(true);
+    expect(second.announced).toBe(true);
+    expect(platformCalls).toEqual(["parent-agent:default:user2:channel2:announce-tool-call-1"]);
+    expect(sendGovernedAnnouncement).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(sendGovernedAnnouncement).mock.calls[0]).toEqual(
+      vi.mocked(sendGovernedAnnouncement).mock.calls[1],
+    );
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when governed delivery lacks an authenticated caller", async () => {
+    const sendGovernedAnnouncement = vi.fn();
+    const sender = createCrossSessionSender({
+      ...deps,
+      sendGovernedAnnouncement,
     });
 
     const result = await sender.send({
-      // Self-target NOT allowed in wait mode; use a distinct target with NO callerSessionKey.
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "question",
       mode: "wait",
       announceChannelType: "discord",
       announceChannelId: "guild-channel-42",
-      // callerSessionKey omitted ⇒ no rootRunId ⇒ pass-through.
     });
 
-    expect(result.announced).toBe(true);
-    expect(deps.sendToChannel).toHaveBeenCalledTimes(1);
-    expect(calls).toEqual([]); // ledger never touched
-    expect(allocCalls).toEqual([]);
+    expect(result.announced).toBe(false);
+    expect(sendGovernedAnnouncement).not.toHaveBeenCalled();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 
-  it("content-free: only a sha256 digest reaches the ledger; the announcement text is never passed to a ledger method", async () => {
-    // NB: keep the stub object — `beginInput` is a getter (live), so destructuring
-    // it here would freeze it to its pre-send `undefined` value.
-    const stub = makeStubLedger();
-    const { durableRuns } = makeStubDurableRuns(7);
-    vi.mocked(deps.executeInSession).mockResolvedValue({
-      response: "SECRET-ANNOUNCEMENT-BODY",
-      tokensUsed: { total: 10 },
-      cost: { total: 0.001 },
-    });
+  it("fails closed when governed delivery lacks a stable operation identity", async () => {
+    const sendGovernedAnnouncement = vi.fn();
     const sender = createCrossSessionSender({
       ...deps,
-      outwardLedger: stub.ledger,
-      durableRuns,
-      resolveRootRunId: (k: SessionKey) => `root-${k.userId}`,
+      sendGovernedAnnouncement,
     });
 
-    await sender.send(ledgeredParams);
+    const result = await sender.send({
+      ...ledgeredParams,
+      announceOperationId: undefined,
+    });
 
-    // The digest is a 16-hex-char sha256 slice, not the body.
-    expect(stub.beginInput?.contentDigest).toMatch(/^[0-9a-f]{16}$/);
-    // The raw text never appears in ANY argument passed to a ledger method.
-    expect(JSON.stringify(stub.beginInput)).not.toContain("SECRET-ANNOUNCEMENT-BODY");
-    // The real body still reached the (single) sendToChannel.
-    expect(deps.sendToChannel).toHaveBeenCalledWith("discord", "guild-channel-42", "SECRET-ANNOUNCEMENT-BODY");
+    expect(result.announced).toBe(false);
+    expect(sendGovernedAnnouncement).not.toHaveBeenCalled();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 
-  it("quota: the ledgered path routes through the SAME injected sendToChannel (no parallel send)", async () => {
-    const { ledger } = makeStubLedger();
-    const { durableRuns } = makeStubDurableRuns(7);
+  it("keeps governed boundary errors content-safe", async () => {
+    const sendGovernedAnnouncement = vi.fn(async () => err(
+      new Error("lookup failed token=private-value"),
+    ));
+    const error = vi.fn();
     const sender = createCrossSessionSender({
       ...deps,
-      outwardLedger: ledger,
-      durableRuns,
-      resolveRootRunId: (k: SessionKey) => `root-${k.userId}`,
+      sendGovernedAnnouncement,
+      logger: { error },
     });
 
-    await sender.send(ledgeredParams);
+    const result = await sender.send(ledgeredParams);
 
-    // Exactly one send, and it is the injected (quota-gated) deps.sendToChannel.
-    expect(deps.sendToChannel).toHaveBeenCalledTimes(1);
+    expect(result.announced).toBe(false);
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(JSON.stringify(error.mock.calls)).not.toContain("private-value");
   });
 });

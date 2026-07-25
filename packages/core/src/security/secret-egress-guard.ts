@@ -20,6 +20,45 @@ export interface ScrubResult {
 // eslint-disable-next-line no-restricted-syntax -- egress scrubber sentinel (intra-core, not the Pino censor literal)
 const REDACTED = "[REDACTED]";
 
+const SECRET_FIELD_FRAGMENT =
+  "(?:password|passwd|pwd|secret|token|api[_-]?key|credential|private[_-]?key|username|env[_-]?value)";
+const SECRET_FIELD_HINTS = [
+  "password",
+  "passwd",
+  "pwd",
+  "secret",
+  "token",
+  "api_key",
+  "api-key",
+  "apikey",
+  "credential",
+  "private_key",
+  "private-key",
+  "username",
+  "env_value",
+  "env-value",
+] as const;
+
+const LABELED_SECRET_ASSIGNMENT_RE = new RegExp(
+  `((?:^|[\\s,{])["']?[A-Za-z0-9_.-]*${SECRET_FIELD_FRAGMENT}["']?\\s*[:=]\\s*)` +
+    `(?:"([^"\\r\\n]*)"|'([^'\\r\\n]*)'|(\\$\\{[^}\\r\\n]+\\}|\\[REDACTED\\]|[^\\s,;}\\r\\n]+))`,
+  "gim",
+);
+
+const SECRET_STORAGE_ACTION_FRAGMENT =
+  "(?:confirm(?:ed|ation)?|stor(?:e|ing)|sav(?:e|ing)|set(?:ting)?)";
+const SECRET_STORAGE_ACTION_RE = new RegExp(
+  `\\b${SECRET_STORAGE_ACTION_FRAGMENT}\\b`,
+  "i",
+);
+const LABELED_SECRET_CONFIRMATION_RE = new RegExp(
+    `((?:^|[\\s,{])${SECRET_STORAGE_ACTION_FRAGMENT}\\b[^\\r\\n]{0,96}?` +
+    `["']?[A-Za-z0-9_.-]*${SECRET_FIELD_FRAGMENT}["']?[^\\r\\n]{0,160}?` +
+    `(?:(?:confirmed\\s+)?value\\s+is|with\\s+the\\s+value)\\s*)` +
+    `(?:"([^"\\r\\n]*)"|'([^'\\r\\n]*)'|([^\\s\\r\\n]+?)(?=[,;]|\\.(?=\\s|$)|\\s|$))`,
+  "gim",
+);
+
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -33,7 +72,48 @@ export function mightContainSecret(text: string): boolean {
   for (const prefix of PLAINTEXT_SECRET_PREFIXES) {
     if (text.includes(prefix)) return true;
   }
-  return text.includes("Bearer ") || text.includes("Token ");
+  if (text.includes("Bearer ") || text.includes("Token ")) return true;
+  const lower = text.toLowerCase();
+  if (!SECRET_FIELD_HINTS.some((field) => lower.includes(field))) return false;
+  if (text.includes(":") || text.includes("=")) return true;
+  return lower.includes("value") && SECRET_STORAGE_ACTION_RE.test(text);
+}
+
+function isSafeSecretPlaceholder(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === REDACTED || (trimmed.startsWith("${") && trimmed.endsWith("}"));
+}
+
+function scrubLabeledAssignments(text: string): ScrubResult {
+  let redactions = 0;
+  const scrubbed = text.replace(
+    LABELED_SECRET_ASSIGNMENT_RE,
+    (_match, prefix: string, doubleQuoted: string | undefined, singleQuoted: string | undefined, bare: string | undefined) => {
+      const value = doubleQuoted ?? singleQuoted ?? bare ?? "";
+      if (value.length === 0 || isSafeSecretPlaceholder(value)) return _match;
+      redactions++;
+      if (doubleQuoted !== undefined) return `${prefix}"${REDACTED}"`;
+      if (singleQuoted !== undefined) return `${prefix}'${REDACTED}'`;
+      return `${prefix}${REDACTED}`;
+    },
+  );
+  return { text: scrubbed, redactions };
+}
+
+function scrubLabeledConfirmations(text: string): ScrubResult {
+  let redactions = 0;
+  const scrubbed = text.replace(
+    LABELED_SECRET_CONFIRMATION_RE,
+    (_match, prefix: string, doubleQuoted: string | undefined, singleQuoted: string | undefined, bare: string | undefined) => {
+      const value = doubleQuoted ?? singleQuoted ?? bare ?? "";
+      if (value.length === 0 || isSafeSecretPlaceholder(value)) return _match;
+      redactions++;
+      if (doubleQuoted !== undefined) return `${prefix}"${REDACTED}"`;
+      if (singleQuoted !== undefined) return `${prefix}'${REDACTED}'`;
+      return `${prefix}${REDACTED}`;
+    },
+  );
+  return { text: scrubbed, redactions };
 }
 
 /**
@@ -46,8 +126,10 @@ export function mightContainSecret(text: string): boolean {
  */
 export function scrubSecretsFromText(text: string): ScrubResult {
   if (!mightContainSecret(text)) return { text, redactions: 0 };
-  let result = text;
-  let redactions = 0;
+  const labeled = scrubLabeledAssignments(text);
+  const confirmed = scrubLabeledConfirmations(labeled.text);
+  let result = confirmed.text;
+  let redactions = labeled.redactions + confirmed.redactions;
 
   for (const prefix of PLAINTEXT_SECRET_PREFIXES) {
     const minBody = PREFIX_MIN_BODY_LENGTHS.get(prefix) ?? 0;

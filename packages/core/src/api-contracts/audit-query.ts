@@ -2,7 +2,7 @@
 /**
  * The `obs.audit.query` wire shape — the read surface onto the durable
  * `obs_audit_events` table. The SIBLING
- * of `obs.fleet.health` / `obs.explain`: a bounded, admin-gated, content-free
+ * of `obs.system.health` / `obs.explain`: a bounded, admin-gated, content-free
  * query over the persisted security-decision audit.
  *
  * Request: the {@link AuditQueryParams} filter shape (every field
@@ -67,11 +67,11 @@ export type AuditQueryResponse = z.infer<typeof AuditQueryResponseSchema>;
 
 /**
  * `obs.audit.query` — the admin-gated read RPC onto `obs_audit_events`.
- * The SIBLING of {@link ObsExplainContract} / `ObsFleetHealthContract`:
+ * The SIBLING of {@link ObsExplainContract} / `ObsSystemHealthContract`:
  * a bounded, deterministic, content-free query over the persisted audit. The
  * daemon handler enforces the dual-layer admin gate (gateway-router scope +
  * an in-handler `_trustLevel === "admin"` re-check) and strips internal fields
- * before the parse, mirroring `obs.fleet.health`.
+ * before the parse, mirroring `obs.system.health`.
  *
  * Request: the {@link AuditQueryParams} filter shape — every field optional; an
  * absent field widens the scan. All filters become bound parameters in a

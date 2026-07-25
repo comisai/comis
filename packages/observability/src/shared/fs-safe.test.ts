@@ -7,13 +7,22 @@ import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 // under ESM (vi.spyOn cannot redefine non-configurable namespace
 // properties on `node:fs`). Default false → real chmod runs everywhere
 // else in this file (existing tests rely on real chmod behavior).
-const { chmodSyncThrowsEperm, fchmodSyncMode } = vi.hoisted(() => ({
-  chmodSyncThrowsEperm: { value: false },
-  // "real" → run real fchmod; "permission-model" → throw the --permission
-  // refusal (must be swallowed, file already opened 0o600); "eio" → throw a
-  // genuine I/O error (must propagate). Drives the fchmod-disabled guard.
-  fchmodSyncMode: { value: "real" as "real" | "permission-model" | "eio" },
-}));
+const { chmodSyncThrowsEperm, fchmodSyncMode, fsyncSyncCalls, writeSyncBehavior } = vi.hoisted(
+  () => ({
+    chmodSyncThrowsEperm: { value: false },
+    // "real" → run real fchmod; "permission-model" → throw the --permission
+    // refusal (must be swallowed, file already opened 0o600); "eio" → throw a
+    // genuine I/O error (must propagate). Drives the fchmod-disabled guard.
+    fchmodSyncMode: { value: "real" as "real" | "permission-model" | "eio" },
+    fsyncSyncCalls: { value: 0 },
+    writeSyncBehavior: {
+      maxBytesPerCall: undefined as number | undefined,
+      returnZero: false,
+      callCount: 0,
+      offsets: [] as number[],
+    },
+  }),
+);
 
 vi.mock("node:fs", async (importOriginal) => {
   const real = await importOriginal<typeof import("node:fs")>();
@@ -38,6 +47,34 @@ vi.mock("node:fs", async (importOriginal) => {
       }
       return real.fchmodSync(...args);
     },
+    fsyncSync: (...args: Parameters<typeof real.fsyncSync>) => {
+      fsyncSyncCalls.value += 1;
+      return real.fsyncSync(...args);
+    },
+    writeSync: (
+      fd: number,
+      buffer: Buffer,
+      offset?: number,
+      length?: number,
+      position?: number | null,
+    ): number => {
+      if (writeSyncBehavior.maxBytesPerCall === undefined) {
+        return real.writeSync(fd, buffer, offset, length, position);
+      }
+      writeSyncBehavior.callCount += 1;
+      const effectiveOffset = offset ?? 0;
+      writeSyncBehavior.offsets.push(effectiveOffset);
+      if (writeSyncBehavior.returnZero) return 0;
+
+      const effectiveLength = length ?? buffer.length - effectiveOffset;
+      return real.writeSync(
+        fd,
+        buffer,
+        effectiveOffset,
+        Math.min(effectiveLength, writeSyncBehavior.maxBytesPerCall),
+        position,
+      );
+    },
   };
 });
 
@@ -47,6 +84,7 @@ import * as path from "node:path";
 
 import {
   appendRegularFile,
+  readRegularFile,
   writeRegularFile,
   ensureContainedDir,
   SymlinkParentRejected,
@@ -57,6 +95,11 @@ import {
 let tmpDir: string;
 
 afterEach(() => {
+  writeSyncBehavior.maxBytesPerCall = undefined;
+  writeSyncBehavior.returnZero = false;
+  writeSyncBehavior.callCount = 0;
+  writeSyncBehavior.offsets.length = 0;
+  fsyncSyncCalls.value = 0;
   if (tmpDir) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -146,6 +189,38 @@ describe("appendRegularFile — happy path", () => {
     const r2 = appendRegularFile({ path: target, content: "defg" });
     expect(r2.ok).toBe(true);
     if (r2.ok) expect(r2.value.totalBytes).toBe(7);
+  });
+
+  it("retries partial writes until every requested byte is persisted", () => {
+    writeSyncBehavior.maxBytesPerCall = 2;
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-partial-write-"));
+    const target = path.join(tmpDir, "out.jsonl");
+
+    const result = appendRegularFile({
+      path: target,
+      content: "complete\n",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fs.readFileSync(target, "utf8")).toBe("complete\n");
+    expect(writeSyncBehavior.callCount).toBeGreaterThan(1);
+    expect(writeSyncBehavior.offsets).toEqual([0, 2, 4, 6, 8]);
+  });
+
+  it("returns an error when a write makes no forward progress", () => {
+    writeSyncBehavior.maxBytesPerCall = 2;
+    writeSyncBehavior.returnZero = true;
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-zero-write-"));
+    const target = path.join(tmpDir, "out.jsonl");
+
+    const result = appendRegularFile({ path: target, content: "pending\n" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("made no forward progress");
+    }
+    expect(writeSyncBehavior.callCount).toBe(1);
+    expect(fs.readFileSync(target, "utf8")).toBe("");
   });
 });
 
@@ -245,6 +320,103 @@ describe("appendRegularFile — defensive chmod 0o600 even when file already exi
 });
 
 // ---------------------------------------------------------------------------
+// readRegularFile (symlink-safe bounded read)
+// ---------------------------------------------------------------------------
+describe("readRegularFile — bounded symlink-safe reads", () => {
+  it("uses O_NONBLOCK so a swapped non-regular target cannot stall the daemon", () => {
+    const source = fs.readFileSync(new URL("./fs-safe.ts", import.meta.url), "utf8");
+    const readFlagsStart = source.indexOf("function resolveReadOpenFlags");
+    const readFlagsEnd = source.indexOf("return flags;", readFlagsStart);
+    expect(readFlagsStart).toBeGreaterThan(-1);
+    expect(source.slice(readFlagsStart, readFlagsEnd)).toContain("O_NONBLOCK");
+  });
+
+  it("reads one existing regular file and reports its exact byte length", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-read-happy-"));
+    const target = path.join(tmpDir, "trajectory.jsonl");
+    fs.writeFileSync(target, "first\nsecond\n", { mode: 0o600 });
+
+    const result = readRegularFile({
+      path: target,
+      maxFileBytes: 1024,
+      confinedBaseDir: tmpDir,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.value.content.toString("utf8")).toBe("first\nsecond\n");
+    expect(result.value.totalBytes).toBe(13);
+  });
+
+  it("rejects a final-component symlink without reading its target", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-read-symlink-"));
+    const outside = path.join(tmpDir, "outside.jsonl");
+    const target = path.join(tmpDir, "trajectory.jsonl");
+    fs.writeFileSync(outside, "sensitive\n", { mode: 0o600 });
+    fs.symlinkSync(outside, target);
+
+    const result = readRegularFile({
+      path: target,
+      maxFileBytes: 1024,
+      confinedBaseDir: tmpDir,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(fs.readFileSync(outside, "utf8")).toBe("sensitive\n");
+  });
+
+  it("rejects an escaping ancestor symlink when confinedBaseDir is set", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-read-confine-"));
+    const baseDir = path.join(tmpDir, "base");
+    const outsideDir = path.join(tmpDir, "outside");
+    const outsideInner = path.join(outsideDir, "inner");
+    fs.mkdirSync(baseDir, { recursive: true });
+    fs.mkdirSync(outsideInner, { recursive: true });
+    fs.writeFileSync(path.join(outsideInner, "trajectory.jsonl"), "outside\n");
+    fs.symlinkSync(outsideDir, path.join(baseDir, "escape"));
+
+    const result = readRegularFile({
+      path: path.join(baseDir, "escape", "inner", "trajectory.jsonl"),
+      maxFileBytes: 1024,
+      confinedBaseDir: baseDir,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(PathEscapesConfinementError);
+    }
+  });
+
+  it("rejects an oversized file before returning any content", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-read-limit-"));
+    const target = path.join(tmpDir, "trajectory.jsonl");
+    fs.writeFileSync(target, "x".repeat(65), { mode: 0o600 });
+
+    const result = readRegularFile({
+      path: target,
+      maxFileBytes: 64,
+      confinedBaseDir: tmpDir,
+    });
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a directory after opening it without returning content", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-read-directory-"));
+    const target = path.join(tmpDir, "not-a-file");
+    fs.mkdirSync(target);
+
+    const result = readRegularFile({
+      path: target,
+      maxFileBytes: 1024,
+      confinedBaseDir: tmpDir,
+    });
+
+    expect(result.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // writeRegularFile (symlink-safe write-truncate)
 // ---------------------------------------------------------------------------
 describe("writeRegularFile — happy path", () => {
@@ -258,6 +430,20 @@ describe("writeRegularFile — happy path", () => {
     if (result.ok) expect(result.value.totalBytes).toBe(4);
     expect(fs.readFileSync(target, "utf8")).toBe("data");
     expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+  });
+
+  it("flushes truncate-written bytes before success when requested", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-write-fsync-"));
+    const target = path.join(tmpDir, "out.tmp");
+
+    const result = writeRegularFile({
+      path: target,
+      content: "durable",
+      fsyncBeforeSuccess: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fsyncSyncCalls.value).toBe(1);
   });
 
   it("truncates on rewrite (does NOT append)", () => {
@@ -313,6 +499,34 @@ describe("writeRegularFile — happy path", () => {
     const result = writeRegularFile({ path: target, content: "x" });
     expect(result.ok).toBe(true);
     expect(fs.readFileSync(target, "utf8")).toBe("x");
+  });
+
+  it("retries partial writes at advancing buffer offsets until complete", () => {
+    writeSyncBehavior.maxBytesPerCall = 2;
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-write-partial-"));
+    const target = path.join(tmpDir, "out.tmp");
+
+    const result = writeRegularFile({ path: target, content: "truncate" });
+
+    expect(result.ok).toBe(true);
+    expect(fs.readFileSync(target, "utf8")).toBe("truncate");
+    expect(writeSyncBehavior.offsets).toEqual([0, 2, 4, 6]);
+  });
+
+  it("returns an error when a truncate write makes no forward progress", () => {
+    writeSyncBehavior.maxBytesPerCall = 2;
+    writeSyncBehavior.returnZero = true;
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-write-zero-"));
+    const target = path.join(tmpDir, "out.tmp");
+
+    const result = writeRegularFile({ path: target, content: "pending" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("made no forward progress");
+    }
+    expect(writeSyncBehavior.callCount).toBe(1);
+    expect(fs.readFileSync(target, "utf8")).toBe("");
   });
 });
 

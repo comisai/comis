@@ -258,8 +258,6 @@ export function maybeRewriteImageObject(
 
 // Authorization header (Bearer / Basic / Digest / etc.) — capture up to
 // whitespace or end-of-line. Case-insensitive on the prefix.
-const AUTH_HEADER_RE = /Authorization:\s*\S+\s+\S+/gi;
-
 // JWT-shaped 3-segment dotted base64-url string (header.payload.signature).
 // At least 8 chars per segment to avoid catching random dotted strings.
 const JWT_RE = /eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g;
@@ -276,11 +274,38 @@ const COOKIE_RE = /Cookie:\s*\S+/gi;
  * value during sanitize-stage processing.
  */
 export function sanitizeString(input: string): string {
-  let out = input;
-  out = out.replace(AUTH_HEADER_RE, "<redacted>");
+  let out = redactAuthorizationHeaders(input);
   out = out.replace(JWT_RE, "<redacted>");
   out = out.replace(COOKIE_RE, "<redacted>");
   return out;
+}
+
+function redactAuthorizationHeaders(input: string): string {
+  const lower = input.toLowerCase();
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < input.length) {
+    const start = lower.indexOf("authorization:", cursor);
+    if (start === -1) {
+      parts.push(input.slice(cursor));
+      break;
+    }
+    let end = start + "authorization:".length;
+    while (end < input.length && (input[end] === " " || input[end] === "\t")) end++;
+    while (end < input.length && !/\s/.test(input[end]!)) end++;
+    const tokenSeparator = end;
+    while (end < input.length && (input[end] === " " || input[end] === "\t")) end++;
+    const tokenStart = end;
+    while (end < input.length && !/\s/.test(input[end]!)) end++;
+    if (tokenSeparator === tokenStart || tokenStart === end) {
+      parts.push(input.slice(cursor, start + 1));
+      cursor = start + 1;
+      continue;
+    }
+    parts.push(input.slice(cursor, start), "<redacted>");
+    cursor = end;
+  }
+  return parts.join("");
 }
 
 /**

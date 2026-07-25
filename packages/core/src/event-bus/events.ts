@@ -7,6 +7,7 @@ import type { LearningEvents } from "./events-learning.js";
 import type { TrajectoryEvents } from "./events-trajectory.js";
 import type { ChannelEvents } from "./events-channel.js";
 import type { InfraEvents } from "./events-infra.js";
+import type { SchedulerTaskEvents } from "./events-scheduler-tasks.js";
 import type { TerminalEvents } from "./events-terminal.js";
 import type {
   MediaGenerationEvents,
@@ -25,7 +26,8 @@ import type {
  * - ModelEvents: model-failover (model:*) + provider-health (provider:*) lifecycle
  * - OrchestrationEvents: multi-agent graph lifecycle (graph:*, subagent:budget_exceeded)
  * - LearningEvents: verified-learning write-back/telemetry (memory:skill_used)
- * - TrajectoryEvents: trajectory-bridge lifecycle (prompt:submitted, session:started/ended/summary, memory:injected, tool:timeout)
+ * - TrajectoryEvents: trajectory lifecycle and persistence health
+ *   (prompt:submitted, session:started/ended/summary, observability:trajectory_degraded)
  * - ChannelEvents: channel, queue, streaming, typing, autoreply, sendpolicy, debounce, priority, retry, ack
  * - InfraEvents: config, plugin, hook, browser, auth, device, diagnostic, media, scheduler, system, metrics
  * - TerminalEvents: interactive terminal-driver session lifecycle (session_state, spawn_failed)
@@ -43,6 +45,7 @@ export interface EventMap
     TrajectoryEvents,
     ChannelEvents,
     InfraEvents,
+    SchedulerTaskEvents,
     TerminalEvents,
     MediaGenerationEvents,
     MediaVisionEvents,

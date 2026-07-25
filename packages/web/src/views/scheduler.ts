@@ -6,6 +6,13 @@ import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
+import type { WebRpcMethodMap } from "../api/contracts.generated.js";
+import type {
+  HeartbeatWakeAdmittedEvent,
+  HeartbeatWakeDeferredEvent,
+  HeartbeatWakeTarget,
+  HeartbeatWakeTerminalEvent,
+} from "../api/types/index.js";
 
 // Side-effect imports (register custom elements)
 import "../components/nav/ic-tabs.js";
@@ -22,56 +29,61 @@ import type { TabDef } from "../components/nav/ic-tabs.js";
 import { systemDateFrom, systemNowMs } from "@comis/core";
 
 /* ------------------------------------------------------------------ */
-/*  Local types -- DO NOT import from @comis/scheduler              */
+/*  Generated RPC projections keep web independent of scheduler code. */
 /* ------------------------------------------------------------------ */
+type WebCronJob = WebRpcMethodMap["cron.list"]["result"]["jobs"][number];
+type SchedulerCronSchedule = SchedulerCronJob["schedule"];
+type CronAddParams = WebRpcMethodMap["cron.add"]["params"];
+type CronUpdateParams = WebRpcMethodMap["cron.update"]["params"];
 
-/**
- * Local mirror of the scheduler's CronSchedule + CronPayload discriminator
- * literals. Web cannot import from @comis/scheduler (boundary policy — see
- * "DO NOT import" comment above), so the closed unions are reproduced
- * inline. If the scheduler adds a new kind, web TypeScript will silently
- * accept the wire payload as "unknown discriminator" until this local
- * mirror is updated; that drift is intentional per the bounded-context
- * rule.
- */
-interface SchedulerCronJob {
-  id: string;
-  name: string;
-  agentId: string;
-  schedule: { kind: "cron" | "every" | "at"; expr?: string; tz?: string; everyMs?: number; at?: string };
-  payload: { kind: "system_event" | "agent_turn"; message?: string; text?: string };
-  sessionTarget: string;
-  enabled: boolean;
-  nextRunAtMs?: number;
-  lastRunAtMs?: number;
-  consecutiveErrors: number;
-  createdAtMs: number;
-  deliveryTarget?: {
-    channelId: string;
-    userId: string;
-    tenantId: string;
-    channelType?: string;
-  };
-  wakeGate?: {
-    script: string;
-    language?: "js" | "ts";
-  };
+interface SchedulerCronJobBase {
+  id: WebCronJob["id"];
+  name: WebCronJob["name"];
+  agentId: WebCronJob["agentId"];
+  schedule: WebCronJob["schedule"];
+  lifecycle: WebCronJob["lifecycle"];
+  maxConsecutiveDependencyErrors?: WebCronJob["maxConsecutiveDependencyErrors"];
 }
 
+type SchedulerCronJob = SchedulerCronJobBase & (
+  | {
+      source: "authored";
+      payload: Extract<CronAddParams["payload"], { kind: "heartbeat_event" }>;
+    }
+  | {
+      source: "authored";
+      payload: Extract<CronAddParams["payload"], { kind: "delivery" }>;
+      deliveryTarget: NonNullable<CronAddParams["deliveryTarget"]>;
+    }
+  | {
+      source: "authored";
+      payload: Extract<CronAddParams["payload"], { kind: "agent_turn" }>;
+      sessionPolicy: NonNullable<CronAddParams["sessionPolicy"]>;
+      continuationMode: NonNullable<CronAddParams["continuationMode"]>;
+      deliveryTarget?: CronAddParams["deliveryTarget"];
+      wakeGate?: CronUpdateParams["wakeGate"];
+      cacheRetention?: CronAddParams["cacheRetention"];
+      toolPolicy?: CronAddParams["toolPolicy"];
+    }
+  | {
+      source: "built_in";
+      payload: {
+        kind: "internal_action";
+        action: "memory_review" | "memory_lifecycle" | "reflection";
+      };
+    }
+);
+
 interface ExecutionRecord {
+  executionId: string;
   jobId: string;
   jobName: string;
   agentId: string;
   timestamp: number;
-  success: boolean | "pending";
+  status: "started" | "dispatched" | "completed" | "failed" | "aborted" | "skipped" | "unknown";
+  deliveryStatus?: "not_requested" | "suppressed" | "pre_send_failed" | "accepted" | "partial" | "rejected" | "unknown";
   durationMs?: number;
-  error?: string;
-}
-
-interface HeartbeatRecord {
-  checksRun: number;
-  alertsRaised: number;
-  timestamp: number;
+  errorKind?: string;
 }
 
 interface HeartbeatAgentCard {
@@ -96,15 +108,10 @@ interface HeartbeatAlertRecord {
   timestamp: number;
 }
 
-interface HeartbeatDeliveryRecord {
-  agentId: string;
-  channelType: string;
-  outcome: "delivered" | "skipped" | "failed";
-  level: "ok" | "alert" | "critical";
-  reason?: string;
-  durationMs: number;
-  timestamp: number;
-}
+type HeartbeatWakeLifecycleRecord =
+  | ({ readonly phase: "admitted" } & HeartbeatWakeAdmittedEvent)
+  | ({ readonly phase: "deferred" } & HeartbeatWakeDeferredEvent)
+  | ({ readonly phase: "terminal" } & HeartbeatWakeTerminalEvent);
 
 /* ------------------------------------------------------------------ */
 /*  Tab definitions                                                    */
@@ -119,7 +126,7 @@ const TAB_DEFS: TabDef[] = [
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function formatSchedule(schedule: SchedulerCronJob["schedule"]): string {
+function formatSchedule(schedule: SchedulerCronSchedule): string {
   switch (schedule.kind) {
     case "cron":
       return schedule.expr ?? "cron";
@@ -130,10 +137,12 @@ function formatSchedule(schedule: SchedulerCronJob["schedule"]): string {
       return `Every ${Math.round(ms / 1000)}s`;
     }
     case "at":
-      return schedule.at ? systemDateFrom(schedule.at).toLocaleString() : "one-shot";
-    default:
-      return schedule.kind;
+      return systemDateFrom(schedule.atMs).toLocaleString();
   }
+}
+
+function formatHeartbeatTarget(target: HeartbeatWakeTarget): string {
+  return target.kind === "agent" ? target.agentId : "monitoring";
 }
 
 function formatMs(ms: number): string {
@@ -156,25 +165,96 @@ function formatIntervalMs(ms: number): string {
 /**
  * Convert a SchedulerCronJob to CronJobInput for the ic-cron-editor.
  */
-function jobToCronInput(job: SchedulerCronJob): CronJobInput {
-  return {
+function jobToCronInput(job: Exclude<SchedulerCronJob, { source: "built_in" }>): CronJobInput {
+  const schedule: CronJobInput["schedule"] = job.schedule.kind === "cron"
+    ? { kind: "cron", expr: job.schedule.expr, tz: job.schedule.tz }
+    : job.schedule.kind === "every"
+      ? { kind: "every", everyMs: job.schedule.everyMs, anchorMs: job.schedule.anchorMs }
+      : { kind: "at", at: systemDateFrom(job.schedule.atMs).toISOString() };
+  const common = {
     id: job.id,
     name: job.name,
     agentId: job.agentId,
-    schedule: {
-      kind: job.schedule.kind as "cron" | "every" | "at",
-      expr: job.schedule.expr,
-      tz: job.schedule.tz,
-      everyMs: job.schedule.everyMs,
-      at: job.schedule.at,
-    },
-    message: job.payload?.message ?? job.payload?.text ?? "",
-    enabled: job.enabled,
-    maxConcurrent: 1,
-    sessionTarget: (job.sessionTarget ?? "main") as "main" | "isolated",
-    deliveryTarget: job.deliveryTarget,
-    wakeGate: job.wakeGate,
+    schedule,
+    paused: job.lifecycle.status === "paused",
   };
+  if ("sessionPolicy" in job) {
+    return {
+      ...common,
+      payload: job.payload,
+      sessionPolicy: job.sessionPolicy,
+      continuationMode: job.continuationMode,
+      ...(job.deliveryTarget === undefined ? {} : { deliveryTarget: job.deliveryTarget }),
+      ...(job.wakeGate === undefined ? {} : { wakeGate: job.wakeGate }),
+    };
+  }
+  if ("deliveryTarget" in job) {
+    return { ...common, payload: job.payload, deliveryTarget: job.deliveryTarget };
+  }
+  return { ...common, payload: job.payload };
+}
+
+function decodeSchedulerCronJob(job: WebCronJob): SchedulerCronJob | null {
+  const common: SchedulerCronJobBase = {
+    id: job.id,
+    name: job.name,
+    agentId: job.agentId,
+    schedule: job.schedule,
+    lifecycle: job.lifecycle,
+    ...(job.maxConsecutiveDependencyErrors === undefined
+      ? {}
+      : { maxConsecutiveDependencyErrors: job.maxConsecutiveDependencyErrors }),
+  };
+  const payload = job.payload;
+  if (job.source === "authored" && payload.kind === "heartbeat_event"
+    && typeof payload.text === "string"
+    && (payload.wakeMode === "now" || payload.wakeMode === "next-heartbeat")) {
+    return {
+      ...common,
+      source: "authored",
+      payload: { kind: "heartbeat_event", text: payload.text, wakeMode: payload.wakeMode },
+    };
+  }
+  if (job.source === "authored" && payload.kind === "delivery"
+    && typeof payload.text === "string" && job.deliveryTarget !== undefined) {
+    return {
+      ...common,
+      source: "authored",
+      payload: { kind: "delivery", text: payload.text },
+      deliveryTarget: job.deliveryTarget,
+    };
+  }
+  if (job.source === "authored" && payload.kind === "agent_turn"
+    && typeof payload.message === "string"
+    && job.sessionPolicy !== undefined && job.continuationMode !== undefined) {
+    return {
+      ...common,
+      source: "authored",
+      payload: {
+        kind: "agent_turn",
+        message: payload.message,
+        ...(payload.model === undefined ? {} : { model: payload.model }),
+        ...(payload.timeoutSeconds === undefined ? {} : { timeoutSeconds: payload.timeoutSeconds }),
+      },
+      sessionPolicy: job.sessionPolicy,
+      continuationMode: job.continuationMode,
+      ...(job.deliveryTarget === undefined ? {} : { deliveryTarget: job.deliveryTarget }),
+      ...(job.wakeGate === undefined ? {} : { wakeGate: job.wakeGate }),
+      ...(job.cacheRetention === undefined ? {} : { cacheRetention: job.cacheRetention }),
+      ...(job.toolPolicy === undefined ? {} : { toolPolicy: job.toolPolicy }),
+    };
+  }
+  if (job.source === "built_in" && payload.kind === "internal_action"
+    && (payload.action === "memory_review"
+      || payload.action === "memory_lifecycle"
+      || payload.action === "reflection")) {
+    return {
+      ...common,
+      source: "built_in",
+      payload: { kind: "internal_action", action: payload.action },
+    };
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -679,7 +759,6 @@ export class IcSchedulerView extends LitElement {
   @state() private _error = "";
   @state() private _activeTab = "cron-jobs";
   @state() private _executions: ExecutionRecord[] = [];
-  @state() private _heartbeats: HeartbeatRecord[] = [];
   @state() private _heartbeatEnabled = false;
   @state() private _heartbeatIntervalMs = 300_000;
   @state() private _editorOpen = false;
@@ -691,7 +770,7 @@ export class IcSchedulerView extends LitElement {
   @state() private _cronJobCount = 0;
   @state() private _heartbeatAgents: HeartbeatAgentCard[] = [];
   @state() private _heartbeatAlerts: HeartbeatAlertRecord[] = [];
-  @state() private _heartbeatDeliveries: HeartbeatDeliveryRecord[] = [];
+  @state() private _heartbeatWakeEvents: HeartbeatWakeLifecycleRecord[] = [];
 
   private _rpcStatusUnsubs: (() => void)[] = [];
   private _sse: SseController | null = null;
@@ -734,7 +813,7 @@ export class IcSchedulerView extends LitElement {
       this._jobsLoaded
     ) {
       const job = this._jobs.find((j) => j.id === this.routeParams.jobId);
-      if (job && !this._editorOpen) {
+      if (job?.source === "authored" && !this._editorOpen) {
         this._editingJob = job;
         this._editorOpen = true;
         this._editorError = "";
@@ -750,57 +829,74 @@ export class IcSchedulerView extends LitElement {
   private _initSse(): void {
     if (!this.eventDispatcher || this._sse) return;
     this._sse = new SseController(this, this.eventDispatcher, {
-      "scheduler:job_started": (data) => {
-        const d = data as { jobId: string; jobName?: string; agentId?: string; timestamp?: number };
+      "scheduler:cron_execution_started": (data) => {
+        const d = data as { executionId: string; jobId: string; agentId: string; startedAtMs: number };
+        const jobName = this._jobs.find((job) => job.id === d.jobId)?.name ?? d.jobId;
         const record: ExecutionRecord = {
+          executionId: d.executionId,
           jobId: d.jobId,
-          jobName: d.jobName ?? d.jobId,
-          agentId: d.agentId ?? "",
-          timestamp: d.timestamp ?? systemNowMs(),
-          success: "pending",
+          jobName,
+          agentId: d.agentId,
+          timestamp: d.startedAtMs,
+          status: "started",
         };
         this._executions = [record, ...this._executions].slice(0, 50);
       },
-      "scheduler:job_completed": (data) => {
-        const d = data as { jobId: string; jobName?: string; agentId?: string; timestamp?: number; success?: boolean; durationMs?: number; error?: string };
+      "scheduler:cron_execution_terminal": (data) => {
+        const d = data as {
+          executionId: string;
+          jobId: string;
+          agentId: string;
+          terminalAtMs: number;
+          executionStatus: Exclude<ExecutionRecord["status"], "started">;
+          deliveryStatus: NonNullable<ExecutionRecord["deliveryStatus"]>;
+          durationMs: number;
+          errorKind?: string;
+        };
         const pendingIdx = this._executions.findIndex(
-          (r) => r.jobId === d.jobId && r.success === "pending",
+          (record) => record.executionId === d.executionId && record.status === "started",
         );
         if (pendingIdx >= 0) {
           const updated = [...this._executions];
           updated[pendingIdx] = {
             ...updated[pendingIdx],
-            success: d.success ?? true,
+            status: d.executionStatus,
+            deliveryStatus: d.deliveryStatus,
             durationMs: d.durationMs,
-            error: d.error,
-            timestamp: d.timestamp ?? updated[pendingIdx].timestamp,
+            errorKind: d.errorKind,
+            timestamp: d.terminalAtMs,
           };
           this._executions = updated;
         } else {
+          const jobName = this._jobs.find((job) => job.id === d.jobId)?.name ?? d.jobId;
           const record: ExecutionRecord = {
+            executionId: d.executionId,
             jobId: d.jobId,
-            jobName: d.jobName ?? d.jobId,
-            agentId: d.agentId ?? "",
-            timestamp: d.timestamp ?? systemNowMs(),
-            success: d.success ?? true,
+            jobName,
+            agentId: d.agentId,
+            timestamp: d.terminalAtMs,
+            status: d.executionStatus,
+            deliveryStatus: d.deliveryStatus,
             durationMs: d.durationMs,
-            error: d.error,
+            errorKind: d.errorKind,
           };
           this._executions = [record, ...this._executions].slice(0, 50);
         }
       },
-      "scheduler:heartbeat_delivered": (data) => {
-        const d = data as { agentId?: string; channelType?: string; outcome?: string; level?: string; reason?: string; durationMs?: number; timestamp?: number };
-        const record: HeartbeatDeliveryRecord = {
-          agentId: d.agentId ?? "",
-          channelType: d.channelType ?? "",
-          outcome: (d.outcome as "delivered" | "skipped" | "failed") ?? "delivered",
-          level: (d.level as "ok" | "alert" | "critical") ?? "ok",
-          reason: d.reason,
-          durationMs: d.durationMs ?? 0,
-          timestamp: d.timestamp ?? systemNowMs(),
-        };
-        this._heartbeatDeliveries = [record, ...this._heartbeatDeliveries].slice(0, 50);
+      "scheduler:heartbeat_wake_admitted": (data) => {
+        const event = data as HeartbeatWakeAdmittedEvent;
+        const record: HeartbeatWakeLifecycleRecord = { phase: "admitted", ...event };
+        this._heartbeatWakeEvents = [record, ...this._heartbeatWakeEvents].slice(0, 50);
+      },
+      "scheduler:heartbeat_wake_deferred": (data) => {
+        const event = data as HeartbeatWakeDeferredEvent;
+        const record: HeartbeatWakeLifecycleRecord = { phase: "deferred", ...event };
+        this._heartbeatWakeEvents = [record, ...this._heartbeatWakeEvents].slice(0, 50);
+      },
+      "scheduler:heartbeat_wake_terminal": (data) => {
+        const event = data as HeartbeatWakeTerminalEvent;
+        const record: HeartbeatWakeLifecycleRecord = { phase: "terminal", ...event };
+        this._heartbeatWakeEvents = [record, ...this._heartbeatWakeEvents].slice(0, 50);
       },
       "scheduler:heartbeat_alert": (data) => {
         const d = data as { agentId?: string; consecutiveErrors?: number; classification?: string; reason?: string; backoffMs?: number; timestamp?: number };
@@ -842,11 +938,16 @@ export class IcSchedulerView extends LitElement {
       return;
     }
     try {
-      const result = (await this.rpcClient.call<{ jobs?: SchedulerCronJob[] } | SchedulerCronJob[]>(
+      const result = (await this.rpcClient.call(
         "cron.list",
-        { _agentId: this._selectedAgentId || undefined },
+        { agentId: this._selectedAgentId || undefined },
       ));
-      this._jobs = Array.isArray(result) ? result : (result.jobs ?? []);
+      const jobs = result.jobs.map(decodeSchedulerCronJob);
+      if (jobs.some((job) => job === null)) {
+        this._error = "Cron inventory returned an invalid job";
+        return;
+      }
+      this._jobs = jobs.filter((job): job is SchedulerCronJob => job !== null);
       this._jobsLoaded = true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to load jobs";
@@ -864,7 +965,7 @@ export class IcSchedulerView extends LitElement {
   private async _loadHeartbeatConfig(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const config = await this.rpcClient.call<Record<string, unknown>>("config.read", { section: "scheduler" });
+      const config = await this.rpcClient.call("config.read", { section: "scheduler" });
       const heartbeat = config?.heartbeat as { enabled?: boolean; intervalMs?: number } | undefined;
       if (heartbeat) {
         this._heartbeatEnabled = heartbeat.enabled ?? false;
@@ -878,7 +979,7 @@ export class IcSchedulerView extends LitElement {
   private async _loadAgentIds(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const config = await this.rpcClient.call<Record<string, unknown>>("config.read", { section: "agents" });
+      const config = await this.rpcClient.call("config.read", { section: "agents" });
       if (config && typeof config === "object") {
         this._configAgentIds = Object.keys(config);
       }
@@ -893,9 +994,9 @@ export class IcSchedulerView extends LitElement {
   private async _loadCronStatus(): Promise<void> {
     if (!this.rpcClient || !this._selectedAgentId) return;
     try {
-      const result = await this.rpcClient.call<{ running: boolean; jobCount: number }>(
+      const result = await this.rpcClient.call(
         "cron.status",
-        { _agentId: this._selectedAgentId || undefined },
+        { agentId: this._selectedAgentId || undefined },
       );
       this._cronEnabled = result?.running ?? null;
       this._cronJobCount = result?.jobCount ?? 0;
@@ -907,7 +1008,9 @@ export class IcSchedulerView extends LitElement {
   private async _loadHeartbeatStates(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const result = await this.rpcClient.call<{ agents?: HeartbeatAgentCard[] }>("heartbeat.states", {});
+      const result = await this.rpcClient.call<{
+        agents?: HeartbeatAgentCard[];
+      }>("heartbeat.states", {});
       this._heartbeatAgents = result?.agents ?? [];
     } catch {
       // heartbeat.states may not exist in older daemons -- silently ignore
@@ -947,74 +1050,60 @@ export class IcSchedulerView extends LitElement {
     this._editorError = "";
 
     if (this._editingJob) {
-      // Edit mode -- optimistic update
-      const originalJobs = [...this._jobs];
-      const idx = this._jobs.findIndex((j) => j.id === this._editingJob!.id);
-      if (idx >= 0) {
-        const updatedJob: SchedulerCronJob = {
-          ...this._jobs[idx],
-          name: jobData.name,
-          agentId: jobData.agentId,
-          schedule: jobData.schedule,
-          payload: { kind: "agent_turn", message: jobData.message },
-          sessionTarget: jobData.sessionTarget,
-          enabled: jobData.enabled,
-          deliveryTarget: jobData.deliveryTarget,
-          wakeGate: jobData.wakeGate,
-        };
-        const updated = [...this._jobs];
-        updated[idx] = updatedJob;
-        this._jobs = updated;
-      }
       try {
-        // Spread jobData FIRST so the positional jobId / _agentId arguments
-        // win over any same-named keys (defensive sanitization).
+        const variantFields = "sessionPolicy" in jobData
+          ? {
+              sessionPolicy: jobData.sessionPolicy,
+              continuationMode: jobData.continuationMode,
+              ...(jobData.deliveryTarget === undefined
+                ? {}
+                : { deliveryTarget: jobData.deliveryTarget }),
+              ...(jobData.wakeGate === undefined ? {} : { wakeGate: jobData.wakeGate }),
+            }
+          : "deliveryTarget" in jobData
+            ? { deliveryTarget: jobData.deliveryTarget }
+            : {};
         await this.rpcClient.call("cron.update", {
-          ...(jobData as unknown as Record<string, unknown>),
           jobId: this._editingJob.id,
-          _agentId: this._selectedAgentId || undefined,
+          name: jobData.name,
+          schedule: jobData.schedule,
+          payload: jobData.payload,
+          paused: jobData.paused,
+          ...variantFields,
         });
+        await this._loadJobs();
         this._editorOpen = false;
         this._editingJob = null;
       } catch (err) {
-        this._jobs = originalJobs;
         this._editorError = err instanceof Error ? err.message : "Failed to update job";
       }
     } else {
-      // Create mode -- optimistic update
-      const tempJob: SchedulerCronJob = {
-        id: jobData.id,
-        name: jobData.name,
-        agentId: jobData.agentId,
-        schedule: jobData.schedule,
-        payload: { kind: "agent_turn", message: jobData.message },
-        sessionTarget: jobData.sessionTarget,
-        enabled: jobData.enabled,
-        consecutiveErrors: 0,
-        createdAtMs: systemNowMs(),
-        deliveryTarget: jobData.deliveryTarget,
-        wakeGate: jobData.wakeGate,
-      };
-      this._jobs = [...this._jobs, tempJob];
       try {
-        const result = await this.rpcClient.call<{ jobId: string }>("cron.add", {
-          ...(jobData as unknown as Record<string, unknown>),
-          _agentId: this._selectedAgentId || undefined,
-          _deliveryTarget: jobData.deliveryTarget,
+        const variantFields = "sessionPolicy" in jobData
+          ? {
+              sessionPolicy: jobData.sessionPolicy,
+              continuationMode: jobData.continuationMode,
+              ...(jobData.deliveryTarget === undefined || jobData.deliveryTarget === null
+                ? {}
+                : { deliveryTarget: jobData.deliveryTarget }),
+              ...(jobData.wakeGate === undefined || jobData.wakeGate === null
+                ? {}
+                : { wakeGate: jobData.wakeGate }),
+            }
+          : "deliveryTarget" in jobData
+            ? { deliveryTarget: jobData.deliveryTarget }
+            : {};
+        await this.rpcClient.call("cron.add", {
+          name: jobData.name,
+          agentId: jobData.agentId || this._selectedAgentId || undefined,
+          schedule: jobData.schedule,
+          payload: jobData.payload,
+          ...variantFields,
         });
-        // Update the temp job with the server-returned ID if different
-        if (result?.jobId && result.jobId !== tempJob.id) {
-          const idx = this._jobs.findIndex((j) => j.id === tempJob.id);
-          if (idx >= 0) {
-            const updated = [...this._jobs];
-            updated[idx] = { ...updated[idx], id: result.jobId };
-            this._jobs = updated;
-          }
-        }
+        await this._loadJobs();
         this._editorOpen = false;
         this._editingJob = null;
       } catch (err) {
-        this._jobs = this._jobs.filter((j) => j.id !== tempJob.id);
         this._editorError = err instanceof Error ? err.message : "Failed to create job";
       }
     }
@@ -1025,12 +1114,13 @@ export class IcSchedulerView extends LitElement {
     if (!window.confirm("Delete this job?")) return;
 
     const originalJobs = [...this._jobs];
+    const job = originalJobs.find((candidate) => candidate.id === jobId);
+    if (!job) return;
     this._jobs = this._jobs.filter((j) => j.id !== jobId);
 
     try {
       await this.rpcClient.call("cron.remove", {
-        jobId,
-        _agentId: this._selectedAgentId || undefined,
+        jobId: job.id,
       });
     } catch (err) {
       this._jobs = originalJobs;
@@ -1043,7 +1133,7 @@ export class IcSchedulerView extends LitElement {
     const newValue = !this._heartbeatEnabled;
     this._heartbeatEnabled = newValue;
     try {
-      await this.rpcClient.call("config.set", {
+      await this.rpcClient.call("config.patch", {
         section: "scheduler",
         key: "heartbeat.enabled",
         value: newValue,
@@ -1059,7 +1149,7 @@ export class IcSchedulerView extends LitElement {
     try {
       await this.rpcClient.call("cron.run", {
         jobName,
-        _agentId: this._selectedAgentId || undefined,
+        agentId: this._selectedAgentId || undefined,
       });
       IcToast.show("Job triggered", "success");
     } catch (err) {
@@ -1086,6 +1176,7 @@ export class IcSchedulerView extends LitElement {
   }
 
   private _openEditEditor(job: SchedulerCronJob): void {
+    if (job.source === "built_in") return;
     this._editingJob = job;
     this._editorOpen = true;
     this._editorError = "";
@@ -1110,7 +1201,7 @@ export class IcSchedulerView extends LitElement {
   /* ---- Computed getters ---- */
 
   private get _editingJobInput(): CronJobInput | null {
-    if (!this._editingJob) return null;
+    if (!this._editingJob || this._editingJob.source === "built_in") return null;
     return jobToCronInput(this._editingJob);
   }
 
@@ -1167,62 +1258,82 @@ export class IcSchedulerView extends LitElement {
   }
 
   private _renderJobRow(job: SchedulerCronJob) {
-    const dotClass = job.enabled
-      ? job.consecutiveErrors > 0 ? "status-dot status-dot--error" : "status-dot status-dot--active"
-      : "status-dot status-dot--inactive";
+    const isPaused = job.lifecycle.status === "paused";
+    const isTerminal = job.lifecycle.status === "one_shot_terminal";
+    const consecutiveDependencyErrors = job.lifecycle.status === "scheduled"
+      || job.lifecycle.status === "paused"
+      ? job.lifecycle.consecutiveDependencyErrors
+      : 0;
+    const nextRunAtMs = job.lifecycle.status === "scheduled" || job.lifecycle.status === "paused"
+      ? job.lifecycle.nextRunAtMs
+      : null;
+    const latestExecution = this._executions.find((execution) => execution.jobId === job.id);
+    const deliveryTarget = "deliveryTarget" in job ? job.deliveryTarget : undefined;
+    const dotClass = consecutiveDependencyErrors > 0
+      ? "status-dot status-dot--error"
+      : isPaused || isTerminal
+        ? "status-dot status-dot--inactive"
+        : "status-dot status-dot--active";
     return html`
-      <div class="grid-row" role="row" @click=${() => this._openEditEditor(job)}>
+      <div
+        class="grid-row"
+        role="row"
+        @click=${() => this._openEditEditor(job)}
+      >
         <div class="cell" role="cell">${job.name || job.id}</div>
         <div class="cell" role="cell">${formatSchedule(job.schedule)}</div>
         <div class="cell" role="cell">
-          ${job.lastRunAtMs && job.lastRunAtMs > 0
-            ? html`<ic-relative-time .timestamp=${job.lastRunAtMs}></ic-relative-time>`
+          ${latestExecution
+            ? html`<ic-relative-time .timestamp=${latestExecution.timestamp}></ic-relative-time>`
             : "Never"}
         </div>
         <div class="cell" role="cell">
-          ${job.enabled && job.nextRunAtMs && job.nextRunAtMs > 0
-            ? html`<ic-relative-time .timestamp=${job.nextRunAtMs}></ic-relative-time>`
-            : "(off)"}
+          ${nextRunAtMs === null
+            ? isTerminal ? "Complete" : "Claimed"
+            : isPaused
+              ? "Paused"
+              : html`<ic-relative-time .timestamp=${nextRunAtMs}></ic-relative-time>`}
         </div>
         <div class="cell" role="cell">
           <span class="status-info">
             <span class=${dotClass}></span>
-            ${job.consecutiveErrors > 0
-              ? html`<span class="error-count">${job.consecutiveErrors} errors</span>`
+            ${consecutiveDependencyErrors > 0
+              ? html`<span class="error-count">${consecutiveDependencyErrors} dependency errors</span>`
               : nothing}
           </span>
         </div>
         <div class="cell" role="cell">
-          ${job.deliveryTarget
-            ? html`<ic-tag variant="info">${job.deliveryTarget.channelType ?? "channel"}</ic-tag>`
+          ${deliveryTarget
+            ? html`<ic-tag variant="info">${deliveryTarget.destinationEndpoint.channelType}</ic-tag>`
             : html`<span style="color:var(--ic-text-dim)">local</span>`}
         </div>
         <div class="cell" role="cell">
           <div class="action-group">
             <button
               class="btn-run"
-              ?disabled=${!job.enabled}
-              title=${job.enabled ? "Execute this job now" : "Enable job to run"}
+              title="Execute this job now"
               @click=${(e: Event) => {
                 e.stopPropagation();
                 this._handleRunJob(job.name || job.id);
               }}
             >Run</button>
-            <button
-              class="btn-edit"
-              title="Edit this job"
-              @click=${(e: Event) => {
-                e.stopPropagation();
-                this._openEditEditor(job);
-              }}
-            >Edit</button>
-            <button
-              class="btn-delete"
-              @click=${(e: Event) => {
-                e.stopPropagation();
-                this._handleDeleteJob(job.id);
-              }}
-            >Delete</button>
+            ${job.source === "authored" ? html`
+              <button
+                class="btn-edit"
+                title="Edit this job"
+                @click=${(e: Event) => {
+                  e.stopPropagation();
+                  this._openEditEditor(job);
+                }}
+              >Edit</button>
+              <button
+                class="btn-delete"
+                @click=${(e: Event) => {
+                  e.stopPropagation();
+                  this._handleDeleteJob(job.id);
+                }}
+              >Delete</button>
+            ` : nothing}
           </div>
         </div>
       </div>
@@ -1277,17 +1388,17 @@ export class IcSchedulerView extends LitElement {
                     <div class="execution-entry">
                       <span class="exec-timestamp">${formatTimestamp(exec.timestamp)}</span>
                       <span class="exec-job">${exec.jobName || exec.jobId}</span>
-                      <span class=${exec.success === "pending"
-                        ? "exec-result--pending"
-                        : exec.success
-                          ? "exec-result--success"
-                          : "exec-result--fail"}>${exec.success === "pending" ? "..." : exec.success ? "OK" : "FAIL"}</span>
+                       <span class=${exec.status === "started"
+                         ? "exec-result--pending"
+                         : exec.status === "completed" || exec.status === "dispatched"
+                           ? "exec-result--success"
+                           : "exec-result--fail"}>${exec.status}${exec.deliveryStatus && exec.deliveryStatus !== "not_requested" ? ` / ${exec.deliveryStatus}` : ""}</span>
                       ${exec.durationMs != null
                         ? html`<span class="exec-duration">(${formatMs(exec.durationMs)})</span>`
                         : nothing}
-                      ${exec.error
-                        ? html`<span class="exec-error">${exec.error}</span>`
-                        : nothing}
+                       ${exec.errorKind
+                         ? html`<span class="exec-error">${exec.errorKind}</span>`
+                         : nothing}
                     </div>
                   `,
                 )}
@@ -1300,7 +1411,7 @@ export class IcSchedulerView extends LitElement {
   private _renderHeartbeatTab() {
     if (this._heartbeatAgents.length === 0) {
       // Fall back to global heartbeat info if no per-agent data
-      if (this._heartbeatEnabled || this._heartbeats.length > 0) {
+      if (this._heartbeatEnabled) {
         return html`
           <div class="hb-summary-bar">
             <span>Global heartbeat: ${this._heartbeatEnabled ? "enabled" : "disabled"}</span>
@@ -1363,19 +1474,20 @@ export class IcSchedulerView extends LitElement {
           `
         : nothing}
 
-      ${this._heartbeatDeliveries.length > 0
+      ${this._heartbeatWakeEvents.length > 0
         ? html`
             <div class="hb-recent-section">
-              <h3>Recent Deliveries</h3>
+              <h3>Recent Wake Lifecycle</h3>
               <div class="hb-event-list">
-                ${this._heartbeatDeliveries.slice(0, 20).map(
-                  del => html`
+                ${this._heartbeatWakeEvents.slice(0, 20).map(
+                  wake => html`
                     <div class="hb-event-entry">
-                      <span class="hb-event-ts">${formatTimestamp(del.timestamp)}</span>
-                      <span class="hb-event-agent">${del.agentId}</span>
-                      <ic-tag variant=${del.outcome === "delivered" ? "success" : del.outcome === "failed" ? "error" : "warning"}>${del.outcome}</ic-tag>
-                      <span>${del.channelType}</span>
-                      <span class="hb-event-duration">(${formatMs(del.durationMs)})</span>
+                      <span class="hb-event-ts">${formatTimestamp(wake.timestamp)}</span>
+                      <span class="hb-event-agent">${formatHeartbeatTarget(wake.target)}</span>
+                      <ic-tag variant=${wake.phase === "terminal" ? "success" : wake.phase === "deferred" ? "warning" : "default"}>${wake.phase}</ic-tag>
+                      <span>${wake.phase === "admitted" ? wake.disposition : wake.phase === "deferred" ? wake.reason : wake.status}</span>
+                      <span>${wake.correlationId}</span>
+                      ${wake.phase === "terminal" ? html`<span class="hb-event-duration">(${formatMs(wake.durationMs)})</span>` : nothing}
                     </div>
                   `,
                 )}

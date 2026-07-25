@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Real-layout tests for the OFFLINE obs
- * assemblers — `comis explain --offline` / `comis fleet --offline` and the
+ * assemblers — `comis explain --offline` / `comis system-health --offline` and the
  * automatic unreachable-gateway fallback both ride these.
  *
  * Per AGENTS.md §2.10 the layout IS the contract: the explain test builds the
@@ -34,16 +34,21 @@ import {
   createObservabilityStore,
 } from "@comis/memory";
 import type { AuditEventRow } from "@comis/memory";
+// Preload the runtime graph during test-file setup. Production keeps the
+// offline seam lazy; timed assertions should measure offline assembly rather
+// than Vitest's first-time transform of the daemon graph.
+import "@comis/daemon";
 import {
   assembleIncidentReportOffline,
-  assembleFleetHealthReportOffline,
+  assembleSystemHealthReportOffline,
   resolveOfflineDataDir,
+  resolveOfflineTrajectoryDir,
   resolveSessionFileOffline,
   readAuditSummaryOffline,
   suggestWorstSessionOffline,
 } from "./offline-obs.js";
 
-// Regression guard: if `comis explain --offline` / `comis fleet --offline`
+// Regression guard: if `comis explain --offline` / `comis system-health --offline`
 // resolved the data dir from `os.homedir()` ALONE, ignoring `COMIS_DATA_DIR`,
 // then running the CLI as a different user than the daemon (e.g. the daemon as
 // `comis` but the CLI as `root`) would read an EMPTY `<root-home>/.comis` and
@@ -64,6 +69,53 @@ describe("resolveOfflineDataDir", () => {
   it("falls back to <homedir>/.comis when COMIS_DATA_DIR is unset", () => {
     delete process.env.COMIS_DATA_DIR;
     expect(resolveOfflineDataDir()).toBe(safePath(os.homedir(), ".comis"));
+  });
+});
+
+describe("resolveOfflineTrajectoryDir", () => {
+  const previousConfigPaths = process.env.COMIS_CONFIG_PATHS;
+  const previousTrajectoryDir = process.env.COMIS_TRAJECTORY_DIR;
+
+  afterEach(() => {
+    if (previousConfigPaths === undefined) delete process.env.COMIS_CONFIG_PATHS;
+    else process.env.COMIS_CONFIG_PATHS = previousConfigPaths;
+    if (previousTrajectoryDir === undefined) delete process.env.COMIS_TRAJECTORY_DIR;
+    else process.env.COMIS_TRAJECTORY_DIR = previousTrajectoryDir;
+  });
+
+  it("uses the effective diagnostics trajectory root ahead of the environment fallback", () => {
+    const dataDir = tmpDataDir();
+    const configuredDir = path.join(dataDir, "configured-trajectories");
+    const configPath = path.join(dataDir, "config.yaml");
+    fs.writeFileSync(
+      configPath,
+      `diagnostics:\n  trajectory:\n    dir: ${configuredDir}\n`,
+      "utf8",
+    );
+    process.env.COMIS_CONFIG_PATHS = configPath;
+    process.env.COMIS_TRAJECTORY_DIR = path.join(dataDir, "environment-trajectories");
+
+    expect(resolveOfflineTrajectoryDir(dataDir)).toBe(configuredDir);
+  });
+
+  it("uses the trajectory environment root when no readable config exists", () => {
+    const dataDir = tmpDataDir();
+    const trajectoryDir = path.join(dataDir, "environment-trajectories");
+    process.env.COMIS_CONFIG_PATHS = path.join(dataDir, "missing.yaml");
+    process.env.COMIS_TRAJECTORY_DIR = trajectoryDir;
+
+    expect(resolveOfflineTrajectoryDir(dataDir)).toBe(trajectoryDir);
+  });
+
+  it("treats an empty configured trajectory root like the runtime path resolver", () => {
+    const dataDir = tmpDataDir();
+    const trajectoryDir = path.join(dataDir, "environment-trajectories");
+    const configPath = path.join(dataDir, "config.yaml");
+    fs.writeFileSync(configPath, "diagnostics:\n  trajectory:\n    dir: ''\n", "utf8");
+    process.env.COMIS_CONFIG_PATHS = configPath;
+    process.env.COMIS_TRAJECTORY_DIR = trajectoryDir;
+
+    expect(resolveOfflineTrajectoryDir(dataDir)).toBe(trajectoryDir);
   });
 });
 
@@ -232,9 +284,6 @@ function writeSessionRollup(
 }
 
 describe("assembleIncidentReportOffline — real nested layout, no daemon, no memory.db", () => {
-  // Generous timeout: the FIRST offline call lazy-loads the whole @comis/daemon
-  // graph (a deliberate trade — CLI startup stays light; the offline
-  // path pays once). Under vitest's transform that load can take ~10s cold.
   it("assembles the numbers-backed context_exhausted post-mortem from disk alone", { timeout: 30_000 }, async () => {
     const dataDir = tmpDataDir();
     buildLiveShapedSession(dataDir);
@@ -275,26 +324,26 @@ describe("assembleIncidentReportOffline — real nested layout, no daemon, no me
   });
 });
 
-describe("assembleFleetHealthReportOffline — memory.db present but missing obs tables", () => {
+describe("assembleSystemHealthReportOffline — memory.db present but missing obs tables", () => {
   it("degrades to file-only sources when the db lacks the obs schema (post-reset live state)", { timeout: 30_000 }, async () => {
     const dataDir = tmpDataDir();
     fs.mkdirSync(path.join(dataDir, "logs"), { recursive: true });
     // An empty SQLite db — exactly what an operator reset can leave behind.
     fs.writeFileSync(path.join(dataDir, "memory.db"), "", "utf-8");
 
-    const report = await assembleFleetHealthReportOffline(dataDir, 24);
+    const report = await assembleSystemHealthReportOffline(dataDir, 24);
 
     expect(report.windowHours).toBe(24);
     expect(report.coverage?.sessionSummary.found).toBe(false);
   });
 });
 
-describe("assembleFleetHealthReportOffline — local day files, no daemon, no memory.db", () => {
+describe("assembleSystemHealthReportOffline — local day files, no daemon, no memory.db", () => {
   it("returns an honest report with coverage gaps when memory.db is absent", { timeout: 30_000 }, async () => {
     const dataDir = tmpDataDir();
     const logsDir = path.join(dataDir, "logs");
     fs.mkdirSync(logsDir, { recursive: true });
-    // Today's session-index day file (the fleet activity source reads real day-keys).
+    // Today's session-index day file (the system activity source reads real day-keys).
     const today = new Date().toISOString().slice(0, 10);
     const rows = [
       {
@@ -326,13 +375,13 @@ describe("assembleFleetHealthReportOffline — local day files, no daemon, no me
       "utf-8",
     );
 
-    const report = await assembleFleetHealthReportOffline(dataDir, 24);
+    const report = await assembleSystemHealthReportOffline(dataDir, 24);
 
     expect(report.windowHours).toBe(24);
     // Activity came from the local day file.
     expect(report.activity.activeAgents).toContain("default");
     // The session-summary store (memory.db) is absent — coverage says so
-    // honestly instead of masquerading as a clean zero-session fleet.
+    // honestly instead of masquerading as a clean zero-session system.
     expect(report.coverage?.sessionSummary.found).toBe(false);
   });
 });

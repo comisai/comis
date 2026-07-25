@@ -129,6 +129,7 @@ describe("line-adapter -- webhook event runWithContext wrap", () => {
   it("runs handlers inside runWithContext({ traceId, channelType: \"line\" })", async () => {
     let ctxTraceId: string | undefined;
     let ctxChannelType: string | undefined;
+    let ctxTrustLevel: string | undefined;
     let stampedTraceId: string | undefined;
     const normalized = makeNormalized();
     vi.mocked(mapLineToNormalized).mockReturnValue(normalized);
@@ -138,6 +139,7 @@ describe("line-adapter -- webhook event runWithContext wrap", () => {
       const ctx = tryGetContext();
       ctxTraceId = ctx?.traceId;
       ctxChannelType = ctx?.channelType;
+      ctxTrustLevel = ctx?.trustLevel;
       stampedTraceId = m.metadata.traceId as string | undefined;
     });
 
@@ -146,5 +148,6 @@ describe("line-adapter -- webhook event runWithContext wrap", () => {
     expect(ctxTraceId).toBeDefined();
     expect(ctxTraceId).toBe(stampedTraceId);
     expect(ctxChannelType).toBe("line");
+    expect(ctxTrustLevel).toBe("user");
   });
 });

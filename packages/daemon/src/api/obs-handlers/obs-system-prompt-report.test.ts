@@ -35,7 +35,7 @@ function makeObsStore(overrides: Record<string, unknown> = {}) {
     aggregateBySession: vi.fn().mockReturnValue({ sessionKey: "", totalCost: 0, totalTokens: 0, callCount: 0 }),
     aggregateHourly: vi.fn().mockReturnValue([]),
     queryDelivery: vi.fn().mockReturnValue([]),
-    deliveryStats: vi.fn().mockReturnValue({ total: 0, success: 0, error: 0, timeout: 0, filtered: 0, avgLatencyMs: 0 }),
+    deliveryStats: vi.fn().mockReturnValue({ total: 0, attempted: 0, success: 0, error: 0, timeout: 0, filtered: 0, aborted: 0, attemptedLatencyMs: 0, avgLatencyMs: 0 }),
     latestChannelSnapshots: vi.fn().mockReturnValue([]),
     resetAll: vi.fn().mockReturnValue({ tokenUsage: 0, delivery: 0, diagnostics: 0, channels: 0 }),
     resetTable: vi.fn().mockReturnValue(0),
@@ -77,7 +77,7 @@ function makeDeps(overrides?: Partial<ObsHandlerDeps>): ObsHandlerDeps {
     },
     deliveryTracer: {
       getRecent: vi.fn().mockReturnValue([]),
-      getStats: vi.fn().mockReturnValue({ total: 0, successes: 0, failures: 0, avgLatencyMs: 0 }),
+      getStats: vi.fn().mockReturnValue({ total: 0, attempted: 0, successes: 0, failures: 0, timeouts: 0, filtered: 0, aborted: 0, attemptedLatencyMs: 0, avgLatencyMs: 0 }),
       reset: vi.fn(),
       dispose: vi.fn(),
     },
