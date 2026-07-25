@@ -53,6 +53,7 @@ export async function loadChatSessionSelection(
 ): Promise<{
   readonly selectedAgent: string;
   readonly sessions: ChatSessionInfo[];
+  readonly routedSession?: ChatSessionInfo;
   readonly routeResolved: boolean;
 }> {
   if (!conversationRef) {
@@ -67,9 +68,8 @@ export async function loadChatSessionSelection(
   if (!routed) return { selectedAgent, sessions: [], routeResolved: false };
   return {
     selectedAgent: routed.agentId,
-    sessions: sessions
-      .filter((session) => session.tenantId === routed.tenantId && session.agentId === routed.agentId)
-      .map(toChatSession),
+    sessions: await loadChatSessions(rpcClient, routed.agentId),
+    routedSession: toChatSession(routed),
     routeResolved: true,
   };
 }

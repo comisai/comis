@@ -224,6 +224,7 @@ export class IcChatConsole extends LitElement {
 
   // --- Session / conversation state ---
   @state() private _sessions: ChatSessionInfo[] = [];
+  private _routedSession: ChatSessionInfo | undefined;
   @state() private _activeSession = "";
   @state() private _messages: ChatMessageData[] = [];
   @state() private _agents: ChatAgentOption[] = [];
@@ -511,18 +512,20 @@ export class IcChatConsole extends LitElement {
       if (!this._isCurrentSessionListRequest(request)) return;
       this._selectedAgent = selection.selectedAgent;
       this._sessions = selection.sessions;
+      this._routedSession = undefined;
       this._sessionListLoadingRevision = undefined;
       this._loading = false;
       if (request.conversationRef && selection.routeResolved) {
-        const match = this._sessions.find((session) => session.key === request.conversationRef);
+        const match = selection.routedSession;
         if (match) {
-          this._activateSession(match.key);
+          this._activateSession(match.key, match);
           void this._loadSessionHistory();
         }
       }
     } catch {
       if (!this._isCurrentSessionListRequest(request)) return;
       this._sessions = [];
+      this._routedSession = undefined;
       this._sessionListLoadingRevision = undefined;
       this._loading = false;
     }
@@ -614,9 +617,10 @@ export class IcChatConsole extends LitElement {
     void this._loadSessionHistory();
   }
 
-  private _activateSession(key: string): void {
+  private _activateSession(key: string, routedSession?: ChatSessionInfo): void {
     this._activeSessionRevision += 1;
     this._sessionListLoadingRevision = undefined;
+    this._routedSession = routedSession;
     this._activeSession = key;
     this._messages = [];
     this._budgetSegments = [];
@@ -632,11 +636,17 @@ export class IcChatConsole extends LitElement {
   }
 
   private _activeTransportSessionKey(): string {
-    return resolveTransportSessionKey(this._sessions, this._activeSession);
+    return resolveTransportSessionKey(this._activeSessionCandidates(), this._activeSession);
   }
 
   private _activeSessionTarget() {
-    return resolveActiveSessionTarget(this._sessions, this._activeSession);
+    return resolveActiveSessionTarget(this._activeSessionCandidates(), this._activeSession);
+  }
+
+  private _activeSessionCandidates(): readonly ChatSessionInfo[] {
+    return this._routedSession?.key === this._activeSession
+      ? [this._routedSession, ...this._sessions]
+      : this._sessions;
   }
 
   private _activeTargetMatches(target: SessionTarget): boolean {
@@ -859,6 +869,13 @@ export class IcChatConsole extends LitElement {
   private _syncSessionMessageCount(): void {
     if (!this._activeSession) return;
     const count = this._messages.filter((m) => m.role !== "error").length;
+    if (this._routedSession?.key === this._activeSession) {
+      this._routedSession = {
+        ...this._routedSession,
+        messageCount: count,
+        lastActivity: systemNowMs(),
+      };
+    }
     this._sessions = this._sessions.map((s) =>
       s.key === this._activeSession
         ? { ...s, messageCount: count, lastActivity: systemNowMs() }

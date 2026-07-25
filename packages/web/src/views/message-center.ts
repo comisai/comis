@@ -430,7 +430,7 @@ export class IcMessageCenter extends LitElement {
     if (
       !this.rpcClient
       || !this._effectiveChannel
-      || this._selectedEndpointIsAmbiguous()
+      || this._selectedEndpointCannotUseNativeRpc()
     ) return null;
     return {
       revision: this._actionContextRevision,
@@ -721,14 +721,10 @@ export class IcMessageCenter extends LitElement {
     if (!this.rpcClient || !channel) return;
     const rpcClient = this.rpcClient;
 
-    // Path 1: Native history is safe only when the endpoint coordinate is unambiguous.
-    if (this._capabilities?.fetchHistory) {
-      if (this._selectedEndpointIsAmbiguous()) {
-        this._messages = [];
-        this._messagesAreActionable = false;
-        this._selectedMessageId = "";
-        return;
-      }
+    if (
+      this._capabilities?.fetchHistory
+      && !this._selectedEndpointCannotUseNativeRpc()
+    ) {
       try {
         const fetchResult = await this.rpcClient.call<{
           messages: FetchedMessage[];
@@ -829,18 +825,11 @@ export class IcMessageCenter extends LitElement {
       ?? this._selectedChatId;
   }
 
-  private _selectedEndpointIsAmbiguous(): boolean {
+  private _selectedEndpointCannotUseNativeRpc(): boolean {
     const selected = this._chatList.find(
       (chat) => (chat.key ?? chat.chatId) === this._selectedChatId,
     );
-    const selectedEndpoint = selected?.endpoint;
-    if (!selectedEndpoint) return false;
-    return this._chatList.some((chat) =>
-      chat.endpoint !== undefined
-      && chat.endpoint.channelType === selectedEndpoint.channelType
-      && chat.endpoint.conversationId === selectedEndpoint.conversationId
-      && !endpointsEqual(chat.endpoint, selectedEndpoint)
-    );
+    return selected?.endpoint !== undefined;
   }
 
   // -------------------------------------------------------------------------
@@ -874,7 +863,7 @@ export class IcMessageCenter extends LitElement {
   private _handleSendClick(): void {
     if (
       this._mutationPending
-      || this._selectedEndpointIsAmbiguous()
+      || this._selectedEndpointCannotUseNativeRpc()
       || !this._sendText.trim()
     ) return;
     this._showSendConfirm = true;
@@ -1540,7 +1529,7 @@ export class IcMessageCenter extends LitElement {
 
   private _renderSendForm() {
     const attachSupported = this._capabilities?.attachments === true;
-    const endpointAmbiguous = this._selectedEndpointIsAmbiguous();
+    const endpointAmbiguous = this._selectedEndpointCannotUseNativeRpc();
 
     return html`
       <div class="section">
@@ -1645,7 +1634,7 @@ export class IcMessageCenter extends LitElement {
     if (!groups) return nothing;
 
     const platformLabel = this._effectiveChannel.charAt(0).toUpperCase() + this._effectiveChannel.slice(1);
-    const endpointAmbiguous = this._selectedEndpointIsAmbiguous();
+    const endpointAmbiguous = this._selectedEndpointCannotUseNativeRpc();
 
     return html`
       <div class="platform-actions">
