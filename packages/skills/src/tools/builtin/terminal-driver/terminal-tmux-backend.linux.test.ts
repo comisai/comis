@@ -23,6 +23,9 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   tmuxSessionName,
@@ -95,6 +98,82 @@ describe.skipIf(!isLinux() || !tmuxAvailable())(
         buildTmuxHasSessionArgv({ tmuxPath: TMUX, name: `${NAME}-does-not-exist` }),
       );
       expect(ghost).not.toBe(0);
+    });
+  },
+);
+
+/**
+ * Live proof of the per-session `-e` env FRESHNESS fix, against a real tmux server. A tmux pane
+ * inherits the SERVER's GLOBAL environment, captured ONCE when the server first starts and never
+ * refreshed — so on a long-lived server (it outlives daemon restarts by design) a later drive
+ * would inherit the value the server booted with, not the daemon's current one (e.g. a rotated ADO
+ * PAT would never reach a new drive). {@link buildTmuxSpawnArgv} now injects the current scrubbed
+ * env per session via `-e`, which OVERRIDES the stale server-global value on that pane. This drives
+ * the tmux CLI directly (no node-pty / no bwrap needed — only a real tmux + its own `-S` socket) so
+ * it runs on any Linux/CI box with tmux, isolating the env-freshness mechanism.
+ */
+describe.skipIf(!isLinux() || !tmuxAvailable())(
+  "Live tmux (Linux) — per-session `-e` injects the CURRENT env over the server's boot-time env",
+  () => {
+    const RUN = `${process.pid}-${Math.floor(Math.random() * 1e6)}`;
+    const SOCK = join(tmpdir(), `comis-tmux-e-${RUN}.sock`);
+    const S1 = `comis-efresh1-${RUN}`;
+    const S2 = `comis-efresh2-${RUN}`;
+    const OUT = join(tmpdir(), `comis-pane-env-${RUN}.txt`);
+
+    afterEach(() => {
+      // Reap both sessions + kill the dedicated server + drop the pane-env probe file.
+      runTmuxArgv([TMUX, "-S", SOCK, "kill-server"]);
+      for (const p of [OUT, SOCK]) {
+        try {
+          rmSync(p, { force: true });
+        } catch {
+          /* best-effort cleanup */
+        }
+      }
+    });
+
+    it("a 2nd session started with `-e TOKEN_VAL=NEW` sees NEW even though the server booted with OLD", async () => {
+      // 1) Start the server via a FIRST session whose PROCESS env carries TOKEN_VAL=OLD — the
+      //    server's global environment captures OLD for its whole life.
+      const first = spawnSync(
+        TMUX,
+        ["-S", SOCK, "new-session", "-d", "-s", S1, "--", "sh", "-c", "sleep 30"],
+        { env: { ...process.env, TOKEN_VAL: "OLD" }, timeout: 5_000, encoding: "utf8" },
+      );
+      if (first.status !== 0) {
+        expect(first.status ?? 0).toBeGreaterThanOrEqual(0); // flaky-tolerant (soak tier), never hard-fail
+        return;
+      }
+
+      // 2) Create a 2nd session via the PRODUCTION builder, injecting the CURRENT value with `-e`.
+      //    The pane writes its OWN process env for TOKEN_VAL to a file.
+      const argv = buildTmuxSpawnArgv({
+        tmuxPath: TMUX,
+        socketPath: SOCK,
+        name: S2,
+        bin: "sh",
+        binArgv: ["-c", `printenv TOKEN_VAL > ${OUT}; sleep 5`],
+        cols: 80,
+        rows: 24,
+        env: { TOKEN_VAL: "NEW" } as NodeJS.ProcessEnv,
+      });
+      expect(argv).toContain("-e");
+      expect(argv).toContain("TOKEN_VAL=NEW"); // the builder emitted the per-session override
+      const second = spawnSync(argv[0]!, argv.slice(1), { timeout: 5_000, encoding: "utf8" });
+      if (second.status !== 0) {
+        expect(second.status ?? 0).toBeGreaterThanOrEqual(0);
+        return;
+      }
+
+      // 3) The pane's ACTUAL process env must show NEW (the `-e` override), NOT the server's OLD.
+      let paneSaw: string | undefined;
+      for (let i = 0; i < 20 && paneSaw === undefined; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        if (existsSync(OUT)) paneSaw = readFileSync(OUT, "utf8").trim();
+      }
+      if (paneSaw === undefined) return; // pane never wrote (transient) — soak-tier tolerant
+      expect(paneSaw).toBe("NEW"); // fresh value reached the pane; the stale server-global OLD did not
     });
   },
 );

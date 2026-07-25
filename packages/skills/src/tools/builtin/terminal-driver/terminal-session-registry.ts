@@ -515,7 +515,8 @@ export function createTerminalSessionRegistry(
       // The daemon-resolved bwrap path rides the frame for the worker's fail-closed branch (undefined ⇒ no spawn, lost).
       bwrapPath: deps.bwrapPath,
       // The operator jail opt-out rides the frame like bwrapPath (true ⇒ the worker spawns the CLI
-      // directly, env-scrub preserved, forced non-durable PTY — see setup-terminal-tools wiring).
+      // directly, env-scrub preserved; a durable tmux drive is preserved via a scrubbed server env +
+      // per-session `new-session -e` — see terminal-worker-backend-attach).
       ...(deps.unsafeDisableSandbox ? { unsafeDisableSandbox: true } : {}),
       ...(req.durable ? { backend: "tmux" } : {}), // A durable drive selects the tmux backend (terminal-worker-entry.ts reads p["backend"]).
     });

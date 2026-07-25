@@ -221,7 +221,7 @@ describe("buildSpawnPlan — unsafeDisableSandbox (the operator opt-out of the j
   it("returns an UNSANDBOXED plan (child runs directly, no bwrap) when the operator opts out", async () => {
     const plan = await buildSpawnPlan(makeInput(), { unsafeDisableSandbox: true });
     expect(plan.bin).toBe("/bin/cat"); // the driven CLI itself, NOT the bwrap binary
-    expect(plan.unsandboxed).toBe(true); // the backend reads this to force the non-durable PTY path
+    expect(plan.unsandboxed).toBe(true); // the backend reads this for the direct (no-bwrap) spawn; a durable tmux drive is still allowed
     expect(plan.cwd).toBe("/ws"); // the child still runs in the session workspace (no bwrap --chdir)
     expect(plan.argv.join(" ")).not.toContain("bwrap"); // no jail wrapper anywhere in the argv
     // We did NOT bubblewrap it, so we must NOT lie to a sandbox-aware CLI (claude may nest its own).

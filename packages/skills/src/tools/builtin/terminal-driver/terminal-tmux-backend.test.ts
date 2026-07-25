@@ -131,6 +131,40 @@ describe("terminal-tmux-backend — pure command builders (every command -S the 
     expect(argv).toContain("40");
   });
 
+  it("buildTmuxSpawnArgv: injects the CURRENT env as `-e KEY=VALUE` (freshness — pane env decoupled from the stale server-global env)", () => {
+    // A tmux pane inherits the server's GLOBAL environment, which is captured ONCE when the
+    // server first starts and never refreshed (proven live: a 2nd session's pane sees the value
+    // the server booted with, not the daemon's current one). So a rotated secret (e.g. the ADO
+    // PAT) would never reach a new drive on a long-lived server. Injecting the current (already
+    // scrubbed) env per session with `-e` overrides the stale global per-pane — the freshness fix.
+    const argv = buildTmuxSpawnArgv({
+      tmuxPath,
+      socketPath: SOCK,
+      name: "comis-abc",
+      bin: "/usr/local/bin/claude",
+      binArgv: ["--flag"],
+      cols: 120,
+      rows: 40,
+      env: { PATH: "/usr/bin", AZURE_DEVOPS_EXT_PAT: "current-pat", TERM: "xterm-256color" },
+    });
+    // Each entry rides as a distinct `-e` `KEY=VALUE` pair, BEFORE the `--` command separator.
+    const sep = argv.indexOf("--");
+    const ePairs: string[] = [];
+    for (let i = 0; i < sep; i++) {
+      if (argv[i] === "-e") ePairs.push(argv[i + 1]!);
+    }
+    expect(ePairs).toEqual(
+      expect.arrayContaining(["PATH=/usr/bin", "AZURE_DEVOPS_EXT_PAT=current-pat", "TERM=xterm-256color"]),
+    );
+    // The driven command still trails the `--` verbatim (env injection never displaces it).
+    expect(argv.slice(sep)).toEqual(["--", "/usr/local/bin/claude", "--flag"]);
+  });
+
+  it("buildTmuxSpawnArgv: emits NO `-e` when env is absent (optional — the pure builder stays minimal)", () => {
+    const argv = buildTmuxSpawnArgv({ tmuxPath, socketPath: SOCK, name: "comis-abc", bin: "/bin/sh", binArgv: [], cols: 80, rows: 24 });
+    expect(argv).not.toContain("-e");
+  });
+
   it("buildTmuxHasSessionArgv probes by name on the same socket (the re-attach decision)", () => {
     expect(buildTmuxHasSessionArgv({ tmuxPath, socketPath: SOCK, name: "comis-abc" })).toEqual([
       tmuxPath,
@@ -186,6 +220,16 @@ describe("terminal-tmux-backend — createTmuxBackend create-vs-re-attach decisi
     expect(opts).toEqual(expect.arrayContaining(["status=off", "prefix=None"]));
     // It attached the DRIVING pty to the named session.
     expect(f.attachName).toBe("comis-abc");
+  });
+
+  it("CREATE threads the CURRENT env onto new-session as `-e` (each fresh drive gets today's env, not the server's boot-time env)", () => {
+    const f = makeFake({ hasSession: false });
+    createTmuxBackend(f.deps({ env: { PATH: "/usr/bin", AZURE_DEVOPS_EXT_PAT: "rotated-today" } as NodeJS.ProcessEnv }));
+    const created = f.oneShot.find((a) => a.includes("new-session"))!;
+    const sep = created.indexOf("--");
+    const ePairs: string[] = [];
+    for (let i = 0; i < sep; i++) if (created[i] === "-e") ePairs.push(created[i + 1]!);
+    expect(ePairs).toEqual(expect.arrayContaining(["PATH=/usr/bin", "AZURE_DEVOPS_EXT_PAT=rotated-today"]));
   });
 
   it("RE-ATTACHES (NO new-session) when hasSession is true (survival after a restart)", () => {

@@ -427,8 +427,9 @@ function getOrCreateTerminalRegistry(
       // host ⇒ the worker fail-closes (no unjailed spawn).
       bwrapPath: deps.bwrapPath,
       // The operator jail opt-out (`skills.terminal.unsafeDisableSandbox`) rides the create frame
-      // like bwrapPath: true ⇒ the worker spawns the CLI directly (no bwrap), env-scrub preserved,
-      // forced non-durable PTY. A security downgrade for bwrap-less hosts, surfaced in config_posture.
+      // like bwrapPath: true ⇒ the worker spawns the CLI directly (no bwrap), env-scrub preserved.
+      // A durable tmux drive is preserved (server started scrubbed + per-session `new-session -e`),
+      // so session persistence survives. A security downgrade for bwrap-less hosts, surfaced in config_posture.
       unsafeDisableSandbox: deps.config?.unsafeDisableSandbox,
       egressControl: deps.egressControl,
       // Agent-workspace persistence: root each session in the agent's OWN workspace

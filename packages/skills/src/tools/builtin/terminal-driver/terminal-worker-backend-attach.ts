@@ -5,17 +5,17 @@
  * that file keeps headroom under the 800-line architecture cap before the attention
  * wiring lands (the fd3 emitter call is added to the worker later).
  *
- * BEHAVIOR-NEUTRAL: this is pure code movement. {@link attachBackend} performs the EXACT
- * same wiring `handleCreate` did inline (try `loadPty()` → on success wire the node-pty
- * session's `onData`→ring / `onExit`→exit and set `state.pty`; on throw WARN
- * `errorKind:"dependency"`, flip to `degraded`, spawn the pipe child and wire its
+ * {@link attachBackend} performs the wiring `handleCreate` did inline (try `loadPty()` → on
+ * success wire the node-pty session's `onData`→ring / `onExit`→exit and set `state.pty`; on throw
+ * WARN `errorKind:"dependency"`, flip to `degraded`, spawn the pipe child and wire its
  * `stdout.on("data")`→ring + `close`/`error`→exit and set `state.pipe`). {@link appendRing}
  * and {@link markExited} (the worker's former closure locals, whose ONLY callers were these
- * backend stream handlers) move with it byte-for-byte. Both backends normally spawn
- * `bwrap [scope args] -- bin argv` (the plan is composed upstream); the ONE exception is an
- * `unsandboxed` plan (operator `unsafeDisableSandbox`), where the plan is the CLI itself and the
- * spawns run it directly with `plan.cwd` — and such a plan is FORCED onto the PTY path (never the
- * tmux backend, whose server env would bypass the plan's secret-scrub).
+ * backend stream handlers) move with it. Both backends normally spawn `bwrap [scope args] -- bin
+ * argv` (the plan is composed upstream); the ONE exception is an `unsandboxed` plan (operator
+ * `unsafeDisableSandbox`), where the plan is the CLI itself and the spawns run it directly with
+ * `plan.cwd`. An unsandboxed plan STILL takes the durable tmux backend when requested — the tmux
+ * server env is kept clean by starting it with the scrubbed `plan.env` and injecting the current
+ * scrubbed env per pane via `new-session -e`, so no jail `--unsetenv` is needed (see attachBackend).
  *
  * INFRA-FREE (like every worker-side sibling): value-imports ONLY node builtins, and
  * type-imports the worker's structural contracts from the neutral leaf
@@ -43,11 +43,11 @@ interface BackendSpawnPlan {
   /** Child cwd — present ONLY on the {@link unsandboxed} direct-spawn path (the jailed path bakes cwd into bwrap's `--chdir`). */
   cwd?: string;
   /**
-   * `true` when the jail was bypassed (`unsafeDisableSandbox`) — the child runs DIRECTLY, no bwrap.
-   * FORCES the non-durable PTY backend: a tmux server would inherit — and leak — the daemon env
-   * that the jail's per-session `--unsetenv` normally strips (the scrubbed `plan.env` protects the
-   * FIRST session that starts the server, but a pre-existing server's env bypasses it), so a durable
-   * `backend:"tmux"` request is downgraded to PTY here rather than run a secret-leaking session.
+   * `true` when the jail was bypassed (`unsafeDisableSandbox`) — the child runs DIRECTLY, no bwrap,
+   * with `cwd` set. It does NOT force the PTY backend: a durable `backend:"tmux"` request still uses
+   * tmux, because the tmux server env stays clean without the jail's `--unsetenv` — `new-session`
+   * (the only server-starting command) runs the scrubbed `plan.env`, and each `new-session -e`
+   * re-injects the current scrubbed env per pane. See {@link attachBackend}.
    */
   unsandboxed?: boolean;
 }
@@ -188,28 +188,18 @@ export function attachBackend(args: AttachBackendArgs): boolean {
     return true;
   }
 
-  // An unsandboxed drive can NEVER take the tmux backend: the tmux server inherits — and would
-  // leak — the daemon env that the jail's per-session `--unsetenv` normally strips (the scrubbed
-  // plan.env only protects the session that STARTS the server; a pre-existing server bypasses it).
-  // Downgrade a durable `backend:"tmux"` request to the non-durable PTY path here + WARN, mirroring
-  // the tmux-unavailable degrade — never a secret-leaking session.
-  if (requestedBackend === "tmux" && plan.unsandboxed === true) {
-    logger.warn(
-      {
-        hint: "durable tmux backend disabled under unsafeDisableSandbox (no jail --unsetenv to strip the tmux server env); running non-durable pty",
-        errorKind: "precondition" as const,
-      },
-      "terminal durable drive downgraded (sandbox disabled)",
-    );
-  }
-
-  // The tmux named-session backend — selected ONLY when the create frame
-  // requested it AND the worker was built with the tmux loader AND the drive is jailed (an
-  // unsandboxed drive is forced to PTY above). The handle is FakePtyLike-shaped, so it wires
-  // EXACTLY like the pty branch (onData→ring, onExit→markExited, set state.pty so writeToBackend
-  // uses it) — one seam, no worker-entry branching. The driven plan command + geometry ride into
-  // the loader; the loader owns has-session-then-attach.
-  if (requestedBackend === "tmux" && loadTmux !== undefined && plan.unsandboxed !== true) {
+  // The tmux named-session backend — selected when the create frame requested it AND the worker
+  // was built with the tmux loader. An UNSANDBOXED drive (operator `unsafeDisableSandbox`) takes
+  // this path too: session persistence is a hard requirement, and the tmux server env is safe
+  // WITHOUT the jail's `--unsetenv` because (1) the SERVER is only ever started by `new-session`,
+  // which runs with the already-scrubbed `plan.env` (no daemon secrets in its global env — the
+  // security floor; `has-session` never starts a server, verified on tmux 3.4), and (2) each
+  // `new-session -e` injects the current scrubbed env per pane (freshness — it also overrides
+  // anything stale in the server global). That is parity with the sandbox-off PTY path (both run
+  // the scrubbed env, no jail). The handle is FakePtyLike-shaped, so it wires EXACTLY like the pty
+  // branch (onData→ring, onExit→markExited, set state.pty so writeToBackend uses it) — one seam, no
+  // worker-entry branching. A tmux-less host (no loadTmux) still falls through to the PTY path below.
+  if (requestedBackend === "tmux" && loadTmux !== undefined) {
     const handle = loadTmux.spawn({
       sessionId,
       bin: plan.bin,
