@@ -3745,7 +3745,14 @@ Media processing test methods and provider inspection. All methods require `admi
 
 <Accordion title="message (7 methods)">
 
-Cross-channel message operations: send, reply, edit, delete, fetch, react, and attach files. All methods require `admin` scope and a `channel_type` + `channel_id` to identify the target channel.
+Cross-channel message operations: send, reply, edit, delete, fetch, react, and
+attach files. `message.send`, `message.reply`, and `message.react` are
+`rpc`-scoped outward operations guarded by the `orch:message` capability.
+Editing, deleting, fetching, and attaching remain `admin`-scoped. Every method
+identifies its target with only `channel_type` and `channel_id`; the contract
+cannot distinguish channel instances, threads, or direct/shared conversation
+kind. A client holding a complete `ChannelEndpoint` must fail closed instead of
+discarding those qualifiers.
 
 <Note>
 **Durable duplicate suppression for autonomy-originated sends.** When
@@ -3764,21 +3771,21 @@ best-effort pass-through operations.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
-| `message.send` | `admin` | Send a message to a channel |
-| `message.reply` | `admin` | Reply to a specific message |
+| `message.send` | `rpc` | Send a message to a channel |
+| `message.reply` | `rpc` | Reply to a specific message |
 | `message.edit` | `admin` | Edit an existing message |
 | `message.delete` | `admin` | Delete a message |
 | `message.fetch` | `admin` | Fetch recent messages from a channel |
-| `message.react` | `admin` | Add a reaction to a message |
+| `message.react` | `rpc` | Add a reaction to a message |
 | `message.attach` | `admin` | Send a file attachment to a channel |
 
 ### `message.send`
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ channel_type: string, channel_id: string, text: string, buttons?: object[], cards?: object[], effects?: object[], thread_reply?: string }` |
-| **Returns** | `{ receipt: { kind: "tracked", messageId: string } \| { kind: "delivered_untracked" }, channelId: string }` |
+| **Scope** | `rpc` |
+| **Parameters** | `{ channel_type: string, channel_id: string, text: string, buttons?: object[][], cards?: object[], effects?: object[], thread_reply?: boolean }` |
+| **Returns** | `{ messageId: string, channelId: string }` |
 
 <CodeGroup>
 ```json Request
@@ -3809,8 +3816,8 @@ best-effort pass-through operations.
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ channel_type: string, channel_id: string, text: string, message_id: string }` |
+| **Scope** | `rpc` |
+| **Parameters** | `{ channel_type: string, channel_id: string, text: string, message_id: string, buttons?: object[][], cards?: object[], effects?: object[], thread_reply?: boolean }` |
 | **Returns** | `{ messageId: string, channelId: string }` |
 
 ### `message.edit`
@@ -3819,7 +3826,7 @@ best-effort pass-through operations.
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ channel_type: string, channel_id: string, message_id: string, text: string }` |
-| **Returns** | Edit confirmation |
+| **Returns** | `{ edited: true, channelId: string, messageId: string }` |
 
 ### `message.delete`
 
@@ -3827,7 +3834,7 @@ best-effort pass-through operations.
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ channel_type: string, channel_id: string, message_id: string }` |
-| **Returns** | Delete confirmation |
+| **Returns** | `{ deleted: true, channelId: string, messageId: string }` |
 
 ### `message.fetch`
 
@@ -3835,7 +3842,7 @@ best-effort pass-through operations.
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ channel_type: string, channel_id: string, limit?: number, before?: string }` |
-| **Returns** | `{ messages: object[] }` |
+| **Returns** | `{ messages: object[], channelId: string }` |
 
 <CodeGroup>
 ```json Request
@@ -3867,17 +3874,17 @@ best-effort pass-through operations.
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
+| **Scope** | `rpc` |
 | **Parameters** | `{ channel_type: string, channel_id: string, message_id: string, emoji: string }` |
-| **Returns** | React confirmation |
+| **Returns** | `{ reacted: true, channelId: string, messageId: string, emoji: string }` |
 
 ### `message.attach`
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ channel_type: string, channel_id: string, file_path: string, caption?: string }` |
-| **Returns** | `{ messageId: string, channelId: string }` |
+| **Parameters** | `{ channel_type: string, channel_id: string, attachment_url: string, attachment_type?: "image" \| "file" \| "audio" \| "video", mime_type?: string, file_name?: string, caption?: string }` |
+| **Returns** | `{ receipt: { kind: "tracked", messageId: string } \| { kind: "delivered_untracked" }, channelId: string }` |
 
 </Accordion>
 

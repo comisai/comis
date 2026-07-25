@@ -183,8 +183,8 @@ const PLATFORM_ACTIONS: Record<string, PlatformActionGroup[]> = {
 /**
  * Message center view for the Comis operator console.
  *
- * Displays a channel selector, message list (for platforms supporting fetchHistory),
- * and a send form with operator attribution confirmation dialog.
+ * Displays endpoint-authoritative stored history. Native history and mutations
+ * remain unavailable when their RPC input cannot carry the selected endpoint.
  *
  * Accessed via `#/messages/:type` route.
  *
@@ -601,7 +601,7 @@ export class IcMessageCenter extends LitElement {
       await this._loadChats(revision, channel);
       if (!this._isCurrentChannel(revision, channel)) return;
 
-      // Fetch messages - uses session history fallback for non-fetchHistory platforms
+      // Endpoint-backed selections require the scoped session-history path.
       await this._refetchMessages(revision, channel);
       if (!this._isCurrentChannel(revision, channel)) return;
 
@@ -706,8 +706,11 @@ export class IcMessageCenter extends LitElement {
   // Re-fetch messages helper
   // -------------------------------------------------------------------------
 
-  /** Re-fetch message list - uses message.fetch when the platform supports fetchHistory,
-   *  otherwise falls back to stored session history via session.list + session.history. */
+  /**
+   * Re-fetch messages without dropping endpoint authority. Native history is
+   * used only when the selected target has no endpoint qualifiers; otherwise
+   * the exact endpoint is resolved through session.list + session.history.
+   */
   private async _refetchMessages(
     revision = this._channelRevision,
     channel = this._effectiveChannel,
@@ -751,7 +754,7 @@ export class IcMessageCenter extends LitElement {
       return;
     }
 
-    // Path 2: No fetchHistory - fall back to stored session data
+    // Endpoint-bound or non-native history: resolve exact stored session data.
     try {
       const sessions = await listSessionsAcrossAgents(rpcClient);
       if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;

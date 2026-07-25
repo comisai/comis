@@ -11,7 +11,7 @@ The Chat Console lets you talk to your agents directly from the browser. You can
 ## Routes
 
 - `/chat` -- opens the console without a selected session
-- `/chat/:conversationRef` -- searches the authorized tenant and agent partitions, selects the owning agent, and opens the matching stored conversation
+- `/chat/:conversationRef` -- searches every authorized tenant and agent partition without a session-kind filter, selects the owning agent, and opens the matching direct-message, group, or sub-agent conversation
 
 ## Backing API
 
@@ -28,7 +28,7 @@ The Chat Console is split into two main areas side by side.
 
 ### Session Sidebar
 
-On the left, the session sidebar lists conversations for the selected agent. Each session shows its label or shortened opaque conversation reference, channel kind, message count, and last activity.
+On the left, the session sidebar lists direct-message conversations for the selected agent. Each session shows its label or shortened opaque conversation reference, channel kind, message count, and last activity.
 
 At the top of the sidebar you will find:
 
@@ -36,9 +36,12 @@ At the top of the sidebar you will find:
 - A **search bar** ("Filter sessions...") that filters the visible session list by conversation reference or label as you type
 
 Click any session in the list to load its conversation in the message area.
-For a routed conversation reference, the console switches to the owning agent.
-The message input remains disabled unless that reference resolves to an
-authorized tenant, agent, and conversation target.
+Route resolution is separate from the direct-message sidebar query: a routed
+group or sub-agent conversation can remain active even though it is not a
+sidebar row. The console switches to the owning agent, loads history with the
+resolved tenant, agent, and conversation reference, and uses that same exact
+scope when continuing the conversation. The message input remains disabled
+unless all three authority fields resolve.
 
 <Tip>
 For richer filtering -- by agent, channel, or content match across all sessions -- use the [Sessions](/web-dashboard/sessions-view) view instead. The chat console's sidebar is a quick filter, not a full session browser.
