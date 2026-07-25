@@ -341,10 +341,7 @@ function buildChannelManagerDeps(deps: {
   return {
     container, dataDir, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, clock, timers,
-    graphReportDurability: {
-      outwardLedger: agents.outwardLedger,
-      resolveRootRunId: agents.resolveRootRunId,
-    },
+    graphReportDurability: { outwardLedger: agents.outwardLedger, resolveRootRunId: agents.resolveRootRunId },
     // Live EnvPort → bootstrapAdapters → createMsTeamsPlugin (managed-identity
     // App-Service IDENTITY_ENDPOINT/IDENTITY_HEADER read live per mint).
     env,
