@@ -564,7 +564,9 @@ describe("IcMessageCenter", () => {
   });
 
   it("fails closed for one endpoint the native contract cannot encode", async () => {
-    const call = vi.fn(() => Promise.reject(new Error("Native RPC must not run")));
+    const call = vi.fn((_method: string) =>
+      Promise.reject(new Error("Native RPC must not run")),
+    );
     const endpoint = {
       channelType: "telegram",
       channelInstanceId: "account-b",
