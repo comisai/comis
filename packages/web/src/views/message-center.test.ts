@@ -563,6 +563,42 @@ describe("IcMessageCenter", () => {
     expect(current._captureActionContext()).toBeNull();
   });
 
+  it("fails closed for one endpoint the native contract cannot encode", async () => {
+    const call = vi.fn(() => Promise.reject(new Error("Native RPC must not run")));
+    const endpoint = {
+      channelType: "telegram",
+      channelInstanceId: "account-b",
+      conversationId: "shared-chat",
+      threadId: "thread-b",
+      conversationKind: "shared" as const,
+    };
+    const selectedKey = JSON.stringify([
+      endpoint.channelType,
+      endpoint.channelInstanceId,
+      endpoint.conversationId,
+      endpoint.threadId,
+      endpoint.conversationKind,
+    ]);
+    const el = await createElement({ channelType: "telegram" });
+    const current = state(el);
+    Object.assign(current, {
+      _loadState: "loaded",
+      _channelIsRunning: true,
+      _capabilities: { fetchHistory: true },
+      _chatList: [{ key: selectedKey, chatId: "shared-chat", label: "selected", endpoint }],
+      _selectedChatId: selectedKey,
+      _hasLoaded: true,
+    });
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
+    await el.updateComplete;
+
+    await current._refetchMessages();
+
+    expect(call.mock.calls.filter(([method]) => method === "message.fetch")).toHaveLength(0);
+    expect(current._messagesAreActionable).toBe(false);
+    expect(current._captureActionContext()).toBeNull();
+  });
+
   it("does not let a stale zero-match request clear newer stored messages", async () => {
     const listA = deferred<Record<string, unknown>>();
     const listB = deferred<Record<string, unknown>>();

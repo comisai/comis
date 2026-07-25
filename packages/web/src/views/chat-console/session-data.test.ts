@@ -84,8 +84,17 @@ describe("chat session data", () => {
         if (method === "session.list") {
           const agentId = String(params?.["agent_id"]);
           return {
-            sessions: params?.["kind"] === undefined
+            sessions: params?.["kind"] === "dm"
               ? [{
+                  conversationRef: `sidebar-${agentId}`,
+                  agentId,
+                  kind: "dm",
+                  messageCount: 3,
+                  totalTokens: 4,
+                  updatedAt: 4,
+                  createdAt: 3,
+                }]
+              : [{
                   conversationRef: `conversation-${agentId}`,
                   agentId,
                   kind: agentId === "agent-b" ? "group" : "dm",
@@ -93,9 +102,8 @@ describe("chat session data", () => {
                   totalTokens: 2,
                   updatedAt: 2,
                   createdAt: 1,
-                }]
-              : [],
-            total: params?.["kind"] === undefined ? 1 : 0,
+                }],
+            total: 1,
           };
         }
         throw new Error(`Unexpected method: ${method}`);
@@ -109,6 +117,15 @@ describe("chat session data", () => {
     )).resolves.toEqual({
       selectedAgent: "agent-b",
       sessions: [{
+        key: "sidebar-agent-b",
+        tenantId: "tenant-a",
+        agentId: "agent-b",
+        conversationRef: "sidebar-agent-b",
+        channelType: "dm",
+        messageCount: 3,
+        lastActivity: 4,
+      }],
+      routedSession: {
         key: "conversation-agent-b",
         tenantId: "tenant-a",
         agentId: "agent-b",
@@ -116,7 +133,7 @@ describe("chat session data", () => {
         channelType: "group",
         messageCount: 1,
         lastActivity: 2,
-      }],
+      },
       routeResolved: true,
     });
     expect(rpc.call).toHaveBeenCalledWith("session.list", {
@@ -126,6 +143,11 @@ describe("chat session data", () => {
     expect(rpc.call).toHaveBeenCalledWith("session.list", {
       tenant_id: "tenant-a",
       agent_id: "agent-b",
+    });
+    expect(rpc.call).toHaveBeenCalledWith("session.list", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-b",
+      kind: "dm",
     });
   });
 
