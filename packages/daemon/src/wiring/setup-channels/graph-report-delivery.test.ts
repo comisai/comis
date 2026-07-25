@@ -4,7 +4,14 @@ import { mkdtemp, mkdir, readFile, rename, rm, stat, symlink, writeFile } from "
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { ok, type Result } from "@comis/shared";
-import type { ChannelPort, DeliverToChannelOptions, DeliveryAttempt, DeliveryService } from "@comis/core";
+import type {
+  ChannelPort,
+  DeliverToChannelOptions,
+  DeliveryAttempt,
+  DeliveryService,
+  OutwardSendLedgerPort,
+  SessionKey,
+} from "@comis/core";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createGraphReportRequestHandler } from "./graph-report-delivery.js";
 
@@ -69,6 +76,29 @@ function makeDeliveryService(): DeliveryService {
   };
 }
 
+function makeOutwardLedger(): OutwardSendLedgerPort {
+  return {
+    allocateStep: vi.fn(async () => ok(7)),
+    lookup: vi.fn(async () => ok(undefined)),
+    begin: vi.fn(async () => ok(undefined)),
+    markUnknown: vi.fn(async () => ok(undefined)),
+    reclaimPreSend: vi.fn(async () => ok(false)),
+    commit: vi.fn(async () => ok(undefined)),
+    markFailed: vi.fn(async () => ok(undefined)),
+    parkUncertain: vi.fn(async () => ok(true)),
+    hasUncertainty: vi.fn(async () => ok(false)),
+    listUnreconciled: vi.fn(async () => ok([])),
+  };
+}
+
+function requestSession(): SessionKey {
+  return {
+    tenantId: "tenant-a",
+    userId: "user_a",
+    channelId: "chat-1",
+  };
+}
+
 function routeOptions(overrides: Partial<DeliverToChannelOptions> = {}): DeliverToChannelOptions {
   return {
     completionMode: "deferred_retry",
@@ -109,17 +139,34 @@ async function makeReport(outputPath?: string): Promise<{ root: string; graphDir
 }
 
 describe("graph report delivery", () => {
-  it("uploads the owner-selected regular report file as an attachment", async () => {
+  it("records the report attachment before calling the platform upload", async () => {
     const { root } = await makeReport();
     const adapter = makeAdapter(true);
+    const outwardLedger = makeOutwardLedger();
     const handler = createGraphReportRequestHandler({
       dataDir: root,
       clock: createFakeClock(1),
       logger: makeLogger(),
       deliveryService: makeDeliveryService(),
-    });
+      outwardLedger,
+      resolveRootRunId: vi.fn(() => ok("root-1")),
+    } as unknown as Parameters<typeof createGraphReportRequestHandler>[0]);
 
-    await handler(GRAPH_ID, "telegram", "chat-1", adapter, routeOptions());
+    await (handler as unknown as (
+      graphId: string,
+      channelType: string,
+      channelId: string,
+      adapter: ChannelPort,
+      options: DeliverToChannelOptions,
+      sessionKey: SessionKey,
+    ) => Promise<void>)(
+      GRAPH_ID,
+      "telegram",
+      "chat-1",
+      adapter,
+      routeOptions(),
+      requestSession(),
+    );
 
     expect(adapter.sendAttachment).toHaveBeenCalledWith(
       "chat-1",
@@ -129,6 +176,15 @@ describe("graph report delivery", () => {
         mimeType: "text/markdown",
       }),
       { threadId: "topic-1" },
+    );
+    expect(outwardLedger.allocateStep).toHaveBeenCalledWith(
+      "root-1",
+      expect.stringContaining("graph-report:"),
+    );
+    expect(outwardLedger.markUnknown).toHaveBeenCalledWith("root-1", 7);
+    expect(outwardLedger.commit).toHaveBeenCalledWith("root-1", 7, "attachment-1");
+    expect(vi.mocked(outwardLedger.markUnknown).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(adapter.sendAttachment!).mock.invocationCallOrder[0]!,
     );
   });
 
