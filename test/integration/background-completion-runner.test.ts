@@ -25,19 +25,34 @@
  * @module
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { resolve, dirname } from "node:path";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestDaemon, type TestDaemonHandle } from "../support/daemon-harness.js";
+import { createFakeClock } from "../support/fake-clock.js";
+import { createFakeTimers } from "../support/fake-timers.js";
+import { createBackgroundTaskManager, loadTask } from "@comis/agent";
 import { EchoChannelAdapter } from "@comis/channels";
+import { createConversationRef, TypedEventBus } from "@comis/core";
 import type { BackgroundTaskOrigin } from "@comis/core";
+import { ok } from "@comis/shared";
+import { createCompletionRecovery } from "../../packages/agent/dist/background/completion-recovery.js";
+import { createBackgroundTaskRecoveryController } from "../../packages/agent/dist/background/background-task-recovery-controller.js";
+import {
+  persistBackgroundRecoveryAuthority,
+  recoverBackgroundRecoveryAuthorities,
+  removeBackgroundRecoveryAuthority,
+} from "../../packages/agent/dist/background/background-recovery-authority.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const configPath = resolve(__dirname, "../config/config.test-background-completion.yaml");
 
-// Formatted session key for the test session.
-// Format: "{tenantId}:{userId}:{channelId}" (matches formatSessionKey output)
+// Colon-joined identity string the tests use as a compact source for the
+// tenantId/userId components of the origin's conversation scope. Segments are
+// "{tenantId}:{userId}:{channelId}".
 const TEST_SESSION_KEY = "test:test-user:bg-completion-test";
 const TEST_AGENT_ID = "default";
 const TEST_CHANNEL_TYPE = "echo";
@@ -45,17 +60,63 @@ const TEST_CHANNEL_ID = "bg-completion-test";
 
 /**
  * Build a BackgroundTaskOrigin for test use.
- * backgroundHopCount=0 means this is a first-generation background task.
+ *
+ * The origin carries the canonical conversation authority
+ * (turnScope + conversationRef + deliveryOrigin); the completion runner
+ * projects a query scope from it and looks the session up via
+ * loadByRef(scope, conversationRef). Callers may override the identity via
+ * flat helper args (agentId/sessionKey/channelType/channelId/userId), which
+ * are folded into the scope; any BackgroundTaskOrigin field passed through
+ * overrides wins. backgroundHopCount=0 means a first-generation background task.
  */
-function makeTestOrigin(overrides?: Partial<BackgroundTaskOrigin>): BackgroundTaskOrigin {
+function makeTestOrigin(
+  over: Partial<BackgroundTaskOrigin> & {
+    agentId?: string;
+    sessionKey?: string;
+    channelType?: string;
+    channelId?: string;
+    userId?: string;
+  } = {},
+): BackgroundTaskOrigin {
+  const agentId = over.agentId ?? TEST_AGENT_ID;
+  const sessionParts = (over.sessionKey ?? TEST_SESSION_KEY).split(":");
+  const tenantId = sessionParts[0] ?? "test";
+  const userId = over.userId ?? sessionParts[1] ?? "test-user";
+  const channelType = over.channelType ?? TEST_CHANNEL_TYPE;
+  const channelId = over.channelId ?? TEST_CHANNEL_ID;
+  const endpoint = {
+    channelType,
+    channelInstanceId: "test-instance",
+    conversationId: channelId,
+    conversationKind: "direct" as const,
+  };
+  const turnScope = {
+    conversation: {
+      tenantId,
+      agentId,
+      partition: {
+        kind: "endpoint-conversation-principal" as const,
+        endpoint,
+        principalId: userId,
+      },
+    },
+    principal: { principalId: userId },
+    endpoint,
+  };
+  const conversationRef = createConversationRef(turnScope.conversation);
+  if (!conversationRef.ok) throw conversationRef.error;
   return {
-    agentId: TEST_AGENT_ID,
-    sessionKey: TEST_SESSION_KEY,
-    channelType: TEST_CHANNEL_TYPE,
-    channelId: TEST_CHANNEL_ID,
+    turnScope,
+    conversationRef: conversationRef.value,
+    deliveryOrigin: { channelType, channelId, userId, tenantId },
     traceId: null,
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
-    ...overrides,
+    ...Object.fromEntries(
+      Object.entries(over).filter(
+        ([key]) => !["agentId", "sessionKey", "channelType", "channelId", "userId"].includes(key),
+      ),
+    ),
   };
 }
 
@@ -126,14 +187,17 @@ describe("background-task completion re-triggers agent session (integration)", (
     handle.daemon.deliveryAdapters.set(TEST_CHANNEL_TYPE, echoAdapter);
 
     // Seed the session store so the completion runner's
-    // sessionStore.loadByFormattedKey(TEST_SESSION_KEY) returns non-undefined
-    // (runner falls back to notifyFn if the session is absent).
+    // loadByRef(queryScope, origin.conversationRef) returns non-undefined
+    // (runner falls back to notifyFn if the session is absent). Save at the
+    // exact conversation scope makeTestOrigin() projects, so the runner's
+    // scope+ref lookup resolves it. Empty message history is sufficient for
+    // the runner's existence check.
     if (handle.daemon.sessionStoreBridge) {
-      handle.daemon.sessionStoreBridge.saveByFormattedKey(
-        TEST_SESSION_KEY,
-        [], // empty message history is sufficient for the runner's existence check
-        { agentId: TEST_AGENT_ID, channelType: TEST_CHANNEL_TYPE },
+      const seeded = handle.daemon.sessionStoreBridge.save(
+        makeTestOrigin().turnScope.conversation,
+        [],
       );
+      if (!seeded.ok) throw seeded.error;
     }
   }, 120_000);
 
@@ -396,19 +460,20 @@ describe("background-task completion re-triggers agent session (integration)", (
       // Use a fresh session key for this test to isolate from prior state.
       const restartSessionKey = "test:restart-user:bg-restart-test";
 
-      // Seed a session so the runner finds it and calls executor.execute().
-      if (handle.daemon.sessionStoreBridge) {
-        handle.daemon.sessionStoreBridge.saveByFormattedKey(
-          restartSessionKey,
-          [],
-          { agentId: TEST_AGENT_ID, channelType: TEST_CHANNEL_TYPE },
-        );
-      }
-
       const origin = makeTestOrigin({
         sessionKey: restartSessionKey,
         channelId: "bg-restart-test",
       });
+
+      // Seed a session at this origin's scope so the runner finds it and calls
+      // executor.execute() (loadByRef(queryScope, origin.conversationRef)).
+      if (handle.daemon.sessionStoreBridge) {
+        const seeded = handle.daemon.sessionStoreBridge.save(
+          origin.turnScope.conversation,
+          [],
+        );
+        if (!seeded.ok) throw seeded.error;
+      }
 
       const { taskId, failTask } = promoteSyntheticTask(
         handle,
@@ -453,6 +518,656 @@ describe("background-task completion re-triggers agent session (integration)", (
     },
     20_000,
   );
+});
+
+describe("background-task durable timeout integration", () => {
+  it("persists the configured hard-timeout terminal state before reporting failure", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-background-timeout-"));
+    try {
+      const clock = createFakeClock(1_000);
+      const timers = createFakeTimers(1_000);
+      const eventBus = new TypedEventBus();
+      const abortController = new AbortController();
+      const manager = createBackgroundTaskManager({
+        dataDir,
+        eventBus,
+        logger: {
+          info: () => undefined,
+          warn: () => undefined,
+          debug: () => undefined,
+        },
+        clock,
+        timers,
+        maxBackgroundDurationMs: 500,
+      });
+      const promoted = manager.promote(
+        "test_timeout",
+        new Promise(() => undefined),
+        abortController,
+        makeTestOrigin(),
+      );
+      expect(promoted.ok).toBe(true);
+      if (!promoted.ok) return;
+
+      clock.advance(500);
+      timers.advance(500);
+
+      const task = manager.getTask(promoted.value);
+      expect(task?.status).toBe("failed");
+      expect(task?.error).toBe("Hard timeout exceeded");
+      expect(abortController.signal.aborted).toBe(true);
+      expect(loadTask(dataDir, TEST_AGENT_ID, promoted.value)).toMatchObject({
+        id: promoted.value,
+        status: "failed",
+        error: "Hard timeout exceeded",
+        completedAt: 1_500,
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("background-task compiled durable recovery integration", () => {
+  function makeRecoveryDeps(
+    task: Record<string, unknown>,
+    overrides: Record<string, unknown> = {},
+  ) {
+    return {
+      taskManager: {
+        getTask: vi.fn(() => task),
+        persistContinuationOutbox: vi.fn(() => ok(true)),
+        persistCleanupPendingOutbox: vi.fn(() => ok(true)),
+        persistFinalizedResult: vi.fn(() => ok(true)),
+        scheduleDispatchRetry: vi.fn(),
+        scheduleStateRetry: vi.fn(),
+        recordRecoveryIncident: vi.fn(() => ok(undefined)),
+      },
+      recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
+      cleanupFinalizedSession: vi.fn().mockResolvedValue(ok(undefined)),
+      reconcileDelivery: vi.fn(),
+      deliveryProtection: "ledger" as const,
+      commitState: vi.fn(() => ok(true)),
+      emitRoutingOutcome: vi.fn(),
+      deliverPersistedOutbox: vi.fn().mockResolvedValue(undefined),
+      ...overrides,
+    };
+  }
+
+  it("recovers a finalized continuation from the protected journal and delivers its persisted outbox", async () => {
+    const origin = makeTestOrigin();
+    const task = {
+      id: "task-recovered",
+      toolName: "report",
+      status: "completed",
+      origin,
+      continuationExecutionId: "execution-recovered",
+      dispatchState: "executing",
+    };
+    const recovered = {
+      response: "Recovered continuation",
+      executionId: "execution-recovered",
+      cleanupRequired: false,
+    };
+    const deps = makeRecoveryDeps(task, {
+      recoverFinalizedResult: vi.fn().mockResolvedValue(ok(recovered)),
+    });
+    const recovery = createCompletionRecovery(deps as never);
+
+    await recovery.recoverClaimedTask(task.id, origin, task.toolName);
+
+    expect(deps.taskManager.persistContinuationOutbox).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({
+        kind: "continuation",
+        response: recovered.response,
+        executionId: recovered.executionId,
+        idempotencyKey: "background-continuation:execution-recovered",
+        deliveryProtection: "ledger",
+      }),
+      ["executing"],
+    );
+    expect(deps.deliverPersistedOutbox).toHaveBeenCalledWith(
+      task.id,
+      origin,
+      expect.objectContaining({ response: recovered.response }),
+    );
+  });
+
+  it("finishes protected-session cleanup before making the recovered continuation deliverable", async () => {
+    const origin = makeTestOrigin();
+    const task: Record<string, unknown> = {
+      id: "task-cleanup",
+      toolName: "report",
+      status: "completed",
+      origin,
+      continuationExecutionId: "execution-cleanup",
+      dispatchState: "executing",
+    };
+    const recovered = {
+      response: "Recovered after cleanup",
+      executionId: "execution-cleanup",
+      cleanupRequired: true,
+    };
+    const persistCleanupPendingOutbox = vi.fn(
+      (_taskId: string, outbox: unknown) => {
+        task.dispatchState = "cleanup_pending";
+        task.continuationOutbox = outbox;
+        return ok(true);
+      },
+    );
+    const deps = makeRecoveryDeps(task, {
+      recoverFinalizedResult: vi.fn().mockResolvedValue(ok(recovered)),
+    });
+    deps.taskManager.persistCleanupPendingOutbox = persistCleanupPendingOutbox;
+    const recovery = createCompletionRecovery(deps as never);
+
+    await recovery.recoverClaimedTask(
+      task.id as string,
+      origin,
+      task.toolName as string,
+    );
+
+    expect(deps.cleanupFinalizedSession).toHaveBeenCalledWith({
+      agentId: TEST_AGENT_ID,
+      sessionKey: {
+        tenantId: "test",
+        agentId: TEST_AGENT_ID,
+        channelId: "echo:test-instance:bg-completion-test",
+        userId: "test-user",
+        peerId: "test-user",
+      },
+    });
+    expect(deps.commitState).toHaveBeenCalledWith(
+      task.id,
+      "ready_to_deliver",
+      ["cleanup_pending"],
+    );
+    expect(deps.deliverPersistedOutbox).toHaveBeenCalledWith(
+      task.id,
+      origin,
+      expect.objectContaining({ response: recovered.response }),
+    );
+  });
+
+  it("reconciles an accepted delivery claim into the durable delivered state", async () => {
+    const origin = makeTestOrigin();
+    const task = {
+      id: "task-delivering",
+      toolName: "report",
+      status: "completed",
+      origin,
+      continuationExecutionId: "execution-delivering",
+      dispatchState: "delivering",
+    };
+    const deps = makeRecoveryDeps(task, {
+      reconcileDelivery: vi.fn().mockResolvedValue(ok({ kind: "accepted" })),
+    });
+    const recovery = createCompletionRecovery(deps as never);
+    const outbox = {
+      kind: "continuation" as const,
+      response: "Delivered continuation",
+      executionId: "execution-delivering",
+      idempotencyKey: "background-continuation:execution-delivering",
+      deliveryProtection: "ledger" as const,
+    };
+
+    await recovery.reconcileDeliveryClaim(task.id, origin, outbox);
+
+    expect(deps.reconcileDelivery).toHaveBeenCalledWith({
+      taskId: task.id,
+      origin,
+      response: outbox.response,
+      executionId: outbox.executionId,
+      idempotencyKey: outbox.idempotencyKey,
+    });
+    expect(deps.commitState).toHaveBeenCalledWith(
+      task.id,
+      "delivered",
+      ["delivering"],
+    );
+    expect(deps.emitRoutingOutcome).toHaveBeenCalledWith(
+      task.id,
+      origin,
+      task.toolName,
+      true,
+      "continuation_accepted",
+    );
+  });
+
+  it("resets an unstarted claimed continuation so durable dispatch can retry it", async () => {
+    const origin = makeTestOrigin();
+    const task = {
+      id: "task-unstarted",
+      toolName: "report",
+      status: "completed",
+      origin,
+      continuationExecutionId: "execution-unstarted",
+      dispatchState: "execution_claimed",
+    };
+    const deps = makeRecoveryDeps(task);
+    const recovery = createCompletionRecovery(deps as never);
+
+    await recovery.recoverClaimedTask(task.id, origin, task.toolName);
+
+    expect(deps.commitState).toHaveBeenCalledWith(
+      task.id,
+      "pending",
+      ["execution_claimed"],
+    );
+    expect(deps.taskManager.scheduleDispatchRetry).toHaveBeenCalledWith(task.id);
+    expect(deps.emitRoutingOutcome).toHaveBeenCalledWith(
+      task.id,
+      origin,
+      task.toolName,
+      false,
+      "retry_scheduled",
+    );
+  });
+
+  it("consumes a silent continuation after cleanup without sending a user message", async () => {
+    const origin = makeTestOrigin();
+    const task = {
+      id: "task-silent",
+      toolName: "report",
+      status: "completed",
+      origin,
+      continuationExecutionId: "execution-silent",
+      dispatchState: "cleanup_pending",
+      continuationOutbox: {
+        kind: "continuation",
+        response: "NO_REPLY",
+        executionId: "execution-silent",
+        idempotencyKey: "background-continuation:execution-silent",
+        deliveryProtection: "ledger",
+      },
+    };
+    const deps = makeRecoveryDeps(task);
+    const recovery = createCompletionRecovery(deps as never);
+
+    await recovery.finishCleanup(task.id, origin, task.toolName);
+
+    expect(deps.cleanupFinalizedSession).toHaveBeenCalledOnce();
+    expect(deps.commitState).toHaveBeenCalledWith(
+      task.id,
+      "delivered",
+      ["cleanup_pending"],
+    );
+    expect(deps.deliverPersistedOutbox).not.toHaveBeenCalled();
+  });
+
+  it("returns a retryable pre-send delivery claim to its durable retry state", async () => {
+    const origin = makeTestOrigin();
+    const task = {
+      id: "task-retryable",
+      toolName: "report",
+      status: "completed",
+      origin,
+      continuationExecutionId: "execution-retryable",
+      dispatchState: "delivering",
+    };
+    const deps = makeRecoveryDeps(task, {
+      reconcileDelivery: vi.fn().mockResolvedValue(ok({
+        kind: "retryable_pre_send",
+        errorKind: "resource",
+        message: "delivery queue busy",
+      })),
+    });
+    const recovery = createCompletionRecovery(deps as never);
+    const outbox = {
+      kind: "continuation" as const,
+      response: "Retry this continuation",
+      executionId: "execution-retryable",
+      idempotencyKey: "background-continuation:execution-retryable",
+      deliveryProtection: "ledger" as const,
+    };
+
+    await recovery.reconcileDeliveryClaim(task.id, origin, outbox);
+
+    expect(deps.commitState).toHaveBeenCalledWith(
+      task.id,
+      "pre_send",
+      ["delivering"],
+    );
+    expect(deps.taskManager.recordRecoveryIncident).toHaveBeenCalledWith(task.id);
+    expect(deps.taskManager.scheduleDispatchRetry).toHaveBeenCalledWith(task.id);
+  });
+
+  it("parks a permanent delivery rejection and records its terminal routing reason", async () => {
+    const origin = makeTestOrigin();
+    const task = {
+      id: "task-permanent",
+      toolName: "report",
+      status: "completed",
+      origin,
+      continuationExecutionId: "execution-permanent",
+      dispatchState: "delivering",
+    };
+    const deps = makeRecoveryDeps(task, {
+      reconcileDelivery: vi.fn().mockResolvedValue(ok({
+        kind: "permanent",
+        errorKind: "validation",
+        message: "destination rejected",
+      })),
+    });
+    const recovery = createCompletionRecovery(deps as never);
+    const outbox = {
+      kind: "fallback" as const,
+      response: "Fallback completion",
+      executionId: "execution-permanent",
+      idempotencyKey: "background-continuation:execution-permanent",
+      deliveryProtection: "ledger" as const,
+    };
+
+    await recovery.reconcileDeliveryClaim(task.id, origin, outbox);
+
+    expect(deps.commitState).toHaveBeenCalledWith(
+      task.id,
+      "parked_permanent",
+      ["delivering"],
+    );
+    expect(deps.emitRoutingOutcome).toHaveBeenCalledWith(
+      task.id,
+      origin,
+      task.toolName,
+      false,
+      "permanent_parked",
+    );
+  });
+
+  it("round-trips protected recovery authority through the compiled restart store", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-recovery-authority-"));
+    const authority = {
+      agentId: TEST_AGENT_ID,
+      taskId: "task-authority",
+      toolName: "report",
+      sessionKey: TEST_SESSION_KEY,
+      projectedSessionKey: {
+        tenantId: "test",
+        agentId: TEST_AGENT_ID,
+        channelId: "echo:test-instance:bg-completion-test",
+        userId: "test-user",
+        peerId: "test-user",
+      },
+      traceId: null,
+      timestamp: 1_000,
+      source: "scan" as const,
+      requiredDisposition: "accepted" as const,
+      resolutionRequested: false,
+    };
+    try {
+      const persisted = persistBackgroundRecoveryAuthority(dataDir, authority);
+      const recovered = recoverBackgroundRecoveryAuthorities(dataDir);
+      const incidentDir = join(
+        dataDir,
+        TEST_AGENT_ID,
+        ".recovery-incidents",
+      );
+
+      expect(persisted).toEqual({ ok: true, value: { kind: "committed" } });
+      expect(recovered).toEqual({ ok: true, value: [authority] });
+      expect(statSync(incidentDir).mode & 0o777).toBe(0o700);
+      expect(
+        statSync(join(incidentDir, readdirSync(incidentDir)[0]!)).mode & 0o777,
+      ).toBe(0o600);
+
+      expect(removeBackgroundRecoveryAuthority(dataDir, authority)).toEqual({
+        ok: true,
+        value: undefined,
+      });
+      expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
+        ok: true,
+        value: [],
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("records and resolves a recovery incident through the compiled durable controller", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-recovery-controller-"));
+    const eventBus = new TypedEventBus();
+    const notified = vi.fn();
+    const recorder = vi.fn(() => ok("accepted" as const));
+    eventBus.on("background_task:notified", notified);
+    try {
+      const controller = createBackgroundTaskRecoveryController({
+        eventBus,
+        logger: { warn: vi.fn() },
+        clock: createFakeClock(1_000),
+        timers: createFakeTimers(1_000),
+        dataDir,
+      });
+      controller.setRecorder(recorder);
+      const task = {
+        id: "task-controller-lifecycle",
+        toolName: "report",
+        origin: makeTestOrigin(),
+      };
+
+      controller.recordTask(task);
+
+      expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
+        ok: true,
+        value: [
+          expect.objectContaining({
+            taskId: task.id,
+            requiredDisposition: "accepted",
+            resolutionRequested: false,
+          }),
+        ],
+      });
+      expect(notified).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: task.id,
+        reason: "recovery_retry_required",
+        trajectoryRecorded: true,
+      }));
+
+      controller.resolveTask(task);
+
+      expect(recorder.mock.calls.map(([incident]) => incident.reason)).toEqual([
+        "recovery_retry_required",
+        "recovery_resolved",
+      ]);
+      expect(notified).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: task.id,
+        reason: "recovery_resolved",
+        trajectoryRecorded: true,
+      }));
+      expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
+        ok: true,
+        value: [],
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles restored recovery authority only after a complete restart scan", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-recovery-controller-"));
+    const origin = makeTestOrigin();
+    const authority = {
+      agentId: TEST_AGENT_ID,
+      taskId: "task-restored-controller",
+      toolName: "report",
+      sessionKey: TEST_SESSION_KEY,
+      projectedSessionKey: {
+        tenantId: "test",
+        agentId: TEST_AGENT_ID,
+        channelId: "echo:test-instance:bg-completion-test",
+        userId: "test-user",
+        peerId: "test-user",
+      },
+      traceId: null,
+      timestamp: 1_000,
+      source: "scan" as const,
+      requiredDisposition: "accepted" as const,
+      resolutionRequested: false,
+    };
+    const persisted = persistBackgroundRecoveryAuthority(dataDir, authority);
+    expect(persisted.ok).toBe(true);
+    const recorder = vi.fn(() => ok("accepted" as const));
+    try {
+      const controller = createBackgroundTaskRecoveryController({
+        eventBus: new TypedEventBus(),
+        logger: { warn: vi.fn() },
+        clock: createFakeClock(2_000),
+        timers: createFakeTimers(2_000),
+        dataDir,
+      });
+      controller.setRecorder(recorder);
+
+      expect(recorder).not.toHaveBeenCalled();
+
+      controller.reportScanFailures([], [], vi.fn());
+
+      expect(recorder).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: authority.taskId,
+        reason: "recovery_resolved",
+      }));
+      expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
+        ok: true,
+        value: [],
+      });
+
+      controller.recordTask({
+        id: "task-after-restart",
+        toolName: "report",
+        origin,
+      });
+      expect(recorder).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: "task-after-restart",
+        reason: "recovery_retry_required",
+      }));
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps restart authority durable while trajectory resolution is suppressed", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-recovery-controller-"));
+    const eventBus = new TypedEventBus();
+    const systemErrors = vi.fn();
+    const logger = { warn: vi.fn() };
+    const recorder = vi.fn()
+      .mockReturnValueOnce(ok("accepted" as const))
+      .mockReturnValueOnce(ok("suppressed" as const))
+      .mockReturnValue(ok("accepted" as const));
+    eventBus.on("system:error", systemErrors);
+    try {
+      const controller = createBackgroundTaskRecoveryController({
+        eventBus,
+        logger,
+        clock: createFakeClock(2_500),
+        timers: createFakeTimers(2_500),
+        dataDir,
+      });
+      controller.setRecorder(recorder);
+      const task = {
+        id: "task-suppressed-resolution",
+        toolName: "report",
+        origin: makeTestOrigin(),
+      };
+      controller.recordTask(task);
+
+      controller.resolveTask(task);
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          errorKind: "config",
+          hint: expect.stringContaining("diagnostics.trajectory.enabled"),
+        }),
+        "Background recovery resolution is suppressed",
+      );
+      expect(systemErrors).toHaveBeenCalledWith(expect.objectContaining({
+        source: "background-recovery-configuration",
+      }));
+      expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
+        ok: true,
+        value: [
+          expect.objectContaining({
+            taskId: task.id,
+            resolutionRequested: true,
+          }),
+        ],
+      });
+
+      controller.setRecorder(recorder);
+
+      expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
+        ok: true,
+        value: [],
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces an incomplete restart scan and retries it deterministically", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-recovery-controller-"));
+    const eventBus = new TypedEventBus();
+    const systemErrors = vi.fn();
+    const logger = { warn: vi.fn() };
+    const timers = createFakeTimers(3_000);
+    const retry = vi.fn();
+    eventBus.on("system:error", systemErrors);
+    try {
+      const controller = createBackgroundTaskRecoveryController({
+        eventBus,
+        logger,
+        clock: createFakeClock(3_000),
+        timers,
+        dataDir,
+      });
+      controller.setRecorder(vi.fn(() => ok("accepted" as const)));
+      const failedTask = {
+        id: "task-incomplete-scan",
+        toolName: "report",
+        origin: makeTestOrigin(),
+      };
+
+      controller.reportScanFailures(
+        [{ kind: "task_read", identity: failedTask }],
+        [],
+        retry,
+      );
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          failureCount: 1,
+          failureKinds: ["task_read"],
+          errorKind: "resource",
+        }),
+        "Background task recovery scan incomplete",
+      );
+      expect(systemErrors).toHaveBeenCalledWith(expect.objectContaining({
+        source: "background-task-recovery",
+      }));
+      expect(timers.unrefRecord()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: "timeout",
+          delay: 1_000,
+          unrefCalled: true,
+        }),
+      ]));
+
+      timers.advance(1_000);
+
+      expect(retry).toHaveBeenCalledOnce();
+      expect(recoverBackgroundRecoveryAuthorities(dataDir)).toEqual({
+        ok: true,
+        value: [
+          expect.objectContaining({
+            taskId: failedTask.id,
+            source: "scan",
+            requiredDisposition: "accepted",
+          }),
+        ],
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -92,7 +92,7 @@ export interface TestDaemonHandle {
    */
   getTimerRecord(): ReadonlyArray<FakeTimerEntry> | undefined;
   /**
-   * Chaos-test probe: read a `durable_runs` row straight from the
+   * Chaos-test probe: read a `durable_run_checkpoints` row straight from the
    * daemon's `memory.db` (resolved from `config.dataDir` + `memory.dbPath`). The
    * durable-resume engine is not exposed on `DaemonInstance`, so the chaos test
    * inspects the persisted state directly to assert a run resumed / was orphaned /
@@ -109,12 +109,11 @@ export interface TestDaemonHandle {
   getOutwardLedgerRow(rootRunId: string, stepIndex: number): OutwardLedgerProbeRow | undefined;
 }
 
-/** A raw `durable_runs` row as the chaos-test probe reads it (subset of columns). */
+/** A raw `durable_run_checkpoints` row as the chaos-test probe reads it (subset of columns). */
 export interface DurableRunProbeRow {
   rootRunId: string;
   status: string;
   spawnTree: string;
-  outwardStep: number;
   orphanReason: string | undefined;
   lastHeartbeatAt: number;
 }
@@ -491,7 +490,7 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
 
     // Resolve the daemon's memory.db path ONCE (same resolution the WAL-cleanup
     // branch uses): config.dataDir + config.memory.dbPath. The chaos-test probes
-    // open it read-only per call so the chaos test can inspect the durable_runs /
+    // open it read-only per call so the chaos test can inspect the durable_run_checkpoints /
     // outward_send_ledger rows the daemon persisted (those tables are not exposed
     // on DaemonInstance). Captured here because `daemon` is in scope.
     const resolveMemoryDbPath = (): string | undefined => {
@@ -822,7 +821,7 @@ function openMemoryDbReadonly(dbPath: string | undefined): { db: unknown; close:
   }
 }
 
-/** Read one `durable_runs` row by rootRunId; `undefined` when absent. */
+/** Read one `durable_run_checkpoints` row by rootRunId; `undefined` when absent. */
 function readDurableRun(dbPath: string | undefined, rootRunId: string): DurableRunProbeRow | undefined {
   const handle = openMemoryDbReadonly(dbPath);
   if (!handle) return undefined;
@@ -831,14 +830,13 @@ function readDurableRun(dbPath: string | undefined, rootRunId: string): DurableR
       handle.db as { prepare: (sql: string) => { get: (...a: unknown[]) => unknown } }
     )
       .prepare(
-        `SELECT root_run_id, status, spawn_tree, outward_step, orphan_reason, last_heartbeat_at FROM durable_runs WHERE root_run_id = ?`,
+        `SELECT root_run_id, status, spawn_tree, orphan_reason, last_heartbeat_at FROM durable_run_checkpoints WHERE root_run_id = ?`,
       )
       .get(rootRunId) as
       | {
           root_run_id: string;
           status: string;
           spawn_tree: string;
-          outward_step: number;
           orphan_reason: string | null;
           last_heartbeat_at: number;
         }
@@ -848,7 +846,6 @@ function readDurableRun(dbPath: string | undefined, rootRunId: string): DurableR
       rootRunId: row.root_run_id,
       status: row.status,
       spawnTree: row.spawn_tree,
-      outwardStep: row.outward_step,
       orphanReason: row.orphan_reason ?? undefined,
       lastHeartbeatAt: row.last_heartbeat_at,
     };

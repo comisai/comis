@@ -110,7 +110,10 @@ export function createImsgClient(opts: ImsgClientOptions): ImsgClient {
     try {
       parsed = JSON.parse(trimmed) as JsonRpcResponse;
     } catch {
-      logger.debug({ raw: trimmed }, "imsg rpc: failed to parse line");
+      logger.debug(
+        { lineBytes: Buffer.byteLength(trimmed, "utf8") },
+        "imsg rpc: failed to parse line",
+      );
       return;
     }
 
@@ -170,11 +173,15 @@ export function createImsgClient(opts: ImsgClientOptions): ImsgClient {
         reader.on("line", handleLine);
 
         proc.stderr?.on("data", (chunk: Buffer) => {
-          const lines = chunk.toString().split(/\r?\n/);
-          for (const line of lines) {
-            if (line.trim()) {
-              logger.debug(`imsg stderr: ${line.trim()}`);
-            }
+          const text = chunk.toString("utf8");
+          const nonEmptyLineCount = text
+            .split(/\r?\n/)
+            .filter((line) => line.trim().length > 0).length;
+          if (nonEmptyLineCount > 0) {
+            logger.debug(
+              { stderrBytes: chunk.byteLength, nonEmptyLineCount },
+              "imsg child process wrote stderr",
+            );
           }
         });
 

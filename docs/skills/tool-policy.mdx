@@ -20,7 +20,7 @@ and customise it with `allow` / `deny`.
 | `minimal` | `read`, `write` | Restricted agents with basic file access |
 | `coding` | `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `exec`, `process` | Development and coding agents |
 | `messaging` | `message`, `session_status` | Agents that only send messages |
-| `supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` | Fleet management and administration |
+| `supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` | Agent administration and administration |
 | `full` | All tools (no restrictions) | Unrestricted agents -- this is the default |
 
 <Info>
@@ -112,7 +112,7 @@ skills:
       - group:web
 ```
 
-This agent can manage the fleet (agents, sessions, memory, channels, tokens, models, skills, MCP servers, heartbeats) and also has web access for checking external services.
+This agent can manage the system (agents, sessions, memory, channels, tokens, models, skills, MCP servers, heartbeats) and also has web access for checking external services.
 
 ## How Resolution Works
 

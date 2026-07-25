@@ -61,8 +61,7 @@ import {
   resolveProviderFamily,
   type CorrectionVerdict,
 } from "@comis/agent";
-import { deriveTenantFromSessionKey } from "./setup-memory-usefulness-wiring.js";
-import { buildCustomJudgeModelSpec } from "./setup-learning-judge.js";
+import { buildCustomJudgeModelSpec, type LearningModelCredentialResolver } from "./setup-learning-judge.js";
 
 // ===========================================================================
 // 1. messageId → trajectory-scope map (bounded, in-memory daemon-lifetime)
@@ -249,6 +248,8 @@ function matchEmoji(emoji: string, map: ReactionEmojiMap): "success" | "failure"
 
 /** Dependencies for {@link wireLearningReactions} + {@link wireLearningCorrection}. */
 export interface LearningReactionsWiringDeps {
+  /** Configured deployment tenant used for completion events emitted outside ALS. */
+  tenantId: string;
   /** The daemon's typed event bus (source of channel:reaction_received / message:received / graph:completed). */
   eventBus: TypedEventBus;
   /** The sole @comis/memory adapter for the outcome port (the observe target). */
@@ -495,8 +496,7 @@ export function wireLearningCorrection(deps: LearningReactionsWiringDeps): void 
   // so no ALS dependency. The sessionKey is already the `formatSessionKey(...)`
   // string the reader formats the `message:received` payload into. An absent
   // sessionKey OR traceId records NOTHING (a later correction then fails-closed —
-  // never mis-joined). The tenant is derived from the sessionKey's first segment
-  // (mirrors `deriveTenantFromSessionKey`).
+  // never mis-joined). The tenant is deployment authority, not a parsed display key.
   deps.eventBus.on("diagnostic:message_processed", (p) => {
     if (deps.recordSessionTrajectory === undefined) return;
     if (!deps.correctionEnabled(p.agentId)) return;
@@ -504,8 +504,12 @@ export function wireLearningCorrection(deps: LearningReactionsWiringDeps): void 
     const trajectoryId = p.traceId;
     if (sk === undefined || sk.length === 0) return; // cannot reliably join → skip
     if (trajectoryId === undefined || trajectoryId.length === 0) return;
-    const tenantId = deriveTenantFromSessionKey(sk) ?? "default";
-    deps.recordSessionTrajectory(sk, { traceId: trajectoryId, tenantId, agentId: p.agentId, sessionId: sk });
+    deps.recordSessionTrajectory(sk, {
+      traceId: trajectoryId,
+      tenantId: deps.tenantId,
+      agentId: p.agentId,
+      sessionId: sk,
+    });
   });
 
   // READER — classify a follow-up user turn and observe a correction against the
@@ -556,6 +560,7 @@ export function wireLearningCorrection(deps: LearningReactionsWiringDeps): void 
 /** The slice of the daemon container {@link buildReactionWiringDeps} reads. */
 export interface ReactionWiringContainer {
   config: {
+    tenantId: string;
     agents?: Record<string, AgentReactionConfig | undefined>;
     // The REAL MemoryConfig type (not a loose `{ costFeatures?: { enabled?: boolean } }`)
     // so tsc ENFORCES that the master gate reads `memory.enabled` — a missed field is a
@@ -577,6 +582,7 @@ interface AgentReactionConfig {
   provider?: string;
   model?: string;
   operationModels?: Record<string, unknown>;
+  oauthProfiles?: Record<string, string>;
   learningOutcome?: {
     enabled?: boolean;
     correction?: { enabled?: boolean };
@@ -629,9 +635,9 @@ const REACTION_RATE_LIMIT = { windowMs: 300_000, warnThreshold: 2, auditThreshol
 /**
  * Resolve + construct the cheap `fast`-tier correction detector for one agent
  * (the `outcomeJudge` operation tier — no new ModelOperationType).
- * Resolves the provider/modelId by NAME and the API key from the secret manager
- * (KEYLESS sentinel for keyless providers); returns `undefined` on a missing key
- * (a no-op branch — `Defer != Retry`). The seam itself reuses createCorrectionDetectorSeam.
+ * Resolves the provider/modelId by NAME, then uses a static secret, a keyless
+ * sentinel, or the agent's late-bound OAuth credential. Returns `undefined`
+ * when no supported credential source is configured.
  */
 function resolveCorrectionDetector(
   agent: AgentReactionConfig,
@@ -639,6 +645,7 @@ function resolveCorrectionDetector(
   agentId: string,
   clock: ClockPort,
   logger: ComisLogger,
+  resolveCredential?: LearningModelCredentialResolver,
 ): ((turn: string) => Promise<CorrectionVerdict | undefined>) | undefined {
   const agentProvider = agent.provider ?? "anthropic";
   const resolved = resolveOperationModel({
@@ -656,20 +663,27 @@ function resolveCorrectionDetector(
     // correction detector (DRIFT/supersede) is a silent no-op on a local keyless daemon.
     // Guarded by test/architecture/keyless-provider-by-type.
     (KEYLESS_PROVIDER_TYPES.has(providerEntry?.type ?? resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
-  if (!apiKey) return undefined; // no key → no-op detector (Defer != Retry)
   // Custom YAML providers (ollama/lm-studio/…) aren't in pi-ai's catalog → the
   // seam would skip; build a spec so correction detection runs locally too.
   const customModel = buildCustomJudgeModelSpec(providerEntry, resolved.provider, resolved.modelId);
-  return createCorrectionDetectorSeam({
+  const createDetector = (apiKeyValue: string) => createCorrectionDetectorSeam({
     provider: resolved.provider,
     modelId: resolved.modelId,
-    apiKey,
+    apiKey: apiKeyValue,
     maxOutputTokens: CORRECTION_MAX_OUTPUT_TOKENS,
     clock,
     logger,
     agentId,
     customModel,
   });
+  if (apiKey) return createDetector(apiKey);
+  const hasOAuthProfile = agent.oauthProfiles?.[resolved.provider] !== undefined;
+  if (!hasOAuthProfile || resolveCredential === undefined) return undefined;
+  return async (turn) => {
+    const credential = await resolveCredential(agentId, resolved.provider);
+    if (!credential) return undefined;
+    return createDetector(credential)(turn);
+  };
 }
 
 /**
@@ -684,13 +698,13 @@ function resolveCorrectionDetector(
  *  - `recordOutboundMessage` is built ONLY when SOME agent has learning-outcome on
  *    (else `undefined` → the delivery drain does zero extra work).
  *  - the correction detector is built ONLY when SOME agent has correction on AND a
- *    cheap-model API key resolves (a missing key → `undefined`, a no-op branch:
- *    `Defer != Retry`).
+ *    static, keyless, or configured OAuth credential path exists.
  */
 export function buildReactionWiringDeps(
   container: ReactionWiringContainer,
   clock: ClockPort,
   timers: TimerPort,
+  resolveCredential?: LearningModelCredentialResolver,
 ): BuildReactionWiringResult {
   const { eventBus, outcomeStore, logger } = container;
   const costFeaturesEnabled = container.config.memory?.enabled !== false;
@@ -746,7 +760,7 @@ export function buildReactionWiringDeps(
     const firstAgentId = Object.keys(agents).find((id) => correctionEnabled(id));
     const agent = firstAgentId !== undefined ? agents[firstAgentId] : undefined;
     if (agent !== undefined) {
-      correctionDetector = resolveCorrectionDetector(agent, container, firstAgentId ?? "default", clock, logger);
+      correctionDetector = resolveCorrectionDetector(agent, container, firstAgentId ?? "default", clock, logger, resolveCredential);
     }
     if (correctionDetector === undefined) {
       logger.warn(
@@ -768,6 +782,7 @@ export function buildReactionWiringDeps(
   };
 
   const deps: LearningReactionsWiringDeps = {
+    tenantId: container.config.tenantId,
     eventBus,
     outcomeStore,
     clock,

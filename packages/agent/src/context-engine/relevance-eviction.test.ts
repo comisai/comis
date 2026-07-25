@@ -224,7 +224,7 @@ function makeDeps(overrides: Partial<ContextEngineDeps> = {}): ContextEngineDeps
     relevanceScorer: scoreRelevance,
     contextStore: fakeStoreRanking([]),
     modelProfile: nonCachingProfile,
-    conversationId: "conv-a",
+    conversationRef: `cv_${"a".repeat(43)}`,
     agentId: "agent-a",
     tenantId: "tenant-a",
     sessionKey: "conv-a",

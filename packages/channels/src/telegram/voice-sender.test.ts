@@ -1,20 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { GrammyError } from "grammy";
 import { createTelegramVoiceSender, type TelegramVoiceSenderDeps } from "./voice-sender.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
 // Mock Grammy
 // ---------------------------------------------------------------------------
-vi.mock("grammy", () => ({
-  Bot: vi.fn(),
-  InputFile: class MockInputFile {
-    path: string;
-    constructor(path: string) {
-      this.path = path;
-    }
-  },
-}));
+vi.mock("grammy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("grammy")>();
+  return {
+    ...actual,
+    Bot: vi.fn(),
+    InputFile: class MockInputFile {
+      path: string;
+      constructor(path: string) {
+        this.path = path;
+      }
+    },
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,6 +32,15 @@ function createMockBot() {
       sendDocument: vi.fn(),
     },
   };
+}
+
+function makeGrammyError(description: string, errorCode = 400): GrammyError {
+  return new GrammyError(
+    "Call to 'sendVoice' failed!",
+    { ok: false, error_code: errorCode, description },
+    "sendVoice",
+    {},
+  );
 }
 
 function createDeps(): TelegramVoiceSenderDeps & {
@@ -52,7 +66,7 @@ describe("createTelegramVoiceSender", () => {
     vi.clearAllMocks();
   });
 
-  it("should send voice and return message ID on success", async () => {
+  it("should send voice and return a tracked receipt on success", async () => {
     const deps = createDeps();
     deps._bot.api.sendVoice.mockResolvedValue({ message_id: 42 });
 
@@ -61,7 +75,7 @@ describe("createTelegramVoiceSender", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value).toBe("42");
+    expect(result.value).toEqual({ kind: "tracked", messageId: "42" });
 
     expect(deps._bot.api.sendVoice).toHaveBeenCalledWith(
       12345,
@@ -82,7 +96,13 @@ describe("createTelegramVoiceSender", () => {
       "Voice send started",
     );
     expect(deps._logger.info).toHaveBeenCalledWith(
-      { channelType: "telegram", messageId: "99", chatId: "100", durationSecs: 10 },
+      {
+        channelType: "telegram",
+        messageId: "99",
+        chatId: "100",
+        durationSecs: 10,
+        tracking: "tracked",
+      },
       "Voice send complete",
     );
   });
@@ -90,7 +110,7 @@ describe("createTelegramVoiceSender", () => {
   it("should fall back to sendDocument on VOICE_MESSAGES_FORBIDDEN", async () => {
     const deps = createDeps();
     deps._bot.api.sendVoice.mockRejectedValue(
-      new Error("Bad Request: VOICE_MESSAGES_FORBIDDEN"),
+      makeGrammyError("Bad Request: VOICE_MESSAGES_FORBIDDEN"),
     );
     deps._bot.api.sendDocument.mockResolvedValue({ message_id: 77 });
 
@@ -99,7 +119,7 @@ describe("createTelegramVoiceSender", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value).toBe("77");
+    expect(result.value).toEqual({ kind: "tracked", messageId: "77" });
 
     expect(deps._bot.api.sendDocument).toHaveBeenCalledWith(
       12345,
@@ -119,7 +139,7 @@ describe("createTelegramVoiceSender", () => {
   it("should fall back to sendDocument on CHAT_SEND_VOICES_FORBIDDEN", async () => {
     const deps = createDeps();
     deps._bot.api.sendVoice.mockRejectedValue(
-      new Error("Bad Request: CHAT_SEND_VOICES_FORBIDDEN"),
+      makeGrammyError("Bad Request: CHAT_SEND_VOICES_FORBIDDEN"),
     );
     deps._bot.api.sendDocument.mockResolvedValue({ message_id: 88 });
 
@@ -128,7 +148,42 @@ describe("createTelegramVoiceSender", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value).toBe("88");
+    expect(result.value).toEqual({ kind: "tracked", messageId: "88" });
+  });
+
+  it("treats a primary send without a valid message ID as delivered without retrying", async () => {
+    const deps = createDeps();
+    deps._bot.api.sendVoice.mockResolvedValue({});
+
+    const sender = createTelegramVoiceSender(deps);
+    const result = await sender.sendVoice("12345", "/tmp/voice.ogg", 5);
+
+    expect(result).toEqual({ ok: true, value: { kind: "delivered_untracked" } });
+    expect(deps._bot.api.sendVoice).toHaveBeenCalledTimes(1);
+    expect(deps._bot.api.sendDocument).not.toHaveBeenCalled();
+    expect(deps._logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ hint: expect.stringContaining("Do not retry") }),
+      "Voice sent without platform tracking",
+    );
+  });
+
+  it("treats document fallback completion without a message ID as delivered without retrying", async () => {
+    const deps = createDeps();
+    deps._bot.api.sendVoice.mockRejectedValue(
+      makeGrammyError("Bad Request: VOICE_MESSAGES_FORBIDDEN"),
+    );
+    deps._bot.api.sendDocument.mockResolvedValue({});
+
+    const sender = createTelegramVoiceSender(deps);
+    const result = await sender.sendVoice("12345", "/tmp/voice.ogg", 5);
+
+    expect(result).toEqual({ ok: true, value: { kind: "delivered_untracked" } });
+    expect(deps._bot.api.sendVoice).toHaveBeenCalledTimes(1);
+    expect(deps._bot.api.sendDocument).toHaveBeenCalledTimes(1);
+    expect(deps._logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ hint: expect.stringContaining("Do not retry") }),
+      "Voice sent without platform tracking",
+    );
   });
 
   it("should return error on non-FORBIDDEN failure", async () => {
@@ -154,6 +209,26 @@ describe("createTelegramVoiceSender", () => {
       }),
       "Voice send failed",
     );
+  });
+
+  it("redacts credentials from voice-send logs and returned errors", async () => {
+    const credential = `xoxb-${"s".repeat(32)}`;
+    const deps = createDeps();
+    deps._bot.api.sendVoice.mockRejectedValue(
+      new Error(`voice request failed with ${credential}`),
+    );
+
+    const sender = createTelegramVoiceSender(deps);
+    const result = await sender.sendVoice("12345", "/tmp/voice.ogg", 5);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).not.toContain(credential);
+    const warning = deps._logger.warn.mock.calls.find(
+      (call) => call[1] === "Voice send failed",
+    );
+    const payload = warning?.[0] as { err?: unknown };
+    expect(typeof payload.err).toBe("string");
+    expect(String(payload.err)).not.toContain(credential);
   });
 
   it("should pass replyTo parameter to reply_parameters", async () => {

@@ -19,6 +19,7 @@
 
 import type {
   AttachmentPayload,
+  AttachmentSendReceipt,
   ChannelPort,
   ChannelStatus,
   MessageHandler,
@@ -30,7 +31,11 @@ import { ok, err } from "@comis/shared";
 import { messagingApi, webhook } from "@line/bot-sdk";
 import { buildFlexMessage, type FlexTemplate } from "./flex-builder.js";
 import { mapLineToNormalized, isMessageEvent } from "./message-mapper.js";
-import { systemNowMs, runWithContext } from "@comis/core";
+import {
+  createAttachmentSendReceipt,
+  systemNowMs,
+  runWithContext,
+} from "@comis/core";
 import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -135,7 +140,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
     );
 
     void runWithContext(
-      { traceId, startedAt: systemNowMs(), channelType: "line", tenantId: "default", trustLevel: "admin" },
+      { traceId, startedAt: systemNowMs(), channelType: "line", tenantId: "default", trustLevel: "user" },
       () => {
         for (const handler of handlers) {
           try {
@@ -156,7 +161,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
   async function sendAttachmentAsLineMessage(
     chatId: string,
     attachment: AttachmentPayload,
-  ): Promise<Result<string, Error>> {
+  ): Promise<Result<AttachmentSendReceipt, Error>> {
     try {
       let lineMessage: messagingApi.Message;
 
@@ -208,11 +213,27 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
         messages: [lineMessage],
       });
 
-      const messageId = response.sentMessages[0]?.id ?? "sent";
+      const receipt = createAttachmentSendReceipt(response.sentMessages[0]?.id);
+      if (receipt.kind === "delivered_untracked") {
+        deps.logger.warn(
+          {
+            channelType: "line",
+            chatId,
+            hint: "LINE accepted the push without sentMessages[0].id. Do not retry; the message may already be delivered",
+            errorKind: "platform" as const,
+          },
+          "Attachment delivered without platform tracking",
+        );
+      }
 
       if (attachment.isVoiceNote) {
         deps.logger.info(
-          { channelType: "line", messageId, chatId },
+          {
+            channelType: "line",
+            chatId,
+            tracking: receipt.kind,
+            ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
+          },
           "Voice send complete",
         );
       }
@@ -220,8 +241,9 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
       deps.logger.debug(
         {
           channelType: "line" as const,
-          messageId,
           chatId,
+          tracking: receipt.kind,
+          ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
           attachmentType: attachment.type,
           captionLength: attachment.caption?.length ?? 0,
           hasFileName: attachment.fileName !== undefined,
@@ -229,7 +251,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
         "Outbound attachment",
       );
 
-      return ok(messageId);
+      return ok(receipt);
     } catch (error) {
       const sendErr = error instanceof Error ? error : new Error(String(error));
       deps.logger.warn(
@@ -333,7 +355,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
       attachment: AttachmentPayload,
        
       _options?: SendMessageOptions,
-    ): Promise<Result<string, Error>> {
+    ): Promise<Result<AttachmentSendReceipt, Error>> {
       return sendAttachmentAsLineMessage(chatId, attachment);
     },
 

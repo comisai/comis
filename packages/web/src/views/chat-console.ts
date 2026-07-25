@@ -6,9 +6,23 @@ import { IcToast } from "../components/feedback/ic-toast.js";
 import type { ApiClient } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
-import { parseSessionKeyString, formatSessionDisplayName } from "../utils/session-key-parser.js";
-import { stripSilentTokens, stripUserSystemContext } from "../utils/message-content.js";
+import type { SessionTarget } from "../api/session-scope.js";
+import { parseSessionKeyString } from "../utils/session-key-parser.js";
+import { stripSilentTokens } from "../utils/message-content.js";
 import { systemClearInterval, systemNowMs, systemSetInterval, systemSetTimeout } from "@comis/core";
+import {
+  createLocalChatSession,
+  filterChatSessions,
+  loadChatAgents,
+  loadChatBudget,
+  loadChatHistory,
+  loadChatSessionSelection,
+  resolveActiveSessionTarget,
+  resolveTransportSessionKey,
+  sendChatMessage,
+  type ChatAgentOption,
+  type ChatSessionInfo,
+} from "./chat-console/session-data.js";
 
 // Side-effect imports to register child components
 import "../components/domain/ic-chat-message.js";
@@ -25,16 +39,6 @@ import "../components/data/ic-budget-segment-bar.js";
 // Sub-component imports
 import "./chat-console/session-sidebar.js";
 import "./chat-console/message-renderer.js";
-
-/** Session information from session.status RPC. */
-interface SessionInfo {
-  key: string;
-  agentId: string;
-  channelType: string;
-  messageCount: number;
-  lastActivity: number;
-  label?: string;
-}
 
 /** A single chat message in the conversation. */
 interface ChatMessageData {
@@ -54,19 +58,38 @@ interface ToolCallData {
   status: "running" | "success" | "error";
 }
 
-/** Agent option for the selector dropdown. */
-interface AgentOption {
-  id: string;
-  name: string;
-  model: string;
-}
-
 /** Pending file attachment data. */
 interface AttachmentData {
   id: string;
   file: File;
   type: "image" | "audio" | "file";
   previewUrl?: string;
+}
+
+interface ChatRequestContext {
+  readonly revision: number;
+  readonly activeSession: string;
+  readonly selectedAgent: string;
+  readonly transportSessionKey: string;
+  readonly rpcClient: RpcClient | null;
+  readonly apiClient: ApiClient | null;
+  readonly target?: SessionTarget;
+}
+
+interface StoredSessionRequestContext {
+  readonly activeRevision: number;
+  readonly historyRevision: number;
+  readonly rpcClient: RpcClient;
+  readonly selectedAgent: string;
+  readonly target: SessionTarget;
+}
+
+interface SessionListRequestContext {
+  readonly revision: number;
+  readonly activeRevision: number;
+  readonly rpcClient: RpcClient;
+  readonly selectedAgent: string;
+  readonly conversationRef: string;
 }
 
 /** Slash command definition. */
@@ -195,15 +218,16 @@ export class IcChatConsole extends LitElement {
 
   @property({ attribute: false }) eventDispatcher: EventDispatcher | null = null;
 
-  @property() sessionKey = "";
+  @property() conversationRef = "";
 
   @property() authToken = "";
 
   // --- Session / conversation state ---
-  @state() private _sessions: SessionInfo[] = [];
+  @state() private _sessions: ChatSessionInfo[] = [];
+  private _routedSession: ChatSessionInfo | undefined;
   @state() private _activeSession = "";
   @state() private _messages: ChatMessageData[] = [];
-  @state() private _agents: AgentOption[] = [];
+  @state() private _agents: ChatAgentOption[] = [];
   @state() private _selectedAgent = "default";
   @state() private _loading = true;
   @state() private _searchQuery = "";
@@ -236,6 +260,13 @@ export class IcChatConsole extends LitElement {
   // --- Budget bar state ---
   @state() private _budgetSegments: Array<{ label: string; tokens: number; color: string }> = [];
   @state() private _budgetTotal = 0;
+  private _sessionLoadRevision = 0;
+  private _sessionListLoadingRevision: number | undefined;
+  private _activeSessionRevision = 0;
+  private _historyRequestRevision = 0;
+  private _budgetRequestRevision = 0;
+  private _sendRequestRevision = 0;
+  private _sendingRequestId: number | undefined;
 
   @query(".message-area") private _messageArea!: HTMLElement;
   @query(".input-textarea") private _textarea!: HTMLTextAreaElement;
@@ -297,6 +328,15 @@ export class IcChatConsole extends LitElement {
         });
       }
     }
+    if (
+      !changed.has("rpcClient")
+      && changed.has("conversationRef")
+      && this.rpcClient?.status === "connected"
+    ) {
+      this._sessions = [];
+      this._activateSession("");
+      void this._loadSessions();
+    }
     // Load agents when apiClient becomes available
     if (changed.has("apiClient") && this.apiClient && this._agents.length <= 1) {
       this._loadAgents();
@@ -318,12 +358,18 @@ export class IcChatConsole extends LitElement {
 
   private _setupEventListeners(): void {
     const appendIfActive = (data: Record<string, unknown>) => {
-      if (data.sessionKey === this._activeSession) this._appendMessage(data);
+      if (data.sessionKey === this._activeTransportSessionKey()) this._appendMessage(data);
     };
     this._onDocEvent("message:received", appendIfActive);
     this._onDocEvent("message:sent", appendIfActive);
     this._onDocEvent("session:created", (data) => {
-      const session: SessionInfo = {
+      const invalidatedRevision = this._sessionLoadRevision;
+      this._sessionLoadRevision += 1;
+      if (this._sessionListLoadingRevision === invalidatedRevision) {
+        this._sessionListLoadingRevision = undefined;
+        this._loading = false;
+      }
+      const session: ChatSessionInfo = {
         key: String(data.sessionKey ?? ""),
         agentId: String(data.agentId ?? "unknown"),
         channelType: String(data.channelType ?? "web"),
@@ -342,7 +388,7 @@ export class IcChatConsole extends LitElement {
   }
 
   private _handleStreamingEvent(data: Record<string, unknown>): void {
-    if (data.sessionKey !== this._activeSession) return;
+    if (data.sessionKey !== this._activeTransportSessionKey()) return;
     if (!this._streaming) {
       this._streaming = true;
       this._streamingTokens = 0;
@@ -399,12 +445,14 @@ export class IcChatConsole extends LitElement {
     const url = typeof p?.url === "string" ? p.url : "";
     const channelId = typeof p?.channelId === "string" ? p.channelId : "";
     const notificationSessionKey = typeof p?.sessionKey === "string" ? p.sessionKey : "";
-    const activeSession = parseSessionKeyString(this._activeSession);
+    const activeSession = parseSessionKeyString(this._activeTransportSessionKey());
     const notifiedSession = parseSessionKeyString(notificationSessionKey);
-    const isActiveSession = notificationSessionKey === this._activeSession
+    const isActiveSession = notificationSessionKey === this._activeTransportSessionKey()
       || (activeSession !== undefined
         && notifiedSession !== undefined
         && activeSession.tenantId === "web"
+        && activeSession.tenantId === notifiedSession.tenantId
+        && activeSession.agentId === notifiedSession.agentId
         && activeSession.userId === notifiedSession.userId
         && activeSession.channelId === notifiedSession.channelId);
     if (!url || !channelId || !isActiveSession || notifiedSession?.channelId !== channelId) return;
@@ -442,159 +490,180 @@ export class IcChatConsole extends LitElement {
 
   private async _loadSessions(): Promise<void> {
     if (!this.rpcClient) {
+      this._sessionListLoadingRevision = undefined;
       this._loading = false;
       return;
     }
+    const request: SessionListRequestContext = {
+      revision: ++this._sessionLoadRevision,
+      activeRevision: this._activeSessionRevision,
+      rpcClient: this.rpcClient,
+      selectedAgent: this._selectedAgent,
+      conversationRef: this.conversationRef,
+    };
+    this._sessionListLoadingRevision = request.revision;
+    this._loading = true;
     try {
-      // Closed-union retype: session.list returns kind ∈
-      // {"dm", "group", "sub-agent"} per session-handlers.ts:413-417 derivation
-      // (parentSessionKey -> "sub-agent" | guildId -> "group" | else "dm").
-      const result = await this.rpcClient.call<{
-        sessions: Array<{
-          sessionKey: string;
-          agentId: string;
-          channelId: string;
-          kind: "dm" | "group" | "sub-agent";
-          messageCount?: number;
-          updatedAt: number;
-        }>;
-      }>("session.list", { kind: "dm" });
-      const sessions = result?.sessions ?? [];
-      this._sessions = sessions.map((s) => ({
-        key: s.sessionKey,
-        agentId: s.agentId,
-        channelType: s.channelId.startsWith("web:") ? "web" : s.kind,
-        messageCount: s.messageCount ?? 0,
-        lastActivity: s.updatedAt,
-      }));
-      // Show the chat UI immediately with session list
+      const selection = await loadChatSessionSelection(
+        request.rpcClient,
+        request.selectedAgent,
+        request.conversationRef,
+      );
+      if (!this._isCurrentSessionListRequest(request)) return;
+      this._selectedAgent = selection.selectedAgent;
+      this._sessions = selection.sessions;
+      this._routedSession = undefined;
+      this._sessionListLoadingRevision = undefined;
       this._loading = false;
-      // Pre-select session from route param and load history in background
-      if (this.sessionKey) {
-        const match = this._sessions.find((s) => s.key === this.sessionKey);
+      if (request.conversationRef && selection.routeResolved) {
+        const match = selection.routedSession;
         if (match) {
-          this._activeSession = match.key;
-          this._loadSessionHistory();
+          this._activateSession(match.key, match);
+          void this._loadSessionHistory();
         }
       }
     } catch {
+      if (!this._isCurrentSessionListRequest(request)) return;
       this._sessions = [];
+      this._routedSession = undefined;
+      this._sessionListLoadingRevision = undefined;
       this._loading = false;
     }
+  }
+
+  private _isCurrentSessionListRequest(request: SessionListRequestContext): boolean {
+    return request.revision === this._sessionLoadRevision
+      && request.activeRevision === this._activeSessionRevision
+      && request.rpcClient === this.rpcClient
+      && request.selectedAgent === this._selectedAgent
+      && request.conversationRef === this.conversationRef;
   }
 
   private async _loadSessionHistory(): Promise<void> {
     if (!this.rpcClient || !this._activeSession) return;
+    const target = this._activeSessionTarget();
+    if (!target) return;
+    const request: StoredSessionRequestContext = {
+      activeRevision: this._activeSessionRevision,
+      historyRevision: ++this._historyRequestRevision,
+      rpcClient: this.rpcClient,
+      selectedAgent: this._selectedAgent,
+      target,
+    };
+    this._sessionListLoadingRevision = undefined;
     this._loading = true;
     try {
-      const result = await this.rpcClient.call<{
-        messages: Array<{
-          id?: string;
-          role: "user" | "assistant" | "error" | "system" | "tool";
-          content: string;
-          timestamp?: number;
-          toolCalls?: unknown[];
-        }>;
-      }>("session.history", { session_key: this._activeSession });
-      const rawMessages = result?.messages ?? [];
-      this._messages = rawMessages
-        .map((m): ChatMessageData => ({
-          id: m.id ?? crypto.randomUUID(),
-          role: m.role,
-          content: m.role === "assistant"
-            ? stripSilentTokens(m.content)
-            : m.role === "user"
-              ? stripUserSystemContext(m.content)
-              : m.content,
-          timestamp: m.timestamp ?? 0,
-          // Tool calls flow through opaquely — view's ToolCallData shape is
-          // an internal display detail that matches the daemon's response.
-          toolCalls: m.toolCalls as ToolCallData[] | undefined,
-        }))
-        .filter((m) => m.content !== "" || m.role !== "assistant");
+      const result = await loadChatHistory(request.rpcClient, request.target);
+      if (!this._isCurrentStoredSessionRequest(request)) return;
+      this._messages = result.messages;
     } catch {
+      if (!this._isCurrentStoredSessionRequest(request)) return;
       this._messages = [];
     } finally {
-      this._loading = false;
-      this._scrollToBottom();
+      if (this._isCurrentStoredSessionRequest(request)) {
+        this._loading = false;
+        this._scrollToBottom();
+        void this._loadBudgetData(request);
+      }
     }
-    // Load budget data for the active session (fire-and-forget, non-blocking)
-    this._loadBudgetData();
   }
 
-  private async _loadBudgetData(): Promise<void> {
-    if (!this.rpcClient || !this._activeSession) {
-      this._budgetSegments = [];
-      this._budgetTotal = 0;
-      return;
-    }
-    // Find the agent for this session
-    const sessionInfo = this._sessions.find((s) => s.key === this._activeSession);
-    const agentId = sessionInfo?.agentId ?? "default";
-    try {
-      const result = await this.rpcClient.call<{
-        snapshots: Array<{
-          tokensLoaded?: number;
-          tokensEvicted?: number;
-          tokensMasked?: number;
-          budgetUtilization?: number;
-        }>;
-      }>("obs.context.pipeline", { agentId, limit: 1 });
-      const snap = result?.snapshots?.[0] ?? null;
-      if (!snap) {
-        this._budgetSegments = [];
-        this._budgetTotal = 0;
-        return;
-      }
-      const tokensLoaded = snap.tokensLoaded ?? 0;
-      const tokensEvicted = snap.tokensEvicted ?? 0;
-      const tokensMasked = snap.tokensMasked ?? 0;
-      const budgetUtilization = snap.budgetUtilization ?? 0;
-      const totalBudget = budgetUtilization > 0 ? Math.round(tokensLoaded / budgetUtilization) : 0;
-      const available = Math.max(0, totalBudget - tokensLoaded);
-      const segments: Array<{ label: string; tokens: number; color: string }> = [];
-      if (tokensLoaded > 0) segments.push({ label: "Loaded", tokens: tokensLoaded, color: "var(--ic-accent)" });
-      if (tokensEvicted > 0) segments.push({ label: "Evicted", tokens: tokensEvicted, color: "var(--ic-warning)" });
-      if (tokensMasked > 0) segments.push({ label: "Masked", tokens: tokensMasked, color: "var(--ic-text-dim)" });
-      if (available > 0) segments.push({ label: "Available", tokens: available, color: "var(--ic-surface-2)" });
-      this._budgetSegments = segments;
-      this._budgetTotal = totalBudget;
-    } catch {
-      this._budgetSegments = [];
-      this._budgetTotal = 0;
-    }
+  private async _loadBudgetData(request: StoredSessionRequestContext): Promise<void> {
+    const budgetRevision = ++this._budgetRequestRevision;
+    const budget = await loadChatBudget(request.rpcClient, request.target.agentId);
+    if (
+      budgetRevision !== this._budgetRequestRevision
+      || !this._isCurrentStoredSessionRequest(request)
+    ) return;
+    this._budgetSegments = budget.segments;
+    this._budgetTotal = budget.total;
   }
 
   private async _loadAgents(): Promise<void> {
     if (!this.apiClient) return;
     try {
-      const agents = await this.apiClient.getAgents();
-      this._agents = agents.length > 0
-        ? agents.map((a) => ({ id: a.id, name: a.name ?? a.id, model: a.model }))
-        : [{ id: "default", name: "Default", model: "unknown" }];
+      const nextAgents = await loadChatAgents(this.apiClient);
+      this._agents = nextAgents;
+      if (!nextAgents.some((agent) => agent.id === this._selectedAgent)) {
+        this._selectedAgent = nextAgents[0]!.id;
+        this._sessions = [];
+        this._activateSession("");
+        await this._loadSessions();
+      }
     } catch {
       this._agents = [{ id: "default", name: "Default", model: "unknown" }];
     }
   }
 
+  private _handleAgentChange(e: Event): void {
+    this._selectedAgent = (e.target as HTMLSelectElement).value;
+    this._sessions = [];
+    this._activateSession("");
+    void this._loadSessions();
+  }
+
   private _createNewSession(): void {
-    const sessionKey = `web:${this._selectedAgent}:${crypto.randomUUID()}`;
-    const newSession: SessionInfo = {
-      key: sessionKey,
-      agentId: this._selectedAgent,
-      channelType: "web",
-      messageCount: 0,
-      lastActivity: systemNowMs(),
-    };
+    this._sessionLoadRevision += 1;
+    const newSession = createLocalChatSession(this._selectedAgent, systemNowMs());
     this._sessions = [newSession, ...this._sessions];
-    this._activeSession = sessionKey;
-    this._messages = [];
+    this._activateSession(newSession.key);
   }
 
   private _selectSession(key: string): void {
-    this._activeSession = key;
+    const selected = this._sessions.find((session) => session.key === key);
+    if (selected) this._selectedAgent = selected.agentId;
+    this._activateSession(key);
     this._sidebarOpen = false;
-    this._loadSessionHistory();
+    void this._loadSessionHistory();
+  }
+
+  private _activateSession(key: string, routedSession?: ChatSessionInfo): void {
+    this._activeSessionRevision += 1;
+    this._sessionListLoadingRevision = undefined;
+    this._routedSession = routedSession;
+    this._activeSession = key;
+    this._messages = [];
+    this._budgetSegments = [];
+    this._budgetTotal = 0;
+    this._loading = false;
+    this._sendingRequestId = undefined;
+    this._sending = false;
+    this._streaming = false;
+    this._streamingTokens = 0;
+    this._streamingContent = "";
+    this._streamBuffer = "";
+    this._rafPending = false;
+  }
+
+  private _activeTransportSessionKey(): string {
+    return resolveTransportSessionKey(this._activeSessionCandidates(), this._activeSession);
+  }
+
+  private _activeSessionTarget() {
+    return resolveActiveSessionTarget(this._activeSessionCandidates(), this._activeSession);
+  }
+
+  private _activeSessionCandidates(): readonly ChatSessionInfo[] {
+    return this._routedSession?.key === this._activeSession
+      ? [this._routedSession, ...this._sessions]
+      : this._sessions;
+  }
+
+  private _activeTargetMatches(target: SessionTarget): boolean {
+    const activeTarget = this._activeSessionTarget();
+    return activeTarget !== undefined
+      && activeTarget.tenantId === target.tenantId
+      && activeTarget.agentId === target.agentId
+      && activeTarget.conversationRef === target.conversationRef;
+  }
+
+  private _isCurrentStoredSessionRequest(request: StoredSessionRequestContext): boolean {
+    return request.activeRevision === this._activeSessionRevision
+      && request.historyRevision === this._historyRequestRevision
+      && request.rpcClient === this.rpcClient
+      && request.selectedAgent === this._selectedAgent
+      && request.selectedAgent === request.target.agentId
+      && this._activeTargetMatches(request.target);
   }
 
   private _handleScroll(): void {
@@ -689,14 +758,72 @@ export class IcChatConsole extends LitElement {
     }];
   }
 
-  /** Round-trip text through the chat REST API; append assistant or error. */
-  private async _chatRoundTrip(text: string, errorPrefix: string): Promise<void> {
-    if (!this.apiClient) return;
+  private _captureChatRequest(): ChatRequestContext | undefined {
+    if (!this._activeSession) return undefined;
+    const target = this._activeSessionTarget();
+    const transportSessionKey = this._activeTransportSessionKey();
+    if (!target && !transportSessionKey) return undefined;
+    return {
+      revision: this._activeSessionRevision,
+      activeSession: this._activeSession,
+      selectedAgent: this._selectedAgent,
+      transportSessionKey,
+      rpcClient: this.rpcClient,
+      apiClient: this.apiClient,
+      ...(target ? { target } : {}),
+    };
+  }
+
+  private _isCurrentChatRequest(request: ChatRequestContext): boolean {
+    if (
+      request.revision !== this._activeSessionRevision
+      || request.activeSession !== this._activeSession
+      || request.selectedAgent !== this._selectedAgent
+    ) {
+      return false;
+    }
+    if (request.target) {
+      return request.rpcClient === this.rpcClient
+        && request.selectedAgent === request.target.agentId
+        && this._activeTargetMatches(request.target);
+    }
+    return request.transportSessionKey !== ""
+      && request.transportSessionKey === this._activeTransportSessionKey()
+      && request.apiClient === this.apiClient
+      && this._activeSessionTarget() === undefined;
+  }
+
+  private _canSendToActiveSession(): boolean {
+    const target = this._activeSessionTarget();
+    if (target) return this.rpcClient !== null && target.agentId === this._selectedAgent;
+    const transportSessionKey = this._activeTransportSessionKey();
+    if (transportSessionKey) return this.apiClient !== null;
+    return !this._activeSession && !this.conversationRef && this.apiClient !== null;
+  }
+
+  /** Round-trip text through the active chat boundary; append assistant or error. */
+  private async _chatRoundTrip(
+    text: string,
+    errorPrefix: string,
+    request: ChatRequestContext,
+  ): Promise<void> {
     try {
-      const result = await this.apiClient.chat(text, this._selectedAgent, this._activeSession ?? undefined);
-      const cleaned = result.response ? stripSilentTokens(result.response) : "";
+      const response = request.target
+        ? request.rpcClient
+          ? await sendChatMessage(request.rpcClient, request.target, text)
+          : ""
+        : request.apiClient
+          ? (await request.apiClient.chat(
+              text,
+              request.selectedAgent,
+              request.transportSessionKey,
+            )).response
+          : "";
+      if (!this._isCurrentChatRequest(request)) return;
+      const cleaned = response ? stripSilentTokens(response) : "";
       if (cleaned) this._pushMsg("assistant", cleaned);
     } catch (err) {
+      if (!this._isCurrentChatRequest(request)) return;
       this._pushMsg("error", err instanceof Error ? err.message : errorPrefix);
     }
   }
@@ -704,11 +831,17 @@ export class IcChatConsole extends LitElement {
   private async _sendMessage(): Promise<void> {
     const text = this._inputValue.trim();
     if ((text === "" && this._attachments.length === 0) || this._sending) return;
-    if (!this.apiClient) return;
+    if (!this._canSendToActiveSession()) return;
     if (!this._activeSession) {
       this._createNewSession();
       if (!this._activeSession) return;
     }
+    const request = this._captureChatRequest();
+    if (!request) return;
+    this._historyRequestRevision += 1;
+    this._budgetRequestRevision += 1;
+    const requestId = ++this._sendRequestRevision;
+    this._sendingRequestId = requestId;
     this._sending = true;
     if (text) this._pushMsg("user", text);
     this._inputValue = "";
@@ -719,16 +852,30 @@ export class IcChatConsole extends LitElement {
       if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
     }
     this._attachments = [];
-    await this._chatRoundTrip(text, "Failed to send message");
-    this._sending = false;
-    this._syncSessionMessageCount();
-    this._scrollToBottom();
-    this._focusInput();
+    try {
+      await this._chatRoundTrip(text, "Failed to send message", request);
+      if (!this._isCurrentChatRequest(request)) return;
+      this._syncSessionMessageCount();
+      this._scrollToBottom();
+      this._focusInput();
+    } finally {
+      if (this._sendingRequestId === requestId) {
+        this._sendingRequestId = undefined;
+        this._sending = false;
+      }
+    }
   }
 
   private _syncSessionMessageCount(): void {
     if (!this._activeSession) return;
     const count = this._messages.filter((m) => m.role !== "error").length;
+    if (this._routedSession?.key === this._activeSession) {
+      this._routedSession = {
+        ...this._routedSession,
+        messageCount: count,
+        lastActivity: systemNowMs(),
+      };
+    }
     this._sessions = this._sessions.map((s) =>
       s.key === this._activeSession
         ? { ...s, messageCount: count, lastActivity: systemNowMs() }
@@ -746,9 +893,9 @@ export class IcChatConsole extends LitElement {
       const bytes = new Uint8Array(await blob.arrayBuffer());
       let binary = "";
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const result = await this.rpcClient.call<{ text: string }>(
+      const result = await this.rpcClient.call(
         "audio.transcribe",
-        { audio: btoa(binary), format: "webm" },
+        { audio: btoa(binary), mimeType: blob.type || "audio/webm" },
       );
       const text = result?.text ?? "";
       if (text) this._inputValue += (this._inputValue ? " " : "") + text;
@@ -876,9 +1023,15 @@ export class IcChatConsole extends LitElement {
         await this._createNewSession();
         break;
       case "/reset":
-        if (this._activeSession && this.rpcClient) {
+        if (this.rpcClient) {
+          const target = this._activeSessionTarget();
+          if (!target) break;
           try {
-            await this.rpcClient.call("session.reset", { session_key: this._activeSession });
+            await this.rpcClient.call("session.reset", {
+              tenant_id: target.tenantId,
+              agent_id: target.agentId,
+              conversation_ref: target.conversationRef,
+            });
             IcToast.show("Session reset", "success");
             await this._loadSessionHistory();
           } catch {
@@ -887,13 +1040,19 @@ export class IcChatConsole extends LitElement {
         }
         break;
       case "/export":
-        if (this._activeSession && this.rpcClient) {
+        if (this.rpcClient) {
+          const target = this._activeSessionTarget();
+          if (!target) break;
           try {
-            const result = await this.rpcClient.call<{ data: string }>(
+            const result = await this.rpcClient.call(
               "session.export",
-              { session_key: this._activeSession },
+              {
+                tenant_id: target.tenantId,
+                agent_id: target.agentId,
+                conversation_ref: target.conversationRef,
+              },
             );
-            const data = result?.data ?? "";
+            const data = JSON.stringify(result, null, 2);
             if (data) {
               const blob = new Blob([data], { type: "application/jsonl" });
               const url = URL.createObjectURL(blob);
@@ -909,9 +1068,15 @@ export class IcChatConsole extends LitElement {
         }
         break;
       case "/compact":
-        if (this._activeSession && this.rpcClient) {
+        if (this.rpcClient) {
+          const target = this._activeSessionTarget();
+          if (!target) break;
           try {
-            await this.rpcClient.call("session.compact", { session_key: this._activeSession });
+            await this.rpcClient.call("session.compact", {
+              tenant_id: target.tenantId,
+              agent_id: target.agentId,
+              conversation_ref: target.conversationRef,
+            });
             IcToast.show("Session compacted", "success");
           } catch {
             IcToast.show("Failed to compact session", "error");
@@ -947,13 +1112,25 @@ export class IcChatConsole extends LitElement {
       if (this._messages[i].role === "user") { userMsg = this._messages[i]; break; }
     }
     this._messages = this._messages.filter((m) => m.id !== messageId);
-    if (userMsg && this.apiClient) {
+    const request = this._captureChatRequest();
+    if (userMsg && request && this._canSendToActiveSession()) {
+      this._historyRequestRevision += 1;
+      this._budgetRequestRevision += 1;
+      const requestId = ++this._sendRequestRevision;
+      this._sendingRequestId = requestId;
       this._sending = true;
       this._scrollToBottom();
-      await this._chatRoundTrip(userMsg.content, "Retry failed");
-      this._sending = false;
-      this._scrollToBottom();
-      this._focusInput();
+      try {
+        await this._chatRoundTrip(userMsg.content, "Retry failed", request);
+        if (!this._isCurrentChatRequest(request)) return;
+        this._scrollToBottom();
+        this._focusInput();
+      } finally {
+        if (this._sendingRequestId === requestId) {
+          this._sendingRequestId = undefined;
+          this._sending = false;
+        }
+      }
     }
   }
 
@@ -964,21 +1141,8 @@ export class IcChatConsole extends LitElement {
     // -- not available in session context. Local removal only.
   }
 
-  private get _filteredSessions(): SessionInfo[] {
-    if (!this._searchQuery) return this._sessions;
-    const q = this._searchQuery.toLowerCase();
-    return this._sessions.filter(
-      (s) =>
-        s.key.toLowerCase().includes(q) ||
-        (s.label?.toLowerCase().includes(q) ?? false),
-    );
-  }
-
-  private _formatTokens(count: number): string {
-    if (count >= 1000) {
-      return `${(count / 1000).toFixed(1)}K tokens`;
-    }
-    return `${count} tokens`;
+  private get _filteredSessions(): ChatSessionInfo[] {
+    return filterChatSessions(this._sessions, this._searchQuery);
   }
 
   private _renderSidebar() {
@@ -1029,7 +1193,7 @@ export class IcChatConsole extends LitElement {
           class="agent-select"
           aria-label="Agent"
           .value=${this._selectedAgent}
-          @change=${(e: Event) => { this._selectedAgent = (e.target as HTMLSelectElement).value; }}
+          @change=${this._handleAgentChange}
         >
           ${this._agents.map(
             (a) => html`<option value=${a.id}>${a.name} (${a.model})</option>`,
@@ -1038,7 +1202,7 @@ export class IcChatConsole extends LitElement {
         ${this._activeSession
           ? html`
               <div class="session-info">
-                <span class="session-info-key">${(() => { const p = parseSessionKeyString(this._activeSession); return p ? formatSessionDisplayName(p) : this._activeSession.slice(0, 8); })()}</span>
+                <span class="session-info-key">${this._activeSession.length > 12 ? `${this._activeSession.slice(0, 12)}…` : this._activeSession}</span>
                 <span>${this._messages.length} messages</span>
               </div>
             `
@@ -1071,8 +1235,11 @@ export class IcChatConsole extends LitElement {
 
   private _renderInputBar() {
     const filteredCmds = this._getFilteredSlashCommands();
+    const canSend = this._canSendToActiveSession();
     const sendDisabled =
-      (this._inputValue.trim() === "" && this._attachments.length === 0) || this._sending;
+      !canSend
+      || (this._inputValue.trim() === "" && this._attachments.length === 0)
+      || this._sending;
     return html`
       <div class="input-bar">
         ${this._showSlashMenu && filteredCmds.length > 0
@@ -1118,7 +1285,7 @@ export class IcChatConsole extends LitElement {
             placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
             maxlength="10000"
             .value=${this._inputValue}
-            ?disabled=${this._sending}
+            ?disabled=${this._sending || !canSend}
             @input=${this._handleInput}
             @keydown=${this._handleKeydown}
           ></textarea>

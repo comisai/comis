@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Output-size escalation policy + success-path response processing
- * (recovery, SEP extraction, post-batch continuation, budget continuation,
- * output guard).
+ * Output-size escalation policy and success-path response processing.
  *
  * The failure-path equivalents (overflow recovery, error classification,
  * timeout cost estimation) live in `./failure-path.js` so each module
@@ -14,11 +12,11 @@
  * @module
  */
 
-import { formatSessionKey } from "@comis/core";
+import { formatSessionKey, toSafeErrorLogString } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { fromPromise } from "@comis/shared";
-
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { withPromptTimeout } from "../prompt-timeout.js";
+import { runContinuationTurn } from "../continuation-turn.js";
 import {
   scanWithOutputGuard,
   recoverEmptyFinalResponse,
@@ -28,22 +26,20 @@ import {
 import { runPostBatchContinuation } from "../post-batch-continuation.js";
 import { runNarrateNudge } from "../narrate-nudge.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
+import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { TurnBudgetTracker } from "../../budget/turn-budget-tracker.js";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
 import { processFailurePath } from "./failure-path.js";
+import { applyInteractiveSilentRecovery } from "./interactive-silent-recovery.js";
+import { applyResponseLocaleEnforcement } from "./response-locale-enforcement.js";
 
 /**
  * Compute the final PromptRunResult by running output escalation, success-
  * path response processing, and failure-path overflow recovery as needed.
  *
- * Side effects:
- *   - mutates `params.result.response`, `params.result.finishReason`,
- *     `params.result.errorContext`, `params.result.continuationMetrics`,
- *     `params.result.budgetMetrics`.
- *   - emits `observability:token_usage` + `execution:output_escalated`
- *     events.
+ * Mutates the response/result metrics and emits output-escalation events.
  */
 export async function escalateOutput(
   params: RunPromptParams,
@@ -61,7 +57,17 @@ export async function escalateOutput(
 
   // Output escalation -- retry with higher output budget on max_tokens truncation.
   if (promptSucceeded && !skipPrompt && !escalationAttempted && !budgetTracker) {
-    escalationAttempted = await maybeEscalateOutput(params, messageText, promptImages);
+    const escalation = await maybeEscalateOutput(params, messageText, promptImages);
+    if (escalation.ok) {
+      escalationAttempted = escalation.value;
+    } else {
+      return {
+        promptSucceeded: false,
+        promptError: escalation.error,
+        escalationAttempted: false,
+        ghostCost,
+      };
+    }
   }
 
   if (promptSucceeded && !skipPrompt) {
@@ -90,7 +96,7 @@ async function maybeEscalateOutput(
   params: RunPromptParams,
   messageText: string,
   promptImages: ImageContent[] | undefined,
-): Promise<boolean> {
+): Promise<Result<boolean, Error>> {
   const { session, sessionKey, agentId, bridge, config, effectiveTimeout, deps } = params;
 
   const bridgeStopReason = bridge.getResult().lastStopReason;
@@ -102,32 +108,33 @@ async function maybeEscalateOutput(
     !escalationEnabled ||
     config.maxTokens !== undefined // only when not explicitly set by operator
   ) {
-    return false;
+    return ok(false);
   }
 
   const originalMaxTokens = session.agent.state.model?.maxTokens ?? 8192;
   const escalatedMaxTokens = escalationConfig?.escalatedMaxTokens ?? 32_768;
-
-  deps.logger.info(
-    {
+  const guardProviderDispatch = resolveProviderDispatchGuard(
+    params.executionOverrides?.onProviderStart,
+  );
+  const instrumented = tryCatch(() => {
+    deps.logger.info(
+      {
+        originalMaxTokens,
+        escalatedMaxTokens,
+        hint: "LLM hit max_tokens; retrying with escalated output budget",
+      },
+      "Output escalation triggered",
+    );
+    deps.eventBus.emit("execution:output_escalated", {
+      agentId: agentId ?? "default",
+      sessionKey: formatSessionKey(sessionKey),
       originalMaxTokens,
       escalatedMaxTokens,
-      hint: "LLM hit max_tokens; retrying with escalated output budget",
-      errorKind: "transient" as ErrorKind,
-    },
-    "Output escalation triggered",
-  );
-
-  // Emit escalation event for observability
-  deps.eventBus.emit("execution:output_escalated", {
-    agentId: agentId ?? "default",
-    sessionKey: formatSessionKey(sessionKey),
-    originalMaxTokens,
-    escalatedMaxTokens,
-    timestamp: deps.clock.now(),
+      timestamp: deps.clock.now(),
+    });
   });
+  if (!instrumented.ok) return err(instrumented.error);
 
-  // One-shot stream wrapper: inject escalated maxTokens into the next prompt call
   const originalStreamFn = session.agent.streamFn;
   let escalationUsed = false;
   session.agent.streamFn = (model, context, options) => {
@@ -140,6 +147,8 @@ async function maybeEscalateOutput(
   };
 
   try {
+    const admitted = guardProviderDispatch();
+    if (!admitted.ok) return err(admitted.error);
     await withPromptTimeout(
       session.prompt(messageText, {
         expandPromptTemplates: false,
@@ -150,27 +159,22 @@ async function maybeEscalateOutput(
       deps.timers,
     );
 
-    // Update response from escalated attempt
     const escalatedResponse = getVisibleAssistantText(session);
-    if (escalatedResponse) {
-      // Escalation response replaces original truncated response downstream
-      // (extractedResponse in the next block will pick this up)
-    }
+    if (escalatedResponse) void escalatedResponse;
   } catch (escalationError) {
     deps.logger.warn(
       {
-        err: escalationError,
+        err: toSafeErrorLogString(escalationError),
         hint: "Output escalation retry failed; using original truncated response",
-        errorKind: "transient" as ErrorKind,
+        errorKind: "dependency" as ErrorKind,
       },
       "Output escalation retry failed",
     );
   } finally {
-    // Restore original stream fn (one-shot wrapper should not persist)
     session.agent.streamFn = originalStreamFn;
   }
 
-  return true;
+  return ok(true);
 }
 
 /**
@@ -231,14 +235,15 @@ async function processSuccessPath(
           stepsExecuted: lateResult.stepsExecuted,
           textEmitted: lateResult.textEmitted,
           hint: "All text was thinking-only; nudging LLM for visible response",
-          errorKind: "transient" as ErrorKind,
         },
         "Attempting continuation after all-thinking execution",
       );
-      const followUpResult = await fromPromise(
-        session.followUp("Please provide a visible response summarizing what you did."),
+      const continuationResult = await runContinuationTurn(
+        session,
+        "Please provide a visible response summarizing what you did.",
+        resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
       );
-      if (followUpResult.ok) {
+      if (continuationResult.ok) {
         const lateRecovered = getVisibleAssistantText(session);
         if (lateRecovered !== "") {
           result.response = lateRecovered;
@@ -249,8 +254,8 @@ async function processSuccessPath(
         }
       } else {
         deps.logger.debug(
-          { err: followUpResult.error },
-          "followUp call failed; downstream handler will return empty response",
+          { err: toSafeErrorLogString(continuationResult.error) },
+          "Continuation turn failed; downstream handler will return empty response",
         );
       }
     }
@@ -295,7 +300,7 @@ async function processSuccessPath(
 
   // L4: Post-batch continuation (the silent-termination enforcement path).
   // Detects empty final assistant turn after a successful tool batch within
-  // the current execution window and fires a directive followUp with multi-
+  // the current execution window and starts directive continuation turns with multi-
   // shot retry. Falls through to L3 synthesis (recoverEmptyFinalResponse) on
   // exhaustion. SEP plan extraction + step counting remain intact for
   // observability — see pi-event-bridge.ts:949-1024.
@@ -315,6 +320,8 @@ async function processSuccessPath(
     await runBudgetContinuation(params, budgetTracker, budgetCapped, requestedBudget);
   }
 
+  await applyInteractiveSilentRecovery(params);
+
   // Surface discarded pre-tool URLs/short-codes absent from final response.
   // MUST run BEFORE the OutputGuard scan below so the surfaced URL passes through
   // the egress firewall and any embedded credential is redacted.
@@ -324,6 +331,8 @@ async function processSuccessPath(
     userMessageIndex,
     deps.logger,
   );
+
+  await applyResponseLocaleEnforcement(params);
 
   // Redact LLM output -- log only character count.
   // OutputGuard scans the full response for secrets immediately after.
@@ -358,6 +367,9 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
     logger: deps.logger,
     agentId,
     getVisibleAssistantText,
+    guardProviderDispatch: resolveProviderDispatchGuard(
+      params.executionOverrides?.onProviderStart,
+    ),
   });
   if (continuationResult.ok) {
     const v = continuationResult.value;
@@ -374,8 +386,8 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
   } else {
     deps.logger.warn(
       {
-        err: continuationResult.error.cause,
-        hint: "Post-batch continuation followUp failed; preserving response collected so far",
+        err: toSafeErrorLogString(continuationResult.error.cause),
+        hint: "Post-batch continuation turn failed; preserving response collected so far",
         errorKind: "internal" as ErrorKind,
       },
       "Post-batch continuation error",
@@ -396,6 +408,9 @@ async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
     logger: deps.logger,
     agentId,
     getVisibleAssistantText,
+    guardProviderDispatch: resolveProviderDispatchGuard(
+      params.executionOverrides?.onProviderStart,
+    ),
   });
   if (outcome.recovered && outcome.response) {
     result.response = outcome.response;
@@ -436,12 +451,15 @@ async function runBudgetContinuation(
       "Budget continuation nudge",
     );
 
-    // fromPromise wrapping: followUp rejections surface as Result values, never thrown exceptions.
-    const followUpResult = await fromPromise(session.followUp(budgetNudgeText));
-    if (!followUpResult.ok) {
+    const continuationResult = await runContinuationTurn(
+      session,
+      budgetNudgeText,
+      resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
+    );
+    if (!continuationResult.ok) {
       deps.logger.warn(
-        { err: followUpResult.error, hint: "Budget continuation followUp failed; preserving response collected so far", errorKind: "sdk" as ErrorKind },
-        "followUp error, stopping budget continuation",
+        { err: toSafeErrorLogString(continuationResult.error), hint: "Budget continuation turn failed; preserving response collected so far", errorKind: "dependency" as ErrorKind },
+        "Continuation turn error, stopping budget continuation",
       );
       break;
     }
@@ -458,7 +476,6 @@ async function runBudgetContinuation(
   }
 
   const lastDecisionReason = decision.reason;
-
   // Set finish reason based on tracker stop condition
   if (decision.reason === "budget_reached" || decision.reason === "diminishing_returns" || decision.reason === "max_continuations") {
     result.finishReason = "budget_exhausted";

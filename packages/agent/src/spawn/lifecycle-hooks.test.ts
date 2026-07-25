@@ -75,13 +75,16 @@ describe("prepareSpawn", () => {
         runId: "run-123",
         parentSessionKey: "parent:session:key",
         agentId: "agent-1",
-        task: "Analyze data",
         depth: 1,
         maxDepth: 3,
         artifactCount: 0,
         timestamp: expect.any(Number),
       }),
     );
+    const prepared = deps.eventBus.emit.mock.calls.find(
+      ([event]) => event === "session:sub_agent_spawn_prepared",
+    );
+    expect(prepared?.[1]).not.toHaveProperty("task");
   });
 
   it("returns undefined when internal error occurs (belt defense)", async () => {

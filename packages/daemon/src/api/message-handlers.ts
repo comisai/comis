@@ -15,7 +15,7 @@
  * @module
  */
 
-import type { ChannelPluginPort } from "@comis/core";
+import type { ChannelEndpoint, ChannelPluginPort, ChannelPort } from "@comis/core";
 import type { RichButton, RichCard, RichEffect } from "@comis/core";
 import {
   safePath,
@@ -37,12 +37,11 @@ import {
   CapabilityDeniedError,
   systemGetEnv,
   systemNowMs,
-  formatSessionKey,
-  parseFormattedSessionKey,
   tryGetContext,
   resolvePlatformDeliveryResult,
+  ChannelEndpointSchema,
 } from "@comis/core";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import { stat } from "node:fs/promises";
 import { relative } from "node:path";
 import { resolveAdapter, authorizeChannelAccess } from "../wiring/daemon-utils.js";
@@ -96,6 +95,71 @@ function resolveMessageId(
 }
 
 type InboundMessageIdResolver = NonNullable<MessageHandlerDeps["inboundMessageIdResolver"]>;
+
+function endpointsEqual(left: ChannelEndpoint, right: ChannelEndpoint): boolean {
+  return left.channelType === right.channelType
+    && left.channelInstanceId === right.channelInstanceId
+    && left.conversationId === right.conversationId
+    && left.threadId === right.threadId
+    && left.conversationKind === right.conversationKind;
+}
+
+function requireEndpointAuthority(
+  rawParams: Record<string, unknown>,
+  adapter: ChannelPort,
+  channelId: string,
+): ChannelEndpoint {
+  const explicitEndpoint = rawParams.endpoint;
+  const contextEndpoint = tryGetContext()?.turnScope?.endpoint;
+  const endpoint = ChannelEndpointSchema.safeParse(explicitEndpoint ?? contextEndpoint);
+  const requestedChannelType = typeof rawParams.channel_type === "string"
+    ? rawParams.channel_type
+    : adapter.channelType;
+  if (
+    !endpoint.success
+    || requestedChannelType !== adapter.channelType
+    || endpoint.data.channelType !== adapter.channelType
+    || endpoint.data.channelInstanceId !== adapter.channelId
+    || endpoint.data.conversationId !== channelId
+  ) {
+    throw new Error("Message operation requires an exact endpoint for the selected adapter");
+  }
+  if (
+    explicitEndpoint !== undefined
+    && contextEndpoint !== undefined
+    && !endpointsEqual(endpoint.data, contextEndpoint)
+  ) {
+    throw new Error("Message operation endpoint conflicts with the authenticated turn");
+  }
+  return endpoint.data;
+}
+
+function requireGatewayEndpointAuthority(
+  rawParams: Record<string, unknown>,
+  channelId: string,
+): ChannelEndpoint {
+  const explicitEndpoint = rawParams.endpoint;
+  const contextEndpoint = tryGetContext()?.turnScope?.endpoint;
+  const endpoint = ChannelEndpointSchema.safeParse(explicitEndpoint ?? contextEndpoint);
+  const displayId = endpoint.success
+    ? `${endpoint.data.channelType}:${endpoint.data.channelInstanceId}:${endpoint.data.conversationId}`
+    : undefined;
+  if (
+    !endpoint.success
+    || endpoint.data.channelType !== "gateway"
+    || (endpoint.data.conversationId !== channelId && displayId !== channelId)
+  ) {
+    throw new Error("Gateway message operation requires an exact selected endpoint");
+  }
+  if (
+    explicitEndpoint !== undefined
+    && contextEndpoint !== undefined
+    && !endpointsEqual(endpoint.data, contextEndpoint)
+  ) {
+    throw new Error("Gateway message endpoint conflicts with the authenticated turn");
+  }
+  return endpoint.data;
+}
 
 // ---------------------------------------------------------------------------
 // Capability guard — maps RPC methods to ChannelCapability feature flags.
@@ -155,13 +219,13 @@ function requireMethod<TMethod extends (...args: never[]) => unknown>(
       `Channel "${adapter.channelType}" does not implement adapter.${methodName} but its capability gate claims support — fix plugin CAPABILITIES or adapter implementation.`,
     );
   }
-  return method;
+  return method.bind(adapter) as TMethod;
 }
 
 /**
  * The outward irreversible-action gate for an agent-
  * initiated orch:message send. Called AFTER authorizeChannelAccess, BEFORE
- * deliver, for message.send/reply/react. Consults `boundedAutonomy.tryOutward`
+ * deliver, for message.send/reply/react/attach. Consults `boundedAutonomy.tryOutward`
  * (origin-only + per-target grant + per-hour + volume); on a deny it throws a
  * `CapabilityDeniedError` whose §2.7 WARN names the reason.
  *
@@ -199,26 +263,21 @@ function enforceOutwardQuota(
  * Resolve the `(rootRunId, outwardStepIndex)` idempotency
  * key for an outward send from the threaded raw params.
  *
- * `rootRunId` comes from `resolveRootRunId(parseFormattedSessionKey(...))` — the
- * tree-stable run root (present iff a caller session + resolver are wired). The
+ * `rootRunId` is injected by the authenticated RPC boundary. The
  * `_outwardStepIndex` is the monotonic step the RPC chokepoint
  * allocated + injected for EVERY autonomy outward call.
  *
  * `_outwardStepIndex` is read as-is — `undefined` ⇒ pass-through (no
  * ledger) in {@link wrapOutwardSend}. It is NEVER defaulted to 0 here (two
- * un-indexed sends would collide on the idempotency key and one would be
- * silently dropped). A non-autonomy / interactive send has no rootRunId and no
+ * un-indexed sends would collide on the idempotency key and block one distinct
+ * operation). A non-autonomy / interactive send has no rootRunId and no
  * step index, so the wrap is a pure pass-through.
  */
 function resolveOutwardLedgerContext(
   deps: MessageHandlerDeps,
   rawParams: Record<string, unknown>,
 ): { rootRunId: string | undefined; outwardStepIndex: number | undefined } {
-  const callerSessionKey = rawParams._callerSessionKey as string | undefined;
-  // parseFormattedSessionKey returns undefined for a malformed key; guard it
-  // (mirrors graph-coordinator.ts) so a bad key is a pass-through, never a throw.
-  const parsedCaller = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
-  const rootRunId = parsedCaller ? deps.resolveRootRunId?.(parsedCaller) : undefined;
+  const rootRunId = rawParams._rootRunId as string | undefined;
   // Read the injected step index verbatim — NEVER `?? 0`.
   const outwardStepIndex = rawParams._outwardStepIndex as number | undefined;
   return { rootRunId, outwardStepIndex };
@@ -249,17 +308,18 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageSendContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
       const extra: Record<string, unknown> = {
         ...(rawParams.buttons ? { buttons: rawParams.buttons as RichButton[][] } : {}),
         ...(rawParams.cards ? { cards: rawParams.cards as RichCard[] } : {}),
         ...(rawParams.effects ? { effects: rawParams.effects as RichEffect[] } : {}),
         ...(rawParams.thread_reply !== undefined ? { threadReply: rawParams.thread_reply as boolean } : {}),
       };
-      // Wrap the EXISTING deliverToChannel with the
-      // three-state ledger (begin→markUnknown→commit). The quota gate above is
-      // untouched and there is NO parallel send path — the real delivery still
-      // happens inside doSend. A non-autonomy send (no rootRunId/step) is a
-      // pure pass-through.
+      // Wrap the existing deliverToChannel with the closed five-state ledger
+      // (begin → markUnknown → commit, fail, or unresolved park). A committed
+      // operation identity short-circuits; an ambiguous outcome is parked and
+      // escalated rather than queried or replayed. The quota gate above is
+      // unchanged, and a send without rootRunId/step is a pure pass-through.
       const { rootRunId, outwardStepIndex } = resolveOutwardLedgerContext(deps, rawParams);
       const wrapResult = await wrapOutwardSend({
         ledger: deps.outwardLedger,
@@ -268,16 +328,26 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         agentId: (rawParams._agentId as string | undefined) ?? "",
         channelType,
         channelId,
+        operationKind: "message_send",
+        operationOptions: extra,
         text: typeof text === "string" ? text : String(text),
         doSend: async () => {
           const dr = await deps.deliveryService.deliverToChannel(adapter, channelId, text, {
+            completionMode: "settled",
+            destinationEndpoint: endpoint,
+            threadId: endpoint.threadId,
             extra: Object.keys(extra).length > 0 ? extra : undefined,
             origin: "rpc:message.send",
           });
           const platformDelivery = resolvePlatformDeliveryResult(dr);
           if (!platformDelivery.ok) return platformDelivery;
-          if (platformDelivery.value.failedChunks > 0) return { ok: false as const, error: new Error("Message delivery failed") };
-          return ok({ messageId: platformDelivery.value.chunks[0]?.messageId ?? "delivered" });
+          if (platformDelivery.value.platform.status !== "accepted") {
+            return err(new Error("Message delivery was not fully accepted by the platform"));
+          }
+          const platformMessageId = platformDelivery.value.chunks[0]?.messageId;
+          return platformMessageId === undefined || platformMessageId.length === 0
+            ? err(new Error("Message delivery returned no platform receipt"))
+            : ok({ messageId: platformMessageId });
         },
         logger: deps.logger,
       });
@@ -303,6 +373,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageReplyContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
       const extra: Record<string, unknown> = {
         ...(rawParams.buttons ? { buttons: rawParams.buttons as RichButton[][] } : {}),
         ...(rawParams.cards ? { cards: rawParams.cards as RichCard[] } : {}),
@@ -318,17 +389,28 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         agentId: (rawParams._agentId as string | undefined) ?? "",
         channelType,
         channelId,
+        operationKind: "message_reply",
+        targetMessageId: messageId,
+        operationOptions: extra,
         text: typeof text === "string" ? text : String(text),
         doSend: async () => {
           const dr = await deps.deliveryService.deliverToChannel(adapter, channelId, text, {
+            completionMode: "settled",
+            destinationEndpoint: endpoint,
             replyTo: messageId,
+            threadId: endpoint.threadId,
             extra: Object.keys(extra).length > 0 ? extra : undefined,
             origin: "rpc:message.reply",
           });
           const platformDelivery = resolvePlatformDeliveryResult(dr);
           if (!platformDelivery.ok) return platformDelivery;
-          if (platformDelivery.value.failedChunks > 0) return { ok: false as const, error: new Error("Message delivery failed") };
-          return ok({ messageId: platformDelivery.value.chunks[0]?.messageId ?? "delivered" });
+          if (platformDelivery.value.platform.status !== "accepted") {
+            return err(new Error("Message delivery was not fully accepted by the platform"));
+          }
+          const platformMessageId = platformDelivery.value.chunks[0]?.messageId;
+          return platformMessageId === undefined || platformMessageId.length === 0
+            ? err(new Error("Message delivery returned no platform receipt"))
+            : ok({ messageId: platformMessageId });
         },
         logger: deps.logger,
       });
@@ -360,12 +442,11 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageReactContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      requireEndpointAuthority(rawParams, adapter, channelId);
       const reactToMessage = requireMethod(adapter, "reactToMessage", adapter.reactToMessage);
-      // Wrap the EXISTING reactToMessage with the
-      // three-state ledger. A reaction sends an emoji (not free text), so the
-      // emoji is the digest input; it has no platform message id, so doSend
-      // returns a fixed "reacted" sentinel on success. Same single path — no
-      // parallel send; a non-autonomy reaction is a pass-through.
+      // Wrap the EXISTING reactToMessage with the ledger. A reaction sends an
+      // emoji (not free text), so the emoji is the digest input. The real target
+      // message id is the durable platform receipt; no synthetic id is created.
       const { rootRunId, outwardStepIndex } = resolveOutwardLedgerContext(deps, rawParams);
       const wrapResult = await wrapOutwardSend({
         ledger: deps.outwardLedger,
@@ -374,11 +455,13 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         agentId: (rawParams._agentId as string | undefined) ?? "",
         channelType,
         channelId,
+        operationKind: "message_react",
+        targetMessageId: messageId,
         text: emoji,
         doSend: async () => {
           const reactResult = await reactToMessage(channelId, messageId, emoji);
           if (!reactResult.ok) return reactResult;
-          return ok({ messageId: "reacted" });
+          return ok({ messageId });
         },
         logger: deps.logger,
       });
@@ -405,9 +488,12 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageEditContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
       const editMessage = requireMethod(adapter, "editMessage", adapter.editMessage);
       const formatted = formatForChannel(text, channelType);
-      const editResult = await editMessage(channelId, messageId, formatted);
+      const editResult = endpoint.threadId === undefined
+        ? await editMessage(channelId, messageId, formatted)
+        : await editMessage(channelId, messageId, formatted, { threadId: endpoint.threadId });
       if (!editResult.ok) throw editResult.error;
       const result = { edited: true as const, channelId, messageId };
       if (IS_DEV) MessageEditContract.response.parse(result);
@@ -427,6 +513,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageDeleteContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      requireEndpointAuthority(rawParams, adapter, channelId);
       const deleteMessage = requireMethod(adapter, "deleteMessage", adapter.deleteMessage);
       const delResult = await deleteMessage(channelId, messageId);
       if (!delResult.ok) throw delResult.error;
@@ -447,8 +534,13 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageFetchContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
       const fetchMessages = requireMethod(adapter, "fetchMessages", adapter.fetchMessages);
-      const fetchResult = await fetchMessages(channelId, { limit, before });
+      const fetchResult = await fetchMessages(channelId, {
+        limit,
+        before,
+        threadId: endpoint.threadId,
+      });
       if (!fetchResult.ok) throw fetchResult.error;
       const result = { messages: fetchResult.value as unknown as Record<string, unknown>[], channelId };
       if (IS_DEV) MessageFetchContract.response.parse(result);
@@ -462,6 +554,10 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       assertCapability("message.attach", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
       authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      // An attachment is an outward delivery just like a text send. Keep an
+      // admin-trust agent on the active origin unless the target has the
+      // explicit autonomy grant; one attachment consumes one volume unit.
+      enforceOutwardQuota(deps, rawParams, channelId, 1);
 
       const userParams = stripInternalFields(rawParams);
       MessageAttachContract.request.parse(userParams);
@@ -508,6 +604,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       // Gateway is a transport layer, not a ChannelPort adapter.
       // Serve the file via /media/:id and push a WebSocket notification.
       if (channelType === "gateway") {
+        requireGatewayEndpointAuthority(rawParams, channelId);
         if (!deps.wsConnections || !deps.mediaDir) {
           throw new Error("Gateway attachment support requires wsConnections and mediaDir");
         }
@@ -534,17 +631,19 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         );
 
         const requestContext = tryGetContext();
-        const sessionKey = requestContext?.sessionKey
-          ? parseFormattedSessionKey(requestContext.sessionKey)
-          : undefined;
-        const hasMatchingSession = sessionKey?.channelId === channelId;
+        const endpoint = requestContext?.turnScope?.endpoint;
+        const endpointDisplayId = endpoint === undefined
+          ? undefined
+          : `${endpoint.channelType}:${endpoint.channelInstanceId}:${endpoint.conversationId}`;
+        const hasMatchingSession = endpoint?.conversationId === channelId
+          || endpointDisplayId === channelId;
 
         const attachmentType = (rawParams.attachment_type as string) ?? "file";
         const fileName = (rawParams.file_name as string | undefined) ?? basename(attachmentUrl);
         const caption = rawParams.caption as string | undefined;
-        if (hasMatchingSession && requestContext?.clientId && sessionKey) {
+        if (hasMatchingSession && requestContext?.clientId && requestContext.sessionKey) {
           deps.wsConnections.sendToClientId(requestContext.clientId, "notification.attachment", {
-            sessionKey: formatSessionKey(sessionKey),
+            sessionKey: requestContext.sessionKey,
             channelId,
             url: `/media/${mediaId}`,
             type: attachmentType,
@@ -567,8 +666,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
           const marker = caption
             ? `${caption}\n\n<!-- attachment:${json} -->`
             : `<!-- attachment:${json} -->`;
-          if (hasMatchingSession && sessionKey) {
-            deps.onGatewayAttachment(sessionKey, marker);
+          if (hasMatchingSession && requestContext?.turnScope) {
+            deps.onGatewayAttachment(requestContext.turnScope.conversation, marker);
           } else {
             deps.logger.warn({
               channelId,
@@ -578,23 +677,30 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
           }
         }
 
-        const result = { messageId: mediaId, channelId };
+        const result = {
+          receipt: { kind: "tracked" as const, messageId: mediaId },
+          channelId,
+        };
         if (IS_DEV) MessageAttachContract.response.parse(result);
         return result;
       }
 
       // Non-gateway channel types use the adapter
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
       const sendAttachment = requireMethod(adapter, "sendAttachment", adapter.sendAttachment);
-      const attachResult = await sendAttachment(channelId, {
+      const attachment = {
         type: (rawParams.attachment_type as "image" | "file" | "audio" | "video") ?? "file",
         url: attachmentUrl,
         mimeType: rawParams.mime_type as string | undefined,
         fileName: rawParams.file_name as string | undefined,
         caption: rawParams.caption as string | undefined,
-      });
+      };
+      const attachResult = endpoint.threadId === undefined
+        ? await sendAttachment(channelId, attachment)
+        : await sendAttachment(channelId, attachment, { threadId: endpoint.threadId });
       if (!attachResult.ok) throw attachResult.error;
-      const result = { messageId: attachResult.value, channelId };
+      const result = { receipt: attachResult.value, channelId };
       if (IS_DEV) MessageAttachContract.response.parse(result);
       return result;
     },
@@ -607,6 +713,11 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       DiscordActionContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const channelId = rawParams.channel_id as string | undefined;
+      if (channelId === undefined) {
+        throw new Error("Discord action requires a selected channel endpoint");
+      }
+      requireEndpointAuthority(rawParams, adapter, channelId);
       if (rawParams.channel_id) {
         authorizeChannelAccess(
           rawParams._callerChannelId as string | undefined,
@@ -629,6 +740,11 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       TelegramActionContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const channelId = rawParams.chat_id as string | undefined;
+      if (channelId === undefined) {
+        throw new Error("Telegram action requires a selected channel endpoint");
+      }
+      requireEndpointAuthority(rawParams, adapter, channelId);
       if (rawParams.chat_id) {
         authorizeChannelAccess(
           rawParams._callerChannelId as string | undefined,
@@ -651,6 +767,11 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       SlackActionContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const channelId = rawParams.channel_id as string | undefined;
+      if (channelId === undefined) {
+        throw new Error("Slack action requires a selected channel endpoint");
+      }
+      requireEndpointAuthority(rawParams, adapter, channelId);
       if (rawParams.channel_id) {
         authorizeChannelAccess(
           rawParams._callerChannelId as string | undefined,
@@ -673,6 +794,11 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       WhatsappActionContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
+      const channelId = rawParams.group_jid as string | undefined;
+      if (channelId === undefined) {
+        throw new Error("WhatsApp action requires a selected channel endpoint");
+      }
+      requireEndpointAuthority(rawParams, adapter, channelId);
       if (rawParams.group_jid) {
         authorizeChannelAccess(
           rawParams._callerChannelId as string | undefined,

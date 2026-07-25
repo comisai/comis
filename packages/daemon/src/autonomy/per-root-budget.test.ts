@@ -147,7 +147,7 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate"
   it("fires onLimbWarning ONCE per root+limb when the token limb crosses 80% of its cap", () => {
     // The wedge arrived with zero warning (observed live): the meter enforced
     // silently until the abort. A once-per-(root,limb) pre-trip warning gives
-    // the fleet lens a health signal BEFORE the session dies.
+    // the system health view a health signal BEFORE the session dies.
     const clock = createFakeClock(1_000_000);
     const warnings: Array<{ rootRunId: string; limb: string; spent: number; cap: number; unit: string }> = [];
     const budget = createPerRootBudget({
@@ -342,6 +342,44 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate"
     // $ limb: 10 - 4 consumed — a REAL number from the accumulator snapshot, NOT null.
     expect(r.usdRemaining).not.toBeNull();
     expect(r.usdRemaining).toBeCloseTo(6, 10);
+  });
+
+  it("exports and idempotently rehydrates absolute USD token and wall-clock state", () => {
+    const first = makeBudget({ aggregateUsd: 10, tokens: 1000, wallClockMs: 60_000 });
+    first.budget.registerRoot("root-restart");
+    expect(first.budget.reserveBudget(
+      "root-restart",
+      PRICED_PROVIDER,
+      PRICED_MODEL,
+      4,
+      100,
+    ).kind).toBe("ok");
+    first.clock.advance(10_000);
+    const persisted = first.budget.exportState("root-restart");
+    expect(persisted).toEqual({
+      startedAtMs: 1_000_000,
+      tokensConsumed: 100,
+      usdConsumed: 4,
+    });
+
+    const resumed = makeBudget({ aggregateUsd: 10, tokens: 1000, wallClockMs: 60_000 });
+    resumed.clock.advance(10_000);
+    resumed.budget.rehydrate("root-restart", persisted);
+    resumed.budget.rehydrate("root-restart", persisted);
+
+    expect(resumed.budget.exportState("root-restart")).toEqual(persisted);
+    expect(resumed.budget.remaining("root-restart")).toEqual({
+      tokensRemaining: 900,
+      wallClockMsRemaining: 50_000,
+      usdRemaining: 6,
+    });
+    expect(resumed.budget.reserveBudget(
+      "root-restart",
+      PRICED_PROVIDER,
+      PRICED_MODEL,
+      7,
+      1,
+    ).kind).toBe("exceeded");
   });
 
   it("remaining() is a PURE read — it does not mutate the token total or anchor a window", () => {

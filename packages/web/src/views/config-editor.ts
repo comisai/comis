@@ -3,6 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { RpcClient } from "../api/rpc-client.js";
+import type { WebRpcMethodMap } from "../api/contracts.generated.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 import type { ConfigHistoryEntry } from "../api/types/config-types.js";
 
@@ -29,13 +30,6 @@ export { serializeYaml as serializeToYaml, parseYaml };
 import type { TabDef } from "../components/nav/ic-tabs.js";
 import type { SchemaProperty } from "./config-editor/schema-form.js";
 import { systemClearTimeout, systemDateFrom, systemSetTimeout } from "@comis/core";
-import type {
-  ConfigHistoryResponse,
-  ConfigDiffResponse,
-  ConfigRollbackResponse,
-  ConfigGcResponse,
-} from "../api/types/config-types.js";
-
 type LoadState = "loading" | "loaded" | "error";
 
 /** Top-level tab definitions for the Settings view. */
@@ -297,7 +291,10 @@ export class IcConfigEditor extends LitElement {
     try {
       // Load config first (primary data for the editor)
       const rpc = this.rpcClient;
-      const configResult = await rpc.call<{ config: Record<string, unknown>; sections: string[] }>("config.read");
+      const configResult = await rpc.call<{
+        config: Record<string, unknown>;
+        sections: string[];
+      }>("config.read");
 
       this._sections = configResult.sections;
       this._configData = configResult.config;
@@ -498,7 +495,10 @@ export class IcConfigEditor extends LitElement {
       this._dirty = false;
 
       // Reload config data
-      const configResult = await rpc.call<{ config: Record<string, unknown>; sections: string[] }>("config.read");
+      const configResult = await rpc.call<{
+        config: Record<string, unknown>;
+        sections: string[];
+      }>("config.read");
       this._configData = configResult.config;
       this._loadSectionState();
     } catch (err) {
@@ -519,7 +519,10 @@ export class IcConfigEditor extends LitElement {
     this._gatewayError = "";
 
     try {
-      const result = await this.rpcClient.call<Record<string, unknown>>("config.read", { section: "gateway" });
+      const result = await this.rpcClient.call<Record<string, unknown>>(
+        "config.read",
+        { section: "gateway" },
+      );
       this._gatewayConfig = (result ?? {}) as GatewayConfig;
     } catch (err) {
       this._gatewayError = err instanceof Error ? err.message : "Failed to load gateway config";
@@ -532,7 +535,11 @@ export class IcConfigEditor extends LitElement {
     if (!this.rpcClient) return;
 
     try {
-      await this.rpcClient.call("config.patch", { section: "gateway", key, value });
+      await this.rpcClient.call("config.patch", {
+        section: "gateway",
+        key,
+        value: value as WebRpcMethodMap["config.patch"]["params"]["value"],
+      });
       // Optimistically update local state
       if (this._gatewayConfig) {
         this._gatewayConfig = { ...this._gatewayConfig, [key]: value } as GatewayConfig;
@@ -566,7 +573,7 @@ export class IcConfigEditor extends LitElement {
     this._historyError = "";
 
     try {
-      const result = await this.rpcClient.call<ConfigHistoryResponse>("config.history", { limit: 50 });
+      const result = await this.rpcClient.call("config.history", { limit: 50 });
       if (result.error) {
         // Git unavailable -- informational, not an error toast
         this._historyEntries = [];
@@ -586,7 +593,7 @@ export class IcConfigEditor extends LitElement {
     this._diffLoading = true;
 
     try {
-      const result = await this.rpcClient.call<ConfigDiffResponse>("config.diff", { sha });
+      const result = await this.rpcClient.call("config.diff", { sha });
       this._diffText = result.diff;
     } catch (err) {
       this._diffText = "";
@@ -612,7 +619,7 @@ export class IcConfigEditor extends LitElement {
     if (!this.rpcClient || !this._confirmRollbackSha) return;
 
     try {
-      await this.rpcClient.call<ConfigRollbackResponse>("config.rollback", { sha: this._confirmRollbackSha });
+      await this.rpcClient.call("config.rollback", { sha: this._confirmRollbackSha });
       IcToast.show("Config rolled back. Daemon restarting...", "success");
       this._confirmRollbackSha = null;
     } catch (err) {
@@ -627,7 +634,7 @@ export class IcConfigEditor extends LitElement {
     this._gcRunning = true;
 
     try {
-      const result = await this.rpcClient.call<ConfigGcResponse>("config.gc");
+      const result = await this.rpcClient.call("config.gc");
       const squashed = result.squashed;
       IcToast.show(
         squashed != null ? `GC complete: ${squashed} versions squashed` : "GC complete",

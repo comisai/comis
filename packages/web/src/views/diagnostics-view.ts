@@ -309,7 +309,7 @@ export class IcDiagnosticsView extends LitElement {
       });
 
       if (Array.isArray(raw)) {
-        this._events = raw;
+        this._events = raw as unknown as DiagnosticsEvent[];
         this._eventCounts = this._computeCounts(raw);
       } else {
         const events = Array.isArray(raw.events) ? raw.events as DiagnosticsEvent[] : [];

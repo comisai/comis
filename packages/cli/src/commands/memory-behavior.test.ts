@@ -100,7 +100,10 @@ describe("memory search/inspect render via the contracted RPCs", () => {
       } as never),
     );
 
-    await program.parseAsync(["node", "test", "memory", "search", "dark mode"]);
+    await program.parseAsync([
+      "node", "test", "memory", "search", "dark mode",
+      "--tenant", "test-tenant", "--agent", "test-agent",
+    ]);
 
     expect(exitSpy.spy).not.toHaveBeenCalledWith(1);
     const out = getSpyOutput(consoleSpy.log);
@@ -123,7 +126,10 @@ describe("memory search/inspect render via the contracted RPCs", () => {
       } as never),
     );
 
-    await program.parseAsync(["node", "test", "memory", "inspect", "mem-001"]);
+    await program.parseAsync([
+      "node", "test", "memory", "inspect", "mem-001",
+      "--tenant", "test-tenant", "--agent", "test-agent",
+    ]);
 
     expect(exitSpy.spy).not.toHaveBeenCalledWith(1);
     const out = getSpyOutput(consoleSpy.log);
@@ -163,7 +169,10 @@ describe("memory stats display", () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    await program.parseAsync(["node", "test", "memory", "stats"]);
+    await program.parseAsync([
+      "node", "test", "memory", "stats",
+      "--tenant", "test-tenant", "--agent", "test-agent",
+    ]);
 
     const output = getSpyOutput(consoleSpy.log);
     // camelCase keys should be converted to Title Case
@@ -208,6 +217,7 @@ describe("memory stats --format json", () => {
 
     await program.parseAsync([
       "node", "test", "memory", "stats", "--format", "json",
+      "--tenant", "test-tenant", "--agent", "test-agent",
     ]);
 
     const output = getSpyOutput(consoleSpy.log);
@@ -249,16 +259,19 @@ describe("memory stats empty", () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    await program.parseAsync(["node", "test", "memory", "stats"]);
+    await program.parseAsync([
+      "node", "test", "memory", "stats",
+      "--tenant", "test-tenant", "--agent", "test-agent",
+    ]);
 
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("No memory statistics available");
   });
 });
 
-// ── memory clear requires at least one filter ───────────────────
+// ── memory clear requires an explicit RPC-backed scope ──────────
 
-describe("memory clear requires at least one filter", () => {
+describe("memory clear requires an explicit scope", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -273,60 +286,20 @@ describe("memory clear requires at least one filter", () => {
     exitSpy.restore();
   });
 
-  it("exits with safety error when no filters provided", async () => {
+  it("rejects a clear command without explicit tenant-agent authority", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    try {
-      await program.parseAsync(["node", "test", "memory", "clear", "--yes"]);
-    } catch (e) {
-      expect((e as Error).message).toBe("process.exit called");
-    }
-
-    expect(exitSpy.spy).toHaveBeenCalledWith(1);
-    const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("At least one filter is required");
+    await expect(
+      program.parseAsync(["node", "test", "memory", "clear", "--yes"]),
+    ).rejects.toThrow("required option '--tenant <tenantId>' not specified");
+    expect(withClient).not.toHaveBeenCalled();
   });
 });
 
-// ── memory clear rejects invalid filter format ─────────────────
+// ── memory clear rejects the unsupported widening filter ────────
 
-describe("memory clear rejects invalid filter format", () => {
-  let consoleSpy: ReturnType<typeof createConsoleSpy>;
-  let exitSpy: ReturnType<typeof createProcessExitSpy>;
-
-  beforeEach(() => {
-    vi.mocked(withClient).mockReset();
-    consoleSpy = createConsoleSpy();
-    exitSpy = createProcessExitSpy();
-  });
-
-  afterEach(() => {
-    consoleSpy.restore();
-    exitSpy.restore();
-  });
-
-  it("exits with error for invalid filter format", async () => {
-    const program = createTestProgram();
-    registerMemoryCommand(program);
-
-    try {
-      await program.parseAsync([
-        "node", "test", "memory", "clear", "--filter", "invalidformat", "--yes",
-      ]);
-    } catch (e) {
-      expect((e as Error).message).toBe("process.exit called");
-    }
-
-    expect(exitSpy.spy).toHaveBeenCalledWith(1);
-    const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("Invalid filter format");
-  });
-});
-
-// ── memory clear with --yes and --filter sends RPC ──────────────
-
-describe("memory clear with --yes and --filter sends RPC", () => {
+describe("memory clear rejects the unsupported filter option", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
   let callSpy: ReturnType<typeof vi.fn>;
@@ -352,27 +325,24 @@ describe("memory clear with --yes and --filter sends RPC", () => {
     exitSpy.restore();
   });
 
-  it("sends memory.flush RPC (--filter is dropped)", async () => {
-    // MemoryFlushContract is the actual flush surface. The contract's
-    // request only models tenant_id + agent_id (the daemon's actual flush
-    // params); arbitrary --filter key=value flags are dropped.
+  it("rejects --filter before issuing a broader memory.flush RPC", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    await program.parseAsync([
-      "node", "test", "memory", "clear", "--filter", "memoryType=conversation", "--yes",
-    ]);
+    await expect(
+      program.parseAsync([
+        "node", "test", "memory", "clear", "--filter", "memoryType=conversation", "--yes",
+        "--tenant", "test-tenant", "--agent", "test-agent",
+      ]),
+    ).rejects.toThrow("unknown option '--filter'");
 
-    expect(callSpy).toHaveBeenCalledWith("memory.flush", {});
-
-    const output = getSpyOutput(consoleSpy.log);
-    expect(output).toContain("Memory entries cleared");
+    expect(callSpy).not.toHaveBeenCalled();
   });
 });
 
-// ── memory clear with --yes and --tenant ───────────────────────
+// ── memory clear with explicit authority ───────────────────────
 
-describe("memory clear with --yes and --tenant", () => {
+describe("memory clear with explicit authority", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
   let callSpy: ReturnType<typeof vi.fn>;
@@ -398,18 +368,18 @@ describe("memory clear with --yes and --tenant", () => {
     exitSpy.restore();
   });
 
-  it("sends memory.flush RPC with tenant_id param", async () => {
-    // --tenant flag maps to MemoryFlushContract's tenant_id request field
-    // (snake_case — matches the daemon's actual parameter).
+  it("sends memory.flush RPC with tenant_id and agent_id", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
     await program.parseAsync([
-      "node", "test", "memory", "clear", "--tenant", "test-tenant", "--yes",
+      "node", "test", "memory", "clear", "--tenant", "test-tenant",
+      "--agent", "test-agent", "--yes",
     ]);
 
     expect(callSpy).toHaveBeenCalledWith("memory.flush", {
       tenant_id: "test-tenant",
+      agent_id: "test-agent",
     });
 
     const output = getSpyOutput(consoleSpy.log);
@@ -417,9 +387,9 @@ describe("memory clear with --yes and --tenant", () => {
   });
 });
 
-// ── memory clear with both --filter and --tenant ───────────────
+// ── memory clear with both supported scopes ─────────────────────
 
-describe("memory clear with both --filter and --tenant", () => {
+describe("memory clear with both tenant and agent", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
   let callSpy: ReturnType<typeof vi.fn>;
@@ -445,21 +415,20 @@ describe("memory clear with both --filter and --tenant", () => {
     exitSpy.restore();
   });
 
-  it("sends memory.flush RPC with tenant_id (--filter is dropped)", async () => {
-    // Only the --tenant flag maps to a real MemoryFlushContract request
-    // field; arbitrary --filter key=value flags are dropped.
+  it("sends memory.flush RPC with tenant_id and agent_id", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
     await program.parseAsync([
       "node", "test", "memory", "clear",
-      "--filter", "memoryType=conversation",
       "--tenant", "test-tenant",
+      "--agent", "agent-a",
       "--yes",
     ]);
 
     expect(callSpy).toHaveBeenCalledWith("memory.flush", {
       tenant_id: "test-tenant",
+      agent_id: "agent-a",
     });
   });
 });
@@ -487,7 +456,8 @@ describe("memory clear without --yes in non-TTY exits", () => {
 
     try {
       await program.parseAsync([
-        "node", "test", "memory", "clear", "--filter", "memoryType=conversation",
+        "node", "test", "memory", "clear", "--tenant", "test-tenant",
+        "--agent", "agent-a",
       ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
@@ -496,50 +466,6 @@ describe("memory clear without --yes in non-TTY exits", () => {
     expect(exitSpy.spy).toHaveBeenCalledWith(1);
     const errOutput = getSpyOutput(consoleSpy.error);
     expect(errOutput).toContain("Confirmation required");
-  });
-});
-
-// ── memory clear with filter containing = in value ─────────────
-
-describe("memory clear with filter containing = in value", () => {
-  let consoleSpy: ReturnType<typeof createConsoleSpy>;
-  let exitSpy: ReturnType<typeof createProcessExitSpy>;
-  let callSpy: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    vi.mocked(withClient).mockReset();
-    consoleSpy = createConsoleSpy();
-    exitSpy = createProcessExitSpy();
-
-    // MemoryFlushContract.response = { flushed: true, entriesRemoved, scope }
-    callSpy = vi.fn().mockImplementation(async (_method: string, params: { tenant_id?: string; agent_id?: string }) => ({
-      flushed: true,
-      entriesRemoved: 0,
-      scope: { tenantId: params.tenant_id ?? "", agentId: params.agent_id ?? null },
-    }));
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      return fn({ call: callSpy, close: vi.fn() });
-    });
-  });
-
-  afterEach(() => {
-    consoleSpy.restore();
-    exitSpy.restore();
-  });
-
-  it("correctly parses filter value containing = signs (but --filter is dropped from RPC)", async () => {
-    // The CLI still parses --filter for the input-validation guard at the
-    // top of the action handler (at least one flag is required), but the
-    // resulting filter object does not flow into the RPC call
-    // (MemoryFlushContract doesn't model arbitrary filters).
-    const program = createTestProgram();
-    registerMemoryCommand(program);
-
-    await program.parseAsync([
-      "node", "test", "memory", "clear", "--filter", "content=has=equals", "--yes",
-    ]);
-
-    expect(callSpy).toHaveBeenCalledWith("memory.flush", {});
   });
 });
 
@@ -573,7 +499,10 @@ describe("memory commands handle daemon offline", () => {
     registerMemoryCommand(program);
 
     try {
-      await program.parseAsync(["node", "test", "memory", "stats"]);
+      await program.parseAsync([
+        "node", "test", "memory", "stats",
+        "--tenant", "test-tenant", "--agent", "test-agent",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }
@@ -589,7 +518,8 @@ describe("memory commands handle daemon offline", () => {
 
     try {
       await program.parseAsync([
-        "node", "test", "memory", "clear", "--filter", "memoryType=test", "--yes",
+        "node", "test", "memory", "clear", "--tenant", "test-tenant",
+        "--agent", "agent-a", "--yes",
       ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
@@ -633,12 +563,14 @@ describe("memory recall-trace dispatch", () => {
 
     await program.parseAsync([
       "node", "test", "memory", "recall-trace", "sess-A",
-      "--trace-id", "t-A", "--agent", "agent-x", "--limit", "50",
+      "--trace-id", "t-A", "--tenant", "test-tenant",
+      "--agent", "agent-x", "--limit", "50",
     ]);
 
     expect(callSpy).toHaveBeenCalledWith("memory.recall_trace", {
       session_key: "sess-A",
       trace_id: "t-A",
+      tenant_id: "test-tenant",
       agent_id: "agent-x",
       limit: 50,
     });
@@ -650,6 +582,7 @@ describe("memory recall-trace dispatch", () => {
 
     await program.parseAsync([
       "node", "test", "memory", "recall-trace", "sess-A", "--format", "json",
+      "--tenant", "test-tenant", "--agent", "test-agent",
     ]);
 
     const output = getSpyOutput(consoleSpy.log);
@@ -663,7 +596,10 @@ describe("memory recall-trace dispatch", () => {
     registerMemoryCommand(program);
 
     try {
-      await program.parseAsync(["node", "test", "memory", "recall-trace", "sess-A"]);
+      await program.parseAsync([
+        "node", "test", "memory", "recall-trace", "sess-A",
+        "--tenant", "test-tenant", "--agent", "test-agent",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }
@@ -700,10 +636,12 @@ describe("memory observations dispatch", () => {
     registerMemoryCommand(program);
 
     await program.parseAsync([
-      "node", "test", "memory", "observations", "--agent", "agent-y", "--limit", "25",
+      "node", "test", "memory", "observations", "--tenant", "test-tenant",
+      "--agent", "agent-y", "--limit", "25",
     ]);
 
     expect(callSpy).toHaveBeenCalledWith("memory.observations", {
+      tenant_id: "test-tenant",
       agent_id: "agent-y",
       limit: 25,
     });
@@ -713,7 +651,10 @@ describe("memory observations dispatch", () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    await program.parseAsync(["node", "test", "memory", "observations"]);
+    await program.parseAsync([
+      "node", "test", "memory", "observations",
+      "--tenant", "test-tenant", "--agent", "test-agent",
+    ]);
 
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("obs-1");
@@ -749,10 +690,12 @@ describe("memory entities dispatch", () => {
     registerMemoryCommand(program);
 
     await program.parseAsync([
-      "node", "test", "memory", "entities", "--agent", "agent-z", "--limit", "10",
+      "node", "test", "memory", "entities", "--tenant", "test-tenant",
+      "--agent", "agent-z", "--limit", "10",
     ]);
 
     expect(callSpy).toHaveBeenCalledWith("memory.entities", {
+      tenant_id: "test-tenant",
       agent_id: "agent-z",
       limit: 10,
     });
@@ -762,7 +705,10 @@ describe("memory entities dispatch", () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    await program.parseAsync(["node", "test", "memory", "entities"]);
+    await program.parseAsync([
+      "node", "test", "memory", "entities",
+      "--tenant", "test-tenant", "--agent", "test-agent",
+    ]);
 
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("ent-1");
@@ -799,7 +745,10 @@ describe("memory stats recall-counter overlay", () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    await program.parseAsync(["node", "test", "memory", "stats"]);
+    await program.parseAsync([
+      "node", "test", "memory", "stats",
+      "--tenant", "test-tenant", "--agent", "test-agent",
+    ]);
 
     const methods = callSpy.mock.calls.map((c) => c[0] as string);
     expect(methods).toContain("memory.stats");
@@ -810,7 +759,10 @@ describe("memory stats recall-counter overlay", () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    await program.parseAsync(["node", "test", "memory", "stats", "--format", "json"]);
+    await program.parseAsync([
+      "node", "test", "memory", "stats", "--format", "json",
+      "--tenant", "test-tenant", "--agent", "test-agent",
+    ]);
 
     const output = getSpyOutput(consoleSpy.log);
     const parsed = JSON.parse(output) as Record<string, unknown>;
@@ -831,7 +783,10 @@ describe("memory stats recall-counter overlay", () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    await program.parseAsync(["node", "test", "memory", "stats"]);
+    await program.parseAsync([
+      "node", "test", "memory", "stats",
+      "--tenant", "test-tenant", "--agent", "test-agent",
+    ]);
 
     // Fail-open: base stats still rendered, no non-zero exit.
     const output = getSpyOutput(consoleSpy.log);
@@ -853,7 +808,10 @@ describe("memory stats recall-counter overlay", () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    await program.parseAsync(["node", "test", "memory", "stats"]);
+    await program.parseAsync([
+      "node", "test", "memory", "stats",
+      "--tenant", "test-tenant", "--agent", "test-agent",
+    ]);
 
     const output = getSpyOutput(consoleSpy.log);
     // Breadcrumb surfaced (info() → console.log), carrying the underlying cause.

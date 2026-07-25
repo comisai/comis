@@ -45,6 +45,7 @@ function createMockDeliveryQueue(nextId = "delivery-entry-id"): MockDeliveryQueu
       enqueueCalls.push(entry);
       return ok(nextId);
     }),
+    claim: vi.fn(async () => ok(true)),
     ack: vi.fn(async () => ok(undefined)),
     nack: vi.fn(async () => ok(undefined)),
     fail: vi.fn(async () => ok(undefined)),
@@ -83,6 +84,33 @@ function makeNotificationConfig(overrides: Partial<NotificationConfig> = {}): No
   };
 }
 
+function deliveryFields(agentId: string, channelId: string) {
+  return {
+    authority: {
+      tenantId: "tenant-a",
+      agentId,
+      conversationRef: `cv_${"n".repeat(43)}` as never,
+    },
+    destinationEndpoint: {
+      channelType: "discord",
+      channelInstanceId: "discord-test",
+      conversationId: channelId,
+      conversationKind: "direct" as const,
+    },
+  };
+}
+
+function recordDestination(
+  ctx: ReturnType<typeof setupNotifications>,
+  agentId: string,
+  channelId: string,
+): void {
+  ctx.sessionTracker.recordActivity(
+    agentId,
+    deliveryFields(agentId, channelId).destinationEndpoint,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Build a deps object for `setupNotifications` with sensible test defaults.
 // ---------------------------------------------------------------------------
@@ -106,8 +134,9 @@ function makeDeps(overrides: Partial<Parameters<typeof setupNotifications>[0]> =
     },
     criticalBypass: overrides.criticalBypass ?? false,
     activeAdapterTypes: overrides.activeAdapterTypes ?? new Set<string>(["discord"]),
+    tenantId: overrides.tenantId ?? "tenant-a",
+    resolveChannelInstanceId: overrides.resolveChannelInstanceId ?? ((channelType: string) => `${channelType}-test`),
     logger: overrides.logger ?? createMockLogger(),
-    tenantId: overrides.tenantId ?? "default",
     ...overrides,
   };
   return { deps, deliveryQueue, eventBus };
@@ -138,10 +167,14 @@ describe("setupNotifications -- daemon wiring", () => {
     expect(typeof ctxA.sessionTracker.getMostRecent).toBe("function");
 
     // State isolation: writing into tracker A leaves tracker B empty.
-    ctxA.sessionTracker.recordActivity("agent-1", "discord", "discord-test-channel-A");
-    expect(ctxA.sessionTracker.getRecentForPlatform("agent-1", "discord")).toBe(
-      "discord-test-channel-A",
-    );
+    const endpoint = {
+      channelType: "discord",
+      channelInstanceId: "discord-test",
+      conversationId: "discord-test-channel-A",
+      conversationKind: "direct" as const,
+    };
+    ctxA.sessionTracker.recordActivity("agent-1", endpoint);
+    expect(ctxA.sessionTracker.getRecentForPlatform("agent-1", "discord")).toEqual(endpoint);
     expect(ctxB.sessionTracker.getRecentForPlatform("agent-1", "discord")).toBeUndefined();
   });
 
@@ -160,21 +193,23 @@ describe("setupNotifications -- daemon wiring", () => {
     deps.activeAdapterTypes = new Set<string>(["discord"]);
 
     const ctx = setupNotifications(deps);
-    // Seed a recent session for agent-default so the channel resolver has a
-    // fallback target. agent-disabled never reaches resolution.
-    ctx.sessionTracker.recordActivity("agent-default", "discord", "discord-test-channel-1");
+    // Seed the exact authoritative destination for the enabled agent.
+    // agent-disabled never reaches resolution.
+    recordDestination(ctx, "agent-default", "discord-test-channel-3");
 
     const disabledResult = await ctx.notificationService.notifyUser({
       agentId: "agent-disabled",
       message: "should not deliver",
       channelType: "discord",
       channelId: "discord-test-channel-2",
+      ...deliveryFields("agent-disabled", "discord-test-channel-2"),
     });
     const defaultResult = await ctx.notificationService.notifyUser({
       agentId: "agent-default",
       message: "should deliver",
       channelType: "discord",
       channelId: "discord-test-channel-3",
+      ...deliveryFields("agent-default", "discord-test-channel-3"),
     });
 
     expect(disabledResult.ok).toBe(false);
@@ -196,12 +231,14 @@ describe("setupNotifications -- daemon wiring", () => {
     deps.activeAdapterTypes = new Set<string>(["discord"]);
 
     const ctx = setupNotifications(deps);
+    recordDestination(ctx, "agent-x", "discord-test-channel-1");
     const result = await ctx.notificationService.notifyUser({
       agentId: "agent-x",
       message: "hello world",
       priority: "normal",
       channelType: "discord",
       channelId: "discord-test-channel-1",
+      ...deliveryFields("agent-x", "discord-test-channel-1"),
     });
 
     expect(result.ok).toBe(true);
@@ -239,12 +276,14 @@ describe("setupNotifications -- daemon wiring", () => {
     deps.activeAdapterTypes = new Set<string>(["discord"]);
 
     const ctx = setupNotifications(deps);
+    recordDestination(ctx, "agent-critical", "discord-test-channel-1");
     const result = await ctx.notificationService.notifyUser({
       agentId: "agent-critical",
       message: "urgent",
       priority: "critical",
       channelType: "discord",
       channelId: "discord-test-channel-1",
+      ...deliveryFields("agent-critical", "discord-test-channel-1"),
     });
 
     expect(result.ok).toBe(true);
@@ -285,6 +324,7 @@ describe("setupNotifications -- daemon wiring", () => {
       });
       deps.activeAdapterTypes = new Set<string>(["discord"]);
       const ctx = setupNotifications(deps);
+      recordDestination(ctx, "agent-1", "discord-test-channel-1");
       return { ctx, deliveryQueue, eventBus };
     };
 
@@ -296,12 +336,14 @@ describe("setupNotifications -- daemon wiring", () => {
       message: "evening msg",
       channelType: "discord",
       channelId: "discord-test-channel-1",
+      ...deliveryFields("agent-1", "discord-test-channel-1"),
     });
     await tokyo.ctx.notificationService.notifyUser({
       agentId: "agent-1",
       message: "midday msg",
       channelType: "discord",
       channelId: "discord-test-channel-1",
+      ...deliveryFields("agent-1", "discord-test-channel-1"),
     });
 
     // NYC at 23:00 -- inside the 22:00-07:00 window -> deferred to end-of-quiet.

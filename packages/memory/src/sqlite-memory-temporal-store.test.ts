@@ -18,7 +18,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { MemoryEntry, MemoryConfig } from "@comis/core";
-import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
+import { ScopedMemoryTestAdapter as SqliteMemoryAdapter } from "../../../test/support/scoped-memory-adapter.js";
 import { createSqliteMemoryTemporalStore } from "./sqlite-memory-temporal-store.js";
 import type Database from "better-sqlite3";
 

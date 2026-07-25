@@ -10,6 +10,7 @@
  * @module
  */
 
+import { randomUUID } from "node:crypto";
 import type { NormalizedMessage, SessionKey } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 
@@ -73,7 +74,7 @@ export function createFollowupTrigger(deps: FollowupTriggerDeps): FollowupTrigge
       extraMetadata?: Record<string, unknown>,
     ): NormalizedMessage {
       return {
-        id: `followup-${chainId}-${chainDepth}`,
+        id: randomUUID(),
         channelId,
         channelType,
         senderId: "system",

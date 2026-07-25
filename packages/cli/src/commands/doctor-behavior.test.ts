@@ -2,7 +2,7 @@
 /**
  * Doctor command behavior tests.
  *
- * Tests doctor command behaviors: runs all 5 health check categories,
+ * Tests doctor command behaviors across the complete diagnostic registry,
  * --repair invokes repair modules and re-runs diagnostics, --format json
  * calls renderDoctorJson, and exit code 1 on failures.
  *
@@ -67,6 +67,18 @@ vi.mock("node:fs", () => ({
   existsSync: vi.fn(() => false),
 }));
 
+const repairBoundaryMocks = vi.hoisted(() => ({
+  database: vi.fn(),
+  repairFtsDrift: vi.fn(),
+  repairContextItems: vi.fn(),
+}));
+
+vi.mock("better-sqlite3", () => ({ default: repairBoundaryMocks.database }));
+vi.mock("../doctor/repairs/repair-lcd.js", () => ({
+  repairFtsDrift: repairBoundaryMocks.repairFtsDrift,
+  repairContextItems: repairBoundaryMocks.repairContextItems,
+}));
+
 // Mock node:os for homedir
 vi.mock("node:os", async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -84,6 +96,7 @@ const { repairConfig } = await import("../doctor/repairs/repair-config.js");
 const { repairDaemon } = await import("../doctor/repairs/repair-daemon.js");
 const { repairWorkspace } = await import("../doctor/repairs/repair-workspace.js");
 const { repairConfigAudit } = await import("../doctor/repairs/repair-config-audit.js");
+const fs = await import("node:fs");
 
 /** Factory: a healthy doctor result with no failures. */
 const healthyResult: DoctorResult = {
@@ -114,7 +127,23 @@ const failingResult: DoctorResult = {
   repairableCount: 2,
 };
 
-describe("doctor runs all 5 health check categories", () => {
+beforeEach(() => {
+  vi.mocked(fs.readFileSync).mockReset();
+  vi.mocked(fs.readFileSync).mockImplementation(() => {
+    throw new Error("ENOENT");
+  });
+  vi.mocked(fs.existsSync).mockReturnValue(false);
+  repairBoundaryMocks.database.mockReset();
+  repairBoundaryMocks.database.mockImplementation(function DatabaseMock() {
+    return { pragma: vi.fn(), close: vi.fn() };
+  });
+  repairBoundaryMocks.repairFtsDrift.mockReset();
+  repairBoundaryMocks.repairFtsDrift.mockResolvedValue({ ok: true, value: [] });
+  repairBoundaryMocks.repairContextItems.mockReset();
+  repairBoundaryMocks.repairContextItems.mockResolvedValue({ ok: true, value: [] });
+});
+
+describe("doctor runs the complete diagnostic registry", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -249,14 +278,23 @@ describe("doctor --repair with repair failures", () => {
       .mockResolvedValueOnce(failingResult)
       .mockResolvedValueOnce(failingResult);
 
-    vi.mocked(repairConfig).mockResolvedValue({ ok: false, error: new Error("Permission denied") } as never);
-    vi.mocked(repairDaemon).mockResolvedValue({ ok: true, value: [] } as never);
-    vi.mocked(repairWorkspace).mockResolvedValue({ ok: true, value: [] } as never);
+    vi.mocked(repairConfig).mockResolvedValue({
+      ok: false,
+      error: new Error("Authorization: Bearer PRIVATE_CONFIG_REPAIR_SENTINEL"),
+    } as never);
+    vi.mocked(repairDaemon).mockResolvedValue({
+      ok: false,
+      error: new Error("PRIVATE_DAEMON_REPAIR_SENTINEL"),
+    } as never);
+    vi.mocked(repairWorkspace).mockResolvedValue({
+      ok: false,
+      error: new Error("PRIVATE_WORKSPACE_REPAIR_SENTINEL"),
+    } as never);
     // Daemon-not-running is the typical failure mode for the audit
     // scrub in repair contexts; surface as Err.
     vi.mocked(repairConfigAudit).mockResolvedValue({
       ok: false,
-      error: new Error("Daemon not running"),
+      error: new Error("PRIVATE_AUDIT_REPAIR_SENTINEL"),
     } as never);
 
     const program = createTestProgram();
@@ -271,10 +309,132 @@ describe("doctor --repair with repair failures", () => {
     // Output contains FAILED message for config repair
     const errOutput = getSpyOutput(consoleSpy.error);
     expect(errOutput).toContain("FAILED:");
-    expect(errOutput).toContain("Permission denied");
+    const combinedOutput = `${errOutput}\n${getSpyOutput(consoleSpy.log)}`;
+    expect(combinedOutput).not.toContain("PRIVATE_CONFIG_REPAIR_SENTINEL");
+    expect(combinedOutput).not.toContain("PRIVATE_DAEMON_REPAIR_SENTINEL");
+    expect(combinedOutput).not.toContain("PRIVATE_WORKSPACE_REPAIR_SENTINEL");
+    expect(combinedOutput).not.toContain("PRIVATE_AUDIT_REPAIR_SENTINEL");
 
     // Exits 1 because post-repair result still has failures
     expect(exitSpy.spy).toHaveBeenCalledWith(1);
+  });
+
+  it("does not surface database-open error content during LCD repair", async () => {
+    const lcdFailure: DoctorResult = {
+      ...failingResult,
+      findings: [
+        {
+          category: "lcd",
+          check: "FTS drift",
+          status: "fail",
+          message: "FTS drift detected",
+          repairable: true,
+        },
+      ],
+      repairableCount: 1,
+    };
+    vi.mocked(runDoctorChecks)
+      .mockResolvedValueOnce(lcdFailure)
+      .mockResolvedValueOnce(healthyResult);
+    vi.mocked(repairConfig).mockResolvedValue({ ok: true, value: [] } as never);
+    vi.mocked(repairDaemon).mockResolvedValue({ ok: true, value: [] } as never);
+    vi.mocked(repairWorkspace).mockResolvedValue({ ok: true, value: [] } as never);
+    vi.mocked(repairConfigAudit).mockResolvedValue({ ok: true, value: [] } as never);
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    repairBoundaryMocks.database.mockImplementation(function DatabaseFailure() {
+      throw new Error("Authorization: Bearer PRIVATE_LCD_OPEN_SENTINEL");
+    });
+
+    const program = createTestProgram();
+    registerDoctorCommand(program);
+    await program.parseAsync(["node", "test", "doctor", "--repair"]);
+
+    expect(getSpyOutput(consoleSpy.error)).not.toContain("PRIVATE_LCD_OPEN_SENTINEL");
+  });
+
+  it("opens the configured custom memory database for LCD repair", async () => {
+    const lcdFailure: DoctorResult = {
+      ...failingResult,
+      findings: [
+        {
+          category: "lcd",
+          check: "FTS drift",
+          status: "fail",
+          message: "FTS drift detected",
+          repairable: true,
+        },
+      ],
+      repairableCount: 1,
+    };
+    vi.mocked(runDoctorChecks)
+      .mockResolvedValueOnce(lcdFailure)
+      .mockResolvedValueOnce(healthyResult);
+    vi.mocked(repairConfig).mockResolvedValue({ ok: true, value: [] } as never);
+    vi.mocked(repairDaemon).mockResolvedValue({ ok: true, value: [] } as never);
+    vi.mocked(repairWorkspace).mockResolvedValue({ ok: true, value: [] } as never);
+    vi.mocked(repairConfigAudit).mockResolvedValue({ ok: true, value: [] } as never);
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      "dataDir: /srv/comis\nmemory:\n  dbPath: stores/custom-memory.db\n",
+    );
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+
+    const program = createTestProgram();
+    registerDoctorCommand(program);
+    await program.parseAsync([
+      "node",
+      "test",
+      "doctor",
+      "--repair",
+      "--config",
+      "/cfg/custom.yaml",
+    ]);
+
+    expect(repairBoundaryMocks.database).toHaveBeenCalledWith(
+      "/srv/comis/stores/custom-memory.db",
+      { timeout: 5000 },
+    );
+    expect(repairBoundaryMocks.repairFtsDrift).toHaveBeenCalledTimes(1);
+    expect(repairBoundaryMocks.repairContextItems).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not surface LCD repair-operation error content", async () => {
+    const lcdFailure: DoctorResult = {
+      ...failingResult,
+      findings: [
+        {
+          category: "lcd",
+          check: "FTS drift",
+          status: "fail",
+          message: "FTS drift detected",
+          repairable: true,
+        },
+      ],
+      repairableCount: 1,
+    };
+    vi.mocked(runDoctorChecks)
+      .mockResolvedValueOnce(lcdFailure)
+      .mockResolvedValueOnce(healthyResult);
+    vi.mocked(repairConfig).mockResolvedValue({ ok: true, value: [] } as never);
+    vi.mocked(repairDaemon).mockResolvedValue({ ok: true, value: [] } as never);
+    vi.mocked(repairWorkspace).mockResolvedValue({ ok: true, value: [] } as never);
+    vi.mocked(repairConfigAudit).mockResolvedValue({ ok: true, value: [] } as never);
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    repairBoundaryMocks.repairFtsDrift.mockResolvedValue({
+      ok: false,
+      error: new Error("PRIVATE_LCD_FTS_SENTINEL"),
+    });
+    repairBoundaryMocks.repairContextItems.mockResolvedValue({
+      ok: false,
+      error: new Error("PRIVATE_LCD_CONTEXT_SENTINEL"),
+    });
+
+    const program = createTestProgram();
+    registerDoctorCommand(program);
+    await program.parseAsync(["node", "test", "doctor", "--repair"]);
+
+    const output = getSpyOutput(consoleSpy.error);
+    expect(output).not.toContain("PRIVATE_LCD_FTS_SENTINEL");
+    expect(output).not.toContain("PRIVATE_LCD_CONTEXT_SENTINEL");
   });
 });
 

@@ -125,7 +125,7 @@ describe.skipIf(!isLive)(
 // describe.skipIf(!isLive)("HARN-01 Stage-B — live assembly outcome (COMIS_LIVE required)", () => {
 //   it("seeded conversation about known facts scores ≥ 0.6 on factual recall question", async () => {
 //     const dataDir = mkdtempSync(tmpdir() + "/assembly-outcome-");
-//     const configPath = buildCtxConfig({ version: "dag", label: "assembly-outcome", filePrefix: "ao" });
+//     const configPath = buildCtxConfig({ label: "assembly-outcome", filePrefix: "ao" });
 //     const driver = new ConversationDriver({ agentId: "ao-test", provider: "anthropic", timeoutMs: 5 * 60_000 });
 //     // ... seed known facts via driver, query, capture modelAnswer ...
 //     // const score = assemblyOutcomeScore(modelAnswer, referenceAnswer, keyFacts);

@@ -76,12 +76,8 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
             maxContextChars: 4000,
             minScore: 0.1,
             includeTrustLevels: ["system", "learned"],
-            // rag.rerank.enabled now defaults ON, but setupSingleAgent
-            // resolves the EFFECTIVE rerank from the raw signal + model-presence — with no
-            // reranker model present in this mock it resolves to false. Set it explicitly
-            // false here so the mock config matches the post-setupAgents effective config
-            // (this test asserts the DaemonInstance shape, not the rerank default).
-            rerank: { enabled: false },
+            // Explicit off keeps this fixture independent of local model presence.
+            rerank: { mode: "off" },
           },
         }),
       },
@@ -97,7 +93,7 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
         git: { enabled: false, repositories: [], checkRemote: true },
       },
       scheduler: {
-        cron: { enabled: false, storeDir: "", maxConcurrentRuns: 3, defaultTimezone: "", maxJobs: 100 },
+        cron: { enabled: false, maxRunsPerTick: 3, defaultTimezone: "UTC", maxJobs: 100, maxConsecutiveDependencyErrors: 5, staggerWindowMs: 0 },
         heartbeat: { enabled: false, intervalMs: 300_000, showOk: false, showAlerts: true },
         quietHours: {
           enabled: false,
@@ -106,19 +102,8 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
           timezone: "",
           criticalBypass: true,
         },
-        execution: {
-          lockDir: "./data/scheduler/locks",
-          staleMs: 600_000,
-          updateMs: 30_000,
-          logDir: "./data/scheduler/logs",
-          maxLogBytes: 2_000_000,
-          keepLines: 2_000,
-        },
-        tasks: {
-          enabled: false,
-          confidenceThreshold: 0.8,
-          storeDir: "./data/scheduler/tasks",
-        },
+        execution: { maxLogBytes: 2_000_000, retainedExecutions: 1_000 },
+        tasks: { enabled: false, confidenceThreshold: 0.8, debounceMs: 15_000, batchMax: 8, maxPerCheck: 3, maxPerDayPerConversation: 3, defaultWindowMs: 43_200_000, preAcceptanceRetryLimit: 3 },
       },
       integrations: {
         mcp: { servers: [] },
@@ -477,7 +462,7 @@ describe("daemon main()", () => {
   });
 
   it("uses COMIS_CONFIG_PATHS when set (filtered to existing files)", async () => {
-    process.env["COMIS_CONFIG_PATHS"] = "/custom/a.yaml:/custom/b.yaml";
+    process.env["COMIS_CONFIG_PATHS"] = "/custom/a.yaml,/custom/b.yaml";
     const { overrides } = buildOverrides();
 
     instances.push(await main(overrides));
@@ -714,6 +699,43 @@ describe("hardenDataDirPermissions", () => {
 
     const stat = fs.statSync(secretsJsonPath);
     expect(stat.mode & 0o777).toBe(0o600);
+  });
+
+  it("hardens every artifact in the nested production session layout without following symlinks", () => {
+    fs.chmodSync(testDir, 0o700);
+    const sessionsDir = nodePath.join(testDir, "workspace", "sessions");
+    const tenantDir = nodePath.join(sessionsDir, "tenant_a");
+    const channelDir = nodePath.join(tenantDir, "telegram_a");
+    fs.mkdirSync(channelDir, { recursive: true, mode: 0o755 });
+    const artifacts = [
+      nodePath.join(channelDir, "conversation.jsonl"),
+      nodePath.join(channelDir, "conversation.jsonl.trajectory.jsonl"),
+      nodePath.join(channelDir, "conversation.jsonl.trajectory-path.json"),
+      nodePath.join(channelDir, "conversation_session-metadata.json"),
+    ];
+    for (const artifact of artifacts) {
+      fs.writeFileSync(artifact, "test artifact\n", { mode: 0o644 });
+      fs.chmodSync(artifact, 0o644);
+    }
+    fs.chmodSync(sessionsDir, 0o755);
+    fs.chmodSync(tenantDir, 0o755);
+    fs.chmodSync(channelDir, 0o755);
+    const outsideArtifact = nodePath.join(testDir, "outside-session.jsonl");
+    fs.writeFileSync(outsideArtifact, "outside\n", { mode: 0o644 });
+    fs.chmodSync(outsideArtifact, 0o644);
+    fs.symlinkSync(outsideArtifact, nodePath.join(channelDir, "outside-link.jsonl"));
+
+    const corrections = hardenDataDirPermissions(testDir);
+
+    for (const directory of [sessionsDir, tenantDir, channelDir]) {
+      expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
+      expect(corrections).toContainEqual({ file: directory, oldMode: 0o755, newMode: 0o700 });
+    }
+    for (const artifact of artifacts) {
+      expect(fs.statSync(artifact).mode & 0o777).toBe(0o600);
+      expect(corrections).toContainEqual({ file: artifact, oldMode: 0o644, newMode: 0o600 });
+    }
+    expect(fs.statSync(outsideArtifact).mode & 0o777).toBe(0o644);
   });
 });
 

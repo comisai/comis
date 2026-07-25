@@ -27,8 +27,6 @@ describe("sessions_spawn tool", () => {
       model: undefined,
       agent: undefined,
       async: false,
-      announce_channel_type: undefined,
-      announce_channel_id: undefined,
       max_steps: undefined,
     });
   });
@@ -51,8 +49,6 @@ describe("sessions_spawn tool", () => {
       model: undefined,
       agent: "researcher",
       async: true,
-      announce_channel_type: undefined,
-      announce_channel_id: undefined,
       max_steps: undefined,
     });
   });
@@ -90,7 +86,28 @@ describe("sessions_spawn tool", () => {
     expect(params.properties.max_steps.description).toContain("Floor of 30");
   });
 
-  it("throws on RPC error", async () => {
+  it("does not expose or forward model-selected announcement routes", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => ({ runId: "run_a", async: true }));
+    const tool = createSessionsSpawnTool(mockRpcCall);
+    const params = tool.parameters as { properties: Record<string, unknown> };
+
+    expect(params.properties).not.toHaveProperty("announce_channel_type");
+    expect(params.properties).not.toHaveProperty("announce_channel_id");
+
+    await tool.execute("call-route", {
+      task: "inspect records",
+      async: true,
+      announce_channel_type: "telegram",
+      announce_channel_id: "previous_chat",
+    } as never);
+
+    expect(mockRpcCall).toHaveBeenCalledWith("session.spawn", expect.not.objectContaining({
+      announce_channel_type: expect.anything(),
+      announce_channel_id: expect.anything(),
+    }));
+  });
+
+  it("throws when the RPC request fails", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => {
       throw new Error("spawn failed");
     });

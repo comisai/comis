@@ -48,8 +48,34 @@ function createMockDeps(overrides?: Partial<PiEventBridgeDeps>): PiEventBridgeDe
       getState: vi.fn(),
       reset: vi.fn(),
     } as any,
-    sessionKey: { tenantId: "t1", channelId: "c1", userId: "u1" },
+    sessionKey: { tenantId: "t1", agentId: "test-agent", channelId: "c1", userId: "u1" },
     agentId: "test-agent",
+    memoryScope: {
+      turnScope: {
+        conversation: {
+          tenantId: "t1",
+          agentId: "test-agent",
+          partition: {
+            kind: "endpoint-conversation-principal",
+            endpoint: {
+              channelType: "test",
+              channelInstanceId: "test-instance",
+              conversationId: "c1",
+              conversationKind: "direct",
+            },
+            principalId: "u1",
+          },
+        },
+        principal: { principalId: "u1" },
+        endpoint: {
+          channelType: "test",
+          channelInstanceId: "test-instance",
+          conversationId: "c1",
+          conversationKind: "direct",
+        },
+      },
+      visibility: { kind: "conversation-private" },
+    } as any,
     channelId: "test-channel",
     executionId: "exec-001",
     provider: "anthropic",
@@ -115,7 +141,7 @@ describe("resilience-compaction-events integration", () => {
 
     expect(received).toHaveLength(1);
     expect(received[0].agentId).toBe("test-agent");
-    expect(received[0].sessionKey).toEqual({ tenantId: "t1", channelId: "c1", userId: "u1" });
+    expect(received[0].sessionKey).toEqual({ tenantId: "t1", agentId: "test-agent", channelId: "c1", userId: "u1" });
     expect(received[0].timestamp).toBeGreaterThan(0);
     expect(typeof received[0].timestamp).toBe("number");
 
@@ -124,7 +150,7 @@ describe("resilience-compaction-events integration", () => {
     // the emitted compaction:started event above.
     expect(deps.logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionKey: "t1:u1:c1",
+        sessionKey: "t1:agent:test-agent:u1:c1",
       }),
       "Auto-compaction started",
     );

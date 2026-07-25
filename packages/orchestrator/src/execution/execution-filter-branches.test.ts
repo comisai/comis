@@ -37,7 +37,7 @@ function makeAdapter(channelType = "telegram"): ChannelPort {
     removeReaction: vi.fn(async () => ok(undefined)),
     deleteMessage: vi.fn(async () => ok(undefined)),
     fetchMessages: vi.fn(async () => ok([])),
-    sendAttachment: vi.fn(async () => ok("att-1")),
+    sendAttachment: vi.fn(async () => ok({ kind: "tracked" as const, messageId: "att-1" })),
     platformAction: vi.fn(async () => ok(undefined)),
   };
 }
@@ -64,9 +64,14 @@ function makeSessionKey(): SessionKey {
   };
 }
 
-function makeDeps(overrides?: Partial<FilterDeps>): FilterDeps {
-  const eventBus = {
-    emit: vi.fn(() => true),
+function makeEventBus() {
+  const emit = vi.fn((_event: string, _payload: unknown) => true);
+  return {
+    emit,
+    emitSafely: vi.fn((event: string, payload: unknown) => ({
+      hadListeners: emit(event, payload),
+      failures: [],
+    })),
     on: vi.fn().mockReturnThis(),
     off: vi.fn().mockReturnThis(),
     once: vi.fn().mockReturnThis(),
@@ -74,6 +79,10 @@ function makeDeps(overrides?: Partial<FilterDeps>): FilterDeps {
     listenerCount: vi.fn(() => 0),
     setMaxListeners: vi.fn().mockReturnThis(),
   };
+}
+
+function makeDeps(overrides?: Partial<FilterDeps>): FilterDeps {
+  const eventBus = makeEventBus();
   const logger = {
     info: vi.fn(),
     warn: vi.fn(),
@@ -231,7 +240,7 @@ describe("filterExecutionResponse response sanitization fallbacks", () => {
 // ---------------------------------------------------------------------------
 
 describe("filterExecutionResponse resource abort path", () => {
-  it("sends accomplishment notification when resource aborted with empty response and tools succeeded", async () => {
+  it("returns an accomplishment notification for receipt-tracked delivery after a resource abort", async () => {
     const deps = makeDeps();
     const adapter = makeAdapter();
     const result = await filterExecutionResponse(
@@ -255,18 +264,14 @@ describe("filterExecutionResponse resource abort path", () => {
       "stop",
     );
 
-    expect(result.deliver).toBe(false);
-    if (!result.deliver) {
-      expect(result.reason).toBe("resource_abort_empty");
+    expect(result.deliver).toBe(true);
+    if (result.deliver) {
+      expect(result.text).toContain("processing budget");
     }
-    expect(adapter.sendMessage).toHaveBeenCalledWith(
-      "chat-1",
-      expect.stringContaining("processing budget"),
-      expect.objectContaining({ replyTo: "msg-reply-to" }),
-    );
+    expect(adapter.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("sends generic exhaustion message when resource aborted with empty response and no tool history", async () => {
+  it("returns a generic exhaustion message for receipt-tracked delivery without tool history", async () => {
     const deps = makeDeps();
     const adapter = makeAdapter();
     const result = await filterExecutionResponse(
@@ -284,18 +289,14 @@ describe("filterExecutionResponse resource abort path", () => {
       "stop",
     );
 
-    expect(result.deliver).toBe(false);
-    if (!result.deliver) {
-      expect(result.reason).toBe("resource_abort_empty");
+    expect(result.deliver).toBe(true);
+    if (result.deliver) {
+      expect(result.text).toContain("processing limit");
     }
-    expect(adapter.sendMessage).toHaveBeenCalledWith(
-      "chat-1",
-      expect.stringContaining("processing limit"),
-      expect.any(Object),
-    );
+    expect(adapter.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("sends canned acknowledgment when LLM finishes normally with empty response", async () => {
+  it("returns a canned acknowledgment for receipt-tracked delivery after an empty normal stop", async () => {
     const deps = makeDeps();
     const adapter = makeAdapter();
     const result = await filterExecutionResponse(
@@ -313,15 +314,11 @@ describe("filterExecutionResponse resource abort path", () => {
       "stop",
     );
 
-    expect(result.deliver).toBe(false);
-    if (!result.deliver) {
-      expect(result.reason).toBe("empty_stop_ack");
+    expect(result.deliver).toBe(true);
+    if (result.deliver) {
+      expect(result.text).toContain("completed the requested");
     }
-    expect(adapter.sendMessage).toHaveBeenCalledWith(
-      "chat-1",
-      expect.stringContaining("completed the requested"),
-      expect.any(Object),
-    );
+    expect(adapter.sendMessage).not.toHaveBeenCalled();
   });
 
   it("returns deliver=false with empty reason when LLM finished with non-stop reason and empty response", async () => {
@@ -357,15 +354,7 @@ describe("filterExecutionResponse resource abort path", () => {
 
 describe("filterExecutionResponse response filter", () => {
   it("returns deliver=false with reason=filtered when response is NO_REPLY", async () => {
-    const eventBus = {
-      emit: vi.fn(() => true),
-      on: vi.fn().mockReturnThis(),
-      off: vi.fn().mockReturnThis(),
-      once: vi.fn().mockReturnThis(),
-      removeAllListeners: vi.fn().mockReturnThis(),
-      listenerCount: vi.fn(() => 0),
-      setMaxListeners: vi.fn().mockReturnThis(),
-    };
+    const eventBus = makeEventBus();
     const deps = makeDeps({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       eventBus: eventBus as any,
@@ -487,7 +476,7 @@ describe("filterExecutionResponse outbound media", () => {
     });
     const adapter = makeAdapter();
     (adapter.sendAttachment as ReturnType<typeof vi.fn>).mockResolvedValue(
-      ok("att-id"),
+      ok({ kind: "tracked", messageId: "att-id" }),
     );
 
     const result = await filterExecutionResponse(
@@ -523,7 +512,7 @@ describe("filterExecutionResponse outbound media", () => {
     });
     const adapter = makeAdapter();
     (adapter.sendAttachment as ReturnType<typeof vi.fn>).mockResolvedValue(
-      ok("att-id"),
+      ok({ kind: "tracked", messageId: "att-id" }),
     );
 
     const result = await filterExecutionResponse(

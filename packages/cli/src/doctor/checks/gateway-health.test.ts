@@ -10,6 +10,7 @@
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { AppConfigSchema } from "@comis/core";
 import type { DoctorContext } from "../types.js";
 
 // Mock node:net createConnection
@@ -66,6 +67,19 @@ describe("gatewayHealthCheck", () => {
     expect(findings[0]?.message).not.toContain("No gateway URL configured");
   });
 
+  it("reports an explicitly disabled gateway as an intentional skip", async () => {
+    const findings = await gatewayHealthCheck.run({
+      ...baseContext,
+      config: AppConfigSchema.parse({ gateway: { enabled: false } }),
+      gatewayUrl: undefined,
+    });
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.status).toBe("skip");
+    expect(findings[0]?.message).toContain("gateway.enabled is false");
+    expect(findings[0]?.message).not.toContain("No gateway URL configured");
+  });
+
   it("produces fail for invalid gateway URL", async () => {
     const findings = await gatewayHealthCheck.run({
       ...baseContext,
@@ -96,6 +110,25 @@ describe("gatewayHealthCheck", () => {
     expect(findings[0].status).toBe("pass");
     expect(findings[0].message).toContain("reachable");
     expect(socket.destroy).toHaveBeenCalled();
+  });
+
+  it("removes URL brackets before connecting to an IPv6 host", async () => {
+    const socket = createConnectingSocket();
+    vi.mocked(net.createConnection).mockImplementation((_opts: unknown, callback: () => void) => {
+      queueMicrotask(() => callback());
+      return socket as never;
+    });
+
+    const findings = await gatewayHealthCheck.run({
+      ...baseContext,
+      gatewayUrl: "https://[2001:db8::1]:8443",
+    });
+
+    expect(findings[0]?.status).toBe("pass");
+    expect(net.createConnection).toHaveBeenCalledWith(
+      { host: "2001:db8::1", port: 8443, timeout: 5_000 },
+      expect.any(Function),
+    );
   });
 
   it("produces fail when TCP connection fails", async () => {

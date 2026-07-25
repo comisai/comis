@@ -18,9 +18,11 @@ const EVENT_CONFIG: Record<string, { label: string; color: string }> = {
   "skill:loaded": { label: "SKILL", color: "#10b981" },
   "skill:executed": { label: "SKILL RUN", color: "#10b981" },
   "skill:rejected": { label: "REJECTED", color: "#ef4444" },
-  "scheduler:job_started": { label: "JOB START", color: "#8b5cf6" },
-  "scheduler:job_completed": { label: "JOB DONE", color: "#22c55e" },
-  "scheduler:heartbeat_check": { label: "HEARTBEAT", color: "#06b6d4" },
+  "scheduler:cron_execution_started": { label: "CRON START", color: "#8b5cf6" },
+  "scheduler:cron_execution_terminal": { label: "CRON DONE", color: "#22c55e" },
+  "scheduler:heartbeat_wake_admitted": { label: "HB ADMIT", color: "#06b6d4" },
+  "scheduler:heartbeat_wake_deferred": { label: "HB DEFER", color: "#f59e0b" },
+  "scheduler:heartbeat_wake_terminal": { label: "HB DONE", color: "#22c55e" },
   "system:error": { label: "ERROR", color: "#ef4444" },
 };
 
@@ -61,8 +63,24 @@ export function summarizePayload(event: string, payload: Record<string, unknown>
     return (payload["skillName"] ?? payload["name"] ?? "unknown skill") as string;
   }
 
-  if (event === "scheduler:job_completed" || event === "scheduler:job_started") {
-    return (payload["taskId"] ?? payload["jobId"] ?? "") as string;
+  if (event === "scheduler:cron_execution_terminal" || event === "scheduler:cron_execution_started") {
+    return (payload["executionId"] ?? payload["jobId"] ?? "") as string;
+  }
+
+  if (
+    event === "scheduler:heartbeat_wake_admitted"
+    || event === "scheduler:heartbeat_wake_deferred"
+    || event === "scheduler:heartbeat_wake_terminal"
+  ) {
+    const target = payload["target"] as { kind?: string; agentId?: string } | undefined;
+    const targetLabel = target?.kind === "agent"
+      ? target.agentId ?? "agent"
+      : target?.kind === "monitoring" ? "monitoring" : "unknown";
+    const lifecycle = payload["disposition"] ?? payload["reason"] ?? payload["status"] ?? "heartbeat";
+    const correlationId = payload["correlationId"];
+    return correlationId === undefined
+      ? `${targetLabel}: ${String(lifecycle)}`
+      : `${targetLabel}: ${String(lifecycle)} (${String(correlationId)})`;
   }
 
   if (event === "audit:event") {

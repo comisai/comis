@@ -38,7 +38,13 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { ok, type Result } from "@comis/shared";
-import type { MemoryEntry, MemoryConfig, EmbeddingPort } from "@comis/core";
+import type {
+  MemoryEntry,
+  MemoryConfig,
+  EmbeddingPort,
+  MemoryWriteScope,
+  ResolvedTurnScope,
+} from "@comis/core";
 import {
   SqliteMemoryAdapter,
   createSqliteMemoryEntityStore,
@@ -106,6 +112,28 @@ function deterministicEmbeddingPort(): EmbeddingPort {
   };
 }
 
+// A resolved turn scope for a (tenant, agent) pair. `store(entry, scope)` derives
+// the row's tenantId/agentId from `scope.turnScope.conversation` — it is the
+// AUTHORITATIVE partition, NOT the caller-supplied entry fields — so the seed
+// builds the scope from the entry's intended (tenant, agent).
+function turnScopeFor(tenantId: string, agentId: string): ResolvedTurnScope {
+  const endpoint = {
+    channelType: "test",
+    channelInstanceId: "test-main",
+    conversationId: `conv-${tenantId}-${agentId}`,
+    conversationKind: "shared" as const,
+  };
+  return {
+    conversation: { tenantId, agentId, partition: { kind: "endpoint-conversation", endpoint } },
+    principal: { principalId: "user_a" },
+    endpoint,
+  };
+}
+
+function writeScopeFor(tenantId: string, agentId: string): MemoryWriteScope {
+  return { turnScope: turnScopeFor(tenantId, agentId), visibility: { kind: "conversation" } };
+}
+
 // ---------------------------------------------------------------------------
 // Wired-store isolation
 // ---------------------------------------------------------------------------
@@ -138,7 +166,7 @@ describe("Entity-associative recall -- wired-store isolation", () => {
 
   async function seedMemory(overrides: Partial<MemoryEntry>): Promise<string> {
     const entry = makeEntry(overrides);
-    const r = await adapter.store(entry);
+    const r = await adapter.store(entry, writeScopeFor(entry.tenantId, entry.agentId));
     expect(r.ok).toBe(true);
     return entry.id;
   }

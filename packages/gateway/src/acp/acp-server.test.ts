@@ -54,6 +54,8 @@ vi.mock("@agentclientprotocol/sdk", () => {
     }
   }
   return {
+    tenantId: "default",
+    agentId: "a1",
     AgentSideConnection: FakeAgentSideConnection,
     ndJsonStream: vi.fn(() => ({ readable: {}, writable: {} })),
   };
@@ -433,6 +435,7 @@ describe("startAcpServer bridge wiring", () => {
   const ACP_SESSION_ID = "wire-acp-session-1";
   const SESSION_KEY = formatSessionKey({
     tenantId: "default",
+    agentId: "a1",
     userId: "ide-user",
     channelId: "acp",
     peerId: ACP_SESSION_ID,

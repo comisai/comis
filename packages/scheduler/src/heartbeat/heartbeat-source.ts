@@ -1,37 +1,54 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * HeartbeatSourcePort: Pluggable interface for heartbeat check sources.
- *
- * Each source represents a system or service to monitor. Implementations
- * perform the actual check (e.g., HTTP ping, disk space, process health)
- * and return a structured result for the HeartbeatRunner to classify.
- */
+/** Closed, content-free contract implemented by non-model monitoring sources. */
+import { ERROR_KINDS } from "@comis/core";
+import type { ErrorKind } from "@comis/core";
+import type { Result } from "@comis/shared";
+import { z } from "zod";
+import { SchedulerDiagnosticCounterSchema } from "../cron/cron-runtime.js";
 
-/** Result of a single heartbeat source check. */
-export interface HeartbeatCheckResult {
-  /** Unique identifier for the source that produced this result. */
-  sourceId: string;
-  /** Human-readable check output (classified by relevance filter). */
-  text: string;
-  /** Timestamp (ms since epoch) when the check was performed. */
-  timestamp: number;
-  /** Optional metadata for logging/debugging. */
-  metadata?: Record<string, unknown>;
+const CodeTokenSchema = z.string().regex(/^[a-z][a-z0-9_]*$/).max(64);
+
+export const HeartbeatSourceIdSchema = CodeTokenSchema;
+
+export const MonitoringSourceDiagnosticSchema = z.strictObject({
+  level: z.enum(["ok", "alert", "critical"]),
+  observedAtMs: z.number().int().nonnegative().safe(),
+  code: CodeTokenSchema,
+  counters: z.array(SchedulerDiagnosticCounterSchema).max(32),
+}).superRefine((value, ctx) => {
+  const names = new Set<string>();
+  for (const [index, counter] of value.counters.entries()) {
+    if (names.has(counter.name)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["counters", index, "name"],
+        message: "counter names must be unique",
+      });
+    }
+    names.add(counter.name);
+  }
+});
+export type MonitoringSourceDiagnostic = z.infer<typeof MonitoringSourceDiagnosticSchema>;
+
+export const MonitoringSourceErrorSchema = z.strictObject({
+  code: CodeTokenSchema,
+  errorKind: z.enum(ERROR_KINDS),
+});
+export type MonitoringSourceError = z.infer<typeof MonitoringSourceErrorSchema>;
+
+export interface HeartbeatSourcePort {
+  readonly id: string;
+  check(
+    signal: AbortSignal,
+  ): Promise<Result<MonitoringSourceDiagnostic, MonitoringSourceError>>;
 }
 
-/**
- * Port interface for pluggable heartbeat check sources.
- *
- * Implementations should:
- * - Return HeartbeatCheckResult with HEARTBEAT_OK_TOKEN in text for healthy status
- * - Include "CRITICAL" or "EMERGENCY" in text for high-severity issues
- * - Return any other text for alert-level issues
- */
-export interface HeartbeatSourcePort {
-  /** Unique identifier for this source. */
-  readonly id: string;
-  /** Human-readable display name. */
-  readonly name: string;
-  /** Perform the health check and return a result. */
-  check(): Promise<HeartbeatCheckResult>;
+export function monitoringSourceError(
+  code: string,
+  errorKind: ErrorKind,
+): MonitoringSourceError {
+  const parsed = MonitoringSourceErrorSchema.safeParse({ code, errorKind });
+  return parsed.success
+    ? parsed.data
+    : { code: "invalid_source_error", errorKind: "internal" };
 }

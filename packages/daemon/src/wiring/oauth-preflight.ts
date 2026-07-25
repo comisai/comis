@@ -6,7 +6,7 @@
  *
  *   1. `hasAnyOAuthAgent(agents)` — runtime gate. Returns `true` iff at least
  *      one entry in the per-agent map declares a `provider` value that
- *      pi-ai's `getOAuthProvider` recognises as an OAuth provider. Used to
+ *      the provider OAuth catalog recognises as an OAuth provider. Used to
  *      skip the entire preflight (and any outbound network probe) when no
  *      OAuth-using agent is configured.
  *
@@ -14,7 +14,7 @@
  *      `runOAuthTlsPreflight({ timeoutMs: 4000 })` from `@comis/agent`
  *      and surfaces the result via Pino:
  *        - `kind: "tls-cert"` → exactly one WARN with module + errorKind +
- *          distro-aware install hint + OpenSSL `code` + raw `message`.
+ *          distro-aware install hint + recognized OpenSSL `code`.
  *        - `kind: "network"` → a single DEBUG (no WARN — transient failures
  *          should not pollute the boot path).
  *        - `{ ok: true }` → silent (operators do not want noise on boot).
@@ -34,7 +34,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { runOAuthTlsPreflight } from "@comis/core";
-import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { getProviderOAuth } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { PerAgentConfig } from "@comis/core";
 
@@ -45,15 +45,15 @@ const PREFLIGHT_TIMEOUT_MS = 4000;
 const MODULE_NAME = "oauth-tls-preflight";
 
 /**
- * Returns `true` iff at least one agent's `provider` is recognised by pi-ai's
- * `getOAuthProvider` as an OAuth-using provider.
+ * Returns `true` iff at least one agent's `provider` is recognised by the
+ * provider OAuth catalog as an OAuth-using provider.
  *
- * Single-source-of-truth check — avoids drift with pi-ai's provider catalogue.
+ * Single-source-of-truth check — avoids drift with the provider catalogue.
  * When this returns `false`, the daemon skips the preflight entirely (zero
  * outbound probes during boot for OAuth-less deployments).
  */
 export function hasAnyOAuthAgent(agents: Record<string, PerAgentConfig>): boolean {
-  return Object.values(agents).some((agent) => Boolean(getOAuthProvider(agent.provider)));
+  return Object.values(agents).some((agent) => Boolean(getProviderOAuth(agent.provider)));
 }
 
 interface OsRelease {
@@ -127,7 +127,6 @@ export async function emitOAuthTlsPreflightWarn(logger: ComisLogger): Promise<vo
         errorKind: "network" as const,
         hint,
         code: result.code,
-        message: result.message,
       },
       "OAuth TLS preflight failed: system CA bundle cannot validate auth.openai.com",
     );
@@ -137,8 +136,8 @@ export async function emitOAuthTlsPreflightWarn(logger: ComisLogger): Promise<vo
   logger.debug(
     {
       submodule: MODULE_NAME,
-      errorKind: "oauth_tls_network",
-      message: result.message,
+      errorKind: "network" as const,
+      reason: result.reason,
     },
     "OAuth TLS preflight network failure (skipping WARN — likely transient)",
   );

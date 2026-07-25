@@ -13,6 +13,10 @@
 
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
+import {
+  createAttachmentSendReceipt,
+  type AttachmentSendReceipt,
+} from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -42,7 +46,7 @@ export interface WhatsAppVoiceSender {
     jid: string,
     filePath: string,
     durationSecs?: number,
-  ): Promise<Result<string, Error>>;
+  ): Promise<Result<AttachmentSendReceipt, Error>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -60,7 +64,7 @@ export function createWhatsAppVoiceSender(deps: WhatsAppVoiceSenderDeps): WhatsA
       jid: string,
       filePath: string,
       durationSecs?: number,
-    ): Promise<Result<string, Error>> {
+    ): Promise<Result<AttachmentSendReceipt, Error>> {
       const duration = durationSecs ?? 0;
 
       logger.info(
@@ -75,14 +79,31 @@ export function createWhatsAppVoiceSender(deps: WhatsAppVoiceSenderDeps): WhatsA
           mimetype: "audio/ogg; codecs=opus",
         });
 
-        const messageId = sent?.key?.id ?? "";
+        const receipt = createAttachmentSendReceipt(sent?.key?.id);
+        if (receipt.kind === "delivered_untracked") {
+          logger.warn(
+            {
+              channelType: "whatsapp",
+              chatId: jid,
+              hint: "WhatsApp accepted the voice send without key.id. Do not retry; wait for platform reconciliation",
+              errorKind: "platform" as const,
+            },
+            "Voice sent without platform tracking",
+          );
+        }
 
         logger.info(
-          { channelType: "whatsapp", messageId, chatId: jid, durationSecs: duration },
+          {
+            channelType: "whatsapp",
+            chatId: jid,
+            durationSecs: duration,
+            tracking: receipt.kind,
+            ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
+          },
           "Voice send complete",
         );
 
-        return ok(messageId);
+        return ok(receipt);
       } catch (error) {
         const sendErr = error instanceof Error ? error : new Error(String(error));
 

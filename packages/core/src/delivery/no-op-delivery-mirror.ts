@@ -9,13 +9,14 @@ import type { DeliveryMirrorPort, DeliveryMirrorEntry } from "../ports/delivery-
  *
  * All operations succeed immediately with no persistence.
  * record returns a random UUID, pending returns [], acknowledge returns void,
- * pruneOld returns 0.
+ * and clearSession/pruneOld return 0.
  */
 export function createNoOpDeliveryMirror(): DeliveryMirrorPort {
   return Object.freeze({
     record: () => Promise.resolve(ok(randomUUID())),
     pending: () => Promise.resolve(ok([] as DeliveryMirrorEntry[])),
     acknowledge: () => Promise.resolve(ok(undefined)),
+    clearSession: () => Promise.resolve(ok(0)),
     pruneOld: () => Promise.resolve(ok(0)),
   });
 }

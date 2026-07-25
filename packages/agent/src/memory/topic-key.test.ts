@@ -129,6 +129,27 @@ describe("openingRequestTokens", () => {
     expect(openingRequestTokens("please could you the a an")).toEqual([]);
     expect(openingRequestTokens("   ...!?   ")).toEqual([]);
   });
+
+  it.each([
+    ["Hebrew", "העבר את החבילה דרך המעלית למשרד הצפוני", ["החבילה", "המעלית", "הצפוני"]],
+    ["Arabic", "انقل الطرد عبر المصعد إلى المكتب الشمالي", ["الطرد", "المصعد", "الشمالي"]],
+    ["Russian", "доставь посылку через лифт в северный офис", ["доставь", "посылку", "северный"]],
+  ])("preserves %s content words so native-language topics remain groupable", (_language, request, expectedTokens) => {
+    const tokens = openingRequestTokens(request);
+    expect(tokens.length).toBeGreaterThan(0);
+    expect(tokens).toEqual(expect.arrayContaining(expectedTokens));
+    expect(normalizeOpeningRequest(request)).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it.each([
+    ["Hebrew", "העבר את החבילה דרך המעלית למשרד הצפוני", "בבקשה העבר את החבילה דרך המעלית למשרד הצפוני ודווח על המסירה"],
+    ["Arabic", "انقل الطرد عبر المصعد إلى المكتب الشمالي", "من فضلك انقل الطرد عبر المصعد إلى المكتب الشمالي وأبلغ عن التسليم"],
+    ["Russian", "доставь посылку через лифт в северный офис", "пожалуйста доставь посылку через лифт в северный офис и сообщи о доставке"],
+  ])("credits a surfaced %s skill from a matching native-language turn", (language, opening, reuse) => {
+    const topicTokens = openingRequestTokens(opening);
+    const skillName = `skill-${language.toLowerCase()}-delivery`;
+    expect(topicMatchedSkillNames(reuse, [{ name: skillName, topicTokens }])).toEqual([skillName]);
+  });
 });
 
 describe("stemToken + morphological collapse (the keyless semantic-matching slice)", () => {
@@ -349,6 +370,55 @@ describe("topicMatchScores", () => {
       .filter((s) => s.credited)
       .map((s) => s.name);
     expect(topicMatchedSkillNames(turn, surfaced)).toEqual(creditedNames);
+  });
+
+  it("credits only the dominant learned topic when simulator request boilerplate overlaps every skill", () => {
+    const learned = [
+      {
+        name: "skill-package",
+        topicTokens: [
+          "accept", "as", "build", "correct", "deliver", "depot", "finish", "grad", "inspect",
+          "mcp", "need", "only", "package", "recipient", "result", "sim", "simulator", "tool", "use",
+        ],
+      },
+      {
+        name: "skill-threat",
+        topicTokens: [
+          "action", "alert", "baseline", "case", "close", "current", "distinguish", "false", "finish",
+          "from", "grad", "investigate", "justifi", "mcp", "only", "open", "positive", "result", "sim",
+          "simulator", "soc", "take", "telemetry", "th", "tool", "true", "use",
+        ],
+      },
+      {
+        name: "skill-wildfire",
+        topicTokens: [
+          "account", "as", "assign", "change", "choose", "containment", "declare", "evacuation", "finish",
+          "fire", "forecast", "fuel", "grad", "incident", "inspect", "mcp", "need", "only", "open", "plan",
+          "resource", "result", "safe", "sim", "simulator", "spread", "terrain", "tool", "use", "weather", "wildfire",
+        ],
+      },
+      {
+        name: "skill-relief",
+        topicTokens: [
+          "allocate", "assess", "confirm", "convoy", "current", "delivery", "dispatch", "field", "finish",
+          "grad", "humanitarian", "mcp", "need", "only", "open", "operation", "prioritize", "relief", "report",
+          "reroute", "result", "sim", "simulator", "source", "supply", "tool", "use", "verify",
+        ],
+      },
+    ];
+    const requests = [
+      ["skill-package", "Use only depot-sim tools to accept the new package, inspect the building as needed, deliver it to the correct recipient, and finish with the simulator graded result."],
+      ["skill-threat", "Use only th-sim tools to open and investigate the new SOC alert, distinguish true from false positive with telemetry and baselines, take only justified action, close the case, and finish with the simulator graded result."],
+      ["skill-wildfire", "Use only fire-sim tools to open the new wildfire incident, inspect weather, fuels, terrain, spread and resources, choose a safe plan accounting for forecast changes, assign resources and evacuation as needed, declare containment, and finish with the simulator graded result."],
+      ["skill-relief", "Use only relief-sim tools to open the new humanitarian operation, verify field-report sources, assess needs, prioritize, reroute and allocate supplies, dispatch the convoy, confirm delivery, and finish with the simulator graded result."],
+    ] as const;
+
+    for (const [expected, request] of requests) {
+      const credited = topicMatchScores(request, learned)
+        .filter((score) => score.credited)
+        .map((score) => score.name);
+      expect(credited).toEqual([expected]);
+    }
   });
 
   it("credits nothing (but still scores every skill) for an empty/ungroupable turn", () => {

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import { findEnvKeys, getProviders } from "@earendil-works/pi-ai/compat";
 import { createSecretManager, createSecretManagerWithMutableHandle } from "@comis/core";
 import {
+  ComisCredentialStore,
   createAuthStorageAdapter,
   getProviderSecretNames,
   getProvidersForSecretName,
@@ -106,11 +106,11 @@ describe("createAuthStorageAdapter", () => {
     expect(await storage.getApiKey("anthropic")).toBe("custom-key");
   });
 
-  it("returns an AuthStorage instance", () => {
+  it("returns a ComisCredentialStore instance", () => {
     const secretManager = createSecretManager({});
     const storage = createAuthStorageAdapter({ secretManager });
 
-    expect(storage).toBeInstanceOf(AuthStorage);
+    expect(storage).toBeInstanceOf(ComisCredentialStore);
   });
 
   it("keeps Comis key precedence while accepting catalog aliases", () => {
@@ -168,6 +168,45 @@ describe("createAuthStorageAdapter", () => {
       "cloudflare-workers-ai",
       "cloudflare-ai-gateway",
     ]);
+    expect(getProvidersForSecretName("AWS_REGION")).toContain("amazon-bedrock");
+  });
+
+  it("bridges a managed Bedrock bearer token into the pi credential key", async () => {
+    const storage = createAuthStorageAdapter({
+      secretManager: createSecretManager({
+        AWS_BEARER_TOKEN_BEDROCK: "test-bedrock-bearer",
+      }),
+    });
+
+    await expect(storage.read("amazon-bedrock")).resolves.toEqual({
+      type: "api_key",
+      key: "test-bedrock-bearer",
+    });
+  });
+
+  it("carries optional Bedrock region and profile values into credential env", async () => {
+    const storage = createAuthStorageAdapter({
+      secretManager: createSecretManager({
+        AWS_REGION: "il-central-1",
+        AWS_PROFILE: "bedrock-test-profile",
+      }),
+    });
+
+    await expect(storage.read("amazon-bedrock")).resolves.toEqual({
+      type: "api_key",
+      env: {
+        AWS_REGION: "il-central-1",
+        AWS_PROFILE: "bedrock-test-profile",
+      },
+    });
+  });
+
+  it("leaves Bedrock absent when no managed credential values are stored", async () => {
+    const storage = createAuthStorageAdapter({
+      secretManager: createSecretManager({}),
+    });
+
+    await expect(storage.read("amazon-bedrock")).resolves.toBeUndefined();
   });
 
   it("attaches Cloudflare routing identifiers to stored credentials", () => {
@@ -395,5 +434,135 @@ describe("createAuthStorageAdapter", () => {
     });
 
     expect(await storage.getApiKey("nvidia")).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ComisCredentialStore — pi-ai CredentialStore contract
+// ---------------------------------------------------------------------------
+// pi's ModelRuntime resolves request auth live through this interface
+// (read/list/modify/delete), so a sync write into the store must be visible
+// to the very next read. These tests pin that contract plus the
+// runtime-override layer the rotation adapter and OAuth pre-resolve write to.
+
+describe("ComisCredentialStore — CredentialStore contract", () => {
+  it("read() returns the stored credential and undefined when absent", async () => {
+    const store = new ComisCredentialStore();
+    store.set("anthropic", { type: "api_key", key: "sk-1" });
+
+    await expect(store.read("anthropic")).resolves.toEqual({ type: "api_key", key: "sk-1" });
+    await expect(store.read("openai")).resolves.toBeUndefined();
+  });
+
+  it("read() surfaces a runtime override as an api_key credential, keeping the stored env", async () => {
+    const store = new ComisCredentialStore();
+    store.set("cloudflare-ai-gateway", {
+      type: "api_key",
+      key: "stored-key",
+      env: { CLOUDFLARE_ACCOUNT_ID: "acct", CLOUDFLARE_GATEWAY_ID: "gw" },
+    });
+    store.setRuntimeApiKey("cloudflare-ai-gateway", "rotated-key");
+
+    await expect(store.read("cloudflare-ai-gateway")).resolves.toEqual({
+      type: "api_key",
+      key: "rotated-key",
+      env: { CLOUDFLARE_ACCOUNT_ID: "acct", CLOUDFLARE_GATEWAY_ID: "gw" },
+    });
+  });
+
+  it("a sync setRuntimeApiKey is visible to the next read() — the rotation contract", async () => {
+    const store = new ComisCredentialStore();
+    store.setRuntimeApiKey("anthropic", "key-A");
+    await expect(store.read("anthropic")).resolves.toMatchObject({ key: "key-A" });
+
+    store.setRuntimeApiKey("anthropic", "key-B");
+    await expect(store.read("anthropic")).resolves.toMatchObject({ key: "key-B" });
+
+    store.removeRuntimeApiKey("anthropic");
+    await expect(store.read("anthropic")).resolves.toBeUndefined();
+  });
+
+  it("preserves an OAuth runtime credential for an OAuth-only SDK provider", async () => {
+    const store = new ComisCredentialStore();
+    store.setRuntimeOAuthCredential("openai-codex", {
+      access: "test-access-token",
+      refresh: "test-refresh-token",
+      expires: 4_000_000_000_000,
+    });
+
+    await expect(store.read("openai-codex")).resolves.toEqual({
+      type: "oauth",
+      access: "test-access-token",
+      refresh: "test-refresh-token",
+      expires: 4_000_000_000_000,
+    });
+    await expect(store.list()).resolves.toEqual([
+      { providerId: "openai-codex", type: "oauth" },
+    ]);
+  });
+
+  it("list() unions stored credentials and runtime overrides without duplicates", async () => {
+    const store = new ComisCredentialStore();
+    store.set("anthropic", { type: "api_key", key: "sk-1" });
+    store.setRuntimeApiKey("anthropic", "override");
+    store.setRuntimeApiKey("openai", "runtime-only");
+
+    const infos = await store.list();
+    const ids = infos.map((i) => i.providerId).sort();
+    expect(ids).toEqual(["anthropic", "openai"]);
+    expect(infos.every((i) => i.type === "api_key")).toBe(true);
+  });
+
+  it("modify() persists the returned credential and serializes per provider", async () => {
+    const store = new ComisCredentialStore();
+    store.set("anthropic", { type: "api_key", key: "v0" });
+
+    const order: string[] = [];
+    const slow = store.modify("anthropic", async (current) => {
+      await new Promise((r) => setTimeout(r, 30));
+      order.push("slow");
+      return { type: "api_key", key: `${(current as { key?: string })?.key}-slow` };
+    });
+    const fast = store.modify("anthropic", async (current) => {
+      order.push("fast");
+      return { type: "api_key", key: `${(current as { key?: string })?.key}-fast` };
+    });
+
+    await Promise.all([slow, fast]);
+    // The second modify must observe the first one's write.
+    expect(order).toEqual(["slow", "fast"]);
+    expect(store.get("anthropic")).toEqual({ type: "api_key", key: "v0-slow-fast" });
+  });
+
+  it("modify() returning undefined leaves the entry unchanged and resolves the current value", async () => {
+    const store = new ComisCredentialStore();
+    store.set("anthropic", { type: "api_key", key: "keep" });
+
+    const result = await store.modify("anthropic", async () => undefined);
+    expect(result).toEqual({ type: "api_key", key: "keep" });
+    expect(store.get("anthropic")).toEqual({ type: "api_key", key: "keep" });
+  });
+
+  it("delete() removes both the stored credential and any runtime override", async () => {
+    const store = new ComisCredentialStore();
+    store.set("anthropic", { type: "api_key", key: "sk-1" });
+    store.setRuntimeApiKey("anthropic", "override");
+
+    await store.delete("anthropic");
+    await expect(store.read("anthropic")).resolves.toBeUndefined();
+    expect(store.getStoredApiKey("anthropic")).toBeUndefined();
+  });
+
+  it("getApiKey({includeFallback:false}) never consults the ambient environment", async () => {
+    const store = new ComisCredentialStore();
+    const saved = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "ambient-key";
+    try {
+      expect(await store.getApiKey("anthropic", { includeFallback: false })).toBeUndefined();
+      expect(await store.getApiKey("anthropic")).toBe("ambient-key");
+    } finally {
+      if (saved !== undefined) process.env.ANTHROPIC_API_KEY = saved;
+      else delete process.env.ANTHROPIC_API_KEY;
+    }
   });
 });

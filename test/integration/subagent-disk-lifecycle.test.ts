@@ -29,7 +29,7 @@ import {
   utimesSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 
 import { sweepResultFiles, createResultCondenser } from "@comis/agent";
 
@@ -84,6 +84,7 @@ describe("subagent disk lifecycle integration", () => {
         "The research task found 5 key results. Finding 1: AI safety requires interpretability. Finding 2: RLHF has limitations. Finding 3: Constitutional AI shows promise. Finding 4: Scalable oversight is critical. Finding 5: Adversarial testing improves robustness.",
       task: "Research AI safety",
       runId: "test-run-001",
+      tenantId: "test-integration",
       sessionKey: "test-integration:user1:ch1",
       agentId: "researcher",
     });
@@ -259,6 +260,7 @@ describe("subagent disk lifecycle integration", () => {
         fullResult: "End-to-end test: the subagent completed analysis of market data.",
         task: "Analyze market data",
         runId: "e2e-run-001",
+        tenantId: "test-e2e",
         sessionKey: "test-e2e:user1:ch1",
         agentId: "analyst",
       });
@@ -276,13 +278,10 @@ describe("subagent disk lifecycle integration", () => {
       // Condenser-written file should be removed
       expect(existsSync(result.diskPath)).toBe(false);
 
-      // Session directory should be removed (was the only file)
-      // The session dir is the parent of the file
-      const sessionDir = join(
-        tmpDir5,
-        "subagent-results",
-        "test-e2e_user1_ch1",
-      );
+      // Session directory should be removed (was the only file).
+      // The session dir is the parent of the persisted file — full results
+      // persist under subagent-results/{tenantId}/{runId}.json.
+      const sessionDir = dirname(result.diskPath);
       expect(existsSync(sessionDir)).toBe(false);
     } finally {
       rmSync(tmpDir5, { recursive: true, force: true });

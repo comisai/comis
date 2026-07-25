@@ -72,6 +72,8 @@ export interface OutcomeObservation {
   confidence: number;
   /** Optional sender-trust tag (reaction/correction provenance); never raises trust. */
   senderTrust?: string;
+  /** Whether the operator explicitly named the sender that supplied senderTrust. */
+  senderTrustExplicit?: boolean;
   /** Opaque recalled-memory ids attributed to this trajectory — ids only, never bodies. */
   recalledIds?: string[];
   /** Opaque used-skill ids attributed to this trajectory — ids only, never bodies; absent when no skill use was attributed. */
@@ -164,6 +166,9 @@ export interface OutcomeSignalPort {
    * the stored value was corrupt — it degrades to absent, never throws). The reflection
    * source attaches it onto each `ReflectionSourceTrajectory` so procedure information
    * reaches the reflection engine (whose string transcript drops tool_use/tool_result blocks).
+   * Each entry also carries the content-free trust tier and explicit-map bit resolved
+   * at ingress. Canonical principal session ids intentionally cannot be reversed to raw
+   * channel sender ids, so reflection consumes the captured decision instead.
    *
    * `observedAt` is the turn's ledger timestamp (MAX `observed_at` across the turn's
    * source rows, epoch ms) — the PER-TURN WINDOW KEY the reflection source builder
@@ -173,5 +178,12 @@ export interface OutcomeSignalPort {
    */
   listTrajectoryIds?(
     scope: LearningScope,
-  ): Promise<Result<Array<{ trajectoryId: string; sessionId: string; observedAt: number; procedureDescriptor?: ReadonlyArray<string> }>, Error>>;
+  ): Promise<Result<Array<{
+    trajectoryId: string;
+    sessionId: string;
+    observedAt: number;
+    senderTrust?: string;
+    senderTrustExplicit?: boolean;
+    procedureDescriptor?: ReadonlyArray<string>;
+  }>, Error>>;
 }

@@ -3,11 +3,7 @@ import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { sharedStyles } from "../../styles/shared.js";
 import type { SessionListItem, DataTableColumn } from "../../api/types/index.js";
-import {
-  parseSessionKeyString,
-  formatSessionDisplayName,
-  computeSessionStatus,
-} from "../../utils/session-key-parser.js";
+import { computeSessionStatus } from "../../utils/session-key-parser.js";
 
 // Side-effect imports to register child custom elements
 import "../data/ic-data-table.js";
@@ -37,21 +33,15 @@ const STATUS_DOT_COLORS: Record<string, string> = {
 /** Column definitions for the session data table. */
 const SESSION_COLUMNS: DataTableColumn<SessionListItem>[] = [
   {
-    key: "sessionKey",
+    key: "conversationRef",
     label: "Session",
     sortable: true,
     render: (value: unknown, row: SessionListItem) => {
       const raw = String(value ?? "");
-      const parsed = parseSessionKeyString(raw);
-      const displayName = parsed
-        ? formatSessionDisplayName(parsed)
-        : raw.length > 15
-          ? raw.slice(0, 12) + "..."
-          : raw;
-      const channelLabel = parsed?.channelId ?? row.kind;
+      const displayName = raw.length > 15 ? raw.slice(0, 12) + "..." : raw;
       return html`<span title=${raw}>
         <strong style="font-size: var(--ic-text-sm);">${displayName}</strong>
-        <span style="font-size: var(--ic-text-xs); color: var(--ic-text-dim); margin-left: 4px;">${channelLabel}</span>
+        <span style="font-size: var(--ic-text-xs); color: var(--ic-text-dim); margin-left: 4px;">${row.kind}</span>
       </span>`;
     },
   },
@@ -77,11 +67,11 @@ const SESSION_COLUMNS: DataTableColumn<SessionListItem>[] = [
   },
   {
     key: "kind",
-    label: "Channel",
+    label: "Kind",
     sortable: true,
     render: (value: unknown) => {
-      const channel = String(value ?? "");
-      return html`<ic-tag variant=${channel}>${channel}</ic-tag>`;
+      const kind = String(value ?? "");
+      return html`<ic-tag variant=${kind}>${kind}</ic-tag>`;
     },
   },
   {

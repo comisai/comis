@@ -19,7 +19,7 @@
  * @module
  */
 
-import { type KnownProvider } from "@earendil-works/pi-ai";
+import type { BuiltinProvider } from "@earendil-works/pi-ai/compat";
 import { getModels } from "@earendil-works/pi-ai/compat";
 
 export interface ModelIdNormalizationResult {
@@ -85,9 +85,9 @@ export function normalizeModelId(
   }
 
   // Resolve against SDK registry (sync -- reads from static generated registry).
-  // Cast to KnownProvider -- unknown providers already returned passthrough above
+  // Cast to BuiltinProvider -- unknown providers already returned passthrough above
   // (no FAMILY_ALIASES entry), so this cast is safe for all reachable code paths.
-  const models = getModels(provider as KnownProvider);
+  const models = getModels(provider as BuiltinProvider);
   const matches = models
     .filter((m) => m.id.toLowerCase().startsWith(prefix))
     .sort((a, b) => b.id.localeCompare(a.id));

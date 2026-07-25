@@ -2,24 +2,17 @@
 /**
  * Context Engine section sub-editor for agent configuration.
  *
- * Renders all 27 ContextEngineConfigSchema fields organized in 4 groups:
- * - Core (2): enabled, version (mode selector)
+ * Renders the canonical context-engine settings:
+ * - Core: enabled
  * - Shared (3): thinkingKeepTurns, compactionModel, evictionMinAge
- * - Pipeline-mode (6): historyTurns, observationKeepWindow, etc.
- * - DAG-mode (16): freshTailTurns, contextThreshold, etc.
- *
- * Pipeline/DAG groups show/hide based on the version selector.
+ * - Durable context settings: freshTailTurns, contextThreshold, etc.
  */
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import {
   renderNumberField,
   renderTextField,
-  renderTextarea,
-  renderSelectField,
   renderCheckbox,
-  getField,
-  nothing,
 } from "./editor-helpers.js";
 import type { EditorForm, FieldChangeDetail } from "./editor-types.js";
 
@@ -128,22 +121,9 @@ export class IcAgentContextEngineEditor extends LitElement {
   };
 
   override render() {
-    const version = getField<string>(this.form, "contextEngine.version", "dag");
-
     return html`
       <!-- Core fields (always visible) -->
       ${renderCheckbox(this.form, "contextEngine.enabled", "Enabled", this._onChange)}
-      ${renderSelectField(
-        this.form,
-        "contextEngine.version",
-        "Mode",
-        [
-          { value: "pipeline", label: "Pipeline" },
-          { value: "dag", label: "DAG" },
-        ],
-        this._onChange,
-      )}
-
       <hr class="divider" />
 
       <!-- Shared fields (always visible) -->
@@ -162,50 +142,14 @@ export class IcAgentContextEngineEditor extends LitElement {
         placeholder: "15",
       })}
 
-      ${version === "pipeline" ? this._renderPipelineFields() : nothing}
-      ${version === "dag" ? this._renderDagFields() : nothing}
+      ${this._renderDurableContextFields()}
     `;
   }
 
-  private _renderPipelineFields() {
+  private _renderDurableContextFields() {
     return html`
       <hr class="divider" />
-      <div class="section-title">Pipeline Settings</div>
-      ${renderNumberField(this.form, "contextEngine.historyTurns", "History Turns", this._onChange, {
-        min: "3",
-        max: "100",
-        placeholder: "15",
-      })}
-      ${renderNumberField(this.form, "contextEngine.observationKeepWindow", "Observation Keep Window", this._onChange, {
-        min: "1",
-        max: "50",
-        placeholder: "25",
-      })}
-      ${renderNumberField(this.form, "contextEngine.observationTriggerChars", "Observation Trigger Chars", this._onChange, {
-        min: "50000",
-        max: "1000000",
-        placeholder: "120000",
-      })}
-      ${renderNumberField(this.form, "contextEngine.observationDeactivationChars", "Observation Deactivation Chars", this._onChange, {
-        min: "20000",
-        max: "500000",
-        placeholder: "80000",
-      })}
-      ${renderNumberField(this.form, "contextEngine.compactionCooldownTurns", "Compaction Cooldown Turns", this._onChange, {
-        min: "1",
-        max: "50",
-        placeholder: "5",
-      })}
-      ${renderTextarea(this.form, "contextEngine.historyTurnOverrides", "History Turn Overrides (JSON)", this._onChange, {
-        placeholder: '{"agentId": 20}',
-      })}
-    `;
-  }
-
-  private _renderDagFields() {
-    return html`
-      <hr class="divider" />
-      <div class="section-title">DAG Settings</div>
+      <div class="section-title">Durable Context Settings</div>
       <div class="field-row">
         ${renderNumberField(this.form, "contextEngine.freshTailTurns", "Fresh Tail Turns", this._onChange, {
           min: "1",

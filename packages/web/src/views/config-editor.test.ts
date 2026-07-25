@@ -128,7 +128,7 @@ const MOCK_SCHEMA: Record<string, unknown> = {
 /* ------------------------------------------------------------------ */
 
 /** Config-editor-specific mock that routes RPC methods to test data. */
-function createConfigMockRpcClient(callImpl?: (...args: unknown[]) => unknown): ReturnType<typeof createMockRpcClient> {
+function createConfigMockRpcClient(callImpl?: (...args: never[]) => unknown): ReturnType<typeof createMockRpcClient> {
   return createMockRpcClient(
     callImpl ??
       (async (method: string) => {

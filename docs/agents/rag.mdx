@@ -52,7 +52,8 @@ it with everything it has ever seen.
 The total amount of memory context is also capped by `maxContextChars` (default
 4000 characters). This prevents memories from taking up too much of the agent's
 thinking space, leaving room for your current conversation and the agent's
-instructions.
+instructions. The cap covers all recall placement together, including any
+same-sender top hit placed beside the current message.
 
 Each memory also has a trust level. By default, only **system** memories
 (created by Comis itself) and **learned** memories (from your conversations) are
@@ -103,15 +104,19 @@ For developers and operators who want to know what is actually happening, the
    only `system` and `learned` memories pass; `external` memories (web pages,
    third-party API responses) are excluded unless you opt in.
 7. **Dedup + budget** -- Hits are deduplicated by content fingerprint (first 200
-   characters), then appended to a memory section until `maxResults` or
-   `maxContextChars` is reached. If a single hit would push the section over
-   budget, it is dropped (not truncated).
+   characters), then selected until `maxResults` or `maxContextChars` is
+   reached. The character budget covers inline and system-section recall
+   together. If a single hit would push the combined recall over budget, it is
+   dropped (not truncated).
 8. **Provenance and sanitization** -- Each included memory is formatted with its
    date, trust level, and source. External content is wrapped in safety markers
    so the model treats it as untrusted input.
-9. **Injection** -- The formatted memory section is appended to the system
-   prompt as the dynamic preamble (so it never invalidates the cached prefix --
-   see [Compaction](/agents/compaction#cache-stable-prompt-architecture)).
+9. **Injection** -- A sufficiently relevant top hit with matching sender
+   provenance may be placed beside the current message. Unknown-sender,
+   cross-sender, and remaining hits stay in the annotated dynamic preamble, so
+   their provenance warning remains attached and they never invalidate the
+   cached prefix. See
+   [Compaction](/agents/compaction#cache-stable-prompt-architecture).
 
 The orchestrator is in `packages/agent/src/rag/memory-recall.ts`, and the
 underlying lane search engine lives in `packages/memory/src/hybrid-search.ts`.

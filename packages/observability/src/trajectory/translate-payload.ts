@@ -26,6 +26,7 @@ import { translateCacheBreakPayload } from "./translate-cache-break-payload.js";
 import { translateImagePayload } from "./translate-image-payload.js";
 import { translateOrchestrationPayload } from "./translate-orchestration-payload.js";
 import { translateSpendPayload } from "./translate-spend-payload.js";
+import { translateTaskPayload } from "./translate-task-payload.js";
 import { translateVideoPayload } from "./translate-video-payload.js";
 import { translateVisionPayload } from "./translate-vision-payload.js";
 import { translateVoicePayload } from "./translate-voice-payload.js";
@@ -364,6 +365,17 @@ export function translatePayload(
       // the notice BODY never crosses the bus.
       return { taskId: payload.taskId, toolName: payload.toolName, notified: payload.notified, reason: payload.reason };
 
+    case "scheduler:task_extraction_completed":
+    case "scheduler:task_extraction_failed":
+    case "scheduler:task_check_started":
+    case "scheduler:task_check_terminal":
+    case "scheduler:task_delivery_history_failed":
+    case "scheduler:task_cap_deferred":
+    case "scheduler:task_store_degraded":
+    case "scheduler:task_cancelled":
+    case "scheduler:task_store_reset":
+      return translateTaskPayload(eventName, payload);
+
     case "terminal:drive_promoted":
       // Terminal drive promotion → trajectory. Content-free: the reason enum
       // ONLY. The terminal sessionId, agentId, and raw timestamp are envelope/
@@ -376,6 +388,14 @@ export function translatePayload(
       // terminal sessionId, agentId, and raw timestamp are envelope/correlation ids
       // (the recorder envelope carries the agent session) — never echoed.
       return { reason: payload.reason, durationMs: payload.durationMs };
+
+    case "delivery:outward_ledger_transition":
+      return {
+        rootRunId: payload.rootRunId,
+        stepIndex: payload.stepIndex,
+        transition: payload.transition,
+        outcome: payload.outcome,
+      };
 
     case "delivery:enqueued":
       return {

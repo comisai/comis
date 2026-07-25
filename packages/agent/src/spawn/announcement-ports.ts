@@ -21,25 +21,72 @@
  * @module
  */
 
+import type { Result } from "@comis/shared";
+import type { ChannelEndpoint, ConversationLocator } from "@comis/core";
+
+export interface AnnouncementOperationIdentity {
+  agentId: string;
+  rootRunId: string;
+  stepIndex: number;
+}
+
+export interface GovernedCompletionAnnouncementRequest {
+  agentId: string;
+  callerSessionKey: string;
+  callerConversation: ConversationLocator;
+  destinationEndpoint: ChannelEndpoint;
+  runId: string;
+  channelType: string;
+  channelId: string;
+  text: string;
+  options?: { threadId?: string };
+  partId?: string;
+  attachment?: CompletionAttachmentShape;
+}
+
+/** Generated-file reference; daemon wiring validates and snapshots it before egress. */
+export interface CompletionAttachmentShape {
+  sourceAgentId: string;
+  path: string;
+}
+
+export type GovernedCompletionAnnouncementOutcome =
+  | { delivered: true; identity: AnnouncementOperationIdentity }
+  | {
+      delivered: false;
+      identity?: AnnouncementOperationIdentity;
+      failure: string;
+    };
+
+export type SendGovernedCompletionAnnouncement = (
+  request: GovernedCompletionAnnouncementRequest,
+) => Promise<Result<GovernedCompletionAnnouncementOutcome, Error>>;
+
 /**
  * Single announcement enqueued onto the batcher. Mirrors the shape of
  * `QueuedAnnouncement` defined in
  * `packages/orchestrator/src/cross-session/announcement-batcher.ts` (the
  * `enqueue` argument that the batcher consumes).
  *
- * NOTE: `callerSessionKey` is the FORMATTED string form (caller uses
- * `parseFormattedSessionKey` to convert it to `SessionKey` when needed),
- * matching the orchestrator's `QueuedAnnouncement.callerSessionKey: string`.
+ * `callerSessionKey` is a display and idempotency projection; canonical
+ * conversation authority travels separately in `callerConversation`.
  */
 export interface QueuedAnnouncementShape {
   announcementText: string;
   announceChannelType: string;
   announceChannelId: string;
+  announceThreadId?: string;
   callerAgentId: string;
   callerSessionKey: string;
+  callerConversation: ConversationLocator;
+  /** Immutable channel endpoint captured from the authenticated caller turn. */
+  destinationEndpoint: ChannelEndpoint;
+  /** Response locale resolved for the originating user turn. */
+  resolvedLanguage?: string;
   runId: string;
   /** Idempotency key `${callerSessionKey}::${runId}`. Mirrors QueuedAnnouncement.idempotencyKey — keep in lockstep. */
   idempotencyKey?: string;
+  attachments?: CompletionAttachmentShape[];
 }
 
 /**
@@ -48,7 +95,7 @@ export interface QueuedAnnouncementShape {
  * (`createAnnouncementBatcher`).
  */
 export interface AnnouncementBatcher {
-  enqueue(params: QueuedAnnouncementShape): void;
+  enqueue(params: QueuedAnnouncementShape): Promise<Result<"queued" | "retained", Error>>;
   flush(): Promise<void>;
   shutdown(): Promise<void>;
   readonly pending: number;
@@ -56,6 +103,12 @@ export interface AnnouncementBatcher {
   hasDelivered(key: string): boolean;
   /** Mark an idempotency key delivered (success only). Mirrors the orchestrator batcher — keep in lockstep. */
   markDelivered(key: string): void;
+  /**
+   * Is this key still owned by the announcement pipeline (queued/mid-admission/
+   * retained-uncertain)? While true the failure sweep must not send its own
+   * notice for the key. Mirrors the orchestrator batcher — keep in lockstep.
+   */
+  hasPending?(key: string): boolean;
 }
 
 /**
@@ -67,14 +120,18 @@ export interface DeadLetterEntryShape {
   announcementText: string;
   channelType: string;
   channelId: string;
+  agentId?: string;
   runId: string;
   failedAt: number;
   attemptCount: number;
   lastAttemptAt: number;
   lastError?: string;
   threadId?: string;
+  extra?: Record<string, unknown>;
   /** Idempotency key `${callerSessionKey}::${runId}`. Mirrors DeadLetterEntry.idempotencyKey — keep in lockstep. */
   idempotencyKey?: string;
+  rootRunId?: string;
+  stepIndex?: number;
 }
 
 /**
@@ -83,7 +140,31 @@ export interface DeadLetterEntryShape {
  * (`createAnnouncementDeadLetterQueue`).
  */
 export interface AnnouncementDeadLetterQueue {
-  enqueue(entry: Omit<DeadLetterEntryShape, "id" | "lastAttemptAt">): void;
+  enqueue(entry: Omit<DeadLetterEntryShape, "id" | "lastAttemptAt">): Promise<Result<void, Error>>;
+  reserveDecision(entry: {
+    idempotencyKey: string;
+    agentId: string;
+    runId: string;
+    announcementText: string;
+    channelType: string;
+    channelId: string;
+    failedAt: number;
+    threadId?: string;
+  }): Promise<Result<{ created: boolean }, Error>>;
+  lookupDecision(idempotencyKey: string): Promise<Result<{
+    idempotencyKey: string;
+    agentId: string;
+    runId: string;
+    announcementText: string;
+    channelType: string;
+    channelId: string;
+    failedAt: number;
+    threadId?: string;
+  } | undefined, Error>>;
+  resolveDecision(
+    idempotencyKey: string,
+    outcome: "receipt_committed" | "no_reply",
+  ): Promise<Result<boolean, Error>>;
   drain(
     sendToChannel: (
       type: string,

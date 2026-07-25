@@ -593,19 +593,24 @@ describe("createSqliteEmbeddingCache", () => {
 describe("cache maintenance", () => {
   let db: Database.Database;
   let inner: EmbeddingPort;
+  let cache: EmbeddingPort | undefined;
 
   beforeEach(() => {
     db = createTestDb();
     inner = createMockInner();
+    cache = undefined;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // An assertion failure must not leave the prune interval running against a
+    // database that this hook is about to close.
+    await cache?.dispose?.();
     // Ensure db is closed to avoid leaking handles
     try { db.close(); } catch { /* already closed */ }
   });
 
   it("recordAccess buffers and does not write on every hit", async () => {
-    const cache = createSqliteEmbeddingCache(inner, {
+    cache = createSqliteEmbeddingCache(inner, {
       db,
       maxEntries: 50_000,
       pruneIntervalMs: 600_000, // large -- prevent timer interference
@@ -644,7 +649,7 @@ describe("cache maintenance", () => {
   });
 
   it("lazy buffer flushes at 100-entry threshold", async () => {
-    const cache = createSqliteEmbeddingCache(inner, {
+    cache = createSqliteEmbeddingCache(inner, {
       db,
       maxEntries: 50_000,
       pruneIntervalMs: 600_000,
@@ -678,7 +683,7 @@ describe("cache maintenance", () => {
 
   it("LRU prune removes least-recently-accessed entries", async () => {
     // Use short pruneIntervalMs to trigger prune via timer
-    const cache = createSqliteEmbeddingCache(inner, {
+    cache = createSqliteEmbeddingCache(inner, {
       db,
       maxEntries: 5,
       pruneIntervalMs: 30,
@@ -726,7 +731,7 @@ describe("cache maintenance", () => {
 
   it("prune flushes lazy buffer before eviction", async () => {
     // maxEntries: 3, insert 5 texts, hit the oldest one to refresh it
-    const cache = createSqliteEmbeddingCache(inner, {
+    cache = createSqliteEmbeddingCache(inner, {
       db,
       maxEntries: 3,
       pruneIntervalMs: 30,
@@ -775,15 +780,16 @@ describe("cache maintenance", () => {
   });
 
   it("TTL expiration removes old entries", async () => {
-    const cache = createSqliteEmbeddingCache(inner, {
+    cache = createSqliteEmbeddingCache(inner, {
       db,
       maxEntries: 50_000,
-      ttlMs: 100, // 100ms TTL for test speed
+      ttlMs: 1_000,
       pruneIntervalMs: 30,
     });
 
-    // Insert 3 "old" entries with created_at in the past (> 100ms ago)
-    const oldTime = Date.now() - 500;
+    // Keep a wide margin between expired and recent rows so event-loop load
+    // cannot age the recent fixture past the TTL before the assertion runs.
+    const oldTime = Date.now() - 5_000;
     for (let i = 0; i < 3; i++) {
       insertRawRow(db, `old-text-${i}`, {
         createdAt: oldTime,
@@ -820,7 +826,7 @@ describe("cache maintenance", () => {
 
   it("WAL checkpoint runs after prune without error", async () => {
     // This test verifies prune + WAL checkpoint completes without throwing
-    const cache = createSqliteEmbeddingCache(inner, {
+    cache = createSqliteEmbeddingCache(inner, {
       db,
       maxEntries: 2,
       pruneIntervalMs: 30,
@@ -847,7 +853,7 @@ describe("cache maintenance", () => {
 
   it("dispose flushes buffer and clears timer", async () => {
     const disposeSpy = inner.dispose as ReturnType<typeof vi.fn>;
-    const cache = createSqliteEmbeddingCache(inner, {
+    cache = createSqliteEmbeddingCache(inner, {
       db,
       maxEntries: 50_000,
       pruneIntervalMs: 600_000,
@@ -886,7 +892,7 @@ describe("cache maintenance", () => {
 
   it("dispose forwards to inner.dispose exactly once", async () => {
     const disposeSpy = inner.dispose as ReturnType<typeof vi.fn>;
-    const cache = createSqliteEmbeddingCache(inner, {
+    cache = createSqliteEmbeddingCache(inner, {
       db,
       maxEntries: 50_000,
       pruneIntervalMs: 600_000,

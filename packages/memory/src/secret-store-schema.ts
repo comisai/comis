@@ -16,6 +16,17 @@
 import type Database from "better-sqlite3";
 import type { SecretsCrypto, EncryptedSecret } from "@comis/core";
 import { systemNowMs } from "@comis/core";
+import { z } from "zod";
+import { createRowMapper } from "./row-mapper.js";
+
+export const EncryptedSecretProjectionSchema = z.strictObject({
+  ciphertext: z.instanceof(Buffer),
+  iv: z.instanceof(Buffer),
+  auth_tag: z.instanceof(Buffer),
+  salt: z.instanceof(Buffer),
+});
+
+const encryptedSecretProjectionMapper = createRowMapper(EncryptedSecretProjectionSchema);
 
 /** Well-known canary row name -- excluded from list/decryptAll operations. */
 export const CANARY_NAME = "__comis_canary__";
@@ -96,13 +107,17 @@ export function validateCanary(db: Database.Database, crypto: SecretsCrypto): vo
   );
 
   // The INSERT above guarantees a canary row exists; read + validate it.
-  const row = db
-    .prepare(
-      "SELECT ciphertext, iv, auth_tag, salt FROM secrets WHERE name = ?",
-    )
-    .get(CANARY_NAME) as
-    | { ciphertext: Buffer; iv: Buffer; auth_tag: Buffer; salt: Buffer }
-    | undefined;
+  const parsed = encryptedSecretProjectionMapper.parseOptionalRow(
+    db
+      .prepare(
+        "SELECT ciphertext, iv, auth_tag, salt FROM secrets WHERE name = ?",
+      )
+      .get(CANARY_NAME),
+  );
+  if (!parsed.ok) {
+    throw new Error(`DECRYPTION_FAILED: invalid canary row at ${parsed.error.path}`);
+  }
+  const row = parsed.value;
 
   if (!row) {
     throw new Error("DECRYPTION_FAILED: secrets canary missing after seed");

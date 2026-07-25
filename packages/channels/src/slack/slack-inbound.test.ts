@@ -169,6 +169,7 @@ describe("slack-adapter -- message + block_actions runWithContext wrap", () => {
     it("runs handlers inside runWithContext({ traceId, channelType: \"slack\" })", async () => {
       let ctxTraceId: string | undefined;
       let ctxChannelType: string | undefined;
+      let ctxTrustLevel: string | undefined;
       let stampedTraceId: string | undefined;
       const normalized = makeNormalized();
       vi.mocked(mapSlackToNormalized).mockReturnValue(normalized);
@@ -178,6 +179,7 @@ describe("slack-adapter -- message + block_actions runWithContext wrap", () => {
         const ctx = tryGetContext();
         ctxTraceId = ctx?.traceId;
         ctxChannelType = ctx?.channelType;
+        ctxTrustLevel = ctx?.trustLevel;
         stampedTraceId = m.metadata.traceId;
       });
       await adapter.start();
@@ -190,6 +192,7 @@ describe("slack-adapter -- message + block_actions runWithContext wrap", () => {
       expect(ctxTraceId).toBeDefined();
       expect(ctxTraceId).toBe(stampedTraceId);
       expect(ctxChannelType).toBe("slack");
+      expect(ctxTrustLevel).toBe("user");
     });
   });
 
@@ -213,6 +216,7 @@ describe("slack-adapter -- message + block_actions runWithContext wrap", () => {
     it("runs handlers inside runWithContext({ traceId, channelType: \"slack\" }) for block actions", async () => {
       let ctxTraceId: string | undefined;
       let ctxChannelType: string | undefined;
+      let ctxTrustLevel: string | undefined;
       let stampedTraceId: string | undefined;
 
       const adapter = createSlackAdapter(makeDeps());
@@ -220,6 +224,7 @@ describe("slack-adapter -- message + block_actions runWithContext wrap", () => {
         const ctx = tryGetContext();
         ctxTraceId = ctx?.traceId;
         ctxChannelType = ctx?.channelType;
+        ctxTrustLevel = ctx?.trustLevel;
         stampedTraceId = m.metadata.traceId;
       });
       await adapter.start();
@@ -232,6 +237,7 @@ describe("slack-adapter -- message + block_actions runWithContext wrap", () => {
       expect(ctxTraceId).toBeDefined();
       expect(ctxTraceId).toBe(stampedTraceId);
       expect(ctxChannelType).toBe("slack");
+      expect(ctxTrustLevel).toBe("user");
     });
   });
 });

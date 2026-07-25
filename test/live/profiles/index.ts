@@ -42,9 +42,8 @@ export const PROFILES: readonly LiveProfile[] = [
   },
   {
     id: "lean-cloud",
-    description: "Lean cloud: pipeline context engine, OpenAI embeddings, voice (Whisper→TTS)",
+    description: "Lean cloud: OpenAI embeddings and voice processing",
     configDelta: {
-      "contextEngine.version": "pipeline",
       "embedding.provider": "openai",
     },
     credentialsRequired: ["OPENAI_API_KEY"],
@@ -53,9 +52,8 @@ export const PROFILES: readonly LiveProfile[] = [
   {
     id: "privacy-device",
     description:
-      "Privacy/on-device: DAG, local embeddings, costFeatures.enabled=false, encrypted storage",
+      "Privacy/on-device: local embeddings, cost features disabled, encrypted storage",
     configDelta: {
-      "contextEngine.version": "dag",
       "embedding.provider": "local",
       "memory.costFeatures.enabled": false,
       "security.storage": "encrypted",

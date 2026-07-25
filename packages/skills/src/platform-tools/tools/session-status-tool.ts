@@ -3,24 +3,22 @@
  * Session Status Tool: View current session information.
  *
  * Delegates to the daemon-side session.status RPC method to retrieve
- * model, token usage, session duration, and step count.
+ * agent, model, token and cost totals, and step usage.
  *
  * @module
  */
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import { jsonResult } from "../tool-helpers.js";
 
 import type { RpcCall } from "./memory-search-tool.js";
 
 // ── Parameter Schema ────────────────────────────────────────────────
 
-const SessionStatusParams = Type.Object({
-  model: Type.Optional(
-    Type.String({ description: "Optional model override for this session" }),
-  ),
-});
+const SessionStatusParams = Type.Object({});
+
+type SessionStatusParamsType = Static<typeof SessionStatusParams>;
 
 // ── Factory ─────────────────────────────────────────────────────────
 
@@ -35,17 +33,15 @@ export function createSessionStatusTool(rpcCall: RpcCall): AgentTool<typeof Sess
     name: "session_status",
     label: "Session Status",
     description:
-      "View your current session status including model, token usage, and session duration.",
+      "View your current session status including agent, model, token and cost totals, and step usage.",
     parameters: SessionStatusParams,
 
     async execute(
       _toolCallId: string,
-      params: Record<string, unknown>,
+      _params: SessionStatusParamsType,
     ): Promise<AgentToolResult<unknown>> {
       try {
-        const p = params as unknown as Record<string, unknown>;
-        const model = typeof p.model === "string" ? p.model : undefined;
-        const result = await rpcCall("session.status", { ...(model && { model }) });
+        const result = await rpcCall("session.status", {});
         return jsonResult(result);
       } catch (err) {
         if (err instanceof Error && err.message.startsWith("[")) throw err;

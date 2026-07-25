@@ -5,7 +5,7 @@
  * `outcome_events` SQL: the idempotent `observe()`
  * upsert (deterministic-hash id + `ON CONFLICT … DO NOTHING` on the UNIQUE
  * `(tenant_id, agent_id, trajectory_id, source, observed_at)` tuple), the scoped
- * precedence-first-then-confidence `resolve()` fusion (fail-closed `unknown`),
+ * precedence-first-then-terminal-recency `resolve()` fusion (fail-closed `unknown`),
  * and the age-based `prune()`.
  *
  * `outcome_events` has NO foreign key (unlike `memory_usefulness → memories`), so
@@ -46,6 +46,9 @@ function makeObs(overrides: Partial<OutcomeObservation> = {}): OutcomeObservatio
     confidence: overrides.confidence ?? 0.9,
     observedAt: overrides.observedAt ?? 1_000,
     ...(overrides.senderTrust !== undefined ? { senderTrust: overrides.senderTrust } : {}),
+    ...(overrides.senderTrustExplicit !== undefined
+      ? { senderTrustExplicit: overrides.senderTrustExplicit }
+      : {}),
     ...(overrides.recalledIds !== undefined ? { recalledIds: overrides.recalledIds } : {}),
     ...(overrides.usedSkillIds !== undefined ? { usedSkillIds: overrides.usedSkillIds } : {}),
     ...(overrides.procedureDescriptor !== undefined ? { procedureDescriptor: overrides.procedureDescriptor } : {}),
@@ -136,6 +139,23 @@ describe("createSqliteOutcomeStore", () => {
       const byId = new Map(r.value.map((p) => [p.trajectoryId, p]));
       expect(byId.get("turn-a")?.observedAt).toBe(1_001); // MAX across the turn's rows
       expect(byId.get("turn-b")?.observedAt).toBe(2_000);
+    });
+
+    it("projects the content-free ingress trust decision used by reflection", async () => {
+      await store.observe(makeObs({
+        trajectoryId: "turn-trusted",
+        sessionId: "sess-1",
+        senderTrust: "user",
+        senderTrustExplicit: true,
+      }));
+
+      const result = await store.listTrajectoryIds!(SCOPE_A);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const trusted = result.value.find((entry) => entry.trajectoryId === "turn-trusted");
+      expect(trusted?.senderTrust).toBe("user");
+      expect(trusted?.senderTrustExplicit).toBe(true);
     });
 
     it("is scoped — never returns another (tenant, agent)'s trajectories", async () => {
@@ -408,9 +428,23 @@ describe("createSqliteOutcomeStore", () => {
       expect(res.value.sources).toContain("correction");
     });
 
-    it("picks the max-confidence row within the winning tier", async () => {
-      // Two tool rows: success@0.7 and failure@0.8 → the max-confidence row wins.
+    it("returns the terminal row confidence within the winning tier", async () => {
+      // Two tool rows: the later failure is terminal and its confidence is returned.
       await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.7, observedAt: 1_000 }));
+      await store.observe(makeObs({ source: "tool", outcome: "failure", confidence: 0.8, observedAt: 2_000 }));
+      const res = await store.resolve(TRAJ, SCOPE_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.outcome).toBe("failure");
+      expect(res.value.confidence).toBe(0.8);
+    });
+
+    it("a lower-confidence terminal tool failure overrides an earlier successful step", async () => {
+      // Multi-step tools report successful intermediate operations at 0.9, while a
+      // terminal domain failure can carry 0.8. The terminal observation is the
+      // trajectory verdict; confidence must not let an earlier step mask it and
+      // falsely reinforce attributed memories or skills.
+      await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.9, observedAt: 1_000 }));
       await store.observe(makeObs({ source: "tool", outcome: "failure", confidence: 0.8, observedAt: 2_000 }));
       const res = await store.resolve(TRAJ, SCOPE_A);
       expect(res.ok).toBe(true);

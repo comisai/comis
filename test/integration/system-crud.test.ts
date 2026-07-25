@@ -370,7 +370,7 @@ describe("SYSTEM CRUD TEST: Config, agents, memory, sessions, channels, tokens, 
       const resp = (await sendJsonRpc(
         ws,
         "memory.stats",
-        {},
+        { tenant_id: "test", agent_id: "default" },
         ++rpcId,
         { timeoutMs: RPC_FAST_MS },
       )) as Record<string, unknown>;
@@ -383,7 +383,7 @@ describe("SYSTEM CRUD TEST: Config, agents, memory, sessions, channels, tokens, 
       const resp = (await sendJsonRpc(
         ws,
         "memory.browse",
-        { limit: 10 },
+        { tenant_id: "test", agent_id: "default", limit: 10 },
         ++rpcId,
         { timeoutMs: RPC_FAST_MS },
       )) as Record<string, unknown>;

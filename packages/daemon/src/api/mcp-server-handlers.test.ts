@@ -16,7 +16,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { buildMcpServerForClient } from "./mcp-server-handlers.js";
+import {
+  buildMcpServerForClient,
+  applyMcpClientIdentity,
+} from "./mcp-server-handlers.js";
 import type { TokenClient } from "@comis/gateway";
 
 // ---------------------------------------------------------------------------
@@ -56,11 +59,11 @@ const stubRegistry = new Map<string, StubMeta>([
   // INJECTED obsExplainForMcpClient assembler DIRECTLY (NOT daemonRpcForMcpClient)
   // and feeds the result into the SAME wrapExternalContent wrap.
   ["obs_explain", { mcpExportPolicy: "permission-gated" }],
-  // obs_fleet_health: permission-gated SIBLING of obs_explain. Its
-  // dispatch branch invokes the INJECTED obsFleetHealthForMcpClient assembler
+  // obs_system_health: permission-gated SIBLING of obs_explain. Its
+  // dispatch branch invokes the INJECTED obsSystemHealthForMcpClient assembler
   // DIRECTLY (NOT daemonRpcForMcpClient), never injecting admin, and feeds the
   // result into the SAME wrapExternalContent wrap.
-  ["obs_fleet_health", { mcpExportPolicy: "permission-gated" }],
+  ["obs_system_health", { mcpExportPolicy: "permission-gated" }],
   ["tokens_manage", { mcpExportPolicy: "never-export" }],
   ["future_tool_no_policy", {} /* no policy — default-deny safety net */],
 ]);
@@ -220,14 +223,14 @@ describe("buildMcpServerForClient -- default-deny tools/list filter", () => {
       expect(registered).not.toContain("memory_get");
       // obs_explain is permission-gated but NOT in the allowlist → skipped.
       expect(registered).not.toContain("obs_explain");
-      // obs_fleet_health is permission-gated but NOT in the allowlist → skipped.
-      expect(registered).not.toContain("obs_fleet_health");
+      // obs_system_health is permission-gated but NOT in the allowlist → skipped.
+      expect(registered).not.toContain("obs_system_health");
       // safe tool still present.
       expect(registered).toContain("web_search");
 
       const summary = infoCalls.at(-1);
       expect(summary?.obj["registered"]).toBe(2); // web_search + memory_search
-      expect(summary?.obj["skippedGated"]).toBe(3); // memory_get + obs_explain + obs_fleet_health
+      expect(summary?.obj["skippedGated"]).toBe(3); // memory_get + obs_explain + obs_system_health
       expect(summary?.obj["allowlistSize"]).toBe(1);
     } finally {
       restore();
@@ -252,10 +255,10 @@ describe("buildMcpServerForClient -- default-deny tools/list filter", () => {
       expect(registered).not.toContain("memory_search");
       expect(registered).not.toContain("memory_get");
       expect(registered).not.toContain("obs_explain");
-      expect(registered).not.toContain("obs_fleet_health");
+      expect(registered).not.toContain("obs_system_health");
 
       const summary = infoCalls.at(-1);
-      expect(summary?.obj["skippedGated"]).toBe(4); // memory_search + memory_get + obs_explain + obs_fleet_health
+      expect(summary?.obj["skippedGated"]).toBe(4); // memory_search + memory_get + obs_explain + obs_system_health
     } finally {
       restore();
     }
@@ -419,15 +422,24 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
       // Even when a hostile caller passes _trustLevel in the args, the
       // dispatcher MUST NOT pass it through to daemonRpcForMcpClient. The
       // indirection is the trust-flag isolation point.
+      // A hostile caller smuggles the trusted dispatch-authority fields in the
+      // tool args: _trustLevel (admin escalation), plus _tenantId / _agentId
+      // (cross-tenant / forged-agent-origin). The dispatcher MUST strip ALL of
+      // them before daemonRpcForMcpClient — they are server-injected identity,
+      // never client input.
       const result = (await cb!({
         query: "anything",
         _trustLevel: "admin",
+        _tenantId: "victim-tenant",
+        _agentId: "victim-agent",
       })) as { isError?: boolean; content?: unknown };
 
       expect(result.isError ?? false).toBe(false);
       expect(rpc.calls.length).toBe(1);
       const dispatchedParams = rpc.calls[0]!.params;
       expect(dispatchedParams).not.toHaveProperty("_trustLevel");
+      expect(dispatchedParams).not.toHaveProperty("_tenantId");
+      expect(dispatchedParams).not.toHaveProperty("_agentId");
     } finally {
       restore();
     }
@@ -1099,16 +1111,16 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
   });
 
   // ------------------------------------------------------------------------
-  // obs_fleet_health — direct-assembler dispatch under daemon authority
+  // obs_system_health — direct-assembler dispatch under daemon authority
   //
-  // The SECURITY-CRITICAL fleet sibling of obs_explain. Its dispatch branch
-  // invokes the INJECTED obsFleetHealthForMcpClient assembler DIRECTLY (NOT
-  // daemonRpcForMcpClient -> the admin-gated obs.fleet.health RPC) and feeds the
+  // The SECURITY-CRITICAL system sibling of obs_explain. Its dispatch branch
+  // invokes the INJECTED obsSystemHealthForMcpClient assembler DIRECTLY (NOT
+  // daemonRpcForMcpClient -> the admin-gated obs.system.health RPC) and feeds the
   // result into the SAME Step-5 wrapExternalContent wrap. Authorization is the
   // per-client mcpClient.allowlist + the digest-only/bounded report.
   //
   // Required invariants:
-  //   - never-inject-admin: obsFleetHealthForMcpClient called with params that
+  //   - never-inject-admin: obsSystemHealthForMcpClient called with params that
   //     DO NOT contain _trustLevel (stripTrustLevel ran); the result is wrapped.
   //   - fail-closed: undefined closure -> generic dispatch_error, no crash, no
   //     fall-through to the admin RPC indirection.
@@ -1116,21 +1128,21 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
   //     err.message (no sessionKey/path leak).
   // ------------------------------------------------------------------------
 
-  it("buildMcpServerForClient obs_fleet_health dispatch invokes the direct assembler (NOT daemonRpcForMcpClient), strips _trustLevel, and wraps the result", async () => {
+  it("buildMcpServerForClient obs_system_health dispatch invokes the direct assembler (NOT daemonRpcForMcpClient), strips _trustLevel, and wraps the result", async () => {
     const { logger } = makeCapturingLogger();
-    const client = makeMcpClient(["mcp-client"], ["obs_fleet_health"]);
+    const client = makeMcpClient(["mcp-client"], ["obs_system_health"]);
     const rpc = makeRpcRecorder();
 
     // The injected assembler — a stand-in for the production
-    // assembleFleetHealthReport closure. Records its params so we can prove
+    // assembleSystemHealthReport closure. Records its params so we can prove
     // _trustLevel was stripped before it ran.
     const assemblerCalls: Array<Record<string, unknown>> = [];
-    const obsFleetHealthForMcpClient = vi.fn(
+    const obsSystemHealthForMcpClient = vi.fn(
       async (params: Record<string, unknown>) => {
         assemblerCalls.push(params);
         return {
           windowHours: 6,
-          likelyRootCause: { code: "fleet_high_degraded_rate" },
+          likelyRootCause: { code: "system_high_degraded_rate" },
           sessions: { total: 3, degraded: 2, degradedRate: 0.66 },
         };
       },
@@ -1145,12 +1157,12 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
           daemonRpcForMcpClient: rpc.fn,
           defaultToolRateLimit: 30,
           toolNameToRpcMethod: identityToolNameToRpcMethod,
-          obsFleetHealthForMcpClient,
+          obsSystemHealthForMcpClient,
         },
         client,
       );
 
-      const cb = capturedCallback["obs_fleet_health"];
+      const cb = capturedCallback["obs_system_health"];
       expect(cb).toBeDefined();
 
       // A hostile caller smuggles _trustLevel:"admin" in the args. The
@@ -1164,12 +1176,12 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
       };
 
       // (a) the assembler ran with _trustLevel stripped.
-      expect(obsFleetHealthForMcpClient).toHaveBeenCalledTimes(1);
+      expect(obsSystemHealthForMcpClient).toHaveBeenCalledTimes(1);
       expect(assemblerCalls.length).toBe(1);
       expect(assemblerCalls[0]).not.toHaveProperty("_trustLevel");
       expect(assemblerCalls[0]).toMatchObject({ sinceHours: 6 });
 
-      // (b) obs_fleet_health did NOT route through daemonRpcForMcpClient.
+      // (b) obs_system_health did NOT route through daemonRpcForMcpClient.
       expect(rpc.calls.length).toBe(0);
 
       // (c) the result flowed through wrapExternalContent (SECURITY NOTICE +
@@ -1180,19 +1192,19 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
       expect(text).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
       expect(text).toMatch(/<<<END_UNTRUSTED_[a-f0-9]+>>>/);
       // The report payload survives between the markers.
-      expect(text).toContain("fleet_high_degraded_rate");
+      expect(text).toContain("system_high_degraded_rate");
     } finally {
       restore();
     }
   });
 
-  it("buildMcpServerForClient obs_fleet_health fails closed (dispatch_error, no crash) when obsFleetHealthForMcpClient is unwired", async () => {
+  it("buildMcpServerForClient obs_system_health fails closed (dispatch_error, no crash) when obsSystemHealthForMcpClient is unwired", async () => {
     // Defense-in-depth: an obsStore-less boot / wiring gap leaves the closure
     // undefined. The dispatch branch must return a generic dispatch_error
     // sentinel (NOT throw, NOT leak), and MUST NOT fall through to
     // daemonRpcForMcpClient (which would hit the admin-gated RPC).
     const { logger } = makeCapturingLogger();
-    const client = makeMcpClient(["mcp-client"], ["obs_fleet_health"]);
+    const client = makeMcpClient(["mcp-client"], ["obs_system_health"]);
     const rpc = makeRpcRecorder();
 
     const { capturedCallback, restore } = captureRegisteredCallback();
@@ -1204,12 +1216,12 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
           daemonRpcForMcpClient: rpc.fn,
           defaultToolRateLimit: 30,
           toolNameToRpcMethod: identityToolNameToRpcMethod,
-          // obsFleetHealthForMcpClient intentionally omitted (unwired).
+          // obsSystemHealthForMcpClient intentionally omitted (unwired).
         },
         client,
       );
 
-      const cb = capturedCallback["obs_fleet_health"];
+      const cb = capturedCallback["obs_system_health"];
       expect(cb).toBeDefined();
       const r = (await cb!({ sinceHours: 24 })) as {
         isError?: boolean;
@@ -1225,16 +1237,16 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
     }
   });
 
-  it("buildMcpServerForClient obs_fleet_health returns a generic dispatch_error (no raw err.message leak) when the assembler throws", async () => {
+  it("buildMcpServerForClient obs_system_health returns a generic dispatch_error (no raw err.message leak) when the assembler throws", async () => {
     // Error-opacity: a throwing assembler must NOT surface its raw
     // message (it can carry sessionKeys/file paths). The on-wire response is a
     // generic sentinel; the structured err is captured on the WARN log only.
     const { logger } = makeCapturingLogger();
-    const client = makeMcpClient(["mcp-client"], ["obs_fleet_health"]);
+    const client = makeMcpClient(["mcp-client"], ["obs_system_health"]);
     const rpc = makeRpcRecorder();
 
     const leakyMessage = "sessionKey /Users/secret/.comis/x leak";
-    const obsFleetHealthForMcpClient = vi.fn(async () => {
+    const obsSystemHealthForMcpClient = vi.fn(async () => {
       throw new Error(leakyMessage);
     });
 
@@ -1247,12 +1259,12 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
           daemonRpcForMcpClient: rpc.fn,
           defaultToolRateLimit: 30,
           toolNameToRpcMethod: identityToolNameToRpcMethod,
-          obsFleetHealthForMcpClient,
+          obsSystemHealthForMcpClient,
         },
         client,
       );
 
-      const cb = capturedCallback["obs_fleet_health"];
+      const cb = capturedCallback["obs_system_health"];
       expect(cb).toBeDefined();
       const r = (await cb!({ sinceHours: 24 })) as {
         isError?: boolean;
@@ -1405,3 +1417,80 @@ function captureRegisteredCallback(): {
     });
   return { capturedCallback, restore: () => spy.mockRestore() };
 }
+
+// ===========================================================================
+// applyMcpClientIdentity -- MCP-dispatch authority injection
+//
+// The MCP dispatch path (daemonRpcForMcpClient at the gateway composition root)
+// binds an authenticated mcp-client to a tenant/agent identity so tenant-scoped
+// RPC methods (memory.search_files) have the explicit authority this runtime
+// requires. Contract, both halves:
+//   (a) inject IDENTITY -- the daemon tenantId + resolved default agentId as
+//       trusted _tenantId / _agentId so tenant-scoped methods work;
+//   (b) NEVER elevate trust -- _trustLevel is never emitted, so admin-gated
+//       methods stay rejected on the MCP path.
+// Plus: a client can never FORGE identity (all internal _-fields are stripped
+// before the trusted values are injected), tenant is authoritative, and an
+// explicitly-supplied agent wins over the injected default (per-agent routing).
+// ===========================================================================
+
+describe("applyMcpClientIdentity -- MCP-dispatch authority injection", () => {
+  const identity = { tenantId: "daemon-tenant", defaultAgentId: "default-agent" };
+
+  it("injects the daemon tenantId and default agentId as trusted _tenantId/_agentId", () => {
+    const out = applyMcpClientIdentity({ query: "q", limit: 3 }, identity);
+    // (a) identity injected so tenant-scoped methods have explicit authority.
+    expect(out._tenantId).toBe("daemon-tenant");
+    expect(out._agentId).toBe("default-agent");
+    // Non-internal tool args pass through untouched.
+    expect(out.query).toBe("q");
+    expect(out.limit).toBe(3);
+  });
+
+  it("NEVER emits _trustLevel, even when the client forges one (no trust elevation)", () => {
+    const out = applyMcpClientIdentity(
+      { query: "q", _trustLevel: "admin" },
+      identity,
+    );
+    // (b) the MCP path keeps its token-assigned (non-admin) trust — a forged
+    // _trustLevel is dropped and never re-added.
+    expect(out).not.toHaveProperty("_trustLevel");
+  });
+
+  it("strips forged identity fields before injecting the trusted ones (tenant is authoritative)", () => {
+    const out = applyMcpClientIdentity(
+      {
+        query: "q",
+        _tenantId: "victim-tenant",
+        _agentId: "victim-agent",
+        _callerSessionKey: "forged:session:key",
+      },
+      identity,
+    );
+    // A client-named tenant/agent can never widen the boundary: the forged
+    // values are stripped and replaced by the daemon's trusted identity.
+    expect(out._tenantId).toBe("daemon-tenant");
+    expect(out._agentId).toBe("default-agent");
+    expect(out).not.toHaveProperty("_callerSessionKey");
+  });
+
+  it("lets an explicitly-supplied agent win over the injected default (per-agent routing)", () => {
+    const out = applyMcpClientIdentity(
+      { query: "q", agentId: "explicit-agent" },
+      identity,
+    );
+    // Explicit non-internal agentId is preserved; the default is NOT injected
+    // as _agentId so it cannot override the caller's per-agent routing.
+    expect(out.agentId).toBe("explicit-agent");
+    expect(out).not.toHaveProperty("_agentId");
+    // Tenant stays authoritative regardless.
+    expect(out._tenantId).toBe("daemon-tenant");
+  });
+
+  it("does not mutate the caller's params object", () => {
+    const input: Record<string, unknown> = { query: "q" };
+    applyMcpClientIdentity(input, identity);
+    expect(input).not.toHaveProperty("_tenantId");
+    expect(input).not.toHaveProperty("_agentId");
+  });
+});

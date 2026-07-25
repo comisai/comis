@@ -32,6 +32,7 @@ import {
   validateEmailCredentials,
   validateMsTeamsCredentials,
   type TelegramPluginHandle,
+  type TelegramCredentialValidationFailureKind,
   type LinePluginHandle,
   type EmailAdapterDeps,
   type MsTeamsAdapterHandle,
@@ -45,6 +46,53 @@ import {
 } from "./msteams-test-seams.js";
 import os from "node:os";
 import { safePath, systemNowMs } from "@comis/core";
+
+function telegramValidationFailureFields(
+  failureKind: TelegramCredentialValidationFailureKind,
+  apiRoot: string | undefined,
+): {
+  readonly errorKind: "auth" | "network" | "dependency" | "validation" | "internal";
+  readonly hint: string;
+  readonly apiRoot: string;
+} {
+  const endpoint = apiRoot ?? "https://api.telegram.org";
+  switch (failureKind) {
+    case "auth":
+      return {
+        errorKind: "auth",
+        hint: "Verify TELEGRAM_BOT_TOKEN is valid via @BotFather",
+        apiRoot: endpoint,
+      };
+    case "network":
+      return {
+        errorKind: "network",
+        hint: apiRoot
+          ? `Check connectivity to channels.telegram.apiRoot (${endpoint}); verify the endpoint is running and serves the Telegram Bot API`
+          : `Check outbound DNS/TLS connectivity to ${endpoint}`,
+        apiRoot: endpoint,
+      };
+    case "dependency":
+      return {
+        errorKind: "dependency",
+        hint: `Telegram Bot API at ${endpoint} returned a non-authentication failure; retry and inspect the endpoint service health`,
+        apiRoot: endpoint,
+      };
+    case "validation":
+      return {
+        errorKind: "validation",
+        hint: "Set a non-empty token in channels.telegram.botToken or TELEGRAM_BOT_TOKEN",
+        apiRoot: endpoint,
+      };
+    default: {
+      const _exhaustive: never = failureKind;
+      return {
+        errorKind: "internal",
+        hint: `Unsupported Telegram validation failure kind: ${String(_exhaustive)}`,
+        apiRoot: endpoint,
+      };
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -123,7 +171,14 @@ export async function bootstrapAdapters(deps: {
 
   // Telegram
   if (channelConfig.telegram.enabled) {
-    const token = (channelConfig.telegram.botToken as string | undefined) || getSecret("TELEGRAM_BOT_TOKEN");
+    const configuredTelegramToken = channelConfig.telegram.botToken as string | undefined;
+    const initialCanonicalTelegramToken = getSecret("TELEGRAM_BOT_TOKEN");
+    const followsCanonicalTelegramSecret = configuredTelegramToken === undefined
+      || configuredTelegramToken === initialCanonicalTelegramToken;
+    const getTelegramBotToken = (): string => followsCanonicalTelegramSecret
+      ? getSecret("TELEGRAM_BOT_TOKEN") ?? configuredTelegramToken ?? ""
+      : configuredTelegramToken ?? "";
+    const token = getTelegramBotToken();
     if (token) {
       // E2E redirection seam: when channels.telegram.apiRoot is set,
       // point grammy's Bot constructor at the override URL. Production
@@ -134,7 +189,7 @@ export async function bootstrapAdapters(deps: {
       const validation = await validateBotToken(token, telegramApiRoot);
       if (validation.ok) {
         const plugin = createTelegramPlugin({
-          botToken: token,
+          getBotToken: getTelegramBotToken,
           webhookSecret: channelConfig.telegram.webhookUrl ? (getSecret("TELEGRAM_WEBHOOK_SECRET") ?? undefined) : undefined,
           webhookUrl: channelConfig.telegram.webhookUrl,
           logger: channelsLogger,
@@ -145,7 +200,13 @@ export async function bootstrapAdapters(deps: {
         channelPlugins.set("telegram", plugin);
         channelsLogger.info({ channelType: "telegram", botUsername: validation.value.username }, "Channel adapter initialized");
       } else {
-        channelsLogger.warn({ err: validation.error.message, hint: "Verify TELEGRAM_BOT_TOKEN is valid via @BotFather", errorKind: "auth" as const }, "Telegram credential validation failed");
+        channelsLogger.warn(
+          {
+            err: validation.error.message,
+            ...telegramValidationFailureFields(validation.error.failureKind, telegramApiRoot),
+          },
+          "Telegram credential validation failed",
+        );
       }
     } else {
       channelsLogger.warn({ hint: "Set botToken in channels.telegram config or TELEGRAM_BOT_TOKEN env var", errorKind: "config" as const }, "Telegram enabled but no bot token configured");
@@ -475,7 +536,7 @@ export async function bootstrapAdapters(deps: {
         handleWebhookEvents: (activities) => teamsAdapter.handleWebhookEvents(activities as TeamsActivity[]),
         // Bridge the ingress auth-gate rejections onto the daemon eventBus as a
         // content-free health_signal, so a forged/expired/wrong-audience/missing-
-        // token flood is COUNTED by `comis fleet` instead of raw-log-only. Carries
+        // token flood is COUNTED by `comis system-health` instead of raw-log-only. Carries
         // the channel label + closed reason class only — never the token/header/body.
         onAuthRejected: (reason) =>
           container.eventBus.emit("channel:ingress_auth_rejected", {

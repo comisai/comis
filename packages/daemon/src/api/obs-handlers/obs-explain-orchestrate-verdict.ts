@@ -18,7 +18,7 @@
  * run): fires when ANY run has `outcome:"failure"` (a non-zero exit) OR a
  * `toolCalls` entry with `decision:"deny"`. Returns null when the section is
  * absent/empty or every run succeeded with no denial. Because the section is
- * ABSENT on any non-orchestrate session (and on the frozen 678/503 fixtures,
+ * ABSENT on any non-orchestrate session (and on the established cost and breaker fixtures,
  * which carry no orchestrate records), the verdict cannot regress them — it is
  * registered in the acute tier, BELOW the two frozen codes and ABOVE the
  * `completed_with_tool_errors` catch-all (a failed run is a specific cause, more

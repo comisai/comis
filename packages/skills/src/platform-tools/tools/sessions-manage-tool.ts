@@ -45,12 +45,9 @@ const SessionsManageToolParams = Type.Object({
     ],
     { description: "Session management action. Valid values: delete (archive and remove session), reset (clear messages, keep identity), export (download transcript as JSON), compact (reduce token usage)" },
   ),
-  session_key: Type.Optional(
-    Type.String({
-      description:
-        "The formatted session key (e.g., tenant:user:channel). For the COMPACT action you may OMIT this (or pass \"self\") to compact YOUR OWN current session — you do not need to construct or guess your session key. delete/reset/export still require an explicit key.",
-    }),
-  ),
+  tenant_id: Type.String({ description: "Tenant that owns the target conversation" }),
+  agent_id: Type.String({ description: "Agent that owns the target conversation" }),
+  conversation_ref: Type.String({ description: "Opaque durable reference of the target conversation" }),
   instructions: Type.Optional(
     Type.String({
       description: "Optional instructions for compaction guidance (only used with compact action)",
@@ -93,26 +90,35 @@ export function createSessionsManageTool(
       gatedActions: ["delete", "reset"],
       actionOverrides: {
         async delete(p, rpcCall, ctx) {
-          const sessionKey = readStringParam(p, "session_key");
-          return rpcCall("session.delete", { session_key: sessionKey, _trustLevel: ctx.trustLevel });
+          return rpcCall("session.delete", {
+            tenant_id: readStringParam(p, "tenant_id"),
+            agent_id: readStringParam(p, "agent_id"),
+            conversation_ref: readStringParam(p, "conversation_ref"),
+            _trustLevel: ctx.trustLevel,
+          });
         },
         async reset(p, rpcCall, ctx) {
-          const sessionKey = readStringParam(p, "session_key");
-          return rpcCall("session.reset", { session_key: sessionKey, _trustLevel: ctx.trustLevel });
+          return rpcCall("session.reset", {
+            tenant_id: readStringParam(p, "tenant_id"),
+            agent_id: readStringParam(p, "agent_id"),
+            conversation_ref: readStringParam(p, "conversation_ref"),
+            _trustLevel: ctx.trustLevel,
+          });
         },
         async export(p, rpcCall, ctx) {
-          const sessionKey = readStringParam(p, "session_key");
-          return rpcCall("session.export", { session_key: sessionKey, _trustLevel: ctx.trustLevel });
+          return rpcCall("session.export", {
+            tenant_id: readStringParam(p, "tenant_id"),
+            agent_id: readStringParam(p, "agent_id"),
+            conversation_ref: readStringParam(p, "conversation_ref"),
+            _trustLevel: ctx.trustLevel,
+          });
         },
         async compact(p, rpcCall, ctx) {
-          // COMPACT-KEY: session_key is OPTIONAL for compact — when omitted, the
-          // daemon compacts the caller's OWN session via the injected
-          // _callerSessionKey (no agent-constructed key). Pass it through only
-          // when the caller supplied one.
-          const sessionKey = readStringParam(p, "session_key", false);
           const instructions = readStringParam(p, "instructions", false);
           return rpcCall("session.compact", {
-            ...(sessionKey ? { session_key: sessionKey } : {}),
+            tenant_id: readStringParam(p, "tenant_id"),
+            agent_id: readStringParam(p, "agent_id"),
+            conversation_ref: readStringParam(p, "conversation_ref"),
             instructions,
             _trustLevel: ctx.trustLevel,
           });

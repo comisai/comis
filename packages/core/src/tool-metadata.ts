@@ -35,20 +35,48 @@ export interface ToolCapabilityMetadata {
   readonly replacesPackages?: readonly string[];
 }
 
+export type TrackedInvocationSideEffect =
+  | "scheduling"
+  | "outbound_delivery"
+  | "deferred_work";
+
+export type ToolInvocationSideEffects =
+  | {
+      readonly kind: "always";
+      readonly capabilities: readonly TrackedInvocationSideEffect[];
+    }
+  | {
+      readonly kind: "by_action";
+      readonly parameter: "action";
+      readonly actions: Readonly<
+        Record<string, readonly TrackedInvocationSideEffect[]>
+      >;
+    };
+
+/** Model-visible recovery guidance for one structured tool failure. */
+export interface ToolFailureFallback {
+  /** Structured `details.error` code that activates this alternative. */
+  readonly onErrorCode: string;
+  /** Alternative tool that must be present in the live tool set. */
+  readonly toolName: string;
+  /** Bounded, code-owned instruction appended to the failed tool result. */
+  readonly guidance: string;
+}
+
 // ---------------------------------------------------------------------------
 // ComisToolMetadata interface
 // ---------------------------------------------------------------------------
 
 /** Per-tool metadata stored in the side-channel registry. All fields optional. */
-// @optional-field-count: 14 optional fields — this is a side-channel metadata
+// @optional-field-count: 17 optional fields — this is a side-channel metadata
 // aggregator keyed by tool name, registered incrementally via spread-merge from
 // independent sources (result caps, parallel-safety flags, action-gating
-// schema, MCP-export policy, capability routing, and the activity hints
-// suppressActivity/failureDetector). Every field is conditionally present per
-// tool by design; the registry merges partial registrations, so a required
-// field would force every caller to supply unrelated keys. Splitting would
-// fragment a single per-tool record into N parallel maps with no added type
-// safety. Well-bounded record, not an undermodeled type.
+// schema, MCP-export policy, capability routing, activity hints, failure
+// classification, and failure alternatives). Every field is conditionally
+// present per tool by design; the registry merges partial registrations, so a
+// required field would force every caller to supply unrelated keys. Splitting
+// would fragment a single per-tool record into N parallel maps with no added
+// type safety. Well-bounded record, not an undermodeled type.
 export interface ComisToolMetadata {
   /** Per-tool result size cap in characters. */
   maxResultSizeChars?: number;
@@ -62,6 +90,9 @@ export interface ComisToolMetadata {
   outputSchema?: Record<string, unknown>;
   /** Tool names that should be co-discovered whenever this tool is discovered (bidirectional). */
   coDiscoverWith?: string[];
+  /** Runtime-owned classification of effects attempted by an invocation.
+   *  Absence is fail-closed: the bridge records an unclassified invocation. */
+  invocationSideEffects?: ToolInvocationSideEffects;
   /** Valid `action` enum values for action-discriminated tools. Used by the
    *  generic schema-validator in @comis/skills/bridge to gate unknown actions
    *  before the per-tool validateInput runs. Field shape mirrors
@@ -139,6 +170,10 @@ export interface ComisToolMetadata {
         /** The concrete token that matched, e.g. a status code. */
         matchedToken?: string;
       };
+  /** Structured failure-to-tool alternatives. The agent loop appends guidance
+   *  only when `details.error` matches and the named tool is live, so disabled
+   *  capabilities never appear as available recovery paths. */
+  failureFallbacks?: readonly ToolFailureFallback[];
 }
 
 // ---------------------------------------------------------------------------

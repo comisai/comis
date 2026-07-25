@@ -38,6 +38,7 @@ import {
   AdminApprovalResolveContract,
   AdminApprovalResolveAllContract,
   AdminApprovalClearDenialCacheContract,
+  ConversationRefSchema,
   stripInternalFields,
   systemGetEnv,
 } from "@comis/core";
@@ -81,8 +82,12 @@ export function createApprovalHandlers(deps: ApprovalHandlerDeps): Record<string
   return {
     [AdminApprovalPendingContract.method]: async (rawParams) => {
       const userParams = stripInternalFields(rawParams);
-      AdminApprovalPendingContract.request.parse(userParams);
-      const requests = deps.approvalGate.pending();
+      const params = AdminApprovalPendingContract.request.parse(userParams);
+      const conversationRef = ConversationRefSchema.parse(params.conversation_ref);
+      const requests = deps.approvalGate.pending().filter((request) =>
+        request.tenantId === params.tenant_id
+        && request.agentId === params.agent_id
+        && request.conversationRef === conversationRef);
       const result = { requests, total: requests.length };
       if (IS_DEV) AdminApprovalPendingContract.response.parse(result);
       return result;
@@ -110,6 +115,14 @@ export function createApprovalHandlers(deps: ApprovalHandlerDeps): Record<string
           `Approval request not found: ${params.requestId} (may have already been resolved or timed out)`,
         );
       }
+      const conversationRef = ConversationRefSchema.parse(params.conversation_ref);
+      if (
+        existing.tenantId !== params.tenant_id
+        || existing.agentId !== params.agent_id
+        || existing.conversationRef !== conversationRef
+      ) {
+        throw new Error("Approval request is outside the supplied authority scope");
+      }
 
       deps.approvalGate.resolveApproval(params.requestId, params.approved, approvedBy, reason);
 
@@ -134,10 +147,11 @@ export function createApprovalHandlers(deps: ApprovalHandlerDeps): Record<string
       const approvedBy = params.approvedBy ?? "operator";
       const reason = params.reason;
 
-      const pending = deps.approvalGate.pending();
-      const matches = params.sessionKey
-        ? pending.filter((r) => r.sessionKey === params.sessionKey)
-        : pending;
+      const conversationRef = ConversationRefSchema.parse(params.conversation_ref);
+      const matches = deps.approvalGate.pending().filter((request) =>
+        request.tenantId === params.tenant_id
+        && request.agentId === params.agent_id
+        && request.conversationRef === conversationRef);
 
       const resolvedIds: string[] = [];
       for (const req of matches) {
@@ -153,7 +167,11 @@ export function createApprovalHandlers(deps: ApprovalHandlerDeps): Record<string
     [AdminApprovalClearDenialCacheContract.method]: async (rawParams) => {
       const userParams = stripInternalFields(rawParams);
       const params = AdminApprovalClearDenialCacheContract.request.parse(userParams);
-      deps.approvalGate.clearDenialCache(params.sessionKey);
+      deps.approvalGate.clearDenialCache({
+        tenantId: params.tenant_id,
+        agentId: params.agent_id,
+        conversationRef: ConversationRefSchema.parse(params.conversation_ref),
+      });
       const result = { cleared: true as const };
       if (IS_DEV) AdminApprovalClearDenialCacheContract.response.parse(result);
       return result;

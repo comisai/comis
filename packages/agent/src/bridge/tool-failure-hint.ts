@@ -17,6 +17,8 @@
  * @module
  */
 
+import { classifyRuntimeToolGuard, isMcpValidationError } from "./bridge-event-handlers.js";
+
 /** First bracketed snake_case code (≥ one underscore → avoids matching `[i]`/`[abc]`/array indices). */
 const BRACKETED_ERROR_CODE = /\[([a-z]+(?:_[a-z]+)+)\]/;
 
@@ -39,6 +41,9 @@ export const GENERIC_TOOL_FAILURE_HINT =
  */
 export function toolFailureHint(errorText?: string): string {
   if (errorText) {
+    if (classifyRuntimeToolGuard(errorText) === "step_limit") {
+      return "Execution step budget was exhausted; increase max_steps for the run or simplify the task before retrying";
+    }
     const m = BRACKETED_ERROR_CODE.exec(errorText);
     if (m) {
       const code = m[1];
@@ -48,6 +53,9 @@ export function toolFailureHint(errorText?: string): string {
     if (errno) {
       const code = errno[1];
       return `Tool failed (${code}) — inspect the protected trajectory for the input path, then pass a file path or use a directory-listing tool`;
+    }
+    if (isMcpValidationError(errorText)) {
+      return "Tool arguments were rejected by validation; inspect argsPreview in the protected trajectory and correct the rejected fields before retrying";
     }
   }
   return GENERIC_TOOL_FAILURE_HINT;

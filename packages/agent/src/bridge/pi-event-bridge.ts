@@ -25,7 +25,7 @@ import {
   type SessionKey,
   type TypedEventBus,
   type MemoryPort,
-  type MemoryEntry,
+  type MemoryWriteScope,
   type ModelOperationType,
   type ErrorKind,
   // Classification data for "Tool X not found" enrichment.
@@ -37,7 +37,7 @@ import {
 import type { SessionTrajectoryHandleRegistry } from "@comis/observability";
 import { buildTraceMetadata } from "@comis/observability";
 import type { ComisLogger, SpendConfig } from "@comis/core";
-import { suppressError } from "@comis/shared";
+import { suppressError, type Result } from "@comis/shared";
 import { randomUUID } from "node:crypto";
 import { resolveModelPricing } from "@comis/core";
 import { getCacheProviderInfo } from "../executor/cache-usage-helpers.js";
@@ -59,7 +59,12 @@ import type { ExecutionResult } from "../executor/types.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { extractMcpServerName } from "@comis/shared";
-import { classifyMcpErrorType, sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
+import {
+  classifyMcpErrorType,
+  classifyRuntimeToolGuard,
+  sanitizeToolArgs,
+  extractErrorText,
+} from "./bridge-event-handlers.js";
 
 /**
  * Bracketed `[error_code]` prefixes that mean the tool's OWN IO failed (disk,
@@ -129,7 +134,11 @@ export function classifyToolError(_toolName: string, errorText: string | undefin
 import * as os from "node:os";
 import * as pathModule from "node:path";
 import { appendSessionIndexEntry } from "@comis/observability";
-import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
+import {
+  createBridgeMetrics,
+  buildBridgeResult,
+} from "./bridge-metrics.js";
+import { recordToolInvocationSideEffects } from "./bridge-side-effect-accumulator.js";
 import { drainAt, type DrainInflightState } from "../executor/drain-helper.js";
 import { checkStepLimit, emitStepLimitAbort, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
 import type { LoopStateReporter, SpendEmitHooks } from "./bridge-safety-controls.js";
@@ -325,6 +334,8 @@ export interface PiEventBridgeDeps {
   sessionKey: SessionKey;
   agentId: string;
   channelId: string;
+  /** Inbound channel message ID used by the session index for operator trace lookup. */
+  inboundMessageId: string;
   executionId: string;
   provider: string;
   model: string;
@@ -333,6 +344,8 @@ export interface PiEventBridgeDeps {
   logger: ComisLogger;
   /** Optional memory port for flushing compaction summaries to long-term memory. */
   memoryPort?: MemoryPort;
+  /** Snapshot of the current turn authority for compaction-summary persistence. */
+  memoryScope?: MemoryWriteScope;
   /** Called with streaming text deltas for real-time response forwarding.
    *  kind='text' for visible text_delta events; kind='thinking' for thinking_delta events.
    *  Consumers must only accumulate kind==='text' — thinking deltas must never reach the channel. */
@@ -354,8 +367,11 @@ export interface PiEventBridgeDeps {
   compactionSettings?: { enabled: boolean; reserveTokens: number; keepRecentTokens: number };
   /** Optional provider health monitor for cross-agent failure aggregation. */
   providerHealth?: ProviderHealthMonitor;
-  /** Called when a tool execution completes -- used by pi-executor to reset prompt timeout. */
-  onToolExecutionEnd?: () => void;
+  /** Called when a tool reports progress or completes -- used to reset prompt stall timeout. */
+  onToolActivity?: () => void;
+  /** Atomically records a successful background-task read after its tool result
+   * has crossed the session journal boundary at `turn_end`. */
+  acknowledgeBackgroundTaskConsumption?: (taskId: string) => Result<boolean, Error>;
   /** Returns current model ID for per-turn pricing resolution. Updated on manual /model switch. */
   getCurrentModel?: () => string;
   /**
@@ -367,8 +383,7 @@ export interface PiEventBridgeDeps {
    */
   spendAccumulator?: SpendAccumulator;
   /**
-   * The resolved `(tenant, agent)` this bridge reserves spend against — derived
-   * at the daemon composition root via `parseFormattedSessionKey`. Required
+   * The resolved `(tenant, agent)` this bridge reserves spend against. Required
    * whenever `spendAccumulator` is present.
    */
   spendScope?: SpendScope;
@@ -394,7 +409,7 @@ export interface PiEventBridgeDeps {
    * resolver registers on first use (so a top-level, non-spawned loop is bounded
    * too). Required whenever {@link boundedAutonomyBudget} is present.
    */
-  resolveRootRunId?: (sessionKey: SessionKey) => string;
+  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
   /** Callback to record cache reads for adaptive retention escalation. */
   onCacheReads?: (tokens: number) => void;
   /** Callback to record a completed turn with cache write token count.
@@ -559,6 +574,15 @@ export interface PiEventBridgeResult {
    * getThinkingBlockStores. Empty when no skill was attributed.
    */
   getUsedSkillIds: () => ReadonlySet<string>;
+  /** Whether this execution successfully delivered through the message tool
+   *  to the exact channel route. Used to authorize a final silent sentinel
+   *  only when the user has already received the response out of band. */
+  hasOutboundDelivery: (target: {
+    channelType: string;
+    channelId: string;
+  }) => boolean;
+  /** Monotonically record runtime-owned background handoff acceptance. */
+  markDeferredWork: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -628,6 +652,17 @@ export function extractSelfGradedOutcome(result: unknown): "success" | "failure"
   return undefined;
 }
 
+/** A plan can advance only when this assistant message continues into tool work. */
+function assistantMessageContinuesWithTools(message: AssistantMessage | undefined): boolean {
+  if (!message) return false;
+  const stopReason = (message as { stopReason?: unknown }).stopReason;
+  if (stopReason === "toolUse" || stopReason === "tool_use") return true;
+  return Array.isArray(message.content) && message.content.some((block: unknown) => {
+    const type = (block as { type?: unknown })?.type;
+    return type === "toolCall" || type === "tool_use";
+  });
+}
+
 /**
  * Parse a JSON OBJECT out of `text`: the whole string first (a bare result), else the
  * `{`…`}` slice (a security-wrapped payload whose preamble + markers carry no braces).
@@ -652,6 +687,7 @@ function parseEmbeddedJsonObject(text: string): Record<string, unknown> | undefi
 export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResult {
   // Internal accumulation state (managed by bridge-metrics module)
   const m = createBridgeMetrics();
+  const pendingBackgroundTaskConsumptions = new Set<string>();
 
   // One-shot SDK-breakdown notice. Fires exactly once per
   // daemon process — the latch is module-scoped so multiple bridge
@@ -718,9 +754,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // Suppress per-turn re-emits: session.started fires ONCE per
           // session (not per pi-mono turn). The bridge is
           // per-turn, so consult the session-scoped trajectoryRegistry
-          // latch — it survives across turns and resets only when the
-          // session is destroyed (or the daemon restarts and rebuilds
-          // the registry fresh). When the registry is absent
+          // latch — it survives across turns and restores from mandatory
+          // lifecycle rows after daemon restart. Session destruction closes
+          // the registry entry after session.ended, resetting the latch.
+          // When the registry is absent
           // (legacy/test callers), fall through to the legacy
           // unconditional emit so existing harnesses keep working.
           const formattedKey = formatSessionKey(deps.sessionKey);
@@ -794,6 +831,11 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // -----------------------------------------------------------------
         case "tool_execution_start": {
           const toolEvent = event as { toolName: string; toolCallId: string; args?: unknown };
+          recordToolInvocationSideEffects(
+            m.sideEffectSummary,
+            toolEvent.toolName,
+            toolEvent.args,
+          );
           m.toolStartTimes.set(toolEvent.toolCallId, systemNowMs());
           m.toolCallHistory.push(toolEvent.toolName);
           m.lastActiveToolName = toolEvent.toolName;
@@ -852,6 +894,15 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           break;
         }
 
+        case "tool_execution_update": {
+          // A tool progress update is genuine execution activity. In
+          // particular, background_tasks read_output emits bounded heartbeats
+          // while awaiting a durable promoted call, so the model stall budget
+          // must not misclassify that healthy wait as a hung prompt.
+          deps.onToolActivity?.();
+          break;
+        }
+
         case "tool_execution_end": {
           const endEvent = event as {
             toolCallId: string;
@@ -886,20 +937,22 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             | "exit_code"
             | "failure_detector"
             | "mcp_classifier"
+            | "runtime_guard"
             | undefined;
           let matchedRule: string | undefined;
           let matchedToken: string | undefined;
           let httpStatus: number | undefined;
-          // transportOk tracks the SDK/transport signal itself: false ONLY when
-          // the SDK reported isError (the call/transport failed). An exit-code,
-          // detector, or MCP-content failure means the call RETURNED and the
-          // content was a failure → transportOk stays true. This is the
+          // transportOk tracks whether the call reached the tool boundary. An
+          // exit-code, detector, MCP argument-validation, or MCP-content failure
+          // means the call RETURNED and the content was a failure, so transportOk
+          // is true. SDK isError starts pessimistically false; the MCP classifier
+          // corrects it to true for schema/argument rejections. This is the
           // self-evident-misclassification tell: a transportOk:true failure
           // with classifiedFailureBy:'failure_detector' means "we matched a
           // structured field, the transport was fine". (Derived from
           // the flip source, NOT the refined classifiedFailureBy label, so the
           // MCP-refinement of an SDK-isError failure stays transportOk:false.)
-          const transportOk = !endEvent.isError;
+          let transportOk = !endEvent.isError;
           // :591 — SDK isError flip (the transport/call itself errored).
           if (!toolSuccess) classifiedFailureBy = "sdk_iserror";
           // Tool metadata, read ONCE — gates the exit-code heuristic AND the failureDetector hook.
@@ -924,9 +977,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               // external/MCP/transport failure — see classifyToolError). The one
               // genuinely-missing-dependency exit is 127 (command/binary not
               // found), where the "check the package is installed" hint is right.
-              // Live 2026-07-10 (fleet-marathon): a python script exiting 1 on its
-              // own JSONDecodeError was mislabeled `dependency`, sending diagnosis
-              // at a phantom missing interpreter.
+              // A command that ran and exited non-zero failed internally; it does
+              // not prove that its interpreter or another dependency is missing.
               toolErrorKind = exitCode === 127 ? "dependency" : "internal";
               classifiedFailureBy = "exit_code"; // exec non-zero exit — call returned, content failed
             }
@@ -1014,7 +1066,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // call returned; the CONTENT failed — the failure_detector semantics). Opt-in
           // marker ⇒ never a false-flag. Runs only while
           // still success, so an SDK/exit-code/detector failure already classified wins.
-          if (toolSuccess && extractSelfGradedOutcome(endEvent.result) === "failure") {
+          const selfGradedOutcome = extractSelfGradedOutcome(endEvent.result);
+          if (toolSuccess && selfGradedOutcome === "failure") {
             toolSuccess = false;
             toolErrorKind = toolErrorKind ?? "validation";
             classifiedFailureBy = "failure_detector";
@@ -1030,16 +1083,29 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const rawArgsForParams = m.toolRawArgs.get(endEvent.toolCallId);
           m.toolRawArgs.delete(endEvent.toolCallId);
 
+          if (
+            toolSuccess
+            && endEvent.toolName === "background_tasks"
+            && (rawArgsForParams as { action?: unknown } | undefined)?.action === "read_output"
+          ) {
+            const taskId = (rawArgsForParams as { taskId?: unknown }).taskId;
+            if (typeof taskId === "string" && taskId.length > 0) {
+              pendingBackgroundTaskConsumptions.add(taskId);
+            }
+          }
+
           let errorText: string | undefined;
           // resultBytes/resultDigest replace the raw body with a count + a
           // non-reversible 12-hex digest on the failure path — the
           // body itself never crosses into the event/log.
           let resultBytes: number | undefined;
           let resultDigest: string | undefined;
+          let runtimeToolGuard: ReturnType<typeof classifyRuntimeToolGuard> = undefined;
           // Extract MCP server name for attribution
           const mcpServer = extractMcpServerName(endEvent.toolName);
           if (!toolSuccess) {
             errorText = extractErrorText(endEvent.result);
+            runtimeToolGuard = classifyRuntimeToolGuard(errorText);
             const serialized =
               typeof endEvent.result === "string"
                 ? endEvent.result
@@ -1061,13 +1127,25 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // (timeout → timeout, connection/transport → dependency,
             // everything else → classifyToolError fallback).
             if (toolErrorKind === undefined) {
-              if (mcpServer !== undefined) {
+              if (runtimeToolGuard !== undefined) {
+                toolErrorKind = "resource";
+                classifiedFailureBy = "runtime_guard";
+                matchedRule = runtimeToolGuard;
+                // The runtime blocked the call before the tool or MCP transport
+                // boundary, so no external dependency was contacted.
+                transportOk = false;
+              } else if (mcpServer !== undefined) {
                 const mcpKind = classifyMcpErrorType(errorText);
                 toolErrorKind = mcpKind === "timeout"
                   ? "timeout"
+                  : mcpKind === "validation"
+                    ? "validation"
                   : (mcpKind === "connection" || mcpKind === "transport")
                     ? "dependency"
                     : classifyToolError(endEvent.toolName, errorText);
+                if (mcpKind === "validation") {
+                  transportOk = true;
+                }
                 // Classifier precedence: the MCP classifier refines the sdk_iserror
                 // flip when this is an MCP-namespaced tool. The flip source
                 // is primary; the classifier that produced the errorKind wins
@@ -1131,7 +1209,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 durationMs,
                 ...(errorText && { errorText: sanitizeLogString(errorText).slice(0, 1500) }),
                 argumentCount: sanitizedArgs === undefined ? 0 : Object.keys(sanitizedArgs).length,
-                ...(mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
+                ...(mcpServer !== undefined && runtimeToolGuard === undefined && {
+                  mcpServer,
+                  mcpErrorType: classifyMcpErrorType(errorText),
+                }),
                 errorKind: toolErrorKind ?? ("dependency" as const),
                 // Name the bracketed `[error_code]` the errorText carries
                 // (permission_denied / invalid_value / …) instead of a generic
@@ -1140,16 +1221,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 // Failure-classification provenance — assigned at the mutation points above.
                 // matchedToken is untrusted tool output → sanitize+bound it
                 // exactly like errorText; the rest are enum-like/digest/number.
-                // transportOk = !endEvent.isError — it reflects whether the
-                // transport DELIVERED a response, not which classifier labeled
-                // the failure. It is false ONLY when the SDK reported a
-                // transport/spawn failure (endEvent.isError), and STAYS false
-                // even when the MCP classifier later refines that isError
-                // failure (relabeling classifiedFailureBy → "mcp_classifier").
-                // Do NOT rewrite as (classifiedFailureBy !== "sdk_iserror") —
-                // that flips the MCP-refined case to transportOk:true and reopens
-                // the MCP-transport-failure misclassification (see the
-                // const above).
+                // transportOk reflects whether the call reached the tool
+                // boundary. MCP schema/argument rejection is a returned
+                // tool-level response even when the SDK exposes it through
+                // isError; timeout/connection/transport failures remain false.
                 ...(classifiedFailureBy !== undefined && { classifiedFailureBy }),
                 transportOk,
                 ...(httpStatus !== undefined && { httpStatus }),
@@ -1170,7 +1245,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // as SEPARATE string-literal calls in an if/else (NOT a ternary) so
           // the trajectory-event-types-known arch gate's EMIT_REGEX sees both
           // names and verifies their mappings.
-          if (deps.toolRetryBreaker) {
+          // Runtime guards do not describe tool health. Feeding them into the
+          // per-tool retry breaker would blame a healthy tool for a local
+          // execution budget and manufacture a provider-outage diagnosis.
+          if (deps.toolRetryBreaker && classifiedFailureBy !== "runtime_guard") {
             const transition = deps.toolRetryBreaker.recordResult(
               endEvent.toolName,
               (sanitizedArgs ?? {}) as Record<string, unknown>,
@@ -1321,7 +1399,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }),
             ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
             ...(errorText && { errorMessage: sanitizeLogString(errorText).slice(0, 1500) }),
-            ...(!toolSuccess && mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
+            ...(!toolSuccess && mcpServer !== undefined && runtimeToolGuard === undefined && {
+              mcpServer,
+              mcpErrorType: classifyMcpErrorType(errorText),
+            }),
             ...(truncMeta && { truncated: truncMeta.truncated, fullChars: truncMeta.fullChars, returnedChars: truncMeta.returnedChars }),
             // Failure-classification provenance — assigned at the mutation points above.
             // matchedToken is untrusted tool output and the payload feeds the
@@ -1332,6 +1413,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // closed-union → emitted as-is.
             ...(classifiedFailureBy !== undefined && { classifiedFailureBy }),
             ...(!toolSuccess && { transportOk }),
+            ...(selfGradedOutcome !== undefined && { selfGradedOutcome }),
             ...(httpStatus !== undefined && { httpStatus }),
             ...(matchedRule !== undefined && { matchedRule }),
             ...(matchedToken !== undefined && { matchedToken: sanitizeLogString(matchedToken).slice(0, 1500) }),
@@ -1385,7 +1467,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
           // Reset prompt timeout after each tool completion so slow tools
           // do not starve subsequent LLM turns.
-          deps.onToolExecutionEnd?.();
+          deps.onToolActivity?.();
 
           // Safety: check step limit (delegated to bridge-safety-controls)
           {
@@ -1442,10 +1524,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // LLM turn about to start (pre-serialize hook for assert+restore)
         // -----------------------------------------------------------------
         case "turn_start": {
-          // Reset per-turn outbound capture. The log accumulates
-          // message(send/reply/attach) calls across the turn so the
-          // post-execution gate can make sentinel-aware decisions.
-          m.outboundLog.length = 0;
+          // Keep outbound delivery evidence for the full execution. A message
+          // tool call is normally followed by another model turn whose final
+          // assistant text is NO_REPLY; clearing here would erase the proof
+          // that the exact channel route already received a response.
 
           // Run the executor-supplied pre-call closure once per turn, before
           // pi-ai reads `session.agent.state.messages` to serialize the next
@@ -1574,7 +1656,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   .join(" ")
               : "";
 
-            if (assistantTextForPlan.length > 0) {
+            if (assistantTextForPlan.length > 0 && assistantMessageContinuesWithTools(assistantMsg)) {
               const steps = extractPlanFromResponse(assistantTextForPlan, deps.sepConfig.maxSteps);
               if (steps && steps.length >= deps.sepConfig.minSteps) {
                 const plan: ExecutionPlan = {
@@ -1612,6 +1694,22 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // -----------------------------------------------------------------
         case "turn_end": {
           m.llmCallCount++;
+
+          const taskConsumptions = [...pendingBackgroundTaskConsumptions];
+          pendingBackgroundTaskConsumptions.clear();
+          for (const taskId of taskConsumptions) {
+            const acknowledged = deps.acknowledgeBackgroundTaskConsumption?.(taskId);
+            if (acknowledged && !acknowledged.ok) {
+              deps.logger.warn(
+                {
+                  taskId,
+                  errorKind: "resource" as const,
+                  hint: "Repair protected background-task storage; the pending result remains eligible for continuation delivery",
+                },
+                "Background task consumption receipt could not be recorded",
+              );
+            }
+          }
 
           const turnEvent = event as { message: unknown };
           const assistantMsg = turnEvent.message as AssistantMessage | undefined;
@@ -2028,6 +2126,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 event: "turn_completed",
                 ts: systemDateFrom(systemNowMs()).toISOString(),
                 sessionId: formatSessionKey(deps.sessionKey),
+                messageId: deps.inboundMessageId,
                 traceId: tryGetContext()?.traceId ?? deps.executionId,
                 durationMs: llmLatencyMs ?? 0,
                 inputTokens: usage.input,
@@ -2181,7 +2280,23 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // routes an `exceeded` outcome through the SAME m.aborted spend-abort path.
             const perRoot = deps.boundedAutonomyBudget?.current;
             if (perRoot && deps.resolveRootRunId && !m.aborted) {
-              const rootRunId = deps.resolveRootRunId(deps.sessionKey);
+              const resolvedRoot = deps.resolveRootRunId(deps.agentId, deps.sessionKey);
+              if (!resolvedRoot.ok) {
+                deps.logger.warn(
+                  {
+                    agentId: deps.agentId,
+                    step: "per-root-budget",
+                    errorKind: resolvedRoot.error.errorKind,
+                    hint: "Preserve the trusted request agent, session, and root identity through the execution boundary before retrying",
+                  },
+                  "Per-root budget identity mismatch",
+                );
+                m.finishReason = "error";
+                m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
+                m.aborted = true;
+                deps.onAbort?.();
+              } else {
+                const rootRunId = resolvedRoot.value;
               // Re-anchor the per-root wall-clock + token limbs ONCE per
               // turn (this metrics state is per-turn, so the flag fires on the turn's
               // FIRST per-root reserve). An interactive session root (`root-session-*`)
@@ -2216,7 +2331,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 perRootEstUsd,
                 usage.totalTokens,
               );
-              if (rootGate.kind === "exceeded") {
+                if (rootGate.kind === "exceeded") {
                 m.finishReason = "spend_exceeded"; // reuse the single spend finishReason
                 m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
                 m.aborted = true;
@@ -2238,6 +2353,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                       }
                     : undefined,
                 );
+                }
               }
             }
 
@@ -2336,7 +2452,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   .join(" ")
               : "";
 
-            if (assistantTextForPlan.length > 0) {
+            if (assistantTextForPlan.length > 0 && assistantMessageContinuesWithTools(assistantMsg)) {
               const steps = extractPlanFromResponse(assistantTextForPlan, deps.sepConfig.maxSteps);
               if (steps && steps.length >= deps.sepConfig.minSteps) {
                 const plan: ExecutionPlan = {
@@ -2469,12 +2585,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
           // Flush compaction summary to long-term memory
           let memoriesWritten = 0;
-          if (compactionEvent.result?.summary && deps.memoryPort) {
+          if (compactionEvent.result?.summary && deps.memoryPort && deps.memoryScope) {
             const entry = {
               id: randomUUID(),
-              tenantId: deps.sessionKey.tenantId,
-              userId: deps.sessionKey.userId,
-              agentId: deps.agentId,
               content: compactionEvent.result.summary,
               trustLevel: "learned" as const,
               source: { who: "compaction", channel: deps.channelId },
@@ -2482,7 +2595,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               createdAt: systemNowMs(),
             };
             // Fire-and-forget: never block event processing on memory I/O
-            suppressError(deps.memoryPort.store(entry as MemoryEntry), "compaction memory flush");
+            suppressError(deps.memoryPort.store(entry, deps.memoryScope), "compaction memory flush");
             memoriesWritten = 1;
           }
 
@@ -2771,6 +2884,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
   const getResult = () => buildBridgeResult(m, deps.stepCounter.getCount());
 
+  const markDeferredWork = (): void => {
+    m.sideEffectSummary.deferredWorkCapabilityInvoked = true;
+  };
+
   /** Accumulate estimated cost from a timed-out API request. */
   const addGhostCost = (estimated: GhostCostEstimate): void => {
     m.ghostCostUsd += estimated.costUsd;
@@ -2811,5 +2928,22 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
     return new Set<string>([...m.turnUsedSkillIds, ...topicMatched]);
   };
 
-  return { listener, getResult, addGhostCost, getThinkingBlockStores, getDrainState, getUsedSkillIds };
+  const hasOutboundDelivery = (target: {
+    channelType: string;
+    channelId: string;
+  }): boolean => m.outboundLog.some(
+    (delivery) => delivery.channelType === target.channelType
+      && delivery.channelId === target.channelId,
+  );
+
+  return {
+    listener,
+    getResult,
+    addGhostCost,
+    getThinkingBlockStores,
+    getDrainState,
+    getUsedSkillIds,
+    hasOutboundDelivery,
+    markDeferredWork,
+  };
 }

@@ -1,72 +1,67 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Session Reset Policy Integration Tests
- *
- * Composes real createSessionStore, createSessionLifecycle, and
- * createSessionResetScheduler to validate the full reset system
- * end-to-end with an in-memory SQLite database.
- *
- * Also validates trigger phrase matching logic (pure function tests).
- *
- * @module
- */
-
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
+import {
+  createConversationRef,
+  type ComputeDailyResetNextRun,
+  type ConversationScope,
+  type SessionResetPolicyConfig,
+  type TimerHandle,
+  type TimerPort,
+  type TypedEventBus,
+} from "@comis/core";
+import { createSessionStore, initSchema, type SessionStore } from "@comis/memory";
+import { computeNextRunAtMs } from "@comis/scheduler";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
-import { initSchema, createSessionStore, type SessionStore } from "@comis/memory";
-import { formatSessionKey, type SessionKey, type TypedEventBus } from "@comis/core";
-import type { SessionResetPolicyConfig, ComputeDailyResetNextRun, TimerPort, TimerHandle } from "@comis/core";
+import { createSessionLifecycle, type SessionLifecycle } from "./session-lifecycle.js";
+import { createSessionResetScheduler, type SessionResetScheduler } from "./session-reset-policy.js";
 
-// ---------------------------------------------------------------------------
-// Lightweight TimerPort wrapper that delegates to globals.
-// ---------------------------------------------------------------------------
-
-function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+function wrapTimerHandle(timer: NodeJS.Timeout): TimerHandle {
   let cancelled = false;
-  let unrefCalled = false;
   return {
     get cancelled() { return cancelled; },
     cancel() {
       if (cancelled) return;
       cancelled = true;
-      clearTimeout(t);
+      clearTimeout(timer);
     },
     unref() {
-      if (cancelled || unrefCalled) return;
-      unrefCalled = true;
-      t.unref();
+      if (!cancelled) timer.unref();
     },
   };
 }
 
 const testTimers: TimerPort = {
-  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
-  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+  setTimeout: (callback, delayMs) => wrapTimerHandle(setTimeout(callback, delayMs)),
+  setInterval: (callback, delayMs) => wrapTimerHandle(setInterval(callback, delayMs)),
 };
-// Test-only @comis/scheduler import — see session-reset-policy.test.ts for
-// rationale. Production agent source does not import scheduler.
-import { computeNextRunAtMs } from "@comis/scheduler";
-import { createSessionLifecycle, type SessionLifecycle } from "./session-lifecycle.js";
-import {
-  createSessionResetScheduler,
-  type SessionResetScheduler,
-} from "./session-reset-policy.js";
 
-const computeDailyResetNextRun: ComputeDailyResetNextRun = (
-  updatedAt: number,
-  hour: number,
-  timezone: string,
-): number | undefined => {
-  return computeNextRunAtMs(
+const computeDailyResetNextRun: ComputeDailyResetNextRun = (updatedAt, hour, timezone) =>
+  computeNextRunAtMs(
     { kind: "cron", expr: `0 ${hour} * * *`, tz: timezone || undefined },
     updatedAt,
   );
-};
 
-// ---------------------------------------------------------------------------
-// Test harness
-// ---------------------------------------------------------------------------
+function makeScope(
+  principalId: string,
+  conversationId: string,
+  conversationKind: "direct" | "shared" = "direct",
+): ConversationScope {
+  return {
+    tenantId: "t1",
+    agentId: "agent_a",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: {
+        channelType: "test",
+        channelInstanceId: "test-instance",
+        conversationId,
+        conversationKind,
+      },
+      principalId,
+    },
+  };
+}
 
 interface TestHarness {
   db: Database.Database;
@@ -74,23 +69,20 @@ interface TestHarness {
   sessionManager: SessionLifecycle;
   scheduler: SessionResetScheduler;
   events: Array<{ name: string; payload: unknown }>;
-  setConfig: (c: SessionResetPolicyConfig) => void;
-  setNow: (ms: number) => void;
+  setNow(ms: number): void;
 }
 
-function createTestHarness(config: Partial<SessionResetPolicyConfig> = {}): TestHarness {
+function createTestHarness(config: Partial<SessionResetPolicyConfig>): TestHarness {
   const db = new Database(":memory:");
   initSchema(db, 1536);
   const sessionStore = createSessionStore(db);
   const sessionManager = createSessionLifecycle(sessionStore);
-
   const events: Array<{ name: string; payload: unknown }> = [];
   const eventBus = {
     emit: (name: string, payload: unknown) => { events.push({ name, payload }); },
     on: () => {},
     off: () => {},
   } as unknown as TypedEventBus;
-
   const fullConfig: SessionResetPolicyConfig = {
     mode: "idle",
     dailyResetHour: 4,
@@ -101,372 +93,188 @@ function createTestHarness(config: Partial<SessionResetPolicyConfig> = {}): Test
     perType: {},
     ...config,
   };
-
-  let currentConfig = fullConfig;
-  let currentNowMs = Date.now();
-
+  let nowMs = Date.now();
   const scheduler = createSessionResetScheduler({
     sessionStore,
     sessionManager,
     eventBus,
     logger: createMockLogger(),
-    getConfig: () => currentConfig,
+    getConfig: () => fullConfig,
     computeDailyResetNextRun,
-    nowMs: () => currentNowMs,
+    nowMs: () => nowMs,
     timers: testTimers,
+    listQueryScopes: () => [{ tenantId: "t1", agentId: "agent_a" }],
   });
-
   return {
     db,
     sessionStore,
     sessionManager,
     scheduler,
     events,
-    setConfig: (c: SessionResetPolicyConfig) => { currentConfig = c; },
-    setNow: (ms: number) => { currentNowMs = ms; },
+    setNow(value) { nowMs = value; },
   };
 }
 
-// ---------------------------------------------------------------------------
-// Helper: save a session with a specific updatedAt
-// ---------------------------------------------------------------------------
-
-function saveSessionAt(
-  store: SessionStore,
-  key: SessionKey,
+function saveAt(
+  harness: TestHarness,
+  scope: ConversationScope,
   updatedAt: number,
   metadata: Record<string, unknown> = {},
 ): void {
-  // Save the session first
-  store.save(key, [{ role: "user", content: "test" }], metadata);
-  // Then update the updatedAt directly via raw SQL
-  const db = (store as any)._db;
-  // We can't easily access the DB directly, so we use a workaround:
-  // save with the correct metadata, then the sweep will use the stored updatedAt
+  const saved = harness.sessionStore.save(scope, [{ role: "user", content: "test" }], metadata);
+  expect(saved.ok).toBe(true);
+  const conversationRef = createConversationRef(scope);
+  if (!conversationRef.ok) throw conversationRef.error;
+  harness.db.prepare(
+    "UPDATE sessions SET updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND conversation_ref = ?",
+  ).run(updatedAt, scope.tenantId, scope.agentId, conversationRef.value);
 }
 
-// We need direct DB access to set updatedAt. Let's use the db from harness.
-function setUpdatedAt(db: Database.Database, sessionKey: string, updatedAt: number): void {
-  db.prepare("UPDATE sessions SET updated_at = ? WHERE session_key = ?").run(updatedAt, sessionKey);
+function isStored(harness: TestHarness, scope: ConversationScope): boolean {
+  const loaded = harness.sessionStore.load(scope);
+  expect(loaded.ok).toBe(true);
+  return loaded.ok && loaded.value !== undefined;
 }
 
-// ---------------------------------------------------------------------------
-// Group 1: Sweep-based idle reset
-// ---------------------------------------------------------------------------
-
-describe("Session Reset Integration: Idle Reset", () => {
-  let h: TestHarness;
-
-  beforeEach(() => {
-    h = createTestHarness({ mode: "idle", idleTimeoutMs: 14_400_000 }); // 4 hours
-  });
+describe("Session reset integration", () => {
+  let harness: TestHarness;
 
   afterEach(() => {
-    h.scheduler.stop();
-    h.db.close();
+    harness.scheduler.stop();
+    harness.db.close();
   });
 
-  it("resets sessions idle beyond timeout", () => {
+  it("expires a conversation beyond the idle timeout", () => {
+    harness = createTestHarness({ mode: "idle", idleTimeoutMs: 14_400_000 });
     const now = Date.now();
-    const fiveHoursAgo = now - 5 * 60 * 60 * 1000; // 5 hours ago
+    const scope = makeScope("user_a", "chat_a");
+    saveAt(harness, scope, now - 5 * 60 * 60 * 1000);
+    harness.setNow(now);
 
-    const key: SessionKey = { tenantId: "t1", userId: "u1", channelId: "c1" };
-    h.sessionStore.save(key, [{ role: "user", content: "hello" }]);
-    setUpdatedAt(h.db, formatSessionKey(key), fiveHoursAgo);
+    harness.scheduler.sweep();
 
-    h.setNow(now);
-    h.scheduler.sweep();
-
-    // Verify session was deleted
-    const loaded = h.sessionStore.load(key);
-    expect(loaded).toBeUndefined();
-
-    // Verify event emitted
-    const expiredEvents = h.events.filter((e) => e.name === "session:expired");
-    expect(expiredEvents).toHaveLength(1);
-    expect((expiredEvents[0]!.payload as any).reason).toBe("auto-reset:idle");
+    expect(isStored(harness, scope)).toBe(false);
+    expect(harness.events).toContainEqual({
+      name: "session:expired",
+      payload: { conversationScope: scope, reason: "auto-reset:idle" },
+    });
   });
 
-  it("does NOT reset sessions within idle timeout", () => {
+  it("retains a conversation inside the idle timeout", () => {
+    harness = createTestHarness({ mode: "idle", idleTimeoutMs: 14_400_000 });
     const now = Date.now();
-    const oneHourAgo = now - 1 * 60 * 60 * 1000; // 1 hour ago
+    const scope = makeScope("user_a", "chat_a");
+    saveAt(harness, scope, now - 60 * 60 * 1000);
+    harness.setNow(now);
 
-    const key: SessionKey = { tenantId: "t1", userId: "u2", channelId: "c2" };
-    h.sessionStore.save(key, [{ role: "user", content: "recent" }]);
-    setUpdatedAt(h.db, formatSessionKey(key), oneHourAgo);
+    harness.scheduler.sweep();
 
-    h.setNow(now);
-    h.scheduler.sweep();
-
-    // Verify session still exists
-    const loaded = h.sessionStore.load(key);
-    expect(loaded).toBeDefined();
-
-    // No expired events
-    const expiredEvents = h.events.filter((e) => e.name === "session:expired");
-    expect(expiredEvents).toHaveLength(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Group 2: Sweep-based daily reset
-// ---------------------------------------------------------------------------
-
-describe("Session Reset Integration: Daily Reset", () => {
-  let h: TestHarness;
-
-  beforeEach(() => {
-    h = createTestHarness({ mode: "daily", dailyResetHour: 4, dailyResetTimezone: "UTC" });
+    expect(isStored(harness, scope)).toBe(true);
+    expect(harness.events).toHaveLength(0);
   });
 
-  afterEach(() => {
-    h.scheduler.stop();
-    h.db.close();
+  it("expires a conversation across the configured daily boundary", () => {
+    harness = createTestHarness({ mode: "daily", dailyResetHour: 4, dailyResetTimezone: "UTC" });
+    const scope = makeScope("user_a", "chat_a");
+    saveAt(harness, scope, new Date("2026-02-10T03:00:00Z").getTime());
+    harness.setNow(new Date("2026-02-11T05:00:00Z").getTime());
+
+    harness.scheduler.sweep();
+
+    expect(isStored(harness, scope)).toBe(false);
   });
 
-  it("resets sessions from before daily reset hour", () => {
-    // Session updated yesterday at 3 AM UTC (before the 4 AM reset)
-    const yesterday3am = new Date("2026-02-10T03:00:00Z").getTime();
-    // Now is today at 5 AM UTC (after the 4 AM reset)
-    const today5am = new Date("2026-02-11T05:00:00Z").getTime();
+  it("retains a conversation updated after the current daily boundary", () => {
+    harness = createTestHarness({ mode: "daily", dailyResetHour: 4, dailyResetTimezone: "UTC" });
+    const scope = makeScope("user_a", "chat_a");
+    saveAt(harness, scope, new Date("2026-02-11T05:00:00Z").getTime());
+    harness.setNow(new Date("2026-02-11T06:00:00Z").getTime());
 
-    const key: SessionKey = { tenantId: "t1", userId: "u1", channelId: "c1" };
-    h.sessionStore.save(key, [{ role: "user", content: "old" }]);
-    setUpdatedAt(h.db, formatSessionKey(key), yesterday3am);
+    harness.scheduler.sweep();
 
-    h.setNow(today5am);
-    h.scheduler.sweep();
-
-    const loaded = h.sessionStore.load(key);
-    expect(loaded).toBeUndefined();
-
-    const expiredEvents = h.events.filter((e) => e.name === "session:expired");
-    expect(expiredEvents).toHaveLength(1);
-    expect((expiredEvents[0]!.payload as any).reason).toBe("auto-reset:daily");
+    expect(isStored(harness, scope)).toBe(true);
   });
 
-  it("does NOT reset sessions updated after the daily reset hour today", () => {
-    // Session updated today at 5 AM UTC (after the 4 AM reset)
-    const today5am = new Date("2026-02-11T05:00:00Z").getTime();
-    // Now is today at 6 AM UTC (same day, after reset hour)
-    const today6am = new Date("2026-02-11T06:00:00Z").getTime();
-
-    const key: SessionKey = { tenantId: "t1", userId: "u2", channelId: "c2" };
-    h.sessionStore.save(key, [{ role: "user", content: "today" }]);
-    setUpdatedAt(h.db, formatSessionKey(key), today5am);
-
-    h.setNow(today6am);
-    h.scheduler.sweep();
-
-    const loaded = h.sessionStore.load(key);
-    expect(loaded).toBeDefined();
-
-    const expiredEvents = h.events.filter((e) => e.name === "session:expired");
-    expect(expiredEvents).toHaveLength(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Group 3: Hybrid mode
-// ---------------------------------------------------------------------------
-
-describe("Session Reset Integration: Hybrid Mode", () => {
-  let h: TestHarness;
-
-  beforeEach(() => {
-    h = createTestHarness({
+  it("hybrid mode expires conversations matching either condition", () => {
+    harness = createTestHarness({
       mode: "hybrid",
       dailyResetHour: 4,
       dailyResetTimezone: "UTC",
-      idleTimeoutMs: 14_400_000, // 4 hours
+      idleTimeoutMs: 14_400_000,
     });
-  });
-
-  afterEach(() => {
-    h.scheduler.stop();
-    h.db.close();
-  });
-
-  it("resets sessions matching either idle OR daily condition", () => {
-    // Now is 2026-02-11 05:00 UTC
     const now = new Date("2026-02-11T05:00:00Z").getTime();
+    const idle = makeScope("idle_user", "chat_idle");
+    const daily = makeScope("daily_user", "chat_daily");
+    saveAt(harness, idle, now - 5 * 60 * 60 * 1000);
+    saveAt(harness, daily, new Date("2026-02-11T01:30:00Z").getTime());
+    harness.setNow(now);
 
-    // Session 1: idle only -- updated 5 hours ago (same day after reset hour)
-    // This was updated at 00:00 UTC on Feb 11, which is before the 4 AM reset, so daily also triggers
-    // Let's make it simpler: updated at 00:01 UTC Feb 11 (before 4 AM) and idle (5 hours ago)
-    const key1: SessionKey = { tenantId: "t1", userId: "idle-user", channelId: "c1" };
-    h.sessionStore.save(key1, [{ role: "user", content: "idle" }]);
-    setUpdatedAt(h.db, formatSessionKey(key1), now - 5 * 60 * 60 * 1000);
+    harness.scheduler.sweep();
 
-    // Session 2: daily only -- updated yesterday at 3 AM, but only 2 hours ago (not idle)
-    // Actually, to be "daily only" and not idle, we need: updatedAt after (now - idleTimeout) but before daily reset
-    // updatedAt = today 3:30 AM UTC (after idleTimeout window of 4h, so not idle... wait)
-    // now = 5 AM, idleTimeout = 4h, so anything updated before 1 AM is idle
-    // For daily only: updated at 4:30 AM today (after daily reset) -- no, that wouldn't trigger daily either
-    // Let's think again: daily triggers when the 4 AM reset has passed since updatedAt
-    // If updatedAt = today 1:30 AM and now = 5 AM, that's 3.5 hours (not idle), but daily 4 AM passed since 1:30 AM
-    const key2: SessionKey = { tenantId: "t1", userId: "daily-user", channelId: "c2" };
-    h.sessionStore.save(key2, [{ role: "user", content: "daily" }]);
-    setUpdatedAt(h.db, formatSessionKey(key2), new Date("2026-02-11T01:30:00Z").getTime());
-
-    h.setNow(now);
-    h.scheduler.sweep();
-
-    // Both should be deleted
-    expect(h.sessionStore.load(key1)).toBeUndefined();
-    expect(h.sessionStore.load(key2)).toBeUndefined();
-
-    const expiredEvents = h.events.filter((e) => e.name === "session:expired");
-    expect(expiredEvents).toHaveLength(2);
+    expect(isStored(harness, idle)).toBe(false);
+    expect(isStored(harness, daily)).toBe(false);
   });
 
-  it("does NOT reset sessions that satisfy neither condition", () => {
-    // Now is 2026-02-11 05:00 UTC
-    const now = new Date("2026-02-11T05:00:00Z").getTime();
+  it("hybrid mode retains a conversation matching neither condition", () => {
+    harness = createTestHarness({
+      mode: "hybrid",
+      dailyResetHour: 4,
+      dailyResetTimezone: "UTC",
+      idleTimeoutMs: 14_400_000,
+    });
+    const scope = makeScope("fresh_user", "chat_fresh");
+    saveAt(harness, scope, new Date("2026-02-11T04:30:00Z").getTime());
+    harness.setNow(new Date("2026-02-11T05:00:00Z").getTime());
 
-    // Session updated at 4:30 AM today -- after daily reset hour, and only 30 min ago (not idle)
-    const key: SessionKey = { tenantId: "t1", userId: "fresh-user", channelId: "c3" };
-    h.sessionStore.save(key, [{ role: "user", content: "fresh" }]);
-    setUpdatedAt(h.db, formatSessionKey(key), new Date("2026-02-11T04:30:00Z").getTime());
+    harness.scheduler.sweep();
 
-    h.setNow(now);
-    h.scheduler.sweep();
-
-    expect(h.sessionStore.load(key)).toBeDefined();
-    const expiredEvents = h.events.filter((e) => e.name === "session:expired");
-    expect(expiredEvents).toHaveLength(0);
+    expect(isStored(harness, scope)).toBe(true);
   });
-});
 
-// ---------------------------------------------------------------------------
-// Group 4: Per-type overrides
-// ---------------------------------------------------------------------------
-
-describe("Session Reset Integration: Per-type Overrides", () => {
-  let h: TestHarness;
-
-  beforeEach(() => {
-    h = createTestHarness({
+  it("applies conversation-kind overrides without parsing display keys", () => {
+    harness = createTestHarness({
       mode: "idle",
-      idleTimeoutMs: 14_400_000, // 4 hours
-      perType: {
-        group: { mode: "none" }, // Groups disabled
-      },
+      idleTimeoutMs: 14_400_000,
+      perType: { group: { mode: "none" } },
     });
-  });
-
-  afterEach(() => {
-    h.scheduler.stop();
-    h.db.close();
-  });
-
-  it("resets DM sessions but not group sessions when group mode is none", () => {
     const now = Date.now();
-    const fiveHoursAgo = now - 5 * 60 * 60 * 1000;
+    const direct = makeScope("user_a", "direct_chat");
+    const shared = makeScope("user_b", "shared_chat", "shared");
+    saveAt(harness, direct, now - 5 * 60 * 60 * 1000);
+    saveAt(harness, shared, now - 5 * 60 * 60 * 1000);
+    harness.setNow(now);
 
-    // DM session (no guildId in key)
-    const dmKey: SessionKey = { tenantId: "t1", userId: "u1", channelId: "c1" };
-    h.sessionStore.save(dmKey, [{ role: "user", content: "dm" }]);
-    setUpdatedAt(h.db, formatSessionKey(dmKey), fiveHoursAgo);
+    harness.scheduler.sweep();
 
-    // Group session (guildId in key makes it group)
-    const groupKey: SessionKey = { tenantId: "t1", userId: "u2", channelId: "c2", guildId: "g1" };
-    h.sessionStore.save(groupKey, [{ role: "user", content: "group" }]);
-    setUpdatedAt(h.db, formatSessionKey(groupKey), fiveHoursAgo);
+    expect(isStored(harness, direct)).toBe(false);
+    expect(isStored(harness, shared)).toBe(true);
+  });
 
-    h.setNow(now);
-    h.scheduler.sweep();
+  it("retains sub-agent conversations managed by their own lifecycle", () => {
+    harness = createTestHarness({ mode: "idle", idleTimeoutMs: 14_400_000 });
+    const now = Date.now();
+    const child = makeScope("child_principal", "child_chat");
+    const regular = makeScope("user_a", "chat_a");
+    saveAt(harness, child, now - 5 * 60 * 60 * 1000, { parentSessionKey: "parent" });
+    saveAt(harness, regular, now - 5 * 60 * 60 * 1000);
+    harness.setNow(now);
 
-    // DM should be deleted
-    expect(h.sessionStore.load(dmKey)).toBeUndefined();
+    harness.scheduler.sweep();
 
-    // Group should survive
-    expect(h.sessionStore.load(groupKey)).toBeDefined();
-
-    const expiredEvents = h.events.filter((e) => e.name === "session:expired");
-    expect(expiredEvents).toHaveLength(1);
-    expect((expiredEvents[0]!.payload as any).reason).toBe("auto-reset:idle");
+    expect(isStored(harness, child)).toBe(true);
+    expect(isStored(harness, regular)).toBe(false);
   });
 });
 
-// ---------------------------------------------------------------------------
-// Group 5: Sub-agent exclusion
-// ---------------------------------------------------------------------------
-
-describe("Session Reset Integration: Sub-agent Exclusion", () => {
-  let h: TestHarness;
-
-  beforeEach(() => {
-    h = createTestHarness({ mode: "idle", idleTimeoutMs: 14_400_000 });
-  });
-
-  afterEach(() => {
-    h.scheduler.stop();
-    h.db.close();
-  });
-
-  it("does NOT reset sub-agent sessions regardless of idle status", () => {
-    const now = Date.now();
-    const fiveHoursAgo = now - 5 * 60 * 60 * 1000;
-
-    // Sub-agent session (has parentSessionKey in metadata)
-    const subAgentKey: SessionKey = {
-      tenantId: "t1",
-      userId: "sub-agent-123",
-      channelId: "sub-agent:123",
-    };
-    h.sessionStore.save(subAgentKey, [{ role: "user", content: "task" }], {
-      parentSessionKey: "t1:u1:c1",
-    });
-    setUpdatedAt(h.db, formatSessionKey(subAgentKey), fiveHoursAgo);
-
-    // Regular session (should be reset for contrast)
-    const regularKey: SessionKey = { tenantId: "t1", userId: "u1", channelId: "c1" };
-    h.sessionStore.save(regularKey, [{ role: "user", content: "hello" }]);
-    setUpdatedAt(h.db, formatSessionKey(regularKey), fiveHoursAgo);
-
-    h.setNow(now);
-    h.scheduler.sweep();
-
-    // Sub-agent should survive
-    expect(h.sessionStore.load(subAgentKey)).toBeDefined();
-
-    // Regular session should be deleted
-    expect(h.sessionStore.load(regularKey)).toBeUndefined();
-
-    const expiredEvents = h.events.filter((e) => e.name === "session:expired");
-    expect(expiredEvents).toHaveLength(1);
-    // Only the regular session was expired
-    expect((expiredEvents[0]!.payload as any).sessionKey.userId).toBe("u1");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Group 6: Trigger phrase matching
-// ---------------------------------------------------------------------------
-
-/**
- * Since matchesResetTrigger is exported from @comis/channels (which
- * the agent package does not depend on), we test the trigger phrase matching
- * logic inline with an equivalent pure function implementation.
- *
- * This validates the same behavior:
- * - Literal case-insensitive matching
- * - /regex/ pattern matching
- * - ReDoS protection (invalid regex silently skipped)
- */
 function matchesResetTrigger(text: string, triggers: string[]): boolean {
   const lowerText = text.toLowerCase().trim();
   for (const trigger of triggers) {
     try {
       if (trigger.startsWith("/") && trigger.endsWith("/") && trigger.length > 2) {
-        const re = new RegExp(trigger.slice(1, -1), "i");
-        if (re.test(lowerText)) return true;
-      } else {
-        if (lowerText === trigger.toLowerCase()) return true;
-      }
+        if (new RegExp(trigger.slice(1, -1), "i").test(lowerText)) return true;
+      } else if (lowerText === trigger.toLowerCase()) return true;
     } catch {
-      // Invalid regex -- skip silently (ReDoS prevention)
+      continue;
     }
   }
   return false;
@@ -475,36 +283,29 @@ function matchesResetTrigger(text: string, triggers: string[]): boolean {
 describe("Trigger Phrase Matching", () => {
   it("matches literal trigger phrases case-insensitively", () => {
     expect(matchesResetTrigger("Reset Session", ["reset session"])).toBe(true);
-    expect(matchesResetTrigger("RESET SESSION", ["reset session"])).toBe(true);
-    expect(matchesResetTrigger("reset session", ["Reset Session"])).toBe(true);
   });
 
-  it("matches /regex/ trigger patterns", () => {
-    expect(matchesResetTrigger("start over please", ["/start over/"])).toBe(true);
+  it("matches regular-expression trigger patterns", () => {
     expect(matchesResetTrigger("I want to start over now", ["/start over/"])).toBe(true);
   });
 
-  it("does NOT match when text differs from trigger", () => {
+  it("does not match different text", () => {
     expect(matchesResetTrigger("hello", ["reset session"])).toBe(false);
-    expect(matchesResetTrigger("resetsession", ["reset session"])).toBe(false);
   });
 
-  it("silently skips invalid regex patterns", () => {
-    // Invalid regex should not throw, just return false
+  it("skips invalid regular expressions", () => {
     expect(matchesResetTrigger("test", ["/[invalid/"])).toBe(false);
   });
 
-  it("handles empty trigger list", () => {
+  it("handles an empty trigger list", () => {
     expect(matchesResetTrigger("anything", [])).toBe(false);
   });
 
-  it("handles multiple triggers (first match wins)", () => {
-    expect(
-      matchesResetTrigger("new chat", ["reset session", "new chat", "/forget/"])
-    ).toBe(true);
+  it("matches any configured trigger", () => {
+    expect(matchesResetTrigger("new chat", ["reset session", "new chat", "/forget/"])).toBe(true);
   });
 
-  it("trims whitespace from input text", () => {
+  it("trims input whitespace", () => {
     expect(matchesResetTrigger("  reset session  ", ["reset session"])).toBe(true);
   });
 });

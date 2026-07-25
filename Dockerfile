@@ -22,6 +22,7 @@ RUN corepack enable && corepack prepare pnpm@10.34.4 --activate
 
 # Copy dependency manifests first (layer caching)
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY patches/ patches/
 COPY packages/shared/package.json      packages/shared/
 COPY packages/core/package.json        packages/core/
 COPY packages/infra/package.json       packages/infra/

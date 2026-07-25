@@ -130,7 +130,7 @@
                 },
                 "workspace": {
                   "additionalProperties": false,
-                  "description": "Nested workspace configuration. Use this OR the flat workspace_profile field, not both. Optionally inline ROLE.md / IDENTITY.md via role/identity for single-call creation (PREFERRED for batch fleet creation).",
+                  "description": "Nested workspace configuration. Use this OR the flat workspace_profile field, not both. Optionally inline ROLE.md / IDENTITY.md via role/identity for single-call creation (PREFERRED for batch system creation).",
                   "properties": {
                     "identity": {
                       "description": "Inline IDENTITY.md content. Written to <workspaceDir>/IDENTITY.md immediately on create. Should set name/creature/vibe/emoji/avatar/ethos for the agent. Max 4096 chars. When omitted, IDENTITY.md is the unmodified seed template.",
@@ -172,7 +172,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Workspace profile controlling platform instruction verbosity. Valid values: full (~9K tokens, user-facing agents on channels), specialist (~800 tokens, task workers and fleet sub-agents) ONLY. NO other values accepted. Default: full. Can be changed later via update action. Alternative shape: nested workspace.profile (see `workspace` field)."
+                  "description": "Workspace profile controlling platform instruction verbosity. Valid values: full (~9K tokens, user-facing agents on channels), specialist (~800 tokens, task workers and system sub-agents) ONLY. NO other values accepted. Default: full. Can be changed later via update action. Alternative shape: nested workspace.profile (see `workspace` field)."
                 }
               },
               "type": "object"
@@ -619,6 +619,10 @@
               "type": "string"
             },
             {
+              "const": "wait",
+              "type": "string"
+            },
+            {
               "const": "kill",
               "type": "string"
             },
@@ -627,7 +631,7 @@
               "type": "string"
             }
           ],
-          "description": "Subagent action (default: list). Valid values: list (show active runs), kill (terminate sub-agent), steer (redirect task with new message)"
+          "description": "Subagent action (default: list). Valid values: list (show runs), wait (await owned children without polling), kill (terminate sub-agent), steer (redirect task with new message)"
         },
         "message": {
           "description": "New task description for the subagent (for steer)",
@@ -637,9 +641,26 @@
           "description": "Include runs from last N minutes (default: 30, for list)",
           "type": "integer"
         },
+        "run_ids": {
+          "description": "Exact run IDs to wait for; omit to wait for active direct children",
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "type": "array"
+        },
         "target": {
           "description": "Run ID of the target subagent (for kill/steer)",
           "type": "string"
+        },
+        "timeout_ms": {
+          "description": "Wait deadline in milliseconds",
+          "maximum": 300000,
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -670,7 +691,7 @@
               "type": "string"
             }
           ],
-          "description": "Task management action. list: show all tasks for this agent. get: get task details by ID. cancel: cancel a running task. read_output: read the output of a completed task."
+          "description": "Task management action. list: show all tasks for this conversation. get: get task details by ID. cancel: cancel a running task. read_output: wait for a running task and read its completed output."
         },
         "taskId": {
           "description": "Task ID. Required for get, cancel, and read_output actions.",
@@ -1132,7 +1153,7 @@
               "type": "string"
             },
             {
-              "const": "fleet_health",
+              "const": "system_health",
               "type": "string"
             },
             {
@@ -1140,7 +1161,7 @@
               "type": "string"
             }
           ],
-          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), fleet_health (cross-session fleet-health triage: degradation rate, recurring WARNs, model/config health over a window), audit (the durable security-decision audit log: secret access, injection detection, command blocks — filter by kind/classification/agent/tenant/outcome/since/until)"
+          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), system_health (cross-session system-health triage: degradation rate, recurring WARNs, model/config health over a window), audit (the durable security-decision audit log: secret access, injection detection, command blocks — filter by kind/classification/agent/tenant/outcome/since/until)"
         },
         "agent_id": {
           "description": "Agent identifier (for billing.byAgent)",
@@ -1152,6 +1173,10 @@
         },
         "channel_id": {
           "description": "Channel identifier (for channels.get, delivery.recent)",
+          "type": "string"
+        },
+        "channel_type": {
+          "description": "Channel adapter type (required with channel_id for channels.get)",
           "type": "string"
         },
         "classification": {
@@ -1179,7 +1204,7 @@
           "type": "string"
         },
         "since_hours": {
-          "description": "Window in hours for fleet_health (default 24)",
+          "description": "Window in hours for system_health (default 24)",
           "type": "integer"
         },
         "since_ms": {
@@ -1272,20 +1297,12 @@
           "description": "Use lightweight bootstrap context (HEARTBEAT.md only)",
           "type": "boolean"
         },
-        "model": {
-          "description": "Model override for heartbeat LLM calls",
-          "type": "string"
-        },
         "prompt": {
           "description": "Custom heartbeat prompt text",
           "type": "string"
         },
         "response_prefix": {
           "description": "Prefix to strip from LLM responses before delivery",
-          "type": "string"
-        },
-        "session": {
-          "description": "Session key for heartbeat conversation isolation",
           "type": "string"
         },
         "show_alerts": {
@@ -1296,29 +1313,50 @@
           "description": "Show OK status notifications",
           "type": "boolean"
         },
-        "skip_heartbeat_only_delivery": {
-          "description": "Suppress HEARTBEAT_OK-only delivery from cron triggers",
-          "type": "boolean"
-        },
         "stale_ms": {
           "description": "Max ms before stuck detection triggers",
           "type": "integer"
         },
-        "target_channel_id": {
-          "description": "Delivery target channel identifier",
-          "type": "string"
-        },
-        "target_channel_type": {
-          "description": "Delivery target channel type (e.g. telegram, discord)",
-          "type": "string"
-        },
-        "target_chat_id": {
-          "description": "Delivery target chat/conversation ID",
-          "type": "string"
-        },
-        "target_is_dm": {
-          "description": "Whether delivery target is a DM conversation",
-          "type": "boolean"
+        "target": {
+          "additionalProperties": false,
+          "description": "Complete exact heartbeat delivery endpoint",
+          "properties": {
+            "channel_instance_id": {
+              "description": "Registered channel adapter instance ID",
+              "type": "string"
+            },
+            "channel_type": {
+              "description": "Channel type (e.g. telegram, discord)",
+              "type": "string"
+            },
+            "conversation_id": {
+              "description": "Platform conversation ID",
+              "type": "string"
+            },
+            "conversation_kind": {
+              "anyOf": [
+                {
+                  "const": "direct",
+                  "type": "string"
+                },
+                {
+                  "const": "shared",
+                  "type": "string"
+                }
+              ]
+            },
+            "thread_id": {
+              "description": "Platform thread or topic ID",
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel_type",
+            "channel_instance_id",
+            "conversation_id",
+            "conversation_kind"
+          ],
+          "type": "object"
         }
       },
       "required": [
@@ -1949,10 +1987,28 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "visibility": {
+          "anyOf": [
+            {
+              "const": "conversation",
+              "type": "string"
+            },
+            {
+              "const": "principal",
+              "type": "string"
+            },
+            {
+              "const": "agent-shared",
+              "type": "string"
+            }
+          ],
+          "description": "Who may recall this memory"
         }
       },
       "required": [
-        "content"
+        "content",
+        "visibility"
       ],
       "type": "object"
     },
@@ -3127,11 +3183,24 @@
               "type": "string"
             }
           ],
-          "description": "Cron scheduling action. Valid values: add (create new job), list (show all jobs), update (modify job config), remove (delete a job), status (scheduler health), runs (job execution history), run (trigger job now), wake (wake scheduler loop)"
+          "description": "Cron scheduling action. Valid values: add (create new job), list (show all jobs), update (modify job config), remove (delete a job), status (scheduler health), runs (job execution history), run (trigger job now), wake (request typed heartbeat coordinator admission)"
         },
-        "enabled": {
-          "description": "Enable or disable a job (for update)",
-          "type": "boolean"
+        "continuation_mode": {
+          "anyOf": [
+            {
+              "const": "none",
+              "type": "string"
+            },
+            {
+              "const": "heartbeat_excerpt",
+              "type": "string"
+            },
+            {
+              "const": "origin_history",
+              "type": "string"
+            }
+          ],
+          "description": "Post-run continuation mode for agent-turn jobs. Default: none."
         },
         "job_name": {
           "description": "Job name (required for update, remove, runs, run)",
@@ -3166,10 +3235,18 @@
           "description": "Human-readable job name (for add/update)",
           "type": "string"
         },
+        "paused": {
+          "description": "Pause or resume future occurrences (for update)",
+          "type": "boolean"
+        },
         "payload_kind": {
           "anyOf": [
             {
-              "const": "system_event",
+              "const": "heartbeat_event",
+              "type": "string"
+            },
+            {
+              "const": "delivery",
               "type": "string"
             },
             {
@@ -3177,7 +3254,7 @@
               "type": "string"
             }
           ],
-          "description": "Payload type. Valid values: system_event (cron/system triggers), agent_turn (agent-initiated runs)"
+          "description": "Payload type. Valid values: heartbeat_event (enqueue an agent heartbeat event), delivery (deliver exact text), agent_turn (run the agent)"
         },
         "payload_text": {
           "description": "Payload text or message content",
@@ -3229,17 +3306,9 @@
             {
               "const": "rolling",
               "type": "string"
-            },
-            {
-              "const": "accumulate",
-              "type": "string"
             }
           ],
-          "description": "Session history strategy for recurring jobs. Valid values: fresh (new session each run; default and STRONGLY PREFERRED for cadences ≥ 10 minutes), rolling (keep last N turns; ONLY use when cadence < 5 minutes), accumulate (keep all history; rarely correct, leaks across runs). Rationale: cron uses a 5-minute prompt cache TTL, so any cadence longer than that wastes cache-write spend on rolling/accumulate — the cache is always cold by the next tick. Pick fresh unless cross-tick session memory is essential and cadence is < 5 minutes. Default: fresh"
-        },
-        "source": {
-          "description": "Audit trail source identifier for wake action (default: agent)",
-          "type": "string"
+          "description": "Bounded session history strategy for agent-turn jobs. Valid values: fresh (new session each run; default) or rolling (keep up to max_history_turns)."
         },
         "timezone": {
           "description": "IANA timezone (e.g. America/Los_Angeles). REQUIRED for any time-of-day schedule (schedule_kind=cron or at) so it fires at the USER'S local wall-clock time, not the server's. Set it to the user's known timezone (from memory/USER.md); without it a naive time like 09:00 is interpreted in the server timezone (UTC). E.g. a Pacific user's 'remind me at 9am' must pass timezone=America/Los_Angeles.",
@@ -3261,6 +3330,36 @@
         "wake_gate_script": {
           "description": "Optional pre-run gate script for a monitoring job (add/update). When set, the scheduler runs it before each fire and wakes the model ONLY if the script signals a change; otherwise the fire is skipped cheaply. The script prints its verdict on stdout — see this tool's description for the protocol and a worked example.",
           "type": "string"
+        },
+        "wake_gate_timeout_seconds": {
+          "description": "Wake-gate timeout in seconds. Default: 30.",
+          "type": "integer"
+        },
+        "wake_mode": {
+          "anyOf": [
+            {
+              "const": "now",
+              "type": "string"
+            },
+            {
+              "const": "next-heartbeat",
+              "type": "string"
+            }
+          ],
+          "description": "Heartbeat-event timing. Valid values: now or next-heartbeat. Default: now."
+        },
+        "wake_target": {
+          "anyOf": [
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "monitoring",
+              "type": "string"
+            }
+          ],
+          "description": "Typed scheduler wake target. Default: agent."
         }
       },
       "required": [
@@ -3275,6 +3374,10 @@
     "category": "session",
     "schema": {
       "properties": {
+        "agent_id": {
+          "description": "Agent that owns the sessions",
+          "type": "string"
+        },
         "limit": {
           "description": "Maximum results to return (default: 10, max: 30)",
           "maximum": 30,
@@ -3292,8 +3395,16 @@
         "summarize": {
           "description": "Summarize matched sessions using LLM (default: true when query provided)",
           "type": "boolean"
+        },
+        "tenant_id": {
+          "description": "Tenant that owns the sessions",
+          "type": "string"
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "type": "object"
     },
     "conditional": false
@@ -3302,12 +3413,7 @@
     "name": "session_status",
     "category": "session",
     "schema": {
-      "properties": {
-        "model": {
-          "description": "Optional model override for this session",
-          "type": "string"
-        }
-      },
+      "properties": {},
       "type": "object"
     },
     "conditional": false
@@ -3317,6 +3423,14 @@
     "category": "session",
     "schema": {
       "properties": {
+        "agent_id": {
+          "description": "Agent that owns the target conversation",
+          "type": "string"
+        },
+        "conversation_ref": {
+          "description": "Opaque durable reference of the target conversation",
+          "type": "string"
+        },
         "limit": {
           "description": "Max messages to return (default: 20)",
           "type": "integer"
@@ -3325,13 +3439,15 @@
           "description": "Pagination offset (default: 0)",
           "type": "integer"
         },
-        "session_key": {
-          "description": "Target session key to retrieve history for",
+        "tenant_id": {
+          "description": "Tenant that owns the target conversation",
           "type": "string"
         }
       },
       "required": [
-        "session_key"
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
       ],
       "type": "object"
     },
@@ -3342,6 +3458,10 @@
     "category": "session",
     "schema": {
       "properties": {
+        "agent_id": {
+          "description": "Agent that owns the sessions",
+          "type": "string"
+        },
         "kind": {
           "anyOf": [
             {
@@ -3366,8 +3486,16 @@
         "since_minutes": {
           "description": "Only sessions active within N minutes",
           "type": "integer"
+        },
+        "tenant_id": {
+          "description": "Tenant that owns the sessions",
+          "type": "string"
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "type": "object"
     },
     "conditional": false
@@ -3398,17 +3526,28 @@
           ],
           "description": "Session management action. Valid values: delete (archive and remove session), reset (clear messages, keep identity), export (download transcript as JSON), compact (reduce token usage)"
         },
+        "agent_id": {
+          "description": "Agent that owns the target conversation",
+          "type": "string"
+        },
+        "conversation_ref": {
+          "description": "Opaque durable reference of the target conversation",
+          "type": "string"
+        },
         "instructions": {
           "description": "Optional instructions for compaction guidance (only used with compact action)",
           "type": "string"
         },
-        "session_key": {
-          "description": "The formatted session key (e.g., tenant:user:channel). For the COMPACT action you may OMIT this (or pass \"self\") to compact YOUR OWN current session — you do not need to construct or guess your session key. delete/reset/export still require an explicit key.",
+        "tenant_id": {
+          "description": "Tenant that owns the target conversation",
           "type": "string"
         }
       },
       "required": [
-        "action"
+        "action",
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
       ],
       "type": "object"
     },
@@ -3419,6 +3558,14 @@
     "category": "session",
     "schema": {
       "properties": {
+        "agent_id": {
+          "description": "Agent that owns the target conversation",
+          "type": "string"
+        },
+        "conversation_ref": {
+          "description": "Opaque durable reference of the target conversation",
+          "type": "string"
+        },
         "max_turns": {
           "description": "Max ping-pong turns 0-5 (for ping-pong mode)",
           "type": "integer"
@@ -3440,8 +3587,8 @@
           ],
           "description": "Send mode (default: fire-and-forget). Valid values: fire-and-forget (send without waiting), wait (block for response), ping-pong (multi-turn exchange)"
         },
-        "session_key": {
-          "description": "Target session key to send the message to",
+        "tenant_id": {
+          "description": "Tenant that owns the target conversation",
           "type": "string"
         },
         "text": {
@@ -3454,7 +3601,9 @@
         }
       },
       "required": [
-        "session_key",
+        "tenant_id",
+        "agent_id",
+        "conversation_ref",
         "text"
       ],
       "type": "object"
@@ -3470,14 +3619,6 @@
           "description": "Target agent ID for cross-agent spawning",
           "type": "string"
         },
-        "announce_channel_id": {
-          "description": "Channel ID for result announcement",
-          "type": "string"
-        },
-        "announce_channel_type": {
-          "description": "Channel type for result announcement",
-          "type": "string"
-        },
         "artifact_refs": {
           "description": "File paths for the sub-agent to reference (not inline content)",
           "items": {
@@ -3486,7 +3627,7 @@
           "type": "array"
         },
         "async": {
-          "description": "Spawn asynchronously, returns runId immediately (default: false)",
+          "description": "Optional explicit async intent; every spawn returns runId immediately",
           "type": "boolean"
         },
         "domain_knowledge": {

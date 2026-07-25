@@ -17,7 +17,7 @@
 
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
-import { safePath, writeMasterKeyIfAbsent } from "@comis/core";
+import { safePath, systemGetEnv, writeMasterKeyIfAbsent } from "@comis/core";
 import { createModelCatalog } from "@comis/core";
 import type {
   WizardState,
@@ -186,13 +186,6 @@ export function validateNonInteractiveOptions(
     throw new NonInteractiveError(
       "Custom endpoints require interactive setup so Comis can collect the base URL and compatibility mode; run `comis init` interactively.",
       "provider",
-    );
-  }
-
-  if (opts.provider === "amazon-bedrock" && opts.apiKey !== undefined) {
-    throw new NonInteractiveError(
-      "amazon-bedrock uses the ambient AWS credential chain; remove --api-key and configure AWS credentials and region for this process.",
-      "apiKey",
     );
   }
 
@@ -431,10 +424,16 @@ export function validateNonInteractiveOptions(
 export function buildNonInteractiveState(
   opts: NonInteractiveOptions,
 ): WizardState {
+  const bedrockRegion = opts.provider === "amazon-bedrock"
+    ? systemGetEnv("AWS_REGION")
+    : undefined;
   // Provider config
   const provider: ProviderConfig = {
     id: opts.provider!,
     ...(opts.apiKey !== undefined && { apiKey: opts.apiKey }),
+    ...(bedrockRegion !== undefined && {
+      credentialValues: { AWS_REGION: bedrockRegion },
+    }),
     // The non-interactive path does not perform a live provider request. The
     // presence of a key is configuration, not proof that the credential works.
     validated: false,

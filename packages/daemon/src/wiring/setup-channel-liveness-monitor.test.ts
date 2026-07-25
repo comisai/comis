@@ -180,7 +180,7 @@ describe("setupChannelLivenessMonitor", () => {
     expect(result.stop).toBeUndefined();
   });
 
-  it("is a no-op when there are no webhook adapters to watch (socket-only fleet)", () => {
+  it("is a no-op when there are no webhook adapters to watch (socket-only system)", () => {
     const { deps, timer } = makeHarness({
       adapters: [["telegram", makeAdapter({ connectionMode: "socket", lastInboundAt: 0 })]],
       enabled: true,

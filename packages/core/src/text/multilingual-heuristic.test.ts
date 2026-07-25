@@ -10,7 +10,7 @@ import {
 // resolveMultilingual: the pure advisory name heuristic.
 //
 // Classifies an embedder/reranker model id as `true | false | "unknown"` for the
-// `comis fleet` model-health line. Pure (no I/O/clock/env). Advisory ONLY —
+// `comis system-health` model-health line. Pure (no I/O/clock/env). Advisory ONLY —
 // NO search/recall behavior gates on the result (the FTS trigram floor
 // carries recall regardless).
 //

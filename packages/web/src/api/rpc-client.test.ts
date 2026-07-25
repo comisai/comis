@@ -119,7 +119,7 @@ describe("createRpcClient", () => {
     ws.onopen!();
 
     // Catch rejections from disconnect in afterEach
-    client.call("system.health").catch(() => {});
+    client.call("system.ping").catch(() => {});
     client.call("agents.list").catch(() => {});
 
     expect(ws.send).toHaveBeenCalledTimes(2);
@@ -127,7 +127,7 @@ describe("createRpcClient", () => {
     const msg2 = JSON.parse(ws.send.mock.calls[1][0] as string);
 
     expect(msg1.jsonrpc).toBe("2.0");
-    expect(msg1.method).toBe("system.health");
+    expect(msg1.method).toBe("system.ping");
     expect(msg1.id).toBe(1);
 
     expect(msg2.id).toBe(2);
@@ -139,7 +139,7 @@ describe("createRpcClient", () => {
     const ws = MockWebSocket.lastInstance!;
     ws.onopen!();
 
-    const promise = client.call<{ uptime: number }>("system.health");
+    const promise = client.call("system.ping");
 
     // Extract the id from the sent message
     const sent = JSON.parse(ws.send.mock.calls[0][0] as string);
@@ -149,12 +149,12 @@ describe("createRpcClient", () => {
       data: JSON.stringify({
         jsonrpc: "2.0",
         id: sent.id,
-        result: { uptime: 12345 },
+        result: { pong: true, ts: 12345 },
       }),
     } as MessageEvent);
 
     const result = await promise;
-    expect(result).toEqual({ uptime: 12345 });
+    expect(result).toEqual({ pong: true, ts: 12345 });
   });
 
   it("call rejects when error response received", async () => {
@@ -162,7 +162,7 @@ describe("createRpcClient", () => {
     const ws = MockWebSocket.lastInstance!;
     ws.onopen!();
 
-    const promise = client.call("invalid.method");
+    const promise = client.call("system.ping");
     const sent = JSON.parse(ws.send.mock.calls[0][0] as string);
 
     ws.onmessage!({
@@ -181,7 +181,7 @@ describe("createRpcClient", () => {
     const ws = MockWebSocket.lastInstance!;
     ws.onopen!();
 
-    const promise = client.call("slow.method");
+    const promise = client.call("system.ping");
 
     // The first send is our call. Heartbeat may also fire at 30s.
     expect(ws.send).toHaveBeenCalledTimes(1);
@@ -193,7 +193,7 @@ describe("createRpcClient", () => {
   });
 
   it("call rejects when not connected", async () => {
-    await expect(client.call("some.method")).rejects.toThrow("Not connected");
+    await expect(client.call("system.ping")).rejects.toThrow("Not connected");
   });
 
   it("call includes params when provided", () => {
@@ -201,10 +201,10 @@ describe("createRpcClient", () => {
     const ws = MockWebSocket.lastInstance!;
     ws.onopen!();
 
-    client.call("agent.get", { id: "agent-1" }).catch(() => {});
+    client.call("agents.get", { agentId: "agent-1" }).catch(() => {});
 
     const sent = JSON.parse(ws.send.mock.calls[0][0] as string);
-    expect(sent.params).toEqual({ id: "agent-1" });
+    expect(sent.params).toEqual({ agentId: "agent-1" });
   });
 
   it("call omits params when not provided", () => {
@@ -212,7 +212,7 @@ describe("createRpcClient", () => {
     const ws = MockWebSocket.lastInstance!;
     ws.onopen!();
 
-    client.call("system.health").catch(() => {});
+    client.call("system.ping").catch(() => {});
 
     const sent = JSON.parse(ws.send.mock.calls[0][0] as string);
     expect(sent.params).toBeUndefined();
@@ -382,8 +382,8 @@ describe("createRpcClient", () => {
     const ws = MockWebSocket.lastInstance!;
     ws.onopen!();
 
-    const promise1 = client.call("method1");
-    const promise2 = client.call("method2");
+    const promise1 = client.call("system.ping");
+    const promise2 = client.call("agents.list");
 
     client.disconnect();
 

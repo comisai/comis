@@ -14,7 +14,10 @@
  * @module
  */
 
-import { stripInlineRecalledMemory, extractInlineRecalledMemory } from "../../../rag/hybrid-memory-injector.js";
+import {
+  extractInlineRecalledMemory,
+  stripInlineRecalledMemory,
+} from "../../../rag/hybrid-memory-injector.js";
 
 /** Minimum content length (chars) for a tool result to be considered clearable. */
 export const MICROCOMPACT_MIN_CONTENT_LENGTH = 1000;
@@ -565,7 +568,11 @@ export function deferRecallToTrailingResponsesItem(input: Array<Record<string, u
   // item-level `type` presence (pi-ai user items have none; assistant items use "message").
   const trailing: Record<string, unknown> = {
     role: "user",
-    content: wasString ? recall : [{ type: "input_text", text: recall }],
+    content: wasString
+      ? recall
+      : [
+          { type: "input_text", text: recall },
+        ],
   };
   if (typeof msg.type !== "undefined") trailing.type = msg.type;
   input.push(trailing);

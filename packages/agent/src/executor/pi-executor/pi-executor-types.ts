@@ -1,16 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Pure types for the PiExecutor factory — extracted to a dedicated file so
- * closure-extracted helpers can `import type { PiExecutorDeps }` without
- * creating a cyclic import with `pi-executor.ts` (which itself imports
- * those helpers).
- *
- * @module
- */
-
+/** PiExecutor factory types, isolated to avoid cyclic imports from its helpers. */
+/** @module */
 import type {
-  AuthStorage,
   ModelRegistry,
+  ModelRuntime,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -40,6 +33,8 @@ import type {
   EnvPort,
   TimerPort,
   ContextStorePort,
+  WorkspacePolicyPort,
+  WorkspacePolicySnapshot,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 
@@ -51,13 +46,17 @@ import type { SummarizerSpendBreaker } from "../../safety/summarizer-spend-break
 import type { ProviderHealthMonitor } from "../../safety/provider-health-monitor.js";
 import type { ComisSessionManager } from "../../session/comis-session-manager.js";
 import type { AuthRotationAdapter } from "../../model/auth-rotation-adapter.js";
+import type { ComisCredentialStore } from "../../model/auth-storage-adapter.js";
 import type { OAuthTokenManager } from "../../model/oauth-token-manager.js";
 import type { ActiveRunRegistry } from "../active-run-registry.js";
 import type { GeminiCacheManager } from "../gemini-cache-manager.js";
 import type { BackgroundTaskManager } from "../../background/index.js";
+import type { McpInstructionBlock } from "@comis/core";
 
 /** Dependencies required by the PiExecutor. */
 export interface PiExecutorDeps {
+  /** Agent authority bound to this executor instance by the composition root. */
+  agentId: string;
   // Safety controls
   circuitBreaker: CircuitBreaker;
   /** Optional provider health monitor for cross-agent pre-check. */
@@ -69,7 +68,7 @@ export interface PiExecutorDeps {
   stepCounter: StepCounter; spendAccumulator?: import("../../budget/spend-accumulator.js").SpendAccumulator; spendConfig?: import("@comis/core").SpendConfig; // Spend kill-switch: daemon-wide accumulator REFERENCE (per-turn bridge) + config; absent ⇒ no-op.
   /** Late-bound per-root budget holder + rootRunId resolver, threaded into the bridge like spendAccumulator; absent ⇒ no-op. */
   boundedAutonomyBudget?: import("../../bridge/pi-event-bridge.js").BoundedAutonomyBudgetHolder;
-  resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string;
+  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
   eventBus: TypedEventBus;
   logger: ComisLogger;
   /** The daemon package.json version, stamped into trace.metadata's
@@ -81,13 +80,19 @@ export interface PiExecutorDeps {
    *  plan bridge reads the live plan via the shared port. Absent in non-ACP runtimes. */
   executionPlanHolder?: import("./execution-plan-holder.js").ExecutionPlanHolder;
   // Adapters
-  authStorage: AuthStorage;
+  authStorage: ComisCredentialStore;
   modelRegistry: ModelRegistry;
+  /** ModelRuntime backing modelRegistry — createAgentSession consumes it and
+   *  resolves request auth live through the credential store. */
+  modelRuntime: ModelRuntime;
   providerAliases?: Map<string, string>;
   // Session management
   sessionAdapter: ComisSessionManager;
   // Workspace
   workspaceDir: string;
+  /** Daemon-composed loader. When present, one snapshot is loaded at turn start. */
+  workspacePolicyPort?: WorkspacePolicyPort;
+  workspacePolicySnapshot?: WorkspacePolicySnapshot;
   /** Daemon data dir (COMIS_DATA_DIR / config.dataDir). Threaded to
    *  prompt-assembly via ToolAssemblyDeps so the recall-trace recorder resolves
    *  its containment base from the SAME source the memory.recall_trace reader
@@ -103,12 +108,8 @@ export interface PiExecutorDeps {
   agentDir: string;
   // Optional
   memoryPort?: MemoryPort;
-  /** Optional LCD context store (dag-mode write-path + assembly).
-   *  TYPE-only from @comis/core — the agent never imports the memory package
-   *  (the agent↛memory cut); the daemon injects the concrete createLcdStore.
-   *  Absent ⇒ no afterTurn ingest + the dag branch falls through to the
-   *  pipeline (never crashes, never no-ops). */
-  contextStore?: ContextStorePort;
+  /** Canonical durable context store injected through the core port. */
+  contextStore: ContextStorePort;
   /** The daemon-owned per-tenant summarizer spend+breaker. ONE
    *  instance constructed at the composition root (mirrors the embedding breaker,
    *  setup-memory.ts) and injected here so it bounds AGGREGATE per-tenant
@@ -183,6 +184,13 @@ export interface PiExecutorDeps {
   mediaPersistenceEnabled?: boolean;
   autonomousMediaEnabled?: boolean;
   getPromptSkillsXml?: () => string;
+  /** Typed path-to-skill attribution captured beside the rendered skill listing. */
+  getPromptSkillLocations?: () => ReadonlyMap<string, string>;
+  /**
+   * Read instructions from currently connected MCP servers for each execution.
+   * Resolver form keeps the dynamic preamble current after reconnects.
+   */
+  getMcpServerInstructions?: () => ReadonlyArray<McpInstructionBlock>;
   /** Tool names available to sub-agents, injected by daemon from TOOL_PROFILES + config. */
   subAgentToolNames?: string[];
   /** Whether sub-agents inherit MCP tools from parent (subAgentMcpTools: "inherit"). */
@@ -254,10 +262,9 @@ export interface PiExecutorDeps {
   toolCapabilityPort: ToolCapabilityPort;
   /** Sender trust display config from AppConfig. */
   senderTrustDisplayConfig?: SenderTrustDisplayConfig;
-  /** Documentation config from AppConfig. */
-  documentationConfig?: import("@comis/core").DocumentationConfig;
   /** Tenant ID for conversation creation. */
-  tenantId?: string;
+  /** Bound tenant authority for every turn executed by this instance. */
+  tenantId: string;
   /** Delivery mirror port for session mirroring injection. */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget limits. */

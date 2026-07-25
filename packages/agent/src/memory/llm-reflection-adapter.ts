@@ -79,7 +79,11 @@ export interface LlmReflectionAdapterDeps {
   /** Model id of the resolved cheap model. */
   modelId: string;
   /** The API key for the resolved provider (resolved daemon-side; never logged). */
-  apiKey: string;
+  apiKey?: string;
+  /** Provider-scoped configuration for native model authentication; never logged. */
+  providerEnv?: Record<string, string>;
+  /** Scheduler-owned cancellation for the enclosing reflection occurrence. */
+  signal?: AbortSignal;
   /** Custom-provider model spec (resolved `/v1` baseUrl) so a keyless/local YAML provider the
    *  pi-ai catalog can't see still resolves a model — else reflection is skipped on keyless. */
   customModel?: CustomCompletionsModelSpec;
@@ -104,7 +108,7 @@ export interface LlmReflectionAdapterDeps {
   /**
    * Optional per-call usage sink. A background reflection run spends real
    * tokens with no executor in the loop — without this hook the spend hits
-   * the provider bill with ZERO obs rows (invisible to fleet/billing). The
+   * the provider bill with ZERO obs rows (invisible to system/billing). The
    * daemon wiring forwards it as an `observability:token_usage` event under
    * the synthetic `__REFLECT__` session key. Best-effort: a throwing sink
    * never fails the reflect call.
@@ -195,7 +199,7 @@ function retainTrajectoryEdges(trajectoryText: string, retainedChars: number): s
  * content.
  */
 export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): ReflectionAdapter {
-  const { provider, modelId, apiKey, customModel, clock, logger } = deps;
+  const { provider, modelId, apiKey, providerEnv, customModel, clock, logger } = deps;
   // Per-kind prompt + source label — default to the skill values
   // so an existing skill adapter construction is byte-identical.
   const systemPrompt = deps.systemPrompt ?? REFLECT_PROMPT;
@@ -307,6 +311,9 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
     }
 
     const controller = new AbortController();
+    const abortFromCaller = (): void => controller.abort(deps.signal?.reason);
+    if (deps.signal?.aborted === true) controller.abort(deps.signal.reason);
+    else deps.signal?.addEventListener("abort", abortFromCaller, { once: true });
     const timer = systemSetTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
     const callStartMs = clock.now();
 
@@ -318,7 +325,8 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
           messages: [{ role: "user" as const, content: userContent, timestamp: clock.now() }],
         },
         {
-          apiKey,
+          ...(apiKey === undefined ? {} : { apiKey }),
+          ...(providerEnv === undefined ? {} : { env: providerEnv }),
           ...temperatureOption(model, REFLECT_TEMPERATURE),
           maxTokens: reflectionOutputTokens,
           signal: controller.signal,
@@ -326,6 +334,7 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
       ),
     );
     systemClearTimeout(timer);
+    deps.signal?.removeEventListener("abort", abortFromCaller);
 
     if (!responseResult.ok) {
       logger.warn(
@@ -334,6 +343,8 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
           step: "reflect" as const,
           // Closed-union errorKind: a network-class transport fault on the LLM call.
           errorKind: "network" as const,
+          model: `${provider}/${modelId}`,
+          durationMs: clock.now() - callStartMs,
           hint: "reflection LLM call failed; the topic is skipped this run (the prior doc survives)",
         },
         "reflection LLM call failed",
@@ -391,6 +402,7 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
           step: "reflect" as const,
           errorKind: "dependency" as const,
           model: `${provider}/${modelId}`,
+          durationMs: clock.now() - callStartMs,
           hint: `reflection model returned an error/empty response (${resp.errorMessage ?? "no content"}) — topic skipped; verify the resolved cheap model id is valid for ${provider}`,
         },
         "reflection model returned error/empty response",
@@ -406,6 +418,8 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
       {
         submodule: "llm-reflection-adapter",
         step: "reflect" as const,
+        model: `${provider}/${modelId}`,
+        durationMs: clock.now() - callStartMs,
         opCount: result.ops?.length ?? 0,
         sectionCount: result.sections?.length ?? 0,
       },

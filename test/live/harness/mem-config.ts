@@ -16,7 +16,7 @@
  *                        weight 0 neutralizes the lane's RRF contribution)
  *       temporal/causal/graphSpread → rag.lanes.<lane>.enabled
  *       entity         → rag.entityLane.enabled
- *       rerank/mmr/pinned → rag.<knob>.enabled
+ *       rerank → rag.rerank.mode; mmr/pinned → rag.<knob>.enabled
  *       includeTrustLevels:true → ["system","learned","external"] (TrustLevel[] —
  *                        the boolean maps to the full spectrum so trust
  *                        arbitration is actually exercised)
@@ -170,7 +170,7 @@ export function buildMemConfig(opts: MemConfigOpts): string {
       ensureObj(rag, "entityLane")["enabled"] = rc.entity;
     }
     if (rc.rerank !== undefined) {
-      ensureObj(rag, "rerank")["enabled"] = rc.rerank;
+      ensureObj(rag, "rerank")["mode"] = rc.rerank ? "on" : "off";
     }
     if (rc.rerankTimeoutMs !== undefined) {
       ensureObj(rag, "rerank")["timeoutMs"] = rc.rerankTimeoutMs;

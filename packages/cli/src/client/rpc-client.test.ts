@@ -90,7 +90,7 @@ function connectLastWsAsync(): void {
 // ignored COMIS_CONFIG_PATHS, a non-default data-dir daemon (a test/second
 // daemon on another port) would be unreachable via the CLI even with
 // COMIS_CONFIG_PATHS exported — you'd have to discover COMIS_GATEWAY_URL. The
-// gateway config path must honor COMIS_CONFIG_PATHS (first ":"-separated entry,
+// gateway config path must honor COMIS_CONFIG_PATHS (first comma-separated entry,
 // matching the daemon), falling back to the default home location.
 describe("resolveGatewayConfigPath — honors COMIS_CONFIG_PATHS", () => {
   const SAVED = process.env.COMIS_CONFIG_PATHS;
@@ -100,7 +100,7 @@ describe("resolveGatewayConfigPath — honors COMIS_CONFIG_PATHS", () => {
   });
 
   it("returns the first COMIS_CONFIG_PATHS entry when set", () => {
-    process.env.COMIS_CONFIG_PATHS = "/custom/livetest/config.yaml:/other/config.yaml";
+    process.env.COMIS_CONFIG_PATHS = "/custom/livetest/config.yaml,/other/config.yaml";
     expect(resolveGatewayConfigPath()).toBe("/custom/livetest/config.yaml");
   });
 

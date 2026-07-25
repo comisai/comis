@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Background tasks management tool: multi-action tool for agent-scoped task management.
+ * Background tasks management tool: multi-action tool for conversation-scoped task management.
  *
  * Supports 4 actions: list, get, cancel, read_output.
- * Any user can check their own background tasks (not admin-gated).
+ * Each conversation can inspect only the background tasks it started.
  *
  * @module
  */
@@ -11,8 +11,8 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import type { Result } from "@comis/shared";
-import { readStringParam, readEnumParam } from "../tool-helpers.js";
-import { systemDateFrom } from "@comis/core";
+import { readStringParam, readEnumParam, throwToolError } from "../tool-helpers.js";
+import { createConversationRef, systemDateFrom, tryGetContext } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Local interface for BackgroundTaskManager dependency injection.
@@ -32,15 +32,54 @@ interface TaskInfo {
   completedAt?: number;
   result?: string;
   error?: string;
-  /** agentId is nested under origin.agentId */
-  origin: { agentId: string };
+  origin: {
+    turnScope: {
+      conversation: { agentId: string };
+    };
+    conversationRef: string;
+  };
 }
 
 /** Subset of BackgroundTaskManager consumed by this tool. */
 export interface BackgroundTaskManagerLike {
   getTask(taskId: string): TaskInfo | undefined;
+  waitForTask(
+    taskId: string,
+    onWaiting?: () => void,
+    waitHeartbeatMs?: number,
+  ): Promise<Result<TaskInfo, Error>>;
   getTasks(agentId: string): TaskInfo[];
   cancel(taskId: string): Result<void, Error>;
+}
+
+interface TaskAuthority {
+  agentId: string;
+  conversationRef: string;
+}
+
+function resolveTaskAuthority(expectedAgentId: string): TaskAuthority {
+  const context = tryGetContext();
+  if (!context?.turnScope || context.agentId !== expectedAgentId) {
+    return throwToolError(
+      "permission_denied",
+      "Background tasks require an active matching conversation authority",
+      { hint: "Retry the action from the conversation that started the task" },
+    );
+  }
+  const conversationRef = createConversationRef(context.turnScope.conversation);
+  if (!conversationRef.ok) {
+    return throwToolError(
+      "permission_denied",
+      "The active conversation authority is invalid",
+      { hint: "Retry after the session identity has been restored" },
+    );
+  }
+  return { agentId: context.agentId, conversationRef: conversationRef.value };
+}
+
+function taskBelongsToAuthority(task: TaskInfo, authority: TaskAuthority): boolean {
+  return task.origin.turnScope.conversation.agentId === authority.agentId
+    && task.origin.conversationRef === authority.conversationRef;
 }
 
 // ---------------------------------------------------------------------------
@@ -57,9 +96,9 @@ const BackgroundTasksToolParams = Type.Object({
     ],
     {
       description:
-        "Task management action. list: show all tasks for this agent. " +
+        "Task management action. list: show all tasks for this conversation. " +
         "get: get task details by ID. cancel: cancel a running task. " +
-        "read_output: read the output of a completed task.",
+        "read_output: wait for a running task and read its completed output.",
     },
   ),
   taskId: Type.Optional(
@@ -81,10 +120,10 @@ const VALID_ACTIONS = ["list", "get", "cancel", "read_output"] as const;
  * Create a background tasks management tool with 4 actions.
  *
  * Actions:
- * - **list** -- List all background tasks for the current agent
+ * - **list** -- List all background tasks for the current conversation
  * - **get** -- Get details of a specific task by ID
  * - **cancel** -- Cancel a running background task
- * - **read_output** -- Read the output of a completed background task
+ * - **read_output** -- Wait for a running task and read its completed output
  *
  * @param deps - Dependencies: BackgroundTaskManager and agentId
  * @returns AgentTool implementing the background tasks management interface
@@ -92,33 +131,40 @@ const VALID_ACTIONS = ["list", "get", "cancel", "read_output"] as const;
 export function createBackgroundTasksTool(deps: {
   manager: BackgroundTaskManagerLike;
   agentId: string;
+  /** Derived from the owning agent's prompt stall budget. */
+  waitHeartbeatMs?: number;
 }): AgentTool<typeof BackgroundTasksToolParams> {
   return {
     name: "background_tasks",
     label: "Background Tasks",
     description:
       "Manage background tasks. Long-running tool executions are automatically promoted " +
-      "to background. Use this tool to check status, read output, or cancel tasks.",
+      "to background. Use read_output once to wait for and consume a promoted task result; use the other actions to check status or cancel tasks.",
     parameters: BackgroundTasksToolParams,
 
     async execute(
       _toolCallId: string,
       params: BackgroundTasksToolParamsType,
+      _signal?: AbortSignal,
+      onUpdate?: (partialResult: AgentToolResult<unknown>) => void,
     ): Promise<AgentToolResult<unknown>> {
       const p = params as unknown as Record<string, unknown>;
       const action = readEnumParam(p, "action", VALID_ACTIONS);
+      const authority = resolveTaskAuthority(deps.agentId);
 
       switch (action) {
         case "list": {
-          const tasks = deps.manager.getTasks(deps.agentId).map((t: TaskInfo) => ({
-            id: t.id,
-            toolName: t.toolName,
-            status: t.status,
-            startedAt: systemDateFrom(t.startedAt).toISOString(),
-            completedAt: t.completedAt
-              ? systemDateFrom(t.completedAt).toISOString()
-              : undefined,
-          }));
+          const tasks = deps.manager.getTasks(deps.agentId)
+            .filter((task: TaskInfo) => taskBelongsToAuthority(task, authority))
+            .map((t: TaskInfo) => ({
+              id: t.id,
+              toolName: t.toolName,
+              status: t.status,
+              startedAt: systemDateFrom(t.startedAt).toISOString(),
+              completedAt: t.completedAt
+                ? systemDateFrom(t.completedAt).toISOString()
+                : undefined,
+            }));
           return {
             content: [{ type: "text", text: JSON.stringify(tasks) }],
             details: tasks,
@@ -128,11 +174,10 @@ export function createBackgroundTasksTool(deps: {
         case "get": {
           const taskId = readStringParam(p, "taskId");
           const task = deps.manager.getTask(taskId!);
-          if (!task || task.origin.agentId !== deps.agentId) {
-            return {
-              content: [{ type: "text", text: `Error: Task not found: ${taskId}` }],
-              details: null,
-            };
+          if (!task || !taskBelongsToAuthority(task, authority)) {
+            throwToolError("not_found", `Background task not found: ${taskId}`, {
+              hint: "Call background_tasks with action=list to obtain a task ID owned by this conversation",
+            });
           }
           const details = {
             id: task.id,
@@ -153,18 +198,14 @@ export function createBackgroundTasksTool(deps: {
         case "cancel": {
           const taskId = readStringParam(p, "taskId");
           const task = deps.manager.getTask(taskId!);
-          if (!task || task.origin.agentId !== deps.agentId) {
-            return {
-              content: [{ type: "text", text: `Error: Task not found: ${taskId}` }],
-              details: null,
-            };
+          if (!task || !taskBelongsToAuthority(task, authority)) {
+            throwToolError("not_found", `Background task not found: ${taskId}`, {
+              hint: "Call background_tasks with action=list to obtain a task ID owned by this conversation",
+            });
           }
           const cancelResult = deps.manager.cancel(taskId!);
           if (!cancelResult.ok) {
-            return {
-              content: [{ type: "text", text: `Error: ${cancelResult.error.message}` }],
-              details: null,
-            };
+            throwToolError("conflict", cancelResult.error.message);
           }
           return {
             content: [{ type: "text", text: `Task ${taskId} cancelled successfully.` }],
@@ -174,12 +215,29 @@ export function createBackgroundTasksTool(deps: {
 
         case "read_output": {
           const taskId = readStringParam(p, "taskId");
-          const task = deps.manager.getTask(taskId!);
-          if (!task || task.origin.agentId !== deps.agentId) {
-            return {
-              content: [{ type: "text", text: `Error: Task not found: ${taskId}` }],
-              details: null,
-            };
+          let task = deps.manager.getTask(taskId!);
+          if (!task || !taskBelongsToAuthority(task, authority)) {
+            throwToolError("not_found", `Background task not found: ${taskId}`, {
+              hint: "Call background_tasks with action=list to obtain a task ID owned by this conversation",
+            });
+          }
+          if (task.status === "running") {
+            const waited = await deps.manager.waitForTask(
+              taskId!,
+              onUpdate
+                ? () => onUpdate({
+                    content: [{ type: "text", text: "Background task is still running." }],
+                    details: { taskId, status: "running" },
+                  })
+                : undefined,
+              deps.waitHeartbeatMs ?? 60_000,
+            );
+            if (!waited.ok) {
+              return throwToolError("conflict", waited.error.message, {
+                hint: "Inspect the task details before retrying the underlying operation",
+              });
+            }
+            task = waited.value;
           }
           switch (task.status) {
             case "running":
@@ -193,10 +251,9 @@ export function createBackgroundTasksTool(deps: {
                 details: { taskId, status: "completed", result: task.result },
               };
             case "failed":
-              return {
-                content: [{ type: "text", text: `Task failed: ${task.error}` }],
-                details: { taskId, status: "failed", error: task.error },
-              };
+              return throwToolError("conflict", `Background task failed: ${task.error ?? "unknown error"}`, {
+                hint: "Inspect the task details and retry the underlying operation when appropriate",
+              });
             case "cancelled":
               return {
                 content: [{ type: "text", text: "Task was cancelled." }],

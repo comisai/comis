@@ -35,7 +35,7 @@ export interface CacheBreakQueriesSlice {
   /**
    * Cache-break rate by reason + the $-lost SUM over the existing
    * `category:'cache_break'` diagnostics index. The store-method wrapper around the
-   * standalone `queryCacheBreakRateByReason` (kept standalone for the fleet/explain
+   * standalone `queryCacheBreakRateByReason` (kept standalone for the system/explain
    * surfaces; exposed here as the `obs.cacheBreaks.byReason` RPC's deps-reachable
    * read — the `queryAuditEvents` mold). Content-free.
    */

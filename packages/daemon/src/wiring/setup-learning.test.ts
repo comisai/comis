@@ -24,8 +24,9 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
+import type { OutcomeVerdict } from "@comis/agent";
 import { TypedEventBus, runWithContext } from "@comis/core";
-import { createSqliteMentalModelStore, initSchema } from "@comis/memory";
+import { createSqliteMentalModelStore, createSqliteOutcomeStore, initSchema } from "@comis/memory";
 import type { EventMap, OutcomeObservation, ResolvedOutcome, LearningScope } from "@comis/core";
 import type { UsefulnessScope, MemoryUsefulnessStore, UsefulnessSignal } from "@comis/core";
 import type { MentalModelStorePort } from "@comis/core";
@@ -161,6 +162,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -182,6 +184,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     const { store, observe, resolve } = makeStubStore();
     const emitSpy = vi.spyOn(bus, "emit");
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -207,6 +210,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -233,6 +237,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -250,11 +255,70 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     expect(observe.mock.calls[0]![0].outcome).toBe("success");
   });
 
+  it("persists the ingress sender-trust decision with a tool outcome", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    runWithContext({
+      tenantId: "tenant-x",
+      agentId: AGENT,
+      sessionKey: SESSION_KEY,
+      traceId: TRACE,
+      senderTrustTier: "user",
+      senderTrustExplicit: true,
+    } as never, () => bus.emit("tool:executed", toolPayload({ success: true })));
+    await Promise.resolve();
+
+    expect(observe.mock.calls[0]![0]).toMatchObject({
+      senderTrust: "user",
+      senderTrustExplicit: true,
+    });
+  });
+
+  it("does not persist an outcome for a turn that ingress marked ineligible for learning", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    runWithContext({
+      tenantId: "tenant-x",
+      agentId: AGENT,
+      sessionKey: SESSION_KEY,
+      traceId: TRACE,
+      learningEligible: false,
+    } as never, () => bus.emit("tool:executed", toolPayload({ success: true })));
+    await Promise.resolve();
+
+    expect(observe).not.toHaveBeenCalled();
+  });
+
   it("graph:completed { status:'completed' } records 'success' AND emits learning:outcome_observed", async () => {
     const bus = new TypedEventBus();
     const { store, observe, resolve } = makeStubStore(baseVerdict({ outcome: "success" }));
     const emitSpy = vi.spyOn(bus, "emit");
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -288,6 +352,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore(baseVerdict({ outcome: "failure" }));
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -309,6 +374,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore(baseVerdict({ outcome: "failure" }));
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -332,6 +398,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     const { store, resolve } = makeStubStore(baseVerdict({ outcome: "unknown", confidence: 0, sources: [] }));
     const logger = createMockLogger();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -360,6 +427,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     const { store } = makeStubStore(baseVerdict({ outcome: "unknown", confidence: 0, sources: [] }));
     const emitSpy = vi.spyOn(bus, "emit");
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -386,6 +454,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     const prune = vi.fn(() => ({ changes: 0 }));
     const logger = createMockLogger();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: { observe, resolve, prune },
       usefulnessStore: mockUsefulnessStore().store,
@@ -410,6 +479,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     const resolve = vi.fn(async () => ok(baseVerdict()));
     const prune = vi.fn(() => ({ changes: 0 }));
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: { observe, resolve, prune },
       usefulnessStore: mockUsefulnessStore().store,
@@ -435,6 +505,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -462,6 +533,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -514,6 +586,7 @@ describe("wireLearningOutcome — reward/failure write at resolve()", () => {
     const { store, resolve } = makeStubStore(verdict);
     const us = opts?.usefulnessStore ?? mockUsefulnessStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: us.store,
@@ -804,6 +877,7 @@ describe("wireLearningOutcome — memory:skill_used → observe(usedSkillIds)", 
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -829,6 +903,7 @@ describe("wireLearningOutcome — memory:skill_used → observe(usedSkillIds)", 
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -849,6 +924,7 @@ describe("wireLearningOutcome — memory:skill_used → observe(usedSkillIds)", 
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -889,6 +965,7 @@ describe("wireLearningOutcome — memory:recall_used → observe(recalledIds)", 
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -914,6 +991,7 @@ describe("wireLearningOutcome — memory:recall_used → observe(recalledIds)", 
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -934,6 +1012,7 @@ describe("wireLearningOutcome — memory:recall_used → observe(recalledIds)", 
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -987,6 +1066,7 @@ describe("wireLearningOutcome — orchestrate:run_summary → observe(procedureD
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -1018,6 +1098,7 @@ describe("wireLearningOutcome — orchestrate:run_summary → observe(procedureD
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -1038,6 +1119,7 @@ describe("wireLearningOutcome — orchestrate:run_summary → observe(procedureD
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -1086,6 +1168,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve()", ()
     const { store } = makeStubStore(verdict);
     const ls = opts?.learnedSkillStore ?? mockLearnedSkillStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -1198,6 +1281,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve()", ()
       baseVerdict({ outcome: "failure", sources: ["tool"], usedSkillIds: ["deploy"], confidence: 0.9 }),
     );
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore,
       usefulnessStore: mockUsefulnessStore().store,
@@ -1295,6 +1379,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve()", ()
     const emitSpy = vi.spyOn(bus, "emit");
     // No learnedSkillStore / learningSkillsEnabled / learningSkillsPromoteAt deps.
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -1373,13 +1458,15 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
       agentId: AGENT,
       sessionKey: SESSION_KEY,
       traceId: TRACE,
+      toolCalls: 0,
+      llmCalls: 1,
       receivedAt: NOW,
       executionDurationMs: 10,
       deliveryDurationMs: 0,
       totalDurationMs: 10,
       tokensUsed: 5,
       cost: 0,
-      success: true,
+      status: "success",
       finishReason: "stop",
       timestamp: NOW,
       ...over,
@@ -1396,6 +1483,7 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
     const us = mockUsefulnessStore();
     const ls = mockLearnedSkillStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: us.store,
@@ -1436,10 +1524,131 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
     expect(ls.promoteByName.mock.calls[0]![0]).toBe("s1");
   });
 
+  it("records the completed-turn boundary after tool observations before resolving a single-agent turn", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe, resolve } = makeStubStore();
+    const clock = createFakeClock(NOW);
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock,
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("tool:executed", toolPayload({ success: true }));
+    await flushMicrotasks();
+    clock.advance(250);
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    expect(observe).toHaveBeenCalledTimes(2);
+    expect(observe.mock.calls[1]![0]).toEqual(expect.objectContaining({
+      trajectoryId: TRACE,
+      sessionId: SESSION_KEY,
+      source: "explicit",
+      outcome: "unknown",
+      confidence: 0,
+      observedAt: NOW + 250,
+    }));
+    expect(observe.mock.invocationCallOrder[1]).toBeLessThan(resolve.mock.invocationCallOrder[0]!);
+  });
+
+  it("an explicit terminal tool failure outranks later generic tool success when the turn is resolved", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 384);
+    const bus = new TypedEventBus();
+    const clock = createFakeClock(NOW);
+    const ls = mockLearnedSkillStore();
+    const emitSpy = vi.spyOn(bus, "emit");
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: createSqliteOutcomeStore({ db }),
+      usefulnessStore: mockUsefulnessStore().store,
+      learnedSkillStore: ls.store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      learningSkillsEnabled: () => true,
+      learningSkillsPromoteAt: () => 3,
+      clock,
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("tool:executed", toolPayload({
+      success: false,
+      selfGradedOutcome: "failure",
+    } as Partial<EventMap["tool:executed"]>));
+    await flushMicrotasks();
+    clock.advance(1);
+    bus.emit("tool:executed", toolPayload({ toolName: "read", toolCallId: "call-2", success: true }));
+    bus.emit("memory:skill_used", skillUsedPayload({ usedSkillIds: ["s1"], usedCount: 1 }));
+    await flushMicrotasks();
+    clock.advance(1);
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    const emitted = emitSpy.mock.calls.find((c) => c[0] === "learning:outcome_observed");
+    expect((emitted?.[1] as EventMap["learning:outcome_observed"] | undefined)?.outcome).toBe("failure");
+    expect(ls.promoteByName).not.toHaveBeenCalled();
+    db.close();
+  });
+
+  it("a later explicit tool success recovers an earlier explicit failure at turn completion", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 384);
+    const bus = new TypedEventBus();
+    const clock = createFakeClock(NOW);
+    const ls = mockLearnedSkillStore();
+    const emitSpy = vi.spyOn(bus, "emit");
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: createSqliteOutcomeStore({ db }),
+      usefulnessStore: mockUsefulnessStore().store,
+      learnedSkillStore: ls.store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      learningSkillsEnabled: () => true,
+      learningSkillsPromoteAt: () => 3,
+      clock,
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("tool:executed", toolPayload({
+      success: false,
+      selfGradedOutcome: "failure",
+    } as Partial<EventMap["tool:executed"]>));
+    await flushMicrotasks();
+    clock.advance(1);
+    bus.emit("tool:executed", toolPayload({
+      toolCallId: "call-2",
+      success: true,
+      selfGradedOutcome: "success",
+    } as Partial<EventMap["tool:executed"]>));
+    bus.emit("memory:skill_used", skillUsedPayload({ usedSkillIds: ["s1"], usedCount: 1 }));
+    await flushMicrotasks();
+    clock.advance(1);
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    const emitted = emitSpy.mock.calls.find((c) => c[0] === "learning:outcome_observed");
+    expect((emitted?.[1] as EventMap["learning:outcome_observed"] | undefined)?.outcome).toBe("success");
+    expect(ls.promoteByName).toHaveBeenCalledTimes(1);
+    db.close();
+  });
+
   it("byte-identity: learningOutcomeEnabled => false → diagnostic:message_processed resolves NOTHING", async () => {
     const bus = new TypedEventBus();
     const { store, resolve } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -1460,6 +1669,7 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
     const bus = new TypedEventBus();
     const { store, resolve } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -1494,6 +1704,7 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
     const us = mockUsefulnessStore();
     const ls = mockLearnedSkillStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: us.store,
@@ -1527,6 +1738,7 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
     );
     const us = mockUsefulnessStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: us.store,
@@ -1557,6 +1769,7 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
     const prune = vi.fn(() => ({ changes: 0 }));
     const logger = createMockLogger();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: { observe, resolve, prune },
       usefulnessStore: mockUsefulnessStore().store,
@@ -1690,6 +1903,7 @@ describe("promote/demote drive the REAL learned-skill store via name→id (not n
     const { store: outcomeStore } = makeStubStore(verdict);
     const skillStore = createSqliteMentalModelStore({ db });
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore,
       usefulnessStore: mockUsefulnessStore().store,
@@ -1841,6 +2055,18 @@ describe("promote/demote drive the REAL learned-skill store via name→id (not n
 // consume chain. The deterministic tool/pipeline tier ALWAYS out-ranks the judge at
 // fusion, so the judge runs ONLY on `unknown` (resolved turns skip it — bounds cost).
 describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conversational turn", () => {
+  function judgeVerdict(outcome: OutcomeVerdict["outcome"]): OutcomeVerdict {
+    return {
+      outcome,
+      confidence: 0.7,
+      cappedConfidence: 0.7,
+      source: "judge",
+      judgeModel: "example/judge",
+      rubricHash: "a".repeat(64),
+      evidenceRefs: ["b".repeat(64)],
+    };
+  }
+
   function diagnosticPayload(
     over?: Partial<EventMap["diagnostic:message_processed"]>,
   ): EventMap["diagnostic:message_processed"] {
@@ -1851,13 +2077,15 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
       agentId: AGENT,
       sessionKey: SESSION_KEY,
       traceId: TRACE,
+      toolCalls: 0,
+      llmCalls: 1,
       receivedAt: NOW,
       executionDurationMs: 10,
       deliveryDurationMs: 0,
       totalDurationMs: 10,
       tokensUsed: 5,
       cost: 0,
-      success: true,
+      status: "success",
       finishReason: "stop",
       timestamp: NOW,
       ...over,
@@ -1889,10 +2117,11 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
       baseVerdict({ outcome: "success", confidence: 0.7, sources: ["judge"], recalledIds: ["m1"] }),
     );
     const us = mockUsefulnessStore();
-    const outcomeJudge = vi.fn(async () => ({ outcome: "success" as const, cappedConfidence: 0.7 }));
+    const outcomeJudge = vi.fn(async () => judgeVerdict("success"));
     const readTurnTranscript = vi.fn(() => "user: please summarize\nassistant: here is the summary");
     const emitSpy = vi.spyOn(bus, "emit");
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: us.store,
@@ -1912,7 +2141,10 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
     // The judge ran over the transcript and a source:"judge" row was observed (capped reward).
     expect(readTurnTranscript).toHaveBeenCalledTimes(1);
     expect(outcomeJudge).toHaveBeenCalledTimes(1);
-    expect(outcomeJudge.mock.calls[0]![0]).toContain("summarize");
+    expect(outcomeJudge.mock.calls[0]![0]).toEqual({
+      agentId: AGENT,
+      trajectoryContent: "user: please summarize\nassistant: here is the summary",
+    });
     const judgeObs = observe.mock.calls.map((c) => c[0]).find((o) => o.source === "judge");
     expect(judgeObs, "a source:'judge' observation must be written").toBeDefined();
     expect(judgeObs!.outcome).toBe("success");
@@ -1940,9 +2172,10 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
       baseVerdict({ outcome: "success", confidence: 0.7, sources: ["judge"] }),
     );
     const us = mockUsefulnessStore();
-    const outcomeJudge = vi.fn(async () => ({ outcome: "success" as const, cappedConfidence: 0.7 }));
+    const outcomeJudge = vi.fn(async () => judgeVerdict("success"));
     const readTurnTranscript = vi.fn(() => "user: hi\nassistant: hello");
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: us.store,
@@ -1975,6 +2208,7 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
     const us = mockUsefulnessStore();
     // NO outcomeJudge / learningOutcomeJudgeEnabled / readTurnTranscript deps.
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: us.store,
@@ -1996,9 +2230,10 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
     const bus = new TypedEventBus();
     // resolve already yields a deterministic success — the judge must never run.
     const { store } = makeStubStore(baseVerdict({ outcome: "success", sources: ["tool"], recalledIds: ["m1"] }));
-    const outcomeJudge = vi.fn(async () => ({ outcome: "failure" as const, cappedConfidence: 0.7 }));
+    const outcomeJudge = vi.fn(async () => judgeVerdict("failure"));
     const readTurnTranscript = vi.fn(() => "user: do x\nassistant: done");
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -2030,6 +2265,7 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
       throw new Error("model resolution failed");
     });
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -2063,8 +2299,9 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
       baseVerdict({ outcome: "unknown", confidence: 0, sources: [] }),
       baseVerdict({ outcome: "success", confidence: 0.7, sources: ["judge"] }),
     );
-    const outcomeJudge = vi.fn(async () => ({ outcome: "success" as const, cappedConfidence: 0.7 }));
+    const outcomeJudge = vi.fn(async () => judgeVerdict("success"));
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -2103,6 +2340,7 @@ describe("wireLearningOutcome — surface refresh on doc ADMISSION", () => {
     const bus = new TypedEventBus();
     const { store } = makeStubStore();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,
@@ -2148,6 +2386,7 @@ describe("wireLearningOutcome — learning:correction_observed → demote the co
     const skills = mockLearnedSkillStore();
     const logger = createMockLogger();
     wireLearningOutcome({
+      tenantId: "tenant-x",
       eventBus: bus,
       outcomeStore: store,
       usefulnessStore: mockUsefulnessStore().store,

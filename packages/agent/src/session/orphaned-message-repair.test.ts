@@ -235,19 +235,23 @@ describe("repairOrphanedMessages", () => {
     expect(lastMsg.role).toBe("assistant");
   });
 
-  it("repairs session ending with assistant toolUse (restart before tool results)", () => {
+  it("repairs assistant tool use without inventing a restart cause", () => {
     const sm = createTestSession();
     appendUser(sm, "check something");
     appendAssistantToolUse(sm, "call_002");
 
     const result = repairOrphanedMessages(sm);
     expect(result.repaired).toBe(true);
-    expect(result.reason).toContain("toolUse interrupted");
+    expect(result.reason).toContain("without a recorded result");
 
-    // Verify synthetic assistant was appended
     const context = sm.buildSessionContext();
     const lastMsg = context.messages[context.messages.length - 1]!;
     expect(lastMsg.role).toBe("assistant");
+    const content = (lastMsg as { content: Array<{ text: string }> }).content;
+    expect(content[0]!.text).toBe(
+      "(the previous turn ended before this tool result was recorded)",
+    );
+    expect(content[0]!.text).not.toMatch(/restart/i);
   });
 
   it("synthetic reply for tool-result tail mentions restart", () => {

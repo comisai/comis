@@ -63,6 +63,48 @@ describe("subagents tool", () => {
     });
   });
 
+  it("wait action forwards bounded ids timeout and the tool cancellation signal", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => ({
+      results: [{
+        runId: "run-1",
+        status: "completed",
+        completion: {
+          endReason: "completed",
+          completedAtMs: 123,
+          summary: "child-authored result",
+        },
+      }],
+    }));
+    const controller = new AbortController();
+    const tool = createSubagentsTool(mockRpcCall);
+
+    const result = await tool.execute("call-wait", {
+      action: "wait",
+      run_ids: ["run-1", "run-2"],
+      timeout_ms: 20_000,
+    } as never, controller.signal);
+
+    expect(mockRpcCall).toHaveBeenCalledWith(
+      "subagent.wait",
+      { runIds: ["run-1", "run-2"], timeoutMs: 20_000 },
+      { signal: controller.signal },
+    );
+    const parsed = parseResult(result) as {
+      results: Array<{ completion: { summary: string } }>;
+    };
+    expect(parsed.results[0]!.completion.summary).toContain("child-authored result");
+    expect(parsed.results[0]!.completion.summary).toMatch(/<<<UNTRUSTED_[a-f0-9]{24}>>>/);
+  });
+
+  it("wait action defaults to the caller's active children", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => ({ results: [] }));
+    const tool = createSubagentsTool(mockRpcCall);
+
+    await tool.execute("call-wait-default", { action: "wait" } as never);
+
+    expect(mockRpcCall).toHaveBeenCalledWith("subagent.wait", {}, { signal: undefined });
+  });
+
   // -------------------------------------------------------------------------
   // kill action
   // -------------------------------------------------------------------------

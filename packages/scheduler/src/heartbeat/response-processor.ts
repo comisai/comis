@@ -4,7 +4,8 @@
  *
  * Pure functions that classify LLM heartbeat responses into a discriminated
  * union outcome (heartbeat_ok vs deliver). Handles:
- * - HEARTBEAT_OK token detection with HTML/Markdown stripping
+ * - Shared silent-response suppression with HTML/Markdown stripping
+ * - HEARTBEAT_OK acknowledgement detection
  * - ackMaxChars threshold for soft acknowledgments
  * - Response prefix removal
  * - Media bypass
@@ -14,16 +15,17 @@
  * are handled by the caller based on the returned outcome.
  */
 
-import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
+import { HEARTBEAT_OK_TOKEN, isSilentResponse } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
-/** Discriminated union result of heartbeat response classification. */
+/** Closed visibility classification after response-prefix and markup normalization. */
 export type HeartbeatResponseOutcome =
-  | { kind: "heartbeat_ok"; reason: "token" | "ack_under_threshold" | "empty_reply"; cleanedText: string }
-  | { kind: "deliver"; text: string; hasMedia: boolean };
+  | { kind: "empty" }
+  | { kind: "acknowledged_ok"; reason: "heartbeat_token" | "ack_under_threshold"; text: string }
+  | { kind: "alert"; level: "alert" | "critical"; text: string; hasMedia: boolean };
 
 /** Input to classifyHeartbeatResponse. */
 export interface ClassifyHeartbeatInput {
@@ -41,28 +43,49 @@ export interface ProcessHeartbeatInput {
 }
 
 // ---------------------------------------------------------------------------
-// Regex constants
-// ---------------------------------------------------------------------------
-
-/** Matches HTML tags (not a full parser -- sufficient for token exposure). */
-const HTML_TAG_RE = /<[^>]+>/g;
-
-/** Matches leading/trailing Markdown wrapper characters (backticks, bold, italic, strikethrough). */
-const MARKDOWN_WRAPPER_RE = /^[`*_~]+|[`*_~]+$/g;
-
-// ---------------------------------------------------------------------------
 // Pure functions
 // ---------------------------------------------------------------------------
+
+function isMarkdownWrapperCharacter(character: string): boolean {
+  return character === "`" || character === "*" || character === "_" || character === "~";
+}
+
+function stripMarkdownWrappers(text: string): string {
+  let start = 0;
+  while (start < text.length && isMarkdownWrapperCharacter(text.charAt(start))) start += 1;
+
+  let end = text.length;
+  while (end > start && isMarkdownWrapperCharacter(text.charAt(end - 1))) end -= 1;
+
+  return text.slice(start, end);
+}
 
 /**
  * Strip HTML tags and common Markdown wrappers to expose tokens.
  * Not a full parser -- just enough to find HEARTBEAT_OK in LLM output.
  */
 export function stripMarkup(text: string): string {
-  return text
-    .replace(HTML_TAG_RE, "")
-    .replace(MARKDOWN_WRAPPER_RE, "")
-    .trim();
+  return stripMarkdownWrappers(stripHtmlTags(text)).trim();
+}
+
+function stripHtmlTags(text: string): string {
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const start = text.indexOf("<", cursor);
+    if (start === -1) {
+      parts.push(text.slice(cursor));
+      break;
+    }
+    parts.push(text.slice(cursor, start));
+    const end = text.indexOf(">", start + 1);
+    if (end === -1) {
+      parts.push(text.slice(start));
+      break;
+    }
+    cursor = end + 1;
+  }
+  return parts.join("");
 }
 
 /**
@@ -115,36 +138,60 @@ export function stripResponsePrefix(text: string, prefix: string | undefined): s
  * Classify a heartbeat LLM response into an outcome.
  *
  * Check order:
- * 1. Media bypass -- always deliver
- * 2. Empty/null reply -- treated as HEARTBEAT_OK
- * 3. Token detection + ackMaxChars threshold
+ * 1. Empty/null reply -- suppress when text-only, preserve media
+ * 2. Media bypass -- always deliver
+ * 3. Shared non-heartbeat silent marker -- suppress
+ * 4. HEARTBEAT_OK detection + ackMaxChars threshold
  */
 export function classifyHeartbeatResponse(input: ClassifyHeartbeatInput): HeartbeatResponseOutcome {
   const { text, hasMedia, ackMaxChars } = input;
 
-  // Media bypass -- always deliver
-  if (hasMedia) {
-    return { kind: "deliver", text: text?.trim() ?? "", hasMedia: true };
-  }
-
-  // Empty/null reply treated as HEARTBEAT_OK
+  // Empty model text never manufactures a user-visible acknowledgement.
   if (!text || !text.trim()) {
-    return { kind: "heartbeat_ok", reason: "empty_reply", cleanedText: "" };
+    return hasMedia
+      ? { kind: "alert", level: "alert", text: "", hasMedia: true }
+      : { kind: "empty" };
   }
 
-  const { stripped, hadToken } = stripHeartbeatToken(text);
+  const normalized = stripMarkup(text);
+  if (hasMedia) {
+    return {
+      kind: "alert",
+      level: isCritical(normalized) ? "critical" : "alert",
+      text: normalized,
+      hasMedia: true,
+    };
+  }
+
+  // The shared helper is the runtime-wide source of truth for NO_REPLY and
+  // [SILENT] wrappers. HEARTBEAT_OK deliberately continues through the
+  // acknowledgement path below so showOk and transcript pruning retain their
+  // existing semantics.
+  if (normalized !== HEARTBEAT_OK_TOKEN && isSilentResponse(normalized)) {
+    return { kind: "empty" };
+  }
+
+  const { stripped, hadToken } = stripHeartbeatToken(normalized);
+  if (isCritical(stripped)) {
+    return { kind: "alert", level: "critical", text: stripped, hasMedia: false };
+  }
 
   if (hadToken) {
-    // Token found -- check if remaining text is under threshold
-    if (stripped.length <= ackMaxChars) {
-      return { kind: "heartbeat_ok", reason: "token", cleanedText: stripped };
+    if (stripped.length === 0) {
+      return { kind: "acknowledged_ok", reason: "heartbeat_token", text: HEARTBEAT_OK_TOKEN };
     }
-    // Token found but substantial remaining text -- deliver the stripped text
-    return { kind: "deliver", text: stripped, hasMedia: false };
+    if (stripped.length <= ackMaxChars) {
+      return { kind: "acknowledged_ok", reason: "ack_under_threshold", text: stripped };
+    }
+    return { kind: "alert", level: "alert", text: stripped, hasMedia: false };
   }
 
-  // No token, no media, non-empty -- deliver as-is
-  return { kind: "deliver", text: text.trim(), hasMedia: false };
+  return {
+    kind: "alert",
+    level: isCritical(normalized) ? "critical" : "alert",
+    text: normalized,
+    hasMedia: false,
+  };
 }
 
 /**
@@ -165,4 +212,9 @@ export function processHeartbeatResponse(input: ProcessHeartbeatInput): Heartbea
   const prefixStripped = stripResponsePrefix(responseText, responsePrefix);
 
   return classifyHeartbeatResponse({ text: prefixStripped, hasMedia, ackMaxChars });
+}
+
+function isCritical(text: string): boolean {
+  const upper = text.toUpperCase();
+  return upper.includes("CRITICAL") || upper.includes("EMERGENCY");
 }

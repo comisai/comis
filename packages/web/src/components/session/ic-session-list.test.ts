@@ -8,33 +8,27 @@ import "./ic-session-list.js";
 
 const testSessions: SessionListItem[] = [
   {
-    sessionKey: "abc12345",
+    conversationRef: "abc12345",
     agentId: "default",
-    userId: "user1",
-    channelId: "ch1",
-    kind: "telegram",
+    kind: "dm",
     messageCount: 47,
     totalTokens: 23400,
     createdAt: Date.now() - 7200000,
     updatedAt: Date.now() - 3600000,
   },
   {
-    sessionKey: "def67890",
+    conversationRef: "def67890",
     agentId: "default",
-    userId: "user2",
-    channelId: "ch2",
-    kind: "discord",
+    kind: "group",
     messageCount: 12,
     totalTokens: 8100,
     createdAt: Date.now() - 18000000,
     updatedAt: Date.now() - 7200000,
   },
   {
-    sessionKey: "ghi11223longkeythatexceedstruncation",
+    conversationRef: "ghi11223longkeythatexceedstruncation",
     agentId: "support",
-    userId: "user3",
-    channelId: "ch3",
-    kind: "slack",
+    kind: "sub-agent",
     messageCount: 103,
     totalTokens: 67200,
     createdAt: Date.now() - 86400000,
@@ -86,7 +80,7 @@ describe("IcSessionList", () => {
     expect(rows?.length).toBe(3);
   });
 
-  it("renders session key as parsed display name with bold text", async () => {
+  it("renders the conversation reference with bold text", async () => {
     const el = await createElement<IcSessionList>("ic-session-list", {
       sessions: testSessions,
     });
@@ -125,7 +119,7 @@ describe("IcSessionList", () => {
     expect(agentHeader).toBeTruthy();
   });
 
-  it("renders channel column with ic-tag", async () => {
+  it("renders kind column with ic-tag", async () => {
     const el = await createElement<IcSessionList>("ic-session-list", {
       sessions: testSessions,
     });
@@ -185,7 +179,7 @@ describe("IcSessionList", () => {
     row?.click();
 
     expect(handler).toHaveBeenCalledOnce();
-    expect((handler.mock.calls[0][0] as CustomEvent).detail).toHaveProperty("sessionKey");
+    expect((handler.mock.calls[0][0] as CustomEvent).detail).toHaveProperty("conversationRef");
   });
 
   it("forwards selectable property to ic-data-table", async () => {

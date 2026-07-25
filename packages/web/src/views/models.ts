@@ -3,6 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { RpcClient } from "../api/rpc-client.js";
+import type { WebRpcMethodMap } from "../api/contracts.generated.js";
 import type { ApiClient } from "../api/api-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
@@ -597,7 +598,7 @@ export class IcModelsView extends LitElement {
 
     try {
       // Load config first (required for provider/alias display)
-      const configResult = (await rpc.call<{ config: Record<string, unknown>; sections: string[] }>("config.read")) as {
+      const configResult = (await rpc.call("config.read")) as {
         config: {
           providers: { entries: Record<string, ProviderEntry> };
           models: {
@@ -655,7 +656,10 @@ export class IcModelsView extends LitElement {
           const agentsList = await this.rpcClient.call<{ agents?: string[] }>("agents.list");
           const agentIds = (agentsList.agents ?? []).slice(0, 20);
           const agentDetails = await Promise.allSettled(
-            agentIds.map((id) => this.rpcClient!.call<{ agentId: string; config: { provider?: string; model?: string } & Record<string, unknown> }>("agents.get", { agentId: id })),
+            agentIds.map((id) => this.rpcClient!.call<{
+              agentId: string;
+              config: { provider?: string; model?: string };
+            }>("agents.get", { agentId: id })),
           );
           this._agents = agentDetails
             .filter((r): r is PromiseFulfilledResult<{ agentId: string; config: { provider?: string; model?: string } }> =>
@@ -684,7 +688,11 @@ export class IcModelsView extends LitElement {
       const dotIdx = path.indexOf(".");
       const section = dotIdx > 0 ? path.slice(0, dotIdx) : path;
       const key = dotIdx > 0 ? path.slice(dotIdx + 1) : undefined;
-      await this.rpcClient.call("config.patch", { section, key, value });
+      await this.rpcClient.call("config.patch", {
+        section,
+        key,
+        value: value as WebRpcMethodMap["config.patch"]["params"]["value"],
+      });
       IcToast.show("Configuration updated", "success");
       return true;
     } catch (err) {
@@ -704,7 +712,7 @@ export class IcModelsView extends LitElement {
     this._testingProviders = newTesting;
 
     try {
-      const result = (await this.rpcClient.call<{ status: string }>("models.test", { provider: name })) as TestResult;
+      const result = (await this.rpcClient.call("models.test", { provider: name })) as TestResult;
       const newResults = new Map(this._providerTestResults);
       newResults.set(name, result);
       this._providerTestResults = newResults;

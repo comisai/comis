@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AppContainer, ChannelPort, Attachment, NormalizedMessage } from "@comis/core";
+import type { AppContainer, ChannelPort, Attachment, NormalizedMessage, ResolvedTurnScope } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
 // ---------------------------------------------------------------------------
@@ -50,6 +50,10 @@ import {
   audioPreflight as audioPreflightFn,
 } from "@comis/channels";
 import { createCompositeResolver, preprocessMessage } from "@comis/skills";
+
+const TEST_TURN_SCOPE = {
+  conversation: { agentId: "default" },
+} as unknown as ResolvedTurnScope;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -172,7 +176,7 @@ describe("buildMediaPipeline", () => {
       attachments: [],
     };
 
-    await result.preprocessMessage(msg);
+    await result.preprocessMessage(msg, TEST_TURN_SCOPE);
     expect(lr.processMessage).toHaveBeenCalledWith("hello https://example.com");
   });
 
@@ -280,7 +284,7 @@ describe("buildMediaPipeline", () => {
       attachments: [{ url: "tg://file/abc", type: "image", mimeType: "image/jpeg" }],
     };
 
-    await result.preprocessMessage(msg);
+    await result.preprocessMessage(msg, TEST_TURN_SCOPE);
 
     expect(preprocessMessage).toHaveBeenCalledWith(
       expect.objectContaining({ onSuspiciousContent: callback }),
@@ -304,7 +308,7 @@ describe("buildMediaPipeline", () => {
       attachments: [{ url: "tg://file/abc", type: "image", mimeType: "image/jpeg" }],
     };
 
-    await result.preprocessMessage(msg);
+    await result.preprocessMessage(msg, TEST_TURN_SCOPE);
 
     expect(preprocessMessage).toHaveBeenCalledWith(
       expect.objectContaining({ onSuspiciousContent: undefined }),

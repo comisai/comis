@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { MemoryEntry, MemoryConfig } from "@comis/core";
-import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
+import { ScopedMemoryTestAdapter as SqliteMemoryAdapter } from "../../../test/support/scoped-memory-adapter.js";
 import { createSqliteMemoryEntityStore } from "./sqlite-memory-entity-store.js";
 import type Database from "better-sqlite3";
 
@@ -480,7 +480,7 @@ describe("createSqliteMemoryEntityStore", () => {
       expect(entityRow(entityId)?.mention_count).toBe(2);
 
       // Delete m1 via the EXISTING adapter path (foreign_keys=ON -> CASCADE).
-      const del = await adapter.delete(m1, "tenant_a");
+      const del = await adapter.delete(m1, { tenantId: "tenant_a", agentId: "agent_a" });
       expect(del.ok).toBe(true);
 
       // m1's links are gone (CASCADE)...

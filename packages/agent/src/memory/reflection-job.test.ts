@@ -19,8 +19,9 @@
  *     delta-ops, untargeted sections byte-identical; a new doc synthesizes fresh.
  */
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import { applyDeltaOps, renderStructuredBody, MAX_DOC_NAME_LENGTH } from "@comis/core";
 import type { ResolvedOutcome, StructuredBody } from "@comis/core";
 import { PROCEDURE_REFLECT_PROMPT, type ReflectionResult } from "./reflection-prompt.js";
@@ -32,6 +33,31 @@ import {
   type RunReflectionConfig,
   type ReflectionSourceTrajectory,
 } from "./reflection-job.js";
+
+describe("reflection config default authority", () => {
+  it("uses the validated schema value without a call-site default", () => {
+    const source = readFileSync(new URL("./reflection-job.ts", import.meta.url), "utf8");
+    expect(source).not.toContain("DEFAULT_MAX_DOCS_PER_RUN");
+    expect(source).not.toContain("config.maxDocsPerRun ??");
+  });
+});
+
+describe("reflection cancellation boundary", () => {
+  it("stops before source resolution when the owning occurrence is cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const resolve = vi.fn(async () => ok(success()));
+    const reflect = vi.fn(async () => ok(freshReflection()));
+    const result = await runReflection(makeDeps(
+      [traj(), traj({ trajectoryId: "traj-2", sessionId: "sess-2", sender: "user-2" })],
+      { signal: controller.signal, outcomeSignal: { resolve }, reflectionAdapter: { reflect } },
+    ));
+
+    expect(result.ok).toBe(false);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(reflect).not.toHaveBeenCalled();
+  });
+});
 
 const NOW = 1_700_000_000_000;
 const SCOPE = { tenantId: "t1", agentId: "a1", now: NOW };
@@ -141,6 +167,7 @@ function makeDeps(
       : {}),
     config,
     sourceTrajectories: trajectories,
+    ...(over.signal !== undefined ? { signal: over.signal } : {}),
     reflectionAdapter: { reflect },
     outcomeSignal: { resolve },
     // supersede is ALWAYS wired (production always injects it) — the engine routes a
@@ -1004,10 +1031,9 @@ describe("runReflection — empty-content guard (prior doc survives)", () => {
     expect(res.value.admissionOutcome).toBe("empty_reflection");
   });
 
-  it("a FAILED reflection (err) → store.admit NOT called, recorded empty_reflection (non-fatal)", async () => {
+  it("counts an adapter dependency fault separately from a legitimate empty reflection", async () => {
     const mocks: Partial<Mocks> = {};
-    const { err } = await import("@comis/shared");
-    const reflect = vi.fn(async () => err(new Error("LLM down")));
+    const reflect = vi.fn(async () => err(new Error("Model identifier is invalid")));
     const deps = makeDeps(
       [
         traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "deploy the app" }),
@@ -1019,10 +1045,13 @@ describe("runReflection — empty-content guard (prior doc survives)", () => {
 
     const res = await runReflection(deps);
 
-    expect(res.ok).toBe(true); // the RUN survives a per-topic LLM fault
+    expect(res.ok).toBe(true);
     if (!res.ok) throw new Error("expected ok");
     expect(mocks.admit).not.toHaveBeenCalled();
     expect(res.value.admitted).toBe(0);
+    expect(res.value.skipped).toBe(1);
+    expect(res.value.emptyReflections).toBe(0);
+    expect(res.value.dependencyFailures).toBe(1);
   });
 
   it("a fresh reflection with an EMPTY section list → store.admit NOT called (no empty doc admitted)", async () => {

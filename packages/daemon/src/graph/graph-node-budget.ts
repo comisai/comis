@@ -19,7 +19,7 @@
  * @module
  */
 
-import { systemNowMs, type TypedEventBus } from "@comis/core";
+import { systemNowMs, toSafeErrorLogString, type ConversationLocator, type TypedEventBus } from "@comis/core";
 import type { FailureResult } from "./graph-state-machine.js";
 import type { GraphRunState } from "./graph-coordinator-state.js";
 
@@ -114,7 +114,7 @@ export function applyNodeBudgetBreach(
   gs: GraphRunState,
   nodeId: string,
   spend: number,
-  priorSessionKey?: string,
+  priorConversation?: ConversationLocator,
   finishReason?: string,
 ): NodeBudgetBreachResult {
   // Always record per-node spend (present even when no budget resolves).
@@ -147,12 +147,12 @@ export function applyNodeBudgetBreach(
   const failRes = gs.stateMachine.markNodeFailed(
     nodeId,
     `Node token budget exceeded (${breachDetail}; cap source: ${capSource})`,
-    priorSessionKey,
+    priorConversation,
     { terminal: true },
   );
   if (!failRes.ok) {
     deps.logger?.warn(
-      { graphId: gs.graphId, nodeId, error: failRes.error, hint: "Node may have been concurrently updated", errorKind: "internal" as const },
+      { graphId: gs.graphId, nodeId, error: toSafeErrorLogString(failRes.error), hint: "Node may have been concurrently updated", errorKind: "internal" as const },
       "Budget-fail node transition failed",
     );
   }

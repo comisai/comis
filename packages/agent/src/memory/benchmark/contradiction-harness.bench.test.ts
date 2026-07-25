@@ -265,7 +265,7 @@ describe.skipIf(!COMIS_BENCH)("trust-first contradiction correctness (gated)", (
           maxResults: 10,
           minScore: 0,
           includeTrustLevels,
-          rerank: { enabled: !!rerankerPort, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+          rerank: { mode: rerankerPort ? "on" : "off", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
           scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0.1 },
         },
       );

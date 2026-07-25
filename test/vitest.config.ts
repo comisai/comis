@@ -39,6 +39,10 @@ export default defineConfig({
     teardownTimeout: 30_000,
     pool: "forks",
     maxConcurrency: 1,
+    // Daemon-backed files need parallelism to finish within the E2E budget,
+    // but deriving the worker count from every host CPU can starve teardown
+    // and make retries collide with a daemon that still holds its data lock.
+    maxWorkers: 4,
     retry: 1,
     env: {
       // Repo root, exposed to test daemon configs as ${COMIS_REPO_ROOT}.
@@ -62,6 +66,9 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "json"],
+      // Keep this collector isolated from the unit tier so independently
+      // invoked validation commands cannot delete each other's temp files.
+      reportsDirectory: "coverage/integration",
       include: ["packages/*/dist/**/*.js"],
       exclude: [
         "**/*.test.js",

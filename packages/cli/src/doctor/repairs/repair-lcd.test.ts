@@ -41,7 +41,7 @@ function createTestDb(opts: { withTrigramTwins?: boolean } = {}): Db {
   db.exec(`
     CREATE TABLE lcd_messages (
       id              TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL DEFAULT 'conv-1',
+      conversation_ref TEXT NOT NULL DEFAULT 'conv-1',
       tenant_id       TEXT NOT NULL DEFAULT 'tenant1',
       agent_id        TEXT NOT NULL DEFAULT 'agent1',
       seq             INTEGER NOT NULL DEFAULT 0
@@ -57,7 +57,7 @@ function createTestDb(opts: { withTrigramTwins?: boolean } = {}): Db {
     );
     CREATE TABLE lcd_summaries (
       summary_id      TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL DEFAULT 'conv-1',  -- R4 scope col the twin carries UNINDEXED (matches real schema-lcd.ts)
+      conversation_ref TEXT NOT NULL DEFAULT 'conv-1',  -- R4 scope col the twin carries UNINDEXED (matches real schema-lcd.ts)
       fallback        INTEGER NOT NULL DEFAULT 0,
       tenant_id       TEXT NOT NULL,
       agent_id        TEXT NOT NULL,
@@ -67,19 +67,29 @@ function createTestDb(opts: { withTrigramTwins?: boolean } = {}): Db {
       id              TEXT PRIMARY KEY,
       ref_kind        TEXT NOT NULL CHECK (ref_kind IN ('message','summary')),
       ref_id          TEXT NOT NULL,
-      conversation_id TEXT NOT NULL
+      conversation_ref TEXT NOT NULL
     );
     CREATE TABLE memories (
       id        TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL DEFAULT 'default',
       agent_id  TEXT NOT NULL DEFAULT 'default',
+      visibility TEXT NOT NULL DEFAULT 'agent-shared',
+      conversation_ref TEXT,
+      principal_id TEXT,
       content   TEXT NOT NULL
+    );
+    CREATE TABLE memory_authority_partitions (
+      partition_id INTEGER PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      visibility_key TEXT NOT NULL,
+      UNIQUE (tenant_id, agent_id, visibility_key)
     );
     -- SELF-CONTAINED FTS — matches real schema-lcd.ts lcd_messages_fts
     -- (no content= clause; stores its own re-rendered content via renderMessageFtsText)
     CREATE VIRTUAL TABLE lcd_messages_fts USING fts5(
       content,
-      conversation_id UNINDEXED,
+      conversation_ref UNINDEXED,
       agent_id UNINDEXED,
       message_id UNINDEXED
     );
@@ -110,20 +120,21 @@ function createTrigramTwins(db: Db): void {
   db.exec(`
     CREATE VIRTUAL TABLE lcd_messages_fts_tri USING fts5(
       content,
-      conversation_id UNINDEXED,
+      conversation_ref UNINDEXED,
       agent_id UNINDEXED,
       message_id UNINDEXED,
       tokenize='trigram'
     );
     CREATE VIRTUAL TABLE lcd_summaries_fts_tri USING fts5(
       content,
-      conversation_id UNINDEXED,
+      conversation_ref UNINDEXED,
       agent_id UNINDEXED,
       summary_id UNINDEXED,
       tokenize='trigram'
     );
     CREATE VIRTUAL TABLE memory_fts_tri USING fts5(
       content,
+      authority_token,
       tokenize='trigram'
     );
   `);
@@ -153,7 +164,7 @@ describe("repairFtsDrift", () => {
       "INSERT INTO lcd_message_parts(id, message_id, ordinal, metadata) VALUES (?, ?, 0, ?)",
     ).run("part-1", "msg-1", JSON.stringify({ raw: { text: "hello world" } }));
     const result = await repairFtsDrift(db);
-    expect(result.ok).toBe(true);
+    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
     // lcd_messages_fts is CONTENTLESS — repopulate path, not 'rebuild'
     expect(result.value!.some((a) => a.includes("lcd_messages_fts"))).toBe(true);
   });
@@ -163,7 +174,7 @@ describe("repairFtsDrift", () => {
       "INSERT INTO lcd_summaries(summary_id, fallback, tenant_id, agent_id, content) VALUES ('sum-1', 0, 'tenant1', 'agent1', 'summary text')",
     ).run();
     const result = await repairFtsDrift(db);
-    expect(result.ok).toBe(true);
+    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
     expect(result.value!.some((a) => a.includes("lcd_summaries_fts"))).toBe(true);
   });
 
@@ -189,7 +200,7 @@ describe("repairFtsDrift", () => {
     const result = await repairFtsDrift(db);
 
     const after = lcdMessagesFingerprint(db);
-    expect(result.ok).toBe(true);
+    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
     expect(after.count).toBe(before.count);
     expect(after.ids).toEqual(before.ids);
   });
@@ -202,7 +213,7 @@ describe("repairFtsDrift", () => {
       CREATE TABLE lcd_summaries (summary_id TEXT PRIMARY KEY, content TEXT NOT NULL);
     `);
     const result = await repairFtsDrift(noFtsDb);
-    expect(result.ok).toBe(true);
+    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
     expect(Array.isArray(result.value)).toBe(true);
     expect(result.value!.length).toBe(0);
     noFtsDb.close();
@@ -226,7 +237,7 @@ describe("repairContextItems", () => {
 
     const result = await repairContextItems(db);
 
-    expect(result.ok).toBe(true);
+    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
     const remaining = db
       .prepare("SELECT COUNT(*) AS c FROM lcd_context_items")
       .get() as { c: number };
@@ -256,7 +267,7 @@ describe("repairContextItems", () => {
     );
     const result = await repairContextItems(db);
 
-    expect(result.ok).toBe(true);
+    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
     const joined = result.value!.join(" ");
     // At least one action string must mention a count
     expect(joined).toMatch(/\d+/);
@@ -280,7 +291,7 @@ describe("repairContextItems", () => {
 
     const result = await repairContextItems(db);
 
-    expect(result.ok).toBe(true);
+    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
     const remaining = db
       .prepare("SELECT COUNT(*) AS c FROM lcd_context_items")
       .get() as { c: number };
@@ -304,14 +315,14 @@ describe("repairFtsDrift — contentless FTS guard (no 'rebuild' on self-contain
     // repairFtsDrift must NOT use 'rebuild' on the contentless table.
     const db = new Database(":memory:");
     db.exec(`
-      CREATE TABLE lcd_messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL DEFAULT 'conv', tenant_id TEXT NOT NULL DEFAULT 't', agent_id TEXT NOT NULL DEFAULT 'a', seq INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE lcd_messages (id TEXT PRIMARY KEY, conversation_ref TEXT NOT NULL DEFAULT 'conv', tenant_id TEXT NOT NULL DEFAULT 't', agent_id TEXT NOT NULL DEFAULT 'a', seq INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE lcd_message_parts (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, ordinal INTEGER NOT NULL DEFAULT 0, tool_name TEXT, tool_input TEXT, tool_output TEXT, metadata TEXT NOT NULL DEFAULT '{}');
       CREATE TABLE lcd_summaries (summary_id TEXT PRIMARY KEY, content TEXT NOT NULL);
-      CREATE VIRTUAL TABLE lcd_messages_fts USING fts5(content, conversation_id UNINDEXED, agent_id UNINDEXED, message_id UNINDEXED);
+      CREATE VIRTUAL TABLE lcd_messages_fts USING fts5(content, conversation_ref UNINDEXED, agent_id UNINDEXED, message_id UNINDEXED);
     `);
     // Must NOT throw (a 'rebuild' on a contentless table would throw)
     const result = await repairFtsDrift(db);
-    expect(result.ok).toBe(true);
+    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
     db.close();
   });
 
@@ -359,12 +370,15 @@ describe("repairFtsDrift — normalized trigram twin backfill", () => {
     ).run("part-he", "msg-he", JSON.stringify({ raw: { text: "הספרים על המדף" } }));
     // lcd_summaries
     db.prepare(
-      "INSERT INTO lcd_summaries(summary_id, conversation_id, fallback, tenant_id, agent_id, content) VALUES ('sum-he', 'conv-he', 0, 'tenant1', 'agent-a', ?)",
+      "INSERT INTO lcd_summaries(summary_id, conversation_ref, fallback, tenant_id, agent_id, content) VALUES ('sum-he', 'conv-he', 0, 'tenant1', 'agent-a', ?)",
     ).run("הספרים סוכמו");
     // memories
     db.prepare(
       "INSERT INTO memories(id, tenant_id, agent_id, content) VALUES ('mem-he', 'tenant1', 'agent-a', ?)",
     ).run("הספרים נשמרו בזיכרון");
+    db.prepare(
+      "INSERT INTO memory_authority_partitions(tenant_id, agent_id, visibility_key) VALUES ('tenant1', 'agent-a', 'agent-shared')",
+    ).run();
   }
 
   it("backfills all three trigram twins from base rows at the base rowid with scope columns", async () => {
@@ -372,41 +386,41 @@ describe("repairFtsDrift — normalized trigram twin backfill", () => {
     seedHebrewBaseRows(db);
 
     const result = await repairFtsDrift(db);
-    expect(result.ok).toBe(true);
+    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
 
     // lcd_messages_fts_tri: rendered+normalized content at the base rowid, scope copied
     const msgBase = db
-      .prepare("SELECT rowid, conversation_id, agent_id, id FROM lcd_messages WHERE id='msg-he'")
-      .get() as { rowid: number; conversation_id: string; agent_id: string; id: string };
+      .prepare("SELECT rowid, conversation_ref, agent_id, id FROM lcd_messages WHERE id='msg-he'")
+      .get() as { rowid: number; conversation_ref: string; agent_id: string; id: string };
     const msgTri = db
       .prepare(
-        "SELECT rowid, conversation_id, agent_id, message_id FROM lcd_messages_fts_tri WHERE message_id='msg-he'",
+        "SELECT rowid, conversation_ref, agent_id, message_id FROM lcd_messages_fts_tri WHERE message_id='msg-he'",
       )
       .get() as
-      | { rowid: number; conversation_id: string; agent_id: string; message_id: string }
+      | { rowid: number; conversation_ref: string; agent_id: string; message_id: string }
       | undefined;
     expect(msgTri).toBeDefined();
     expect(msgTri?.rowid).toBe(msgBase.rowid);
-    expect(msgTri?.conversation_id).toBe(msgBase.conversation_id);
+    expect(msgTri?.conversation_ref).toBe(msgBase.conversation_ref);
     expect(msgTri?.agent_id).toBe(msgBase.agent_id);
     expect(msgTri?.message_id).toBe(msgBase.id);
 
-    // lcd_summaries_fts_tri: normalized content at the base rowid, R4 scope copied
+    // lcd_summaries_fts_tri: normalized content at the base rowid with scope copied
     const sumBase = db
-      .prepare("SELECT rowid, conversation_id, agent_id, summary_id FROM lcd_summaries WHERE summary_id='sum-he'")
+      .prepare("SELECT rowid, conversation_ref, agent_id, summary_id FROM lcd_summaries WHERE summary_id='sum-he'")
       .get() as
-      | { rowid: number; conversation_id: string; agent_id: string; summary_id: string }
+      | { rowid: number; conversation_ref: string; agent_id: string; summary_id: string }
       | undefined;
     const sumTri = db
       .prepare(
-        "SELECT rowid, conversation_id, agent_id, summary_id FROM lcd_summaries_fts_tri WHERE summary_id='sum-he'",
+        "SELECT rowid, conversation_ref, agent_id, summary_id FROM lcd_summaries_fts_tri WHERE summary_id='sum-he'",
       )
       .get() as
-      | { rowid: number; conversation_id: string; agent_id: string; summary_id: string }
+      | { rowid: number; conversation_ref: string; agent_id: string; summary_id: string }
       | undefined;
     expect(sumTri).toBeDefined();
     expect(sumTri?.rowid).toBe(sumBase?.rowid);
-    expect(sumTri?.conversation_id).toBe("conv-he");
+    expect(sumTri?.conversation_ref).toBe("conv-he");
     expect(sumTri?.agent_id).toBe("agent-a");
     expect(sumTri?.summary_id).toBe("sum-he");
 
@@ -462,7 +476,7 @@ describe("repairFtsDrift — normalized trigram twin backfill", () => {
     ).run();
 
     const result = await repairFtsDrift(db);
-    expect(result.ok).toBe(true);
+    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
 
     // Word lane lcd_messages_fts: re-rendered, contains the tool name (existing behavior)
     const wordMsg = db
@@ -512,7 +526,7 @@ describe("repairFtsDrift — normalized trigram twin backfill", () => {
     seedHebrewBaseRows(db);
 
     const result = await repairFtsDrift(db);
-    expect(result.ok).toBe(true);
+    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
 
     const actions = result.value!;
     expect(actions.some((a) => a.includes("lcd_messages_fts_tri"))).toBe(true);
@@ -546,13 +560,13 @@ describe("repairFtsDrift — normalized trigram twin backfill", () => {
     await repairFtsDrift(db);
 
     const rowA = db
-      .prepare("SELECT conversation_id, agent_id FROM lcd_messages_fts_tri WHERE message_id='msg-a'")
-      .get() as { conversation_id: string; agent_id: string };
+      .prepare("SELECT conversation_ref, agent_id FROM lcd_messages_fts_tri WHERE message_id='msg-a'")
+      .get() as { conversation_ref: string; agent_id: string };
     const rowB = db
-      .prepare("SELECT conversation_id, agent_id FROM lcd_messages_fts_tri WHERE message_id='msg-b'")
-      .get() as { conversation_id: string; agent_id: string };
-    expect(rowA).toEqual({ conversation_id: "conv-a", agent_id: "agent-a" });
-    expect(rowB).toEqual({ conversation_id: "conv-b", agent_id: "agent-b" });
+      .prepare("SELECT conversation_ref, agent_id FROM lcd_messages_fts_tri WHERE message_id='msg-b'")
+      .get() as { conversation_ref: string; agent_id: string };
+    expect(rowA).toEqual({ conversation_ref: "conv-a", agent_id: "agent-a" });
+    expect(rowB).toEqual({ conversation_ref: "conv-b", agent_id: "agent-b" });
 
     db.close();
   });

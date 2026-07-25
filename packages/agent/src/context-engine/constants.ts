@@ -60,7 +60,7 @@ export const DEFAULT_KEEP_WINDOW_TURNS = 10;
 export const MAX_INLINE_TOOL_RESULT_CHARS = 8_000;
 
 /** MCP tool result inline threshold (chars). Used by: microcompaction guard. */
-export const MAX_INLINE_MCP_TOOL_RESULT_CHARS = 15_000;
+export const MAX_INLINE_MCP_TOOL_RESULT_CHARS = 8_000;
 
 /** read tool (file read) inline threshold (chars) -- higher for code context. Used by: microcompaction guard. */
 export const MAX_INLINE_FILE_READ_RESULT_CHARS = 15_000;
@@ -348,7 +348,7 @@ export const LCD_FALLBACK_HEADER_MARKER = "fallback=emergency-truncation";
  *  Value = {@link TOOL_RESULT_HARD_CAP_CHARS} (100_000), the same absolute
  *  per-result ceiling the pipeline microcompaction guard enforces — chosen for
  *  consistency with the existing tiering rather than the tighter
- *  {@link MAX_INLINE_MCP_TOOL_RESULT_CHARS} (15_000) so the assembler only bounds
+ *  {@link MAX_INLINE_MCP_TOOL_RESULT_CHARS} (8_000) so the assembler only bounds
  *  genuinely pathological results and leaves normal-large tool outputs intact in
  *  the fresh tail. A SINGLE per-result cap (the simplest correct shape) is used,
  *  not a "then largest-first total-tail budget" tier: 100K chars ≈ 28.6K tokens

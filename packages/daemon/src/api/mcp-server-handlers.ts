@@ -43,6 +43,7 @@ import { z } from "zod";
 import {
   getAllToolMetadata,
   getToolMetadata,
+  stripInternalFields,
   systemSetInterval,
   wrapExternalContent,
   type ComisToolMetadata,
@@ -182,6 +183,13 @@ export interface BuildMcpServerForClientDeps {
    *  the last N CONFIRMED messages are returned. Wired from the composition
    *  root with MCP_RESOURCE_READ_LIMIT. */
   readonly resourceReadLimit: number;
+  /** The daemon's tenant + the resolved default agent the MCP client acts as.
+   *  Threaded to the resources handler as the session-query authority
+   *  (session.history addresses sessions by tenant_id + agent_id +
+   *  conversation_ref). Must match the identity `daemonRpcForMcpClient` binds
+   *  each call to. */
+  readonly tenantId: string;
+  readonly defaultAgentId: string;
   /**
    * SECURITY — the trust-flag-FREE direct invocation of the
    * `obs.explain` ASSEMBLER (`assembleIncidentReportFromSources`), built at the
@@ -205,12 +213,12 @@ export interface BuildMcpServerForClientDeps {
   ) => Promise<unknown>;
   /**
    * SECURITY — the trust-flag-FREE direct invocation of the
-   * `obs.fleet.health` ASSEMBLER (`assembleFleetHealthReport`), the cross-session
-   * fleet sibling of {@link obsExplainForMcpClient}. Built at the composition
-   * root over the obsStore + dataDir + boot.clock. The `obs_fleet_health` MCP
+   * `obs.system.health` ASSEMBLER (`assembleSystemHealthReport`), the cross-session
+   * system sibling of {@link obsExplainForMcpClient}. Built at the composition
+   * root over the obsStore + dataDir + boot.clock. The `obs_system_health` MCP
    * tool's dispatch branch calls THIS (not {@link daemonRpcForMcpClient}) so it
    * runs under DAEMON authority WITHOUT touching the admin-gated
-   * `obs.fleet.health` RPC and WITHOUT injecting `_trustLevel:"admin"`. Its
+   * `obs.system.health` RPC and WITHOUT injecting `_trustLevel:"admin"`. Its
    * authorization is the per-client `mcpClient.allowlist` (the compensating
    * control) + the digest-only/bounded report — NOT admin trust.
    *
@@ -222,7 +230,7 @@ export interface BuildMcpServerForClientDeps {
    * Step 4 for every tool); the closure validates the `{sinceHours?}` shape via
    * the contract `request.parse` before assembling.
    */
-  readonly obsFleetHealthForMcpClient?: (
+  readonly obsSystemHealthForMcpClient?: (
     params: Record<string, unknown>,
   ) => Promise<unknown>;
 }
@@ -319,6 +327,8 @@ export function buildMcpServerForClient(
       logger,
       daemonRpcForMcpClient: deps.daemonRpcForMcpClient,
       resourceReadLimit: deps.resourceReadLimit,
+      tenantId: deps.tenantId,
+      defaultAgentId: deps.defaultAgentId,
     },
     client,
   );
@@ -485,12 +495,16 @@ function buildDispatchCallback(args: {
     }
 
     // ----- Step 4 -- Dispatch via daemonRpcForMcpClient (trust-flag isolated)
-    // STRIP any _trustLevel a hostile caller might have injected in args. The
-    // composition-root wiring of daemonRpcForMcpClient already never sets
-    // _trustLevel:"admin"; stripping HERE is defense-in-depth so the field
-    // never even reaches the indirection. (This strip runs for EVERY tool,
-    // including obs_explain below.)
-    const safeParams: Record<string, unknown> = stripTrustLevel(argsRecord);
+    // STRIP every trusted, dispatcher-injected internal field a hostile caller
+    // might have smuggled into the tool args — not just `_trustLevel` (admin
+    // escalation) but also `_tenantId` / `_agentId` (cross-tenant reads /
+    // forged agent-origin), `_callerSessionKey`, `_capabilities`, etc. These
+    // are server-injected identity/authority signals; an external MCP client
+    // must never supply them. The composition root re-injects the trusted
+    // tenant/agent identity via `applyMcpClientIdentity` AFTER this strip, so
+    // the only tenant/agent authority that survives is the daemon's own.
+    // (This strip runs for EVERY tool, including obs_explain below.)
+    const safeParams: Record<string, unknown> = stripInternalFields(argsRecord);
 
     // ----- Step 4 (obs_explain) -- direct-assembler dispatch -----------------
     // SECURITY: obs_explain reaches the IncidentReport assembler with NO new
@@ -567,20 +581,20 @@ function buildDispatchCallback(args: {
       return { content: [{ type: "text", text: wrapped }] };
     }
 
-    // ----- Step 4 (obs_fleet_health) -- direct-assembler dispatch -------------
-    // SECURITY: the cross-session fleet sibling of obs_explain. It reaches the
-    // FleetHealthReport with NO new privilege — it does NOT route through
-    // daemonRpcForMcpClient -> the admin-gated obs.fleet.health RPC; instead it
+    // ----- Step 4 (obs_system_health) -- direct-assembler dispatch -------------
+    // SECURITY: the cross-session system sibling of obs_explain. It reaches the
+    // SystemHealthReport with NO new privilege — it does NOT route through
+    // daemonRpcForMcpClient -> the admin-gated obs.system.health RPC; instead it
     // invokes the trust-flag-FREE assembler closure DIRECTLY under daemon
     // authority. Its boundary is the per-client mcpClient.allowlist (enforced
     // above at Steps 1 + the registration filter) + the digest-only/bounded
     // report. `safeParams` is already _trustLevel-stripped, so no admin trust can
     // be smuggled in.
-    if (toolName === "obs_fleet_health") {
-      if (!deps.obsFleetHealthForMcpClient) {
+    if (toolName === "obs_system_health") {
+      if (!deps.obsSystemHealthForMcpClient) {
         // obsStore-less boot or wiring gap — fail CLOSED, not crash, and do NOT
         // fall through to the trust-isolated daemonRpcForMcpClient indirection
-        // (which would hit the admin-gated obs.fleet.health RPC and be rejected).
+        // (which would hit the admin-gated obs.system.health RPC and be rejected).
         logger.warn(
           {
             clientId: client.id,
@@ -588,23 +602,23 @@ function buildDispatchCallback(args: {
             submodule: "dispatch",
             errorKind: "internal" as const,
             hint:
-              "obs_fleet_health reached dispatch but the closure is unwired; check daemon.ts setupGateway wiring",
+              "obs_system_health reached dispatch but the closure is unwired; check daemon.ts setupGateway wiring",
           },
-          "MCP obs_fleet_health dispatch skipped -- closure unavailable",
+          "MCP obs_system_health dispatch skipped -- closure unavailable",
         );
         return {
           isError: true,
           content: [
             {
               type: "text",
-              text: `[dispatch_error] obs_fleet_health unavailable; check daemon logs (clientId=${client.id})`,
+              text: `[dispatch_error] obs_system_health unavailable; check daemon logs (clientId=${client.id})`,
             },
           ],
         };
       }
       let report: unknown;
       try {
-        report = await deps.obsFleetHealthForMcpClient(safeParams);
+        report = await deps.obsSystemHealthForMcpClient(safeParams);
       } catch (err) {
         logger.warn(
           {
@@ -614,9 +628,9 @@ function buildDispatchCallback(args: {
             submodule: "dispatch",
             errorKind: "internal" as const,
             hint:
-              "obs_fleet_health assembler threw; inspect the fleet-health assembler + request shape",
+              "obs_system_health assembler threw; inspect the system-health assembler + request shape",
           },
-          "MCP obs_fleet_health dispatch error",
+          "MCP obs_system_health dispatch error",
         );
         // NEVER surface raw err.message (it can carry sessionKeys/file paths);
         // a contract request.parse failure also collapses here.
@@ -711,17 +725,43 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * Strip the `_trustLevel` field from a params record before dispatch. The
- * trust-flag indirection at the composition root never SETS this field;
- * stripping at dispatch time prevents a hostile MCP client from THREADING
- * an admin trust flag through `tools/call` arguments.
+ * Bind an authenticated MCP client to a tenant/agent IDENTITY for the RPC
+ * dispatch, without granting it any new TRUST.
+ *
+ * This runtime requires tenant-scoped RPC methods (e.g., `memory.search_files`)
+ * to carry explicit `_tenantId` / `_agentId` authority. An external MCP client
+ * has no turn context to supply that, so the gateway composition root wires
+ * `daemonRpcForMcpClient` to call this helper: the daemon's own tenantId + the
+ * resolved default agentId are injected as the trusted `_tenantId` / `_agentId`.
+ *
+ * Security invariants:
+ *   - Internal `_`-prefixed fields the caller may have smuggled in are STRIPPED
+ *     first, so a client can neither forge identity nor widen the tenant
+ *     boundary by naming another tenant/agent.
+ *   - `_tenantId` is AUTHORITATIVE — the MCP client always acts within THIS
+ *     daemon's tenant; a client-supplied tenant is ignored.
+ *   - `_agentId` is a FALLBACK — an explicitly-supplied (non-internal) `agentId`
+ *     tool arg wins (per-agent tool routing); otherwise the default agent is
+ *     bound. The caller-named agent is NOT promoted to the trusted agent-origin
+ *     signal, so it cannot claim another agent's origin privileges.
+ *   - `_trustLevel` is NEVER set here — the MCP path keeps whatever
+ *     (non-admin) trust the token/dispatch already assigns, so admin-gated
+ *     methods stay rejected.
+ *
+ * Pure: returns a new object, does not mutate the input.
  */
-function stripTrustLevel(
+export function applyMcpClientIdentity(
   params: Record<string, unknown>,
+  identity: { readonly tenantId: string; readonly defaultAgentId: string },
 ): Record<string, unknown> {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- intentional discard
-  const { _trustLevel, ...rest } = params;
-  return rest;
+  // Defense-in-depth: re-strip any internal field (the dispatcher already
+  // strips at Step 4). Keeps this helper a self-contained trust boundary.
+  const authorized = stripInternalFields(params);
+  authorized._tenantId = identity.tenantId;
+  if (authorized.agentId === undefined) {
+    authorized._agentId = identity.defaultAgentId;
+  }
+  return authorized;
 }
 
 /**

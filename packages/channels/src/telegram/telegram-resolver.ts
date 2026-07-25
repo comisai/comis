@@ -36,8 +36,8 @@ interface ResolverLogger {
 }
 
 export interface TelegramResolverDeps {
-  bot: Bot;
-  botToken: string;
+  /** Resolve the Bot owned by the current polling generation. */
+  getBot: () => Bot | undefined;
   maxBytes: number;
   ssrfFetcher: SsrfFetcher;
   logger: ResolverLogger;
@@ -63,9 +63,9 @@ export interface TelegramResolverDeps {
  */
 export function createTelegramResolver(deps: TelegramResolverDeps): MediaResolverPort {
   /** Strip the bot token from error messages then apply general sanitization. */
-  function sanitizeError(msg: string): string {
+  function sanitizeError(msg: string, botToken: string): string {
     // Direct replacement first (handles bot token embedded in URLs where regex \b fails)
-    const stripped = deps.botToken ? msg.replaceAll(deps.botToken, "[REDACTED_BOT_TOKEN]") : msg;
+    const stripped = botToken ? msg.replaceAll(botToken, "[REDACTED_BOT_TOKEN]") : msg;
     return sanitizeLogString(stripped);
   }
 
@@ -73,7 +73,13 @@ export function createTelegramResolver(deps: TelegramResolverDeps): MediaResolve
     schemes: ["tg-file"],
 
     async resolve(attachment: Attachment): Promise<Result<ResolvedMedia, Error>> {
+      let botToken = "";
       try {
+        const bot = deps.getBot();
+        if (bot === undefined) {
+          return err(new Error("Telegram adapter is not connected"));
+        }
+        botToken = bot.token;
         // Extract fileId from tg-file://{fileId}
         const fileId = attachment.url.replace(/^tg-file:\/\//, "");
         if (!fileId) {
@@ -81,7 +87,7 @@ export function createTelegramResolver(deps: TelegramResolverDeps): MediaResolve
         }
 
         // Get file metadata from Telegram API
-        const file = await deps.bot.api.getFile(fileId);
+        const file = await bot.api.getFile(fileId);
 
         // Pre-download size check
         if (file.file_size != null && file.file_size > deps.maxBytes) {
@@ -105,7 +111,7 @@ export function createTelegramResolver(deps: TelegramResolverDeps): MediaResolve
         // host as `apiRoot`. getFile (above) already honors apiRoot via the grammy client, so the
         // download MUST too — else getFile resolves on the override but the bytes 404 on real Telegram.
         const apiBase = deps.apiRoot ?? "https://api.telegram.org";
-        const downloadUrl = `${apiBase}/file/bot${deps.botToken}/${file.file_path}`;
+        const downloadUrl = `${apiBase}/file/bot${botToken}/${file.file_path}`;
 
         // Download via SSRF-guarded fetcher
         const startMs = systemNowMs();
@@ -125,7 +131,7 @@ export function createTelegramResolver(deps: TelegramResolverDeps): MediaResolve
           );
           // Sanitize error message to prevent bot token leakage from download URL
           const msg = fetchResult.error instanceof Error ? fetchResult.error.message : String(fetchResult.error);
-          return err(new Error(sanitizeError(msg)));
+          return err(new Error(sanitizeError(msg, botToken)));
         }
 
         const { buffer, mimeType: fetchedMime, sizeBytes } = fetchResult.value;
@@ -156,7 +162,7 @@ export function createTelegramResolver(deps: TelegramResolverDeps): MediaResolve
       } catch (error: unknown) {
         // Sanitize all error messages to prevent bot token leakage
         const msg = error instanceof Error ? error.message : String(error);
-        return err(new Error(sanitizeError(msg)));
+        return err(new Error(sanitizeError(msg, botToken)));
       }
     },
   };

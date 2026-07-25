@@ -2,7 +2,7 @@
 /**
  * Shutdown setup: sole owner of the daemon teardown chain. Owns SIGTERM/
  * SIGINT/SIGUSR2 handler registration, the `shuttingDown` re-entrancy
- * guard, the 30s hard timeout, the per-step 5s timeout (`STEP_TIMEOUT_MS`),
+ * guard, the 45s default hard timeout, bounded component timeouts,
  * logger.flush, exit-code dispatch, the `process.on("exit", ...)` safety
  * net, and the ordered teardown of all 30+ subsystems. Inlines the
  * `process/graceful-shutdown.ts` body into this file so the entire chain
@@ -10,12 +10,12 @@
  * @module
  */
 
-import type { AppContainer, ApprovalGate, SecretStorePort } from "@comis/core";
+import type { AppContainer, ApprovalGate, ClockPort, SecretStorePort, TimerPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { GatewayServerHandle } from "@comis/gateway";
-import type { HeartbeatRunner, CronScheduler, WakeCoalescer, PerAgentHeartbeatRunner } from "@comis/scheduler";
+import type { CronScheduler } from "@comis/scheduler";
 import type { BrowserService, MediaTempManager } from "@comis/skills";
-import type { SessionResetScheduler } from "@comis/agent";
+import { SUB_AGENT_SHUTDOWN_TIMEOUT_MS, type SessionResetScheduler } from "@comis/agent";
 import { safePath, systemNowMs, systemSetTimeout, systemClearTimeout, systemClearInterval } from "@comis/core";
 import { withStepTimeout } from "./shutdown-step-timeout.js";
 import { releaseDataDirLock } from "./data-dir-lock.js";
@@ -28,6 +28,7 @@ import type { TokenTracker } from "../observability/token-tracker.js";
 import type { DiagnosticCollector } from "../observability/diagnostic-collector.js";
 import type { ChannelActivityTracker } from "../observability/channel-activity-tracker.js";
 import type { DeliveryTracer } from "../observability/delivery-tracer.js";
+import { createSchedulerShutdown, type SchedulerShutdownParticipant } from "./scheduler-shutdown.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -61,7 +62,7 @@ export interface ShutdownDeps {
   container: AppContainer;
   /** Override process.exit for testability. */
   exitFn: (code: number) => void;
-  /** Hard-timeout (ms) before shutdown force-exits with code 1. Default 30_000; must be < systemd TimeoutStopSec. */
+  /** Hard-timeout (ms) before shutdown force-exits with code 1. Default 45_000; must be < systemd TimeoutStopSec. */
   timeoutMs?: number;
   /** In-flight gateway executions for shutdown observability. */
   activeExecutions?: Map<string, { agentId: string; startedAt: number }>;
@@ -69,20 +70,25 @@ export interface ShutdownDeps {
   graphCoordinator?: { shutdown: () => Promise<void> };
   /** Sub-agent runner with shutdown/drain method. */
   subAgentRunner: { shutdown: () => Promise<void> };
-  /** Per-agent cron schedulers. */
-  cronSchedulers: Map<string, CronScheduler>;
+  /** Every daemon-owned cron scheduler, including quiesced or failed instances. */
+  ownedCronSchedulers: Map<string, CronScheduler>;
+  /** Injected lifecycle time used by the governed scheduler drain gate. */
+  clock: ClockPort;
+  timers: TimerPort;
   /** Per-agent session reset schedulers. */
   resetSchedulers: Map<string, SessionResetScheduler>;
   /** Per-agent browser automation services. */
   browserServices: Map<string, BrowserService>;
   /** Channel lifecycle manager (optional). */
   channelManager?: { stopAll: () => Promise<void> };
-  /** Heartbeat runner for periodic health checks (optional). */
-  heartbeatRunner?: HeartbeatRunner;
-  /** Per-agent heartbeat runner for shutdown cleanup */
-  perAgentRunner?: PerAgentHeartbeatRunner;
-  /** Wake coalescer for timer cleanup on shutdown */
-  wakeCoalescer?: WakeCoalescer;
+  /** Unified heartbeat admission, monitoring, history, and core-port lifecycle. */
+  proactiveSchedulers?: {
+    closeAdmission(): { readonly activeCount: number; readonly cancelledCount: number };
+    waitForIdle(): Promise<void>;
+    abortActive(): { readonly activeCount: number };
+    finalizeShutdown(): void;
+    shutdown(): void;
+  };
   /** Gateway HTTP/WebSocket server handle (optional). */
   gatewayHandle?: GatewayServerHandle;
   /** Token usage tracker for shutdown cost summary. */
@@ -202,13 +208,13 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     activeExecutions,
     graphCoordinator,
     subAgentRunner,
-    cronSchedulers,
+    ownedCronSchedulers,
+    clock,
+    timers,
     resetSchedulers,
     browserServices,
     channelManager,
-    heartbeatRunner,
-    perAgentRunner,
-    wakeCoalescer,
+    proactiveSchedulers,
     gatewayHandle,
     diagnosticCollector,
     channelActivityTracker,
@@ -252,8 +258,8 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
 
   // Inlined graceful-shutdown body: SIGTERM/
   // SIGINT/SIGUSR2 handler registration, shuttingDown re-entrancy guard,
-  // 30s hard timeout, logger.flush, and exit-code dispatch.
-  const hardTimeoutMs = deps.timeoutMs ?? 30_000;
+  // 45s hard timeout, logger.flush, and exit-code dispatch.
+  const hardTimeoutMs = deps.timeoutMs ?? 45_000;
   const exitFnLocal = exitFn;
   let shuttingDown = false;
 
@@ -309,6 +315,49 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         }, "gateway", daemonLogger);
       }
 
+      // Close every scheduled-work admission surface together, then keep model,
+      // delivery, history, root, and core-port dependencies live through the
+      // fixed drain/cancellation classification window.
+      const schedulerParticipants: SchedulerShutdownParticipant[] = [];
+      for (const [agentId, scheduler] of ownedCronSchedulers) {
+        schedulerParticipants.push({
+          name: `cron:${agentId}`,
+          closeAdmission() {
+            const status = scheduler.closeAdmission();
+            return { activeCount: status.activeExecutions, cancelledCount: 0 };
+          },
+          waitForIdle: () => scheduler.waitForIdle(),
+          abortActive() {
+            const status = scheduler.abortActive();
+            return { activeCount: status.activeExecutions };
+          },
+          finalizeShutdown() {},
+        });
+      }
+      if (proactiveSchedulers !== undefined) {
+        schedulerParticipants.push({
+          name: "heartbeat-and-tasks",
+          closeAdmission: () => proactiveSchedulers.closeAdmission(),
+          waitForIdle: () => proactiveSchedulers.waitForIdle(),
+          abortActive: () => proactiveSchedulers.abortActive(),
+          finalizeShutdown: () => proactiveSchedulers.finalizeShutdown(),
+        });
+      }
+      if (schedulerParticipants.length > 0) {
+        const stopMs = systemNowMs();
+        await createSchedulerShutdown({
+          clock,
+          timers,
+          logger: daemonLogger,
+          participants: schedulerParticipants,
+        }).run();
+        daemonLogger.info({
+          component: "governed-schedulers",
+          durationMs: systemNowMs() - stopMs,
+          shutdownOrder: ++shutdownOrder,
+        }, "Component stopped");
+      }
+
       // Shutdown graph coordinator -- before subAgentRunner so coordinator
       // unsubscribes from events and cancels graphs before runner stops
       if (graphCoordinator) {
@@ -325,7 +374,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         await withStepTimeout(async () => {
           await subAgentRunner.shutdown();
           daemonLogger.info({ component: "sub-agent-runner", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
-        }, "sub-agent-runner", daemonLogger);
+        }, "sub-agent-runner", daemonLogger, SUB_AGENT_SHUTDOWN_TIMEOUT_MS);
       }
 
       // Drain background-completion-runner before stopping
@@ -451,13 +500,6 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         }
       }
 
-      for (const [agentId, scheduler] of cronSchedulers) {
-        const stopMs = systemNowMs();
-        await withStepTimeout(() => {
-          scheduler.stop();
-          daemonLogger.info({ component: "cron-scheduler", agentId, durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
-        }, "cron-scheduler", daemonLogger);
-      }
       // Stop reset schedulers
       for (const [agentId, scheduler] of resetSchedulers) {
         const stopMs = systemNowMs();
@@ -537,27 +579,6 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         }, "channel-liveness-monitor", daemonLogger);
       }
       if (unsubscribeHealthAggregator) unsubscribeHealthAggregator(); // health budget aggregator
-      if (heartbeatRunner) {
-        const stopMs = systemNowMs();
-        await withStepTimeout(() => {
-          heartbeatRunner.stop();
-          daemonLogger.info({ component: "heartbeat-runner", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
-        }, "heartbeat-runner", daemonLogger);
-      }
-      if (perAgentRunner) {
-        const stopMs = systemNowMs();
-        await withStepTimeout(() => {
-          perAgentRunner.stop();
-          daemonLogger.info({ component: "per-agent-heartbeat-runner", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
-        }, "per-agent-heartbeat-runner", daemonLogger);
-      }
-      if (wakeCoalescer) {
-        const stopMs = systemNowMs();
-        await withStepTimeout(() => {
-          wakeCoalescer.shutdown();
-          daemonLogger.info({ component: "wake-coalescer", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
-        }, "wake-coalescer", daemonLogger);
-      }
       // Drain the delivery queue / video poller / durable-resume watchdog / delivery
       // mirror / output retention. Each replaces a system:shutdown subscriber that
       // silently no-op'd in production. Order preserved (sequential await).
@@ -685,7 +706,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
       const lockDir = lockDataDir ?? dataDir;
       if (lockDir) { releaseDataDirLock(lockDir); }
 
-      // DB close is ALWAYS last -- no withStepTimeout (must complete or the outer 30s hard timeout handles it)
+      // DB close is ALWAYS last -- no withStepTimeout (must complete or the outer hard timeout handles it)
       {
         const stopMs = systemNowMs();
         try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch { /* best-effort flush before close */ }

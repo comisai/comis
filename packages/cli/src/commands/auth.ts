@@ -54,6 +54,7 @@ import {
   loadEnvFile,
   validateConfig,
   preReadStorageMode,
+  parseConfigPaths,
   safePath,
   validateProfileId,
   redactEmailForLog,
@@ -119,7 +120,7 @@ export const DEFAULT_CONFIG_PATHS = [
 
 /**
  * Resolve the config path the CLI should read. Precedence:
- *  1. `COMIS_CONFIG_PATHS` (first colon-separated entry) — explicit override.
+ *  1. `COMIS_CONFIG_PATHS` (first comma-separated entry) — explicit override.
  *  2. `$COMIS_DATA_DIR/config.yaml` (then `config.local.yaml`) when COMIS_DATA_DIR
  *     is set — follows the daemon's data-dir convention.
  *  3. The first EXISTING `DEFAULT_CONFIG_PATHS` entry (~/.comis, /etc/comis).
@@ -131,7 +132,7 @@ export function resolveCliConfigPath(
   env: NodeJS.ProcessEnv,
   existsFn: (p: string) => boolean = existsSync,
 ): string {
-  const explicit = env.COMIS_CONFIG_PATHS?.split(":")[0];
+  const explicit = parseConfigPaths(env.COMIS_CONFIG_PATHS)[0];
   if (explicit) return explicit;
   const dataDir = env.COMIS_DATA_DIR;
   const candidates = [

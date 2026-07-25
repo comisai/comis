@@ -21,7 +21,7 @@
  *      parsedBody)`.
  *
  * Hono c.env accessor:
- *   The `@hono/node-server@1.19.14` `HttpBindings` type declares
+ *   The `@hono/node-server@2.0.11` `HttpBindings` type declares
  *   `{ incoming: IncomingMessage; outgoing: ServerResponse }`. Verified by
  *   reading `node_modules/@hono/node-server/dist/types.d.ts` directly.
  *
@@ -35,6 +35,7 @@
 
 import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { RESPONSE_ALREADY_SENT } from "@hono/node-server/utils/response";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -311,11 +312,24 @@ export function mountMcpServerEndpoint(
           500,
         );
       }
+      // Headers already shipped by the transport mid-stream — fall through to
+      // the response-already-sent sentinel below so the node adapter does not
+      // try to write them a second time.
     }
 
-    // The transport writes the response stream directly on `outgoing`
-    // (StreamableHTTPServerTransport supports both SSE + JSON modes). Return
-    // a null body so Hono does not attempt to overwrite the response.
+    // The transport wrote the full response (SSE or JSON) directly on the raw
+    // Node ServerResponse. Signal `@hono/node-server` to leave `outgoing`
+    // untouched via the response-already-sent header sentinel. Returning any
+    // other Response (including `c.body(null)`) makes the node adapter call
+    // `outgoing.writeHead()` a SECOND time — throwing ERR_HTTP_HEADERS_SENT and
+    // destroying the socket mid-response, corrupting/truncating every reply.
+    if (outgoing.headersSent) {
+      return RESPONSE_ALREADY_SENT;
+    }
+
+    // The transport returned without writing anything (not expected for a
+    // valid MCP POST). Emit a normal empty response so the client is not left
+    // waiting on an open socket.
     return c.body(null);
   });
 

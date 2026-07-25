@@ -4,17 +4,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { NormalizedMessage, SessionKey } from "@comis/core";
+import type { DeliverToChannelOptions, NormalizedMessage, SessionKey } from "@comis/core";
 import { handleExportTrajectory } from "./export-trajectory.js";
 import { parseSlashCommand } from "./command-parser.js";
-
-// Mock isGroupMessage from @comis/channels
-vi.mock("@comis/channels", () => ({
-  isGroupMessage: vi.fn(),
-  evaluateAutoReply: vi.fn(),
-  isBotMentioned: vi.fn(),
-}));
-import { isGroupMessage } from "@comis/channels";
 
 // ---------------------------------------------------------------------------
 // Parser-level tests
@@ -70,6 +62,29 @@ function makeDeliveryService() {
   return { deliverToChannel: vi.fn(async () => undefined) };
 }
 
+function makeDeliveryOptions(
+  conversationKind: "direct" | "shared" = "direct",
+  conversationId = "chat-1",
+): DeliverToChannelOptions {
+  return {
+    completionMode: "deferred_retry",
+    authority: {
+      tenantId: "default",
+      agentId: "a",
+      conversationRef: `cv_${"a".repeat(43)}` as never,
+    },
+    destinationEndpoint: {
+      channelType: "telegram",
+      channelInstanceId: "adapter-1",
+      conversationId,
+      threadId: "owner-thread",
+      conversationKind,
+    },
+    threadId: "owner-thread",
+    skipChunking: true,
+  };
+}
+
 function makeLogger() {
   return { error: vi.fn(), info: vi.fn() } as unknown as {
     error: (obj: unknown, msg?: string) => void;
@@ -97,6 +112,7 @@ describe("handleExportTrajectory", () => {
       agentId: "a",
       adapter,
       deliveryService,
+      deliveryOptions: makeDeliveryOptions(),
       exportSessionBundle,
       logger: makeLogger(),
     });
@@ -113,7 +129,6 @@ describe("handleExportTrajectory", () => {
   });
 
   it("Test 2: DM owner — inline reply contains bundle path + privacy reminder", async () => {
-    vi.mocked(isGroupMessage).mockReturnValue(false);
     const msg = makeMsg({ senderId: "owner-1" });
     const sessionKey = makeKey("owner-1");
     const adapter = makeAdapter();
@@ -126,6 +141,7 @@ describe("handleExportTrajectory", () => {
       agentId: "a",
       adapter,
       deliveryService,
+      deliveryOptions: makeDeliveryOptions(),
       exportSessionBundle,
       logger: makeLogger(),
     });
@@ -144,8 +160,7 @@ describe("handleExportTrajectory", () => {
     expect(result).toEqual({ action: "handled" });
   });
 
-  it("Test 3: group owner — inline says 'Bundle sent to owner DM' (no path); DM contains path", async () => {
-    vi.mocked(isGroupMessage).mockReturnValue(true);
+  it("rejects a shared authenticated endpoint even when metadata looks direct", async () => {
     const msg = makeMsg({ senderId: "owner-1", channelId: "group-1" });
     const sessionKey = makeKey("owner-1");
     const adapter = makeAdapter();
@@ -158,30 +173,23 @@ describe("handleExportTrajectory", () => {
       agentId: "a",
       adapter,
       deliveryService,
+      deliveryOptions: makeDeliveryOptions("shared", "group-1"),
       exportSessionBundle,
       logger: makeLogger(),
     });
 
-    // Inline group reply: "Bundle sent to owner DM" — no path
-    const inlineCalls = deliveryService.deliverToChannel.mock.calls;
-    const inlineTexts = inlineCalls.map((c: unknown[]) => String(c[2]));
-    expect(
-      inlineTexts.some((t: string) => t === "Bundle sent to owner DM." || t.startsWith("Bundle sent to owner DM")),
-    ).toBe(true);
-
-    // CRITICAL: path is NEVER inline in group
-    expect(inlineTexts.some((t: string) => t.includes("/tmp/bundle-xyz"))).toBe(false);
-
-    // DM to owner contains the path
-    expect(adapter.sendMessage).toHaveBeenCalledWith(
-      "owner-1",
-      expect.stringContaining("/tmp/bundle-xyz"),
+    expect(deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      adapter,
+      "group-1",
+      expect.stringContaining("direct message"),
+      expect.anything(),
     );
+    expect(exportSessionBundle).not.toHaveBeenCalled();
+    expect(adapter.sendMessage).not.toHaveBeenCalled();
     expect(result).toEqual({ action: "handled" });
   });
 
   it("Test 4: export failure — error sent inline; no DM; result is handled", async () => {
-    vi.mocked(isGroupMessage).mockReturnValue(false);
     const msg = makeMsg({ senderId: "owner-1" });
     const sessionKey = makeKey("owner-1");
     const adapter = makeAdapter();
@@ -196,6 +204,7 @@ describe("handleExportTrajectory", () => {
       agentId: "a",
       adapter,
       deliveryService,
+      deliveryOptions: makeDeliveryOptions(),
       exportSessionBundle,
       logger: makeLogger(),
     });
@@ -211,7 +220,6 @@ describe("handleExportTrajectory", () => {
   });
 
   it("Test 5: group + non-owner — 'Access denied'; no routing logic engaged", async () => {
-    vi.mocked(isGroupMessage).mockReturnValue(true);
     const msg = makeMsg({ senderId: "intruder-2", channelId: "group-1" });
     const sessionKey = makeKey("owner-1");
     const adapter = makeAdapter();
@@ -224,6 +232,7 @@ describe("handleExportTrajectory", () => {
       agentId: "a",
       adapter,
       deliveryService,
+      deliveryOptions: makeDeliveryOptions(),
       exportSessionBundle,
       logger: makeLogger(),
     });

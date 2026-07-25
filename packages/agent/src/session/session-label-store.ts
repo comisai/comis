@@ -1,78 +1,55 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Session Label Store: Human-readable labels for sessions.
- *
- * Provides a thin facade for reading/writing session labels through the
- * existing `metadata.label` field in SessionStorePort's metadata JSON column.
- * No schema migration required -- labels are stored as a regular metadata key.
- *
- * @module
- */
+/** Human-readable labels stored in authority-scoped session metadata. */
 
-import type { SessionKey } from "@comis/core";
-import type { SessionStorePort } from "@comis/core";
+import type {
+  ConversationRef,
+  ConversationScope,
+  SessionQueryScope,
+  SessionStoreError,
+  SessionStorePort,
+} from "@comis/core";
+import { ok, type Result } from "@comis/shared";
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
-/**
- * Facade for managing human-readable session labels via metadata.label.
- */
 export interface SessionLabelStore {
-  /** Get the label for a session. Returns undefined if no label set. */
-  getLabel(key: SessionKey): string | undefined;
-  /** Set a label for a session. Creates/updates metadata.label. No-op if session doesn't exist. */
-  setLabel(key: SessionKey, label: string): void;
-  /** Remove the label from a session. No-op if session doesn't exist. */
-  removeLabel(key: SessionKey): void;
-  /** List sessions that have labels, returning [sessionKey, label] pairs. */
-  listLabeled(tenantId?: string): Array<{ sessionKey: string; label: string }>;
+  getLabel(scope: ConversationScope): Result<string | undefined, SessionStoreError>;
+  setLabel(scope: ConversationScope, label: string): Result<void, SessionStoreError>;
+  removeLabel(scope: ConversationScope): Result<void, SessionStoreError>;
+  listLabeled(scope: SessionQueryScope): Result<Array<{ conversationRef: ConversationRef; label: string }>, SessionStoreError>;
 }
 
-// ---------------------------------------------------------------------------
-// Factory
-// ---------------------------------------------------------------------------
-
-/**
- * Create a SessionLabelStore wrapping the given SessionStorePort.
- *
- * Labels are stored in `metadata.label` -- no schema migration needed.
- * All operations delegate to the underlying SessionStorePort for persistence.
- */
 export function createSessionLabelStore(store: SessionStorePort): SessionLabelStore {
   return {
-    getLabel(key: SessionKey): string | undefined {
-      const data = store.load(key);
-      if (!data) return undefined;
-      const label = data.metadata?.label;
-      return typeof label === "string" ? label : undefined;
+    getLabel(scope) {
+      const loaded = store.load(scope);
+      if (!loaded.ok) return loaded;
+      const label = loaded.value?.metadata.label;
+      return ok(typeof label === "string" ? label : undefined);
     },
 
-    setLabel(key: SessionKey, label: string): void {
-      const data = store.load(key);
-      if (!data) return; // Can't label a non-existent session
-      store.save(key, data.messages, { ...data.metadata, label });
+    setLabel(scope, label) {
+      const loaded = store.load(scope);
+      if (!loaded.ok) return loaded;
+      if (loaded.value === undefined) return ok(undefined);
+      return store.save(scope, loaded.value.messages, { ...loaded.value.metadata, label });
     },
 
-    removeLabel(key: SessionKey): void {
-      const data = store.load(key);
-      if (!data) return;
-       
-      const { label: _, ...rest } = data.metadata;
-      store.save(key, data.messages, rest);
+    removeLabel(scope) {
+      const loaded = store.load(scope);
+      if (!loaded.ok) return loaded;
+      if (loaded.value === undefined) return ok(undefined);
+      const { label: _label, ...metadata } = loaded.value.metadata;
+      return store.save(scope, loaded.value.messages, metadata);
     },
 
-    listLabeled(tenantId?: string): Array<{ sessionKey: string; label: string }> {
-      const detailed = store.listDetailed(tenantId);
-      const result: Array<{ sessionKey: string; label: string }> = [];
-      for (const entry of detailed) {
-        const label = entry.metadata?.label;
-        if (typeof label === "string") {
-          result.push({ sessionKey: entry.sessionKey, label });
-        }
+    listLabeled(scope) {
+      const listed = store.listDetailed(scope);
+      if (!listed.ok) return listed;
+      const result: Array<{ conversationRef: ConversationRef; label: string }> = [];
+      for (const entry of listed.value) {
+        const label = entry.metadata.label;
+        if (typeof label === "string") result.push({ conversationRef: entry.conversationRef, label });
       }
-      return result;
+      return ok(result);
     },
   };
 }

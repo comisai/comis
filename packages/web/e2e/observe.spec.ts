@@ -17,10 +17,14 @@ import { login, navigateTo } from "./helpers/login.js";
 const OBSERVE_RPC_HANDLERS: Record<string, unknown> = {
   ...DEFAULT_RPC_HANDLERS,
   "obs.delivery.stats": {
-    successRate: 98.5,
+    total: 1000,
+    attempted: 1000,
+    success: 985,
+    error: 10,
+    timeout: 5,
+    filtered: 0,
+    aborted: 0,
     avgLatencyMs: 120,
-    totalDelivered: 985,
-    failed: 15,
   },
   "obs.billing.total": {
     totalTokens: 250000,
@@ -67,26 +71,52 @@ const OBSERVE_RPC_HANDLERS: Record<string, unknown> = {
       },
     ],
   },
-  "obs.delivery.recent": [
-    {
-      traceId: "trace-1",
-      timestamp: Date.now() - 60000,
-      channelType: "telegram",
-      messagePreview: "Hello from telegram",
-      status: "success",
-      latencyMs: 95,
-      stepCount: 3,
-    },
-    {
-      traceId: "trace-2",
-      timestamp: Date.now() - 120000,
-      channelType: "discord",
-      messagePreview: "Discord test message",
-      status: "failed",
-      latencyMs: null,
-      stepCount: 1,
-    },
-  ],
+  "obs.delivery.recent": {
+    deliveries: [
+      {
+        sourceChannelId: "chat_a",
+        sourceChannelType: "telegram",
+        targetChannelType: "telegram",
+        targetChannelId: "chat_a",
+        deliveredAt: Date.now() - 60000,
+        latencyMs: 95,
+        status: "success",
+        error: null,
+        agentId: "agent_a",
+        sessionKey: null,
+        traceId: "trace-1",
+        toolCalls: 1,
+        llmCalls: 2,
+        tokensTotal: 240,
+        costTotal: 0.01,
+        failureStage: null,
+        errorKind: null,
+        steps: [],
+        evidence: "diagnostic",
+      },
+      {
+        sourceChannelId: "chat_b",
+        sourceChannelType: "discord",
+        targetChannelType: "discord",
+        targetChannelId: "chat_b",
+        deliveredAt: Date.now() - 120000,
+        latencyMs: 120,
+        status: "error",
+        error: "Delivery failed",
+        agentId: "agent_b",
+        sessionKey: null,
+        traceId: "trace-2",
+        toolCalls: 0,
+        llmCalls: 1,
+        tokensTotal: 100,
+        costTotal: 0.005,
+        failureStage: "delivery",
+        errorKind: "platform",
+        steps: [],
+        evidence: "diagnostic",
+      },
+    ],
+  },
   // DiagnosticsEvent shape: { id, timestamp, category, eventType, data }.
   // deriveDiagnosticLevel falls back to "info" for unknown event types and
   // returns "warn" for retry:attempted; deriveDiagnosticMessage echoes the
@@ -163,10 +193,12 @@ test.describe("Observability view", () => {
     // Switch to the Delivery tab via role to disambiguate from body text.
     await view.getByRole("tab", { name: "Delivery" }).click();
 
-    // Verify delivery traces are listed (the mock returns telegram + discord
-    // entries with messagePreview text rendered in the row).
-    await expect(view.getByText("Hello from telegram")).toBeVisible();
-    await expect(view.getByText("Discord test message")).toBeVisible();
+    // Canonical delivery records are content-free, so verify their channel and
+    // lifecycle presentation without relying on a message body preview.
+    const rows = view.locator("ic-delivery-row");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0).getByText("telegram")).toBeVisible();
+    await expect(rows.nth(1).locator('svg[aria-label="Error"]')).toBeVisible();
   });
 
   test("diagnostics tab shows recent events", async ({ page }) => {

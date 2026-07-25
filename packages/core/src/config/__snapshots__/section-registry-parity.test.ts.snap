@@ -693,22 +693,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "array"
   },
   {
-    "default": 5,
-    "immutable": true,
-    "path": "agents.contextEngine.compactionCooldownTurns",
-    "type": "integer"
-  },
-  {
     "default": "",
     "immutable": true,
     "path": "agents.contextEngine.compactionModel",
     "type": "string"
-  },
-  {
-    "default": 2,
-    "immutable": true,
-    "path": "agents.contextEngine.compactionPrefixAnchorTurns",
-    "type": "integer"
   },
   {
     "default": 4,
@@ -747,12 +735,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "boolean"
   },
   {
-    "default": 10,
-    "immutable": true,
-    "path": "agents.contextEngine.ephemeralKeepWindow",
-    "type": "integer"
-  },
-  {
     "default": 15,
     "immutable": true,
     "path": "agents.contextEngine.evictionMinAge",
@@ -762,17 +744,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "default": 8,
     "immutable": true,
     "path": "agents.contextEngine.freshTailTurns",
-    "type": "integer"
-  },
-  {
-    "immutable": true,
-    "path": "agents.contextEngine.historyTurnOverrides",
-    "type": "object"
-  },
-  {
-    "default": 15,
-    "immutable": true,
-    "path": "agents.contextEngine.historyTurns",
     "type": "integer"
   },
   {
@@ -855,24 +826,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "default": 1,
     "immutable": true,
     "path": "agents.contextEngine.memory.distillFromLcd.minDepth",
-    "type": "integer"
-  },
-  {
-    "default": 80000,
-    "immutable": true,
-    "path": "agents.contextEngine.observationDeactivationChars",
-    "type": "integer"
-  },
-  {
-    "default": 25,
-    "immutable": true,
-    "path": "agents.contextEngine.observationKeepWindow",
-    "type": "integer"
-  },
-  {
-    "default": 120000,
-    "immutable": true,
-    "path": "agents.contextEngine.observationTriggerChars",
     "type": "integer"
   },
   {
@@ -1003,12 +956,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.contextEngine.thinkingKeepTurns",
     "type": "integer"
-  },
-  {
-    "default": "dag",
-    "immutable": true,
-    "path": "agents.contextEngine.version",
-    "type": "string"
   },
   {
     "default": {
@@ -1814,6 +1761,21 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "immutable": true,
+    "path": "agents.operationModels.outcomeJudge",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "agents.operationModels.outcomeJudge.model",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "agents.operationModels.outcomeJudge.timeout",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
     "path": "agents.operationModels.planning",
     "type": "object"
   },
@@ -1825,6 +1787,21 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   {
     "immutable": true,
     "path": "agents.operationModels.planning.timeout",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.operationModels.skillSynthesis",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "agents.operationModels.skillSynthesis.model",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "agents.operationModels.skillSynthesis.timeout",
     "type": "integer"
   },
   {
@@ -1972,9 +1949,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
         "temporalParse": true
       },
       "rerank": {
-        "enabled": true,
         "maxCandidates": 40,
         "minResults": 1,
+        "mode": "auto",
         "timeoutMs": 800
       },
       "scoring": {
@@ -2305,20 +2282,14 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": true,
       "maxCandidates": 40,
       "minResults": 1,
+      "mode": "auto",
       "timeoutMs": 800
     },
     "immutable": true,
     "path": "agents.rag.rerank",
     "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.rag.rerank.enabled",
-    "type": "boolean"
   },
   {
     "default": 40,
@@ -2331,6 +2302,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.rag.rerank.minResults",
     "type": "integer"
+  },
+  {
+    "default": "auto",
+    "immutable": true,
+    "path": "agents.rag.rerank.mode",
+    "type": "string"
   },
   {
     "default": 800,
@@ -2399,21 +2376,22 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "defaultTimezone": "",
+      "defaultTimezone": "UTC",
       "enabled": true,
-      "maxConcurrentRuns": 3,
-      "maxConsecutiveErrors": 5,
-      "maxJobs": 100
+      "maxConsecutiveDependencyErrors": 5,
+      "maxJobs": 100,
+      "maxRunsPerTick": 3,
+      "staggerWindowMs": 0
     },
     "immutable": true,
     "path": "agents.scheduler.cron",
     "type": "object"
   },
   {
-    "default": "",
+    "default": "UTC",
     "immutable": true,
     "path": "agents.scheduler.cron.defaultTimezone",
-    "type": "string"
+    "type": "unknown"
   },
   {
     "default": true,
@@ -2422,21 +2400,27 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "boolean"
   },
   {
-    "default": 3,
-    "immutable": true,
-    "path": "agents.scheduler.cron.maxConcurrentRuns",
-    "type": "integer"
-  },
-  {
     "default": 5,
     "immutable": true,
-    "path": "agents.scheduler.cron.maxConsecutiveErrors",
+    "path": "agents.scheduler.cron.maxConsecutiveDependencyErrors",
     "type": "integer"
   },
   {
     "default": 100,
     "immutable": true,
     "path": "agents.scheduler.cron.maxJobs",
+    "type": "integer"
+  },
+  {
+    "default": 3,
+    "immutable": true,
+    "path": "agents.scheduler.cron.maxRunsPerTick",
+    "type": "integer"
+  },
+  {
+    "default": 0,
+    "immutable": true,
+    "path": "agents.scheduler.cron.staggerWindowMs",
     "type": "integer"
   },
   {
@@ -2496,22 +2480,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "immutable": true,
-    "path": "agents.scheduler.heartbeat.session",
-    "type": "string"
-  },
-  {
-    "immutable": true,
     "path": "agents.scheduler.heartbeat.showAlerts",
     "type": "boolean"
   },
   {
     "immutable": true,
     "path": "agents.scheduler.heartbeat.showOk",
-    "type": "boolean"
-  },
-  {
-    "immutable": true,
-    "path": "agents.scheduler.heartbeat.skipHeartbeatOnlyDelivery",
     "type": "boolean"
   },
   {
@@ -2526,7 +2500,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "immutable": true,
-    "path": "agents.scheduler.heartbeat.target.channelId",
+    "path": "agents.scheduler.heartbeat.target.channelInstanceId",
     "type": "string"
   },
   {
@@ -2536,13 +2510,18 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "immutable": true,
-    "path": "agents.scheduler.heartbeat.target.chatId",
+    "path": "agents.scheduler.heartbeat.target.conversationId",
     "type": "string"
   },
   {
     "immutable": true,
-    "path": "agents.scheduler.heartbeat.target.isDm",
-    "type": "boolean"
+    "path": "agents.scheduler.heartbeat.target.conversationKind",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "agents.scheduler.heartbeat.target.threadId",
+    "type": "string"
   },
   {
     "immutable": true,
@@ -5772,7 +5751,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("daemo
     "type": "integer"
   },
   {
-    "default": 30000,
+    "default": 45000,
     "immutable": false,
     "path": "daemon.shutdownTimeoutMs",
     "type": "integer"
@@ -7444,13 +7423,13 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("plugi
 "[
   {
     "default": true,
-    "immutable": false,
+    "immutable": true,
     "path": "plugins.enabled",
     "type": "boolean"
   },
   {
     "default": {},
-    "immutable": false,
+    "immutable": true,
     "path": "plugins.plugins",
     "type": "object"
   }
@@ -7595,22 +7574,22 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("sched
 "[
   {
     "default": {
-      "defaultTimezone": "",
+      "defaultTimezone": "UTC",
       "enabled": true,
-      "maxConcurrentRuns": 3,
-      "maxConsecutiveErrors": 5,
+      "maxConsecutiveDependencyErrors": 5,
       "maxJobs": 100,
-      "storeDir": "./data/scheduler"
+      "maxRunsPerTick": 3,
+      "staggerWindowMs": 0
     },
     "immutable": false,
     "path": "scheduler.cron",
     "type": "object"
   },
   {
-    "default": "",
+    "default": "UTC",
     "immutable": false,
     "path": "scheduler.cron.defaultTimezone",
-    "type": "string"
+    "type": "unknown"
   },
   {
     "default": true,
@@ -7619,15 +7598,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("sched
     "type": "boolean"
   },
   {
-    "default": 3,
-    "immutable": false,
-    "path": "scheduler.cron.maxConcurrentRuns",
-    "type": "integer"
-  },
-  {
     "default": 5,
     "immutable": false,
-    "path": "scheduler.cron.maxConsecutiveErrors",
+    "path": "scheduler.cron.maxConsecutiveDependencyErrors",
     "type": "integer"
   },
   {
@@ -7637,10 +7610,16 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("sched
     "type": "integer"
   },
   {
-    "default": "./data/scheduler",
+    "default": 3,
     "immutable": false,
-    "path": "scheduler.cron.storeDir",
-    "type": "string"
+    "path": "scheduler.cron.maxRunsPerTick",
+    "type": "integer"
+  },
+  {
+    "default": 0,
+    "immutable": false,
+    "path": "scheduler.cron.staggerWindowMs",
+    "type": "integer"
   },
   {
     "immutable": false,
@@ -7649,34 +7628,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("sched
   },
   {
     "default": {
-      "keepLines": 2000,
-      "lockDir": "./data/scheduler/locks",
-      "logDir": "./data/scheduler/logs",
       "maxLogBytes": 2000000,
-      "staleMs": 600000,
-      "updateMs": 30000
+      "retainedExecutions": 1000
     },
     "immutable": false,
     "path": "scheduler.execution",
     "type": "object"
-  },
-  {
-    "default": 2000,
-    "immutable": false,
-    "path": "scheduler.execution.keepLines",
-    "type": "integer"
-  },
-  {
-    "default": "./data/scheduler/locks",
-    "immutable": false,
-    "path": "scheduler.execution.lockDir",
-    "type": "string"
-  },
-  {
-    "default": "./data/scheduler/logs",
-    "immutable": false,
-    "path": "scheduler.execution.logDir",
-    "type": "string"
   },
   {
     "default": 2000000,
@@ -7685,15 +7642,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("sched
     "type": "integer"
   },
   {
-    "default": 600000,
+    "default": 1000,
     "immutable": false,
-    "path": "scheduler.execution.staleMs",
-    "type": "integer"
-  },
-  {
-    "default": 30000,
-    "immutable": false,
-    "path": "scheduler.execution.updateMs",
+    "path": "scheduler.execution.retainedExecutions",
     "type": "integer"
   },
   {
@@ -7758,7 +7709,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("sched
       "enabled": false,
       "end": "07:00",
       "start": "22:00",
-      "timezone": ""
+      "timezone": "UTC"
     },
     "immutable": false,
     "path": "scheduler.quietHours",
@@ -7789,20 +7740,31 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("sched
     "type": "string"
   },
   {
-    "default": "",
+    "default": "UTC",
     "immutable": false,
     "path": "scheduler.quietHours.timezone",
-    "type": "string"
+    "type": "unknown"
   },
   {
     "default": {
+      "batchMax": 8,
       "confidenceThreshold": 0.8,
-      "enabled": true,
-      "storeDir": "./data/scheduler/tasks"
+      "debounceMs": 15000,
+      "defaultWindowMs": 43200000,
+      "enabled": false,
+      "maxPerCheck": 3,
+      "maxPerDayPerConversation": 3,
+      "preAcceptanceRetryLimit": 3
     },
     "immutable": false,
     "path": "scheduler.tasks",
     "type": "object"
+  },
+  {
+    "default": 8,
+    "immutable": false,
+    "path": "scheduler.tasks.batchMax",
+    "type": "integer"
   },
   {
     "default": 0.8,
@@ -7811,16 +7773,40 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("sched
     "type": "number"
   },
   {
-    "default": true,
+    "default": 15000,
+    "immutable": false,
+    "path": "scheduler.tasks.debounceMs",
+    "type": "integer"
+  },
+  {
+    "default": 43200000,
+    "immutable": false,
+    "path": "scheduler.tasks.defaultWindowMs",
+    "type": "integer"
+  },
+  {
+    "default": false,
     "immutable": false,
     "path": "scheduler.tasks.enabled",
     "type": "boolean"
   },
   {
-    "default": "./data/scheduler/tasks",
+    "default": 3,
     "immutable": false,
-    "path": "scheduler.tasks.storeDir",
-    "type": "string"
+    "path": "scheduler.tasks.maxPerCheck",
+    "type": "integer"
+  },
+  {
+    "default": 3,
+    "immutable": false,
+    "path": "scheduler.tasks.maxPerDayPerConversation",
+    "type": "integer"
+  },
+  {
+    "default": 3,
+    "immutable": false,
+    "path": "scheduler.tasks.preAcceptanceRetryLimit",
+    "type": "integer"
   }
 ]"
 `;
@@ -8714,9 +8700,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
             "temporalParse": true
           },
           "rerank": {
-            "enabled": true,
             "maxCandidates": 40,
             "minResults": 1,
+            "mode": "auto",
             "timeoutMs": 800
           },
           "scoring": {
@@ -11218,7 +11204,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         }
       },
       "metricsIntervalMs": 30000,
-      "shutdownTimeoutMs": 30000
+      "shutdownTimeoutMs": 45000
     },
     "immutable": false,
     "path": "daemon",
@@ -11377,7 +11363,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "integer"
   },
   {
-    "default": 30000,
+    "default": 45000,
     "immutable": false,
     "path": "daemon.shutdownTimeoutMs",
     "type": "integer"
@@ -12172,6 +12158,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "gateway.wsMessageRateLimit.windowMs",
     "type": "integer"
+  },
+  {
+    "default": {
+      "principalMappings": []
+    },
+    "immutable": true,
+    "path": "identity",
+    "type": "object"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "identity.principalMappings",
+    "type": "array"
   },
   {
     "default": {
@@ -14364,19 +14364,19 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "enabled": true,
       "plugins": {}
     },
-    "immutable": false,
+    "immutable": true,
     "path": "plugins",
     "type": "object"
   },
   {
     "default": true,
-    "immutable": false,
+    "immutable": true,
     "path": "plugins.enabled",
     "type": "boolean"
   },
   {
     "default": {},
-    "immutable": false,
+    "immutable": true,
     "path": "plugins.plugins",
     "type": "object"
   },
@@ -14578,20 +14578,16 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   {
     "default": {
       "cron": {
-        "defaultTimezone": "",
+        "defaultTimezone": "UTC",
         "enabled": true,
-        "maxConcurrentRuns": 3,
-        "maxConsecutiveErrors": 5,
+        "maxConsecutiveDependencyErrors": 5,
         "maxJobs": 100,
-        "storeDir": "./data/scheduler"
+        "maxRunsPerTick": 3,
+        "staggerWindowMs": 0
       },
       "execution": {
-        "keepLines": 2000,
-        "lockDir": "./data/scheduler/locks",
-        "logDir": "./data/scheduler/logs",
         "maxLogBytes": 2000000,
-        "staleMs": 600000,
-        "updateMs": 30000
+        "retainedExecutions": 1000
       },
       "heartbeat": {
         "alertCooldownMs": 300000,
@@ -14607,12 +14603,17 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "enabled": false,
         "end": "07:00",
         "start": "22:00",
-        "timezone": ""
+        "timezone": "UTC"
       },
       "tasks": {
+        "batchMax": 8,
         "confidenceThreshold": 0.8,
-        "enabled": true,
-        "storeDir": "./data/scheduler/tasks"
+        "debounceMs": 15000,
+        "defaultWindowMs": 43200000,
+        "enabled": false,
+        "maxPerCheck": 3,
+        "maxPerDayPerConversation": 3,
+        "preAcceptanceRetryLimit": 3
       }
     },
     "immutable": false,
@@ -14621,22 +14622,22 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
-      "defaultTimezone": "",
+      "defaultTimezone": "UTC",
       "enabled": true,
-      "maxConcurrentRuns": 3,
-      "maxConsecutiveErrors": 5,
+      "maxConsecutiveDependencyErrors": 5,
       "maxJobs": 100,
-      "storeDir": "./data/scheduler"
+      "maxRunsPerTick": 3,
+      "staggerWindowMs": 0
     },
     "immutable": false,
     "path": "scheduler.cron",
     "type": "object"
   },
   {
-    "default": "",
+    "default": "UTC",
     "immutable": false,
     "path": "scheduler.cron.defaultTimezone",
-    "type": "string"
+    "type": "unknown"
   },
   {
     "default": true,
@@ -14645,15 +14646,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "boolean"
   },
   {
-    "default": 3,
-    "immutable": false,
-    "path": "scheduler.cron.maxConcurrentRuns",
-    "type": "integer"
-  },
-  {
     "default": 5,
     "immutable": false,
-    "path": "scheduler.cron.maxConsecutiveErrors",
+    "path": "scheduler.cron.maxConsecutiveDependencyErrors",
     "type": "integer"
   },
   {
@@ -14663,10 +14658,16 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "integer"
   },
   {
-    "default": "./data/scheduler",
+    "default": 3,
     "immutable": false,
-    "path": "scheduler.cron.storeDir",
-    "type": "string"
+    "path": "scheduler.cron.maxRunsPerTick",
+    "type": "integer"
+  },
+  {
+    "default": 0,
+    "immutable": false,
+    "path": "scheduler.cron.staggerWindowMs",
+    "type": "integer"
   },
   {
     "immutable": false,
@@ -14675,34 +14676,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
-      "keepLines": 2000,
-      "lockDir": "./data/scheduler/locks",
-      "logDir": "./data/scheduler/logs",
       "maxLogBytes": 2000000,
-      "staleMs": 600000,
-      "updateMs": 30000
+      "retainedExecutions": 1000
     },
     "immutable": false,
     "path": "scheduler.execution",
     "type": "object"
-  },
-  {
-    "default": 2000,
-    "immutable": false,
-    "path": "scheduler.execution.keepLines",
-    "type": "integer"
-  },
-  {
-    "default": "./data/scheduler/locks",
-    "immutable": false,
-    "path": "scheduler.execution.lockDir",
-    "type": "string"
-  },
-  {
-    "default": "./data/scheduler/logs",
-    "immutable": false,
-    "path": "scheduler.execution.logDir",
-    "type": "string"
   },
   {
     "default": 2000000,
@@ -14711,15 +14690,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "integer"
   },
   {
-    "default": 600000,
+    "default": 1000,
     "immutable": false,
-    "path": "scheduler.execution.staleMs",
-    "type": "integer"
-  },
-  {
-    "default": 30000,
-    "immutable": false,
-    "path": "scheduler.execution.updateMs",
+    "path": "scheduler.execution.retainedExecutions",
     "type": "integer"
   },
   {
@@ -14784,7 +14757,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "enabled": false,
       "end": "07:00",
       "start": "22:00",
-      "timezone": ""
+      "timezone": "UTC"
     },
     "immutable": false,
     "path": "scheduler.quietHours",
@@ -14815,20 +14788,31 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
-    "default": "",
+    "default": "UTC",
     "immutable": false,
     "path": "scheduler.quietHours.timezone",
-    "type": "string"
+    "type": "unknown"
   },
   {
     "default": {
+      "batchMax": 8,
       "confidenceThreshold": 0.8,
-      "enabled": true,
-      "storeDir": "./data/scheduler/tasks"
+      "debounceMs": 15000,
+      "defaultWindowMs": 43200000,
+      "enabled": false,
+      "maxPerCheck": 3,
+      "maxPerDayPerConversation": 3,
+      "preAcceptanceRetryLimit": 3
     },
     "immutable": false,
     "path": "scheduler.tasks",
     "type": "object"
+  },
+  {
+    "default": 8,
+    "immutable": false,
+    "path": "scheduler.tasks.batchMax",
+    "type": "integer"
   },
   {
     "default": 0.8,
@@ -14837,16 +14821,40 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "number"
   },
   {
-    "default": true,
+    "default": 15000,
+    "immutable": false,
+    "path": "scheduler.tasks.debounceMs",
+    "type": "integer"
+  },
+  {
+    "default": 43200000,
+    "immutable": false,
+    "path": "scheduler.tasks.defaultWindowMs",
+    "type": "integer"
+  },
+  {
+    "default": false,
     "immutable": false,
     "path": "scheduler.tasks.enabled",
     "type": "boolean"
   },
   {
-    "default": "./data/scheduler/tasks",
+    "default": 3,
     "immutable": false,
-    "path": "scheduler.tasks.storeDir",
-    "type": "string"
+    "path": "scheduler.tasks.maxPerCheck",
+    "type": "integer"
+  },
+  {
+    "default": 3,
+    "immutable": false,
+    "path": "scheduler.tasks.maxPerDayPerConversation",
+    "type": "integer"
+  },
+  {
+    "default": 3,
+    "immutable": false,
+    "path": "scheduler.tasks.preAcceptanceRetryLimit",
+    "type": "integer"
   },
   {
     "default": {
@@ -15841,7 +15849,7 @@ exports[`section-registry parity > managed-sections view > MANAGED_SECTIONS expo
     "tool": "channels_manage"
   },
   {
-    "description": "Manage agent fleet (create, get, update, delete, suspend, resume).",
+    "description": "Manage agent system (create, get, update, delete, suspend, resume).",
     "exampleArgs": {
       "action": "create",
       "agent_id": "<new-agent-id>",
@@ -15880,7 +15888,7 @@ exports[`section-registry parity > managed-sections view > MANAGED_SECTIONS expo
 
 exports[`section-registry parity > managed-sections view > getManagedSectionRedirect("agents", "(no key)") 1`] = `
 "{
-  "description": "Manage agent fleet (create, get, update, delete, suspend, resume).",
+  "description": "Manage agent system (create, get, update, delete, suspend, resume).",
   "exampleArgs": {
     "action": "create",
     "agent_id": "<new-agent-id>",
@@ -16961,21 +16969,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           ],
           "type": "object"
         },
-        "compactionCooldownTurns": {
-          "default": 5,
-          "maximum": 50,
-          "minimum": 1,
-          "type": "integer"
-        },
         "compactionModel": {
           "default": "",
           "type": "string"
-        },
-        "compactionPrefixAnchorTurns": {
-          "default": 2,
-          "maximum": 10,
-          "minimum": 0,
-          "type": "integer"
         },
         "condensedMinFanout": {
           "default": 4,
@@ -17009,12 +17005,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "default": true,
           "type": "boolean"
         },
-        "ephemeralKeepWindow": {
-          "default": 10,
-          "maximum": 50,
-          "minimum": 1,
-          "type": "integer"
-        },
         "evictionMinAge": {
           "default": 15,
           "maximum": 50,
@@ -17025,23 +17015,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "default": 8,
           "maximum": 50,
           "minimum": 1,
-          "type": "integer"
-        },
-        "historyTurnOverrides": {
-          "additionalProperties": {
-            "maximum": 100,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "propertyNames": {
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "historyTurns": {
-          "default": 15,
-          "maximum": 100,
-          "minimum": 3,
           "type": "integer"
         },
         "incrementalMaxDepth": {
@@ -17133,24 +17106,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "distillFromLcd"
           ],
           "type": "object"
-        },
-        "observationDeactivationChars": {
-          "default": 80000,
-          "maximum": 500000,
-          "minimum": 20000,
-          "type": "integer"
-        },
-        "observationKeepWindow": {
-          "default": 25,
-          "maximum": 50,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "observationTriggerChars": {
-          "default": 120000,
-          "maximum": 1000000,
-          "minimum": 50000,
-          "type": "integer"
         },
         "outputEscalation": {
           "additionalProperties": false,
@@ -17292,30 +17247,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "maximum": 50,
           "minimum": 1,
           "type": "integer"
-        },
-        "version": {
-          "default": "dag",
-          "enum": [
-            "pipeline",
-            "dag"
-          ],
-          "type": "string"
         }
       },
       "required": [
         "enabled",
-        "version",
         "thinkingKeepTurns",
         "replayDriftIdleMs",
         "compactionModel",
         "evictionMinAge",
-        "historyTurns",
-        "observationKeepWindow",
-        "observationTriggerChars",
-        "observationDeactivationChars",
-        "ephemeralKeepWindow",
-        "compactionCooldownTurns",
-        "compactionPrefixAnchorTurns",
         "outputEscalation",
         "freshTailTurns",
         "contextThreshold",
@@ -17666,6 +17605,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       "type": "object"
     },
     "language": {
+      "maxLength": 128,
+      "minLength": 2,
       "type": "string"
     },
     "learning": {
@@ -18316,7 +18257,37 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           },
           "type": "object"
         },
+        "outcomeJudge": {
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "timeout": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
         "planning": {
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "timeout": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "skillSynthesis": {
           "additionalProperties": false,
           "properties": {
             "model": {
@@ -18485,9 +18456,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "temporalParse": true
         },
         "rerank": {
-          "enabled": true,
           "maxCandidates": 40,
           "minResults": 1,
+          "mode": "auto",
           "timeoutMs": 800
         },
         "scoring": {
@@ -18857,16 +18828,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "rerank": {
           "additionalProperties": false,
           "default": {
-            "enabled": true,
             "maxCandidates": 40,
             "minResults": 1,
+            "mode": "auto",
             "timeoutMs": 800
           },
           "properties": {
-            "enabled": {
-              "default": true,
-              "type": "boolean"
-            },
             "maxCandidates": {
               "default": 40,
               "exclusiveMinimum": 0,
@@ -18879,6 +18846,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               "minimum": 0,
               "type": "integer"
             },
+            "mode": {
+              "default": "auto",
+              "enum": [
+                "auto",
+                "on",
+                "off"
+              ],
+              "type": "string"
+            },
             "timeoutMs": {
               "default": 800,
               "exclusiveMinimum": 0,
@@ -18887,7 +18863,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             }
           },
           "required": [
-            "enabled",
+            "mode",
             "maxCandidates",
             "minResults",
             "timeoutMs"
@@ -18985,37 +18961,43 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "cron": {
           "additionalProperties": false,
           "default": {
-            "defaultTimezone": "",
+            "defaultTimezone": "UTC",
             "enabled": true,
-            "maxConcurrentRuns": 3,
-            "maxConsecutiveErrors": 5,
-            "maxJobs": 100
+            "maxConsecutiveDependencyErrors": 5,
+            "maxJobs": 100,
+            "maxRunsPerTick": 3,
+            "staggerWindowMs": 0
           },
           "properties": {
             "defaultTimezone": {
-              "default": "",
-              "type": "string"
+              "default": "UTC"
             },
             "enabled": {
               "default": true,
               "type": "boolean"
             },
-            "maxConcurrentRuns": {
+            "maxConsecutiveDependencyErrors": {
+              "default": 5,
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "maxJobs": {
+              "default": 100,
+              "exclusiveMinimum": 0,
+              "maximum": 10000,
+              "type": "integer"
+            },
+            "maxRunsPerTick": {
               "default": 3,
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
               "type": "integer"
             },
-            "maxConsecutiveErrors": {
-              "default": 5,
+            "staggerWindowMs": {
+              "default": 0,
               "maximum": 9007199254740991,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "maxJobs": {
-              "default": 100,
-              "maximum": 9007199254740991,
-              "minimum": 0,
+              "minimum": -9007199254740991,
               "type": "integer"
             },
             "wakeGate": {
@@ -19024,10 +19006,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           },
           "required": [
             "enabled",
-            "maxConcurrentRuns",
+            "maxRunsPerTick",
             "defaultTimezone",
             "maxJobs",
-            "maxConsecutiveErrors"
+            "maxConsecutiveDependencyErrors",
+            "staggerWindowMs"
           ],
           "type": "object"
         },
@@ -19069,17 +19052,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "responsePrefix": {
               "type": "string"
             },
-            "session": {
-              "minLength": 1,
-              "type": "string"
-            },
             "showAlerts": {
               "type": "boolean"
             },
             "showOk": {
-              "type": "boolean"
-            },
-            "skipHeartbeatOnlyDelivery": {
               "type": "boolean"
             },
             "staleMs": {
@@ -19090,7 +19066,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "target": {
               "additionalProperties": false,
               "properties": {
-                "channelId": {
+                "channelInstanceId": {
                   "minLength": 1,
                   "type": "string"
                 },
@@ -19098,18 +19074,27 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
                   "minLength": 1,
                   "type": "string"
                 },
-                "chatId": {
+                "conversationId": {
                   "minLength": 1,
                   "type": "string"
                 },
-                "isDm": {
-                  "type": "boolean"
+                "conversationKind": {
+                  "enum": [
+                    "direct",
+                    "shared"
+                  ],
+                  "type": "string"
+                },
+                "threadId": {
+                  "minLength": 1,
+                  "type": "string"
                 }
               },
               "required": [
                 "channelType",
-                "channelId",
-                "chatId"
+                "channelInstanceId",
+                "conversationId",
+                "conversationKind"
               ],
               "type": "object"
             },
@@ -23629,9 +23614,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dae
       "type": "integer"
     },
     "shutdownTimeoutMs": {
-      "default": 30000,
-      "exclusiveMinimum": 0,
+      "default": 45000,
       "maximum": 9007199254740991,
+      "minimum": 40000,
       "type": "integer"
     }
   },
@@ -23842,8 +23827,24 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("gat
       "type": "boolean"
     },
     "host": {
-      "default": "127.0.0.1",
-      "type": "string"
+      "anyOf": [
+        {
+          "format": "ipv4",
+          "pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$",
+          "type": "string"
+        },
+        {
+          "format": "ipv6",
+          "pattern": "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$",
+          "type": "string"
+        },
+        {
+          "format": "hostname",
+          "pattern": "^(?=.{1,253}\\\\.?$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\\\.[a-zA-Z0-9](?:[-0-9a-zA-Z]{0,61}[0-9a-zA-Z])?)*\\\\.?$",
+          "type": "string"
+        }
+      ],
+      "default": "127.0.0.1"
     },
     "httpBodyLimitBytes": {
       "default": 1048576,
@@ -26181,43 +26182,44 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sch
     "cron": {
       "additionalProperties": false,
       "default": {
-        "defaultTimezone": "",
+        "defaultTimezone": "UTC",
         "enabled": true,
-        "maxConcurrentRuns": 3,
-        "maxConsecutiveErrors": 5,
+        "maxConsecutiveDependencyErrors": 5,
         "maxJobs": 100,
-        "storeDir": "./data/scheduler"
+        "maxRunsPerTick": 3,
+        "staggerWindowMs": 0
       },
       "properties": {
         "defaultTimezone": {
-          "default": "",
-          "type": "string"
+          "default": "UTC"
         },
         "enabled": {
           "default": true,
           "type": "boolean"
         },
-        "maxConcurrentRuns": {
+        "maxConsecutiveDependencyErrors": {
+          "default": 5,
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "maxJobs": {
+          "default": 100,
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "maxRunsPerTick": {
           "default": 3,
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
         },
-        "maxConsecutiveErrors": {
-          "default": 5,
+        "staggerWindowMs": {
+          "default": 0,
           "maximum": 9007199254740991,
-          "minimum": 0,
+          "minimum": -9007199254740991,
           "type": "integer"
-        },
-        "maxJobs": {
-          "default": 100,
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "storeDir": {
-          "default": "./data/scheduler",
-          "type": "string"
         },
         "wakeGate": {
           "type": "boolean"
@@ -26225,65 +26227,37 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sch
       },
       "required": [
         "enabled",
-        "storeDir",
-        "maxConcurrentRuns",
+        "maxRunsPerTick",
         "defaultTimezone",
         "maxJobs",
-        "maxConsecutiveErrors"
+        "maxConsecutiveDependencyErrors",
+        "staggerWindowMs"
       ],
       "type": "object"
     },
     "execution": {
       "additionalProperties": false,
       "default": {
-        "keepLines": 2000,
-        "lockDir": "./data/scheduler/locks",
-        "logDir": "./data/scheduler/logs",
         "maxLogBytes": 2000000,
-        "staleMs": 600000,
-        "updateMs": 30000
+        "retainedExecutions": 1000
       },
       "properties": {
-        "keepLines": {
-          "default": 2000,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "lockDir": {
-          "default": "./data/scheduler/locks",
-          "type": "string"
-        },
-        "logDir": {
-          "default": "./data/scheduler/logs",
-          "type": "string"
-        },
         "maxLogBytes": {
           "default": 2000000,
           "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
+          "maximum": 33554432,
           "type": "integer"
         },
-        "staleMs": {
-          "default": 600000,
+        "retainedExecutions": {
+          "default": 1000,
           "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "updateMs": {
-          "default": 30000,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
+          "maximum": 100000,
           "type": "integer"
         }
       },
       "required": [
-        "lockDir",
-        "staleMs",
-        "updateMs",
-        "logDir",
         "maxLogBytes",
-        "keepLines"
+        "retainedExecutions"
       ],
       "type": "object"
     },
@@ -26354,7 +26328,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sch
         "enabled": false,
         "end": "07:00",
         "start": "22:00",
-        "timezone": ""
+        "timezone": "UTC"
       },
       "properties": {
         "criticalBypass": {
@@ -26367,15 +26341,16 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sch
         },
         "end": {
           "default": "07:00",
+          "pattern": "^(?:[01]\\\\d|2[0-3]):[0-5]\\\\d$",
           "type": "string"
         },
         "start": {
           "default": "22:00",
+          "pattern": "^(?:[01]\\\\d|2[0-3]):[0-5]\\\\d$",
           "type": "string"
         },
         "timezone": {
-          "default": "",
-          "type": "string"
+          "default": "UTC"
         }
       },
       "required": [
@@ -26390,30 +26365,72 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sch
     "tasks": {
       "additionalProperties": false,
       "default": {
+        "batchMax": 8,
         "confidenceThreshold": 0.8,
-        "enabled": true,
-        "storeDir": "./data/scheduler/tasks"
+        "debounceMs": 15000,
+        "defaultWindowMs": 43200000,
+        "enabled": false,
+        "maxPerCheck": 3,
+        "maxPerDayPerConversation": 3,
+        "preAcceptanceRetryLimit": 3
       },
       "properties": {
+        "batchMax": {
+          "default": 8,
+          "exclusiveMinimum": 0,
+          "maximum": 64,
+          "type": "integer"
+        },
         "confidenceThreshold": {
           "default": 0.8,
           "maximum": 1,
           "minimum": 0,
           "type": "number"
         },
+        "debounceMs": {
+          "default": 15000,
+          "maximum": 300000,
+          "minimum": 1000,
+          "type": "integer"
+        },
+        "defaultWindowMs": {
+          "default": 43200000,
+          "exclusiveMinimum": 0,
+          "maximum": 2592000000,
+          "type": "integer"
+        },
         "enabled": {
-          "default": true,
+          "default": false,
           "type": "boolean"
         },
-        "storeDir": {
-          "default": "./data/scheduler/tasks",
-          "type": "string"
+        "maxPerCheck": {
+          "default": 3,
+          "exclusiveMinimum": 0,
+          "maximum": 8,
+          "type": "integer"
+        },
+        "maxPerDayPerConversation": {
+          "default": 3,
+          "exclusiveMinimum": 0,
+          "maximum": 24,
+          "type": "integer"
+        },
+        "preAcceptanceRetryLimit": {
+          "default": 3,
+          "maximum": 3,
+          "minimum": -9007199254740991,
+          "type": "integer"
         }
       },
       "required": [
         "enabled",
         "confidenceThreshold",
-        "storeDir"
+        "debounceMs",
+        "batchMax",
+        "maxPerCheck",
+        "maxPerDayPerConversation",
+        "defaultWindowMs",
+        "preAcceptanceRetryLimit"
       ],
       "type": "object"
     }
@@ -28185,21 +28202,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 ],
                 "type": "object"
               },
-              "compactionCooldownTurns": {
-                "default": 5,
-                "maximum": 50,
-                "minimum": 1,
-                "type": "integer"
-              },
               "compactionModel": {
                 "default": "",
                 "type": "string"
-              },
-              "compactionPrefixAnchorTurns": {
-                "default": 2,
-                "maximum": 10,
-                "minimum": 0,
-                "type": "integer"
               },
               "condensedMinFanout": {
                 "default": 4,
@@ -28233,12 +28238,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "default": true,
                 "type": "boolean"
               },
-              "ephemeralKeepWindow": {
-                "default": 10,
-                "maximum": 50,
-                "minimum": 1,
-                "type": "integer"
-              },
               "evictionMinAge": {
                 "default": 15,
                 "maximum": 50,
@@ -28249,23 +28248,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "default": 8,
                 "maximum": 50,
                 "minimum": 1,
-                "type": "integer"
-              },
-              "historyTurnOverrides": {
-                "additionalProperties": {
-                  "maximum": 100,
-                  "minimum": 1,
-                  "type": "integer"
-                },
-                "propertyNames": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              "historyTurns": {
-                "default": 15,
-                "maximum": 100,
-                "minimum": 3,
                 "type": "integer"
               },
               "incrementalMaxDepth": {
@@ -28357,24 +28339,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "distillFromLcd"
                 ],
                 "type": "object"
-              },
-              "observationDeactivationChars": {
-                "default": 80000,
-                "maximum": 500000,
-                "minimum": 20000,
-                "type": "integer"
-              },
-              "observationKeepWindow": {
-                "default": 25,
-                "maximum": 50,
-                "minimum": 1,
-                "type": "integer"
-              },
-              "observationTriggerChars": {
-                "default": 120000,
-                "maximum": 1000000,
-                "minimum": 50000,
-                "type": "integer"
               },
               "outputEscalation": {
                 "additionalProperties": false,
@@ -28516,30 +28480,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "maximum": 50,
                 "minimum": 1,
                 "type": "integer"
-              },
-              "version": {
-                "default": "dag",
-                "enum": [
-                  "pipeline",
-                  "dag"
-                ],
-                "type": "string"
               }
             },
             "required": [
               "enabled",
-              "version",
               "thinkingKeepTurns",
               "replayDriftIdleMs",
               "compactionModel",
               "evictionMinAge",
-              "historyTurns",
-              "observationKeepWindow",
-              "observationTriggerChars",
-              "observationDeactivationChars",
-              "ephemeralKeepWindow",
-              "compactionCooldownTurns",
-              "compactionPrefixAnchorTurns",
               "outputEscalation",
               "freshTailTurns",
               "contextThreshold",
@@ -28890,6 +28838,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "type": "object"
           },
           "language": {
+            "maxLength": 128,
+            "minLength": 2,
             "type": "string"
           },
           "learning": {
@@ -29540,7 +29490,37 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 },
                 "type": "object"
               },
+              "outcomeJudge": {
+                "additionalProperties": false,
+                "properties": {
+                  "model": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "timeout": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
               "planning": {
+                "additionalProperties": false,
+                "properties": {
+                  "model": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "timeout": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "skillSynthesis": {
                 "additionalProperties": false,
                 "properties": {
                   "model": {
@@ -29709,9 +29689,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "temporalParse": true
               },
               "rerank": {
-                "enabled": true,
                 "maxCandidates": 40,
                 "minResults": 1,
+                "mode": "auto",
                 "timeoutMs": 800
               },
               "scoring": {
@@ -30081,16 +30061,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "rerank": {
                 "additionalProperties": false,
                 "default": {
-                  "enabled": true,
                   "maxCandidates": 40,
                   "minResults": 1,
+                  "mode": "auto",
                   "timeoutMs": 800
                 },
                 "properties": {
-                  "enabled": {
-                    "default": true,
-                    "type": "boolean"
-                  },
                   "maxCandidates": {
                     "default": 40,
                     "exclusiveMinimum": 0,
@@ -30103,6 +30079,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "minimum": 0,
                     "type": "integer"
                   },
+                  "mode": {
+                    "default": "auto",
+                    "enum": [
+                      "auto",
+                      "on",
+                      "off"
+                    ],
+                    "type": "string"
+                  },
                   "timeoutMs": {
                     "default": 800,
                     "exclusiveMinimum": 0,
@@ -30111,7 +30096,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   }
                 },
                 "required": [
-                  "enabled",
+                  "mode",
                   "maxCandidates",
                   "minResults",
                   "timeoutMs"
@@ -30209,37 +30194,43 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "cron": {
                 "additionalProperties": false,
                 "default": {
-                  "defaultTimezone": "",
+                  "defaultTimezone": "UTC",
                   "enabled": true,
-                  "maxConcurrentRuns": 3,
-                  "maxConsecutiveErrors": 5,
-                  "maxJobs": 100
+                  "maxConsecutiveDependencyErrors": 5,
+                  "maxJobs": 100,
+                  "maxRunsPerTick": 3,
+                  "staggerWindowMs": 0
                 },
                 "properties": {
                   "defaultTimezone": {
-                    "default": "",
-                    "type": "string"
+                    "default": "UTC"
                   },
                   "enabled": {
                     "default": true,
                     "type": "boolean"
                   },
-                  "maxConcurrentRuns": {
+                  "maxConsecutiveDependencyErrors": {
+                    "default": 5,
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "maxJobs": {
+                    "default": 100,
+                    "exclusiveMinimum": 0,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "maxRunsPerTick": {
                     "default": 3,
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991,
                     "type": "integer"
                   },
-                  "maxConsecutiveErrors": {
-                    "default": 5,
+                  "staggerWindowMs": {
+                    "default": 0,
                     "maximum": 9007199254740991,
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "maxJobs": {
-                    "default": 100,
-                    "maximum": 9007199254740991,
-                    "minimum": 0,
+                    "minimum": -9007199254740991,
                     "type": "integer"
                   },
                   "wakeGate": {
@@ -30248,10 +30239,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 },
                 "required": [
                   "enabled",
-                  "maxConcurrentRuns",
+                  "maxRunsPerTick",
                   "defaultTimezone",
                   "maxJobs",
-                  "maxConsecutiveErrors"
+                  "maxConsecutiveDependencyErrors",
+                  "staggerWindowMs"
                 ],
                 "type": "object"
               },
@@ -30293,17 +30285,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "responsePrefix": {
                     "type": "string"
                   },
-                  "session": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
                   "showAlerts": {
                     "type": "boolean"
                   },
                   "showOk": {
-                    "type": "boolean"
-                  },
-                  "skipHeartbeatOnlyDelivery": {
                     "type": "boolean"
                   },
                   "staleMs": {
@@ -30314,7 +30299,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "target": {
                     "additionalProperties": false,
                     "properties": {
-                      "channelId": {
+                      "channelInstanceId": {
                         "minLength": 1,
                         "type": "string"
                       },
@@ -30322,18 +30307,27 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                         "minLength": 1,
                         "type": "string"
                       },
-                      "chatId": {
+                      "conversationId": {
                         "minLength": 1,
                         "type": "string"
                       },
-                      "isDm": {
-                        "type": "boolean"
+                      "conversationKind": {
+                        "enum": [
+                          "direct",
+                          "shared"
+                        ],
+                        "type": "string"
+                      },
+                      "threadId": {
+                        "minLength": 1,
+                        "type": "string"
                       }
                     },
                     "required": [
                       "channelType",
-                      "channelId",
-                      "chatId"
+                      "channelInstanceId",
+                      "conversationId",
+                      "conversationKind"
                     ],
                     "type": "object"
                   },
@@ -32057,9 +32051,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "temporalParse": true
             },
             "rerank": {
-              "enabled": true,
               "maxCandidates": 40,
               "minResults": 1,
+              "mode": "auto",
               "timeoutMs": 800
             },
             "scoring": {
@@ -35224,7 +35218,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           }
         },
         "metricsIntervalMs": 30000,
-        "shutdownTimeoutMs": 30000
+        "shutdownTimeoutMs": 45000
       },
       "properties": {
         "configWebhook": {
@@ -35423,9 +35417,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "type": "integer"
         },
         "shutdownTimeoutMs": {
-          "default": 30000,
-          "exclusiveMinimum": 0,
+          "default": 45000,
           "maximum": 9007199254740991,
+          "minimum": 40000,
           "type": "integer"
         }
       },
@@ -36399,8 +36393,24 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "type": "boolean"
         },
         "host": {
-          "default": "127.0.0.1",
-          "type": "string"
+          "anyOf": [
+            {
+              "format": "ipv4",
+              "pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$",
+              "type": "string"
+            },
+            {
+              "format": "ipv6",
+              "pattern": "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$",
+              "type": "string"
+            },
+            {
+              "format": "hostname",
+              "pattern": "^(?=.{1,253}\\\\.?$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\\\.[a-zA-Z0-9](?:[-0-9a-zA-Z]{0,61}[0-9a-zA-Z])?)*\\\\.?$",
+              "type": "string"
+            }
+          ],
+          "default": "127.0.0.1"
         },
         "httpBodyLimitBytes": {
           "default": 1048576,
@@ -36660,6 +36670,69 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "httpBodyLimitBytes",
         "wsMaxMessageBytes",
         "wsMessageRateLimit"
+      ],
+      "type": "object"
+    },
+    "identity": {
+      "additionalProperties": false,
+      "default": {
+        "principalMappings": []
+      },
+      "properties": {
+        "principalMappings": {
+          "default": [],
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "agentId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "assertion": {
+                "additionalProperties": false,
+                "properties": {
+                  "channelInstanceId": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "channelType": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "platformSubjectId": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "channelType",
+                  "channelInstanceId",
+                  "platformSubjectId"
+                ],
+                "type": "object"
+              },
+              "principalId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "tenantId": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "tenantId",
+              "agentId",
+              "assertion",
+              "principalId"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "principalMappings"
       ],
       "type": "object"
     },
@@ -39919,20 +39992,16 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       "additionalProperties": false,
       "default": {
         "cron": {
-          "defaultTimezone": "",
+          "defaultTimezone": "UTC",
           "enabled": true,
-          "maxConcurrentRuns": 3,
-          "maxConsecutiveErrors": 5,
+          "maxConsecutiveDependencyErrors": 5,
           "maxJobs": 100,
-          "storeDir": "./data/scheduler"
+          "maxRunsPerTick": 3,
+          "staggerWindowMs": 0
         },
         "execution": {
-          "keepLines": 2000,
-          "lockDir": "./data/scheduler/locks",
-          "logDir": "./data/scheduler/logs",
           "maxLogBytes": 2000000,
-          "staleMs": 600000,
-          "updateMs": 30000
+          "retainedExecutions": 1000
         },
         "heartbeat": {
           "alertCooldownMs": 300000,
@@ -39948,55 +40017,61 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "enabled": false,
           "end": "07:00",
           "start": "22:00",
-          "timezone": ""
+          "timezone": "UTC"
         },
         "tasks": {
+          "batchMax": 8,
           "confidenceThreshold": 0.8,
-          "enabled": true,
-          "storeDir": "./data/scheduler/tasks"
+          "debounceMs": 15000,
+          "defaultWindowMs": 43200000,
+          "enabled": false,
+          "maxPerCheck": 3,
+          "maxPerDayPerConversation": 3,
+          "preAcceptanceRetryLimit": 3
         }
       },
       "properties": {
         "cron": {
           "additionalProperties": false,
           "default": {
-            "defaultTimezone": "",
+            "defaultTimezone": "UTC",
             "enabled": true,
-            "maxConcurrentRuns": 3,
-            "maxConsecutiveErrors": 5,
+            "maxConsecutiveDependencyErrors": 5,
             "maxJobs": 100,
-            "storeDir": "./data/scheduler"
+            "maxRunsPerTick": 3,
+            "staggerWindowMs": 0
           },
           "properties": {
             "defaultTimezone": {
-              "default": "",
-              "type": "string"
+              "default": "UTC"
             },
             "enabled": {
               "default": true,
               "type": "boolean"
             },
-            "maxConcurrentRuns": {
+            "maxConsecutiveDependencyErrors": {
+              "default": 5,
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "maxJobs": {
+              "default": 100,
+              "exclusiveMinimum": 0,
+              "maximum": 10000,
+              "type": "integer"
+            },
+            "maxRunsPerTick": {
               "default": 3,
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
               "type": "integer"
             },
-            "maxConsecutiveErrors": {
-              "default": 5,
+            "staggerWindowMs": {
+              "default": 0,
               "maximum": 9007199254740991,
-              "minimum": 0,
+              "minimum": -9007199254740991,
               "type": "integer"
-            },
-            "maxJobs": {
-              "default": 100,
-              "maximum": 9007199254740991,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "storeDir": {
-              "default": "./data/scheduler",
-              "type": "string"
             },
             "wakeGate": {
               "type": "boolean"
@@ -40004,65 +40079,37 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "required": [
             "enabled",
-            "storeDir",
-            "maxConcurrentRuns",
+            "maxRunsPerTick",
             "defaultTimezone",
             "maxJobs",
-            "maxConsecutiveErrors"
+            "maxConsecutiveDependencyErrors",
+            "staggerWindowMs"
           ],
           "type": "object"
         },
         "execution": {
           "additionalProperties": false,
           "default": {
-            "keepLines": 2000,
-            "lockDir": "./data/scheduler/locks",
-            "logDir": "./data/scheduler/logs",
             "maxLogBytes": 2000000,
-            "staleMs": 600000,
-            "updateMs": 30000
+            "retainedExecutions": 1000
           },
           "properties": {
-            "keepLines": {
-              "default": 2000,
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991,
-              "type": "integer"
-            },
-            "lockDir": {
-              "default": "./data/scheduler/locks",
-              "type": "string"
-            },
-            "logDir": {
-              "default": "./data/scheduler/logs",
-              "type": "string"
-            },
             "maxLogBytes": {
               "default": 2000000,
               "exclusiveMinimum": 0,
-              "maximum": 9007199254740991,
+              "maximum": 33554432,
               "type": "integer"
             },
-            "staleMs": {
-              "default": 600000,
+            "retainedExecutions": {
+              "default": 1000,
               "exclusiveMinimum": 0,
-              "maximum": 9007199254740991,
-              "type": "integer"
-            },
-            "updateMs": {
-              "default": 30000,
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991,
+              "maximum": 100000,
               "type": "integer"
             }
           },
           "required": [
-            "lockDir",
-            "staleMs",
-            "updateMs",
-            "logDir",
             "maxLogBytes",
-            "keepLines"
+            "retainedExecutions"
           ],
           "type": "object"
         },
@@ -40133,7 +40180,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "enabled": false,
             "end": "07:00",
             "start": "22:00",
-            "timezone": ""
+            "timezone": "UTC"
           },
           "properties": {
             "criticalBypass": {
@@ -40146,15 +40193,16 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             },
             "end": {
               "default": "07:00",
+              "pattern": "^(?:[01]\\\\d|2[0-3]):[0-5]\\\\d$",
               "type": "string"
             },
             "start": {
               "default": "22:00",
+              "pattern": "^(?:[01]\\\\d|2[0-3]):[0-5]\\\\d$",
               "type": "string"
             },
             "timezone": {
-              "default": "",
-              "type": "string"
+              "default": "UTC"
             }
           },
           "required": [
@@ -40169,30 +40217,72 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "tasks": {
           "additionalProperties": false,
           "default": {
+            "batchMax": 8,
             "confidenceThreshold": 0.8,
-            "enabled": true,
-            "storeDir": "./data/scheduler/tasks"
+            "debounceMs": 15000,
+            "defaultWindowMs": 43200000,
+            "enabled": false,
+            "maxPerCheck": 3,
+            "maxPerDayPerConversation": 3,
+            "preAcceptanceRetryLimit": 3
           },
           "properties": {
+            "batchMax": {
+              "default": 8,
+              "exclusiveMinimum": 0,
+              "maximum": 64,
+              "type": "integer"
+            },
             "confidenceThreshold": {
               "default": 0.8,
               "maximum": 1,
               "minimum": 0,
               "type": "number"
             },
+            "debounceMs": {
+              "default": 15000,
+              "maximum": 300000,
+              "minimum": 1000,
+              "type": "integer"
+            },
+            "defaultWindowMs": {
+              "default": 43200000,
+              "exclusiveMinimum": 0,
+              "maximum": 2592000000,
+              "type": "integer"
+            },
             "enabled": {
-              "default": true,
+              "default": false,
               "type": "boolean"
             },
-            "storeDir": {
-              "default": "./data/scheduler/tasks",
-              "type": "string"
+            "maxPerCheck": {
+              "default": 3,
+              "exclusiveMinimum": 0,
+              "maximum": 8,
+              "type": "integer"
+            },
+            "maxPerDayPerConversation": {
+              "default": 3,
+              "exclusiveMinimum": 0,
+              "maximum": 24,
+              "type": "integer"
+            },
+            "preAcceptanceRetryLimit": {
+              "default": 3,
+              "maximum": 3,
+              "minimum": -9007199254740991,
+              "type": "integer"
             }
           },
           "required": [
             "enabled",
             "confidenceThreshold",
-            "storeDir"
+            "debounceMs",
+            "batchMax",
+            "maxPerCheck",
+            "maxPerDayPerConversation",
+            "defaultWindowMs",
+            "preAcceptanceRetryLimit"
           ],
           "type": "object"
         }
@@ -41691,6 +41781,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
   },
   "required": [
     "tenantId",
+    "identity",
     "logLevel",
     "dataDir",
     "agentDir",

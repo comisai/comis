@@ -5,13 +5,14 @@
  * Fetches agent, channel, and session counts via JSON-RPC at a
  * configurable interval. Designed for sidebar badge count display.
  *
- * Polling failures are non-fatal -- badges show stale data until
- * the next successful poll. No errors are thrown.
+ * Polling failures are non-fatal -- badges show stale data until the next
+ * successful poll, while `lastError` exposes the failure to the host UI.
  */
 
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import type { RpcClient } from "../api/rpc-client.js";
 import { systemClearInterval, systemSetInterval } from "@comis/core";
+import { listSessionsAcrossAgents } from "../api/session-scope.js";
 
 /** Badge count data returned by polling. */
 export interface BadgeCounts {
@@ -21,8 +22,13 @@ export interface BadgeCounts {
   /** Raw agent IDs for command palette search. */
   agentIds: string[];
   /** Raw session entries for command palette search. */
-  sessionEntries: Array<{ sessionKey: string; agentId: string }>;
+  sessionEntries: Array<{ conversationRef: string; agentId: string }>;
 }
+
+type PollingControllerHost = Pick<
+  ReactiveControllerHost,
+  "addController" | "requestUpdate"
+>;
 
 /**
  * ReactiveController that polls the daemon for badge counts
@@ -38,14 +44,20 @@ export interface BadgeCounts {
  * ```
  */
 export class PollingController implements ReactiveController {
-  private readonly _host: ReactiveControllerHost;
+  private readonly _host: PollingControllerHost;
   private readonly _rpcClient: RpcClient;
   private readonly _onData: (data: BadgeCounts) => void;
   private readonly _intervalMs: number;
   private _timer: ReturnType<typeof setInterval> | null = null;
+  private _lastError: Error | null = null;
+
+  /** Most recent polling failure, cleared after a successful poll. */
+  get lastError(): Error | null {
+    return this._lastError;
+  }
 
   constructor(
-    host: ReactiveControllerHost,
+    host: PollingControllerHost,
     rpcClient: RpcClient,
     onData: (data: BadgeCounts) => void,
     intervalMs = 30_000,
@@ -72,22 +84,24 @@ export class PollingController implements ReactiveController {
 
   private async _poll(): Promise<void> {
     try {
-      const [agentResult, channelResult, sessionResult] = await Promise.all([
-        this._rpcClient.call<{ agents: string[] }>("agent.list"),
-        this._rpcClient.call<{ channels: unknown[] }>("channel.list"),
-        this._rpcClient.call<{ sessions: Array<{ sessionKey: string; agentId: string }>; total: number }>("session.list", {}),
+      const [agentResult, channelResult, sessions] = await Promise.all([
+        this._rpcClient.call("agents.list", {}),
+        this._rpcClient.call("channels.list", {}),
+        listSessionsAcrossAgents(this._rpcClient),
       ]);
 
+      this._lastError = null;
       this._onData({
         agents: agentResult.agents.length,
         channels: channelResult.channels.length,
-        sessions: sessionResult.total,
+        sessions: sessions.length,
         agentIds: agentResult.agents,
-        sessionEntries: sessionResult.sessions?.slice(0, 20) ?? [],
+        sessionEntries: sessions.slice(0, 20),
       });
       this._host.requestUpdate();
-    } catch {
-      // Polling failure is non-fatal -- badge shows stale data
+    } catch (cause) {
+      this._lastError = cause instanceof Error ? cause : new Error(String(cause));
+      this._host.requestUpdate();
     }
   }
 }

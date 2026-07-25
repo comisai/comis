@@ -1,11 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 import { EventEmitter } from "node:events";
+import { fromPromise, tryCatch } from "@comis/shared";
 import type { EventMap } from "./events.js";
+import { createImmutableEventSnapshot } from "./immutable-event-snapshot.js";
 
 /**
  * Handler function type for a specific event.
  */
 export type EventHandler<K extends keyof EventMap> = (payload: EventMap[K]) => void;
+
+/** One subscriber failure captured during isolated observational fan-out. */
+export interface EventSubscriberFailure {
+  readonly listenerIndex: number;
+  readonly error: Error;
+}
+
+/** Result of an isolated observational event fan-out. */
+export interface SafeEventEmission {
+  readonly hadListeners: boolean;
+  /** Subscriber failures raised before the listener returned. */
+  readonly failures: readonly EventSubscriberFailure[];
+  /** Rejections from listeners that returned a promise; always resolves. */
+  readonly pendingFailures: Promise<readonly EventSubscriberFailure[]>;
+}
 
 /**
  * TypedEventBus: Type-safe wrapper around Node.js EventEmitter.
@@ -27,6 +44,52 @@ export class TypedEventBus {
    */
   emit<K extends keyof EventMap>(event: K, payload: EventMap[K]): boolean {
     return this.emitter.emit(event, payload);
+  }
+
+  /**
+   * Emit an observational event without allowing one subscriber to starve later
+   * subscribers or alter the publisher's already-completed side effect.
+   *
+   * Ordinary `emit()` deliberately preserves Node's surfaced-failure semantics.
+   * Callers use this method only after an irreversible boundary action (for
+   * example, a platform message send), then log every returned failure with an
+   * operator-actionable hint. Raw listeners are invoked so `once()` removal and
+   * registration order remain identical to `EventEmitter.emit()`. Listeners
+   * that return promises are not awaited by the publisher; their rejections
+   * are contained and reported through `pendingFailures`.
+   */
+  emitSafely<K extends keyof EventMap>(event: K, payload: EventMap[K]): SafeEventEmission {
+    const listeners = this.emitter.rawListeners(event) as Array<(
+      this: EventEmitter,
+      payload: EventMap[K],
+    ) => unknown>;
+    const failures: EventSubscriberFailure[] = [];
+    const pending: Array<Promise<EventSubscriberFailure | undefined>> = [];
+
+    if (listeners.length === 0) {
+      return { hadListeners: false, failures, pendingFailures: Promise.resolve([]) };
+    }
+    const snapshot = createImmutableEventSnapshot(payload);
+    if (!snapshot.ok) {
+      failures.push({ listenerIndex: -1, error: snapshot.error });
+      return { hadListeners: true, failures, pendingFailures: Promise.resolve([]) };
+    }
+
+    for (const [listenerIndex, listener] of listeners.entries()) {
+      const invoked = tryCatch(() => listener.call(this.emitter, snapshot.value));
+      if (!invoked.ok) {
+        failures.push({ listenerIndex, error: invoked.error });
+        continue;
+      }
+      pending.push(fromPromise(Promise.resolve(invoked.value)).then((settled) =>
+        settled.ok ? undefined : { listenerIndex, error: settled.error },
+      ));
+    }
+
+    const pendingFailures = Promise.all(pending).then((settled) =>
+      settled.filter((failure): failure is EventSubscriberFailure => failure !== undefined),
+    );
+    return { hadListeners: listeners.length > 0, failures, pendingFailures };
   }
 
   /**

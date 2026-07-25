@@ -695,15 +695,11 @@ describe("RagConfigSchema", () => {
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.rerank", () => {
-  it("defaults reranking ON (opt-out posture) with the candidate cap, timeout, and minResults", () => {
-    // Opt-out posture:
-    // rerank is a $0-at-recall capability, default-ON at the schema level. The daemon's
-    // EFFECTIVE-rerank precedence (raw pre-Zod signal + model-present) still governs the
-    // auto-on/download path, so a bare config does NOT force a 606MB download.
+  it("defaults reranking to the explicit auto mode with bounded settings", () => {
     const result = RagConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.rerank.enabled).toBe(true);
+      expect(result.data.rerank.mode).toBe("auto");
       expect(result.data.rerank.maxCandidates).toBe(40);
       expect(result.data.rerank.minResults).toBe(1);
       expect(result.data.rerank.timeoutMs).toBe(800);
@@ -737,15 +733,16 @@ describe("RagConfigSchema.rerank", () => {
     expect(result.success).toBe(false);
   });
 
-  it("accepts a partial rerank override and fills the rest from defaults", () => {
-    const result = RagConfigSchema.safeParse({ rerank: { enabled: true } });
+  it("accepts an explicit rerank mode and rejects the removed boolean side channel", () => {
+    const result = RagConfigSchema.safeParse({ rerank: { mode: "off" } });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.rerank.enabled).toBe(true);
+      expect(result.data.rerank.mode).toBe("off");
       expect(result.data.rerank.maxCandidates).toBe(40);
       expect(result.data.rerank.timeoutMs).toBe(800);
       expect(result.data.rerank.minResults).toBe(1);
     }
+    expect(RagConfigSchema.safeParse({ rerank: { enabled: false } }).success).toBe(false);
   });
 });
 
@@ -1126,8 +1123,8 @@ describe("RagConfigSchema.feedback", () => {
       expect(result.data.maxContextChars).toBe(4000);
       expect(result.data.minScore).toBe(0.1);
       expect(result.data.includeTrustLevels).toEqual(["system", "learned"]);
-      // rerank sub-object (opt-out: enabled ON; caps/timeout frozen).
-      expect(result.data.rerank.enabled).toBe(true);
+      // rerank sub-object (explicit auto mode; caps/timeout frozen).
+      expect(result.data.rerank.mode).toBe("auto");
       expect(result.data.rerank.maxCandidates).toBe(40);
       expect(result.data.rerank.minResults).toBe(1);
       expect(result.data.rerank.timeoutMs).toBe(800);
@@ -1356,9 +1353,7 @@ describe("RagConfigSchema additive (mmr + queryUnderstanding)", () => {
       expect(result.data.maxContextChars).toBe(4000);
       expect(result.data.minScore).toBe(0.1);
       expect(result.data.includeTrustLevels).toEqual(["system", "learned"]);
-      // rerank + scoring + entityLane + feedback sub-objects: $0 enabled toggles flipped ON by
-      // the opt-out posture; the usefulnessAlpha tuning constant frozen.
-      expect(result.data.rerank.enabled).toBe(true);
+      expect(result.data.rerank.mode).toBe("auto");
       expect(result.data.scoring.usefulnessAlpha).toBe(0.1);
       expect(result.data.entityLane.enabled).toBe(true);
       expect(result.data.feedback.enabled).toBe(true);

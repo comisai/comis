@@ -22,8 +22,7 @@
  *     — the re-emit is skipped when either is absent.
  *
  * Two deltas from the analog: (1) instead of an `onPlanUpdate` callback, the
- * acpSessionId is resolved from `parseFormattedSessionKey(sessionKey).peerId`
- * (the AcpSessionMap keys `peerId === acpSessionId`), the retained connection is
+ * ACP session id is resolved by the server-owned session registry, the retained connection is
  * looked up via `getConnection`, and the frame is pushed with the single-arg
  * `connection.sessionUpdate({ sessionId, update })` (acp.d.ts:45); (2) the
  * renderer projection is replaced by {@link mapEntries} → SDK `PlanEntry[]` with
@@ -52,7 +51,6 @@ import type {
   ReadonlyExecutionPlan,
   ReadonlyPlanStep,
 } from "@comis/core";
-import { parseFormattedSessionKey } from "@comis/core";
 import type {
   AgentSideConnection,
   PlanEntry,
@@ -76,6 +74,11 @@ export interface CreateAcpPlanBridgeDeps {
   readonly getConnection: (
     acpSessionId: string,
   ) => AgentSideConnection | undefined;
+  /** Resolve a display label only through the server-owned structured session registry. */
+  readonly resolveAcpSessionId: (
+    agentId: string,
+    sessionKey: string,
+  ) => string | undefined;
   /** Injected bound logger. Optional — DEBUG plan-update traces. */
   readonly logger?: ComisLogger;
 }
@@ -126,9 +129,7 @@ export function createAcpPlanBridge(
       return;
     }
 
-    // Resolve the ACP session id from the formatted sessionKey. The
-    // AcpSessionMap keys `peerId === acpSessionId`.
-    const acpSessionId = parseFormattedSessionKey(sessionKey)?.peerId;
+    const acpSessionId = deps.resolveAcpSessionId(agentId, sessionKey);
     if (acpSessionId === undefined) {
       deps.logger?.debug?.(
         {

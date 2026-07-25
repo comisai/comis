@@ -27,6 +27,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   runWithContext,
+  createConversationRef,
   type RequestContext,
   type ContextStorePort,
   type ContextStoreScope,
@@ -81,7 +82,7 @@ function flattenLoggedValues(logs: CapturedLog[]): string {
 
 /** A neutral RequestContext with a live, fully-scoped session (AGENTS.md §2.2). */
 function liveCtx(overrides: Partial<RequestContext> = {}): RequestContext {
-  return {
+  const context: RequestContext = {
     tenantId: "default",
     userId: "user_a",
     sessionKey: "default:user_a:chan_a",
@@ -92,6 +93,29 @@ function liveCtx(overrides: Partial<RequestContext> = {}): RequestContext {
     contentDelimiter: "test-delimiter-0123456789",
     ...overrides,
   };
+  return {
+    ...context,
+    turnScope: overrides.turnScope ?? {
+      conversation: {
+        tenantId: context.tenantId,
+        agentId: context.agentId ?? "agent_a",
+        partition: { kind: "agent" },
+      },
+      principal: { principalId: context.userId ?? "user_a" },
+      endpoint: {
+        channelType: "test",
+        channelInstanceId: "test-instance",
+        conversationId: context.sessionKey ?? "test-conversation",
+        conversationKind: "direct",
+      },
+    },
+  };
+}
+
+function conversationRefFor(tenantId = "default", agentId = "agent_a") {
+  const result = createConversationRef({ tenantId, agentId, partition: { kind: "agent" } });
+  if (!result.ok) throw result.error;
+  return result.value;
 }
 
 /** Build a text-only message part (the verbatim block carries the text). */
@@ -103,7 +127,7 @@ function textPart(text: string): LcdMessagePart {
 function makeMessage(id: string, seq: number, text: string): LcdMessage {
   return {
     id,
-    conversationId: "default:user_a:chan_a",
+    conversationRef: conversationRefFor(),
     seq,
     role: "user",
     tokenCount: 4,
@@ -116,7 +140,7 @@ function makeMessage(id: string, seq: number, text: string): LcdMessage {
 function makeSummary(overrides: Partial<LcdSummary> = {}): LcdSummary {
   return {
     summaryId: "sum-1",
-    conversationId: "default:user_a:chan_a",
+    conversationRef: conversationRefFor(),
     kind: "leaf",
     depth: 0,
     earliestAt: 1_000_001,
@@ -150,7 +174,7 @@ interface StoreStub {
   getSummaryChildrenReturn: LcdSummary[];
   getSummaryMessagesReturn: string[];
   getMessagesReturn: LcdMessage[];
-  /** Records the conversationId of every runOnConversation call (single-flight proof). */
+  /** Records the conversationRef of every runOnConversation call (single-flight proof). */
   serializedConversationIds: string[];
 }
 
@@ -192,10 +216,10 @@ function makeStore(over: Partial<StoreStub> = {}): { stub: StoreStub; store: Con
     },
     // ctx_expand runs its multi-hop walk INSIDE the single-flight serializer so
     // a deferred compaction write cannot rewrite the DAG mid-walk. The stub runs
-    // `fn` immediately (no real queue) and records the conversationId so the wrap
+    // `fn` immediately (no real queue) and records the conversationRef so the wrap
     // is asserted at the tool level.
-    async runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T> {
-      stub.serializedConversationIds.push(conversationId);
+    async runOnConversation<T>(conversationRef: string, fn: () => T | Promise<T>): Promise<T> {
+      stub.serializedConversationIds.push(conversationRef);
       return fn();
     },
   } as unknown as ContextStorePort;
@@ -256,7 +280,7 @@ describe("ctx_search tool", () => {
     expect(stub.searchLcdArgs[0].query).toBe(sanitizeFts5Query(raw));
     expect(stub.searchLcdArgs[0].query).not.toBe(raw);
     // And it is scoped to the live conversation, never a caller-supplied id.
-    expect(stub.searchLcdArgs[0].scope.conversationId).toBe("default:user_a:chan_a");
+    expect(stub.searchLcdArgs[0].scope.conversationRef).toBe(conversationRefFor());
   });
 
   it("ctx_search builds its store scope from the live context agentId + tenantId, not a wiring closure (multi-agent safety)", async () => {
@@ -287,10 +311,10 @@ describe("ctx_search tool", () => {
     // Each call's scope mirrors ITS OWN live context — never a single shared closure.
     expect(stub.searchLcdArgs[0].scope.agentId).toBe("agent-one");
     expect(stub.searchLcdArgs[0].scope.tenantId).toBe("tenant_one");
-    expect(stub.searchLcdArgs[0].scope.conversationId).toBe("tenant_one:user_a:chan_a");
+    expect(stub.searchLcdArgs[0].scope.conversationRef).toBe(conversationRefFor("tenant_one", "agent-one"));
     expect(stub.searchLcdArgs[1].scope.agentId).toBe("agent-two");
     expect(stub.searchLcdArgs[1].scope.tenantId).toBe("tenant_two");
-    expect(stub.searchLcdArgs[1].scope.conversationId).toBe("tenant_two:user_b:chan_b");
+    expect(stub.searchLcdArgs[1].scope.conversationRef).toBe(conversationRefFor("tenant_two", "agent-two"));
     // The two scopes are genuinely distinct (one wired tool, two agents).
     expect(stub.searchLcdArgs[0].scope.agentId).not.toBe(stub.searchLcdArgs[1].scope.agentId);
   });
@@ -357,7 +381,7 @@ describe("ctx_search tool", () => {
     expect(blob).not.toContain(rawSnippet);
     // It DOES record the scope id + a hit count + a step tag.
     const fields = logger.logs.flatMap((l) => Object.keys(l.obj));
-    expect(fields).toContain("conversationId");
+    expect(fields).toContain("conversationRef");
     expect(fields).toContain("hitCount");
     expect(fields).toContain("step");
   });
@@ -587,7 +611,7 @@ describe("ctx_expand tool", () => {
     const blob = flattenLoggedValues(logger.logs);
     expect(blob).not.toContain(uniqueBody);
     const fields = logger.logs.flatMap((l) => Object.keys(l.obj));
-    expect(fields).toContain("conversationId");
+    expect(fields).toContain("conversationRef");
     expect(fields).toContain("step");
   });
 
@@ -612,8 +636,8 @@ describe("ctx_expand tool", () => {
       getMessages(_s: ContextStoreScope): LcdMessage[] {
         return [makeMessage("deep-m1", 1, "deep recovered multi-hop detail")];
       },
-      async runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T> {
-        serialized.push(conversationId);
+      async runOnConversation<T>(conversationRef: string, fn: () => T | Promise<T>): Promise<T> {
+        serialized.push(conversationRef);
         return fn();
       },
     } as unknown as ContextStorePort;
@@ -624,7 +648,7 @@ describe("ctx_expand tool", () => {
     };
     expect(result.details.body).toContain("deep recovered multi-hop detail");
     // The walk ran inside the single-flight serializer for THIS conversation.
-    expect(serialized).toContain("default:user_a:chan_a");
+    expect(serialized).toContain(conversationRefFor());
   });
 });
 
@@ -651,7 +675,7 @@ describe("ctx_* tools emit a content-free context:dag_expanded metric on a hit (
     const p = calls[0]![1] as Record<string, unknown>;
     expect(p.tool).toBe("ctx_expand");
     expect(p.recoveredCount).toBe(2); // parts.length
-    expect(p.conversationId).toBe("default:user_a:chan_a");
+    expect(p.conversationRef).toBe(conversationRefFor());
     expect(p.agentId).toBe("agent_a");
     expect(p.sessionKey).toBe("default:user_a:chan_a");
     expect(typeof p.durationMs).toBe("number");
@@ -705,7 +729,7 @@ describe("ctx_* tools emit a content-free context:dag_expanded metric on a hit (
     const p = calls[0]![1] as Record<string, unknown>;
     expect(p.tool).toBe("ctx_search");
     expect(p.recoveredCount).toBe(2); // hits.length
-    expect(p.conversationId).toBe("default:user_a:chan_a");
+    expect(p.conversationRef).toBe(conversationRefFor());
     for (const f of CONTENT_FIELDS) expect(p).not.toHaveProperty(f);
     expect(JSON.stringify(p)).not.toContain(rawSnippet);
   });
@@ -727,7 +751,7 @@ describe("ctx_* tools emit a content-free context:dag_expanded metric on a hit (
     const p = calls[0]![1] as Record<string, unknown>;
     expect(p.tool).toBe("ctx_inspect");
     expect(typeof p.recoveredCount).toBe("number");
-    expect(p.conversationId).toBe("default:user_a:chan_a");
+    expect(p.conversationRef).toBe(conversationRefFor());
     for (const f of CONTENT_FIELDS) expect(p).not.toHaveProperty(f);
     expect(JSON.stringify(p)).not.toContain(summary.content);
   });

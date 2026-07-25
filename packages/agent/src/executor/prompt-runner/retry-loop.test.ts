@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { err, ok } from "@comis/shared";
 
 import { hostileMcpTool } from "../../provider/tool-schema/gbnf-hostile-fixtures.js";
 import { setSessionStateClock } from "../executor-session-state.js";
@@ -54,6 +55,11 @@ describe("retry-loop.ts — module surface", () => {
       escalationAttempted: false,
       stuckSessionDetected: true,
     });
+  });
+
+  it("converts continuation failures to a safe debug-log string", () => {
+    expect(source).toMatch(/toSafeErrorLogString\(continuationResult\.error\)/);
+    expect(source).not.toMatch(/err:\s*continuationResult\.error/);
   });
 });
 
@@ -128,6 +134,10 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     channelId: string,
   ): { params: RunPromptParams; emit: ReturnType<typeof vi.fn> } {
     const emit = vi.fn();
+    const emitSafely = vi.fn((event: string, payload: unknown) => {
+      emit(event, payload);
+      return { hadListeners: false, failures: [], pendingFailures: Promise.resolve([]) };
+    });
     const logger = {
       trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
     };
@@ -135,6 +145,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
       session: {
         messages: [],
         getLastAssistantText: vi.fn(() => "recovered visible text"),
+        prompt: vi.fn(async () => undefined),
         followUp: vi.fn(async () => undefined),
       },
       sessionKey: { tenantId: "t1", userId: "u1", channelId },
@@ -155,7 +166,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
       onResetTimer: () => {},
       deps: {
         logger,
-        eventBus: { emit },
+        eventBus: { emit, emitSafely },
         clock: { now: () => 5678 },
         timers: {
           setTimeout: (fn: () => void) => {
@@ -174,6 +185,50 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     // Reset the module once-gate between tests.
     const sfh = (await import("./silent-failure-handlers.js")) as Record<string, unknown>;
     (sfh.resetToolSchemaStripGateForTest as undefined | (() => void))?.();
+  });
+
+  it("rejects a terminal provider-start claim before model dispatch", async () => {
+    const { params } = makeDispatchParams([], "", "provider-start-terminal");
+    params.executionOverrides = {
+      operationType: "interactive",
+      onProviderStart: () => err(new Error("run already terminal")),
+    };
+    vi.mocked(runWithModelRetry).mockImplementation(async (retryParams) => {
+      const started = retryParams.onProviderStart?.();
+      if (started !== undefined && !started.ok) throw started.error;
+      return { succeeded: true };
+    });
+
+    await expect(runRetryLoop(params, "hello", undefined, false)).rejects.toThrow(
+      "run already terminal",
+    );
+    expect(runWithModelRetry).toHaveBeenCalledOnce();
+    expect(params.session.prompt).not.toHaveBeenCalled();
+  });
+
+  it("revalidates provider admission across legitimate model re-entry", async () => {
+    const providerStart = vi.fn(() => ok(undefined));
+    const tools = makeHostileTools();
+    const { params } = makeDispatchParams(
+      tools,
+      LLAMA_SERVER_GRAMMAR_400,
+      "provider-start-once",
+    );
+    params.executionOverrides = {
+      operationType: "interactive",
+      onProviderStart: providerStart,
+    };
+    vi.mocked(runWithModelRetry).mockImplementation(async (retryParams) => {
+      const started = retryParams.onProviderStart?.();
+      if (started !== undefined && !started.ok) throw started.error;
+      return { succeeded: true };
+    });
+
+    const outcome = await runRetryLoop(params, "hello", undefined, false);
+
+    expect(outcome.promptSucceeded).toBe(true);
+    expect(runWithModelRetry).toHaveBeenCalledTimes(2);
+    expect(providerStart).toHaveBeenCalledTimes(2);
   });
 
   it("grammar-400 on the SILENT path dispatches to the strip-retry handler: the single retry fires with STRIPPED tools and emits execution:tool_schema_unsupported", async () => {
@@ -208,7 +263,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     });
   });
 
-  it("regression: a plain client_request body still takes the client_request terminal branch (byte-identical dispatch for existing categories)", async () => {
+  it("routes a plain client_request body to the client_request terminal branch", async () => {
     vi.mocked(runWithModelRetry).mockResolvedValue({ succeeded: true });
     const { params, emit } = makeDispatchParams(
       makeHostileTools(),
@@ -352,10 +407,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     expect(emit.mock.calls.filter((c) => c[0] === "execution:tool_schema_unsupported")).toHaveLength(0);
   });
 
-  it("the default silent-retry path emits execution:recovery_attempted{reason:silent_retry} (the incident's re-drive path, previously log-only)", async () => {
-    // The strip-and-re-enter path was the smoking gun in the budget incident,
-    // findable only by a debug-log grep. Emit an event so `explain` shows the
-    // session re-entered the model on a silent failure.
+  it("the default silent-retry path emits a content-free recovery outcome", async () => {
     // Initial call succeeds-but-empty (drives detectSilentFailure); the retry
     // recovers with visible text.
     vi.mocked(runWithModelRetry).mockResolvedValue({ succeeded: true });
@@ -375,14 +427,14 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     expect(typeof calls[0]![1].succeeded).toBe("boolean");
   });
 
-  it("the continuation nudge (thinking-only final turn) emits execution:recovery_attempted{reason:continuation_nudge}", async () => {
+  it("the continuation nudge emits a content-free recovery outcome", async () => {
     vi.mocked(runWithModelRetry).mockResolvedValue({ succeeded: true });
     const { params, emit } = makeDispatchParams([], "", "c-continuation");
     // finishReason "stop" + empty visible text → the continuation nudge fires.
     (params.bridge.getResult as ReturnType<typeof vi.fn>).mockReturnValue({
       llmCalls: 1, stepsExecuted: 1, textEmitted: false, finishReason: "stop", lastLlmErrorMessage: undefined,
     });
-    // First getVisibleAssistantText → "" (triggers detect); after followUp → recovered.
+    // First getVisibleAssistantText → "" (triggers detect); after continuation → recovered.
     let visibleCalls = 0;
     (params.session.getLastAssistantText as ReturnType<typeof vi.fn>).mockImplementation(() => {
       visibleCalls += 1;
@@ -525,7 +577,7 @@ describe("processFailurePath — knob-named timeout diagnostics", () => {
     expect((usage![1] as Record<string, unknown>).latencyMs).toBe(1_800_000);
   });
 
-  it("regression: a non-timeout terminal error keeps finishReason 'error' + errorKind 'dependency' + the generic all-models hint", async () => {
+  it("maps a non-timeout terminal error to dependency failure with the all-models hint", async () => {
     const { params, warn, result } = makeFailureParams("c-generic-error");
 
     await processFailurePath(params, "hello", undefined, new Error("ECONNREFUSED connection refused"));
@@ -535,5 +587,38 @@ describe("processFailurePath — knob-named timeout diagnostics", () => {
     expect(warnCall![0].errorKind).toBe("dependency");
     expect(warnCall![0].hint).toBe("All models failed (primary + fallbacks)");
     expect(result.finishReason).toBe("error");
+  });
+
+  it("restores overflow recovery mutation when terminal admission denies retry dispatch", async () => {
+    const { params } = makeFailureParams("c-overflow-terminal");
+    const originalStreamFn = vi.fn();
+    const prompt = vi.fn();
+    const denial = new Error("execution terminalized");
+    (params.session as unknown as {
+      agent: { streamFn: unknown };
+      prompt: ReturnType<typeof vi.fn>;
+    }).agent.streamFn = originalStreamFn;
+    (params.session as unknown as {
+      agent: { streamFn: unknown };
+      prompt: ReturnType<typeof vi.fn>;
+    }).prompt = prompt;
+    params.executionOverrides = {
+      onProviderStart: () => err(denial),
+    };
+
+    const outcome = await processFailurePath(
+      params,
+      "hello",
+      undefined,
+      new Error("context length exceeded"),
+    );
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect((params.session as unknown as { agent: { streamFn: unknown } }).agent.streamFn)
+      .toBe(originalStreamFn);
+    expect(outcome).toMatchObject({
+      promptSucceeded: false,
+      promptError: denial,
+    });
   });
 });

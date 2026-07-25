@@ -116,7 +116,7 @@ function baseConfig(overrides: Partial<MemoryRecallConfig> = {}): MemoryRecallCo
     maxResults: 5,
     minScore: 0,
     includeTrustLevels: ["system", "learned"],
-    rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+    rerank: { mode: "off", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
     scoring: DEFAULT_ALPHAS,
     ...overrides,
   };

@@ -17,15 +17,34 @@ export { formatForChannel } from "../delivery/format-for-channel.js";
 export { chunkForDelivery } from "../delivery/chunk-for-delivery.js";
 export type { ChunkForDeliveryOptions } from "../delivery/chunk-for-delivery.js";
 export { chunkBlocks } from "../delivery/block-chunker.js";
+export { createAttachmentSendReceipt } from "../delivery/attachment-send-receipt.js";
 // Note: block-chunker's ChunkMode + ChunkOptions are intentionally NOT
 // re-exported — block-chunker's "paragraph"/"newline"/"sentence"/"length"
 // ChunkMode collides with the streaming-config ChunkMode in
 // exports/config.js, and KISS/YAGNI forbids speculative public exports
 // without callers. chunkBlocks is the only block-chunker
 // symbol consumed cross-package.
-export { createRetryEngine, createBlockRetryGuard } from "../delivery/retry-engine.js";
-export type { RetryEngine, BlockRetryGuard } from "../delivery/retry-engine.js";
+export {
+  createRetryEngine,
+  createBlockRetryGuard,
+  isSafeToRetrySendError,
+  AMBIGUOUS_SEND_OUTCOME_ERROR,
+  EXPLICIT_SEND_REJECTION_ERROR,
+  RETRY_EXHAUSTED_SEND_ERROR,
+} from "../delivery/retry-engine.js";
+export type {
+  RetryEngine,
+  BlockRetryGuard,
+} from "../delivery/retry-engine.js";
 export { isPermanentError, PERMANENT_ERROR_PATTERNS } from "../delivery/permanent-errors.js";
+export {
+  PlatformDeliveryOutcomeSchema,
+  classifyPlatformDelivery,
+} from "../delivery/platform-delivery-outcome.js";
+export type {
+  PlatformDeliveryOutcome,
+  PlatformChunkDeliveryOutcome,
+} from "../delivery/platform-delivery-outcome.js";
 
 // Markdown IR types — re-exported as a narrow public type surface so the
 // Signal channel adapter (signal-format.ts, signal-adapter.ts) can keep its
@@ -58,6 +77,7 @@ export type {
   DeliverToChannelOptions,
   ChunkDeliveryResult,
   DeliveryResult,
+  DeliveryQueueDisposition,
   DeliveryQueueTransition,
   DeliveryQueueTransitionFailure,
 } from "../delivery/types.js";

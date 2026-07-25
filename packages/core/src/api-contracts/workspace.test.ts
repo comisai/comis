@@ -298,20 +298,26 @@ describe("workspace-umbrella domain contracts", () => {
       expect(AdminApprovalResolveContract.method).toBe("admin.approval.resolve");
     });
 
-    it("accepts valid request: { requestId, approved, approvedBy?, reason? }", () => {
+    it("accepts a resolution with explicit conversation authority", () => {
       expect(() =>
         AdminApprovalResolveContract.request.parse({
           requestId: "req-001",
+          tenant_id: "tenant-1",
+          agent_id: "agent-1",
+          conversation_ref: "conversation-ref-1",
           approved: true,
           approvedBy: "admin",
         }),
       ).not.toThrow();
     });
 
-    it("accepts request without approvedBy + reason (both optional)", () => {
+    it("accepts a scoped request without optional attribution", () => {
       expect(() =>
         AdminApprovalResolveContract.request.parse({
           requestId: "req-001",
+          tenant_id: "tenant-1",
+          agent_id: "agent-1",
+          conversation_ref: "conversation-ref-1",
           approved: true,
         }),
       ).not.toThrow();
@@ -509,6 +515,13 @@ describe("workspace-umbrella domain contracts", () => {
           priority: "high",
           channel_type: "telegram",
           channel_id: "chat-42",
+          destination_endpoint: {
+            channelType: "telegram",
+            channelInstanceId: "account-a",
+            conversationId: "chat-42",
+            threadId: "thread-a",
+            conversationKind: "shared",
+          },
         }),
       ).not.toThrow();
     });

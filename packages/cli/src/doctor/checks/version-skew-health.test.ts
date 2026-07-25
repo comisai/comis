@@ -2,17 +2,13 @@
 /**
  * CLI <-> daemon version-skew check unit tests.
  *
- * Motivating failure mode: a stale global `comis` (from `npm i -g comisai`)
- * earlier on PATH than a freshly-built daemon validates config with an
- * OLD schema, reporting PHANTOM failures (a valid `agents.default.autonomy`
- * flagged "Unrecognized key", "No OAuth profiles stored") — with nothing
- * flagging that the CLI binary is wildly out of sync with the running daemon.
- * This check DETECTS and WARNS on that skew.
+ * Detects version skew that can make CLI-side schema diagnostics disagree
+ * with the running daemon.
  *
  * Covers:
  *   - PASS when CLI version == daemon version
  *   - WARN (patch-only mismatch) — versions differ but major.minor agree
- *   - WARN (major.minor mismatch) — stronger "stale global comis" message
+ *   - WARN (major.minor mismatch) — stronger schema-parity message
  *   - graceful skip when the daemon is unreachable (no throw, never fails)
  *   - graceful skip when the daemon does not report a version (optional field)
  *   - never throws even when the RPC itself rejects
@@ -96,8 +92,7 @@ describe("versionSkewHealthCheck", () => {
     expect(f.message).toContain("2.30.5");
   });
 
-  it("produces a STRONGER WARN on a major.minor mismatch (stale global comis)", async () => {
-    // Scenario: a stale global CLI (1.0.42) vs a much newer daemon (2.30.0).
+  it("produces a stronger warning on a major.minor mismatch", async () => {
     mockDaemonVersion({ version: "2.30.0" });
     const findings = await versionSkewHealthCheck.run({
       ...baseContext,
@@ -109,9 +104,7 @@ describe("versionSkewHealthCheck", () => {
     expect(f.status).toBe("warn");
     expect(f.message).toContain("1.0.42");
     expect(f.message).toContain("2.30.0");
-    // The stronger message names the stale-global-comis failure mode and the
-    // remediation (run the deployed build), distinct from a patch-only skew.
-    expect(f.message.toLowerCase()).toContain("stale");
+    expect(f.message.toLowerCase()).toContain("schema");
     expect(f.suggestion ?? "").not.toBe("");
   });
 
@@ -139,11 +132,38 @@ describe("versionSkewHealthCheck", () => {
   });
 
   it("skips gracefully (no throw) when the RPC itself rejects", async () => {
-    vi.mocked(rpcClient.withClient).mockRejectedValue(new Error("ECONNRESET"));
+    vi.mocked(rpcClient.withClient).mockRejectedValue(
+      new Error("Authorization: Bearer PRIVATE_VERSION_SENTINEL"),
+    );
     const findings = await versionSkewHealthCheck.run({ ...baseContext });
 
     expect(findings).toHaveLength(1);
     const f = findings[0] as DoctorFinding;
     expect(f.status).toBe("skip");
+    expect(f.message).not.toContain("PRIVATE_VERSION_SENTINEL");
+  });
+
+  it("does not surface a malformed daemon version", async () => {
+    mockDaemonVersion({
+      version: "Authorization: Bearer PRIVATE_DAEMON_VERSION_SENTINEL",
+    });
+
+    const findings = await versionSkewHealthCheck.run({ ...baseContext });
+    const f = findings[0] as DoctorFinding;
+
+    expect(f.status).toBe("skip");
+    expect(f.message).toContain("valid semantic version");
+    expect(f.message).not.toContain("PRIVATE_DAEMON_VERSION_SENTINEL");
+  });
+
+  it("does not surface an oversized numeric version", async () => {
+    const oversizedVersion = `${"9".repeat(256)}.0.0`;
+    mockDaemonVersion({ version: oversizedVersion });
+
+    const findings = await versionSkewHealthCheck.run({ ...baseContext });
+    const f = findings[0] as DoctorFinding;
+
+    expect(f.status).toBe("skip");
+    expect(f.message).not.toContain(oversizedVersion);
   });
 });

@@ -294,6 +294,7 @@ function runJailedChild(
           {
             runId: ctx.runId,
             errorKind: "internal" as const,
+            hint: "Inspect stderrTail, correct the jailed script or referenced capability/tool name, then retry the orchestrate call.",
             exitCode: code,
             stderrTail: tail ? tail.slice(-512) : undefined,
           },
@@ -356,7 +357,7 @@ export async function runScriptWithOneShotRepair(input: {
    * reaped by the watchdog's no-progress re-anchor cap. No-op when `runs` is
    * undefined (durability off).
    */
-  readonly keepAlive?: { runs: OrchestrateDurableRuns | undefined; rootRunId: string; now: () => number };
+  readonly keepAlive?: { runs: OrchestrateDurableRuns | undefined; checkpointId: string; now: () => number };
 }): Promise<string> {
   const {
     spawnFn,
@@ -433,6 +434,6 @@ export async function runScriptWithOneShotRepair(input: {
   };
 
   return keepAlive
-    ? withDurableKeepAlive(keepAlive.runs, keepAlive.rootRunId, { now: keepAlive.now, logger: log }, runWithRepair)
+    ? withDurableKeepAlive(keepAlive.runs, keepAlive.checkpointId, { now: keepAlive.now, logger: log }, runWithRepair)
     : runWithRepair();
 }

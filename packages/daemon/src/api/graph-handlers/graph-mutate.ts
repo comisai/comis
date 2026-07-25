@@ -26,6 +26,8 @@ import {
   GraphDeleteRunContract,
   stripInternalFields,
   requireCapability,
+  tryGetContext,
+  type AgentCapability,
 } from "@comis/core";
 import { extractUserVariables, substituteUserVariables } from "../../graph/user-variables.js";
 import type { RpcHandler } from "../types.js";
@@ -148,7 +150,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       if (synthPattern && !deps.authoringConfig?.intentAction) {
         // Typed: a gated-off policy refusal is a caller
         // precondition failure, not an internal handler fault — classifyRpcError maps
-        // PreconditionError to precondition/warn so it doesn't read as a fleet ERROR.
+        // PreconditionError to precondition/warn so it doesn't read as a system ERROR.
         throw new PreconditionError(
           "from_intent authoring is disabled by policy (orchestration.authoring.intentAction).",
         );
@@ -237,10 +239,16 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         }
       }
 
+      const requestContext = tryGetContext();
       const coordResult = await deps.graphCoordinator.run({
         graph: finalValidated,
         callerSessionKey: rawParams._callerSessionKey as string | undefined,
         callerAgentId: rawParams._agentId as string | undefined,
+        callerCaps: rawParams._capabilities as AgentCapability[] | undefined,
+        callerRootRunId: rawParams._rootRunId as string | undefined,
+        callerLeaseId: rawParams._leaseId as string | undefined,
+        callerDeliveryOrigin: requestContext?.deliveryOrigin,
+        callerTurnScope: requestContext?.turnScope,
         announceChannelType: rawParams._callerChannelType as string | undefined,
         announceChannelId: rawParams._callerChannelId as string | undefined,
         nodeProgress: userParams.node_progress === true,
@@ -323,7 +331,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       GraphSaveContract.request.parse(userParams);
 
       const id = (rawParams.id as string) ?? randomUUID();
-      const tenantId = deps.tenantId ?? "default";
+      const tenantId = deps.tenantId;
       const agentId = (rawParams.agentId as string) ?? deps.defaultAgentId;
 
       // Validate structure (typeId/typeConfig pairing, DAG sort, Zod schema).
@@ -366,7 +374,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       const userParams = stripInternalFields(rawParams);
       GraphDeleteContract.request.parse(userParams);
 
-      const tenantId = deps.tenantId ?? "default";
+      const tenantId = deps.tenantId;
       const deleted = deps.namedGraphStore.softDelete(id, tenantId);
       if (!deleted) {
         throw new PreconditionError("Named graph not found");

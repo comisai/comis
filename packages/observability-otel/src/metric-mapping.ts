@@ -233,7 +233,7 @@ function wireSpendGauges(deps: WireMetricMappingDeps): void {
  * daemon version label — version ONLY, NO commit; no git rev-parse runs at
  * daemon boot). Both are pull-based `observableGauge`s — the only
  * way to expose a constant series — observed on every scrape. `comis_up` going
- * absent (no scrape) IS the liveness signal the fleet dashboard alerts on.
+ * absent (no scrape) IS the liveness signal the system dashboard alerts on.
  */
 function wireMetaGauges(deps: WireMetricMappingDeps): void {
   const { meter } = deps;
@@ -393,7 +393,7 @@ export function wireMetricMapping(deps: WireMetricMappingDeps): void {
     addCounter(instruments, "comis.offloads", 1, { tool: payload.toolName });
   });
 
-  // ── session:summary → comis.sessions + comis.sessions.degraded (fleet rollup) ──
+  // ── session:summary → comis.sessions + comis.sessions.degraded (system rollup) ──
   eventBus.on("session:summary", (payload) => {
     const severity = payload.degraded ? "degraded" : "ok";
     addCounter(instruments, "comis.sessions", 1, { agent: payload.agentId, severity });

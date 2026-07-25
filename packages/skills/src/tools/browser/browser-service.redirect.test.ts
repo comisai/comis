@@ -150,7 +150,7 @@ describe.runIf(browserExecutable)("BrowserService redirect network policy", () =
     const udpAddress = udpServer.address();
     udpOrigin = `127.0.0.1:${udpAddress.port}`;
     browser = await chromium.launch({ executablePath: browserExecutable, headless: true });
-  });
+  }, 30_000);
 
   beforeEach(async () => {
     privateEndpointHits = 0;

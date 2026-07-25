@@ -17,7 +17,16 @@ import * as fs from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, dirname, extname } from "node:path";
 import { fromPromise } from "@comis/shared";
-import { safePath, PathTraversalError, scrubSecretsFromText, registerActivityLabelSpec } from "@comis/core";
+import {
+  DEFAULT_TEMPLATES,
+  ONBOARDING_COMPLETE_TOOL_RESULT,
+  OPERATOR_OWNED_FILES,
+  safePath,
+  PathTraversalError,
+  scrubSecretsFromText,
+  registerActivityLabelSpec,
+  type WorkspaceFileName,
+} from "@comis/core";
 import type { FileStateTracker } from "../file/file-state-tracker.js";
 import { isDeviceFile } from "../file/file-state-tracker.js";
 import {
@@ -52,6 +61,10 @@ registerActivityLabelSpec("write", {
 
 /** Maximum file size in bytes (1 GiB). Existing files above this are rejected. */
 const MAX_FILE_SIZE = 1024 * 1024 * 1024;
+
+function isOperatorOwnedWorkspaceFile(name: string): name is WorkspaceFileName {
+  return OPERATOR_OWNED_FILES.some((candidate) => candidate === name);
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -190,6 +203,7 @@ export function createComisWriteTool(
   const ext = { promptGuidelines: [
     "For existing files, you MUST read before writing in each response (reads from prior messages do not carry over). Use the edit tool for targeted replacements instead of full rewrites.",
     "Prefer edit over write for modifying existing files — it only sends the diff.",
+    "For BOOTSTRAP.md completion, use write with an empty content string. Never use edit to clear it.",
   ] };
   return {
     ...ext,
@@ -200,7 +214,8 @@ export function createComisWriteTool(
       "are created automatically. For existing files, you must read the file first in the " +
       "current response (reads from previous messages do not carry over). " +
       "The file content is written exactly as provided. Use the edit tool for targeted text " +
-      "replacements instead of rewriting entire files.",
+      "replacements instead of rewriting entire files. Exception: complete onboarding by " +
+      "writing BOOTSTRAP.md with an empty content string; never edit it to empty.",
     parameters: WriteParams,
 
     async execute(
@@ -337,6 +352,23 @@ export function createComisWriteTool(
             }
           }
 
+          // A model may accidentally copy a visible starter back over a file it
+          // customized earlier in the same turn. Reject that exact destructive
+          // reset at the workspace root while leaving ordinary rewrites and
+          // explicitly customized content unaffected.
+          if (
+            absolutePath === safePath(workspacePath, base)
+            && isOperatorOwnedWorkspaceFile(base)
+            && content === DEFAULT_TEMPLATES[base]
+          ) {
+            const currentContent = await fs.readFile(absolutePath, "utf-8");
+            if (currentContent !== DEFAULT_TEMPLATES[base]) {
+              throw new Error(
+                `[starter_template_restore] Refusing to replace customized ${base} with its empty starter template. Preserve the confirmed content or use targeted edits.`,
+              );
+            }
+          }
+
           // --- V7.1: Config syntax validation ---
           const ext = extname(absolutePath).toLowerCase();
           const configError = validateConfigContent(ext, content);
@@ -393,6 +425,9 @@ export function createComisWriteTool(
           sizeBytes: newStat.size,
           coldRead,
           auditNotice,
+          onboardingCompleted:
+            absolutePath === safePath(workspacePath, "BOOTSTRAP.md")
+            && content.trim().length === 0,
         };
       });
 
@@ -418,6 +453,12 @@ export function createComisWriteTool(
       if (resultData.auditNotice) {
         resultBlocks.push({ type: "text" as const, text: resultData.auditNotice });
       }
+      if (resultData.onboardingCompleted) {
+        resultBlocks.push({
+          type: "text" as const,
+          text: ONBOARDING_COMPLETE_TOOL_RESULT,
+        });
+      }
 
       return {
         content: resultBlocks,
@@ -426,6 +467,7 @@ export function createComisWriteTool(
           created: resultData.created,
           sizeBytes: resultData.sizeBytes,
           coldRead: resultData.coldRead,
+          onboardingCompleted: resultData.onboardingCompleted,
           gitDiff: gitStat ?? undefined,
         },
       };

@@ -66,7 +66,7 @@ interface SpendSnapshot {
  *
  * It consumes the LIVE `obs.spend.snapshot` (the threaded
  * `spendAccumulator.getSnapshot()`, NOT the lagging SQL) — so the rendered figure
- * CANNOT disagree with `comis fleet` / the dollars kill-switch.
+ * CANNOT disagree with `comis system-health` / the dollars kill-switch.
  *
  * Admin-gating rides the admin-gated snapshot RPC (an "Admin access required"
  * rejection surfaces the error path). Honest-degradation: an `{ enabled: false }`
@@ -230,7 +230,7 @@ export class IcSpendGovernanceView extends LitElement {
 
     try {
       // The 179-04 LIVE spend snapshot (locked A1 — the kill-switch value).
-      const raw = await rpc.call<{ snapshot?: Record<string, unknown> }>("obs.spend.snapshot", {});
+      const raw = await rpc.call("obs.spend.snapshot", {});
       this._snapshot = this._narrowSnapshot(raw?.snapshot ?? {});
       this._loadState = "loaded";
     } catch {

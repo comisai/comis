@@ -8,15 +8,20 @@ import type { RpcHandler } from "./types.js";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
 import { ok, err } from "@comis/shared";
 import {
+  createDeliveryService,
+  createNoOpDeliveryQueue,
+  createRetryEngine,
   DeliveryQueueTransitionError,
   formatSessionKey,
   runWithContext,
+  TypedEventBus,
   type AttachmentPayload,
   type ChannelCapability,
   type ChannelPluginPort,
   type ChannelPort,
   type DeliveryService,
   type DeliveryResult,
+  type HookRunner,
   type OutwardSendLedgerPort,
   type SessionKey,
 } from "@comis/core";
@@ -29,7 +34,30 @@ import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 // delete/fetch/attach are admin-only (deny-by-origin) and carry NO in-handler
 // cap gate — the wrapper's injected caps are inert for them.
 function createMessageHandlers(deps: MessageHandlerDeps): Record<string, RpcHandler> {
-  return withHeldCapabilities(createMessageHandlersRaw(deps));
+  const handlers = withHeldCapabilities(createMessageHandlersRaw(deps));
+  return Object.fromEntries(Object.entries(handlers).map(([method, handler]) => [
+    method,
+    async (rawParams: Record<string, unknown>) => {
+      if (rawParams.endpoint !== undefined || rawParams.channel_type === "gateway") {
+        return handler(rawParams);
+      }
+      const channelType = typeof rawParams.channel_type === "string"
+        ? rawParams.channel_type
+        : method.slice(0, method.indexOf("."));
+      const adapter = deps.adaptersByType.get(channelType);
+      const channelId = rawParams.channel_id ?? rawParams.chat_id ?? rawParams.group_jid;
+      if (adapter === undefined || typeof channelId !== "string") return handler(rawParams);
+      return handler({
+        ...rawParams,
+        endpoint: {
+          channelType: adapter.channelType,
+          channelInstanceId: adapter.channelId,
+          conversationId: channelId,
+          conversationKind: "direct",
+        },
+      });
+    },
+  ]));
 }
 
 // MessageHandlerDeps requires a DeliveryService. The fake delegates to
@@ -45,18 +73,26 @@ function makeFakeDeliveryService(): DeliveryService {
       if (options?.extra) sendOpts.extra = options.extra;
       const result = await adapter.sendMessage(channelId, text, Object.keys(sendOpts).length > 0 ? sendOpts : undefined);
       return ok({
-        ok: result.ok,
-        totalChunks: 1,
-        deliveredChunks: result.ok ? 1 : 0,
-        failedChunks: result.ok ? 0 : 1,
-        chunks: [{
-          ok: result.ok,
-          messageId: result.ok ? result.value : undefined,
-          error: result.ok ? undefined : result.error,
-          charCount: text.length,
-          retried: false,
-        }],
+        chunks: result.ok
+          ? [{ status: "accepted" as const, messageId: result.value, charCount: text.length, retried: false }]
+          : [{
+              status: "rejected" as const,
+              error: result.error,
+              errorKind: "platform" as const,
+              charCount: text.length,
+              retried: false,
+            }],
         totalChars: text.length,
+        platform: result.ok
+          ? { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 1, lastMessageId: result.value }
+          : {
+              status: "rejected" as const,
+              errorKind: "platform" as const,
+              deliveredChunks: 0,
+              failedChunks: 1,
+              settledAtMs: 1,
+            },
+        queueDisposition: "settled" as const,
       });
     }),
     // DeliveryService gained drainInFlight().
@@ -68,12 +104,10 @@ function makeFakeDeliveryService(): DeliveryService {
 
 function makeQueueTransitionError(messageId = "platform-msg-1"): DeliveryQueueTransitionError {
   const platformResult: DeliveryResult = {
-    ok: true,
-    totalChunks: 1,
-    deliveredChunks: 1,
-    failedChunks: 0,
-    chunks: [{ ok: true, messageId, charCount: 5, retried: false }],
+    chunks: [{ status: "accepted", messageId, charCount: 5, retried: false }],
     totalChars: 5,
+    platform: { status: "accepted", deliveredChunks: 1, settledAtMs: 1, lastMessageId: messageId },
+    queueDisposition: "transition_failed",
   };
   return new DeliveryQueueTransitionError([{
     transition: "ack",
@@ -87,10 +121,10 @@ function makeQueueTransitionError(messageId = "platform-msg-1"): DeliveryQueueTr
 // Mock helpers
 // ---------------------------------------------------------------------------
 
-function createMockAdapter(): ChannelPort {
+function createMockAdapter(channelType = "telegram", channelId = "test-ch"): ChannelPort {
   return {
-    channelId: "test-ch",
-    channelType: "telegram",
+    channelId,
+    channelType,
     start: vi.fn(async () => ok(undefined)),
     stop: vi.fn(async () => ok(undefined)),
     sendMessage: vi.fn(async () => ok("msg-1")),
@@ -98,7 +132,10 @@ function createMockAdapter(): ChannelPort {
     reactToMessage: vi.fn(async () => ok(undefined)),
     deleteMessage: vi.fn(async () => ok(undefined)),
     fetchMessages: vi.fn(async () => ok([])),
-    sendAttachment: vi.fn(async () => ok("attach-1")),
+    sendAttachment: vi.fn(async () => ok({
+      kind: "tracked",
+      messageId: "attach-1",
+    })),
     platformAction: vi.fn(async () => ok({})),
     onMessage: vi.fn(),
   };
@@ -128,6 +165,32 @@ function createMockDeps(workspaceDir: string): MessageHandlerDeps {
   };
 }
 
+describe("message endpoint authority", () => {
+  it("rejects an endpoint from a different adapter instance", async () => {
+    const workspaceDir = mkdtempSync(join(tmpdir(), "comis-test-endpoint-"));
+    try {
+      const deps = createMockDeps(workspaceDir);
+      const handlers = withHeldCapabilities(createMessageHandlersRaw(deps));
+
+      await expect(handlers["message.send"]({
+        channel_type: "telegram",
+        channel_id: "chat-a",
+        endpoint: {
+          channelType: "telegram",
+          channelInstanceId: "other-account",
+          conversationId: "chat-a",
+          conversationKind: "direct",
+        },
+        text: "hello",
+      })).rejects.toThrow("exact endpoint");
+
+      expect(deps.deliveryService.deliverToChannel).not.toHaveBeenCalled();
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -156,7 +219,10 @@ describe("message.attach handler", () => {
       attachment_type: "file",
     });
 
-    expect(result).toEqual({ messageId: "attach-1", channelId: "123" });
+    expect(result).toEqual({
+      receipt: { kind: "tracked", messageId: "attach-1" },
+      channelId: "123",
+    });
     expect(adapter.sendAttachment).toHaveBeenCalledWith("123", expect.objectContaining({
       url: "https://example.com/file.pdf",
     }));
@@ -175,7 +241,10 @@ describe("message.attach handler", () => {
       attachment_type: "file",
     });
 
-    expect(result).toEqual({ messageId: "attach-1", channelId: "123" });
+    expect(result).toEqual({
+      receipt: { kind: "tracked", messageId: "attach-1" },
+      channelId: "123",
+    });
     expect(adapter.sendAttachment).toHaveBeenCalledWith("123", expect.objectContaining({
       url: filePath,
     }));
@@ -198,7 +267,10 @@ describe("message.attach handler", () => {
       attachment_type: "file",
     });
 
-    expect(result).toEqual({ messageId: "attach-1", channelId: "123" });
+    expect(result).toEqual({
+      receipt: { kind: "tracked", messageId: "attach-1" },
+      channelId: "123",
+    });
     expect(adapter.sendAttachment).toHaveBeenCalledWith("123", expect.objectContaining({
       url: filePath,
     }));
@@ -264,10 +336,58 @@ describe("message.attach handler", () => {
       attachment_type: "file",
     });
 
-    expect(result).toEqual({ messageId: "attach-1", channelId: "123" });
+    expect(result).toEqual({
+      receipt: { kind: "tracked", messageId: "attach-1" },
+      channelId: "123",
+    });
     expect(adapter.sendAttachment).toHaveBeenCalledWith("123", expect.objectContaining({
       url: expectedPath,
     }));
+  });
+
+  it("returns delivered-untracked without throwing after a completed send", async () => {
+    const deps = createMockDeps(workspaceDir);
+    const adapter = deps.adaptersByType.get("telegram")!;
+    vi.mocked(adapter.sendAttachment!).mockResolvedValueOnce(ok({
+      kind: "delivered_untracked",
+    }));
+    const handlers = createMessageHandlers(deps);
+
+    const result = await handlers["message.attach"]({
+      channel_type: "telegram",
+      channel_id: "123",
+      attachment_url: "https://example.com/file.pdf",
+      attachment_type: "file",
+    });
+
+    expect(result).toEqual({
+      receipt: { kind: "delivered_untracked" },
+      channelId: "123",
+    });
+  });
+
+  it("preserves the adapter receiver when invoking a class-style attachment method", async () => {
+    const deps = createMockDeps(workspaceDir);
+    const adapter = deps.adaptersByType.get("telegram")!;
+    adapter.sendAttachment = async function (this: ChannelPort) {
+      return ok({
+        kind: "tracked" as const,
+        messageId: `${this.channelType}-attachment`,
+      });
+    };
+    const handlers = createMessageHandlers(deps);
+
+    const result = await handlers["message.attach"]({
+      channel_type: "telegram",
+      channel_id: "123",
+      attachment_url: "https://example.com/file.pdf",
+      attachment_type: "file",
+    });
+
+    expect(result).toEqual({
+      receipt: { kind: "tracked", messageId: "telegram-attachment" },
+      channelId: "123",
+    });
   });
 });
 
@@ -278,6 +398,12 @@ describe("message.attach handler", () => {
 describe("message.attach gateway channel_type", () => {
   let workspaceDir: string;
   let mediaDir: string;
+  const gatewayEndpoint = {
+    channelType: "gateway",
+    channelInstanceId: "dashboard-a",
+    conversationId: "web-chat",
+    conversationKind: "direct" as const,
+  };
 
   beforeEach(() => {
     workspaceDir = mkdtempSync(join(tmpdir(), "comis-test-gw-"));
@@ -303,21 +429,48 @@ describe("message.attach gateway channel_type", () => {
     const filePath = join(workspaceDir, "photo.png");
     const requestSessionKey: SessionKey = {
       tenantId: "tenant-a",
+      agentId: "agent-a",
       userId: "user_a",
-      channelId: "web-chat",
+      channelId: "gateway:dashboard-a:web-chat",
+      peerId: "user_a",
+    };
+    const turnScope = {
+      conversation: {
+        tenantId: "tenant-a",
+        agentId: "agent-a",
+        partition: {
+          kind: "endpoint-conversation-principal" as const,
+          endpoint: {
+            channelType: "gateway",
+            channelInstanceId: "dashboard-a",
+            conversationId: "web-chat",
+            conversationKind: "direct" as const,
+          },
+          principalId: "user_a",
+        },
+      },
+      principal: { principalId: "user_a" },
+      endpoint: {
+        channelType: "gateway",
+        channelInstanceId: "dashboard-a",
+        conversationId: "web-chat",
+        conversationKind: "direct" as const,
+      },
     };
 
     const result = await runWithContext({
       tenantId: requestSessionKey.tenantId,
       userId: requestSessionKey.userId,
       sessionKey: formatSessionKey(requestSessionKey),
+      agentId: "agent-a",
+      turnScope,
       traceId: "550e8400-e29b-41d4-a716-446655440000",
       startedAt: 1_700_000_000_000,
       trustLevel: "user",
       clientId: "dashboard-a",
     }, () => handlers["message.attach"]({
         channel_type: "gateway",
-        channel_id: "web-chat",
+        channel_id: "gateway:dashboard-a:web-chat",
         attachment_url: filePath,
         attachment_type: "image",
         mime_type: "image/png",
@@ -325,10 +478,12 @@ describe("message.attach gateway channel_type", () => {
         caption: "A nice photo",
       }));
 
-    // Returns mediaId and channelId
-    expect(result).toHaveProperty("messageId");
-    expect(result).toHaveProperty("channelId", "web-chat");
-    const messageId = (result as { messageId: string }).messageId;
+    // Returns the gateway media ID as a tracked attachment receipt.
+    expect(result).toHaveProperty("receipt.kind", "tracked");
+    expect(result).toHaveProperty("channelId", "gateway:dashboard-a:web-chat");
+    const messageId = (result as {
+      receipt: { kind: "tracked"; messageId: string };
+    }).receipt.messageId;
     expect(messageId).toMatch(/^[a-f0-9]{16}\.png$/);
 
     // File was copied to mediaDir
@@ -344,8 +499,8 @@ describe("message.attach gateway channel_type", () => {
     expect(meta.size).toBe(Buffer.from("fake-png-content").length);
 
     expect(sendToClientId).toHaveBeenCalledWith("dashboard-a", "notification.attachment", expect.objectContaining({
-      sessionKey: "tenant-a:user_a:web-chat",
-      channelId: "web-chat",
+      sessionKey: "tenant-a:agent:agent-a:user_a:gateway:dashboard-a:web-chat:peer:user_a",
+      channelId: "gateway:dashboard-a:web-chat",
       url: `/media/${messageId}`,
       type: "image",
       mimeType: "image/png",
@@ -355,8 +510,8 @@ describe("message.attach gateway channel_type", () => {
     expect(broadcast).not.toHaveBeenCalled();
 
     expect(persistAttachment).toHaveBeenCalledOnce();
-    const [persistedSessionKey, persistedContent] = persistAttachment.mock.calls[0] as [SessionKey, string];
-    expect(persistedSessionKey).toEqual(requestSessionKey);
+    const [persistedScope, persistedContent] = persistAttachment.mock.calls[0] as [typeof turnScope.conversation, string];
+    expect(persistedScope).toEqual(turnScope.conversation);
     const markerMatch = persistedContent.match(/^A nice photo\n\n<!-- attachment:(\{.*\}) -->$/s);
     expect(markerMatch).not.toBeNull();
     expect(JSON.parse(markerMatch![1])).toEqual({
@@ -380,6 +535,7 @@ describe("message.attach gateway channel_type", () => {
     const result = await handlers["message.attach"]({
       channel_type: "gateway",
       channel_id: "web-chat",
+      endpoint: gatewayEndpoint,
       attachment_url: join(workspaceDir, "photo.png"),
       attachment_type: "image",
       mime_type: "image/png",
@@ -424,9 +580,10 @@ describe("message.attach gateway channel_type", () => {
       trustLevel: "user",
       clientId: "dashboard-a",
     }, () => handlers["message.attach"]({
-        channel_type: "gateway",
-        channel_id: "web-chat",
-        attachment_url: join(workspaceDir, "photo.png"),
+      channel_type: "gateway",
+      channel_id: "web-chat",
+      endpoint: gatewayEndpoint,
+      attachment_url: join(workspaceDir, "photo.png"),
         attachment_type: "image",
         mime_type: "image/png",
         file_name: "photo.png",
@@ -453,6 +610,7 @@ describe("message.attach gateway channel_type", () => {
       handlers["message.attach"]({
         channel_type: "gateway",
         channel_id: "web-chat",
+        endpoint: gatewayEndpoint,
         attachment_url: join(workspaceDir, "photo.png"),
         attachment_type: "image",
       }),
@@ -470,6 +628,7 @@ describe("message.attach gateway channel_type", () => {
       handlers["message.attach"]({
         channel_type: "gateway",
         channel_id: "web-chat",
+        endpoint: gatewayEndpoint,
         attachment_url: join(workspaceDir, "photo.png"),
         attachment_type: "image",
       }),
@@ -491,7 +650,10 @@ describe("message.attach gateway channel_type", () => {
       attachment_type: "file",
     });
 
-    expect(result).toEqual({ messageId: "attach-1", channelId: "123" });
+    expect(result).toEqual({
+      receipt: { kind: "tracked", messageId: "attach-1" },
+      channelId: "123",
+    });
     expect(adapter.sendAttachment).toHaveBeenCalled();
   });
 });
@@ -597,7 +759,11 @@ describe("capability guard", () => {
     const deps = createMockDeps(workspaceDir);
     deps.channelPlugins = new Map([["telegram", createMockPlugin({ fetchHistory: false })]]);
     // Add an adapter for "custom" but no plugin entry
-    deps.adaptersByType.set("custom", createMockAdapter());
+    deps.adaptersByType.set("custom", {
+      ...createMockAdapter(),
+      channelId: "custom-instance",
+      channelType: "custom",
+    });
     const handlers = createMessageHandlers(deps);
 
     const result = await handlers["message.fetch"]({ channel_type: "custom", channel_id: "123" });
@@ -930,7 +1096,7 @@ describe("inboundMessageIdResolver integration", () => {
   it("UUID with mismatched channelType passes through unchanged (defensive)", async () => {
     const deps = makeDepsWithResolver();
     // Resolver record is for telegram, but caller asserts a different channel.
-    deps.adaptersByType.set("discord", createMockAdapter());
+    deps.adaptersByType.set("discord", createMockAdapter("discord"));
     const handlers = createMessageHandlers(deps);
     const tgAdapter = deps.adaptersByType.get("discord")!;
 
@@ -1021,16 +1187,19 @@ describe("outward quota gate", () => {
       drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
     };
     const ledger: OutwardSendLedgerPort = {
+      allocateStep: vi.fn(async () => ok(7)),
       lookup: vi.fn(async () => ok(undefined)),
       begin: vi.fn(async () => ok(undefined)),
       markUnknown: vi.fn(async () => ok(undefined)),
+      reclaimPreSend: vi.fn(async () => ok(true)),
       commit: vi.fn(async () => ok(undefined)),
       markFailed: vi.fn(async () => ok(undefined)),
-      resolveReconcile: vi.fn(async () => ok(undefined)),
+      parkUncertain: vi.fn(async () => ok(true)),
+      hasUncertainty: vi.fn(async () => ok(false)),
       listUnreconciled: vi.fn(async () => ok([])),
     };
     deps.outwardLedger = ledger;
-    deps.resolveRootRunId = vi.fn(() => "root-1");
+    deps.resolveRootRunId = vi.fn(() => ({ ok: true, value: "root-1" }));
     const handlers = createMessageHandlers(deps);
 
     const result = await handlers["message.send"]({
@@ -1040,6 +1209,7 @@ describe("outward quota gate", () => {
       _agentId: "agent-1",
       _callerChannelId: "ch-A",
       _callerSessionKey: "default:user_a:ch-A",
+      _rootRunId: "root-1",
       _outwardStepIndex: 7,
     });
 
@@ -1047,6 +1217,75 @@ describe("outward quota gate", () => {
     expect(ledger.commit).toHaveBeenCalledWith("root-1", 7, "platform-msg-7");
     expect(ledger.markFailed).not.toHaveBeenCalled();
   });
+
+  it.each(["error result", "thrown exception"])(
+    "invokes the adapter once for an ambiguous ledger-protected send: %s",
+    async (failureKind) => {
+      const deps = createMockDeps(workspaceDir);
+      const adapter = deps.adaptersByType.get("telegram")!;
+      vi.mocked(adapter.sendMessage).mockImplementation(async () => {
+        if (failureKind === "thrown exception") {
+          throw new Error("ETIMEDOUT after request write");
+        }
+        return err(new Error("503 Service Unavailable"));
+      });
+      const hookRunner = {
+        runBeforeDelivery: vi.fn(async () => ({})),
+        runAfterDelivery: vi.fn(async () => undefined),
+      } as unknown as HookRunner;
+      const eventBus = new TypedEventBus();
+      const retryEngine = createRetryEngine(
+        {
+          maxAttempts: 3,
+          minDelayMs: 1,
+          maxDelayMs: 1,
+          jitter: false,
+          respectRetryAfter: true,
+          markdownFallback: true,
+        },
+        eventBus,
+        deps.logger,
+      );
+      deps.deliveryService = createDeliveryService({
+        hookRunner,
+        deliveryQueue: createNoOpDeliveryQueue(),
+        logger: deps.logger,
+        clock: { now: () => 1 },
+        eventBus,
+        retryEngine,
+      });
+      const ledger: OutwardSendLedgerPort = {
+        allocateStep: vi.fn(async () => ok(9)),
+        lookup: vi.fn(async () => ok(undefined)),
+        begin: vi.fn(async () => ok(undefined)),
+        markUnknown: vi.fn(async () => ok(undefined)),
+        reclaimPreSend: vi.fn(async () => ok(true)),
+        commit: vi.fn(async () => ok(undefined)),
+        markFailed: vi.fn(async () => ok(undefined)),
+        parkUncertain: vi.fn(async () => ok(true)),
+        hasUncertainty: vi.fn(async () => ok(false)),
+        listUnreconciled: vi.fn(async () => ok([])),
+      };
+      deps.outwardLedger = ledger;
+      deps.resolveRootRunId = vi.fn(() => ({ ok: true, value: "root-ambiguous" }));
+      const handlers = createMessageHandlers(deps);
+
+      await expect(handlers["message.send"]({
+        channel_type: "telegram",
+        channel_id: "ch-A",
+        text: "hello",
+        _agentId: "agent-1",
+        _callerChannelId: "ch-A",
+        _callerSessionKey: "default:user_a:ch-A",
+        _rootRunId: "root-ambiguous",
+        _outwardStepIndex: 9,
+      })).rejects.toThrow();
+
+      expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
+      expect(ledger.commit).not.toHaveBeenCalled();
+      expect(ledger.parkUncertain).toHaveBeenCalledWith("root-ambiguous", 9);
+    },
+  );
 
   it("allows an origin send within quota, then denies before deliver when tryOutward returns per_hour", async () => {
     const deps = createMockDeps(workspaceDir);
@@ -1093,6 +1332,29 @@ describe("outward quota gate", () => {
     expect(agentArg).toBe("agent-1");
     expect(channelId).toBe("ch-A");
     expect(isOrigin).toBe(true);
+  });
+
+  it("denies an admin-origin attachment to a non-origin target without an outward grant", async () => {
+    const deps = createMockDeps(workspaceDir);
+    const tryOutward = vi.fn().mockReturnValue(err({ reason: "no_grant" }));
+    deps.boundedAutonomy = makeOutwardStub(tryOutward as never);
+    const handlers = createMessageHandlers(deps);
+    const adapter = deps.adaptersByType.get("telegram")!;
+
+    await expect(
+      handlers["message.attach"]({
+        channel_type: "telegram",
+        channel_id: "ch-B",
+        attachment_url: "https://example.com/report.csv",
+        attachment_type: "file",
+        _agentId: "agent-1",
+        _callerChannelId: "ch-A",
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow();
+
+    expect(tryOutward).toHaveBeenCalledWith("agent-1", "ch-B", false, 1);
+    expect(adapter.sendAttachment).not.toHaveBeenCalled();
   });
 
   it("derives the tryOutward volume from text.length and denies on a volume trip", async () => {

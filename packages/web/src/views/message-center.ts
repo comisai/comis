@@ -2,8 +2,14 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { RpcClient } from "../api/rpc-client.js";
+import { listSessionsAcrossAgents } from "../api/session-scope.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
-import type { ConnectionStatus, FetchedMessage, PlatformCapabilities } from "../api/types/index.js";
+import type {
+  ConnectionStatus,
+  FetchedMessage,
+  PlatformCapabilities,
+  SessionChannelEndpoint,
+} from "../api/types/index.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 
@@ -37,6 +43,35 @@ interface MessageActionContext {
   rpcClient: RpcClient;
   channel: string;
   chatId: string;
+  endpoint: SessionChannelEndpoint;
+}
+
+interface ChatListEntry {
+  readonly key: string;
+  readonly chatId: string;
+  readonly label: string;
+  readonly endpoint?: SessionChannelEndpoint;
+}
+
+function endpointSelectionKey(endpoint: SessionChannelEndpoint): string {
+  return JSON.stringify([
+    endpoint.channelType,
+    endpoint.channelInstanceId,
+    endpoint.conversationId,
+    endpoint.threadId ?? null,
+    endpoint.conversationKind,
+  ]);
+}
+
+function endpointsEqual(
+  left: SessionChannelEndpoint,
+  right: SessionChannelEndpoint,
+): boolean {
+  return left.channelType === right.channelType
+    && left.channelInstanceId === right.channelInstanceId
+    && left.conversationId === right.conversationId
+    && left.threadId === right.threadId
+    && left.conversationKind === right.conversationKind;
 }
 
 /** Attachment type options for message.attach RPC. */
@@ -146,19 +181,11 @@ const PLATFORM_ACTIONS: Record<string, PlatformActionGroup[]> = {
   ],
 };
 
-/** Map platform to its RPC method name for actions. */
-const PLATFORM_RPC_METHOD: Record<string, string> = {
-  discord: "discord.action",
-  telegram: "telegram.action",
-  slack: "slack.action",
-  whatsapp: "whatsapp.action",
-};
-
 /**
  * Message center view for the Comis operator console.
  *
- * Displays a channel selector, message list (for platforms supporting fetchHistory),
- * and a send form with operator attribution confirmation dialog.
+ * Displays endpoint-authoritative history. Native history and mutations remain
+ * unavailable until discovery supplies the complete selected endpoint.
  *
  * Accessed via `#/messages/:type` route.
  *
@@ -305,7 +332,7 @@ export class IcMessageCenter extends LitElement {
   @state() private _showAttachForm = false;
 
   // Chat picker state
-  @state() private _chatList: Array<{ chatId: string; label: string }> = [];
+  @state() private _chatList: ChatListEntry[] = [];
   @state() private _selectedChatId = "";
 
   // Platform action state
@@ -401,21 +428,29 @@ export class IcMessageCenter extends LitElement {
   }
 
   private _captureActionContext(): MessageActionContext | null {
-    if (!this.rpcClient || !this._effectiveChannel) return null;
+    const endpoint = this._selectedEndpoint();
+    if (
+      !this.rpcClient
+      || !this._effectiveChannel
+      || endpoint === undefined
+    ) return null;
     return {
       revision: this._actionContextRevision,
       rpcClient: this.rpcClient,
       channel: this._effectiveChannel,
-      chatId: this._selectedChatId || this._effectiveChannel,
+      chatId: endpoint.conversationId,
+      endpoint,
     };
   }
 
   private _isCurrentActionContext(context: MessageActionContext): boolean {
+    const endpoint = this._selectedEndpoint();
     return this.isConnected
       && context.revision === this._actionContextRevision
       && context.rpcClient === this.rpcClient
       && context.channel === this._effectiveChannel
-      && context.chatId === (this._selectedChatId || this._effectiveChannel);
+      && endpoint !== undefined
+      && endpointsEqual(context.endpoint, endpoint);
   }
 
   override updated(changedProperties: Map<string, unknown>): void {
@@ -477,7 +512,7 @@ export class IcMessageCenter extends LitElement {
     const rpc = this.rpcClient;
 
     try {
-      const result = await rpc.call<{ channels: ChannelListEntry[]; total: number }>("channels.list");
+      const result = await rpc.call("channels.list");
       if (!this._isCurrentAutoSelect(revision, rpc)) return;
       const channels = result?.channels ?? [];
       this._channelList = channels;
@@ -523,9 +558,14 @@ export class IcMessageCenter extends LitElement {
       // (rpcClient guarded above at the function entry)
       const rpc = this.rpcClient;
       const [listResult, capResult, configResult] = await Promise.allSettled([
-        rpc.call<{ channels: Array<{ channelType: string; channelId?: string; status: string }>; total: number }>("channels.list").then((r) => r?.channels ?? []),
-        rpc.call<{ channelType: string; features: PlatformCapabilities }>("channels.capabilities", { channel_type: channel }).then((r) => r?.features ?? null),
-        rpc.call<Record<string, unknown>>("channels.get", { channel_type: channel }).then((r) => r ?? null),
+        rpc.call<{ channels: ChannelListEntry[]; total: number }>("channels.list")
+          .then((r) => r.channels ?? []),
+        rpc.call<{ channelType: string; features: PlatformCapabilities }>(
+          "channels.capabilities",
+          { channel_type: channel },
+        ).then((r) => r.features ?? null),
+        rpc.call<Record<string, unknown>>("channels.get", { channel_type: channel })
+          .then((r) => r ?? null),
       ]);
       if (!this._isCurrentChannel(revision, channel)) return;
 
@@ -566,7 +606,7 @@ export class IcMessageCenter extends LitElement {
       await this._loadChats(revision, channel);
       if (!this._isCurrentChannel(revision, channel)) return;
 
-      // Fetch messages - uses session history fallback for non-fetchHistory platforms
+      // Every history path is scoped by the selected endpoint.
       await this._refetchMessages(revision, channel);
       if (!this._isCurrentChannel(revision, channel)) return;
 
@@ -597,10 +637,7 @@ export class IcMessageCenter extends LitElement {
   // Chat picker data
   // -------------------------------------------------------------------------
 
-  /**
-   * Load available chat IDs for the current channel type from obs.channels.all
-   * (channel activity tracker) which tracks actual chat IDs the bot has interacted with.
-   */
+  /** Load endpoint-authoritative chats for the current channel type. */
   private async _loadChats(
     revision = this._channelRevision,
     channel = this._effectiveChannel,
@@ -608,9 +645,23 @@ export class IcMessageCenter extends LitElement {
     if (!this.rpcClient || !channel) return;
 
     try {
-      const obsResult = await this.rpcClient.call<{ channels: Array<{ channelId: string; channelType: string; messagesSent: number; messagesReceived: number; lastActiveAt: number }> }>("obs.channels.all");
+      const rpcClient = this.rpcClient;
+      const [obsOutcome, sessionsOutcome] = await Promise.allSettled([
+        rpcClient.call<{
+          channels: Array<{
+            channelId: string;
+            channelType: string;
+            messagesSent: number;
+            messagesReceived: number;
+            lastActiveAt: number;
+          }>;
+        }>("obs.channels.all"),
+        listSessionsAcrossAgents(rpcClient),
+      ]);
       if (!this._isCurrentChannel(revision, channel)) return;
-      const channels = obsResult?.channels ?? [];
+      const channels = obsOutcome.status === "fulfilled"
+        ? obsOutcome.value.channels ?? []
+        : [];
       const chatMap = new Map<string, string>(); // chatId -> label
 
       // Filter for the current channel type and extract chat IDs
@@ -621,19 +672,39 @@ export class IcMessageCenter extends LitElement {
         chatMap.set(ch.channelId, `${ch.channelId} (${msgs} msgs)`);
       }
 
-      // Build deduplicated chat list sorted by most recent
-      this._chatList = Array.from(chatMap.entries()).map(([chatId, label]) => ({
-        chatId,
-        label,
-      }));
+      const endpointChats = new Map<string, ChatListEntry>();
+      if (sessionsOutcome.status === "fulfilled") {
+        for (const session of sessionsOutcome.value) {
+          const endpoint = session.endpoint;
+          if (!endpoint || endpoint.channelType !== channel) continue;
+          const key = endpointSelectionKey(endpoint);
+          const qualifiers = [endpoint.channelInstanceId, endpoint.threadId]
+            .filter((value): value is string => value !== undefined)
+            .join(" / ");
+          const activityLabel = chatMap.get(endpoint.conversationId);
+          endpointChats.set(key, {
+            key,
+            chatId: endpoint.conversationId,
+            label: qualifiers
+              ? `${endpoint.conversationId} (${qualifiers})`
+              : activityLabel ?? endpoint.conversationId,
+            endpoint,
+          });
+        }
+      }
 
-      // Auto-select first chat if none selected
-      if (this._chatList.length > 0 && !this._selectedChatId) {
-        this._selectedChatId = this._chatList[0].chatId;
+      this._chatList = [...endpointChats.values()];
+
+      if (
+        this._chatList.length > 0
+        && !this._chatList.some((chat) => (chat.key ?? chat.chatId) === this._selectedChatId)
+      ) {
+        this._selectedChatId = this._chatList[0].key ?? this._chatList[0].chatId;
       }
     } catch {
       if (!this._isCurrentChannel(revision, channel)) return;
-      // Non-fatal -- chat list simply stays empty
+      this._chatList = [];
+      this._selectedChatId = "";
     }
   }
 
@@ -641,25 +712,38 @@ export class IcMessageCenter extends LitElement {
   // Re-fetch messages helper
   // -------------------------------------------------------------------------
 
-  /** Re-fetch message list - uses message.fetch when the platform supports fetchHistory,
-   *  otherwise falls back to stored session history via session.list + session.history. */
   private async _refetchMessages(
     revision = this._channelRevision,
     channel = this._effectiveChannel,
   ): Promise<void> {
     const requestRevision = ++this._messageRequestRevision;
-    const selectedChatId = this._selectedChatId;
+    const selectedChatKey = this._selectedChatId;
+    const selectedChat = this._chatList.find(
+      (chat) => (chat.key ?? chat.chatId) === selectedChatKey,
+    );
+    const selectedChatId = selectedChat?.chatId ?? selectedChatKey;
     if (!this.rpcClient || !channel) return;
+    const rpcClient = this.rpcClient;
+    const selectedEndpoint = this._selectedEndpoint();
+    this._messagesAreActionable = false;
+    if (selectedEndpoint === undefined) {
+      this._messages = [];
+      this._selectedMessageId = "";
+      return;
+    }
 
-    // Path 1: Platform supports native fetchHistory - use message.fetch as before
     if (this._capabilities?.fetchHistory) {
       try {
-        const fetchResult = await this.rpcClient.call<{ messages: FetchedMessage[]; channelId: string }>("message.fetch", {
+        const fetchResult = await this.rpcClient.call<{
+          messages: FetchedMessage[];
+          channelId: string;
+        }>("message.fetch", {
           channel_type: channel,
-          channel_id: selectedChatId || channel,
+          channel_id: selectedEndpoint.conversationId,
+          endpoint: selectedEndpoint,
           limit: 50,
         });
-        if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
+        if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
         const messages = fetchResult?.messages ?? [];
         this._messages = messages;
         this._messagesAreActionable = true;
@@ -670,23 +754,25 @@ export class IcMessageCenter extends LitElement {
           this._selectedMessageId = "";
         }
       } catch {
-        if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
-        // Non-fatal
+        if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
+        this._messages = [];
+        this._messagesAreActionable = false;
+        this._selectedMessageId = "";
       }
       return;
     }
 
-    // Path 2: No fetchHistory - fall back to stored session data
     try {
-      const sessionsResult = await this.rpcClient.call<{ sessions: Array<{ sessionKey: string; channelId: string; updatedAt: number }> }>("session.list", { kind: "all" });
-      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
-      const sessions = sessionsResult?.sessions ?? [];
-      // Filter to sessions whose channelId matches the currently selected chat
-      const chatId = selectedChatId;
-      const matching = chatId
-        ? sessions.filter((s) => s.channelId === chatId)
+      const sessions = await listSessionsAcrossAgents(rpcClient);
+      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
+      const endpointCandidates = selectedChatId
+        ? sessions.filter((session) => session.endpoint?.channelType === channel
+          && session.endpoint.conversationId === selectedChatId)
         : [];
+      const matching = endpointCandidates.filter((session) => session.endpoint !== undefined
+        && endpointsEqual(session.endpoint, selectedEndpoint));
 
+      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
       if (matching.length === 0) {
         this._messages = [];
         this._messagesAreActionable = false;
@@ -696,14 +782,16 @@ export class IcMessageCenter extends LitElement {
 
       // Pick most recently updated session
       matching.sort((a, b) => b.updatedAt - a.updatedAt);
-      const bestSession = matching[0]!;
+      const bestSession = matching[0];
+      if (!bestSession) return;
 
-      // Fetch conversation history from session store
-      const histResult = await this.rpcClient.call<{ messages: Array<{ role: string; content: string; timestamp: number }>; total: number }>("session.history", {
-        session_key: bestSession.sessionKey,
+      const histResult = await rpcClient.call("session.history", {
+        tenant_id: bestSession.tenantId,
+        agent_id: bestSession.agentId,
+        conversation_ref: bestSession.conversationRef,
         limit: 50,
       });
-      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
+      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
       const histMessages = histResult?.messages ?? [];
 
       // Map session history messages to FetchedMessage shape
@@ -716,7 +804,7 @@ export class IcMessageCenter extends LitElement {
       this._messagesAreActionable = false;
       this._selectedMessageId = "";
     } catch {
-      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
+      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatKey)) return;
       // Non-fatal - leave messages empty
       this._messages = [];
       this._messagesAreActionable = false;
@@ -728,11 +816,22 @@ export class IcMessageCenter extends LitElement {
     channelRevision: number,
     requestRevision: number,
     channel: string,
-    selectedChatId: string,
+    selectedChatKey: string,
   ): boolean {
     return this._isCurrentChannel(channelRevision, channel)
       && requestRevision === this._messageRequestRevision
-      && selectedChatId === this._selectedChatId;
+      && selectedChatKey === this._selectedChatId;
+  }
+
+  private _selectedEndpoint(): SessionChannelEndpoint | undefined {
+    const endpoint = this._chatList.find(
+      (chat) => (chat.key ?? chat.chatId) === this._selectedChatId,
+    )?.endpoint;
+    return endpoint?.channelType === this._effectiveChannel ? endpoint : undefined;
+  }
+
+  private _selectedEndpointMissing(): boolean {
+    return this._selectedEndpoint() === undefined;
   }
 
   // -------------------------------------------------------------------------
@@ -764,7 +863,11 @@ export class IcMessageCenter extends LitElement {
   }
 
   private _handleSendClick(): void {
-    if (this._mutationPending || !this._sendText.trim()) return;
+    if (
+      this._mutationPending
+      || this._selectedEndpointMissing()
+      || !this._sendText.trim()
+    ) return;
     this._showSendConfirm = true;
   }
 
@@ -780,6 +883,7 @@ export class IcMessageCenter extends LitElement {
       await context.rpcClient.call("message.send", {
         channel_type: context.channel,
         channel_id: context.chatId,
+        endpoint: context.endpoint,
         text,
       });
       if (!this._isCurrentActionContext(context)) return;
@@ -845,6 +949,7 @@ export class IcMessageCenter extends LitElement {
       await context.rpcClient.call("message.reply", {
         channel_type: context.channel,
         channel_id: context.chatId,
+        endpoint: context.endpoint,
         text,
         message_id: messageId,
       });
@@ -907,6 +1012,7 @@ export class IcMessageCenter extends LitElement {
       await context.rpcClient.call("message.edit", {
         channel_type: context.channel,
         channel_id: context.chatId,
+        endpoint: context.endpoint,
         message_id: messageId,
         text,
       });
@@ -954,6 +1060,7 @@ export class IcMessageCenter extends LitElement {
       await context.rpcClient.call("message.delete", {
         channel_type: context.channel,
         channel_id: context.chatId,
+        endpoint: context.endpoint,
         message_id: messageId,
       });
       if (!this._isCurrentActionContext(context)) return;
@@ -1006,6 +1113,7 @@ export class IcMessageCenter extends LitElement {
       await context.rpcClient.call("message.react", {
         channel_type: context.channel,
         channel_id: context.chatId,
+        endpoint: context.endpoint,
         message_id: messageId,
         emoji,
       });
@@ -1075,6 +1183,7 @@ export class IcMessageCenter extends LitElement {
       await context.rpcClient.call("message.attach", {
         channel_type: context.channel,
         channel_id: context.chatId,
+        endpoint: context.endpoint,
         attachment_url: attachmentUrl,
         attachment_type: attachmentType,
         caption,
@@ -1117,11 +1226,11 @@ export class IcMessageCenter extends LitElement {
     const context = this._captureActionContext();
     if (!context) return;
 
-    const rpcMethod = PLATFORM_RPC_METHOD[context.channel];
-    if (!rpcMethod) return;
-
     // Build params
-    const params: Record<string, unknown> = { action: platformAction.action };
+    const params: Record<string, unknown> = {
+      action: platformAction.action,
+      endpoint: context.endpoint,
+    };
 
     // Add channel/chat/group identifier based on platform
     if (context.channel === "telegram") {
@@ -1149,10 +1258,26 @@ export class IcMessageCenter extends LitElement {
     this._platformActionPending = true;
     this._actionResult = "";
     try {
-      const result = await context.rpcClient.call(rpcMethod, params);
+      let result: Readonly<Record<string, unknown>>;
+      switch (context.channel) {
+        case "discord":
+          result = await context.rpcClient.call("discord.action", params);
+          break;
+        case "telegram":
+          result = await context.rpcClient.call("telegram.action", params);
+          break;
+        case "slack":
+          result = await context.rpcClient.call("slack.action", params);
+          break;
+        case "whatsapp":
+          result = await context.rpcClient.call("whatsapp.action", params);
+          break;
+        default:
+          return;
+      }
       if (!this._isCurrentActionContext(context)) return;
       IcToast.show("Action completed", "success");
-      this._actionResult = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+      this._actionResult = JSON.stringify(result, null, 2);
     } catch (err) {
       if (!this._isCurrentActionContext(context)) return;
       const msg = err instanceof Error ? err.message : "Action failed";
@@ -1240,7 +1365,10 @@ export class IcMessageCenter extends LitElement {
             ${this._chatList.length === 0
               ? html`<option value="">No chats found</option>`
               : this._chatList.map(
-                  (ch) => html`<option value=${ch.chatId} ?selected=${ch.chatId === this._selectedChatId}>${ch.label}</option>`,
+                  (ch) => {
+                    const key = ch.key ?? ch.chatId;
+                    return html`<option value=${key} ?selected=${key === this._selectedChatId}>${ch.label}</option>`;
+                  },
                 )}
           </select>
         </div>
@@ -1303,7 +1431,7 @@ export class IcMessageCenter extends LitElement {
 
     // Sort by timestamp ascending (oldest first)
     const sorted = [...this._messages].sort((a, b) => a.timestamp - b.timestamp);
-    const canReply = this._messagesAreActionable;
+    const canReply = this._messagesAreActionable && !this._selectedEndpointMissing();
     const canEdit = canReply && this._capabilities?.editMessages === true;
     const canDelete = canReply && this._capabilities?.deleteMessages === true;
     const canReact = canReply && this._capabilities?.reactions === true;
@@ -1412,6 +1540,7 @@ export class IcMessageCenter extends LitElement {
 
   private _renderSendForm() {
     const attachSupported = this._capabilities?.attachments === true;
+    const endpointMissing = this._selectedEndpointMissing();
 
     return html`
       <div class="section">
@@ -1423,13 +1552,13 @@ export class IcMessageCenter extends LitElement {
             .value=${this._sendText}
             @input=${(e: InputEvent) => { this._sendText = (e.target as HTMLTextAreaElement).value; }}
             @keydown=${this._handleKeydown}
-            ?disabled=${this._mutationPending}
+            ?disabled=${this._mutationPending || endpointMissing}
             rows="2"
           ></textarea>
           <button
             class="btn btn-primary"
             @click=${this._handleSendClick}
-            ?disabled=${this._mutationPending || !this._sendText.trim()}
+            ?disabled=${this._mutationPending || endpointMissing || !this._sendText.trim()}
           >
             ${this._actionPending ? "Sending..." : "Send"}
           </button>
@@ -1438,7 +1567,7 @@ export class IcMessageCenter extends LitElement {
               <button
                 class="btn-sm btn-sm-ghost"
                 @click=${this._toggleAttachForm}
-                ?disabled=${this._mutationPending}
+                ?disabled=${this._mutationPending || endpointMissing}
                 title="Attach File"
               >
                 ${this._showAttachForm ? "Close Attach" : "Attach File"}
@@ -1516,6 +1645,7 @@ export class IcMessageCenter extends LitElement {
     if (!groups) return nothing;
 
     const platformLabel = this._effectiveChannel.charAt(0).toUpperCase() + this._effectiveChannel.slice(1);
+    const endpointMissing = this._selectedEndpointMissing();
 
     return html`
       <div class="platform-actions">
@@ -1538,13 +1668,13 @@ export class IcMessageCenter extends LitElement {
                     placeholder=${action.needsInput}
                     .value=${this._actionInputs[inputKey] ?? ""}
                     @input=${(e: InputEvent) => this._handleActionInputChange(inputKey, (e.target as HTMLInputElement).value)}
-                    ?disabled=${this._mutationPending}
+                    ?disabled=${this._mutationPending || endpointMissing}
                   />
                 ` : nothing}
                 <button
                   class="btn-sm btn-sm-ghost"
                   @click=${() => void this._handlePlatformAction(action)}
-                  ?disabled=${this._mutationPending || needsMessageAndMissing}
+                  ?disabled=${this._mutationPending || endpointMissing || needsMessageAndMissing}
                   title=${needsMessageAndMissing ? "Select a message first" : action.label}
                 >
                   ${action.label}

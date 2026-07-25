@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { SessionKey } from "../domain/session-key.js";
+import type { ChannelEndpoint, ConversationScope } from "../domain/conversation-scope.js";
+import type { DeliveryAuthority } from "./delivery-queue.js";
 
 // ─── Hook Name Unions ────────────────────────────────────────────────
 
@@ -97,7 +99,7 @@ export interface HookAfterCompactionContext {
 
 /** Event payload for the session_start hook. */
 export interface HookSessionStartEvent {
-  readonly sessionKey: SessionKey;
+  readonly conversationScope: ConversationScope;
   readonly isNew: boolean;
 }
 
@@ -108,7 +110,7 @@ export interface HookSessionStartContext {
 
 /** Event payload for the session_end hook. */
 export interface HookSessionEndEvent {
-  readonly sessionKey: SessionKey;
+  readonly conversationScope: ConversationScope;
   readonly reason: string;
   readonly durationMs?: number;
 }
@@ -158,6 +160,8 @@ export interface HookBeforeDeliveryContext {
   readonly sessionKey?: string;
   readonly agentId?: string;
   readonly traceId?: string;
+  readonly deliveryAuthority?: DeliveryAuthority;
+  readonly destinationEndpoint?: ChannelEndpoint;
 }
 
 /** Result returned by modifying before_delivery handlers. */
@@ -183,6 +187,8 @@ export interface HookAfterDeliveryContext {
   readonly sessionKey?: string;
   readonly agentId?: string;
   readonly traceId?: string;
+  readonly deliveryAuthority?: DeliveryAuthority;
+  readonly destinationEndpoint?: ChannelEndpoint;
 }
 
 // ─── Hook Handler Map ────────────────────────────────────────────────

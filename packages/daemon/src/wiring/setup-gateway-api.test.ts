@@ -108,7 +108,7 @@ describe("registerRpcMethods", () => {
   // Bridge methods
   // -----------------------------------------------------------------------
 
-  it("registers session/cron bridge methods with rpc trust", () => {
+  it("registers session and cron authoring bridge methods with rpc trust", () => {
     registerRpcMethods(deps);
 
     const calls = registerMethod.mock.calls;
@@ -116,13 +116,53 @@ describe("registerRpcMethods", () => {
     // transformer lives in cron-handlers.ts (no dispatcher special-cases).
     const bridgeMethods = [
       "session.send", "session.spawn", "session.status",
-      "session.history", "session.search", "cron.list", "cron.add",
+      "session.history", "session.search", "cron.add",
     ];
     for (const name of bridgeMethods) {
       const call = calls.find(([m]: [string]) => m === name);
       expect(call, `expected ${name} to be registered`).toBeDefined();
       expect(call![1]).toBe("rpc");
     }
+  });
+
+  it("registers cron read methods on the rpc route without operator trust", async () => {
+    registerRpcMethods(deps);
+    for (const method of ["cron.list", "cron.run", "cron.runs", "cron.status"]) {
+      const calls = registerMethod.mock.calls.filter(([name]: [string]) => name === method);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]![1]).toBe("rpc");
+      const handler = calls[0]![2];
+
+      await handler({}, { clientId: "agent-route", scopes: ["rpc"] });
+      const forwarded = vi.mocked(deps.rpcCall).mock.calls.at(-1)?.[1] as Record<string, unknown>;
+      expect(forwarded._trustLevel).toBeUndefined();
+    }
+  });
+
+  it("registers guarded cron reset as one admin-only route", async () => {
+    registerRpcMethods(deps);
+    const calls = registerMethod.mock.calls.filter(([method]: [string]) => method === "cron.reset");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![1]).toBe("admin");
+    const handler = calls[0]![2];
+
+    await handler({
+      agentId: "default",
+      target: "store",
+      expectedStoreDigest: "a".repeat(64),
+      confirmed: true,
+      _agentId: "forged-agent",
+      _trustLevel: "user",
+      _capabilities: ["forged-capability"],
+    }, { clientId: "operator", scopes: ["admin"] });
+
+    expect(deps.rpcCall).toHaveBeenLastCalledWith("cron.reset", {
+      agentId: "default",
+      target: "store",
+      expectedStoreDigest: "a".repeat(64),
+      confirmed: true,
+      _trustLevel: "admin",
+    });
   });
 
   it("rpc passthrough methods delegate without _trustLevel", async () => {
@@ -135,6 +175,20 @@ describe("registerRpcMethods", () => {
     await handler({ text: "hello" });
 
     expect(deps.rpcCall).toHaveBeenCalledWith("session.send", { text: "hello" });
+  });
+
+  it("registers subagent lifecycle once and derives operator trust from the authenticated route", async () => {
+    registerRpcMethods(deps);
+    const calls = registerMethod.mock.calls.filter(([method]: [string]) => method === "subagent.list");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![1]).toEqual(["rpc", "admin"]);
+    const handler = calls[0]![2];
+
+    await handler({}, { clientId: "operator", scopes: ["admin"] });
+    expect(deps.rpcCall).toHaveBeenLastCalledWith("subagent.list", { _trustLevel: "admin" });
+
+    await handler({}, { clientId: "agent-route", scopes: ["rpc"] });
+    expect(deps.rpcCall).toHaveBeenLastCalledWith("subagent.list", {});
   });
 
   // -----------------------------------------------------------------------

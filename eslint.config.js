@@ -30,7 +30,7 @@ export default tseslint.config(
       // Generated artifact from `pnpm contracts:generate`. The file carries
       // an `/* eslint-disable */` directive in its header banner, but adding
       // it to global ignores is belt-and-suspenders + avoids the parser
-      // ever having to walk the 190-contract literal.
+      // ever having to walk the generated contract literal.
       "packages/web/src/api/contracts.generated.ts",
     ],
   },

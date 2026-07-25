@@ -417,10 +417,9 @@ describe("auth login — mode branching", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  // Test 4: COMIS_CONFIG_PATHS ':' separator — loadStorageMode reads first path
-  it("':' separator: loadStorageMode uses ':' to split COMIS_CONFIG_PATHS", async () => {
+  it("loadStorageMode uses the first comma-separated COMIS_CONFIG_PATHS entry", async () => {
     // Create a config file in encrypted mode at a specific path.
-    // Use a ':'-joined path in COMIS_CONFIG_PATHS (e.g., "/tmp/a.yaml:/tmp/b.yaml").
+    // Use a comma-joined path in COMIS_CONFIG_PATHS.
     // loadStorageMode should take the FIRST path (encrypted), not default to file.
     const fs = await import("node:fs");
     const os = await import("node:os");
@@ -431,11 +430,7 @@ describe("auth login — mode branching", () => {
     fs.writeFileSync(configPath, "security:\n  storage: encrypted\n");
     fs.writeFileSync(decoyPath, "security:\n  storage: file\n");
 
-    // Set COMIS_CONFIG_PATHS to "configPath:decoyPath" — if comma-split is used,
-    // the entire string would be taken as the path (no comma present), falling
-    // back to ~/.comis/config.yaml and returning "file" mode.
-    // With ':' split, it correctly takes configPath → "encrypted".
-    process.env.COMIS_CONFIG_PATHS = `${configPath}:${decoyPath}`;
+    process.env.COMIS_CONFIG_PATHS = `${configPath},${decoyPath}`;
 
     const program = buildProgram();
     // In encrypted mode (correctly parsed), the flow should reach callTyped.
@@ -450,7 +445,7 @@ describe("auth login — mode branching", () => {
       "--local",
     ]);
 
-    // callTyped is only called in encrypted mode — prove the ':' split was used
+    // callTyped is only called in encrypted mode, proving the first path was selected.
     expect(callTypedMock).toHaveBeenCalledTimes(1);
     expect(callTypedMock.mock.calls[0][1]).toMatchObject({ method: "auth.set" });
 
@@ -632,9 +627,9 @@ describe("loadStorageMode with secrets in the encrypted store (not .env)", () =>
 });
 
 describe("resolveCliConfigPath — default config discovery (no explicit COMIS_CONFIG_PATHS)", () => {
-  it("honors an explicit COMIS_CONFIG_PATHS (first colon-separated entry) over everything", () => {
+  it("honors the first explicit comma-separated COMIS_CONFIG_PATHS entry over everything", () => {
     // existsFn returns true for nothing relevant — explicit path wins regardless.
-    expect(resolveCliConfigPath({ COMIS_CONFIG_PATHS: "/x/cfg.yaml:/y/other.yaml" }, () => false))
+    expect(resolveCliConfigPath({ COMIS_CONFIG_PATHS: "/x/cfg.yaml,/y/other.yaml" }, () => false))
       .toBe("/x/cfg.yaml");
   });
 

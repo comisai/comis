@@ -268,6 +268,51 @@ describe("runDeviceFlow — RFC 8628 §3.2 device-authorization request", () => 
 // ---------------------------------------------------------------------------
 
 describe("runDeviceFlow — RFC 8628 §3.5 polling semantics", () => {
+  it("does not log an unknown provider error body while polling continues", async () => {
+    const logger = makeLogger();
+    const clock = makeCapturedClock();
+    const { fetchFn } = makeSequenceFetch([
+      {
+        ok: true,
+        status: 200,
+        json: {
+          device_code: FIXTURE_DEVICE_CODE,
+          user_code: FIXTURE_USER_CODE,
+          verification_uri: FIXTURE_VERIFICATION_URI,
+          expires_in: 600,
+          interval: 5,
+        },
+      },
+      {
+        ok: false,
+        status: 400,
+        json: { error: "Authorization: Bearer PRIVATE_DEVICE_PROVIDER_SENTINEL" },
+      },
+      {
+        ok: true,
+        status: 200,
+        json: { access_token: "AT", token_type: "Bearer", expires_in: 3600 },
+      },
+    ]);
+    const tokenStore = makeTokenStore();
+
+    await runDeviceFlow(makeBaseDeps({
+      fetchFn,
+      logger,
+      nowMs: clock.nowMs,
+      sleep: clock.sleep,
+      tokenStore,
+    }));
+    await vi.waitFor(() => {
+      expect(tokenStore.saveTokens).toHaveBeenCalled();
+    });
+
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(
+      "PRIVATE_DEVICE_PROVIDER_SENTINEL",
+    );
+    assertNoDeviceCodeLogged(logger);
+  });
+
   it("polling honors slow_down by adding exactly 5000ms once per occurrence per RFC 8628 §3.5", async () => {
     const logger = makeLogger();
     const clock = makeCapturedClock();

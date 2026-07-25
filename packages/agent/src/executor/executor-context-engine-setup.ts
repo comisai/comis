@@ -64,9 +64,9 @@ import { readFileSync } from "node:fs";
 export interface ContextEngineSetupDeps {
   logger: ComisLogger;
   eventBus: import("@comis/core").TypedEventBus;
-  agentId?: string;
+  agentId: string;
   workspaceDir: string;
-  authStorage: import("@earendil-works/pi-coding-agent").AuthStorage;
+  authStorage: import("../model/auth-storage-adapter.js").ComisCredentialStore;
   modelRegistry: import("@earendil-works/pi-coding-agent").ModelRegistry;
   getPromptSkillsXml?: () => string;
   /**
@@ -80,11 +80,11 @@ export interface ContextEngineSetupDeps {
   /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
   /** Optional LCD context store (dag-mode assembly). Threaded into
-   *  createContextEngine's deps alongside `conversationId: formattedKey` so the
+   *  createContextEngine's deps alongside `conversationRef: formattedKey` so the
    *  dag branch returns the LCD assembler (reads what the afterTurn ingest
    *  writes). TYPE-only core port (the agent↛memory cut); absent ⇒ the dag
    *  branch falls through to the pipeline. */
-  contextStore?: import("@comis/core").ContextStorePort;
+  contextStore: import("@comis/core").ContextStorePort;
   /** The daemon-owned per-tenant summarizer spend+breaker. When
    *  present, `getSummarizerDeps` wraps the leaf summarizer seam with
    *  `gate(tenantId, inner)` so an open breaker / over-cap tenant BYPASSES the LLM
@@ -111,21 +111,14 @@ export interface ContextEngineSetupParams {
   deps: ContextEngineSetupDeps;
   formattedKey: string;
   sessionKey: string;
+  conversationRef: import("@comis/core").ConversationRef;
   /** The tenant for the dag assembler's LCD read scope (the SAME
    *  source executor-post-execution uses for the ingest scope:
    *  `deps.tenantId ?? sessionKey.tenantId`). Threaded onto ContextEngineDeps so
    *  the assembler builds an agent + tenant scoped read. */
   tenantId: string;
-  /** The turn's agentId — the positional execute() arg
-   *  (`agentId ?? "default"`, the SAME `effectiveAgentId` expression
-   *  executor-post-execution uses for the LCD ingest scope), supplied by the
-   *  caller and NOT read from deps. On the executeAgent path the turn agentId is
-   *  set on the ALS RequestContext, never onto frozenDeps, so `deps.agentId` is
-   *  undefined and the assembler would fail closed (recall 0 history). Threading
-   *  it here makes the dag READ scope == the ingest WRITE scope so the assembler
-   *  builds a non-undefined readScope. `deps.agentId` stays the fallback for
-   *  non-executeAgent callers. */
-  agentId: string | undefined;
+  /** Agent authority bound to the selected executor instance. */
+  agentId: string;
   msg: { channelType?: string; channelId?: string };
   sm: unknown;  // SessionManager -- typed as unknown to avoid SDK type export
   session: { agent: { state: { model: { reasoning?: boolean; contextWindow?: number; maxTokens?: number; id?: string; provider?: string; api?: string } | undefined } }; abortCompaction(): void };
@@ -204,7 +197,7 @@ interface DegradeObservabilityCtx {
   eventBus: import("@comis/core").TypedEventBus;
   logger: ComisLogger;
   clock: import("@comis/core").ClockPort;
-  conversationId: string;
+  conversationRef: string;
   agentId: string;
   sessionKey: string;
 }
@@ -247,7 +240,7 @@ function wrapSummarizerWithDegradeObservability(
           "lcd summarizer degraded to truncation-only",
         );
         ctx.eventBus.emit("context:dag_degraded", {
-          conversationId: ctx.conversationId,
+          conversationId: ctx.conversationRef,
           agentId: ctx.agentId,
           sessionKey: ctx.sessionKey,
           reason,
@@ -281,7 +274,7 @@ function wrapSummarizerWithDegradeObservability(
  */
 export function setupContextEngine(params: ContextEngineSetupParams): ContextEngineSetupResult {
   const {
-    config, deps, formattedKey, tenantId, msg, sm, session, executionOverrides,
+    config, deps, formattedKey, tenantId, msg, sm, session, executionOverrides, conversationRef,
     cacheBreakDetector,
     contextEngineRef,
     getCachedSystemTokensEstimate, getCachedFreshTailPreambleTokens, getTokenAnchor, onAnchorReset,
@@ -290,14 +283,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     windowProvenance,
   } = params;
 
-  // Prefer the caller-supplied turn agentId (the positional
-  // execute() arg threaded as params.agentId) over deps.agentId — on the
-  // executeAgent path deps.agentId (= frozenDeps.agentId) is undefined, so this
-  // is what makes the dag read scope == the ingest write scope (the assembler no
-  // longer fails closed). deps.agentId remains the fallback for callers that set
-  // it directly. This `agentId` flows into the createContextEngine deps (the LCD
-  // read scope) and the getSummarizerDeps wiring below.
-  const agentId = params.agentId ?? deps.agentId;
+  const agentId = params.agentId;
 
   // ExecutionOverrides carries no per-execution context-engine override -- the
   // compaction model is resolved via the operationModels chain below.
@@ -543,7 +529,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       ? wrapSummarizerWithDegradeObservability(
           deps.summarizerSpendBreaker.gate(tenantId, innerWithFailover),
           { eventBus: deps.eventBus, logger: deps.logger, clock: deps.clock,
-            conversationId: formattedKey, agentId: agentId ?? "default", sessionKey: formattedKey },
+            conversationRef, agentId, sessionKey: formattedKey },
         )
       : innerWithFailover;
     return {
@@ -568,7 +554,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     agentId,
     sessionKey: formattedKey,
     // The dag assembler builds an agent + tenant scoped LCD read
-    // from agentId + tenantId + conversationId.
+    // from agentId + tenantId + conversationRef.
     tenantId,
     getModel: () => {
       // Lazy model getter handles model cycling mid-session
@@ -697,7 +683,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       getActiveState: () => ({
         channelType: msg.channelType,
         channelId: msg.channelId,
-        agentId: agentId ?? config.name,
+        agentId,
       }),
       // Pass prompt skills XML getter for post-compact skill restoration.
       // This is the "documentationConfig" resolution path -- skillRegistry.getSnapshot().prompt
@@ -706,7 +692,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       // Report rehydration stats including skillsInjected count
       onRehydrated: (stats: { sectionsInjected: number; filesInjected: number; skillsInjected: number; overflowStripped: boolean }) => {
         deps.eventBus?.emit("context:rehydrated", {
-          agentId: agentId ?? config.name,
+          agentId,
           sessionKey: formattedKey,
           sectionsInjected: stats.sectionsInjected,
           filesInjected: stats.filesInjected,
@@ -717,7 +703,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       },
       onOverflow: (stats: { contextChars: number; budgetChars: number; recoveryAction: "strip_files" | "strip_skills" | "remove_position1" | "remove_rehydration" | "none" }) => {
         deps.eventBus?.emit("context:overflow", {
-          agentId: agentId ?? config.name,
+          agentId,
           sessionKey: formattedKey,
           contextTokens: Math.ceil(stats.contextChars / CHARS_PER_TOKEN_RATIO), // flat-by-design: aggregate stats logging
           budgetTokens: Math.ceil(stats.budgetChars / CHARS_PER_TOKEN_RATIO), // flat-by-design: aggregate stats logging
@@ -731,7 +717,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     // assembler, which reconstructs history from what the afterTurn ingest
     // wrote. Absent ⇒ the branch WARN-falls-through to the pipeline.
     contextStore: deps.contextStore,
-    conversationId: formattedKey,
+    conversationRef,
     // The dag assembler stamps assembly duration + synthesized-tool-result
     // timestamps via this injected clock (production never calls Date.now()).
     clock: deps.clock,

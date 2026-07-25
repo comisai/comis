@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
+import { GrammyError } from "grammy";
 import {
   TELEGRAM_GENERAL_TOPIC_ID,
   TELEGRAM_THREAD_META_KEYS,
@@ -9,6 +10,15 @@ import {
   isTelegramThreadNotFoundError,
   resolveOutboundThreadParams,
 } from "./thread-context.js";
+
+function makeGrammyError(description: string, errorCode = 400): GrammyError {
+  return new GrammyError(
+    "Call to 'sendMessage' failed!",
+    { ok: false, error_code: errorCode, description },
+    "sendMessage",
+    {},
+  );
+}
 
 // ---------------------------------------------------------------------------
 // resolveTelegramThreadContext
@@ -150,26 +160,35 @@ describe("buildTypingThreadParams", () => {
 // ---------------------------------------------------------------------------
 
 describe("isTelegramThreadNotFoundError", () => {
-  it("detects 'message thread not found' error", () => {
-    expect(isTelegramThreadNotFoundError(new Error("Bad Request: message thread not found"))).toBe(
-      true,
-    );
+  it("detects Telegram's message-thread-not-found rejection", () => {
+    expect(isTelegramThreadNotFoundError(
+      makeGrammyError("Bad Request: message thread not found"),
+    )).toBe(true);
   });
 
-  it("detects TOPIC_CLOSED error", () => {
-    expect(isTelegramThreadNotFoundError(new Error("TOPIC_CLOSED"))).toBe(true);
+  it("detects Telegram's TOPIC_CLOSED rejection", () => {
+    expect(isTelegramThreadNotFoundError(
+      makeGrammyError("Bad Request: TOPIC_CLOSED"),
+    )).toBe(true);
   });
 
-  it("detects TOPIC_DELETED error", () => {
-    expect(isTelegramThreadNotFoundError(new Error("TOPIC_DELETED"))).toBe(true);
+  it("detects Telegram's TOPIC_DELETED rejection", () => {
+    expect(isTelegramThreadNotFoundError(
+      makeGrammyError("Bad Request: TOPIC_DELETED"),
+    )).toBe(true);
   });
 
-  it("returns false for unrelated error", () => {
-    expect(isTelegramThreadNotFoundError(new Error("Bad Request: chat not found"))).toBe(false);
+  it("returns false for an unrelated Telegram rejection", () => {
+    expect(isTelegramThreadNotFoundError(
+      makeGrammyError("Bad Request: chat not found"),
+    )).toBe(false);
   });
 
-  it("handles string input gracefully", () => {
-    expect(isTelegramThreadNotFoundError("message thread not found")).toBe(true);
+  it("rejects generic errors and strings with matching text", () => {
+    expect(isTelegramThreadNotFoundError(
+      new Error("Bad Request: message thread not found"),
+    )).toBe(false);
+    expect(isTelegramThreadNotFoundError("Bad Request: message thread not found")).toBe(false);
   });
 
   it("returns false for non-string non-Error input", () => {

@@ -2,6 +2,12 @@
 import type { BackgroundTaskOrigin } from "../domain/background-task-origin.js";
 import type { McpServerEntry } from "../config/schema-integrations.js";
 import type { InjectionRule } from "../security/provider-catalog/index.js";
+import type { DeliveryFailureStage, DeliveryStatus } from "../domain/delivery-status.js";
+import type { ErrorKind } from "../logging/log-fields.js";
+import type { ModelResolutionSource } from "../domain/agent-execution-outcome.js";
+
+/** Content-free reason for a failed outbound webhook delivery. */
+export type WebhookFailureReason = "handler_error" | "task_not_delivered";
 
 /**
  * InfraEvents: Config, plugin, hook, auth, diagnostic,
@@ -32,8 +38,10 @@ export interface InfraEvents {
     toolName: string;
     action: string;
     params: Record<string, unknown>;
+    tenantId: string;
     agentId: string;
-    sessionKey: string;
+    conversationRef: string;
+    resolvingPrincipalId: string;
     trustLevel: string;
     createdAt: number;
     timeoutMs: number;
@@ -158,23 +166,40 @@ export interface InfraEvents {
     channelId: string;
     channelType: string;
     agentId: string;
+    /** Required for durable delivery persistence; omitted only by unresolved boundaries. */
+    tenantId?: string;
+    /** Opaque conversation authority for durable delivery persistence. */
+    conversationRef?: import("../domain/conversation-scope.js").ConversationRef;
+    /** Immutable outbound destination captured by the resolved boundary. */
+    destinationEndpoint?: import("../domain/conversation-scope.js").ChannelEndpoint;
     sessionKey: string;
     /**
      * The turn's trajectory id (=== traceId, the `comis explain` key). OPTIONAL —
      * present when a request context is active at emit (the common turn path).
      * Carried on the payload so the Verified Learning correction writer
      * (setup-learning-reactions.ts) can record the prior completed trajectory for
-     * a single-agent turn WITHOUT reading ALS (the emit runs outside the
-     * executor's runWithContext scope).
-     */
+     * a single-agent turn without depending on AsyncLocalStorage at subscriber
+     * execution time.
+    */
     traceId?: string;
+    /** Hash of the exact immutable workspace policy snapshot used by execution. */
+    workspacePolicyHash?: string;
+    /** Exact tool executions for completed turns; null when execution did not return a result. */
+    toolCalls: number | null;
+    /** Exact model calls for completed turns; null when execution did not return a result. */
+    llmCalls: number | null;
     receivedAt: number;
     executionDurationMs: number;
     deliveryDurationMs: number;
     totalDurationMs: number;
     tokensUsed: number;
     cost: number;
-    success: boolean;
+    /** Closed full-lifecycle outcome; intentional suppression is filtered, never failure. */
+    status: DeliveryStatus;
+    /** Boundary that failed; present only when failure provenance is known. */
+    failureStage?: DeliveryFailureStage;
+    /** Closed operator-facing classification when the failing boundary provides one. */
+    errorKind?: ErrorKind;
     finishReason: string;
     timestamp: number;
   };
@@ -187,7 +212,7 @@ export interface InfraEvents {
     statusCode: number;
     success: boolean;
     durationMs: number;
-    error: string | undefined;
+    failureReason: WebhookFailureReason | undefined;
     timestamp: number;
   };
 
@@ -243,15 +268,110 @@ export interface InfraEvents {
   // Scheduler events (cron, heartbeat, task extraction)
   // -------------------------------------------------------------------------
 
-  /** Scheduler: cron job started execution */
-  "scheduler:job_started": {
+  /** A cron occurrence crossed the durable start-record boundary. */
+  "scheduler:cron_execution_started": {
+    executionId: string;
+    bootId: string;
     jobId: string;
-    jobName: string;
     agentId: string;
+    scheduledForMs: number;
+    trigger: "scheduled" | "manual" | "catchup";
+    workKind: "agent_turn" | "heartbeat_event" | "internal_action" | "delivery_only";
+    rootRunId: string | null;
+    startedAtMs: number;
+  };
+
+  /** A cron occurrence appended its single immutable terminal record. */
+  "scheduler:cron_execution_terminal": {
+    executionId: string;
+    bootId: string;
+    jobId: string;
+    agentId: string;
+    scheduledForMs: number;
+    trigger: "scheduled" | "manual" | "catchup";
+    workKind: "agent_turn" | "heartbeat_event" | "internal_action" | "delivery_only";
+    terminalAtMs: number;
+    durationMs: number;
+    outcomeKind:
+      | "agent_turn"
+      | "wake_gate_skip"
+      | "agent_turn_pre_model_skip"
+      | "heartbeat_event"
+      | "internal_action"
+      | "delivery_only"
+      | "pre_dispatch_failure"
+      | "unsettled";
+    executionStatus: "dispatched" | "completed" | "failed" | "aborted" | "skipped" | "unknown";
+    deliveryStatus: "not_requested" | "suppressed" | "pre_send_failed" | "accepted" | "partial" | "rejected" | "unknown";
+    continuationStatus:
+      | "not_requested"
+      | "admitted"
+      | "skipped"
+      | "failed"
+      | "appended"
+      | "already_present";
+    queueDisposition?: "accepted" | "accepted_oldest_dropped" | "duplicate";
+    deliveredChunks: number;
+    failedChunks: number;
+    ambiguousChunks: number;
+    errorKind?: ErrorKind;
+  };
+
+  /** A model-backed cron occurrence resolved differently from its latest successful baseline. */
+  "scheduler:cron_model_drift": {
+    executionId: string;
+    previousExecutionId: string;
+    jobId: string;
+    agentId: string;
+    previousModelResolved: string;
+    modelResolved: string;
+    previousModelResolutionSource: ModelResolutionSource;
+    modelResolutionSource: ModelResolutionSource;
+    timestamp: number;
+  } & (
+    | { workKind: "agent_turn" }
+    | { workKind: "internal_action"; action: "memory_review" | "reflection" }
+  );
+
+  /** Boot-time reconciliation of durable cron claims against execution facts. */
+  "scheduler:cron_ownership_reconciliation": {
+    agentId: string;
+    durationMs: number;
+    timestamp: number;
+  } & (
+    | {
+      status: "completed";
+      recoveredBeforeStart: number;
+      ownerLostAfterStart: number;
+      settledFromTerminal: number;
+      retainedCurrentBoot: number;
+    }
+    | {
+      status: "failed";
+      errorCode:
+        | "invalid_input"
+        | "store_read"
+        | "ledger_read"
+        | "identity_mismatch"
+        | "orphan_start"
+        | "ledger_write"
+        | "store_write";
+      errorKind: ErrorKind;
+    }
+  );
+
+  /** A guarded operator reset durably replaced selected cron authority files. */
+  "scheduler:cron_store_reset": {
+    agentId: string;
+    operationId: string;
+    target: "store" | "ledger" | "all";
+    beforeDigests: { store: string | null; ledger: string | null };
+    afterDigests: { store: string | null; ledger: string | null };
+    reactivated: boolean;
     timestamp: number;
   };
 
-  /** Scheduler: cron job auto-suspended after exceeding maxConsecutiveErrors */
+  /** Scheduler: cron job auto-suspended after its configured dependency-error limit */
   "scheduler:job_suspended": {
     jobId: string;
     jobName: string;
@@ -266,60 +386,6 @@ export interface InfraEvents {
       tenantId: string;
       channelType?: string;
     };
-  };
-
-  /** Scheduler: cron job completed execution */
-  "scheduler:job_completed": {
-    jobId: string;
-    jobName: string;
-    agentId: string;
-    durationMs: number;
-    success: boolean;
-    error?: string;
-    timestamp: number;
-  };
-
-  /** Scheduler: cron job result ready for delivery to originating channel */
-  "scheduler:job_result": {
-    jobId: string;
-    jobName: string;
-    agentId: string;
-    result: string;
-    success: boolean;
-    /** Absent for deliveryTarget-less system_event jobs (the memory-cron
-     *  __SENTINEL__ class): their WORK rides this event, so it must fire
-     *  even with nothing to deliver. The delivery listener already guards
-     *  via `deliveryTarget?.channelType`. */
-    deliveryTarget?: {
-      channelId: string;
-      userId: string;
-      tenantId: string;
-      channelType?: string;
-    };
-    timestamp: number;
-    /** Payload kind from the cron job — determines delivery strategy (agent execution vs raw text). */
-    payloadKind?: "system_event" | "agent_turn";
-    /** Session history strategy propagated from the CronJob. */
-    sessionStrategy?: "fresh" | "rolling" | "accumulate";
-    /** Number of recent turns to keep for rolling strategy. */
-    maxHistoryTurns?: number;
-    /** Schedule cadence in ms when known. Populated only for schedule.kind === "every"
-     *  (where everyMs is a literal). Undefined for cron-expression and one-shot ("at")
-     *  schedules — deriving cadence from a cron expression would require parsing and is
-     *  intentionally out of scope for this field. Used by the cron handler to warn when
-     *  long-cadence jobs run with a cache-wasting sessionStrategy. */
-    cadenceMs?: number;
-    /** Per-cron-job model override from CronPayload.agent_turn.model. */
-    cronJobModel?: string;
-    /** Per-cron-job cache retention override from CronJob config. */
-    cacheRetention?: "none" | "short" | "long";
-    /** Per-cron-job tool policy override (opt-in). Resolution in the handler:
-     *  job.toolPolicy > agentConfig.toolPolicy > passthrough `{ profile: "full" }`.
-     *  Opt-in by design; omitting preserves pre-existing tool set. */
-    toolPolicy?: { profile: string; allow: string[]; deny: string[] };
-    /** Callback for agent_turn jobs to report execution result back to the scheduler.
-     *  Called by the event handler after agent execution completes. */
-    onComplete?: (result: { status: "ok" | "error"; error?: string }) => void;
   };
 
   /** Scheduler: pre-run wake-gate fired — content-free savings/health signal.
@@ -346,23 +412,38 @@ export interface InfraEvents {
     timestamp: number;
   };
 
-  /** Scheduler: heartbeat check performed */
-  "scheduler:heartbeat_check": {
-    checksRun: number;
-    alertsRaised: number;
+  /** A typed heartbeat occurrence was admitted or coalesced. Content-free. */
+  "scheduler:heartbeat_wake_admitted": {
+    correlationId: string;
+    target: { kind: "agent"; agentId: string } | { kind: "monitoring" };
+    lane: "normal" | "task";
+    retainedReason: "interval" | "manual" | "hook" | "wake" | "exec-event" | "cron" | "task";
+    disposition: "new_occurrence" | "occurrence_upgraded" | "coalesced";
     timestamp: number;
   };
 
-  /** Scheduler: heartbeat notification delivery attempted */
-  "scheduler:heartbeat_delivered": {
-    agentId: string;
-    channelType: string;
-    channelId: string;
-    chatId: string;
-    level: "ok" | "alert" | "critical";
-    outcome: "delivered" | "skipped" | "failed";
-    reason?: string;
+  /** Eligibility for one retained heartbeat occurrence moved into the future. */
+  "scheduler:heartbeat_wake_deferred": {
+    correlationId: string;
+    target: { kind: "agent"; agentId: string } | { kind: "monitoring" };
+    lane: "normal" | "task";
+    reason: "session_busy" | "spacing_deferred" | "flood_deferred" | "root_unavailable" | "task_store_unavailable";
+    nextEligibleAtMs: number;
+    errorKind?: ErrorKind;
+    timestamp: number;
+  };
+
+  /** The single terminal projection for one admitted heartbeat occurrence. */
+  "scheduler:heartbeat_wake_terminal": {
+    correlationId: string;
+    target: { kind: "agent"; agentId: string } | { kind: "monitoring" };
+    lane: "normal" | "task";
+    retainedReason: "interval" | "manual" | "hook" | "wake" | "exec-event" | "cron" | "task";
+    status: "settled" | "skipped" | "aborted" | "unsettled" | "failed_before_side_effect" | "cancelled_before_start";
+    cancellationReason?: "shutdown" | "target_removed" | "feature_disabled" | "maintenance";
+    eventEntryCount: number;
     durationMs: number;
+    errorKind?: ErrorKind;
     timestamp: number;
   };
 
@@ -499,6 +580,13 @@ export interface InfraEvents {
     timestamp: number;
   };
 
+  /** Server-authored instruction prose was excluded after text-shape validation. */
+  "mcp:server:instructions_rejected": {
+    serverName: string;
+    reason: "invalid_text_shape";
+    timestamp: number;
+  };
+
   /**
    * MCP server INITIAL connect FAILED (a first-time connect/install that never
    * reached the reconnect loop — the reconnect_failed sibling only fires AFTER a
@@ -587,11 +675,10 @@ export interface InfraEvents {
    * background task — the OBSERVABILITY signal for "did a raw
    * 'Background task "…" completed.' message fire, and was it correct?".
    *
-   * `notified:false, reason:"live_turn_suppressed"` is the HEALTHY post-fix
+   * `notified:false, reason:"live_turn_consumed"` is the healthy live-turn
    * shape (a task auto-backgrounded mid-turn is consumed by its own running
    * turn, so the notice is suppressed). `notified:true` means a user-visible
-   * notice DID fire (`no_session` = the origin session ended; `hop_cap` =
-   * recursion limit) — a `notified:true` with the origin turn demonstrably live
+   * notice DID fire — a `notified:true` with the origin turn demonstrably live
    * is the leak class this event exists to make diagnosable from
    * `comis explain` in one call (previously wire-grep-only). Content-free:
    * ids + closed-union reason + a boolean, never a message body.
@@ -605,10 +692,20 @@ export interface InfraEvents {
     /** true ⇒ a user-visible fallback notice fired; false ⇒ suppressed. */
     notified: boolean;
     /** Closed-union: why the dispatcher took the fallback/suppress path. */
-    reason: "no_session" | "hop_cap" | "live_turn_suppressed";
+    reason:
+      | "live_turn_consumed"
+      | "silent_consumed"
+      | "continuation_accepted"
+      | "fallback_accepted"
+      | "retry_scheduled"
+      | "permanent_parked"
+      | "uncertain_parked"
+      | "recovery_retry_required"
+      | "recovery_resolved";
     /** traceId from task.origin for operator log continuity (null when absent). */
     traceId: string | null;
     timestamp: number;
+    trajectoryRecorded: boolean;
   };
 
   /** Background completion runner is about to invoke executor.execute() on

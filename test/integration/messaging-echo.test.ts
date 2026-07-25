@@ -12,7 +12,7 @@
  *   message.edit dispatches through registry, returns { edited }
  *   message.delete dispatches through registry, returns { deleted }
  *   message.fetch dispatches through registry, returns { messages }
- *   message.attach dispatches through registry, returns { messageId }
+ *   message.attach dispatches through registry, returns { receipt, channelId }
  *
  * Tests register the EchoChannelAdapter on the daemon's adapterRegistry,
  * resolve it by channel type (mirroring resolveAdapter behavior), and call
@@ -142,7 +142,9 @@ describe("Echo Adapter Dispatch", () => {
           caption: params.caption as string | undefined,
         });
         if (!result.ok) throw result.error;
-        return { messageId: result.value, channelId };
+        // message.attach returns an AttachmentSendReceipt (tracked | delivered_untracked),
+        // mirroring the real handler's { receipt, channelId } response shape.
+        return { receipt: result.value, channelId };
       }
       default:
         throw new Error(`Unknown message method: ${method}`);
@@ -344,9 +346,10 @@ describe("Echo Adapter Dispatch", () => {
         attachment_url: "https://example.com/image.png",
         file_name: "image.png",
         caption: "Test image",
-      })) as { messageId: string; channelId: string };
+      })) as { receipt: { kind: string; messageId?: string }; channelId: string };
 
-      expect(result.messageId).toMatch(/^echo-msg-/);
+      expect(result.receipt.kind).toBe("tracked");
+      expect(result.receipt.messageId).toMatch(/^echo-msg-/);
       expect(result.channelId).toBe("echo-test");
     },
     10_000,

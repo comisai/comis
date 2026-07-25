@@ -37,20 +37,23 @@ export type StorageModePreRead = CredentialStorageMode;
  * @param configPaths - Ordered list of absolute YAML paths (same order the
  *   daemon passes to `bootstrap()` — earlier paths are base layers, later
  *   paths overlay).
+ * @param deps - Optional read seam used by offline diagnostics and tests.
  * @returns
  *   - `"encrypted"` (schema default) when no config path explicitly sets the mode
  *   - `"file"` / `"env"` when `security.storage` is set to that value
  */
 export function preReadStorageMode(
   configPaths: readonly string[],
+  deps: { readFile?: (path: string) => string } = {},
 ): StorageModePreRead {
   let mode: StorageModePreRead = "encrypted"; // schema default
+  const readFile = deps.readFile ?? ((path: string) => readFileSync(path, "utf-8"));
 
   for (const filePath of configPaths) {
-    if (!existsSync(filePath)) continue;
+    if (deps.readFile === undefined && !existsSync(filePath)) continue;
     let content: string;
     try {
-      content = readFileSync(filePath, "utf-8");
+      content = readFile(filePath);
     } catch {
       continue;
     }

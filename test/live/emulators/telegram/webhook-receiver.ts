@@ -1,39 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The HARNESS-SIDE webhook secret-token gate.
+ * Loopback-only Telegram webhook fixture.
  *
- * The Telegram webhook contract: when a bot is registered with a `secret_token`,
- * Telegram stamps every delivered Update with the
- * `X-Telegram-Bot-Api-Secret-Token` header, and the host's ingestion route is
- * expected to REJECT any POST whose header is wrong or absent (a forged Update
- * without the shared secret is untrusted). See the grammy `webhookCallback({
- * secretToken })` primitive and Telegram's setWebhook docs.
- *
- * ⚠ THE PRODUCT GAP: Comis
- * has NO Telegram webhook ingestion route. `shouldUseRunner` (telegram-webhook.ts:116)
- * returns `!webhookUrl` and merely SKIPS the polling runner when a `webhookUrl`
- * is configured, with NOTHING replacing it — `bot.handleUpdate` is driven by no
- * Comis code and no route checks `X-Telegram-Bot-Api-Secret-Token`
- * (`grep -rn webhookCallback packages/` → 0; the only reference is a comment,
- * "the host process is expected to drive bot.handleUpdate externally"). So
- * end-to-end webhook ingestion (a POSTed Update reaching the agent) is a REAL
- * product boundary, NOT something this harness can drive into the agent.
- *
- * What this receiver IS: the harness-side proof of the secret-token gate.
- * It stands up a tiny loopback HTTP server that enforces EXACTLY the discipline
- * a real ingestion route must — a POST with the configured token is accepted
- * (200) and the Update is recorded; a POST with a WRONG or ABSENT token is
- * rejected (401) and NOT recorded. The {@link TgEmulator.postWebhookMessage}
- * webhook-POST mode drives it. This proves the harness can POST a grammy Update
- * carrying the secret-token header AND that the gate rejects a forged one —
- * WITHOUT asserting the (non-existent) product ingestion path.
- *
- * TEST-HARNESS — lives under `test/`, never the packages source-tree; ZERO
- * production code change. `test/` is outside the packages ESLint/architecture
- * rules, so a raw `node:http` loopback server + `Date.now` are fine here. This
- * receiver is INTENTIONALLY a standalone loopback target (the webhook URL is a
- * different endpoint from the Bot API the emulator serves), so it does NOT
- * compose the http-backend base — it is a test fixture, not the emulator.
+ * It accepts updates carrying the configured secret-token header and rejects
+ * wrong or absent tokens. Comis currently rejects Telegram webhook
+ * configuration, so this fixture tests emulator behavior only and does not
+ * represent a product ingestion route.
  *
  * @module
  */

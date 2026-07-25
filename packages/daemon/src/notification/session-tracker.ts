@@ -1,53 +1,76 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * SessionTracker: in-memory tracker of last-active session per agent per platform.
- * Used by channel resolver's fallback chain (levels 2 and 4) to find the best
- * channel for notification delivery when no explicit target is provided.
- * State is ephemeral (resets on daemon restart). This is acceptable because
- * the tracker is a fallback mechanism -- agents with configured primaryChannel
- * never reach the session-based fallback levels.
- * @module
- */
+import { systemNowMs, type ChannelEndpoint } from "@comis/core";
 
 export interface SessionTracker {
-  /** Record a message activity for agent on a specific channel. */
-  recordActivity(agentId: string, channelType: string, channelId: string): void;
-  /** Get most recent channelId for agent on a specific platform. */
-  getRecentForPlatform(agentId: string, channelType: string): string | undefined;
-  /** Get most recent session across all platforms for this agent. */
-  getMostRecent(agentId: string): { channelType: string; channelId: string } | undefined;
+  recordActivity(agentId: string, endpoint: ChannelEndpoint): void;
+  getRecentForPlatform(agentId: string, channelType: string): ChannelEndpoint | undefined;
+  getMostRecent(agentId: string): ChannelEndpoint | undefined;
+  findEndpoint(
+    agentId: string,
+    channelType: string,
+    conversationId: string,
+  ): ChannelEndpoint | undefined;
 }
 
 export function createSessionTracker(opts?: { nowMs?: () => number }): SessionTracker {
-  const getNow = opts?.nowMs ?? Date.now;
-  // Map<agentId, Map<channelType, { channelId, lastActiveMs }>>
-  const tracker = new Map<string, Map<string, { channelId: string; lastActiveMs: number }>>();
+  const getNow = opts?.nowMs ?? systemNowMs;
+  const tracker = new Map<string, Map<string, {
+    endpoint: ChannelEndpoint;
+    lastActiveMs: number;
+  }>>();
+
+  const endpointKey = (endpoint: ChannelEndpoint): string => JSON.stringify([
+    endpoint.channelType,
+    endpoint.channelInstanceId,
+    endpoint.conversationId,
+    endpoint.threadId ?? null,
+    endpoint.conversationKind,
+  ]);
 
   return {
-    recordActivity(agentId, channelType, channelId) {
+    recordActivity(agentId, endpoint) {
       let agentMap = tracker.get(agentId);
       if (!agentMap) {
         agentMap = new Map();
         tracker.set(agentId, agentMap);
       }
-      agentMap.set(channelType, { channelId, lastActiveMs: getNow() });
+      agentMap.set(endpointKey(endpoint), { endpoint, lastActiveMs: getNow() });
     },
 
     getRecentForPlatform(agentId, channelType) {
-      return tracker.get(agentId)?.get(channelType)?.channelId;
+      const agentMap = tracker.get(agentId);
+      if (!agentMap) return undefined;
+      let best: { endpoint: ChannelEndpoint; lastActiveMs: number } | undefined;
+      for (const entry of agentMap.values()) {
+        if (entry.endpoint.channelType !== channelType) continue;
+        if (!best || entry.lastActiveMs >= best.lastActiveMs) best = entry;
+      }
+      return best?.endpoint;
     },
 
     getMostRecent(agentId) {
       const agentMap = tracker.get(agentId);
       if (!agentMap || agentMap.size === 0) return undefined;
 
-      let best: { channelType: string; channelId: string; lastActiveMs: number } | undefined;
-      for (const [channelType, entry] of agentMap) {
-        if (!best || entry.lastActiveMs > best.lastActiveMs) {
-          best = { channelType, channelId: entry.channelId, lastActiveMs: entry.lastActiveMs };
-        }
+      let best: { endpoint: ChannelEndpoint; lastActiveMs: number } | undefined;
+      for (const entry of agentMap.values()) {
+        if (!best || entry.lastActiveMs >= best.lastActiveMs) best = entry;
       }
-      return best ? { channelType: best.channelType, channelId: best.channelId } : undefined;
+      return best?.endpoint;
+    },
+
+    findEndpoint(agentId, channelType, conversationId) {
+      const agentMap = tracker.get(agentId);
+      if (!agentMap) return undefined;
+      let best: { endpoint: ChannelEndpoint; lastActiveMs: number } | undefined;
+      for (const entry of agentMap.values()) {
+        if (
+          entry.endpoint.channelType !== channelType
+          || entry.endpoint.conversationId !== conversationId
+        ) continue;
+        if (!best || entry.lastActiveMs >= best.lastActiveMs) best = entry;
+      }
+      return best?.endpoint;
     },
   };
 }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { runWithContext } from "@comis/core";
 import type { RpcContext, RpcMethodMap, RpcMethodName } from "./method-router.js";
 import { createDynamicMethodRouter } from "./method-router.js";
@@ -151,6 +151,30 @@ describe("createDynamicMethodRouter", () => {
     expect(response!.error!.message).toContain("Insufficient scope");
   });
 
+  it("accepts any declared route scope while rejecting unrelated credentials", async () => {
+    const router = createDynamicMethodRouter();
+    const handler = vi.fn(() => ({ ok: true }));
+    router.registerMethod("subagent.list", ["rpc", "admin"], handler);
+
+    const rpcResponse = await router.server.receive(
+      { jsonrpc: "2.0", method: "subagent.list", params: {}, id: 21 },
+      RPC_CTX,
+    );
+    const adminResponse = await router.server.receive(
+      { jsonrpc: "2.0", method: "subagent.list", params: {}, id: 22 },
+      ADMIN_CTX,
+    );
+    const deniedResponse = await router.server.receive(
+      { jsonrpc: "2.0", method: "subagent.list", params: {}, id: 23 },
+      { clientId: "ws-only", scopes: ["ws"] },
+    );
+
+    expect(rpcResponse?.result).toEqual({ ok: true });
+    expect(adminResponse?.result).toEqual({ ok: true });
+    expect(deniedResponse?.error?.message).toContain("Insufficient scope");
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
   it("hasMethod returns true for registered, false for unregistered", () => {
     const router = createDynamicMethodRouter();
 
@@ -212,8 +236,9 @@ describe("createDynamicMethodRouter trace logging", () => {
     expect(calls.error.length).toBe(1);
   });
 
-  it("returns a stable public error and trace ID for an unclassified internal exception", async () => {
-    const { logger } = makeLogger();
+  it("returns a stable public error and keeps the private exception out of gateway logs", async () => {
+    const { logger, calls } = makeLogger();
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const router = createDynamicMethodRouter(undefined, logger);
     const privateMessage = "Failed to read /Users/operator/.comis/secrets.db";
     router.registerMethod("cron.privatefailure", "rpc", () => {
@@ -239,6 +264,13 @@ describe("createDynamicMethodRouter trace logging", () => {
     expect(response!.error!.message).toBe("Internal server error");
     expect(response!.error!.message).not.toContain(privateMessage);
     expect(response!.error!.data).toEqual({ traceId });
+    expect(JSON.stringify(calls.error)).not.toContain(privateMessage);
+    expect(calls.error[0]![0]).toEqual(expect.objectContaining({
+      errorName: "UnhandledError",
+      parameterCount: 0,
+    }));
+    expect(consoleWarn).not.toHaveBeenCalled();
+    consoleWarn.mockRestore();
   });
 
   it("classifies immutable-config errors as config errorKind and emits warn-level log entry", async () => {
@@ -268,11 +300,11 @@ describe("createDynamicMethodRouter trace logging", () => {
   });
 
   it("logs an admin-trust denial on a read-only obs method at DEBUG, not WARN (the CLI probe-then-offline-fallback flow)", async () => {
-    // `comis explain` / `comis fleet` hit the admin-gated obs.explain /
-    // obs.fleet.health RPC, then fall back to offline assembly from the local
+    // `comis explain` / `comis system-health` hit the admin-gated obs.explain /
+    // obs.system.health RPC, then fall back to offline assembly from the local
     // data dir. The daemon-side denial is a ROUTINE operator flow — logging it
     // WARN spams the very log the operator is reviewing (live incident).
-    for (const method of ["obs.explain", "obs.fleet.health"]) {
+    for (const method of ["obs.explain", "obs.system.health"]) {
       const { logger, calls } = makeLogger();
       const router = createDynamicMethodRouter(undefined, logger);
       router.registerMethod(method, "rpc", () => {
@@ -303,7 +335,7 @@ describe("createDynamicMethodRouter trace logging", () => {
     expect((calls.warn[0]![0] as { errorKind: string }).errorKind).toBe("auth");
   });
 
-  it("logs a typed refusal (AuthorizationError) message-only — no stack rides the warn (expected flow, not a fault)", async () => {
+  it("logs a typed refusal by class without its message or stack", async () => {
     const { logger, calls } = makeLogger();
     const router = createDynamicMethodRouter(undefined, logger);
     router.registerMethod("cron.denied", "rpc", () => {
@@ -316,10 +348,11 @@ describe("createDynamicMethodRouter trace logging", () => {
       RPC_CTX,
     );
     expect(calls.warn.length).toBe(1);
-    const logged = calls.warn[0]![0] as { err: unknown; errorKind: string };
+    const logged = calls.warn[0]![0] as Record<string, unknown>;
     expect(logged.errorKind).toBe("auth");
-    expect(typeof logged.err, "expected refusals log the message, not the Error object (whose serializer emits the stack)").toBe("string");
-    expect(String(logged.err)).not.toMatch(/\n\s+at /);
+    expect(logged.errorName).toBe("AuthorizationError");
+    expect(logged).not.toHaveProperty("err");
+    expect(JSON.stringify(logged)).not.toContain("Admin access required");
   });
 
   it("classifies not-found errors as validation errorKind and emits warn-level log entry", async () => {
@@ -399,7 +432,7 @@ describe("createDynamicMethodRouter trace logging", () => {
     expect((calls.warn[0]![0] as { errorKind: string }).errorKind).toBe("precondition");
   });
 
-  it("truncates the error excerpt at 120 characters with ellipsis when message exceeds limit", async () => {
+  it("does not include a long handler error message in the log hint", async () => {
     const { logger, calls } = makeLogger();
     const router = createDynamicMethodRouter(undefined, logger);
     const longMessage = "x".repeat(200);
@@ -409,9 +442,9 @@ describe("createDynamicMethodRouter trace logging", () => {
       RPC_CTX,
     );
     expect(calls.error.length).toBe(1);
-    const hint = (calls.error[0]![0] as { hint: string }).hint;
-    expect(hint).toContain("...");
-    expect(hint.length).toBeLessThan(180);
+    const payload = calls.error[0]![0] as { hint: string };
+    expect(payload.hint.length).toBeLessThan(180);
+    expect(JSON.stringify(payload)).not.toContain(longMessage);
   });
 
   it("skips trace wrapper for SUPPRESS_LOG_METHODS to avoid noise on polling endpoints", async () => {

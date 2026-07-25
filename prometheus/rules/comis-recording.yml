@@ -17,8 +17,8 @@ groups:
   - name: comis_recording
     interval: 30s
     rules:
-      # Fleet degraded-rate: degraded sessions as a fraction of all sessions.
-      # Consumed by the Fleet Health dashboard + the degraded-rate-spike alert.
+      # System degraded-rate: degraded sessions as a fraction of all sessions.
+      # Consumed by the System Health dashboard + the degraded-rate-spike alert.
       - record: comis:sessions_degraded:ratio5m
         expr: |
           sum(rate(comis_sessions_degraded_total[5m]))
@@ -29,7 +29,7 @@ groups:
       - record: comis:cache_break:rate5m_by_reason
         expr: sum by (reason) (rate(comis_cache_break_total[5m]))
 
-      # Spend velocity: corrected USD per hour across the fleet.
+      # Spend velocity: corrected USD per hour across the system.
       - record: comis:cost_usd:rate1h
         expr: sum(rate(comis_cost_usd_total[1h]))
 

@@ -2,9 +2,9 @@
 /**
  * Context DAG browser view.
  *
- * Displays a list of DAG conversations, an expandable summary tree
- * for a selected conversation, FTS5 search within conversations,
- * and node inspection via a detail panel.
+ * Displays a list of DAG conversations and an expandable summary tree.
+ * Preview search and inspection are local because the control plane exposes
+ * structural previews, not raw node-content recovery.
  *
  * Operator can navigate DAG conversations as a tree, search across
  * content, and inspect nodes.
@@ -29,7 +29,7 @@ import "../components/layout/ic-detail-panel.js";
 
 type LoadState = "loading" | "loaded" | "error";
 
-/** Search result item from context.searchByConversation RPC. */
+/** Search result projected from the loaded structural previews. */
 interface SearchResult {
   readonly id: string;
   readonly type: "message" | "summary";
@@ -37,7 +37,7 @@ interface SearchResult {
   readonly rank?: number;
 }
 
-/** Inspected node detail from context.inspect RPC. */
+/** Inspected node detail projected from a loaded structural preview. */
 interface InspectedNode {
   readonly type: string;
   readonly summaryId?: string;
@@ -410,7 +410,7 @@ export class IcContextDagBrowser extends LitElement {
     if (!this.rpcClient) return;
     this._treeLoading = true;
     try {
-      const res = await this.rpcClient.call("context.tree", { conversation_id: convId }) as { conversationId: string; nodes: DagTreeNode[]; messageCount: number };
+      const res = await this.rpcClient.call("context.tree", { conversation_ref: convId }) as { conversationRef: string; nodes: DagTreeNode[]; messageCount: number };
       this._treeNodes = res.nodes;
       this._treeMessageCount = res.messageCount;
     } catch (e) {
@@ -430,15 +430,20 @@ export class IcContextDagBrowser extends LitElement {
     this._expanded = next;
   }
 
-  private async _inspectNode(summaryId: string): Promise<void> {
-    if (!this.rpcClient) return;
-    try {
-      const res = await this.rpcClient.call("context.inspect", { id: summaryId }) as InspectedNode;
-      this._inspectedNode = res;
-      this._detailOpen = true;
-    } catch (e) {
-      this._errorMsg = (e as Error).message;
-    }
+  private _inspectNode(summaryId: string): void {
+    const node = this._treeNodes.find((candidate) => candidate.summaryId === summaryId);
+    if (!node) return;
+    this._inspectedNode = {
+      type: "summary",
+      summaryId: node.summaryId,
+      content: node.contentPreview,
+      depth: node.depth,
+      kind: node.kind,
+      tokenCount: node.tokenCount,
+      parentIds: node.parentIds,
+      childIds: node.childIds,
+    };
+    this._detailOpen = true;
   }
 
   private _handleSearch(e: CustomEvent<string>): void {
@@ -455,17 +460,18 @@ export class IcContextDagBrowser extends LitElement {
   }
 
   private async _executeSearch(query: string): Promise<void> {
-    if (!this.rpcClient || !this._selectedConvId) return;
+    if (!this._selectedConvId) return;
     this._searchLoading = true;
     try {
-      const res = await this.rpcClient.call("context.searchByConversation", {
-        conversation_id: this._selectedConvId,
-        query,
-        limit: 50,
-      }) as { results: SearchResult[] };
-      this._searchResults = res.results;
-    } catch (e) {
-      this._errorMsg = (e as Error).message;
+      const normalized = query.toLocaleLowerCase();
+      this._searchResults = this._treeNodes
+        .filter((node) => node.contentPreview.toLocaleLowerCase().includes(normalized))
+        .slice(0, 50)
+        .map((node) => ({
+          id: node.summaryId,
+          type: "summary" as const,
+          content: node.contentPreview,
+        }));
     } finally {
       this._searchLoading = false;
     }
@@ -497,8 +503,8 @@ export class IcContextDagBrowser extends LitElement {
       <div class="conv-panel-title">Conversations</div>
       ${this._conversations.map((conv) => html`
         <button
-          class="conv-card ${this._selectedConvId === conv.conversation_id ? "selected" : ""}"
-          @click=${() => this._selectConversation(conv.conversation_id)}
+          class="conv-card ${this._selectedConvId === conv.conversation_ref ? "selected" : ""}"
+          @click=${() => this._selectConversation(conv.conversation_ref)}
         >
           <div class="conv-agent">${conv.agent_id}</div>
           <div class="conv-session">${conv.session_key.length > 40 ? conv.session_key.slice(0, 40) + "..." : conv.session_key}</div>

@@ -15,11 +15,11 @@ describe("CronConfigSchema — wakeGate operator toggle", () => {
     // exactly as it was before the field existed.
     expect(cron).toEqual({
       enabled: true,
-      storeDir: "./data/scheduler",
-      maxConcurrentRuns: 3,
-      defaultTimezone: "",
+      maxRunsPerTick: 3,
+      defaultTimezone: "UTC",
       maxJobs: 100,
-      maxConsecutiveErrors: 5,
+      maxConsecutiveDependencyErrors: 5,
+      staggerWindowMs: 0,
     });
   });
 
@@ -33,6 +33,83 @@ describe("CronConfigSchema — wakeGate operator toggle", () => {
 
   it("rejects a non-boolean toggle (boolean-only; the strict typo guard still holds)", () => {
     expect(() => SchedulerConfigSchema.parse({ cron: { wakeGate: "yes" } })).toThrow();
+  });
+
+  it("uses a safe nonnegative deterministic cron stagger window", () => {
+    expect(SchedulerConfigSchema.parse({ cron: { staggerWindowMs: 30_000 } }).cron.staggerWindowMs).toBe(30_000);
+    expect(() => SchedulerConfigSchema.parse({ cron: { staggerWindowMs: -1 } })).toThrow();
+    expect(() => SchedulerConfigSchema.parse({ cron: { staggerWindowMs: Number.MAX_SAFE_INTEGER + 1 } })).toThrow();
+    expect(PerAgentCronConfigSchema.parse({ staggerWindowMs: 45_000 }).staggerWindowMs).toBe(45_000);
+  });
+});
+
+describe("scheduler task inference opt-in", () => {
+  it("keeps task extraction disabled until an operator explicitly enables it", () => {
+    expect(SchedulerConfigSchema.parse({}).tasks.enabled).toBe(false);
+    expect(SchedulerConfigSchema.parse({ tasks: { enabled: true } }).tasks.enabled).toBe(true);
+  });
+
+  it("materializes the complete bounded task runtime configuration without a path override", () => {
+    expect(SchedulerConfigSchema.parse({}).tasks).toEqual({
+      enabled: false,
+      confidenceThreshold: 0.8,
+      debounceMs: 15_000,
+      batchMax: 8,
+      maxPerCheck: 3,
+      maxPerDayPerConversation: 3,
+      defaultWindowMs: 43_200_000,
+      preAcceptanceRetryLimit: 3,
+    });
+    expect(SchedulerConfigSchema.safeParse({ tasks: { storeDir: "./elsewhere" } }).success).toBe(false);
+  });
+});
+
+describe("truthful scheduler configuration", () => {
+  it("rejects removed scheduler leaves instead of silently accepting unused behavior", () => {
+    for (const value of [
+      { cron: { storeDir: "./data" } },
+      { cron: { maxConcurrentRuns: 3 } },
+      { cron: { maxConsecutiveErrors: 5 } },
+      { execution: { lockDir: "./locks" } },
+      { execution: { staleMs: 1_000 } },
+      { execution: { updateMs: 1_000 } },
+      { execution: { logDir: "./logs" } },
+      { execution: { keepLines: 2_000 } },
+    ]) {
+      expect(SchedulerConfigSchema.safeParse(value).success).toBe(false);
+    }
+  });
+
+  it("uses bounded counters whose names match their production behavior", () => {
+    const parsed = SchedulerConfigSchema.parse({});
+    expect(parsed.cron.maxRunsPerTick).toBe(3);
+    expect(parsed.cron.maxJobs).toBe(100);
+    expect(parsed.cron.maxConsecutiveDependencyErrors).toBe(5);
+    expect(parsed.execution).toEqual({ maxLogBytes: 2_000_000, retainedExecutions: 1_000 });
+    expect(SchedulerConfigSchema.safeParse({ cron: { maxJobs: 0 } }).success).toBe(false);
+    expect(SchedulerConfigSchema.safeParse({ cron: { maxJobs: 10_001 } }).success).toBe(false);
+    expect(SchedulerConfigSchema.safeParse({ execution: { retainedExecutions: 0 } }).success).toBe(false);
+  });
+
+  it("normalizes omitted quiet-hours timezone to UTC and rejects malformed time policy", () => {
+    expect(SchedulerConfigSchema.parse({}).quietHours.timezone).toBe("UTC");
+    expect(SchedulerConfigSchema.parse({ quietHours: { timezone: "" } }).quietHours.timezone).toBe("UTC");
+    expect(SchedulerConfigSchema.safeParse({ quietHours: { start: "24:00" } }).success).toBe(false);
+    expect(SchedulerConfigSchema.safeParse({ quietHours: { end: "7:00" } }).success).toBe(false);
+    expect(SchedulerConfigSchema.safeParse({ quietHours: { timezone: "Mars/Olympus" } }).success).toBe(false);
+    expect(SchedulerConfigSchema.safeParse({ cron: { defaultTimezone: "Mars/Olympus" } }).success).toBe(false);
+  });
+
+  it("keeps global and per-agent cron names aligned", () => {
+    const perAgent = PerAgentCronConfigSchema.parse({});
+    expect(perAgent).toMatchObject({
+      maxRunsPerTick: 3,
+      defaultTimezone: "UTC",
+      maxJobs: 100,
+      maxConsecutiveDependencyErrors: 5,
+    });
+    expect(PerAgentCronConfigSchema.safeParse({ maxConcurrentRuns: 3 }).success).toBe(false);
+    expect(PerAgentCronConfigSchema.safeParse({ maxConsecutiveErrors: 5 }).success).toBe(false);
   });
 });
 

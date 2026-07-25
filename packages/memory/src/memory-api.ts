@@ -12,10 +12,11 @@
  * inspection, search, and management operations.
  */
 
-import type { MemoryEntry, MemorySearchResult, MemoryConfig, SessionKey, SessionStorePort } from "@comis/core";
+import type { MemoryEntry, MemorySearchResult, MemoryConfig, MemoryRecallScope, MemoryWriteScope, SessionKey, SessionStorePort } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { fromPromise } from "@comis/shared";
 import type Database from "better-sqlite3";
+import { z } from "zod";
 import type { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
 import { rowToEntry, buildFilterClause, countRows, groupCountRows, createRowMapper } from "./row-mapper.js";
 import { MemoryRowSchema, IdProjectionRowSchema } from "./row-schemas.js";
@@ -24,6 +25,15 @@ import { systemNowMs } from "@comis/core";
 // Row mappers
 const memoryRowMapper = createRowMapper(MemoryRowSchema);
 const idProjectionMapper = createRowMapper(IdProjectionRowSchema);
+const oldestTimestampMapper = createRowMapper(
+  z.strictObject({ oldest: z.number().nullable() }),
+);
+const pageCountMapper = createRowMapper(
+  z.strictObject({ page_count: z.number().int().nonnegative() }),
+);
+const pageSizeMapper = createRowMapper(
+  z.strictObject({ page_size: z.number().int().nonnegative() }),
+);
 
 // ── Filter & Scope Types ─────────────────────────────────────────────
 
@@ -54,7 +64,7 @@ export interface ClearScope {
   memoryType?: "working" | "episodic" | "semantic" | "procedural";
   trustLevel?: "external"; // Only external allowed for bulk clear
   olderThan?: number;
-  tenantId?: string;
+  tenantId: string;
   agentId?: string;
 }
 
@@ -91,24 +101,27 @@ export interface MemoryApi {
   /** Search memory using hybrid search (delegates to adapter). */
   search(
     query: string,
-    options?: { limit?: number; tenantId?: string; agentId?: string },
+    options: { limit?: number; scope: MemoryRecallScope },
   ): Promise<MemorySearchResult[]>;
+
+  /** Replace a memory under a new operator-authorized visibility and identity. */
+  changeVisibility(id: string, scope: MemoryWriteScope): Promise<Result<MemoryEntry | undefined, Error>>;
 
   /** Clear memory entries within a scoped range. Throws on empty scope. */
   clear(scope: ClearScope): number;
 
   /** Get aggregate statistics about the memory system. */
-  stats(tenantId?: string, agentId?: string): MemoryStats;
+  stats(tenantId: string, agentId: string): MemoryStats;
 
   /** Pin a memory entry (always-inject in recall). Idempotent.
    *  Returns ok(true) if row found, ok(false) if not found (not an error).
    *  tenantId + agentId scope the update — cross-scope IDs are a no-op (fail-closed). */
-  pin(id: string, tenantId?: string, agentId?: string): Promise<Result<boolean, Error>>;
+  pin(id: string, tenantId: string, agentId: string): Promise<Result<boolean, Error>>;
 
   /** Unpin a memory entry. Idempotent.
    *  Returns ok(true) if row found, ok(false) if not found.
    *  tenantId + agentId scope the update — cross-scope IDs are a no-op (fail-closed). */
-  unpin(id: string, tenantId?: string, agentId?: string): Promise<Result<boolean, Error>>;
+  unpin(id: string, tenantId: string, agentId: string): Promise<Result<boolean, Error>>;
 }
 
 // ── Factory ──────────────────────────────────────────────────────────
@@ -212,19 +225,10 @@ export function createMemoryApi(
 
     async search(
       query: string,
-      options?: { limit?: number; tenantId?: string; agentId?: string },
+      options: { limit?: number; scope: MemoryRecallScope },
     ): Promise<MemorySearchResult[]> {
-      const tenantId = options?.tenantId ?? "default";
-      const limit = options?.limit ?? 10;
-      const agentId = options?.agentId;
-
-      const sessionKey: SessionKey = {
-        tenantId,
-        userId: "api",
-        channelId: "api",
-      };
-
-      const result = await adapter.search(sessionKey, query, { limit, agentId });
+      const limit = options.limit ?? 10;
+      const result = await adapter.search(options.scope, query, { limit });
 
       if (!result.ok) {
         return [];
@@ -233,9 +237,19 @@ export function createMemoryApi(
       return result.value;
     },
 
+    async changeVisibility(
+      id: string,
+      scope: MemoryWriteScope,
+    ): Promise<Result<MemoryEntry | undefined, Error>> {
+      return adapter.changeVisibility(id, scope);
+    },
+
     // ── clear ───────────────────────────────────────────────────
 
     clear(scope: ClearScope): number {
+      if (!scope.tenantId) {
+        throw new Error("MemoryApi.clear requires an explicit tenantId");
+      }
       // Safety: require at least one scope field to prevent accidental blanket wipe
       const hasScope =
         scope.sessionKey !== undefined ||
@@ -327,7 +341,10 @@ export function createMemoryApi(
 
     // ── stats ───────────────────────────────────────────────────
 
-    stats(tenantId?: string, agentId?: string): MemoryStats {
+    stats(tenantId: string, agentId: string): MemoryStats {
+      if (!tenantId || !agentId) {
+        throw new Error("MemoryApi.stats requires an explicit tenantId and agentId");
+      }
       const { clause: filterClause, params: filterParams } = buildFilterClause({
         tenantId,
         agentId,
@@ -339,16 +356,21 @@ export function createMemoryApi(
       const byTrustLevel = groupCountRows(db, "memories", "trust_level", filterClause, filterParams);
       const byAgent = groupCountRows(db, "memories", "agent_id", filterClause, filterParams);
 
-      // Sessions are not agent-scoped, only tenant-scoped
-      const tenantOnlyClause = tenantId !== undefined ? "WHERE tenant_id = ?" : "";
-      const tenantOnlyParams: unknown[] = tenantId !== undefined ? [tenantId] : [];
-      const totalSessions = countRows(db, "sessions", tenantOnlyClause, tenantOnlyParams);
+      const totalSessions = countRows(
+        db,
+        "sessions",
+        "WHERE tenant_id = ? AND agent_id = ?",
+        [tenantId, agentId],
+      );
 
       // Oldest entry timestamp
       const oldestClause = hasFilters
         ? `SELECT MIN(created_at) as oldest FROM memories ${filterClause}`
         : "SELECT MIN(created_at) as oldest FROM memories";
-      const oldestRow = db.prepare(oldestClause).get(...(hasFilters ? filterParams : [])) as { oldest: number | null };
+      const oldestParsed = oldestTimestampMapper.parseOptionalRow(
+        db.prepare(oldestClause).get(...(hasFilters ? filterParams : [])),
+      );
+      const oldestCreatedAt = oldestParsed.ok ? (oldestParsed.value?.oldest ?? null) : null;
 
       // Embedded entries
       const embeddedClause = hasFilters
@@ -357,8 +379,14 @@ export function createMemoryApi(
       const embeddedEntries = countRows(db, "memories", embeddedClause, filterParams);
 
       // Database size (page_count * page_size)
-      const pageCount = db.prepare("PRAGMA page_count").get() as { page_count: number };
-      const pageSize = db.prepare("PRAGMA page_size").get() as { page_size: number };
+      const pageCountParsed = pageCountMapper.parseOptionalRow(
+        db.prepare("PRAGMA page_count").get(),
+      );
+      const pageSizeParsed = pageSizeMapper.parseOptionalRow(
+        db.prepare("PRAGMA page_size").get(),
+      );
+      const pageCount = pageCountParsed.ok ? (pageCountParsed.value?.page_count ?? 0) : 0;
+      const pageSize = pageSizeParsed.ok ? (pageSizeParsed.value?.page_size ?? 0) : 0;
 
       return {
         totalEntries: total,
@@ -367,47 +395,31 @@ export function createMemoryApi(
         byAgent,
         totalSessions,
         embeddedEntries,
-        dbSizeBytes: pageCount.page_count * pageSize.page_size,
-        oldestCreatedAt: oldestRow.oldest,
+        dbSizeBytes: pageCount * pageSize,
+        oldestCreatedAt,
       };
     },
 
     // ── pin ─────────────────────────────────────────────────────
 
-    async pin(id: string, tenantId?: string, agentId?: string): Promise<Result<boolean, Error>> {
+    async pin(id: string, tenantId: string, agentId: string): Promise<Result<boolean, Error>> {
       return fromPromise((async () => {
-        const sql =
-          tenantId !== undefined && agentId !== undefined
-            ? "UPDATE memories SET pinned = 1 WHERE id = ? AND tenant_id = ? AND agent_id = ?"
-            : tenantId !== undefined
-            ? "UPDATE memories SET pinned = 1 WHERE id = ? AND tenant_id = ?"
-            : "UPDATE memories SET pinned = 1 WHERE id = ?";
-        const info =
-          tenantId !== undefined && agentId !== undefined
-            ? db.prepare(sql).run(id, tenantId, agentId)
-            : tenantId !== undefined
-            ? db.prepare(sql).run(id, tenantId)
-            : db.prepare(sql).run(id);
+        if (!tenantId || !agentId) throw new Error("MemoryApi.pin requires explicit tenant and agent authority");
+        const info = db
+          .prepare("UPDATE memories SET pinned = 1 WHERE id = ? AND tenant_id = ? AND agent_id = ?")
+          .run(id, tenantId, agentId);
         return info.changes > 0;
       })());
     },
 
     // ── unpin ────────────────────────────────────────────────────
 
-    async unpin(id: string, tenantId?: string, agentId?: string): Promise<Result<boolean, Error>> {
+    async unpin(id: string, tenantId: string, agentId: string): Promise<Result<boolean, Error>> {
       return fromPromise((async () => {
-        const sql =
-          tenantId !== undefined && agentId !== undefined
-            ? "UPDATE memories SET pinned = 0 WHERE id = ? AND tenant_id = ? AND agent_id = ?"
-            : tenantId !== undefined
-            ? "UPDATE memories SET pinned = 0 WHERE id = ? AND tenant_id = ?"
-            : "UPDATE memories SET pinned = 0 WHERE id = ?";
-        const info =
-          tenantId !== undefined && agentId !== undefined
-            ? db.prepare(sql).run(id, tenantId, agentId)
-            : tenantId !== undefined
-            ? db.prepare(sql).run(id, tenantId)
-            : db.prepare(sql).run(id);
+        if (!tenantId || !agentId) throw new Error("MemoryApi.unpin requires explicit tenant and agent authority");
+        const info = db
+          .prepare("UPDATE memories SET pinned = 0 WHERE id = ? AND tenant_id = ? AND agent_id = ?")
+          .run(id, tenantId, agentId);
         return info.changes > 0;
       })());
     },

@@ -230,19 +230,19 @@ function redactVoiceLogMessage(message: string): string {
 
 /**
  * Emit a CONTENT-FREE `voice_degraded` health_signal
- * diagnostic row on a voice failure, so the cross-session `comis fleet`
- * `voice_health` finding (fleet-findings.ts `voiceDegradedFromRow`/`buildFindings`)
- * has a source. The fleet assembler reads `obs_diagnostics` (`health_signal` /
+ * diagnostic row on a voice failure, so the cross-session `comis system-health`
+ * `voice_health` finding (system-findings.ts `voiceDegradedFromRow`/`buildFindings`)
+ * has a source. The system assembler reads `obs_diagnostics` (`health_signal` /
  * `model_health` / `config_posture`) — voice failures emit NO row otherwise (the
  * per-session trajectory record is daemon-context-only; the executor session_summary
- * rollup that feeds the fleet carries only the closed LOG ErrorKinds, which conflate
+ * rollup that feeds the system carries only the closed LOG ErrorKinds, which conflate
  * voice with non-voice). This is the ONLY voice emit site into the store, and it
  * lives in THIS obs-layer module (not media-handlers.ts), reading the obsStore
  * already on MediaApiDeps — so no new dependency is introduced.
  *
  * Details carry the signal label + the closed domain `SttErrorKind` + the voice
  * family ONLY — NEVER the raw provider message, a URL, or a secret (no message
- * bodies; the fleet finding is safe to paste). Best-effort: an absent store no-ops
+ * bodies; the system finding is safe to paste). Best-effort: an absent store no-ops
  * and a throwing store is swallowed (observability is non-fatal — the log lines +
  * the trajectory record are the primary obligations; the store DEGRADES SILENTLY).
  */
@@ -289,7 +289,7 @@ export function wireVoiceObs(args: {
   trajectoryRegistry: SessionTrajectoryHandleRegistry | undefined;
   logger: ComisLogger;
   /** The observability store. When present, `failed()` ALSO inserts a
-   *  content-free `voice_degraded` health_signal row for the `comis fleet`
+   *  content-free `voice_degraded` health_signal row for the `comis system-health`
    *  voice_health finding. Optional — absent off-turn / on a boot mode without it
    *  (the row insert then no-ops; the log line + the trajectory record still fire). */
   obsStore?: ObservabilityStore;
@@ -328,7 +328,7 @@ export function wireVoiceObs(args: {
     },
     failed(a) {
       obs.failed({ errorKind: a.sttErrorKind, provider: a.provider, source: a.source });
-      // Feed the cross-session fleet voice_health finding (content-free,
+      // Feed the cross-session system voice_health finding (content-free,
       // best-effort — never breaks the handler).
       emitVoiceDegradedSignal(obsStore, { kind, errorKind: a.sttErrorKind, agentId });
       logger.warn(

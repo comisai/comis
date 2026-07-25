@@ -69,7 +69,7 @@ vi.mock("../shared/ir-renderer.js", () => ({
 // Imports (after mocks)
 // ---------------------------------------------------------------------------
 
-import { tryGetContext } from "@comis/core";
+import { runWithContext, tryGetContext } from "@comis/core";
 import type { NormalizedMessage } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { simpleParser } from "mailparser";
@@ -185,6 +185,65 @@ describe("email-adapter -- IMAP dispatch runWithContext wrap + Inbound message I
     expect(ctxTraceId).toBeDefined();
     expect(ctxTraceId).toBe(stampedTraceId);
     expect(ctxChannelType).toBe("email");
+  });
+
+  it("reuses the exact IMAP ingress context through normalized dispatch", async () => {
+    const ingressContext = {
+      traceId: "550e8400-e29b-41d4-a716-446655440301",
+      startedAt: 1_700_000_000_000,
+      channelType: "email",
+      tenantId: "default",
+      trustLevel: "user",
+    } as const;
+    let observedContext: ReturnType<typeof tryGetContext>;
+    let stampedTraceId: unknown;
+    const normalized = makeNormalized();
+    vi.mocked(mapEmailToNormalized).mockResolvedValue(normalized);
+    vi.mocked(simpleParser).mockResolvedValue(makeParsedEmail() as any);
+
+    const adapter = createEmailAdapter(makeDeps());
+    adapter.onMessage(async (message) => {
+      observedContext = tryGetContext();
+      stampedTraceId = message.metadata.traceId;
+    });
+    await adapter.start();
+
+    await runWithContext(
+      ingressContext,
+      () => capturedImapHandler!(Buffer.from("raw email source"), 1, {}),
+    );
+
+    expect(observedContext).toBe(ingressContext);
+    expect(observedContext?.startedAt).toBe(ingressContext.startedAt);
+    expect(stampedTraceId).toBe(ingressContext.traceId);
+  });
+
+  it("drops normalized email dispatched from a conflicting channel context", async () => {
+    const handler = vi.fn();
+    const logger = createMockLogger();
+    vi.mocked(mapEmailToNormalized).mockResolvedValue(makeNormalized());
+    vi.mocked(simpleParser).mockResolvedValue(makeParsedEmail() as any);
+    const adapter = createEmailAdapter(makeDeps({ logger }));
+    adapter.onMessage(handler);
+    await adapter.start();
+
+    await runWithContext({
+      traceId: "550e8400-e29b-41d4-a716-446655440302",
+      startedAt: 1_700_000_000_000,
+      channelType: "telegram",
+      tenantId: "default",
+      trustLevel: "user",
+    }, () => capturedImapHandler!(Buffer.from("raw email source"), 1, {}));
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelType: "email",
+        actualChannelType: "telegram",
+        errorKind: "precondition",
+      }),
+      "Email ingress context does not match the normalized message",
+    );
   });
 
   it("emits Inbound message INFO log with channelType, messageId, and traceId fields", async () => {

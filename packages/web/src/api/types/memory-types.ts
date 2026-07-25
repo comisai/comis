@@ -68,7 +68,7 @@ export interface ContextDagNode {
 
 /** DAG conversation entry from context.conversations RPC */
 export interface DagConversation {
-  readonly conversation_id: string;
+  readonly conversation_ref: string;
   readonly tenant_id: string;
   readonly agent_id: string;
   readonly session_key: string;

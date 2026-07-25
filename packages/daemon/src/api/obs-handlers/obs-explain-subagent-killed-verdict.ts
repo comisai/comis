@@ -22,7 +22,7 @@
  * chokepoint). Fires ONLY on `killedBy: "health_monitor"` — a parent /
  * operator / system kill is DELIBERATE orchestration, and surfacing it as a
  * scary root cause would cry wolf (the BENIGN_DAG_DEGRADED_REASONS
- * discipline). It keys only on `subagentKilled` (absent on the frozen 678/503
+ * discipline). It keys only on `subagentKilled` (absent on the established cost and breaker
  * fixtures), so it cannot regress them. The return type is structurally
  * identical to the registry's `RootCause` (no cross-module type import ⇒ no
  * cycle).

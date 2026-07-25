@@ -27,15 +27,19 @@ import {
   type ChannelManagerDeps,
   createCommandQueue,
   coalesceMessages,
+  createDeterministicLocalization,
 } from "@comis/orchestrator";
 import {
   QueueConfigSchema,
+  DmScopeConfigSchema,
   createDeliveryService,
   createNoOpDeliveryQueue,
   createHookRunner,
   createPluginRegistry,
 } from "@comis/core";
 import type { NormalizedMessage, ChannelPort, ComisLogger } from "@comis/core";
+import { ok } from "@comis/shared";
+import { createFakePrincipalResolver } from "../support/fake-principal-resolver.js";
 import { ASYNC_SETTLE_MS } from "../support/timeouts.js";
 
 /**
@@ -62,6 +66,10 @@ function makeRealDeliveryService(eventBus: any) {
     deliveryQueue: createNoOpDeliveryQueue(),
     logger,
     eventBus,
+    clock: {
+      now: () => Date.now(),
+      nowDate: () => new Date(),
+    },
   });
 }
 
@@ -132,14 +140,28 @@ function makeMinimalDeps(
 
   const eventBus = makeEventBus();
   return {
+    // Turn identity now flows through resolveInboundTurnIdentity, which needs
+    // the configured tenant authority, a principal resolver, and the per-agent
+    // DM-scope lookup — mirroring production wiring in
+    // setup-channels-runtime.ts (getDmScope parses DmScopeConfigSchema).
+    tenantId: "default",
+    principalResolver: createFakePrincipalResolver(),
+    getDmScope: () => DmScopeConfigSchema.parse({}),
+    clock: {
+      now: () => Date.now(),
+      nowDate: () => new Date(),
+    },
+    localization: createDeterministicLocalization(),
     eventBus,
     messageRouter: { resolve: vi.fn(() => "default"), updateConfig: vi.fn() },
+    // SessionLifecycle methods return Result now; loadOrCreate is .ok-checked
+    // by resolve-and-preprocess before the executor runs.
     sessionManager: {
-      loadOrCreate: vi.fn(() => []),
-      save: vi.fn(),
-      isExpired: vi.fn(() => false),
-      expire: vi.fn(() => true),
-      cleanStale: vi.fn(() => 0),
+      loadOrCreate: vi.fn(() => ok([])),
+      save: vi.fn(() => ok(undefined)),
+      isExpired: vi.fn(() => ok(false)),
+      expire: vi.fn(() => ok(true)),
+      cleanStale: vi.fn(() => ok(0)),
     },
     createExecutor: vi.fn(() => executor),
     adapters,
@@ -157,6 +179,10 @@ function makeMinimalDeps(
     // processInboundMessage is dep-injected to avoid back-edges between
     // packages. Integration test wires the real implementation.
     processInboundMessage: processInboundMessage as unknown as ChannelManagerDeps["processInboundMessage"],
+    // Durable physical-inbound boundary. The real pipeline commits every
+    // inbound before routing; the test wires an in-memory success so the
+    // executor path (the actual subject of these ordering tests) is reached.
+    persistInboundMessage: async () => ok({ payloads: [], ledgerContent: "" }),
   };
 }
 

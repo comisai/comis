@@ -57,7 +57,11 @@ import {
 } from "./injection-patterns.js";
 // Re-exported so the containment guard can compare the activity shape list
 // against the log sanitizer's credential list from a single import site.
-import { CREDENTIAL_LOG_PATTERNS } from "./patterns/credential-log.js";
+import {
+  AUTH_SCHEME_TOKEN_LOG,
+  CREDENTIAL_LOG_PATTERNS,
+} from "./patterns/credential-log.js";
+import { DB_CONNECTION_STRING } from "./patterns/secret-formats.js";
 
 export { CREDENTIAL_LOG_PATTERNS };
 
@@ -193,8 +197,10 @@ export const SECRET_SHAPE_PATTERNS: readonly RegExp[] = [
   // `.replace(pat, "<redacted>")` (applyShape) masks the WHOLE match span, so
   // the captured password is removed (the host stays masked by HOSTNAME_RE).
   BEARER_TOKEN_LOG,
+  AUTH_SCHEME_TOKEN_LOG,
   AWS_SECRET_KEY,
   URL_PASSWORD,
+  DB_CONNECTION_STRING,
 ];
 
 // PII / network shapes (local — these masks are not in injection-patterns.ts).

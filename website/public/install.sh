@@ -4823,6 +4823,9 @@ Type=exec
 ${user_line}
 ${group_line}
 WorkingDirectory=${COMIS_WORKING_DIR}
+# Files created by runtime components default to owner-only access. This also
+# protects artifacts written by third-party libraries that do not set a mode.
+UMask=0077
 
 # --permission: Node permission model. fs-write scoped to paths the daemon
 # actually writes to at runtime:
@@ -4842,7 +4845,7 @@ ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-f
 
 Restart=on-failure
 RestartSec=5s
-TimeoutStopSec=45
+TimeoutStopSec=60
 # KillMode=process: on stop, systemd signals ONLY the main daemon process - NOT the whole
 # cgroup (the default 'control-group'). REQUIRED for durable terminal drives: a
 # durable session runs its child inside a detached 'tmux new-session -d' server that

@@ -37,10 +37,10 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 // ---------------------------------------------------------------------------
 
 const FIXED_NOW = 7000;
-const CONVERSATION_ID = "conv-condense";
+const CONVERSATION_ID = `cv_${"c".repeat(43)}`;
 
 const SCOPE: ContextStoreScope = {
-  conversationId: CONVERSATION_ID,
+  conversationRef: CONVERSATION_ID,
   tenantId: "tenant_a",
   agentId: "agent_a",
   sessionKey: "sess-a",

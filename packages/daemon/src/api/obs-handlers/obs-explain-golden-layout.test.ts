@@ -36,19 +36,27 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { parseFormattedSessionKey } from "@comis/core";
+import Database from "better-sqlite3";
 import { sessionKeyToPath } from "@comis/agent";
+import { systemDateFrom, systemNowMs } from "@comis/core";
+import { createObservabilityStore, initSchema } from "@comis/memory";
 import {
+  resolveTrajectoryFilePath,
   resolveTrajectoryPointerFilePath,
   writeTrajectoryPointerFileBestEffort,
 } from "@comis/observability";
 import { makeRealReader } from "./obs-explain-readers.js";
 import { assembleIncidentReportFromSources } from "./obs-explain.js";
+import { taskEventToRow } from "../../observability/obs-scheduler-rows.js";
 
 // The canonical formatted session key (the same one obs-explain-readers.test.ts
 // pins). sessionKeyToPath maps it to tenant="default", channel="678314278",
 // file="678314278~peer~678314278.jsonl".
-const SESSION_KEY = "default:678314278:678314278:peer:678314278";
+const SESSION_KEY = "default:agent:default:678314278:678314278:peer:678314278";
+const NAMED_AGENT_SESSION_KEY = "default:agent:worker:678314278:678314278:peer:678314278";
+const TASK_ROOT_RUN_ID = "root-task-check-244cd6a3-0a81-48b1-a4f1-2e24375a6b35";
+const TASK_CORRELATION_ID = "256bb57a-b6c3-46ba-88d3-459c7be29dfe";
+const TASK_SESSION_KEY = "default:agent:default:scheduler-task-check-default:scheduler:task-check:attempt-task-a:peer:scheduler-task-check-default";
 
 // Every temp dir created — torn down in afterEach so no temp tree leaks.
 const tmpDirs: string[] = [];
@@ -68,12 +76,29 @@ function tmpDataDir(): string {
  */
 function buildRealSessionFile(dataDir: string): string {
   const sessionsBase = path.join(dataDir, "workspace", "sessions");
-  const key = parseFormattedSessionKey(SESSION_KEY);
-  expect(key).toBeDefined();
-  const sessionFile = sessionKeyToPath(key!, sessionsBase);
+  const sessionFile = sessionKeyToPath({
+    tenantId: "default",
+    agentId: "default",
+    userId: "678314278",
+    channelId: "678314278",
+    peerId: "678314278",
+  }, sessionsBase);
   fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
   // The session JSONL itself (message log) — empty is fine; the readers target
   // its trajectory/metadata siblings.
+  fs.writeFileSync(sessionFile, "", "utf-8");
+  return sessionFile;
+}
+
+function buildNamedAgentSessionFile(workspaceDir: string): string {
+  const sessionFile = sessionKeyToPath({
+    tenantId: "default",
+    agentId: "worker",
+    userId: "678314278",
+    channelId: "678314278",
+    peerId: "678314278",
+  }, path.join(workspaceDir, "sessions"));
+  fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
   fs.writeFileSync(sessionFile, "", "utf-8");
   return sessionFile;
 }
@@ -109,6 +134,96 @@ function trajectoryLines(): string {
   return [failure, offload].join("\n") + "\n";
 }
 
+function taskTrajectoryLines(): string {
+  return [
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "context.budget",
+      seq: 1,
+      traceId: TASK_CORRELATION_ID,
+      data: {
+        windowTokens: 32_000,
+        rawContextWindowTokens: 32_000,
+        windowCapSource: "none",
+        systemTokens: 1_000,
+        freshTailTokens: 200,
+        budgetedHistoryTokens: 0,
+        keptCount: 0,
+        assembledInputTokens: 1_200,
+        outputHeadroom: 768,
+        verdict: "fits",
+      },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "capability.audited",
+      seq: 2,
+      traceId: TASK_CORRELATION_ID,
+      agentId: "default",
+      data: {
+        leaseId: "lease-task-a",
+        rootRunId: TASK_ROOT_RUN_ID,
+        capability: "orch:read",
+        tool: "task_check",
+        decision: "allow",
+      },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "model.completed",
+      seq: 3,
+      traceId: TASK_CORRELATION_ID,
+      data: {
+        inputTokens: 1_000,
+        outputTokens: 200,
+        cacheReadTokens: 100,
+        cacheCreationTokens: 0,
+      },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.summary",
+      seq: 4,
+      traceId: TASK_CORRELATION_ID,
+      data: { costUsd: 0.015, turnCount: 1, degraded: false },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "learning.outcome_observed",
+      seq: 5,
+      traceId: TASK_CORRELATION_ID,
+      data: {
+        trajectoryId: "task-trajectory-a",
+        outcome: "unknown",
+        source: "pipeline",
+        confidence: 0,
+      },
+    },
+  ].map((line) => JSON.stringify(line)).join("\n") + "\n";
+}
+
+function writeTaskSessionIndex(dataDir: string): void {
+  const logsDir = path.join(dataDir, "logs");
+  fs.mkdirSync(logsDir, { recursive: true });
+  const dayKey = systemDateFrom(systemNowMs()).toISOString().slice(0, 10);
+  fs.writeFileSync(
+    path.join(logsDir, `session-index.${dayKey}.jsonl`),
+    JSON.stringify({
+      traceSchema: "comis-session-index",
+      schemaVersion: 1,
+      event: "turn_completed",
+      traceId: TASK_CORRELATION_ID,
+      sessionKey: TASK_SESSION_KEY,
+    }) + "\n",
+    "utf-8",
+  );
+}
+
 /**
  * Write the REAL `_session-metadata.json` companion next to the session JSONL
  * (the `.jsonl` → `_session-metadata.json` rename comis-session-manager.ts
@@ -120,6 +235,7 @@ function writeRealMetadata(sessionFile: string): void {
     metadataFile,
     JSON.stringify({
       traceId: "trace-1",
+      channel: { type: "telegram", id: "678314278" },
       sessionEnd: {
         type: "session_end",
         endReason: "completed_with_tool_errors",
@@ -183,26 +299,131 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     expect(report.offloads[0]!.pointer).not.toBe("<offloaded>");
   });
 
-  it("resolves the trajectory via the co-located fallback when no pointer file is present", async () => {
+  it("assembles named-agent sessions from their configured workspace", async () => {
     const dataDir = tmpDataDir();
-    const sessionFile = buildRealSessionFile(dataDir);
-
-    // Same layout, but SKIP writeTrajectoryPointerFileBestEffort — the reader
-    // must fall back to the canonical co-located <sessionFile>.trajectory.jsonl
-    // convention and still feed the assembler.
-    fs.writeFileSync(`${sessionFile}.trajectory.jsonl`, trajectoryLines(), "utf-8");
-    expect(fs.existsSync(resolveTrajectoryPointerFilePath(sessionFile))).toBe(false);
-
+    const workspaceDir = path.join(dataDir, "custom-worker-workspace");
+    const sessionFile = buildNamedAgentSessionFile(workspaceDir);
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(runtimeFile, trajectoryLines(), "utf-8");
+    writeTrajectoryPointerFileBestEffort({
+      sessionFile,
+      sessionId: NAMED_AGENT_SESSION_KEY,
+      runtimeFile,
+    });
     writeRealMetadata(sessionFile);
-
-    const report = await assembleIncidentReportFromSources(
-      makeRealReader(dataDir),
+    const reader = makeRealReader(
       dataDir,
-      { sessionKey: SESSION_KEY, depth: "summary" },
+      undefined,
+      new Map([["worker", workspaceDir]]),
     );
 
-    expect(report.failures.length).toBeGreaterThanOrEqual(1);
-    expect(report.offloads.length).toBe(1);
-    expect(report.offloads[0]!.pointer).toBe("tool-results/call_abc.json");
+    const report = await assembleIncidentReportFromSources(
+      reader,
+      dataDir,
+      { sessionKey: NAMED_AGENT_SESSION_KEY, depth: "summary" },
+    );
+
+    expect(reader.resolveSessionFilePath?.(NAMED_AGENT_SESSION_KEY)).toBe(sessionFile);
+    expect(report.outcome.endReason).toBe("completed_with_tool_errors");
+    expect(report.toolStats.web_fetch?.failed).toBeGreaterThanOrEqual(1);
+    expect(report.offloads[0]?.pointer).toBe("tool-results/call_abc.json");
   });
+
+  it("resolves a task-check root to its real origin session and folds durable delivery evidence", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = buildRealSessionFile(dataDir);
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(runtimeFile, trajectoryLines(), "utf-8");
+    writeTrajectoryPointerFileBestEffort({ sessionFile, sessionId: SESSION_KEY, runtimeFile });
+    writeRealMetadata(sessionFile);
+    writeTaskSessionIndex(dataDir);
+
+    // Ephemeral task-check sessions intentionally have no transcript/pointer.
+    // Their trajectory writer therefore uses the sanctioned workspace-dir
+    // fallback: <dataDir>/workspace/<safe-session-id>.trajectory.jsonl.
+    const taskTrajectoryFile = resolveTrajectoryFilePath({
+      sessionId: TASK_SESSION_KEY,
+      workspaceDir: path.join(dataDir, "workspace"),
+    });
+    fs.writeFileSync(taskTrajectoryFile, taskTrajectoryLines(), "utf-8");
+    expect(taskTrajectoryFile.startsWith(path.join(dataDir, "workspace"))).toBe(true);
+    expect(taskTrajectoryFile.includes(`${path.sep}sessions${path.sep}`)).toBe(false);
+
+    const db = new Database(":memory:");
+    initSchema(db, 1_536);
+    const store = createObservabilityStore(db);
+    store.insertDiagnostic(taskEventToRow("scheduler:task_check_started", {
+      agentId: "default",
+      sessionKey: SESSION_KEY,
+      attemptId: "attempt-task-a",
+      rootRunId: TASK_ROOT_RUN_ID,
+      correlationId: TASK_CORRELATION_ID,
+      taskIds: ["task-a"],
+      sourceExecutionIds: ["execution-a"],
+      originTraceIds: ["trace-1"],
+      durationMs: 3,
+      timestamp: 3_000,
+    }));
+    const terminalRow = taskEventToRow("scheduler:task_check_terminal", {
+      agentId: "default",
+      sessionKey: SESSION_KEY,
+      attemptId: "attempt-task-a",
+      rootRunId: TASK_ROOT_RUN_ID,
+      correlationId: TASK_CORRELATION_ID,
+      taskIds: ["task-a"],
+      sourceExecutionIds: ["execution-a"],
+      originTraceIds: ["trace-1"],
+      outcome: "delivered",
+      recovery: "live",
+      deliveredChunks: 1,
+      failedChunks: 0,
+      ambiguousChunks: 0,
+      durationMs: 21,
+      timestamp: 3_021,
+    });
+    terminalRow.details = JSON.stringify({
+      ...JSON.parse(terminalRow.details ?? "{}") as Record<string, unknown>,
+      taskText: "PRIVATE TASK BODY MUST NOT SURFACE",
+    });
+    store.insertDiagnostic(terminalRow);
+
+    const report = await assembleIncidentReportFromSources(
+      makeRealReader(dataDir, store),
+      dataDir,
+      { rootRunId: TASK_ROOT_RUN_ID, depth: "summary" },
+    );
+
+    expect(report.sessionKey).toBe(SESSION_KEY);
+    expect(report.outcome).toEqual({
+      endReason: "success",
+      degraded: false,
+      severity: "ok",
+    });
+    expect(report.summary).toBe("0 tool failures across 1 turns; endReason=success");
+    expect(report.likelyRootCause).toBeNull();
+    expect(report.cost).toMatchObject({ costUsd: 0.015, totalTokens: 1_300 });
+    expect(report.channel).toEqual({ type: "telegram", id: "678314278" });
+    expect((report as unknown as Record<string, unknown>).taskCheck).toEqual({
+      rootRunId: TASK_ROOT_RUN_ID,
+      attemptId: "attempt-task-a",
+      correlationId: TASK_CORRELATION_ID,
+      lifecycle: "terminal",
+      outcome: "delivered",
+      recovery: "live",
+      deliveredChunks: 1,
+      failedChunks: 0,
+      ambiguousChunks: 0,
+    });
+    expect(report.contextBudget).toMatchObject({ verdict: "fits", assembledInputTokens: 1_200 });
+    expect(report.spawnTree).toEqual([
+      expect.objectContaining({
+        leaseId: "lease-task-a",
+        rootRunId: TASK_ROOT_RUN_ID,
+        toolsInvoked: ["task_check"],
+      }),
+    ]);
+    expect(JSON.stringify(report)).not.toContain("PRIVATE TASK BODY MUST NOT SURFACE");
+    db.close();
+  });
+
 });

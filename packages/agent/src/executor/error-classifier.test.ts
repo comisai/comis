@@ -44,6 +44,24 @@ describe("classifyError", () => {
     expect(result.userMessage).not.toContain("401");
   });
 
+  it.each([
+    ["UnrecognizedClientException", "aws_auth_invalid", "AWS_BEARER_TOKEN_BEDROCK"],
+    ["InvalidSignatureException", "aws_auth_invalid", "access keys"],
+    ["ExpiredTokenException", "aws_auth_expired", "aws sso login"],
+    ["AccessDeniedException", "aws_model_access", "AWS_REGION"],
+    ["ResourceNotFoundException", "aws_region_or_model", "model id"],
+    ["The model identifier is invalid", "aws_region_or_model", "model id"],
+  ])(
+    "classifies AWS connection failure %s with an actionable Bedrock hint",
+    (message, category, hintPart) => {
+      const result = classifyError(new Error(message));
+
+      expect(result.category).toBe(category);
+      expect(result.retryable).toBe(false);
+      expect(result.hint).toContain(hintPart);
+    },
+  );
+
   it("classifies overloaded (503) as overloaded", () => {
     const error = new Error("503 Service Unavailable");
     const result = classifyError(error);

@@ -23,11 +23,20 @@ function makeContext(trustLevel: "admin" | "user" | "guest"): RequestContext {
   return {
     tenantId: "default",
     userId: "test-user",
-    sessionKey: "test-session",
+    agentId: "test-agent",
+    sessionKey: "default:agent:test-agent:test-user:chat-1",
+    turnScope: {
+      conversation: { tenantId: "default", agentId: "test-agent", partition: { kind: "agent" } },
+      principal: { principalId: "test-user" },
+      endpoint: { channelType: "telegram", channelInstanceId: "test-instance", conversationId: "chat-1", conversationKind: "direct" },
+    },
     traceId: crypto.randomUUID(),
     startedAt: Date.now(),
     trustLevel,
     channelType: "telegram",
+    deliveryOrigin: Object.freeze({
+      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+    }),
   };
 }
 
@@ -120,8 +129,8 @@ describe("memory_manage tool", () => {
       );
 
       expect(mockRpcCall).toHaveBeenCalledWith("memory.stats", {
-        tenant_id: undefined,
-        agent_id: undefined,
+        tenant_id: "default",
+        agent_id: "test-agent",
         _trustLevel: "admin",
       });
       expect(result.details).toEqual(
@@ -166,6 +175,39 @@ describe("memory_manage tool", () => {
   // -----------------------------------------------------------------------
 
   describe("delete action", () => {
+    it("resolves omitted tenant and agent scope before requesting memory deletion", async () => {
+      (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
+        approved: true,
+        approvedBy: "operator",
+      });
+      mockRpcCall.mockResolvedValue({ deleted: 1, failed: 0, total: 1 });
+
+      const tool = createMemoryManageTool(mockRpcCall, mockApprovalGate);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-del-scope", {
+          action: "delete",
+          ids: ["mem-1"],
+        } as never),
+      );
+
+      expect(mockApprovalGate.requestApproval).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fingerprintParams: {
+            ids: ["mem-1"],
+            tenant_id: "default",
+            agent_id: "test-agent",
+          },
+        }),
+      );
+      expect(mockRpcCall).toHaveBeenCalledWith("memory.delete", {
+        ids: ["mem-1"],
+        tenant_id: "default",
+        agent_id: "test-agent",
+        _trustLevel: "admin",
+      });
+    });
+
     it("calls rpcCall('memory.delete') after approval gate approves", async () => {
       (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
         approved: true,
@@ -179,6 +221,7 @@ describe("memory_manage tool", () => {
         tool.execute("call-del1", {
           action: "delete",
           ids: ["mem-1", "mem-2"],
+          tenant_id: "tenant-a",
         } as never),
       );
 
@@ -186,11 +229,20 @@ describe("memory_manage tool", () => {
         expect.objectContaining({
           toolName: "memory_manage",
           action: "memory.delete",
-          channelType: "telegram",
+          agentId: "test-agent",
+          callbackOwner: {
+            tenantId: "default", userId: "test-user", channelType: "telegram", channelKey: "chat-1",
+          },
+          fingerprintParams: {
+            ids: ["mem-1", "mem-2"],
+            tenant_id: "tenant-a",
+            agent_id: "test-agent",
+          },
         }),
       );
       expect(mockRpcCall).toHaveBeenCalledWith("memory.delete", expect.objectContaining({
         ids: ["mem-1", "mem-2"],
+        tenant_id: "tenant-a",
         _trustLevel: "admin",
       }));
       expect(result.details).toEqual(
@@ -265,7 +317,14 @@ describe("memory_manage tool", () => {
         expect.objectContaining({
           toolName: "memory_manage",
           action: "memory.flush",
-          channelType: "telegram",
+          agentId: "test-agent",
+          callbackOwner: {
+            tenantId: "default", userId: "test-user", channelType: "telegram", channelKey: "chat-1",
+          },
+          fingerprintParams: {
+            tenant_id: "my-tenant",
+            agent_id: "my-agent",
+          },
         }),
       );
       expect(mockRpcCall).toHaveBeenCalledWith("memory.flush", {

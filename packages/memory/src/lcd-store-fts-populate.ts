@@ -41,9 +41,9 @@ import { renderMessageFtsText, isFtsAvailable } from "./lcd-fts.js";
 import { messageRowidRowMapper } from "./lcd-store-mappers.js";
 
 /** The two-column scope the FTS UNINDEXED columns carry. The FTS tables hold
- *  NO tenant_id — `conversation_id` encodes the tenant boundary. */
+ *  NO tenant_id — `conversation_ref` encodes the tenant boundary. */
 export interface FtsPopulateScope {
-  conversationId: string;
+  conversationRef: string;
   agentId: string;
 }
 
@@ -73,7 +73,7 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
   // run when the FTS table exists (guarded at the call site so an FTS-less host's
   // append never throws).
   const insertMessageFts = db.prepare(
-    "INSERT INTO lcd_messages_fts(rowid, content, conversation_id, agent_id, message_id) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO lcd_messages_fts(rowid, content, conversation_ref, agent_id, message_id) VALUES (?, ?, ?, ?, ?)",
   );
 
   // The just-inserted message's rowid — keeps lcd_messages_fts.rowid joinable to
@@ -109,7 +109,7 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
           insertMessageFts.run(
             parsedRowid.value.rowid,
             renderMessageFtsText(parts),
-            scope.conversationId,
+            scope.conversationRef,
             scope.agentId, // agent_id UNINDEXED so the FTS MATCH filters by agent
             messageId,
           );
@@ -143,7 +143,7 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
   let insertMessageTri: Database.Statement | null = null;
   try {
     insertMessageTri = db.prepare(
-      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_id, agent_id, message_id) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_ref, agent_id, message_id) VALUES (?, ?, ?, ?, ?)",
     );
   } catch {
     // Message twin absent (trigram tokenizer missing, or this twin's DDL block
@@ -157,7 +157,7 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
   let selectSummaryRowid: Database.Statement | null = null;
   try {
     insertSummaryTriStmt = db.prepare(
-      "INSERT INTO lcd_summaries_fts_tri(rowid, content, conversation_id, agent_id, summary_id) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO lcd_summaries_fts_tri(rowid, content, conversation_ref, agent_id, summary_id) VALUES (?, ?, ?, ?, ?)",
     );
     selectSummaryRowid = db.prepare("SELECT rowid FROM lcd_summaries WHERE summary_id = ?");
   } catch {
@@ -180,7 +180,7 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
           // side folds identically to the query side (which imports the
           // same symbol). The folded text is what a script-routed MATCH reads.
           normalizeForSearch(renderMessageFtsText(parts)),
-          scope.conversationId,
+          scope.conversationRef,
           scope.agentId, // agent_id UNINDEXED so the twin MATCH filters by agent
           messageId,
         );
@@ -202,7 +202,7 @@ export function createFtsPopulator(db: Database.Database): FtsPopulator {
           parsedRowid.value.rowid,
           // Normalize RAW summary content HERE (the single call site).
           normalizeForSearch(rawContent),
-          scope.conversationId,
+          scope.conversationRef,
           scope.agentId, // agent_id UNINDEXED so the twin MATCH filters by agent
           summaryId,
         );

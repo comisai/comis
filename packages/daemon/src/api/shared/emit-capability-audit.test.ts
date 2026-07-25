@@ -19,8 +19,8 @@
  *
  * @module
  */
-import { describe, it, expect } from "vitest";
-import type { EventMap } from "@comis/core";
+import { describe, it, expect, vi } from "vitest";
+import { TypedEventBus, type EventMap } from "@comis/core";
 import { emitCapabilityAudit } from "./emit-capability-audit.js";
 import type {
   CapabilityAuditRecord,
@@ -41,6 +41,10 @@ function emitAndGetAuditEvent(
       eventBus: {
         emit: (event, payload) => {
           emitted.push({ event, payload });
+        },
+        emitSafely: (event, payload) => {
+          emitted.push({ event, payload });
+          return { hadListeners: false, failures: [], pendingFailures: Promise.resolve([]) };
         },
       },
       config: { tenantId: "tenant-a" },
@@ -119,5 +123,37 @@ describe("emitCapabilityAudit — allow-path classification", () => {
     expect(evt.classification).toBe("destructive");
     expect(evt.kind).toBe("capability_denied");
     expect(evt.outcome).toBe("denied");
+  });
+
+  it("reaches both durable and tree observers and never throws when subscribers fail", async () => {
+    const eventBus = new TypedEventBus();
+    const laterAudit = vi.fn();
+    const laterTree = vi.fn();
+    const warn = vi.fn();
+    eventBus.on("audit:event", () => {
+      throw new Error("private synchronous audit subscriber content");
+    });
+    eventBus.on("audit:event", async () => {
+      throw new Error("private asynchronous audit subscriber content");
+    });
+    eventBus.on("audit:event", laterAudit);
+    eventBus.on("capability:audited", laterTree);
+
+    expect(() => emitCapabilityAudit({
+      container: { eventBus, config: { tenantId: "tenant-a" } },
+      logger: { warn },
+    }, {
+      agentId: "agent-1",
+      capability: "orch:write",
+      method: "tool.invoke",
+      rootRunId: "root-1",
+      decision: "allow",
+    })).not.toThrow();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(laterAudit).toHaveBeenCalledOnce();
+    expect(laterTree).toHaveBeenCalledOnce();
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("private synchronous audit subscriber content");
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("private asynchronous audit subscriber content");
   });
 });

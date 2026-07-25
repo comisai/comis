@@ -16,7 +16,7 @@
  *     channel header carry a per-turn timestamp, so two IDENTICAL requests differ in
  *     raw form (raw-text clustering failed live 2026-06-25). {@link stripUserSystemContext}
  *     recovers the stable request.
- *  2. LOWERCASE, collapse every non-alphanumeric run to a single space, trim.
+ *  2. LOWERCASE, collapse every non-letter/number run to a single space, trim.
  *  3. TOKENIZE on whitespace; drop {@link STOPWORDS} and tokens of length <= 1.
  *  4. DE-DUPLICATE into a Set, then SORT — order-insensitive. "deploy the app" and
  *     "app deploy please" carry the same {app,deploy} token set and collide; a
@@ -99,10 +99,25 @@ function stripUserSystemContext(text: string): string {
   if (endIdx === -1) return text;
   const afterContext = text.slice(endIdx + endMarker.length);
   // Strip the channel header `[telegram] 678314278 (9:34 AM):` — its time is volatile.
-  const channelHeaderMatch = afterContext.match(/\s*\[[\w-]+\]\s+\S+\s+\([^)]*\):\s*/);
-  if (channelHeaderMatch) {
-    const msgStart = afterContext.indexOf(channelHeaderMatch[0]) + channelHeaderMatch[0].length;
-    return afterContext.slice(msgStart).trim();
+  let cursor = 0;
+  while (cursor < afterContext.length && /\s/.test(afterContext[cursor]!)) cursor++;
+  if (afterContext[cursor] === "[") {
+    const channelEnd = afterContext.indexOf("]", cursor + 1);
+    const channel = channelEnd === -1 ? "" : afterContext.slice(cursor + 1, channelEnd);
+    if (channel && [...channel].every((character) => /[\w-]/.test(character))) {
+      cursor = channelEnd + 1;
+      while (cursor < afterContext.length && /\s/.test(afterContext[cursor]!)) cursor++;
+      while (cursor < afterContext.length && !/\s/.test(afterContext[cursor]!)) cursor++;
+      while (cursor < afterContext.length && /\s/.test(afterContext[cursor]!)) cursor++;
+      if (afterContext[cursor] === "(") {
+        const timeEnd = afterContext.indexOf("):", cursor + 1);
+        if (timeEnd !== -1) {
+          cursor = timeEnd + 2;
+          while (cursor < afterContext.length && /\s/.test(afterContext[cursor]!)) cursor++;
+          return afterContext.slice(cursor).trim();
+        }
+      }
+    }
   }
   return afterContext.trim();
 }
@@ -143,10 +158,12 @@ export function normalizeOpeningRequest(signature: string): string {
 export function openingRequestTokens(signature: string): string[] {
   // 1. Strip the volatile per-turn envelope FIRST (its timestamps would defeat collision).
   const stripped = stripUserSystemContext(signature);
-  // 2. Lowercase; collapse non-alphanumeric runs to a single space; trim.
+  // 2. Lowercase; collapse non-letter/number runs to a single space; trim. Unicode
+  // property escapes preserve Hebrew, Arabic, Cyrillic, and other non-Latin topic
+  // words instead of turning the entire request into an ungroupable empty token set.
   const cleaned = stripped
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
   // 3. Tokenize; drop stopwords and tokens of length <= 1; STEM each survivor (collapse
   //    morphological variants so two genuinely-same-task openings worded differently — "deliver"/"delivered"/
@@ -268,14 +285,23 @@ export const DEFAULT_TOPIC_MATCH_THRESHOLD = 0.5;
  *  gap. Only ever HELPS a big core (a core ≤8 can't reach it except at coverage 1.0). */
 export const MIN_ABSOLUTE_CORE_MATCH = 8;
 
+/** A topic-match may satisfy the absolute/fraction gate for several learned skills when
+ * their stored cores share task-framing boilerplate (for example "use only these tools and
+ * report the graded result"). Automatic reuse credit is safe only when one eligible skill is
+ * clearly more specific to the request. Three additional shared core tokens, or 0.15 additional
+ * core coverage, is the minimum deterministic lead; an ambiguous near-tie credits nothing and
+ * leaves explicit SKILL.md-read attribution available. */
+export const MIN_DOMINANT_SHARED_TOKEN_LEAD = 3;
+export const MIN_DOMINANT_COVERAGE_LEAD = 0.15;
+
 /**
  * The deterministic, keyless TOPIC-MATCH reuse attribution. Skill attribution otherwise
  * requires the agent to explicitly `read` the SKILL.md file (the read-attribution path in pi-event-bridge.ts) —
  * a skill the agent APPLIED from the surfaced `<available_skills>` summary / from recall,
  * without opening the file, was never credited, so its `proof_count` never bumped and it
  * never promoted (the reuse leg of the learning loop was LLM-fragile). This credits a SURFACED skill whose
- * stored topic token-set is similar enough (Jaccard ≥ threshold) to the CURRENT turn's
- * opening-request token-set — i.e. the turn IS the skill's task — so a successful turn
+ * stored topic token-set is similar enough to the CURRENT turn's opening-request token-set
+ * and is the dominant eligible match — i.e. the turn IS this skill's task — so a successful turn
  * on the skill's topic promotes it whether or not the model happened to open the file.
  * (The promote/demote SUCCESS/FAILURE gating, the corroboration belt, and the trust
  * ceiling are UNCHANGED — this only widens which surfaced skills enter `usedSkillIds`.)
@@ -314,8 +340,8 @@ export interface TopicMatchScore {
   coverage: number;
   /** |core ∩ turn| — the absolute shared-token count (feeds the MIN_ABSOLUTE_CORE_MATCH floor). */
   sharedCount: number;
-  /** Whether this turn CREDITS the skill (coverage ≥ threshold OR sharedCount ≥ MIN_ABSOLUTE_CORE_MATCH,
-   *  gated on the skill having topicTokens and the turn having content tokens). */
+  /** Whether this turn CREDITS the skill. It must clear the coverage/absolute gate and, when
+   *  several skills clear it, be the single dominant match. Ambiguous matches credit nothing. */
   credited: boolean;
   /** Whether the skill has a stored topicTokens core at all (a legacy/seeded doc has none → never credited). */
   hasTopicTokens: boolean;
@@ -336,19 +362,44 @@ export function topicMatchScores(
 ): TopicMatchScore[] {
   const turnTokens = openingRequestTokens(turnSignature);
   const turnSet = new Set(turnTokens);
-  return surfaced.map((s) => {
+  const rawScores = surfaced.map((s, index) => {
     const hasTopicTokens = !!s.topicTokens && s.topicTokens.length > 0;
     const coreSet = new Set(s.topicTokens ?? []);
     let shared = 0;
     for (const t of coreSet) if (turnSet.has(t)) shared += 1;
     const coverage = coreSet.size === 0 ? 0 : shared / coreSet.size;
-    // Credit on a strong FRACTION (the turn contains most of the core) OR a strong ABSOLUTE count
-    // (a short on-topic turn shares many distinctive core tokens against a large/verbose core).
-    // A no-topicTokens legacy doc and an empty/ungroupable turn never credit (the original guards).
-    const credited =
+    // First apply the per-skill eligibility gate. A second pass below prevents several
+    // boilerplate-overlapping skills from all receiving credit for one topic.
+    const eligible =
       hasTopicTokens && turnTokens.length > 0 && (coverage >= threshold || shared >= MIN_ABSOLUTE_CORE_MATCH);
-    return { name: s.name, coverage, sharedCount: shared, credited, hasTopicTokens };
+    return { index, name: s.name, coverage, sharedCount: shared, eligible, hasTopicTokens };
   });
+
+  const eligible = rawScores
+    .filter((score) => score.eligible)
+    .sort((a, b) =>
+      b.sharedCount - a.sharedCount ||
+      b.coverage - a.coverage ||
+      a.index - b.index,
+    );
+  let creditedIndex: number | undefined;
+  if (eligible.length === 1) {
+    creditedIndex = eligible[0]?.index;
+  } else if (eligible.length > 1) {
+    const best = eligible[0]!;
+    const runnerUp = eligible[1]!;
+    const dominantByShared = best.sharedCount - runnerUp.sharedCount >= MIN_DOMINANT_SHARED_TOKEN_LEAD;
+    const dominantByCoverage = best.coverage - runnerUp.coverage >= MIN_DOMINANT_COVERAGE_LEAD;
+    if (dominantByShared || dominantByCoverage) creditedIndex = best.index;
+  }
+
+  return rawScores.map((score) => ({
+    name: score.name,
+    coverage: score.coverage,
+    sharedCount: score.sharedCount,
+    credited: score.index === creditedIndex,
+    hasTopicTokens: score.hasTopicTokens,
+  }));
 }
 
 /** The common-CORE token-set of a corroboration cluster — the INTERSECTION of its members'

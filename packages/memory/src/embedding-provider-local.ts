@@ -85,13 +85,18 @@ export async function createLocalEmbeddingProvider(
           texts.map(async (text) => {
             try {
               const embedding = await context.getEmbeddingFor(text);
-              return Array.from(embedding.vector);
-            } catch {
-              return null;
+              return ok(Array.from(embedding.vector));
+            } catch (e: unknown) {
+              return err(e instanceof Error ? e : new Error(String(e)));
             }
           }),
         );
-        return ok(results as number[][]);
+        const embeddings: number[][] = [];
+        for (const result of results) {
+          if (!result.ok) return result;
+          embeddings.push(result.value);
+        }
+        return ok(embeddings);
       },
 
       async dispose(): Promise<void> {

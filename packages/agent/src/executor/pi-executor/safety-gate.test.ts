@@ -19,6 +19,7 @@ import type { PiExecutorDeps } from "./pi-executor.js";
 
 function makeResult(): ExecutionResult {
   return {
+    agentId: "agent-test",
     response: "",
     sessionKey: { tenantId: "t", channelId: "c", userId: "u" } as SessionKey,
     tokensUsed: { input: 0, output: 0, total: 0 },

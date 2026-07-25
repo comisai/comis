@@ -15,15 +15,23 @@
  * @module
  */
 
-import { formatSessionKey } from "@comis/core";
+import {
+  emitObservationalEventSafely,
+  formatSessionKey,
+  toSafeErrorLogString,
+} from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { fromPromise } from "@comis/shared";
-
 import { runWithModelRetry } from "../model-retry.js";
+import { runContinuationTurn } from "../continuation-turn.js";
 import { classifyError } from "../error-classifier.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
+import { CONTINUATION_USER_MESSAGE } from "../../session/synthetic-user-messages.js";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
+import {
+  resolveProviderDispatchGuard,
+  type ProviderDispatchGuard,
+} from "../provider-dispatch.js";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
 import {
   handleClientRequest,
@@ -73,8 +81,11 @@ export async function runRetryLoop(
 
   // Bind the model-retry invocation so the silent-failure branches share
   // the deps wiring without re-threading every dependency.
+  const acknowledgeProviderStart = resolveProviderDispatchGuard(
+    params.executionOverrides?.onProviderStart,
+  );
   const invokeRetry: InvokeRetry = (msgText, images) =>
-    invokeModelRetry(params, msgText, images);
+    invokeModelRetry(params, msgText, images, acknowledgeProviderStart);
 
   if (!skipPrompt) {
     const retryResult = await invokeRetry(messageText, promptImages);
@@ -170,7 +181,7 @@ export async function runRetryLoop(
         // documents, threaded in as `false` here.
         await detectSilentFailure(
           params, messageText, promptImages, earlyBridgeResult, retryState,
-          invokeRetry, false,
+          invokeRetry, acknowledgeProviderStart, false,
         );
       }
     }
@@ -205,6 +216,7 @@ async function invokeModelRetry(
   params: RunPromptParams,
   messageText: string,
   promptImages: ImageContent[] | undefined,
+  onProviderStart: ProviderDispatchGuard,
 ) {
   const {
     session, config, sessionKey, agentId, effectiveTimeout, resolvedModel, deps, onResetTimer,
@@ -213,6 +225,7 @@ async function invokeModelRetry(
     session,
     messageText,
     promptImages,
+    onProviderStart,
     config: { provider: config.provider, model: config.model },
     resolvedModel: resolvedModel ? `${resolvedModel.provider}:${resolvedModel.id}` : undefined,
     timeoutConfig: {
@@ -246,7 +259,7 @@ async function invokeModelRetry(
  * Orchestrate the silent-failure detection cascade. Returns the updated
  * silentRetryAttempted flag (always `true` after this function runs).
  *
- *   1. followUp("(continued)") — Gemini thinking-only recovery
+ *   1. Start a continuation turn — Gemini thinking-only recovery
  *   2. classify the bridge's recorded LLM error → branch:
  *        a. client_request_signed_replay  → scrub + retry (signed-replay self-heal)
  *        b. tool_schema_unsupported       → strip pattern/format + retry once
@@ -262,6 +275,7 @@ async function detectSilentFailure(
   earlyBridgeResult: BridgeSnapshot,
   retryState: RetryState,
   invokeRetry: InvokeRetry,
+  acknowledgeProviderStart: ProviderDispatchGuard,
   silentRetryAttempted: boolean,
 ): Promise<boolean> {
   const { session, agentId, sessionKey, deps } = params;
@@ -276,25 +290,24 @@ async function detectSilentFailure(
         llmCalls: earlyBridgeResult.llmCalls,
         stepsExecuted: earlyBridgeResult.stepsExecuted,
         hint: "Model produced no visible text; nudging continuation",
-        errorKind: "transient" as ErrorKind,
       },
       "Attempting continuation after thinking-only final turn",
     );
-    const followUpResult = await fromPromise(
-      session.followUp("(continued from previous message)"),
+    const continuationResult = await runContinuationTurn(
+      session,
+      CONTINUATION_USER_MESSAGE,
+      acknowledgeProviderStart,
     );
-    const nudgeRecovered = followUpResult.ok && getVisibleAssistantText(session) !== "";
-    // Announce the continuation nudge (a followUp re-drive on a thinking-only
-    // "stop" turn) so `explain` shows the recovery attempt (previously
-    // log-only, and only on the recovered branch).
-    deps.eventBus.emit("execution:recovery_attempted", {
+    const nudgeRecovered = continuationResult.ok && getVisibleAssistantText(session) !== "";
+    // Announce whether the continuation produced visible text.
+    emitObservationalEventSafely({ eventBus: deps.eventBus, logger: deps.logger }, "execution:recovery_attempted", {
       agentId: agentId ?? "default",
       sessionKey: formatSessionKey(sessionKey),
       reason: "continuation_nudge",
       succeeded: nudgeRecovered,
       timestamp: deps.clock.now(),
     });
-    if (followUpResult.ok) {
+    if (continuationResult.ok) {
       const recoveredText = getVisibleAssistantText(session);
       if (recoveredText !== "") {
         silent02Recovered = true;
@@ -306,8 +319,8 @@ async function detectSilentFailure(
       }
     } else {
       deps.logger.debug(
-        { err: followUpResult.error },
-        "followUp call failed; falling through to",
+        { err: toSafeErrorLogString(continuationResult.error) },
+        "Continuation turn failed; falling through to retry recovery",
       );
     }
   }
@@ -330,8 +343,8 @@ async function detectSilentFailure(
     }
 
     // Close the gate so this branch cannot be re-entered within the
-    // same runPrompt invocation (defends against future refactors that
-    // might reach this region twice).
+    // same runPrompt invocation even if another control-flow path reaches
+    // this region twice.
     return true;
   } else if (!silent02Recovered) {
     declareSilentTerminalFailure(params, earlyBridgeResult, retryState);

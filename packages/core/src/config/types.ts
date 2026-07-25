@@ -6,6 +6,7 @@
  */
 
 export type { AppConfig } from "./schema.js";
+export type { IdentityConfig } from "./schema-identity.js";
 export type { ApprovalsConfig, ApprovalRule } from "./schema-approvals.js";
 export type {
   AutoReplyEngineConfig,

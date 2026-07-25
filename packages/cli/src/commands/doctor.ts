@@ -10,108 +10,23 @@
  */
 
 import type { Command } from "commander";
-import * as os from "node:os";
 import { existsSync } from "node:fs";
 import Database from "better-sqlite3";
 import { success, error, info } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { runDoctorChecks } from "../doctor/check-runner.js";
 import { renderDoctorTable, renderDoctorJson } from "../doctor/output.js";
-import { configHealthCheck } from "../doctor/checks/config-health.js";
-import { daemonHealthCheck } from "../doctor/checks/daemon-health.js";
-import { gatewayHealthCheck } from "../doctor/checks/gateway-health.js";
-import { channelHealthCheck } from "../doctor/checks/channel-health.js";
-import { msteamsHealthCheck } from "../doctor/checks/msteams-health.js";
-import { workspaceHealthCheck } from "../doctor/checks/workspace-health.js";
-import { oauthHealthCheck } from "../doctor/checks/oauth-health.js";
-import { lcdHealthCheck } from "../doctor/checks/lcd-health.js";
-import { secretsAuditHealthCheck } from "../doctor/checks/secrets-audit-health.js";
-import { versionSkewHealthCheck } from "../doctor/checks/version-skew-health.js";
 import { repairConfig } from "../doctor/repairs/repair-config.js";
 import { repairDaemon } from "../doctor/repairs/repair-daemon.js";
 import { repairWorkspace } from "../doctor/repairs/repair-workspace.js";
 import { repairConfigAudit } from "../doctor/repairs/repair-config-audit.js";
 import { repairFtsDrift, repairContextItems } from "../doctor/repairs/repair-lcd.js";
-import { resolveDoctorConfig } from "../doctor/config-resolve.js";
-import { readCliVersion } from "../util/cli-version.js";
+import {
+  buildDiagnosticContext,
+  DIAGNOSTIC_CHECKS,
+  resolveDefaultDiagnosticConfigPaths,
+} from "../doctor/diagnostic-suite.js";
 import type { DoctorContext } from "../doctor/types.js";
-
-/** All doctor checks in execution order (10 checks). */
-const ALL_CHECKS = [
-  configHealthCheck,
-  daemonHealthCheck,
-  gatewayHealthCheck,
-  // Runs after gateway (needs the daemon reachable) — flags a CLI<->daemon
-  // version skew that would otherwise make config checks report phantom
-  // schema failures (stale global `comis` incident).
-  versionSkewHealthCheck,
-  channelHealthCheck,
-  // Teams is a webhook channel (stale-reap-exempt), so its liveness cannot ride
-  // the health monitor — this check probes creds, the mounted ingress endpoint,
-  // recent INBOUND-ONLY activity, and tenant presence directly.
-  msteamsHealthCheck,
-  workspaceHealthCheck,
-  oauthHealthCheck,
-  secretsAuditHealthCheck,
-  lcdHealthCheck,
-];
-
-/**
- * Resolve default config paths from COMIS_CONFIG_PATHS env var or standard locations.
- */
-function resolveDefaultConfigPaths(): string[] {
-  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-  const envPaths = process.env["COMIS_CONFIG_PATHS"];
-  if (envPaths) {
-    return envPaths.split(":").filter((p) => p.length > 0);
-  }
-  const candidates = [
-    os.homedir() + "/.comis/config.yaml",
-    os.homedir() + "/.comis/config.local.yaml",
-    "/etc/comis/config.yaml",
-    "/etc/comis/config.local.yaml",
-  ];
-  return candidates.filter((p) => existsSync(p));
-}
-
-/**
- * Build a DoctorContext from CLI options.
- *
- * Resolves the config ONCE via the shared store-aware path (env ->
- * ~/.comis/.env -> encrypted secret store, mirroring daemon boot) so every
- * check sees the same config the daemon would. The full resolution outcome
- * rides on the context: when the config is unavailable, checks must name
- * the real reason instead of claiming nothing is configured.
- */
-function buildDoctorContext(configPaths: string[]): DoctorContext {
-  const configResolution = resolveDoctorConfig(configPaths);
-  const config = configResolution.config;
-
-  const dataDir = config?.dataDir || os.homedir() + "/.comis";
-  const daemonPidFile = dataDir + "/daemon.pid";
-
-  // Resolve gateway URL from config. gw.host is a *bind* address; remap
-  // wildcards to loopback so the connectivity probe targets a real address.
-  let gatewayUrl: string | undefined;
-  if (config?.gateway) {
-    const gw = config.gateway;
-    const bindHost = gw.host || "127.0.0.1";
-    const host = bindHost === "0.0.0.0" ? "127.0.0.1" : bindHost === "::" ? "::1" : bindHost;
-    const port = gw.port || 4766;
-    const protocol = gw.tls ? "https" : "http";
-    gatewayUrl = `${protocol}://${host}:${port}`;
-  }
-
-  return {
-    config,
-    configResolution,
-    configPaths,
-    dataDir,
-    daemonPidFile,
-    gatewayUrl,
-    cliVersion: readCliVersion(),
-  };
-}
 
 /**
  * Register the `doctor` command on the program.
@@ -146,14 +61,14 @@ export function registerDoctorCommand(program: Command): void {
       format: string;
       refreshTest?: boolean;
     }) => {
-      const configPaths = options.config ?? resolveDefaultConfigPaths();
+      const configPaths = options.config ?? resolveDefaultDiagnosticConfigPaths();
       const context: DoctorContext = {
-        ...buildDoctorContext(configPaths),
+        ...buildDiagnosticContext(configPaths),
         refreshTest: options.refreshTest,
       };
 
       const result = await withSpinner("Running diagnostics...", () =>
-        runDoctorChecks(ALL_CHECKS, context),
+        runDoctorChecks(DIAGNOSTIC_CHECKS, context),
       );
 
       // Render results
@@ -176,7 +91,7 @@ export function registerDoctorCommand(program: Command): void {
             success(`REPAIRED: ${action}`);
           }
         } else {
-          error(`FAILED: Config repair: ${configResult.error.message}`);
+          error("FAILED: Config repair could not complete; verify config-path permissions");
         }
 
         const daemonResult = await repairDaemon(findings, context.daemonPidFile);
@@ -185,7 +100,7 @@ export function registerDoctorCommand(program: Command): void {
             success(`REPAIRED: ${action}`);
           }
         } else {
-          error(`FAILED: Daemon repair: ${daemonResult.error.message}`);
+          error("FAILED: Daemon repair could not complete; verify PID-file permissions");
         }
 
         const workspaceResult = await repairWorkspace(findings, context.dataDir);
@@ -194,7 +109,7 @@ export function registerDoctorCommand(program: Command): void {
             success(`REPAIRED: ${action}`);
           }
         } else {
-          error(`FAILED: Workspace repair: ${workspaceResult.error.message}`);
+          error("FAILED: Workspace repair could not complete; verify data-directory permissions");
         }
 
         // Config-audit-log scrubber.
@@ -207,8 +122,8 @@ export function registerDoctorCommand(program: Command): void {
             success(`REPAIRED: ${action}`);
           }
         } else {
-          // Daemon-down is the common non-error case; surface as info.
-          info(`SKIPPED: Config-audit scrub: ${auditScrubResult.error.message}`);
+          // An unavailable repair RPC is non-fatal to the remaining repairs.
+          info("SKIPPED: Config-audit scrub could not complete through the daemon RPC");
         }
 
         // LCD store repairs: run when there are repairable lcd findings.
@@ -218,7 +133,7 @@ export function registerDoctorCommand(program: Command): void {
           (f) => f.category === "lcd" && f.repairable,
         );
         if (hasLcdRepairable) {
-          const dbPath = context.dataDir + "/memory.db";
+          const dbPath = context.memoryDbPath ?? context.dataDir + "/memory.db";
           if (existsSync(dbPath)) {
             let lcdDb: Database.Database | undefined;
             try {
@@ -231,7 +146,7 @@ export function registerDoctorCommand(program: Command): void {
                   success(`REPAIRED: ${action}`);
                 }
               } else {
-                error(`FAILED: LCD FTS repair: ${ftsDriftResult.error.message}`);
+                error("FAILED: LCD FTS repair could not complete; stop the daemon and retry");
               }
 
               const contextItemsResult = await repairContextItems(lcdDb);
@@ -240,13 +155,14 @@ export function registerDoctorCommand(program: Command): void {
                   success(`REPAIRED: ${action}`);
                 }
               } else {
-                error(`FAILED: LCD context-items repair: ${contextItemsResult.error.message}`);
+                error(
+                  "FAILED: LCD context-items repair could not complete; stop the daemon and retry",
+                );
               }
-            } catch (lcdErr) {
-              const msg = lcdErr instanceof Error ? lcdErr.message : String(lcdErr);
+            } catch {
               error(
-                `FAILED: LCD repair could not open memory.db: ${msg}` +
-                  " — ensure the daemon is stopped before running --repair",
+                "FAILED: LCD repair could not open memory.db — ensure the daemon is stopped " +
+                  "and the database path is readable before running --repair",
               );
             } finally {
               lcdDb?.close();
@@ -259,11 +175,11 @@ export function registerDoctorCommand(program: Command): void {
         // Re-run diagnostics after repairs
         info("Re-running diagnostics...");
         const rerunContext: DoctorContext = {
-          ...buildDoctorContext(configPaths),
+          ...buildDiagnosticContext(configPaths),
           refreshTest: options.refreshTest,
         };
         const rerunResult = await withSpinner("Verifying repairs...", () =>
-          runDoctorChecks(ALL_CHECKS, rerunContext),
+          runDoctorChecks(DIAGNOSTIC_CHECKS, rerunContext),
         );
 
         if (options.format === "json") {

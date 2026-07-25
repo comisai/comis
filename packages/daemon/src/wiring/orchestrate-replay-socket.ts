@@ -1,46 +1,45 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: replay-divergence boundary. handleReplayCall THROWS on any
-// divergence (no further recorded entry, method/params-digest mismatch, a
-// path-escape or gone pointer) as the serving contract — the socket server's
-// catch converts the throw to a content-free {error} line to the (re-spawned)
-// client (mirrors setup-capability-endpoint.ts startSocket, whose deny branches
-// throw and are caught into a content-free JSON error the same way).
+// @allow-throw: the socket boundary converts replay divergence into a fixed,
+// content-free error response.
 /**
- * `createOrchestrateReplaySocket` — the SEPARATE operator replay socket (REPLAY-02).
+ * A physically separate operator replay socket.
  *
- * A standalone `net.createServer` on its OWN 0600 socket path that speaks the SAME
+ * A standalone `net.createServer` on its own 0600 socket path that speaks the same
  * `{bearer, method, params}` newline-JSON cap-socket wire the jailed SDK sends, but
- * SERVES RECORDED RESULTS: it reads the run's content-free `results/replay.jsonl`
- * and, for a request whose `{method, sha256(params)}` matches the NEXT recorded
+ * serves recorded results: it reads the run's daemon-owned, content-free
+ * `results/replay.jsonl`
+ * and, for a request whose `{method, sha256(params)}` matches the next recorded
  * entry (in recorded ORDER), returns the recorded pointer file's bytes as
- * `{ result }`. Any divergence (wrong method, diverged params, exhausted log, a
- * gone pointer) returns `{ error }` — an honest divergence signal, NEVER a
- * fabricated success and NEVER a real dispatch.
+ * `{ result }`. Any divergence returns `{ error }`; the socket never fabricates
+ * success and has no path to a live dispatch.
  *
- * INV-1 (the load-bearing boundary): this is a PHYSICALLY SEPARATE socket, never a
- * MODE of the production capability endpoint. It has NO LeaseManager, NO rpcCall
- * sink, and NO tool registry — it cannot dispatch a real tool even in principle, so
+ * This is a physically separate socket, never a mode of the production capability
+ * endpoint. It has no LeaseManager, RPC sink, or tool registry, so
  * a re-spawned jailed script pointed at it (`COMIS_ORCH_SOCKET` → this path) can
  * only ever re-consume its own recorded results. The authoritative production gate
- * (`setup-capability-endpoint.ts` `startSocket`) stays single-purpose. The socket
- * is operator-invoked + ephemeral: plan 06's admin handler binds it per-replay and
- * tears it down in a `finally`; it is NOT bound during a normal run.
+ * stays single-purpose. The operator handler binds this socket per replay and
+ * tears it down in a `finally`; it is not bound during a normal run.
  *
  * The wire (buffer / MAX_LINE_BYTES fail-closed overflow / 0600 chmod / open-socket
- * tracking for a non-hanging close) MIRRORS `setup-capability-endpoint.ts`
+ * tracking for a non-hanging close) mirrors `setup-capability-endpoint.ts`
  * `startSocket` so a re-spawned script cannot tell the difference at the transport
- * layer — only the SERVED bytes differ (recorded, not live). The bearer is accepted
- * as-is here: the socket's security is that it serves ONLY recorded, content-free-
- * keyed results and is not reachable during normal operation (plan 06 mints an
- * ephemeral OutputGuard-registered bearer for defense-in-depth).
+ * layer — only the served bytes differ (recorded, not live). Every parsed request
+ * must authenticate with the per-replay bearer before it can inspect or consume a
+ * recorded entry.
  *
  * @module
  */
 
 import net from "node:net";
-import { chmodSync, unlinkSync, readFileSync, existsSync } from "node:fs";
-import { safePath, type ComisLogger } from "@comis/core";
-import { replayParamsDigest } from "./setup-capability-endpoint.js";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { chmodSync, unlinkSync } from "node:fs";
+import { PER_FILE_CAP_BYTES, safePath, toSafeErrorLogString, type ComisLogger } from "@comis/core";
+import { safeResultRunId } from "@comis/skills/tools";
+import { readRegularFile } from "@comis/observability";
+import {
+  REPLAY_LOG_MAX_BYTES,
+  replayParamsDigest,
+} from "./capability-replay-recorder.js";
 
 /**
  * Max bytes a single connection may buffer before a newline-terminated request is
@@ -59,29 +58,35 @@ interface RecordedEntry {
   method: string;
   /** `sha256(canonical(params))` the request's params must match (in order). */
   paramsDigest: string;
+  /** SHA-256 of the exact serialized result bytes. */
+  resultDigest: string;
   /** The recorded-result POINTER (`results/<basename>.<kind>`) — read for the bytes. */
   result: string;
 }
 
 /** The minimal wire payload the (re-spawned) jailed SDK sends. Mirrors the prod endpoint. */
 interface ReplayCallRequest {
-  bearer: string;
-  method: string;
+  bearer?: unknown;
+  method?: unknown;
   params?: Record<string, unknown>;
 }
 
 /** Deps for {@link createOrchestrateReplaySocket}. */
 export interface OrchestrateReplaySocketDeps {
   /**
-   * The run's jailed workspace — `<workspacePath>/results/replay.jsonl` + the
-   * recorded pointer files live here. The socket reads (never writes) under it.
+   * Daemon-owned storage containing `results/<run>/replay.jsonl` and its result
+   * blobs. This root is never mounted into an agent jail.
    */
-  workspacePath: string;
+  recordingRootPath: string;
+  /** Durable execution whose isolated result directory contains this recording. */
+  runId: string;
+  /** Per-replay bearer required on every parsed socket request. */
+  expectedBearer: string;
   /** Boundary logger (optional; the unit tests omit it → the handlers degrade to no-ops). */
   logger?: ComisLogger;
 }
 
-/** The replay socket handle — the 0600 socket lifecycle plan 06 binds per-replay. */
+/** The replay socket handle bound per operator replay. */
 export interface OrchestrateReplaySocket {
   /** Load the recorded entries + bind the 0600 owner-only unix socket at `socketPath`. */
   start(socketPath: string): Promise<void>;
@@ -108,6 +113,9 @@ export function createOrchestrateReplaySocket(
   deps: OrchestrateReplaySocketDeps,
 ): OrchestrateReplaySocket {
   const log = deps.logger?.child({ submodule: "orchestrate-replay-socket" });
+  const safeRunId = safeResultRunId(deps.runId);
+  const resultRefPrefix = `${RESULTS_DIR}/${safeRunId}/`;
+  const expectedBearerDigest = createHash("sha256").update(deps.expectedBearer, "utf8").digest();
   let server: net.Server | null = null;
   let boundSocketPath: string | null = null;
   const openSockets = new Set<net.Socket>();
@@ -126,19 +134,22 @@ export function createOrchestrateReplaySocket(
     cursor = 0;
     let logPath: string;
     try {
-      logPath = safePath(deps.workspacePath, RESULTS_DIR, REPLAY_LOG_NAME);
+      logPath = safePath(
+        deps.recordingRootPath,
+        RESULTS_DIR,
+        safeRunId,
+        REPLAY_LOG_NAME,
+      );
     } catch {
       return; // workspace escape — serve nothing (every request diverges).
     }
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath-confined to the run workspace; the basename is a fixed literal
-    if (!existsSync(logPath)) return;
-    let raw: string;
-    try {
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath-confined to the run workspace; the basename is a fixed literal
-      raw = readFileSync(logPath, "utf8");
-    } catch {
-      return;
-    }
+    const read = readRegularFile({
+      path: logPath,
+      maxFileBytes: REPLAY_LOG_MAX_BYTES,
+      confinedBaseDir: deps.recordingRootPath,
+    });
+    if (!read.ok) return;
+    const raw = read.value.content.toString("utf8");
     for (const line of raw.split("\n")) {
       const trimmed = line.trim();
       if (trimmed.length === 0) continue;
@@ -151,15 +162,24 @@ export function createOrchestrateReplaySocket(
     }
   }
 
+  /** Compare fixed-size bearer digests so unequal input lengths never reach timingSafeEqual. */
+  function authenticates(candidate: unknown): boolean {
+    const isString = typeof candidate === "string";
+    const candidateDigest = createHash("sha256")
+      .update(isString ? candidate : "", "utf8")
+      .digest();
+    const equal = timingSafeEqual(candidateDigest, expectedBearerDigest);
+    return isString && equal;
+  }
+
   /**
    * Serve the NEXT recorded entry IF it matches `{method, sha256(params)}`, reading
    * the recorded pointer's bytes; else throw (the socket's `.catch` renders the
    * throw as a content-free `{ error }`). NEVER a real dispatch — the only outputs
-   * are a recorded pointer's bytes or a divergence error (INV-1). Advances the
+   * are a recorded pointer's bytes or a divergence error. Advances the
    * cursor ONLY on a matched, served entry so a divergence does not consume a slot.
    */
   async function handleReplayCall(
-    _bearer: string,
     method: string,
     params: Record<string, unknown>,
   ): Promise<unknown> {
@@ -170,25 +190,48 @@ export function createOrchestrateReplaySocket(
     if (entry.method !== method || entry.paramsDigest !== replayParamsDigest(params)) {
       throw new Error("replay diverged: request does not match the next recorded call");
     }
-    // Read the recorded pointer's bytes (workspace-confined). A gone/expired blob or
-    // a path escape is a divergence, never a fabricated result.
+    // Read only a direct ResultRef file from this replay's isolated run root. A
+    // sibling-run pointer, nested write artifact, escape, or gone blob diverges.
     let abs: string;
     try {
-      abs = safePath(deps.workspacePath, entry.result);
+      if (typeof entry.result !== "string" || !entry.result.startsWith(resultRefPrefix)) {
+        throw new Error("pointer belongs to another run");
+      }
+      const pointerName = entry.result.slice(resultRefPrefix.length);
+      if (pointerName.length === 0 || pointerName.includes("/") || pointerName.includes("\\")) {
+        throw new Error("pointer is not a direct run result");
+      }
+      abs = safePath(deps.recordingRootPath, RESULTS_DIR, safeRunId, pointerName);
     } catch {
-      throw new Error("replay diverged: recorded result path escapes the workspace");
+      throw new Error("replay diverged: recorded result path is outside this run");
     }
-    let bytes: string;
-    try {
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath-confined; entry.result is a store-minted results/ pointer
-      bytes = readFileSync(abs, "utf8");
-    } catch {
+    const resultRead = readRegularFile({
+      path: abs,
+      maxFileBytes: PER_FILE_CAP_BYTES,
+      confinedBaseDir: deps.recordingRootPath,
+    });
+    if (!resultRead.ok) {
       throw new Error("replay diverged: recorded result blob is gone");
     }
-    cursor += 1; // advance ONLY on a matched, served entry (in-order)
+    const bytes = resultRead.value.content.toString("utf8");
+    const actualResultDigest = createHash("sha256").update(resultRead.value.content).digest("hex");
+    if (
+      typeof entry.resultDigest !== "string" ||
+      !/^[a-f0-9]{64}$/.test(entry.resultDigest) ||
+      actualResultDigest !== entry.resultDigest
+    ) {
+      throw new Error("replay diverged: recorded result integrity check failed");
+    }
     // The recorded bytes are `JSON.stringify(result)`; parse them back so the socket
     // wire (`{ result }`) reconstructs the original reply byte-identically.
-    return JSON.parse(bytes);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(bytes);
+    } catch {
+      throw new Error("replay diverged: recorded result blob is invalid");
+    }
+    cursor += 1; // advance only after a matched entry is valid and ready to serve
+    return parsed;
   }
 
   function start(socketPath: string): Promise<void> {
@@ -227,7 +270,15 @@ export function createOrchestrateReplaySocket(
             socket.end(JSON.stringify({ error: "malformed request" }) + "\n");
             return;
           }
-          void handleReplayCall(req.bearer, req.method, req.params ?? {})
+          if (!authenticates(req.bearer)) {
+            socket.end(JSON.stringify({ error: "authentication failed" }) + "\n");
+            return;
+          }
+          if (typeof req.method !== "string") {
+            socket.end(JSON.stringify({ error: "malformed request" }) + "\n");
+            return;
+          }
+          void handleReplayCall(req.method, req.params ?? {})
             .then((result) => {
               socket.end(JSON.stringify({ result }) + "\n");
             })
@@ -246,7 +297,7 @@ export function createOrchestrateReplaySocket(
           log?.debug(
             {
               submodule: "orchestrate-replay-socket",
-              err,
+              err: toSafeErrorLogString(err),
               errorKind: "network" as const,
               hint: "replay socket connection error (typically a client disconnecting mid-write)",
             },
@@ -260,7 +311,7 @@ export function createOrchestrateReplaySocket(
         log?.error(
           {
             submodule: "orchestrate-replay-socket",
-            err,
+            err: toSafeErrorLogString(err),
             errorKind: "network" as const,
             hint: "replay socket server error",
           },

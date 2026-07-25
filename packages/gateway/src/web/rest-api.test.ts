@@ -24,6 +24,7 @@ function createMockRpcDeps(overrides?: Partial<RpcAdapterDeps>): RpcAdapterDeps 
     inspectMemory: vi.fn().mockResolvedValue({
       stats: { totalEntries: 10, totalSessions: 2 },
     }),
+    getSessionHistory: vi.fn().mockResolvedValue({ messages: [] }),
     getConfig: vi.fn().mockResolvedValue({
       agents: [{ id: "default", provider: "anthropic" }],
     }),
@@ -283,6 +284,31 @@ describe("createRestApi", () => {
       const res = await api.request("/activity?limit=-5", { headers: authHeaders() });
       expect(res.status).toBe(200);
     });
+
+    it("never returns retained message bodies or attachment metadata", async () => {
+      const buffer = new ActivityRingBuffer(100);
+      buffer.push("message:received", {
+        message: {
+          id: "message-1",
+          channelType: "telegram",
+          channelId: "chat-1",
+          senderId: "user-1",
+          text: "private inbound body",
+          attachments: [{ name: "private.pdf", metadata: { secret: "private" } }],
+          metadata: { token: "credential" },
+          timestamp: 42,
+        },
+      });
+
+      const api = createRestApi(createApiDeps({ activityBuffer: buffer }));
+      const res = await api.request("/activity", { headers: authHeaders() });
+      const serialized = JSON.stringify(await res.json());
+
+      expect(serialized).toContain("message-1");
+      expect(serialized).not.toContain("private inbound body");
+      expect(serialized).not.toContain("private.pdf");
+      expect(serialized).not.toContain("credential");
+    });
   });
 
   describe("GET /memory/search", () => {
@@ -290,7 +316,7 @@ describe("createRestApi", () => {
       const deps = createApiDeps();
       const api = createRestApi(deps);
 
-      const res = await api.request("/memory/search?q=dentist", { headers: authHeaders() });
+      const res = await api.request("/memory/search?q=dentist&tenant=tenant-a&agent=agent-a", { headers: authHeaders() });
       expect(res.status).toBe(200);
 
       const body = await res.json();
@@ -298,6 +324,8 @@ describe("createRestApi", () => {
       expect(deps.rpcAdapterDeps.searchMemory).toHaveBeenCalledWith({
         query: "dentist",
         limit: 10,
+        tenantId: "tenant-a",
+        agentId: "agent-a",
       });
     });
 
@@ -305,13 +333,15 @@ describe("createRestApi", () => {
       const deps = createApiDeps();
       const api = createRestApi(deps);
 
-      const res = await api.request("/memory/search?q=test&limit=5", {
+      const res = await api.request("/memory/search?q=test&limit=5&tenant=tenant-a&agent=agent-a", {
         headers: authHeaders(),
       });
       expect(res.status).toBe(200);
       expect(deps.rpcAdapterDeps.searchMemory).toHaveBeenCalledWith({
         query: "test",
         limit: 5,
+        tenantId: "tenant-a",
+        agentId: "agent-a",
       });
     });
 
@@ -330,12 +360,34 @@ describe("createRestApi", () => {
       const deps = createApiDeps();
       const api = createRestApi(deps);
 
-      const res = await api.request("/memory/stats", { headers: authHeaders() });
+      const res = await api.request("/memory/stats?tenant=tenant-a&agent=agent-a", { headers: authHeaders() });
       expect(res.status).toBe(200);
 
       const body = await res.json();
       expect(body.stats).toBeDefined();
-      expect(deps.rpcAdapterDeps.inspectMemory).toHaveBeenCalledWith({});
+      expect(deps.rpcAdapterDeps.inspectMemory).toHaveBeenCalledWith({
+        tenantId: "tenant-a",
+        agentId: "agent-a",
+      });
+    });
+  });
+
+  describe("GET /chat/history", () => {
+    it("binds history reads to the authenticated gateway client", async () => {
+      const getSessionHistory = vi.fn().mockResolvedValue({ messages: [] });
+      const rpcAdapterDeps = createMockRpcDeps({ getSessionHistory });
+      const api = createRestApi(createApiDeps({ rpcAdapterDeps }));
+
+      const res = await api.request("/chat/history?channelId=shared&peerId=thread-a", {
+        headers: authHeaders(),
+      });
+
+      expect(res.status).toBe(200);
+      expect(getSessionHistory).toHaveBeenCalledWith({
+        channelId: "shared",
+        peerId: "thread-a",
+        clientId: "test-client",
+      });
     });
   });
 
@@ -379,6 +431,37 @@ describe("createRestApi", () => {
         clientId: "test-client",
         scopes: ["rpc", "admin"],
       });
+    });
+
+    it("passes a canonical per-turn locale to agent execution", async () => {
+      const deps = createApiDeps();
+      const api = createRestApi(deps);
+
+      const res = await api.request("/chat", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "مرحبا", locale: "ar" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(deps.rpcAdapterDeps.executeAgent).toHaveBeenCalledWith(expect.objectContaining({
+        message: "مرحبا",
+        locale: "ar",
+      }));
+    });
+
+    it("rejects a non-canonical per-turn locale before agent execution", async () => {
+      const deps = createApiDeps();
+      const api = createRestApi(deps);
+
+      const res = await api.request("/chat", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "مرحبا", locale: "AR-eg" }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
     });
 
     it("returns 400 for missing message", async () => {
@@ -489,15 +572,15 @@ describe("createRestApi", () => {
 });
 
 describe("ActivityRingBuffer", () => {
-  it("stores and retrieves entries", () => {
+  it("stores and retrieves content-free entries", () => {
     const buffer = new ActivityRingBuffer(10);
-    buffer.push("test", { data: 1 });
-    buffer.push("test", { data: 2 });
+    buffer.push("scheduler:cron_execution_started", { executionId: "execution-1", jobId: "job-1", startedAtMs: 1 });
+    buffer.push("scheduler:cron_execution_started", { executionId: "execution-2", jobId: "job-2", startedAtMs: 2 });
 
     const entries = buffer.getRecent(10);
     expect(entries).toHaveLength(2);
-    expect(entries[0].payload).toEqual({ data: 1 });
-    expect(entries[1].payload).toEqual({ data: 2 });
+    expect(entries[0].payload).toEqual({ executionId: "execution-1", jobId: "job-1", startedAtMs: 1 });
+    expect(entries[1].payload).toEqual({ executionId: "execution-2", jobId: "job-2", startedAtMs: 2 });
   });
 
   it("assigns incrementing IDs", () => {
@@ -526,13 +609,13 @@ describe("ActivityRingBuffer", () => {
   it("respects limit in getRecent", () => {
     const buffer = new ActivityRingBuffer(10);
     for (let i = 0; i < 5; i++) {
-      buffer.push("evt", { i });
+      buffer.push("scheduler:cron_execution_started", { attempt: i });
     }
 
     const entries = buffer.getRecent(2);
     expect(entries).toHaveLength(2);
-    expect((entries[0].payload as { i: number }).i).toBe(3);
-    expect((entries[1].payload as { i: number }).i).toBe(4);
+    expect((entries[0].payload as { attempt: number }).attempt).toBe(3);
+    expect((entries[1].payload as { attempt: number }).attempt).toBe(4);
   });
 
   it("clears all entries from the ActivityRingBuffer when clear() is invoked", () => {
@@ -589,5 +672,46 @@ describe("subscribeActivityBuffer", () => {
     });
 
     expect(buffer.size).toBe(0);
+  });
+
+  it("captures every correlated heartbeat wake lifecycle event", () => {
+    const eventBus = new TypedEventBus();
+    const buffer = new ActivityRingBuffer(100);
+    const unsubscribe = subscribeActivityBuffer(eventBus, buffer);
+    const target = { kind: "monitoring" as const };
+
+    eventBus.emit("scheduler:heartbeat_wake_admitted", {
+      correlationId: "heartbeat-1",
+      target,
+      lane: "normal",
+      retainedReason: "manual",
+      disposition: "new_occurrence",
+      timestamp: 1,
+    });
+    eventBus.emit("scheduler:heartbeat_wake_deferred", {
+      correlationId: "heartbeat-1",
+      target,
+      lane: "normal",
+      reason: "spacing_deferred",
+      nextEligibleAtMs: 3,
+      timestamp: 2,
+    });
+    eventBus.emit("scheduler:heartbeat_wake_terminal", {
+      correlationId: "heartbeat-1",
+      target,
+      lane: "normal",
+      retainedReason: "manual",
+      status: "settled",
+      eventEntryCount: 0,
+      durationMs: 4,
+      timestamp: 5,
+    });
+
+    expect(buffer.getRecent(3).map((entry) => entry.event)).toEqual([
+      "scheduler:heartbeat_wake_admitted",
+      "scheduler:heartbeat_wake_deferred",
+      "scheduler:heartbeat_wake_terminal",
+    ]);
+    unsubscribe();
   });
 });

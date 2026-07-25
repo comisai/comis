@@ -2,23 +2,13 @@
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
-import { parseSessionKeyString, formatSessionDisplayName } from "../../utils/session-key-parser.js";
+import type { ChatSessionInfo } from "./session-data.js";
 
 // Side-effect imports for sub-components used in template
 import "../../components/form/ic-search-input.js";
 import "../../components/data/ic-tag.js";
 import "../../components/data/ic-relative-time.js";
 import "../../components/display/ic-icon.js";
-
-/** Session information from session.status RPC. */
-export interface SessionInfo {
-  key: string;
-  agentId: string;
-  channelType: string;
-  messageCount: number;
-  lastActivity: number;
-  label?: string;
-}
 
 /**
  * Session list sidebar sub-component.
@@ -134,17 +124,16 @@ export class IcSessionSidebar extends LitElement {
     `,
   ];
 
-  @property({ type: Array }) sessions: SessionInfo[] = [];
+  @property({ type: Array }) sessions: ChatSessionInfo[] = [];
   @property({ type: String }) selectedKey = "";
   @property({ type: String }) filter = "";
   @property({ type: Boolean }) open = false;
 
-  private _renderSessionItem(session: SessionInfo) {
+  private _renderSessionItem(session: ChatSessionInfo) {
     const isActive = session.key === this.selectedKey;
     const itemClass = isActive ? "session-item session-item--active" : "session-item";
-    const parsed = parseSessionKeyString(session.key);
-    const displayName = parsed ? formatSessionDisplayName(parsed) : (session.key.length > 8 ? session.key.slice(0, 8) : session.key);
-    const channelTag = parsed?.channelId ?? session.channelType;
+    const displayName = session.label
+      ?? (session.key.length > 12 ? `${session.key.slice(0, 12)}…` : session.key);
 
     return html`
       <div
@@ -161,7 +150,7 @@ export class IcSessionSidebar extends LitElement {
       >
         <span class="session-key" title=${session.key}>${displayName}</span>
         <div class="session-meta">
-          <ic-tag variant="accent" size="sm">${channelTag}</ic-tag>
+          <ic-tag variant="accent" size="sm">${session.channelType}</ic-tag>
           <span class="msg-count">${session.messageCount}</span>
           <ic-relative-time .timestamp=${session.lastActivity}></ic-relative-time>
         </div>

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unified message tool: multi-action tool for cross-channel messaging.
+ * Unified message tool for endpoint-scoped channel operations.
  *
  * Supports 7 actions: send, reply, react, edit, delete, fetch, attach.
  * Destructive action (delete) requires confirmation via action gate.
  * All actions delegate to the messaging backend via rpcCall indirection.
- * Requires channel_type for explicit adapter resolution.
+ * Requires channel_type for adapter resolution; the daemon independently
+ * requires the requested coordinates to match the authoritative turn endpoint.
  *
  * @module
  */
@@ -135,7 +136,7 @@ const MessageToolParams = Type.Object({
  * requiresConfirmation:true when the action is classified as destructive.
  *
  * @param rpcCall - RPC call function for delegating to the messaging backend
- * @returns AgentTool implementing the cross-channel messaging interface
+ * @returns AgentTool implementing endpoint-scoped messaging
  */
 const VALID_ACTIONS = ["send", "reply", "react", "edit", "delete", "fetch", "attach"] as const;
 
@@ -150,7 +151,7 @@ export function createMessageTool(rpcCall: RpcCall): AgentTool<typeof MessageToo
         "Send, reply, react, edit, delete, fetch messages on active channel.",
       parameters: MessageToolParams,
       validActions: VALID_ACTIONS,
-      actionHandler: async (action, p, rpcCall) => {
+      actionHandler: async (action, p, rpcCall, toolCallId) => {
         const channel_type = readStringParam(p, "channel_type");
         const channel_id = readStringParam(p, "channel_id");
 
@@ -174,7 +175,7 @@ export function createMessageTool(rpcCall: RpcCall): AgentTool<typeof MessageToo
               ...(cards ? { cards } : {}),
               ...(effects ? { effects } : {}),
               ...(thread_reply !== undefined ? { thread_reply } : {}),
-            });
+            }, { outwardOperationId: toolCallId });
           }
 
           case "reply": {
@@ -197,13 +198,17 @@ export function createMessageTool(rpcCall: RpcCall): AgentTool<typeof MessageToo
               ...(cards ? { cards } : {}),
               ...(effects ? { effects } : {}),
               ...(thread_reply !== undefined ? { thread_reply } : {}),
-            });
+            }, { outwardOperationId: toolCallId });
           }
 
           case "react": {
             const emoji = readStringParam(p, "emoji");
             const message_id = readStringParam(p, "message_id");
-            return rpcCall("message.react", { channel_type, channel_id, message_id, emoji });
+            return rpcCall(
+              "message.react",
+              { channel_type, channel_id, message_id, emoji },
+              { outwardOperationId: toolCallId },
+            );
           }
 
           case "edit": {

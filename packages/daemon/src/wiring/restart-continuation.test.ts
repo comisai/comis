@@ -7,9 +7,11 @@ import {
   createRestartContinuationTracker,
   loadContinuations,
   buildMcpStatusLine,
+  resolveContinuationLanguage,
   type ContinuationRecord,
 } from "./restart-continuation.js";
 import type { McpConnection } from "@comis/skills";
+import { runWithContext } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -123,6 +125,38 @@ describe("createRestartContinuationTracker", () => {
     expect(count).toBe(2);
   });
 
+  it("completed turns are excluded from restart capture", () => {
+    const tracker = createRestartContinuationTracker();
+    const record = makeRecord({ channelId: "settled-chat" });
+
+    tracker.track(record);
+    tracker.complete(record);
+
+    const filePath = join(tmpDir, "settled.json");
+    expect(tracker.isTracked(record)).toBe(false);
+    expect(tracker.capture(filePath, 60_000, tmpDir)).toBe(0);
+    expect(existsSync(filePath)).toBe(false);
+  });
+
+  it("earlier completion keeps an overlapping turn active", () => {
+    const tracker = createRestartContinuationTracker();
+    const first = makeRecord({ channelId: "overlap-chat", resolvedLanguage: "en" });
+    const second = makeRecord({ channelId: "overlap-chat", resolvedLanguage: "fr" });
+
+    tracker.track(first);
+    tracker.track(second);
+    tracker.complete(first);
+
+    const filePath = join(tmpDir, "overlap.json");
+    expect(tracker.isTracked(second)).toBe(true);
+    expect(tracker.capture(filePath, 60_000, tmpDir)).toBe(1);
+    const written: ContinuationRecord[] = JSON.parse(readFileSync(filePath, "utf-8"));
+    expect(written[0]?.resolvedLanguage).toBe("fr");
+
+    tracker.complete(second);
+    expect(tracker.isTracked(second)).toBe(false);
+  });
+
   it("preserves chatType across track -> capture -> loadContinuations round trip", () => {
     // Regression: synthetic restart messages were mis-framing group sessions
     // as DMs because chatType was not captured. The full round-trip must
@@ -145,6 +179,40 @@ describe("createRestartContinuationTracker", () => {
     expect(byChannel.get("group-chat")?.chatType).toBe("supergroup");
     expect(byChannel.get("dm-chat")?.chatType).toBe("private");
     expect(byChannel.get("no-meta")?.chatType).toBeUndefined();
+  });
+
+  it("preserves the resolved response language across a restart round trip", () => {
+    const tracker = createRestartContinuationTracker();
+    tracker.track(makeRecord({ resolvedLanguage: "und-Hebr" }));
+
+    const filePath = join(tmpDir, "language-round-trip.json");
+    expect(tracker.capture(filePath, 60_000, tmpDir)).toBe(1);
+
+    const loaded = loadContinuations(filePath, 300_000, makeMockLogger());
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]?.resolvedLanguage).toBe("und-Hebr");
+  });
+});
+
+describe("resolveContinuationLanguage", () => {
+  it("derives the response script from the original inbound text", () => {
+    expect(resolveContinuationLanguage({
+      text: "סכם את ציוני הבטיחות לפי קבוצות הרכב",
+      metadata: {},
+    })).toBe("und-Hebr");
+  });
+
+  it("retains the trusted locale for an English synthetic restart message", () => {
+    const resolved = runWithContext({
+      traceId: "trace-restart-language",
+      startedAt: Date.now(),
+      resolvedLanguage: "und-Hebr",
+    }, () => resolveContinuationLanguage({
+      text: "[system: daemon restarted]",
+      metadata: { isRestartContinuation: true },
+    }));
+
+    expect(resolved).toBe("und-Hebr");
   });
 });
 
@@ -361,4 +429,3 @@ describe("restart-continuation honors §1.4 mode invariants", () => {
     expect(statSync(filePath).mode & 0o777).toBe(0o600);
   });
 });
-

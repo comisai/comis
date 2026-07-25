@@ -72,21 +72,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * Layers are applied left-to-right: later layers override earlier ones.
  * The merged result is validated against AppConfigSchema.
  *
- * `rawMergedOut` (when provided) captures the merged RAW object BEFORE Zod
- * validation/defaulting. This is the only place the genuine pre-default config
- * is observable — the return value is the fully-defaulted `AppConfig`, where
- * tri-state "unset" signals have already collapsed to their schema defaults.
- * Reranking needs the raw `agents.<id>.rag.rerank.enabled` to
- * distinguish operator-unset (auto-on candidate) from an explicit `false`
- * (force-off); `bootstrap()` reads it from here. The out-param keeps the
- * return contract byte-identical for every other caller.
  */
 export function mergeLayered(
   layers: Record<string, unknown>[],
-  rawMergedOut?: { value?: Record<string, unknown> },
 ): Result<AppConfig, ConfigError> {
   if (layers.length === 0) {
-    if (rawMergedOut) rawMergedOut.value = {};
     return validateConfig({});
   }
 
@@ -95,7 +85,6 @@ export function mergeLayered(
     merged = deepMerge(merged, layer);
   }
 
-  if (rawMergedOut) rawMergedOut.value = merged;
   return validateConfig(merged);
 }
 
@@ -120,8 +109,6 @@ export function loadLayered(
   options?: {
     getSecret?: (key: string) => string | undefined;
     envLayer?: Record<string, unknown>;
-    /** Captures the merged RAW config (pre-Zod-default) — see mergeLayered. */
-    rawMergedOut?: { value?: Record<string, unknown> };
   },
 ): Result<AppConfig, ConfigError> {
   const layers: Record<string, unknown>[] = [];
@@ -138,5 +125,5 @@ export function loadLayered(
     layers.push(result.value);
   }
 
-  return mergeLayered(layers, options?.rawMergedOut);
+  return mergeLayered(layers);
 }

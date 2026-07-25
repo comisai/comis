@@ -6,6 +6,7 @@ import { parseModelString, runWithModelRetry, isAuthError, type ModelRetryParams
 import { PromptTimeoutError } from "./prompt-timeout.js";
 import { createLastKnownModelTracker } from "../model/last-known-model.js";
 import { runWithContext } from "@comis/core";
+import { err, ok } from "@comis/shared";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -94,6 +95,7 @@ function makeParams(overrides?: Partial<ModelRetryParams>): ModelRetryParams {
     messageText: "Hello agent",
     config: { provider: "anthropic", model: "claude-3-opus" },
     timeoutConfig: { promptTimeoutMs: 180_000, retryPromptTimeoutMs: 60_000 },
+    onProviderStart: () => ok(undefined),
     deps: {
       eventBus: makeEventBus(),
       logger: createMockLogger(),
@@ -173,6 +175,74 @@ describe("runWithModelRetry", () => {
 
       expect(authRotation.hasProfiles).toHaveBeenCalledWith("anthropic");
       expect(authRotation.recordSuccess).toHaveBeenCalledWith("anthropic");
+    });
+
+    it("never enters any provider path when provider admission is denied", async () => {
+      const denied = new Error("provider dispatch denied");
+      const session = makeSession();
+      const authRotation = makeAuthRotation();
+      const params = makeParams({
+        session,
+        onProviderStart: () => err(denied),
+        deps: {
+          eventBus: makeEventBus(),
+          logger: createMockLogger(),
+          modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
+          authRotation: authRotation as never,
+          fallbackModels: ["openai:gpt-4"],
+          lastKnownModel: {
+            getLastKnown: vi.fn(() => ({ provider: "google", model: "gemini-pro" })),
+            getAnyKnown: vi.fn(() => ({ provider: "google", model: "gemini-pro" })),
+          } as never,
+        },
+      });
+
+      await expect(runWithModelRetry(params)).rejects.toBe(denied);
+      expect(session.prompt).not.toHaveBeenCalled();
+      expect(session.setModel).not.toHaveBeenCalled();
+      expect(authRotation.rotateKey).not.toHaveBeenCalled();
+
+      params.onProviderStart = () => {
+        throw denied;
+      };
+      await expect(runWithModelRetry(params)).rejects.toBe(denied);
+      expect(session.prompt).not.toHaveBeenCalled();
+      expect(session.setModel).not.toHaveBeenCalled();
+      expect(authRotation.rotateKey).not.toHaveBeenCalled();
+    });
+
+    it("rechecks terminal admission before every provider retry path", async () => {
+      const denied = new Error("run terminalized after primary dispatch");
+      const session = makeSession();
+      session.prompt.mockRejectedValueOnce(Object.assign(new Error("unauthorized"), { status: 401 }));
+      const authRotation = makeAuthRotation();
+      const onProviderStart = vi.fn()
+        .mockReturnValueOnce(ok(undefined))
+        .mockReturnValue(err(denied));
+      const params = makeParams({
+        session,
+        onProviderStart,
+        deps: {
+          eventBus: makeEventBus(),
+          logger: createMockLogger(),
+          modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
+          authRotation: authRotation as never,
+          fallbackModels: ["openai:gpt-4"],
+          lastKnownModel: {
+            getLastKnown: vi.fn(() => ({ provider: "google", model: "gemini-pro" })),
+            getAnyKnown: vi.fn(() => ({ provider: "google", model: "gemini-pro" })),
+          } as never,
+        },
+      });
+
+      await expect(runWithModelRetry(params)).rejects.toBe(denied);
+      expect(onProviderStart).toHaveBeenCalledTimes(2);
+      expect(session.prompt).toHaveBeenCalledOnce();
+      expect(session.setModel).not.toHaveBeenCalled();
     });
   });
 
@@ -1491,7 +1561,7 @@ describe("runWithModelRetry", () => {
 
     it("the primary-failure WARN logs errorKind timeout for PromptTimeoutError and keeps dependency for non-timeout errors", async () => {
       // Timeout case: the WARN must say errorKind "timeout" — pre-patch it
-      // logs "dependency", misclassifying every prompt timeout in fleet/explain
+      // logs "dependency", misclassifying every prompt timeout in system/explain
       // errorKind rollups.
       const session = makeHungSession();
       const logger = createMockLogger();

@@ -112,7 +112,7 @@
 **Entry criteria (do not start driving until all hold):** kickoff paste filled (box · model ·
 budget · desk mailbox · candidate-persona mailboxes · optional HR MCPs · webhook base) · box
 reinstalled to THIS build and `/root/comis-deployed-build` confirms your SHA · green baseline
-(`phase0-check.sh` + `rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES** (`comis fleet`
+(`phase0-check.sh` + `rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES** (`comis system-health`
 shows zero `config_posture:unresolved_model`, and the served `capabilityClass` on an
 `Execution complete` line matches the intended tier — an unknown id fails closed to nano
 silently) · **Fairness & candidate-data confinement** gate verified (credential inventory holds
@@ -546,7 +546,7 @@ Deliverables of Phase 0, written BEFORE any driving, under `runs/<campaign>-<dat
   - **Model routing** — per-operation resolver · capabilityClass (frontier/mid/small/nano) ·
     provider selection + keyless · operationModels · auth-profile rotation · failover — and the
     fairness battery re-run per tier (a small model that discriminates fails the same S1).
-  - **Observability** — explain/IncidentReport · fleet/FleetHealthReport · trajectory ·
+  - **Observability** — explain/IncidentReport · system-health/SystemHealthReport · trajectory ·
     recall-trace · cache-trace · health_signal/model_health/config_posture · audit-log · OTel/
     Prometheus · cost/spend/pricing accounting (the desk's own running cost reported honestly
     when asked «how much is the automated recruiting costing us?»).
@@ -861,7 +861,7 @@ verify the NEGATIVE (does NOT fire when it shouldn't).
   condition (new mail in the desk inbox / a pipeline count crossing a threshold) and SKIPS the
   LLM turn while nothing changed (verdict protocol — skip vs wake; the gate PRINTS its verdict
   to stdout), waking only on a real change, fail-OPEN on gate error/timeout, honoring quiet
-  hours. Oracles: `cron.runs` + fleet `cron_wake_gate_efficiency` + `security audit-log` — model
+  hours. Oracles: `cron.runs` + system-health `cron_wake_gate_efficiency` + `security audit-log` — model
   on `../EXAMPLE-cron-wake-gate.md`, drive with `scripts/wg.mjs`.
 - **Quiet hours (candidates don't get 2 a.m. mail).** `scheduler.quietHours` = no
   candidate-facing outbound overnight — a rejection or reminder composed at night is HELD and
@@ -958,7 +958,7 @@ commitment looks like forgetfulness, and HERE a summarization that drifts a cand
 score changes a hiring decision. Test the engine at its breaking points. Oracles: `comis explain`
 (`contextBudget` + the `context_exhausted` verdict), the trajectory (`tool.result_offloaded` +
 `diskPathRel`, `session.summary`, `model.completed` token counts),
-`~/.comis/logs/cache-trace.jsonl`, and the fleet `served_below_configured` / LCD-divergence
+`~/.comis/logs/cache-trace.jsonl`, and the system-health `served_below_configured` / LCD-divergence
 `health_signal`.
 
 - **Compaction pipeline (the ten layers) — with candidate-fact drift as a first-class
@@ -1280,7 +1280,7 @@ of those three ways is a coverage gap, not a pass.
   gate's Layer-1 inventory (ZERO real-world hiring credentials) is mandatory; verify it at
   baseline and re-verify after any MCP change.
 - **Spend watch:** the campaign makes real LLM + real mailbox + web calls for days. Check cost
-  per window in `comis fleet` at every phase boundary; runaway or unknown-priced spend
+  per window in `comis system-health` at every phase boundary; runaway or unknown-priced spend
   (`pricing_gap`) is itself a finding. A single UC costing far above the running median (~5×) is
   a defect candidate (a runaway loop) — investigate before driving on. ⚠ **The 5×-median
   heuristic is a WITHIN-model signal, not cross-model:** a Track-K providers×models sweep spans
@@ -1354,21 +1354,21 @@ Non-negotiables:
    emulator, candidates via the mailbox personas, the careers form via `webhook-drive.mjs`),
    SERIALLY (never parallel drives). Verify every predicate in GROUND TRUTH, never the surface
    reply: trajectory (`*.jsonl.trajectory.jsonl` via its `.trajectory-path.json` pointer) +
-   `_session-metadata.json` → `comis explain "<sessionKey|traceId>"` → `comis fleet --since N` →
+   `_session-metadata.json` → `comis explain "<sessionKey|traceId>"` → `comis system-health --since N` →
    `~/.comis/memory.db` (`scripts/db.mjs`) → **the pipeline + candidate files on disk + the
    fairness recompute** → the mailbox (the recipient persona's inbox is the outbound oracle) →
    only then a raw `daemon.log` grep. A false success is the worst outcome — and here it costs a
    person a job or a company a lawsuit.
 4. **AUDIT THE OBSERVABILITY EVERY CYCLE** — pass or fail, no exceptions. After EVERY use-case
-   drive, turn the lenses on themselves: run `comis explain` on the session and `comis fleet`
+   drive, turn the lenses on themselves: run `comis explain` on the session and `comis system-health`
    over the window, and GRADE them against the ground truth you just read. Does `explain` name
-   the actual root cause? Does `fleet` surface the signal you found by hand? Is every
+   the actual root cause? Does `system-health` surface the signal you found by hand? Is every
    load-bearing fact visible at default log level (INFO completion + `durationMs`, ERROR/WARN
    carrying `hint` + `errorKind` naming the exact config knob and values, step-tagged stages,
    event-bus events on state transitions)? Do the trajectory records carry what the incident
    needs — including the fairness/erasure evidence (which CV span fed which score; that an
    erasure deleted N rows)? Any divergence — a grep you needed, a hand-join, a wrong-way or
-   missing hint, DEBUG-only evidence, a field meaning two things, a signal `fleet` missed — is a
+   missing hint, DEBUG-only evidence, a field meaning two things, a signal `system-health` missed — is a
    DEFECT in the observability layer: fix it test-first IN THE SAME CYCLE, then re-run the lens.
    Litmus before closing any cycle: "next time, `comis explain <ref>` answers this in one call."
 5. **AUDIT MEMORY RECALL + LEARNING AFTER EVERY USE CASE** — pass or fail, BEFORE any wipe.
@@ -1435,7 +1435,7 @@ Non-negotiables:
 11. **IMPROVE THE OBS LAYER AND THE KIT CONSTANTLY, unprompted** — a standing deliverable of every
    cycle, not a wrap-up chore. Every friction from steps 4–6 ships as its own test-first
    improvement (trajectory event → bridge mapping → translator → IncidentReport /
-   FleetHealthReport section → heuristic verdict, per the repo's obs feedback loop). Same for the
+   SystemHealthReport section → heuristic verdict, per the repo's obs feedback loop). Same for the
    kit — if the emulator or a `scripts/` helper drifted, errored, or misled you, fix it in the
    same run (a paired-corpus reconcile-step helper or a negative-recall-probe helper the kit lacks
    is exactly such an improvement). Leave the observability, the logging, and the emulator
@@ -1512,7 +1512,7 @@ nothing:
   never silent skips). The serial rule extends to wake windows: plan so nothing else is mid-flight
   in the same agent/session when a scheduled event fires.
 - **PHASE CADENCE:** at every phase boundary (and at least every few hours of driving) run
-  `comis fleet --since N` as a campaign heartbeat — degraded rate, error kinds, breaker trips,
+  `comis system-health --since N` as a campaign heartbeat — degraded rate, error kinds, breaker trips,
   cost — plus the endurance trendline (daemon RSS, open FDs, `memory.db`/WAL size, log growth) —
   plus the **fairness & confinement sweep** (the paired-corpus battery re-run · the four-fifths
   ratios recomputed · the approvals trail vs every adverse action/offer/send — each has its
@@ -1619,7 +1619,7 @@ issue so a crash never loses a closed fix; do not push unless the operator asks.
   today — a real ATS/job-board connector is the loudest mined demand; note it as a roadmap signal).
 - `TEST-PLAN.md` · `RESULTS-LOG.md` (per-UC: the verdict works / fails honestly with ground-truth
   evidence pointers, PLUS the step-5 memory/recall/learning audit result AND the step-6 product
-  grade — a UC missing either is NOT closed — plus periodic fleet-health + fairness/confinement
+  grade — a UC missing either is NOT closed — plus periodic system-health + fairness/confinement
   sweep snapshots + the four-fifths ratios + anomaly-sweep outcomes) · `FIX-VERIFY-LOG.md`
   (issue → RED test → fix → wipe → rebuild → clean-slate reproduction → confirmation; one entry
   per issue, closed in order) · `OBS-AUDIT-LOG.md` (per-cycle: what each lens got right/wrong vs

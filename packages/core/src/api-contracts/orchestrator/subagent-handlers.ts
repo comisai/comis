@@ -2,7 +2,7 @@
 /**
  * Subagent-handlers contract slice.
  *
- * Mirrors `packages/daemon/src/api/subagent-handlers.ts` (3 methods —
+ * Mirrors `packages/daemon/src/api/subagent-handlers.ts` (7 methods —
  * subagent.*). Spread order in `SUBAGENT_HANDLERS_CONTRACTS` matches the
  * orchestrator contracts array byte for byte to keep
  * `contracts.generated.*` artifacts byte-identical.
@@ -11,6 +11,8 @@
  */
 import { z } from "zod";
 import { defineContract } from "../types.js";
+import { ERROR_KINDS } from "../../logging/log-fields.js";
+import { SUBAGENT_RESULT_SUMMARY_MAX_CHARS } from "../../domain/subagent-context-types.js";
 
 // ===========================================================================
 // --- subagent-handlers.ts ---
@@ -21,24 +23,95 @@ import { defineContract } from "../types.js";
 // ---------------------------------------------------------------------------
 
 /**
- * `subagent.list` — List sub-agent runs (filtered by recentMinutes). Admin-
- * scoped per setup-gateway-api.ts:207-209. Handler path:
- * subagent-handlers.ts:40-44.
+ * `subagent.list` — List sub-agent runs filtered by recent time. The RPC route
+ * is owner-scoped by the handler; the admin route may additionally select an
+ * exact child agent or spawn tree.
  *
- * Request: `{ recentMinutes? }`. Defaults to 30.
- * Response: `{ runs, total }`. Each run is a loose-record (SubAgentRun shape
- *   varies — carries runId, agentId, task, state, spawn metadata).
+ * Agent responses contain only content-free lifecycle fields. Admin responses
+ * retain the full diagnostic run records.
  */
 export const SubagentListContract = defineContract({
   method: "subagent.list",
   request: z.object({
-    recentMinutes: z.number().optional(),
+    recentMinutes: z.number().int().positive().max(10_080).optional(),
+    agentId: z.string().min(1).max(256).optional(),
+    rootRunId: z.string().min(1).max(256).optional(),
   }),
   response: z.object({
     runs: z.array(z.record(z.string(), z.unknown())),
     total: z.number(),
   }),
-  scopes: ["admin"] as const,
+  scopes: ["rpc", "admin"] as const,
+});
+
+// ---------------------------------------------------------------------------
+// subagent.wait
+// ---------------------------------------------------------------------------
+
+const SubagentResultRefSchema = z.strictObject({
+  ref: z.string().min(1).max(1_024),
+  kind: z.enum(["jsonl", "json", "csv", "html", "text", "binary"]),
+  bytes: z.number().int().nonnegative().safe(),
+  rows: z.number().int().nonnegative().safe().optional(),
+  schema: z.array(z.string().max(256)).max(256).optional(),
+  preview: z.string().max(4_096),
+  expiresAt: z.string().min(1).max(64),
+});
+
+export const SubagentSuccessCompletionSchema = z.strictObject({
+  endReason: z.literal("completed"),
+  completedAtMs: z.number().int().nonnegative().safe(),
+  summary: z.string().max(SUBAGENT_RESULT_SUMMARY_MAX_CHARS).optional(),
+  resultRef: SubagentResultRefSchema.optional(),
+});
+
+export const SubagentFailureCompletionSchema = z.strictObject({
+  endReason: z.enum(["failed", "killed", "watchdog_timeout", "ghost_sweep"]),
+  completedAtMs: z.number().int().nonnegative().safe(),
+  errorKind: z.enum(ERROR_KINDS),
+  summary: z.string().max(SUBAGENT_RESULT_SUMMARY_MAX_CHARS).optional(),
+  resultRef: SubagentResultRefSchema.optional(),
+});
+
+export const SubagentCompletionSchema = z.union([
+  SubagentSuccessCompletionSchema,
+  SubagentFailureCompletionSchema,
+]);
+
+export const SubagentRunTelemetrySchema = z.strictObject({
+  tokensUsedTotal: z.number().int().nonnegative().safe(),
+  costTotal: z.number().nonnegative().finite(),
+  finishReason: z.string().min(1).max(128),
+  stepsExecuted: z.number().int().nonnegative().safe(),
+  cacheReadTokens: z.number().int().nonnegative().safe(),
+  cacheWriteTokens: z.number().int().nonnegative().safe(),
+});
+
+const SubagentWaitResultSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    runId: z.string().min(1).max(256),
+    status: z.literal("completed"),
+    completion: SubagentCompletionSchema,
+  }),
+  z.strictObject({ runId: z.string().min(1).max(256), status: z.literal("denied_unknown") }),
+  z.strictObject({ runId: z.string().min(1).max(256), status: z.literal("timeout") }),
+  z.strictObject({ runId: z.string().min(1).max(256), status: z.literal("cancelled") }),
+]);
+
+/** Wait without polling for the caller's active direct children or selected runs. */
+export const SubagentWaitContract = defineContract({
+  method: "subagent.wait",
+  request: z.strictObject({
+    runIds: z.array(z.string().min(1).max(256))
+      .min(1)
+      .max(32)
+      .optional(),
+    timeoutMs: z.number().int().min(0).max(300_000).optional(),
+  }),
+  response: z.strictObject({
+    results: z.array(SubagentWaitResultSchema).max(32),
+  }),
+  scopes: ["rpc", "admin"] as const,
 });
 
 // ---------------------------------------------------------------------------
@@ -46,8 +119,8 @@ export const SubagentListContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `subagent.kill` — Mark a running sub-agent run as failed. Admin-scoped per
- * setup-gateway-api.ts:207-209. Handler path: subagent-handlers.ts:46-55.
+ * `subagent.kill` — Mark a running sub-agent run as failed. Agent callers may
+ * control only an exact direct child; admins may control any selected run.
  *
  * Bespoke pre-Zod validation:
  *   - Missing `target` → `"Missing required parameter: target"`.
@@ -65,7 +138,7 @@ export const SubagentKillContract = defineContract({
     killed: z.boolean(),
     runId: z.string(),
   }),
-  scopes: ["admin"] as const,
+  scopes: ["rpc", "admin"] as const,
 });
 
 // ---------------------------------------------------------------------------
@@ -81,8 +154,8 @@ export const SubagentKillContract = defineContract({
  *     its next step boundary (transcript + progress preserved, same runId; no
  *     kill, no respawn) → `{ status: "steered_inject", runId }`.
  * Rate-limited at 2s per target (shared across both branches).
- * Admin-scoped per setup-gateway-api.ts:207-209. Handler path:
- * subagent-handlers.ts (subagent.steer).
+ * Agent callers may steer only an exact direct child; admins may steer any
+ * selected run. The handler frames the new task as untrusted external text.
  *
  * Bespoke pre-Zod validation:
  *   - Missing `target` → `"Missing required parameter: target"`.
@@ -116,16 +189,54 @@ export const SubagentSteerContract = defineContract({
       runId: z.string(),
     }),
   ]),
+  scopes: ["rpc", "admin"] as const,
+});
+
+const SubagentSpawnAdmissionStateSchema = z.strictObject({
+  paused: z.boolean(),
+  acceptingSpawns: z.boolean(),
+  resetsOnRestart: z.literal(true),
+});
+
+const SubagentSpawnAdmissionMutationSchema = SubagentSpawnAdmissionStateSchema.extend({
+  changed: z.boolean(),
+});
+
+/** Pause new sub-agent admission for the lifetime of this daemon process. */
+export const SubagentPauseContract = defineContract({
+  method: "subagent.pause",
+  request: z.strictObject({}),
+  response: SubagentSpawnAdmissionMutationSchema,
+  scopes: ["admin"] as const,
+});
+
+/** Resume new sub-agent admission unless shutdown has closed it permanently. */
+export const SubagentResumeContract = defineContract({
+  method: "subagent.resume",
+  request: z.strictObject({}),
+  response: SubagentSpawnAdmissionMutationSchema,
+  scopes: ["admin"] as const,
+});
+
+/** Inspect the process-lifetime sub-agent admission gate. */
+export const SubagentStatusContract = defineContract({
+  method: "subagent.status",
+  request: z.strictObject({}),
+  response: SubagentSpawnAdmissionStateSchema,
   scopes: ["admin"] as const,
 });
 
 /**
- * subagent-handlers slice (3 contracts — subagent.*). Spread order matches
+ * subagent-handlers slice (7 contracts — subagent.*). Spread order matches
  * the orchestrator contracts array byte for byte — determinism-critical
  * for codegen output stability.
  */
 export const SUBAGENT_HANDLERS_CONTRACTS = [
   SubagentListContract,
+  SubagentWaitContract,
   SubagentKillContract,
   SubagentSteerContract,
+  SubagentPauseContract,
+  SubagentResumeContract,
+  SubagentStatusContract,
 ] as const;

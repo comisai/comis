@@ -29,6 +29,7 @@ import type {
   ToolCapabilityPort,
   ComisLogger,
   EmbeddingPort,
+  WorkspacePolicySnapshot,
 } from "@comis/core";
 import type { ExcludeDeferralResult } from "./tool-deferral.js";
 import type { ModelProfile, CapabilityClass } from "./model-profile.js";
@@ -36,6 +37,7 @@ import type { WindowProvenance } from "../context-engine/types.js";
 import type { CapabilityIndexRenderResult } from "./capability-index-context.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import type { ExecutionPromptResult } from "./prompt-assembly.js";
+import type { McpInstructionBlock } from "@comis/core";
 import type { ExecutionOverrides } from "./types.js";
 
 /** Subset of PiExecutorDeps used by the tool assembly pipeline. */
@@ -47,6 +49,10 @@ export interface ToolAssemblyDeps {
   customTools: ToolDefinition[];
   convertTools?: (tools: AgentTool[]) => ToolDefinition[];
   workspaceDir: string;
+  /** Immutable workspace policy captured once at the start of this turn. */
+  workspacePolicySnapshot: WorkspacePolicySnapshot;
+  /** Onboarding decision captured once before prompt assembly. */
+  isOnboarding: boolean;
   agentDir: string;
   logger: ComisLogger;
   eventBus: TypedEventBus;
@@ -94,10 +100,12 @@ export interface ToolAssemblyDeps {
   mediaPersistenceEnabled?: boolean;
   autonomousMediaEnabled?: boolean;
   getPromptSkillsXml?: () => string;
+  getPromptSkillLocations?: () => ReadonlyMap<string, string>;
+  /** Live MCP instructions resolver forwarded to prompt assembly. */
+  getMcpServerInstructions?: () => ReadonlyArray<McpInstructionBlock>;
   subAgentToolNames?: string[];
   mcpToolsInherited?: boolean;
   senderTrustDisplayConfig?: SenderTrustDisplayConfig;
-  documentationConfig?: import("@comis/core").DocumentationConfig;
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   deliveryMirrorConfig?: { maxEntriesPerInjection: number; maxCharsPerInjection: number };
   embeddingPort?: EmbeddingPort;

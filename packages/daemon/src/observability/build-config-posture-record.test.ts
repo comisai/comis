@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { DiagnosticRow, ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { buildConfigPostureRecord, countPricingGaps, countUnresolvedModels, countMediaCredentialGaps, anyAgentTerminalUnsafeDisableSandbox, isLoopbackHost } from "./build-config-posture-record.js";
-import { unresolvedModelFromRow } from "../api/obs-handlers/fleet-findings-extractors.js";
+import { unresolvedModelFromRow } from "../api/obs-handlers/system-findings-extractors.js";
 
 describe("isLoopbackHost (TLS-off is benign on a loopback bind)", () => {
   it("treats 127.0.0.1 / ::1 / localhost / 127.x as loopback (TLS-off suppressed)", () => {
@@ -174,7 +174,7 @@ describe("buildConfigPostureRecord", () => {
     // tool processes untrusted web content — a RELAXED security default the
     // Track-M floor sweep wants SURFACED at boot. Pre-fix there was no signal
     // (the config-posture builder checked agentToAgent.sandboxNoDowngrade but not
-    // browser.noSandbox), so a fleet-visible `browser.noSandbox (Chromium sandbox
+    // browser.noSandbox), so a system-visible `browser.noSandbox (Chromium sandbox
     // off)` never appeared — the live friction this campaign hit.
     const { obsStore, insertDiagnostic } = createSpiedObsStore();
     const clock = createFakeClock(9);
@@ -303,7 +303,7 @@ describe("buildConfigPostureRecord", () => {
   // Ollama-served window < configured at the latest boot. A COUNT, never
   // provider names (the record's counts/booleans-only contract). The count
   // alone must flip severity to "warning" (if the hasIssue OR forgets this
-  // count, severity stays "info" while the fleet finding fires).
+  // count, severity stays "info" while the system finding fires).
   // -------------------------------------------------------------------------
 
   it("flips severity to warning when ONLY servedBelowConfiguredCount is non-zero, and carries the count in details", () => {
@@ -438,7 +438,7 @@ describe("countUnresolvedModels — boot count of agents whose model id does NOT
     expect(countUnresolvedModels({ a: { provider: "my-ollama", model: "not-declared" } }, providers)).toBe(1);
   });
 
-  it("counts only the unresolved agents in a mixed fleet", () => {
+  it("counts only the unresolved agents in a mixed system", () => {
     const agents = {
       ok: { provider: "openai-codex", model: "gpt-5.6-sol" }, // resolves
       bad1: { provider: "openai-codex", model: "gpt-5.6" }, // unresolved
@@ -451,7 +451,7 @@ describe("countUnresolvedModels — boot count of agents whose model id does NOT
     expect(countUnresolvedModels({ noModel: { provider: "openai-codex" }, noProvider: { model: "x" }, empty: {} }, undefined)).toBe(0);
   });
 
-  it("unresolvedModelFromRow parses the count from a config_posture row (fleet surfacing)", () => {
+  it("unresolvedModelFromRow parses the count from a config_posture row (system surfacing)", () => {
     expect(unresolvedModelFromRow({ details: JSON.stringify({ unresolvedModelCount: 2 }) } as never)).toBe(2);
     expect(unresolvedModelFromRow({ details: JSON.stringify({ unresolvedModelCount: 0 }) } as never)).toBe(0);
     expect(unresolvedModelFromRow({ details: "not json" } as never)).toBe(0);
@@ -485,7 +485,7 @@ describe("countPricingGaps — boot count of remote-unknown-priced agents (resol
     expect(countPricingGaps(agents)).toBe(0);
   });
 
-  it("counts only the unknown-priced agents in a mixed fleet (no false-flag of free/priced)", () => {
+  it("counts only the unknown-priced agents in a mixed system (no false-flag of free/priced)", () => {
     const agents = {
       free: { provider: "ollama", model: "qwen3:32b" }, // free
       priced: { provider: "anthropic", model: "claude-sonnet-4-5" }, // priced
@@ -509,8 +509,7 @@ describe("countPricingGaps — boot count of remote-unknown-priced agents (resol
 // countMediaCredentialGaps — a configured media provider whose credential is
 // absent will FAIL at first use, but the chimeric/credential detector only
 // watched the main completion pipeline, so the media gap was invisible to
-// `comis fleet` (the incident-day image-gen unavailability, 2026-07-08). This
-// makes it a boot-time posture COUNT.
+// `comis system-health`. This makes it a boot-time posture count.
 // ---------------------------------------------------------------------------
 describe("countMediaCredentialGaps — configured media provider missing its credential", () => {
   const hasNone = () => false;

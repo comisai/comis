@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { formatSessionKey, TypedEventBus } from "@comis/core";
+import { createConversationRef, TypedEventBus } from "@comis/core";
 import type {
+  ConversationScope,
   SessionKey,
+  SessionStorePort,
   SessionResetPolicyConfig,
   ComputeDailyResetNextRun,
   TimerPort,
   TimerHandle,
 } from "@comis/core";
+import { ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Lightweight TimerPort wrapper that delegates to globals so
@@ -36,7 +39,7 @@ const testTimers: TimerPort = {
   setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
   setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
 };
-import type { SessionStore, SessionDetailedEntry } from "@comis/memory";
+import type { SessionDetailedEntry } from "@comis/core";
 // Test-only import from @comis/scheduler: provides the canonical cron-shape
 // helper that daemon composition (setup-schedulers.ts) wires into agent's
 // SessionResetSchedulerDeps.computeDailyResetNextRun in production. The
@@ -85,28 +88,48 @@ function makeDetailedEntry(
   updatedAt: number,
   metadata: Record<string, unknown> = {},
 ): SessionDetailedEntry {
-  return {
-    sessionKey: formatSessionKey(key),
+  const endpoint = {
+    channelType: "test",
+    channelInstanceId: "test-instance",
+    conversationId: key.channelId,
+    conversationKind: key.guildId === undefined ? "direct" as const : "shared" as const,
+    ...(key.threadId === undefined ? {} : { threadId: key.threadId }),
+  };
+  const conversationScope: ConversationScope = {
     tenantId: key.tenantId,
-    userId: key.userId,
-    channelId: key.channelId,
+    agentId: key.agentId ?? "agent_a",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint,
+      principalId: key.userId,
+    },
+  };
+  const conversationRef = createConversationRef(conversationScope);
+  if (!conversationRef.ok) throw conversationRef.error;
+  return {
+    conversationRef: conversationRef.value,
+    conversationScope,
+    tenantId: key.tenantId,
+    agentId: conversationScope.agentId,
     metadata,
     createdAt: updatedAt - 10_000,
     updatedAt,
+    messageCount: 0,
   };
 }
 
 function mockSessionStore(
   entries: SessionDetailedEntry[] = [],
-): Pick<SessionStore, "listDetailed"> {
+): Pick<SessionStorePort, "listDetailed"> {
   return {
-    listDetailed: vi.fn(() => entries),
+    listDetailed: vi.fn((query) => ok(entries.filter((entry) =>
+      entry.tenantId === query.tenantId && entry.agentId === query.agentId))),
   };
 }
 
 function mockSessionLifecycle(): Pick<SessionLifecycle, "expire"> {
   return {
-    expire: vi.fn(() => true),
+    expire: vi.fn(() => ok(true)),
   };
 }
 
@@ -155,17 +178,15 @@ describe("classifySession", () => {
     expect(classifySession(entry)).toBe("dm");
   });
 
-  it("returns 'dm' for unparseable session key (safe fallback)", () => {
-    const entry: SessionDetailedEntry = {
-      sessionKey: "invalid",
-      tenantId: "",
-      userId: "",
-      channelId: "",
-      metadata: {},
-      createdAt: 0,
-      updatedAt: 0,
-    };
-    expect(classifySession(entry)).toBe("dm");
+  it("returns 'thread' when the conversation endpoint has a thread", () => {
+    const entry = makeDetailedEntry({
+      tenantId: "t1",
+      agentId: "agent_a",
+      userId: "u1",
+      channelId: "c1",
+      threadId: "thread_a",
+    }, Date.now());
+    expect(classifySession(entry)).toBe("thread");
   });
 });
 
@@ -431,7 +452,7 @@ describe("createSessionResetScheduler", () => {
     overrides: Partial<SessionResetSchedulerDeps> = {},
   ): SessionResetSchedulerDeps {
     return {
-      sessionStore: mockSessionStore() as unknown as SessionStore,
+      sessionStore: mockSessionStore() as unknown as SessionStorePort,
       sessionManager: mockSessionLifecycle() as unknown as SessionLifecycle,
       eventBus,
       logger,
@@ -439,6 +460,7 @@ describe("createSessionResetScheduler", () => {
       computeDailyResetNextRun,
       nowMs: () => Date.now(),
       timers: testTimers,
+      listQueryScopes: () => [{ tenantId: "t1", agentId: "agent_a" }],
       ...overrides,
     };
   }
@@ -447,7 +469,7 @@ describe("createSessionResetScheduler", () => {
     const store = mockSessionStore([]);
     const mgr = mockSessionLifecycle();
     const deps = makeDeps({
-      sessionStore: store as unknown as SessionStore,
+      sessionStore: store as unknown as SessionStorePort,
       sessionManager: mgr as unknown as SessionLifecycle,
     });
     const scheduler = createSessionResetScheduler(deps);
@@ -465,7 +487,7 @@ describe("createSessionResetScheduler", () => {
     eventBus.on("session:expired", (payload) => emitted.push(payload));
 
     const deps = makeDeps({
-      sessionStore: store as unknown as SessionStore,
+      sessionStore: store as unknown as SessionStorePort,
       sessionManager: mgr as unknown as SessionLifecycle,
       getConfig: () => defaultConfig({ mode: "idle", idleTimeoutMs: 10_000 }),
       nowMs: () => now,
@@ -489,7 +511,7 @@ describe("createSessionResetScheduler", () => {
     const mgr = mockSessionLifecycle();
 
     const deps = makeDeps({
-      sessionStore: store as unknown as SessionStore,
+      sessionStore: store as unknown as SessionStorePort,
       sessionManager: mgr as unknown as SessionLifecycle,
       getConfig: () => defaultConfig({ mode: "idle", idleTimeoutMs: 10_000 }),
       nowMs: () => now,
@@ -514,7 +536,7 @@ describe("createSessionResetScheduler", () => {
     const mgr = mockSessionLifecycle();
 
     const deps = makeDeps({
-      sessionStore: store as unknown as SessionStore,
+      sessionStore: store as unknown as SessionStorePort,
       sessionManager: mgr as unknown as SessionLifecycle,
       getConfig: () =>
         defaultConfig({
@@ -542,7 +564,7 @@ describe("createSessionResetScheduler", () => {
     const mgr = mockSessionLifecycle();
 
     const deps = makeDeps({
-      sessionStore: store as unknown as SessionStore,
+      sessionStore: store as unknown as SessionStorePort,
       sessionManager: mgr as unknown as SessionLifecycle,
       getConfig: () => defaultConfig({ mode: "none" }),
       nowMs: () => now,
@@ -558,7 +580,7 @@ describe("createSessionResetScheduler", () => {
     const now = Date.now();
     const store = mockSessionStore([]);
     const deps = makeDeps({
-      sessionStore: store as unknown as SessionStore,
+      sessionStore: store as unknown as SessionStorePort,
       getConfig: () => defaultConfig({ mode: "idle", sweepIntervalMs: 60_000 }),
       nowMs: () => now,
     });
@@ -583,7 +605,7 @@ describe("createSessionResetScheduler", () => {
   it("stop() clears the interval", () => {
     const store = mockSessionStore([]);
     const deps = makeDeps({
-      sessionStore: store as unknown as SessionStore,
+      sessionStore: store as unknown as SessionStorePort,
       getConfig: () => defaultConfig({ mode: "idle", sweepIntervalMs: 60_000 }),
     });
 
@@ -615,7 +637,7 @@ describe("createSessionResetScheduler", () => {
     });
 
     const deps = makeDeps({
-      sessionStore: store as unknown as SessionStore,
+      sessionStore: store as unknown as SessionStorePort,
       sessionManager: mgr as unknown as SessionLifecycle,
       getConfig: () => currentConfig,
       nowMs: () => now,
@@ -646,7 +668,7 @@ describe("createSessionResetScheduler", () => {
   it("sweep() with undefined getConfig skips all sessions", () => {
     const store = mockSessionStore([]);
     const deps = makeDeps({
-      sessionStore: store as unknown as SessionStore,
+      sessionStore: store as unknown as SessionStorePort,
       getConfig: () => undefined,
     });
 

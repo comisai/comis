@@ -6,7 +6,7 @@ import {
   AgentsManageToolParams,
   buildCreateContract,
 } from "./agents-manage-tool.js";
-import { runWithContext } from "@comis/core";
+import { createDeliveryOrigin, runWithContext } from "@comis/core";
 import type { RequestContext, ApprovalGate, ComisLogger } from "@comis/core";
 
 // Mock @comis/core: preserve real implementations, override safePath
@@ -28,11 +28,23 @@ function makeContext(trustLevel: "admin" | "user" | "guest"): RequestContext {
   return {
     tenantId: "default",
     userId: "test-user",
-    sessionKey: "test-session",
+    agentId: "test-agent",
+    sessionKey: "default:agent:test-agent:test-user:chat-1",
+    turnScope: {
+      conversation: { tenantId: "default", agentId: "test-agent", partition: { kind: "agent" } },
+      principal: { principalId: "test-user" },
+      endpoint: { channelType: "telegram", channelInstanceId: "test-instance", conversationId: "chat-1", conversationKind: "direct" },
+    },
     traceId: crypto.randomUUID(),
     startedAt: Date.now(),
     trustLevel,
     channelType: "telegram",
+    deliveryOrigin: createDeliveryOrigin({
+      tenantId: "default",
+      userId: "test-user",
+      channelType: "telegram",
+      channelId: "chat-1",
+    }),
   };
 }
 
@@ -156,7 +168,12 @@ describe("agents_manage tool", () => {
         expect.objectContaining({
           toolName: "agents_manage",
           action: "agents.create",
-          channelType: "telegram",
+          callbackOwner: {
+            tenantId: "default",
+            userId: "test-user",
+            channelType: "telegram",
+            channelKey: "chat-1",
+          },
         }),
       );
       expect(mockRpcCall).toHaveBeenCalledWith("agents.create", {
@@ -885,7 +902,12 @@ describe("agents_manage tool", () => {
         expect.objectContaining({
           toolName: "agents_manage",
           action: "agents.delete",
-          channelType: "telegram",
+          callbackOwner: {
+            tenantId: "default",
+            userId: "test-user",
+            channelType: "telegram",
+            channelKey: "chat-1",
+          },
         }),
       );
       expect(mockRpcCall).toHaveBeenCalledWith("agents.delete", { agentId: "temp-bot", _trustLevel: "admin" });

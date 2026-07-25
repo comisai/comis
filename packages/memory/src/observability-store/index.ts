@@ -18,6 +18,8 @@ import {
   type ObservabilityStore,
 } from "./observability-store-types.js";
 import { bindQueries } from "./observability-queries.js";
+import { bindDeliveryQueries } from "./delivery-queries.js";
+import type { DeliveryQueryOptions } from "./delivery-queries.js";
 import { bindAggregates } from "./observability-aggregates.js";
 import { bindSpendQueries } from "./spend-queries.js";
 import { bindMutations } from "./observability-mutations.js";
@@ -49,6 +51,7 @@ export type {
   DiagnosticQueryParams,
   SystemPromptReportRow,
 } from "./observability-store-types.js";
+export type { DeliveryQueryOptions } from "./delivery-queries.js";
 
 // The audit sink helpers (insert/query + the 0600 rotated JSONL writer).
 export {
@@ -78,9 +81,13 @@ export type { CacheBreakReasonRate } from "./cache-break-queries.js";
  * @param db - An open better-sqlite3 Database instance
  * @returns ObservabilityStore implementation (frozen)
  */
-export function createObservabilityStore(db: Database.Database): ObservabilityStore {
+export function createObservabilityStore(
+  db: Database.Database,
+  options: DeliveryQueryOptions = {},
+): ObservabilityStore {
   const store: ObservabilityStore = {
     ...bindQueries(db),
+    ...bindDeliveryQueries(db, options),
     // The 900000-ms quarter-hour aggregate + the pricing-coverage column.
     ...bindAggregates(db),
     // The spend accumulator's boot rehydration read (getRollingSpendUsd).

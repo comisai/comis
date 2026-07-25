@@ -13,6 +13,7 @@ import type {
 import { SSE_EVENT_TYPES } from "../api/types/index.js";
 import type { ApiClient, SseEventHandler } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
+import { listSessionsAcrossAgents } from "../api/session-scope.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { systemClearInterval, systemClearTimeout, systemSetInterval, systemSetTimeout } from "@comis/core";
@@ -119,13 +120,6 @@ interface ContextSummary {
   reReads: number;
 }
 
-/** Billing total RPC response (obs.billing.total / obs.billing.byAgent). */
-interface BillingTotalResult {
-  totalCost?: number;
-  totalTokens?: number;
-}
-
-/** Per-hour token-usage histogram entry (obs.billing.usage24h). */
 interface BillingHourlyEntry {
   hour: number;
   tokens: number;
@@ -133,7 +127,7 @@ interface BillingHourlyEntry {
 
 /**
  * Dashboard view combining stat cards, system health, context engine summary,
- * sparklines, agent fleet cards with per-agent cost, channel badges, and
+ * sparklines, agent system cards with per-agent cost, channel badges, and
  * live activity feed.
  *
  * Fetches data from both the REST ApiClient and JSON-RPC RpcClient.
@@ -624,7 +618,7 @@ export class IcDashboard extends LitElement {
     this._agentActionPending = agentId;
     try {
       await this.rpcClient.call("agents.delete", { agentId });
-      // Deletion only changes the fleet cards and their cached billing entry;
+      // Deletion only changes the system cards and their cached billing entry;
       // the remaining dashboard datasets do not need to be reloaded.
       const revision = ++this._agentMutationRevision;
       this._agentDeletionMutations.set(agentId, revision);
@@ -689,10 +683,9 @@ export class IcDashboard extends LitElement {
   private _initSse(): void {
     if (!this.eventDispatcher || this._sse) return;
     this._sse = new SseController(this, this.eventDispatcher, {
-      "message:received": () => { this._messagesToday++; },
-      "message:sent": () => { this._messagesToday++; },
+      "message:received": () => { this._scheduleReload(); },
+      "message:sent": () => { this._scheduleReload(); },
       "session:created": () => { this._sessionCount++; },
-      "system:error": () => { this._errorCount++; },
       "observability:token_usage": () => { this._scheduleReload(); },
       "diagnostic:channel_health": () => { this._scheduleReload(500); },
       "diagnostic:billing_snapshot": () => { this._scheduleReload(); },
@@ -775,6 +768,7 @@ export class IcDashboard extends LitElement {
     const [
       gatewayResult,
       deliveryResult,
+      delivery2DayResult,
       billingTodayResult,
       billing2DayResult,
       sessionResult,
@@ -783,10 +777,11 @@ export class IcDashboard extends LitElement {
       sparklineTokenResult,
     ] = await Promise.allSettled([
       rpc.call<GatewayStatus>("gateway.status"),
-      rpc.call<Record<string, unknown>>("obs.delivery.stats"),
-      rpc.call<Record<string, unknown>>("obs.billing.total", { sinceMs: 86_400_000 }),
-      rpc.call<Record<string, unknown>>("obs.billing.total", { sinceMs: 172_800_000 }),
-      rpc.call<Record<string, unknown>>("session.list", {}),
+      rpc.call("obs.delivery.stats", { sinceMs: 86_400_000 }),
+      rpc.call("obs.delivery.stats", { sinceMs: 172_800_000 }),
+      rpc.call("obs.billing.total", { sinceMs: 86_400_000 }),
+      rpc.call("obs.billing.total", { sinceMs: 172_800_000 }),
+      listSessionsAcrossAgents(rpc),
       rpc.call<{ servers: Array<{ name: string; status: string }>; total: number }>("mcp.list"),
       rpc.call<PipelineSnapshot[]>("obs.context.pipeline", { limit: 50 }),
       rpc.call<Array<{ hour: number; tokens: number }>>("obs.billing.usage24h"),
@@ -800,18 +795,22 @@ export class IcDashboard extends LitElement {
     // 2. Delivery stats -> message count + error count baseline
     if (deliveryResult.status === "fulfilled") {
       const raw = deliveryResult.value;
-      const total = Number(raw.total ?? raw.totalDelivered ?? 0);
-      const successes = Number(raw.successes ?? 0);
-      const failures = Number(raw.failures ?? raw.failed ?? 0);
-      const avgLatencyMs = Number(raw.avgLatencyMs ?? 0);
-      this._deliveryStats = {
-        successRate: total > 0 ? (successes / total) * 100 : 0,
-        avgLatencyMs,
-        totalDelivered: total,
-        failed: failures,
+      const stats: DeliveryStats = {
+        total: Number(raw.total ?? 0),
+        attempted: Number(raw.attempted ?? 0),
+        success: Number(raw.success ?? 0),
+        error: Number(raw.error ?? 0),
+        timeout: Number(raw.timeout ?? 0),
+        filtered: Number(raw.filtered ?? 0),
+        aborted: Number(raw.aborted ?? 0),
+        avgLatencyMs: Number(raw.avgLatencyMs ?? 0),
       };
-      this._messagesToday = total;
-      this._errorCount = failures;
+      this._deliveryStats = stats;
+      this._messagesToday = stats.total;
+      this._errorCount = stats.error + stats.timeout;
+      this._prevMessages = delivery2DayResult.status === "fulfilled"
+        ? Math.max(0, Number(delivery2DayResult.value.total ?? 0) - stats.total)
+        : 0;
     }
 
     // 3. Billing totals (today) + deltas vs previous day
@@ -827,13 +826,11 @@ export class IcDashboard extends LitElement {
         this._prevTokens = Math.max(0, twoDayTokens - todayTokens);
         this._prevCost = Math.max(0, twoDayCost - todayCost);
       }
-      // No previous-period message data available from obs.delivery.stats
-      this._prevMessages = 0;
     }
 
     // 4. Session count
     if (sessionResult.status === "fulfilled") {
-      this._sessionCount = Number((sessionResult.value as Record<string, unknown>).total ?? 0);
+      this._sessionCount = sessionResult.value.length;
     }
 
     // 5. MCP status
@@ -885,7 +882,7 @@ export class IcDashboard extends LitElement {
     if (!this.rpcClient) return;
     const dayMs = 86_400_000;
     const calls = Array.from({ length: 7 }, (_, i) =>
-      this.rpcClient!.call<BillingTotalResult>("obs.billing.total", { sinceMs: dayMs * (i + 1) }),
+      this.rpcClient!.call("obs.billing.total", { sinceMs: dayMs * (i + 1) }),
     );
     const results = await Promise.allSettled(calls);
 
@@ -907,7 +904,9 @@ export class IcDashboard extends LitElement {
 
     await Promise.allSettled([
       (async () => {
-        const usage24h = await this.rpcClient!.call<BillingHourlyEntry[]>("obs.billing.usage24h");
+        const usage24h = await this.rpcClient!.call<BillingHourlyEntry[]>(
+          "obs.billing.usage24h",
+        );
         this._tokenSparklineData = usage24h.map((d) => d.tokens);
       })(),
       this._loadCostSparkline(),
@@ -929,7 +928,7 @@ export class IcDashboard extends LitElement {
 
     const results = await Promise.allSettled(
       agentIds.map((agentId) =>
-        this.rpcClient!.call<BillingTotalResult>("obs.billing.byAgent", { agentId }),
+        this.rpcClient!.call("obs.billing.byAgent", { agentId }),
       ),
     );
 
@@ -1001,7 +1000,8 @@ export class IcDashboard extends LitElement {
   //
   // Multiplexes `<ic-activity-feed>`'s per-handler `(event, data)` contract
   // over `EventDispatcher.addEventListener(type, handler)`. The dispatcher
-  // already opens ONE EventSource per page (started in `app-controller.ts`);
+  // already opens ONE authenticated fetch stream per page (started in
+  // `app-controller.ts`);
   // this adapter just bridges per-type listeners to the single-handler shape
   // expected by `activity-feed.ts:267`.
   //
@@ -1249,7 +1249,7 @@ export class IcDashboard extends LitElement {
             aria-label="View error diagnostics"
           >
             <ic-stat-card
-              label="Errors"
+              label="Delivery Errors (24h)"
               .value=${hasRpc ? formatNumber(this._errorCount) : "---"}
               .threshold=${this._errorCount > 10 ? "critical" : this._errorCount > 3 ? "warning" : "normal"}
             ></ic-stat-card>

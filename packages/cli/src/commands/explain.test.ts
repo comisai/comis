@@ -290,10 +290,60 @@ describe("comis explain default (table) renders key report fields", () => {
     expect(output).toContain("14 tool failures across 25 turns");
     expect(output).toContain("content_heuristic_misclassification");
     // The token figure names its basis so it doesn't read as the same "tok" as
-    // fleet's (which excludes cache). explain = the full model-call ledger.
+    // system's (which excludes cache). explain = the full model-call ledger.
     expect(output).toContain("735800 tok (incl cache reads)");
     // The table branch must NOT have emitted the whole report as JSON.
     expect(() => JSON.parse(output)).toThrow();
+  });
+});
+
+describe("comis explain renders durable task-check lifecycle evidence", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("prints delivered attempt, correlation, and root identifiers for a task-check root", async () => {
+    const taskReport = {
+      ...FAKE_REPORT,
+      taskCheck: {
+        rootRunId: "root-task-check-a",
+        attemptId: "attempt-a",
+        correlationId: "correlation-a",
+        lifecycle: "terminal",
+        outcome: "delivered",
+        recovery: "live",
+        deliveredChunks: 1,
+        failedChunks: 0,
+        ambiguousChunks: 0,
+      },
+    };
+    const client: RpcClient = {
+      call: () => Promise.resolve(taskReport),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync(["node", "test", "explain", "root-task-check-a"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Task check: delivered");
+    expect(output).toContain("attempt=attempt-a");
+    expect(output).toContain("correlation=correlation-a");
+    expect(output).toContain("root=root-task-check-a");
+    expect(output).toContain("delivered=1 failed=0 ambiguous=0");
   });
 });
 

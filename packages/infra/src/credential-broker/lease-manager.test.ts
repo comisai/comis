@@ -39,6 +39,7 @@ function baseInput(caps: readonly AgentCapability[]) {
     caps,
     budgetRef: "budget-1",
     sessionKey: "session-1",
+    trustLevel: "user" as const,
     rootRunId: "run-1",
   };
 }
@@ -75,7 +76,77 @@ describe("LeaseManager — mintLease record shape", () => {
     expect(info?.rootRunId).toBe("run-1");
     expect(info?.budgetRef).toBe("budget-1");
     expect(info?.sessionKey).toBe("session-1");
+    expect(info?.trustLevel).toBe("user");
     expect(info?.parentLeaseId).toBe("parent-1");
+  });
+
+  it.each(["guest", "user", "admin"] as const)(
+    "preserves the exact %s trust level in the server-held lease projection",
+    (trustLevel) => {
+      const mgr = createLeaseManager(makeDeps());
+      const issued = mgr.mintLease({
+        ...baseInput(["orch:graph"]),
+        trustLevel,
+      });
+
+      expect(mgr.validate(issued.bearer, "graph.execute")?.trustLevel).toBe(trustLevel);
+    },
+  );
+
+  it("copies and freezes the delivery origin stored on the validated lease", () => {
+    const mgr = createLeaseManager(makeDeps());
+    const deliveryOrigin = {
+      channelType: "telegram",
+      channelId: "chat-1",
+      userId: "user-1",
+      tenantId: "tenant-1",
+      threadId: "topic-1",
+    };
+    const input = {
+      ...baseInput(["orch:spawn"]),
+      sessionKey: "tenant-1:user-1:chat-1:thread:topic-1",
+      deliveryOrigin,
+    };
+    const issued = mgr.mintLease(input);
+
+    deliveryOrigin.channelId = "forged-after-mint";
+
+    const info = mgr.validate(issued.bearer, "session.spawn");
+    expect(info?.deliveryOrigin).toEqual({
+      channelType: "telegram",
+      channelId: "chat-1",
+      userId: "user-1",
+      tenantId: "tenant-1",
+      threadId: "topic-1",
+    });
+    expect(Object.isFrozen(info?.deliveryOrigin)).toBe(true);
+  });
+
+  it("defensively freezes capability claims and rejects post-mint or post-validate broadening", () => {
+    const mgr = createLeaseManager(makeDeps());
+    const caps: AgentCapability[] = ["orch:read"];
+    const issued = mgr.mintLease({ ...baseInput(caps), caps });
+
+    caps.push("orch:message");
+    expect(mgr.validate(issued.bearer, "message.send")).toBeNull();
+
+    const info = mgr.validate(issued.bearer, "capabilities.introspect");
+    expect(info?.caps).toEqual(["orch:read"]);
+    expect(Object.isFrozen(info?.caps)).toBe(true);
+    expect(() => (info?.caps as AgentCapability[]).push("orch:message")).toThrow();
+    expect(mgr.validate(issued.bearer, "message.send")).toBeNull();
+  });
+
+  it("drops a runtime capability claim outside the closed AgentCapability union", () => {
+    const mgr = createLeaseManager(makeDeps());
+    const issued = mgr.mintLease({
+      ...baseInput(["orch:read"]),
+      caps: ["orch:read", "admin" as AgentCapability],
+    });
+
+    const info = mgr.validate(issued.bearer, "capabilities.introspect");
+    expect(info?.caps).toEqual(["orch:read"]);
+    expect(mgr.validate(issued.bearer, "session.delete")).toBeNull();
   });
 });
 
@@ -105,11 +176,22 @@ describe("LeaseManager — audience binding", () => {
     expect(mgr.validate(bearer, "graph.execute")).not.toBeNull();
   });
 
-  it("denies a deny-by-origin classified method even with broad caps", () => {
+  it("denies a deny-by-origin classified method for a non-admin lease even with broad caps", () => {
     const mgr = createLeaseManager(makeDeps());
     // session.delete is "deny-by-origin" (not an orch:* cap) → never in audience.
     const { bearer } = mgr.mintLease(baseInput(["orch:spawn"]));
     expect(mgr.validate(bearer, "session.delete")).toBeNull();
+  });
+
+  it("admits a deny-by-origin method only for the exact admin-trust lease", () => {
+    const mgr = createLeaseManager(makeDeps());
+    const admin = mgr.mintLease({ ...baseInput([]), trustLevel: "admin" });
+    const user = mgr.mintLease({ ...baseInput([]), trustLevel: "user" });
+    const guest = mgr.mintLease({ ...baseInput([]), trustLevel: "guest" });
+
+    expect(mgr.validate(admin.bearer, "message.edit")?.trustLevel).toBe("admin");
+    expect(mgr.validate(user.bearer, "message.edit")).toBeNull();
+    expect(mgr.validate(guest.bearer, "message.edit")).toBeNull();
   });
 
   it("denies an ungated read-only method (no orch cap → outside audience)", () => {

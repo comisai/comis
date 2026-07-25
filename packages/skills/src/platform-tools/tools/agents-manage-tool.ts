@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Agent management tool: multi-action tool for fleet management.
+ * Agent management tool: multi-action tool for agent administration.
  *
  * Supports 7 actions: create, get, update, delete, suspend, resume, list.
  * Destructive actions (create, delete) require approval via the ApprovalGate.
@@ -73,7 +73,7 @@ export const AgentsManageToolParams = Type.Object({
               description:
                 "Workspace profile controlling platform instruction verbosity. " +
                 "Valid values: full (~9K tokens, user-facing agents on channels), " +
-                "specialist (~800 tokens, task workers and fleet sub-agents) ONLY. NO other values accepted. " +
+                "specialist (~800 tokens, task workers and system sub-agents) ONLY. NO other values accepted. " +
                 "Default: full. Can be changed later via update action. " +
                 "Alternative shape: nested workspace.profile (see `workspace` field).",
             }),
@@ -121,7 +121,7 @@ export const AgentsManageToolParams = Type.Object({
               },
               {
                 description:
-                  "Nested workspace configuration. Use this OR the flat workspace_profile field, not both. Optionally inline ROLE.md / IDENTITY.md via role/identity for single-call creation (PREFERRED for batch fleet creation).",
+                  "Nested workspace configuration. Use this OR the flat workspace_profile field, not both. Optionally inline ROLE.md / IDENTITY.md via role/identity for single-call creation (PREFERRED for batch system creation).",
                 additionalProperties: false,
               },
             ),
@@ -362,7 +362,7 @@ export function createAgentsManageTool(
       name: "agents_manage",
       label: "Agent Management",
       description:
-        "Manage agent fleet: create, get, update, delete, suspend, resume, list. " +
+        "Manage agent system: create, get, update, delete, suspend, resume, list. " +
         "Use update to switch an agent's LLM provider or model (e.g. switch to Gemini, change model). " +
         "Create/delete require approval.",
       parameters: AgentsManageToolParams,

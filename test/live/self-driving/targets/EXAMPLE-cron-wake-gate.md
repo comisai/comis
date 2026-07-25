@@ -3,7 +3,7 @@
 > A **design-document** target whose capability is triggered by the SCHEDULER pre-payload, not a chat turn —
 > it lives in the cron pipeline, a bwrap jail, and the event/DB stream. Shows the **cron-gate drive class**:
 > author a gate → fire it with `cron.run` → read the `cron.runs` skip lens + `scheduler:wake_gate` events +
-> the fleet `cron_wake_gate_efficiency` block + `db.mjs`/audit — NEVER the chat reply. Combines the offline
+> the system `cron_wake_gate_efficiency` block + `db.mjs`/audit — NEVER the chat reply. Combines the offline
 > discipline of `EXAMPLE-verified-learning.md` with the jail-probe discipline of `EXAMPLE-nvda-dag.md`.
 
 ## Target
@@ -16,7 +16,7 @@ Confirm the SHIPPED shape (the doc drifts both ways): `wakeGate` `z.strictObject
 (`cron-types.ts`); the `wake-gate-verdict.ts` parser (fail-open, empty-guard); `wake-gate-runner.ts` +
 `wire-wake-gate-runner.ts` (late-bound ref, populated AFTER `constructCapabilityLayer` in `daemon.ts`); the
 `executeJob` hook (`setup-schedulers.ts`); the `scheduler:wake_gate` event on BOTH obs forks
-(`obs-persistence-wiring.ts` → fleet `cron_wake_gate_efficiency`; `incident-report.ts` `cronWakeGate?`); the
+(`obs-persistence-wiring.ts` → system `cron_wake_gate_efficiency`; `incident-report.ts` `cronWakeGate?`); the
 tri-state `scheduler.cron.wakeGate` toggle (`resolveCronWakeGateEnabled`) + the per-agent override. Known
 DEVIATIONS: `timeoutSeconds` is schema-only (NOT tool/web-authorable — 30 s default); a per-agent
 `scheduler.cron` block **replaces** the global (whole-block `??`, so the global toggle is NOT inherited).
@@ -35,7 +35,7 @@ agentId?, noFire?}`. Pass the gate via `scriptFile` (a raw `.js`), not inline JS
 honorable via `cron.update` (author `noFire`, then `cron.update --file` the deliveryTarget, then fire). A
 non-default agent must be authored via the web/nested shape (agent_turn only — wg.mjs does this; F-CRON-1/2).
 
-## Must-pass predicates (oracle = cron.runs / events / fleet / db / audit — NOT the reply)
+## Must-pass predicates (oracle = cron.runs / events / system / db / audit — NOT the reply)
 | id | predicate (works-bar) | oracle | HARD |
 |---|---|---|---|
 | WG-P1 skip | `{wake:false}` → payload NOT dispatched; a `skipped` row; `estTurnsSaved:1`; NO model turn | `cron.runs` status `skipped`; `cron_wake_gate` row `wake:false` | |
@@ -44,8 +44,8 @@ non-default agent must be authored via the web/nested shape (agent_turn only —
 | WG-T5 deny-origin | the jailed SDK has NO control-plane reach (`*_manage`/token/config unreachable) | gate's `Object.keys(comis_tools)` — no admin tools | ✅ |
 | WG-INV4 wrap/scrub | injected `context` is `wrapExternalContent`-wrapped; `deliver` is OutputGuard-scrubbed BY THE GATE | trajectory `<<<UNTRUSTED_…>>>`; outbound canary/bearer `[REDACTED]` | ✅ |
 | WG-INV5 content-free | the event/row/report carry ids+enum+counts ONLY — never the gathered payload/script/secret | `db.mjs` `cron_wake_gate` details | ✅ |
-| WG-T1 self-DoS | a poisoned always-`false` gate is a VISIBLE self-DoS (100% skip-rate + unbroken `skipped` rows), own job only | fleet `perAgent.skipRate==1`; `cron.runs`; sibling job unaffected | ✅ |
-| WG-obs fleet | after fires, the fleet block rolls up skip-rate / **failOpenRate** / turnsSaved / toolCalls per agent | `obs.fleet.health` `cronWakeGate` | |
+| WG-T1 self-DoS | a poisoned always-`false` gate is a VISIBLE self-DoS (100% skip-rate + unbroken `skipped` rows), own job only | system `perAgent.skipRate==1`; `cron.runs`; sibling job unaffected | ✅ |
+| WG-obs system | after fires, the system block rolls up skip-rate / **failOpenRate** / turnsSaved / toolCalls per agent | `obs.system.health` `cronWakeGate` | |
 | WG-degrade | no-bwrap / autonomy-off host → `runAsToday` (job runs as today, no gate, no event) | `diag:null`; payload dispatched | |
 
 ## Stage / cost
@@ -54,7 +54,7 @@ the model (Stage-C) — use a trivial `payloadText`, or read the decision from t
 (emitted pre-dispatch) so you never wait on the model turn.
 
 ## Known traps — learned the hard way
-- **Not channel-shaped:** the chat reply tells you nothing. Read `cron.runs` / the events / fleet / `db.mjs`.
+- **Not channel-shaped:** the chat reply tells you nothing. Read `cron.runs` / the events / system / `db.mjs`.
 - **Stale dist + dep drift:** the VPS may run an old dist (symbol-grep to prove new code, not the mtime). A
   dist overlay does NOT sync `node_modules` — a HEAD dep bump (e.g. `pi-ai` gaining an export subpath) FATALs
   the boot (`ERR_PACKAGE_PATH_NOT_EXPORTED`); `deploy-dist.sh` now guards this — sync manifests + `pnpm install`

@@ -122,6 +122,41 @@ const PLATFORM_CONFIGS: Record<string, Record<string, unknown>> = {
   imessage: IMESSAGE_CONFIG,
 };
 
+type TestDeliveryStatus = "success" | "error" | "timeout" | "filtered" | "aborted";
+
+function makeDelivery(
+  status: TestDeliveryStatus,
+  overrides: Partial<{
+    traceId: string | null;
+    deliveredAt: number;
+    latencyMs: number;
+    sourceChannelType: string;
+    targetChannelType: string;
+  }> = {},
+) {
+  return {
+    sourceChannelId: "chat_a",
+    sourceChannelType: overrides.sourceChannelType ?? "telegram",
+    targetChannelType: overrides.targetChannelType ?? "telegram",
+    targetChannelId: "chat_a",
+    deliveredAt: overrides.deliveredAt ?? Date.now() - 60_000,
+    latencyMs: overrides.latencyMs ?? 120,
+    status,
+    error: null,
+    agentId: "agent_a",
+    sessionKey: null,
+    traceId: overrides.traceId ?? "trace_a",
+    toolCalls: null,
+    llmCalls: null,
+    tokensTotal: null,
+    costTotal: null,
+    failureStage: null,
+    errorKind: null,
+    steps: null,
+    evidence: "diagnostic" as const,
+  };
+}
+
 /** Creates a mock RPC that dispatches configs by method and params. */
 function createDispatchRpcClient(platformConfig: Record<string, unknown>): RpcClient {
   const callMock = vi.fn().mockImplementation((method: string) => {
@@ -129,10 +164,10 @@ function createDispatchRpcClient(platformConfig: Record<string, unknown>): RpcCl
       return Promise.resolve(platformConfig);
     }
     if (method === "obs.delivery.recent") {
-      return Promise.resolve({ entries: [] });
+      return Promise.resolve({ deliveries: [] });
     }
-    if (method === "obs.channels.get") {
-      return Promise.resolve({ channel: null });
+    if (method === "obs.channels.all") {
+      return Promise.resolve({ channels: [] });
     }
     return Promise.resolve({});
   });
@@ -149,8 +184,16 @@ function priv(el: IcChannelDetail) {
     _config: Record<string, unknown>;
     _enabled: boolean;
     _status: string;
-    _deliveryTrace: Array<{ messageId: string; latencyMs: number; timestamp: number; status: string }>;
+    _deliveryTrace: Array<{
+      traceId: string | null;
+      latencyMs: number;
+      deliveredAt: number;
+      status: TestDeliveryStatus;
+    }>;
     _activityData: number[];
+    _channelLastActiveAt: number;
+    _channelMessagesSent: number;
+    _channelMessagesReceived: number;
     _actionPending: boolean;
     _hasLoaded: boolean;
     apiClient: ApiClient | null;
@@ -251,7 +294,7 @@ describe("IcChannelDetail", () => {
       const labels = Array.from(el.shadowRoot?.querySelectorAll(".field label") ?? []);
       const labelTexts = labels.map((l) => l.textContent);
       expect(labelTexts).toContain("Bot Token");
-      expect(labelTexts).toContain("Webhook URL");
+      expect(labelTexts).not.toContain("Webhook URL");
       expect(labelTexts).toContain("Ack Reaction");
       expect(labelTexts).toContain("Ack Emoji");
     });
@@ -385,16 +428,68 @@ describe("IcChannelDetail", () => {
   });
 
   describe("delivery trace and activity", () => {
-    it("renders delivery trace table with entries", async () => {
+    it("aggregates activity for the selected channel type without conflating matching ids", async () => {
+      const callMock = vi.fn().mockImplementation((method: string) => {
+        if (method === "channels.get") return Promise.resolve(TELEGRAM_CONFIG);
+        if (method === "obs.delivery.recent") return Promise.resolve({ deliveries: [] });
+        if (method === "obs.channels.all") {
+          return Promise.resolve({
+            channels: [
+              { channelType: "telegram", channelId: "shared", lastActiveAt: 100, messagesSent: 2, messagesReceived: 3 },
+              { channelType: "telegram", channelId: "other", lastActiveAt: 300, messagesSent: 5, messagesReceived: 7 },
+              { channelType: "slack", channelId: "shared", lastActiveAt: 900, messagesSent: 11, messagesReceived: 13 },
+            ],
+          });
+        }
+        return Promise.resolve({});
+      });
+      const mockRpc = createMockRpcClient(undefined, { call: callMock, status: "connected" as ConnectionStatus });
+      const el = await createElement({ rpcClient: mockRpc, channelType: "telegram" });
+
+      await priv(el)._loadData();
+
+      expect(callMock).toHaveBeenCalledWith("obs.channels.all");
+      expect(callMock).not.toHaveBeenCalledWith("obs.channels.get", expect.anything());
+      expect(priv(el)._channelLastActiveAt).toBe(300);
+      expect(priv(el)._channelMessagesSent).toBe(7);
+      expect(priv(el)._channelMessagesReceived).toBe(10);
+    });
+
+    it("keeps only deliveries whose destination matches the selected channel type", async () => {
+      const callMock = vi.fn().mockImplementation((method: string) => {
+        if (method === "channels.get") return Promise.resolve(SLACK_CONFIG);
+        if (method === "obs.delivery.recent") {
+          return Promise.resolve({
+            deliveries: [
+              makeDelivery("success", { sourceChannelType: "telegram", targetChannelType: "slack", traceId: "to-slack" }),
+              makeDelivery("success", { sourceChannelType: "slack", targetChannelType: "telegram", traceId: "from-slack" }),
+            ],
+          });
+        }
+        if (method === "obs.channels.all") return Promise.resolve({ channels: [] });
+        return Promise.resolve({});
+      });
+      const mockRpc = createMockRpcClient(undefined, { call: callMock, status: "connected" as ConnectionStatus });
+      const el = await createElement({ rpcClient: mockRpc, channelType: "slack" });
+
+      await priv(el)._loadData();
+
+      expect(priv(el)._deliveryTrace.map((delivery) => delivery.traceId)).toEqual(["to-slack"]);
+    });
+
+    it("requests server-filtered delivery records and renders every lifecycle status", async () => {
       const deliveryEntries = [
-        { messageId: "msg-1", latencyMs: 120, timestamp: Date.now() - 60000, status: "delivered" },
-        { messageId: "msg-2", latencyMs: 340, timestamp: Date.now() - 120000, status: "failed" },
+        makeDelivery("success", { traceId: "trace-1" }),
+        makeDelivery("error", { traceId: "trace-2", latencyMs: 340 }),
+        makeDelivery("timeout", { traceId: "trace-3", latencyMs: 30_000 }),
+        makeDelivery("filtered", { traceId: "trace-4", latencyMs: 0 }),
+        makeDelivery("aborted", { traceId: "trace-5", latencyMs: 0 }),
       ];
 
       const callMock = vi.fn().mockImplementation((method: string) => {
         if (method === "channels.get") return Promise.resolve(TELEGRAM_CONFIG);
-        if (method === "obs.delivery.recent") return Promise.resolve({ entries: deliveryEntries });
-        if (method === "obs.channels.get") return Promise.resolve({ channel: null });
+        if (method === "obs.delivery.recent") return Promise.resolve({ deliveries: deliveryEntries });
+        if (method === "obs.channels.all") return Promise.resolve({ channels: [] });
         return Promise.resolve({});
       });
 
@@ -406,29 +501,46 @@ describe("IcChannelDetail", () => {
       await priv(el)._loadData();
       await el.updateComplete;
 
+      const deliveryCall = callMock.mock.calls.find(([method]) => method === "obs.delivery.recent");
+      expect(deliveryCall?.[1]).toEqual(expect.objectContaining({ channelType: "telegram" }));
+      expect([10, 50]).toContain((deliveryCall?.[1] as { limit?: number } | undefined)?.limit);
+
       // Grid-based trace: each delivery entry renders a row with 3 cells
       const cells = el.shadowRoot?.querySelectorAll('.trace-grid [role="cell"]');
-      expect(cells?.length).toBe(6); // 2 rows x 3 cells
+      expect(cells?.length).toBe(15); // 5 rows x 3 cells
 
-      // Check that ic-tag is used for status
-      const tags = el.shadowRoot?.querySelectorAll(".trace-grid ic-tag");
-      expect(tags?.length).toBe(2);
+      const tags = [...(el.shadowRoot?.querySelectorAll(".trace-grid ic-tag") ?? [])] as Array<HTMLElement & { variant: string }>;
+      expect(tags.map((tag) => tag.textContent?.trim())).toEqual([
+        "Success",
+        "Error",
+        "Timeout",
+        "Filtered",
+        "Aborted",
+      ]);
+      expect(tags.map((tag) => tag.variant)).toEqual([
+        "success",
+        "error",
+        "warning",
+        "default",
+        "warning",
+      ]);
     });
 
     it("renders activity sparkline bars from delivery traces", async () => {
       // Generate delivery trace entries spread across multiple hours
       const now = Date.now();
-      const deliveryEntries = Array.from({ length: 10 }, (_, i) => ({
-        messageId: `msg-${i}`,
-        latencyMs: 100 + i * 10,
-        timestamp: now - i * 3600000, // spread across hours
-        status: "delivered",
-      }));
+      const deliveryEntries = Array.from({ length: 10 }, (_, i) =>
+        makeDelivery("success", {
+          traceId: `trace-${i}`,
+          latencyMs: 100 + i * 10,
+          deliveredAt: now - i * 3600000, // spread across hours
+        }),
+      );
 
       const callMock = vi.fn().mockImplementation((method: string) => {
         if (method === "channels.get") return Promise.resolve(TELEGRAM_CONFIG);
-        if (method === "obs.delivery.recent") return Promise.resolve({ entries: deliveryEntries });
-        if (method === "obs.channels.get") return Promise.resolve({ channel: null });
+        if (method === "obs.delivery.recent") return Promise.resolve({ deliveries: deliveryEntries });
+        if (method === "obs.channels.all") return Promise.resolve({ channels: [] });
         return Promise.resolve({});
       });
 
@@ -450,8 +562,8 @@ describe("IcChannelDetail", () => {
     it("Restart button calls RPC", async () => {
       const callMock = vi.fn().mockImplementation((method: string) => {
         if (method === "channels.get") return Promise.resolve(TELEGRAM_CONFIG);
-        if (method === "obs.delivery.recent") return Promise.resolve({ entries: [] });
-        if (method === "obs.channels.get") return Promise.resolve({ channel: null });
+        if (method === "obs.delivery.recent") return Promise.resolve({ deliveries: [] });
+        if (method === "obs.channels.all") return Promise.resolve({ channels: [] });
         return Promise.resolve({});
       });
 
@@ -472,8 +584,8 @@ describe("IcChannelDetail", () => {
     it("Enable/Disable toggle calls correct RPC when enabled", async () => {
       const callMock = vi.fn().mockImplementation((method: string) => {
         if (method === "channels.get") return Promise.resolve(TELEGRAM_CONFIG);
-        if (method === "obs.delivery.recent") return Promise.resolve({ entries: [] });
-        if (method === "obs.channels.get") return Promise.resolve({ channel: null });
+        if (method === "obs.delivery.recent") return Promise.resolve({ deliveries: [] });
+        if (method === "obs.channels.all") return Promise.resolve({ channels: [] });
         return Promise.resolve({});
       });
 
@@ -496,8 +608,8 @@ describe("IcChannelDetail", () => {
     it("Enable/Disable toggle calls correct RPC when disabled", async () => {
       const callMock = vi.fn().mockImplementation((method: string) => {
         if (method === "channels.get") return Promise.resolve(IMESSAGE_CONFIG);
-        if (method === "obs.delivery.recent") return Promise.resolve({ entries: [] });
-        if (method === "obs.channels.get") return Promise.resolve({ channel: null });
+        if (method === "obs.delivery.recent") return Promise.resolve({ deliveries: [] });
+        if (method === "obs.channels.all") return Promise.resolve({ channels: [] });
         return Promise.resolve({});
       });
 

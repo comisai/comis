@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { AppContainer, Attachment, ChannelPort, NormalizedMessage, TranscriptionPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, WrapExternalContentOptions } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, NormalizedMessage, ResolvedTurnScope, TranscriptionPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, WrapExternalContentOptions } from "@comis/core";
 import type { MediaResolverPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { isVisionCapable } from "@comis/agent";
@@ -48,7 +48,10 @@ export interface MediaPipelineResult {
   /** Attachment resolver callback (Attachment -> Buffer|null). */
   resolveAttachment: (att: Attachment) => Promise<Buffer | null>;
   /** Message preprocessor: link understanding + media resolution + persistence. */
-  preprocessMessage: (msg: NormalizedMessage) => Promise<NormalizedMessage>;
+  preprocessMessage: (
+    msg: NormalizedMessage,
+    turnScope: ResolvedTurnScope,
+  ) => Promise<NormalizedMessage>;
   /** Audio preflight for voice note transcription (undefined when no transcriber). */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PreflightResult type from channels package not re-exported
   audioPreflight?: (msg: NormalizedMessage) => Promise<any>;
@@ -106,7 +109,6 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
     linkRunner,
     transcriber,
     maxMediaBytes,
-    defaultAgentId,
     onSuspiciousContent,
   } = deps;
 
@@ -274,7 +276,10 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
   };
 
   // Build preprocessMessage callback (wraps link understanding + media resolution)
-  const preprocessMessageCallback = async (msg: NormalizedMessage): Promise<NormalizedMessage> => {
+  const preprocessMessageCallback = async (
+    msg: NormalizedMessage,
+    turnScope: ResolvedTurnScope,
+  ): Promise<NormalizedMessage> => {
     // Per-channel media processing config (all default to true when absent)
     // Exclude healthCheck key from lookup -- it's not a channel adapter entry
     const channelEntry = msg.channelType !== "healthCheck"
@@ -315,10 +320,8 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
                 : att.mimeType?.startsWith("audio/") || att.type === "audio" ? "audio"
                 : "document";
 
-              // Determine which agent's workspace to use
-              const agentId = (enrichedMsg.metadata?._agentId as string | undefined) ?? defaultAgentId;
-              const svc = agentPersistenceServices.get(agentId)
-                ?? agentPersistenceServices.get(defaultAgentId);
+              const agentId = turnScope.conversation.agentId;
+              const svc = agentPersistenceServices.get(agentId);
 
               if (svc) {
                 try {
@@ -398,9 +401,9 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
       }
 
       // Store memory entries linking persisted files to text descriptions
+      const memoryTurnScope = turnScope;
       if (persistedFiles.length > 0 && deps.memoryAdapter) {
-        const agentId = (enrichedMsg.metadata?._agentId as string | undefined) ?? defaultAgentId;
-        const tenantId = deps.tenantId ?? "default";
+        const agentId = memoryTurnScope.conversation.agentId;
 
         for (const pf of persistedFiles) {
           const kindLabel = pf.mediaKind === "image" ? "Photo"
@@ -417,14 +420,14 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
           try {
             const storeResult = await deps.memoryAdapter.store({
               id: entryId,
-              tenantId,
-              agentId,
-              userId: senderInfo,
               content,
               trustLevel: "learned",
               source: { who: senderInfo, channel: channelType },
               tags: ["media-file", pf.mediaKind],
               createdAt: systemNowMs(),
+            }, {
+              turnScope: memoryTurnScope,
+              visibility: { kind: "conversation" },
             });
             if (storeResult.ok && deps.embeddingQueue) {
               deps.embeddingQueue.enqueue(entryId, content);

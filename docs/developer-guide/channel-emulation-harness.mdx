@@ -92,7 +92,7 @@ COMIS_LIVE=1 pnpm vitest run -c test/live/vitest.config.ts \
 `chan` is the standalone shell/agent driver for the channel surface; **`tg` is the alias for
 `chan --channel telegram`**. It is a **thin tsx client** over the three surfaces a running rig
 records in its handle file: the emulator `/control/*` API (the drive verbs), the gateway
-`/rpc` over WebSocket (RPC passthrough + the curated `explain` / `fleet` + `trigger`), and the
+`/rpc` over WebSocket (RPC passthrough + the curated `explain` / `system` + `trigger`), and the
 rig lifecycle. Invoke it through `tsx` (it is not a `comis` subcommand):
 
 ```bash
@@ -122,7 +122,7 @@ handle, or malformed JSON. A no-reply is an honest empty body, **never a fabrica
 | `tg rpc <method> [json]` | A verbatim gateway JSON-RPC passthrough (over WS). |
 | `tg trigger cron <id>` / `heartbeat` / `wake` | Fire a scheduler RPC now (`cron.run` / `heartbeat.trigger` / `scheduler.wake`). |
 | `tg wait --event <type>` / `--tool <name>` | Block until a trajectory signal (bounded; never hangs). |
-| `tg explain` / `tg fleet` | The curated observability lenses for the rig's session. |
+| `tg explain` / `tg system` | The curated observability lenses for the rig's session. |
 | `tg mirror` / `tg traj` / `tg db` | The Comis-oracle reads: `delivery_mirror`, the trajectory, and `memory.db`. |
 
 Pass `--agent <id>` to target a non-default agent (for `tg trigger`), `--endpoint <url>` to
@@ -152,23 +152,17 @@ hook is fire-and-forget, so a synchronous read right after send races it.
 
 ## The webhook flag
 
-The emulator supports a **webhook-POST mode**: instead of queuing an inbound `Update` for the
-adapter's `getUpdates` long-poll, it POSTs the grammy `Update` to a configured `webhookUrl`
-carrying the `X-Telegram-Bot-Api-Secret-Token` header. The scenario asserts the harness-side
-secret-token gate (a wrong or absent token is rejected) plus the product's boot-time secret
-**format** validator and the polling-off switch (`shouldUseRunner` returns false when a
-`webhookUrl` is set).
+The emulator has a **webhook-POST mode** for testing its own secret-token gate,
+but the product does not expose a Telegram webhook receiver. Product tests assert
+that setting `webhookUrl` fails adapter startup before polling or external token
+validation begins.
 
 <Warning>
-**Honest gap — webhook ingestion is not wired in the product at HEAD.** Comis validates the
-webhook secret's *format* at boot and skips the polling runner when `webhookUrl` is set, but
-**no daemon route ingests a POSTed `Update` or checks `X-Telegram-Bot-Api-Secret-Token`** — the
-host process is expected to drive `bot.handleUpdate` externally, and nothing does. So at HEAD
-Comis is effectively **polling-only**: a webhook update does **not** reach the agent. The
-harness can POST the update and assert its own gate, but there is no product endpoint to
-receive it. Closing this is a deliberate, test-first product change (mount grammy's
-`webhookCallback` with the secret token) — until that ships, this doc makes **no** claim that a
-webhook update reaches the agent.
+Comis is polling-only. A webhook update does not reach the agent, and adapter
+startup rejects webhook configuration instead of reporting a connection that
+cannot receive messages. A future webhook receiver must mount the platform
+callback with secret-token verification before this harness mode can become a
+product scenario.
 </Warning>
 
 ## Driving from a cold shell (shell-only, unattended)
@@ -188,7 +182,7 @@ processes** — start it with `tg up --detached`:
 COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram up --detached --json
 # Process 2 — a FRESH shell reaches the surviving rig.
 COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram send "hi" --json
-COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram rpc obs.fleet.health '{"since":1}' --json
+COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram rpc obs.system.health '{"since":1}' --json
 # Process 3 — tear it down (SIGTERMs the rig's process group; no leaked daemon).
 COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram down --json
 ```

@@ -145,6 +145,13 @@ describe("REFLECT_PROMPT (the system prompt contract)", () => {
     expect(REFLECT_PROMPT.toUpperCase()).toContain("GENERALIZE");
   });
 
+  it("preserves load-bearing decision boundaries while generalizing incidental literals", () => {
+    expect(REFLECT_PROMPT).toContain("Preserve decision boundaries");
+    expect(REFLECT_PROMPT).toContain("stopping conditions");
+    expect(REFLECT_PROMPT).toContain("quantitative acceptance thresholds");
+    expect(REFLECT_PROMPT).toContain("when the successful evidence establishes it as stable");
+  });
+
   it("emits the delta-op + section schema vocabulary (ops / sections / add / replace / remove)", () => {
     expect(REFLECT_PROMPT).toContain("ops");
     expect(REFLECT_PROMPT).toContain("sections");

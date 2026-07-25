@@ -36,7 +36,7 @@ export class ValidationError extends Error {
  * non-admin token, or using the wrong route). This is an EXPECTED
  * authorization denial — NOT an internal/handler fault. `classifyRpcError` maps it to
  * `errorKind:"auth"`, `level:"warn"` so an operator's wrong-trust call (e.g. obs.explain over
- * a non-admin token) does NOT read as a fleet ERROR / trip operator alerts (the denial itself
+ * a non-admin token) does NOT read as a system ERROR / trip operator alerts (the denial itself
  * is correct + the gate still fired; only the LOG classification changes). Throw this typed
  * error rather than a bare `Error("Admin access required …")`, which the dispatcher would
  * mis-classify as internal/error — typed errors are the sanctioned path.

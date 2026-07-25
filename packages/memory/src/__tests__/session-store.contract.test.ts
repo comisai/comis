@@ -23,7 +23,7 @@
 
 import Database from "better-sqlite3";
 import {
-  type SessionKey,
+  type ConversationScope,
   type SessionStorePort,
   type SessionData,
   type SessionDetailedEntry,
@@ -41,6 +41,10 @@ describe("createSessionStore — SessionStorePort contract", () => {
     initSchema(db, 1536);
   });
 
+  function scope(tenantId: string, agentId: string, principalId: string): ConversationScope {
+    return { tenantId, agentId, partition: { kind: "principal", principalId } };
+  }
+
   it("returns a value structurally compatible with SessionStorePort", () => {
     const store = createSessionStore(db);
     expectTypeOf<ReturnType<typeof createSessionStore>>().toExtend<SessionStorePort>();
@@ -50,10 +54,11 @@ describe("createSessionStore — SessionStorePort contract", () => {
     const expectedMethods: ReadonlyArray<keyof SessionStorePort> = [
       "save",
       "load",
+      "loadByRef",
       "list",
       "delete",
+      "deleteByRef",
       "deleteStale",
-      "loadByFormattedKey",
       "listDetailed",
     ];
     for (const m of expectedMethods) {
@@ -66,16 +71,15 @@ describe("createSessionStore — SessionStorePort contract", () => {
 
   it("save → load round-trip preserves the SessionData DTO shape (createdAt, updatedAt, messages, metadata)", () => {
     const store = createSessionStore(db);
-    const key: SessionKey = {
-      tenantId: "t-1",
-      userId: "u-1",
-      channelId: "c-1",
-    };
+    const key = scope("t-1", "agent-1", "u-1");
     const messages = [{ role: "user", content: "hello" }];
     const metadata = { source: "contract-test" };
-    store.save(key, messages, metadata);
+    expect(store.save(key, messages, metadata).ok).toBe(true);
 
-    const loaded: SessionData | undefined = store.load(key);
+    const loadedResult = store.load(key);
+    expect(loadedResult.ok).toBe(true);
+    if (!loadedResult.ok) return;
+    const loaded: SessionData | undefined = loadedResult.value;
     expect(loaded).toBeDefined();
     for (const field of [
       "messages",
@@ -93,20 +97,19 @@ describe("createSessionStore — SessionStorePort contract", () => {
 
   it("listDetailed returns rows shaped as SessionDetailedEntry from @comis/core", () => {
     const store = createSessionStore(db);
-    const key: SessionKey = {
-      tenantId: "t-2",
-      userId: "u-2",
-      channelId: "c-2",
-    };
-    store.save(key, [{ role: "user", content: "x" }], {});
+    const key = scope("t-2", "agent-2", "u-2");
+    expect(store.save(key, [{ role: "user", content: "x" }], {}).ok).toBe(true);
 
-    const detailed: SessionDetailedEntry[] = store.listDetailed("t-2");
+    const detailedResult = store.listDetailed({ tenantId: "t-2", agentId: "agent-2" });
+    expect(detailedResult.ok).toBe(true);
+    if (!detailedResult.ok) return;
+    const detailed: SessionDetailedEntry[] = detailedResult.value;
     expect(detailed.length).toBeGreaterThan(0);
     for (const field of [
-      "sessionKey",
+      "conversationRef",
+      "conversationScope",
       "tenantId",
-      "userId",
-      "channelId",
+      "agentId",
       "metadata",
       "createdAt",
       "updatedAt",
@@ -118,8 +121,8 @@ describe("createSessionStore — SessionStorePort contract", () => {
       ).toHaveProperty(field);
     }
     expect(detailed[0]!.tenantId).toBe("t-2");
-    expect(detailed[0]!.userId).toBe("u-2");
-    expect(detailed[0]!.channelId).toBe("c-2");
+    expect(detailed[0]!.agentId).toBe("agent-2");
+    expect(detailed[0]!.conversationScope).toEqual(key);
     expect(typeof detailed[0]!.messageCount).toBe("number");
   });
 });

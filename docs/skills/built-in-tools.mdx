@@ -13,7 +13,7 @@ automation. These tools are always available unless you restrict them with a
 **Where these fit.** Comis ships **70 tools** in total. The 13 documented in
 this page (plus the context tools and terminal driver tools below) are the
 framework-level "built-ins" that any coding-agent host would have. The
-remaining tools -- messaging, scheduling, sessions, media, fleet admin, etc. --
+remaining tools -- messaging, scheduling, sessions, media, system admin, etc. --
 are [platform tools](/skills/platform-tools) layered on top. For per-tool guides
 with deeper examples, see the [Agent Tools](/agent-tools/index) tab.
 </Info>
@@ -401,7 +401,11 @@ count: 5
 - Results are cached for 15 minutes by default to reduce API calls
 - When `deepFetch` is greater than 0, the tool automatically fetches full page
   content for the top results, saving separate `web_fetch` calls
-- If the primary provider fails, the tool automatically tries fallback providers
+- If the primary provider fails, the tool automatically tries providers with
+  configured API keys or endpoints. Providers without authority are skipped.
+- Only after every eligible search provider fails does an enabled `browser`
+  become the next recovery path. The agent starts it and opens a Google Search
+  instead of retrying `web_search` again for that request.
 - See [Web Tools Guide](/agent-tools/web-tools) for provider setup details
 
 </Accordion>

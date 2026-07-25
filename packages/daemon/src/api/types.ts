@@ -22,6 +22,8 @@ import type {
   TtsOutputFormat,
   TtsAutoMode,
   AppContainer,
+  AppConfig,
+  ConversationScope,
   SessionKey,
   PerAgentConfig,
   ProviderEntry,
@@ -29,10 +31,11 @@ import type {
   SecretStorePort,
   ExecGitFn,
   MutableSecretManager,
+  DeliveryMirrorPort,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi, SqliteMemoryAdapter, createEmbeddingQueue } from "@comis/memory";
-import type { CronScheduler, ExecutionTracker, WakeCoalescer, PerAgentHeartbeatRunner } from "@comis/scheduler";
+import type { CronScheduler, ExecutionTracker, createHeartbeatWakeCoordinator } from "@comis/scheduler";
 import type { BrowserService, LinkRunner, McpClientManager, TokenStore } from "@comis/skills";
 import type { createCostTracker, createStepCounter, createSubAgentRunner } from "@comis/agent";
 import type { ModelCatalog } from "@comis/core";
@@ -64,22 +67,9 @@ export interface SessionsApiDeps {
   agentDataDir?: string;
   /** Default workspace directory (e.g., ~/.comis/workspace). Used to scan workspace JSONL sessions. */
   defaultWorkspaceDir: string;
-  sessionStore: {
-    listDetailed: (tenantId?: string) => Array<{
-      sessionKey: string;
-      userId: string;
-      channelId: string;
-      metadata: Record<string, unknown>;
-      createdAt: number;
-      updatedAt: number;
-      messageCount: number;
-    }>;
-    loadByFormattedKey: (sessionKey: string) => { messages: unknown[]; metadata: Record<string, unknown>; createdAt: number; updatedAt: number } | undefined;
-    deleteByFormattedKey: (sessionKey: string) => boolean;
-    saveByFormattedKey: (sessionKey: string, messages: unknown[], metadata?: Record<string, unknown>) => void;
-  };
+  sessionStore: import("@comis/core").SessionStorePort;
   crossSessionSender: ReturnType<typeof createCrossSessionSender>; subAgentRunner: ReturnType<typeof createSubAgentRunner>;
-  resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string; // Tree-stable rootRunId resolver — session.spawn propagates ONE tree root so the spawn ceiling/killByRootRun work (see AUDIT-sessions.md). Absent ⇒ runner mints.
+  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
   securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[]; steerInject?: boolean } };
   tenantId: string;
   /** Structured logger threaded through every cluster slice (DaemonApiDeps
@@ -97,12 +87,26 @@ export interface SessionsApiDeps {
    *  consumes the derived field to filter to CONFIRMED-only messages, but the
    *  field is also useful to the dashboard / observers. */
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
+  /** Session-mirror persistence for session delete/reset operations. Lifecycle
+   *  handlers delete every entry for the exact session before clearing
+   *  transcript layers, preventing pending outbound text from entering the next prompt.
+   *  Optional at the dependency boundary so incomplete startup is representable;
+   *  the reset handler fails closed when absent. Production always wires either
+   *  the SQLite adapter or the no-op adapter. */
+  deliveryMirror?: DeliveryMirrorPort;
   /** LCD lossless-store write+run surface — `session.reset_conversation`
    *  calls `deleteConversationLcd` in `runOnConversation` to clear lcd_* rows.
    *  Optional: the handler fails-closed (throws "LCD store not available") when
    *  absent, never a silent 0 count. Same instance as MemoryApiDeps; the copy here
    *  lets session-archive.ts access it without widening to the full MemoryApiDeps slice. */
   lcdStore?: import("@comis/core").ContextStorePort;
+  /** LCD conversation metadata index used by session.reset_conversation when a live
+   *  channel turn exists only in the LCD/pi runtime and has no SessionStorePort row.
+   *  The exact tenant-agent-conversation reference remains the authorization key;
+   *  this port supplies only the corresponding display session key needed to clear
+   *  the LCD and runtime layers. Production wires the same ContextBrowsePort used by
+   *  context.conversations. */
+  contextBrowse?: import("@comis/core").ContextBrowsePort;
   /** MemoryPort for session-archive --memory reset. The concrete
    *  adapter is SqliteMemoryAdapter (which implements MemoryPort) — it is the
    *  SAME object as MemoryApiDeps.memoryAdapter, threaded onto this slice at the
@@ -120,10 +124,10 @@ export interface SessionsApiDeps {
    *  LCD + sessionStore alone resurrects the conversation (the surviving pi
    *  runtime JSONL re-ingests wholesale via the lcd-ingest epoch rebase). Wired
    *  at the composition root from `createConversationReset(...).destroyRuntimeSession`
-   *  bound to the default agent. Returns true when an adapter destroy ran.
+   *  with explicit conversation and display identities. Returns true when an adapter destroy ran.
    *  Optional: absent ⇒ the handler reports `runtimeSessionDestroyed: false`
    *  and WARNs with the resurrection consequence (honest degradation). */
-  destroyRuntimeSession?: (formattedSessionKey: string) => Promise<boolean>;
+  destroyRuntimeSession?: (scope: import("@comis/core").SessionQueryScope, key: SessionKey) => Promise<boolean>;
   /** Executor session-scoped state cleanup: wired at the
    *  composition root (daemon.ts) to @comis/agent's clearSessionState — the
    *  single authoritative path that drops the per-key tool-schema snapshots,
@@ -254,7 +258,7 @@ export interface ChannelsApiDeps {
   // Gateway attachment deps -- set after gateway init via mutable ref
   wsConnections?: { sendToClientId(clientId: string, method: string, params: unknown): boolean };
   mediaDir?: string;
-  onGatewayAttachment?: (sessionKey: SessionKey, marker: string) => void;
+  onGatewayAttachment?: (scope: import("@comis/core").ConversationScope, marker: string) => void;
   // Delivery queue + service
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
   /** DeliveryService constructed once at the composition root (setup-channels.ts); createMessageHandlers calls `deps.deliveryService.deliverToChannel(...)`. */
@@ -274,8 +278,8 @@ export interface ChannelsApiDeps {
   /** The bounded-autonomy service. message.send/reply/react consult `tryOutward` (origin/grant/per-hour/volume) before deliver. Optional; absent ⇒ inert. A daemon-initiated send (no `_agentId`) is never gated. */
   boundedAutonomy?: import("../autonomy/bounded-autonomy.js").BoundedAutonomy;
   /** Tree-stable rootRunId resolver (same as SessionsApiDeps.resolveRootRunId, already spread into the flat dispatch deps). message.send/reply/react derive the outward-ledger idempotency key from it; absent ⇒ the wrap is a pass-through. */
-  resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string;
-  /** The three-state outward ledger; absent ⇒ no exactly-once wrap (non-autonomy daemon) */
+  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
+  /** The closed five-state outward duplicate-suppression and uncertainty ledger; absent ⇒ message.send/reply/react pass through without retained-operation protection. */
   outwardLedger?: import("@comis/core").OutwardSendLedgerPort;
 }
 
@@ -286,10 +290,8 @@ export interface ChannelsApiDeps {
 export interface AgentsApiDeps {
   // Agent management
   suspendedAgents: Set<string>;
-  /** Hot-add callback passed through to agent handlers for runtime agent creation without restart.
-   *  `rawRerankEnabled` is the RAW (pre-Zod-default) rag.rerank.enabled from the RPC input so the
-   *  hot-added agent's effective-rerank precedence distinguishes unset from explicit-off. */
-  hotAdd?: (agentId: string, config: PerAgentConfig, rawRerankEnabled?: boolean | undefined) => Promise<void>;
+  /** Hot-add callback passed through to agent handlers for runtime agent creation without restart. */
+  hotAdd?: (agentId: string, config: PerAgentConfig) => Promise<void>;
   /** Hot-remove callback passed through to agent handlers for runtime agent deletion without restart. */
   hotRemove?: (agentId: string) => Promise<void>;
   // Model management
@@ -319,20 +321,35 @@ export interface AgentsApiDeps {
 /**
  * Dependencies for cron-handlers + graph-handlers + heartbeat-handlers + subagent-handlers
  * (cron.list/run, graph.list/run, heartbeat.list/run, subagent.list).
- * @optional-field-count: 15 — daemon-internal orchestration-plane slice; every optional gates on a daemon-global resource (graph coordinator, heartbeat runner, leaseManager/durableRuns, the autonomy plane denialBreaker/evictRegistry/escalate, the orchestrateReplay wiring cluster). daemon.ts supplies each from the cap-endpoint handle or config; a non-autonomy boot leaves them absent. Keep until a structural slice split.
+ * @optional-field-count: 16 — daemon-internal orchestration-plane slice; every optional gates on a daemon-global resource (graph coordinator, heartbeat coordinator, leaseManager/durableRuns, the autonomy plane denialBreaker/evictRegistry/escalate, the orchestrateReplay wiring cluster). daemon.ts supplies each from the cap-endpoint handle or config; a non-autonomy boot leaves them absent. Keep until a structural slice split.
  */
 export interface OrchestratorApiDeps {
   getAgentCronScheduler: (agentId: string) => CronScheduler;
+  getAgentCronAuthoringConfig: (agentId: string) => {
+    defaultTimezone: string;
+    maxConsecutiveDependencyErrors: number;
+  };
   cronSchedulers: Map<string, CronScheduler>;
   executionTrackers: Map<string, ExecutionTracker>;
-  wakeCoalescer: WakeCoalescer;
+  cronMaintenanceControllers: Map<string, import("../wiring/cron-maintenance-controller.js").CronMaintenanceController>;
+  taskMaintenanceControllers: Map<string, import("../wiring/task-maintenance-controller.js").TaskMaintenanceController>;
+  followupTaskStores: Map<string, import("@comis/scheduler").FollowupTaskStore>;
+  requestTaskRescan: (agentId: string) => Promise<import("@comis/shared").Result<
+    void,
+    { readonly errorKind: import("@comis/core").ErrorKind }
+  >>;
   graphCoordinator?: import("../graph/graph-coordinator.js").GraphCoordinator; // Graph coordinator deps
   // Named graph persistence deps
   namedGraphStore?: import("@comis/memory").NamedGraphStore;
   /** Node type registry for driver config validation (structurally compatible with the graph-local / @comis/scheduler NodeTypeRegistry). */
   nodeTypeRegistry?: import("../graph/node-type-registry.js").NodeTypeRegistry;
   // Heartbeat deps
-  perAgentRunner?: PerAgentHeartbeatRunner;
+  heartbeatCoordinator?: ReturnType<typeof createHeartbeatWakeCoordinator>;
+  getAgentSchedulerSeed?: (agentId: string) => import("@comis/shared").Result<
+    string,
+    { errorKind: import("@comis/core").ErrorKind; message: string }
+  >;
+  schedulerNowMs: () => number;
   globalHeartbeatConfig?: Record<string, unknown>;
   /** cron / graph / subagent handlers read deps.defaultAgentId. */
   defaultAgentId: string;
@@ -480,6 +497,13 @@ export interface ConfigApiDeps {
    * at the rpc-dispatch.ts composition root.
    */
   auditEnabled?: boolean;
+  /**
+   * Synchronous containment hook invoked after a validated config mutation is
+   * durably renamed and before the delayed daemon restart is scheduled.
+   * The hook receives the validated next effective config and must not retain
+   * or expose secret-bearing values.
+   */
+  onConfigPersisted?: (nextConfig: AppConfig) => void;
 }
 
 /**
@@ -691,7 +715,7 @@ export interface MediaApiDeps {
    *  Optional — undefined on a selector-less boot (handler derives from config). */
   voiceSelection?: { stt?: ResolvedVoiceSelection; tts?: ResolvedVoiceSelection };
   /** The obs store the voice obs inserts a `voice_degraded`
-   *  health_signal row into on a STT/TTS failure (feeds the `comis fleet`
+   *  health_signal row into on a STT/TTS failure (feeds the `comis system-health`
    *  voice_health finding). Same instance as `ObservabilityApiDeps.obsStore`;
    *  declared here so the voice handlers' deps slice can read it. Optional. */
   obsStore?: import("@comis/memory").ObservabilityStore;
@@ -708,7 +732,7 @@ export interface MediaApiDeps {
 
 /**
  * Dependencies for obs-handlers (obs.usage/billing/diagnostics/budget/spend).
- * @optional-field-count: 14 — a composition-root deps bag; each optional field is a
+ * @optional-field-count: 15 — a composition-root deps bag; each optional field is a
  * distinct obs source present iff wired (absent ⇒ honest-degrade). +1 per new source.
  */
 export interface ObservabilityApiDeps {
@@ -727,6 +751,10 @@ export interface ObservabilityApiDeps {
   };
   // Observability persistence deps
   obsStore?: import("@comis/memory").ObservabilityStore;
+  obsPersistence?: Pick<
+    import("../observability/obs-persistence-wiring.js").ObsPersistenceResult,
+    "discardPending" | "flushPending"
+  >;
   startupTimestamp?: number;
   sharedCostTracker?: { reset(): number };
   // Context pipeline collector deps
@@ -750,15 +778,15 @@ export interface ObservabilityApiDeps {
    *  existing handler tests can pass {} for deps. */
   dataDir?: string;
   /**
-   * Injected ClockPort for obs.fleet.health's `sinceHours` -> `sinceMs`
+   * Injected ClockPort for obs.system.health's `sinceHours` -> `sinceMs`
    * conversion (the globals gate forbids Date.now()/new Date() in the
    * handler/assembler). Populated by `buildRpcDispatchDeps` in daemon.ts
    * from `boot.clock`. Optional preserves existing handler
-   * tests that pass {} for deps; the fleet handler asserts `deps.clock!`
-   * because buildRpcDispatchDeps always populates it, and the fleet tests inject a fakeClock.
+   * tests that pass {} for deps; the system handler asserts `deps.clock!`
+   * because buildRpcDispatchDeps always populates it, and the system tests inject a fakeClock.
    */
   clock?: import("@comis/core").ClockPort;
-  /** The durable-run store the fleet assembler reads (`countByStatus`) for the autonomy block. Soft-fail (obsStore? precedent): absent ⇒ the block is OMITTED (offline CLI / non-durability boot). Wired on the SAME object as obsStore/clock by buildRpcDispatchDeps (daemon.ts:893). @optional-field */ durableRuns?: import("@comis/core").DurableRunPort;
+  /** The durable-run store the system assembler reads (`countByStatus`) for the autonomy block. Soft-fail (obsStore? precedent): absent ⇒ the block is OMITTED (offline CLI / non-durability boot). Wired on the SAME object as obsStore/clock by buildRpcDispatchDeps (daemon.ts:893). @optional-field */ durableRuns?: import("@comis/core").DurableRunPort;
   /**
    * DI seam for the bundle pipeline.
    * Tests inject a stub that returns ok({ bundleDir: "/tmp/bundle", ... }).

@@ -33,6 +33,12 @@ import {
   INTERNAL_FIELD_NAMES,
 } from "./index.js";
 
+const AUTHORITY = { tenant_id: "tenant-1", agent_id: "agent-1" } as const;
+const TARGET_AUTHORITY = {
+  ...AUTHORITY,
+  conversation_ref: "conversation-ref-1",
+} as const;
+
 // ===========================================================================
 // Aggregator sanity
 // ===========================================================================
@@ -92,9 +98,9 @@ describe("SESSIONS_CONTRACTS aggregator", () => {
     ]);
   });
 
-  it("every contract has scopes.length === 1 (single-scope invariant)", () => {
+  it("keeps every session orchestration read on its declared single route", () => {
     for (const c of SESSIONS_CONTRACTS) {
-      expect(c.scopes.length, `${c.method} must have exactly one scope`).toBe(1);
+      expect(c.scopes, `${c.method} route scopes`).toEqual([c.scopes[0]]);
     }
   });
 });
@@ -201,30 +207,36 @@ describe("AgentsListContract", () => {
 });
 
 describe("SessionListContract", () => {
-  it("accepts empty request", () => {
-    expect(SessionListContract.request.parse({})).toEqual({});
+  it("rejects a request without tenant and agent authority", () => {
+    expect(() => SessionListContract.request.parse({})).toThrow();
   });
 
   it("accepts request with kind + since_minutes", () => {
     expect(SessionListContract.request.parse({
+      ...AUTHORITY,
       kind: "dm",
       since_minutes: 60,
-    })).toEqual({ kind: "dm", since_minutes: 60 });
+    })).toEqual({ ...AUTHORITY, kind: "dm", since_minutes: 60 });
   });
 
   it("rejects request with non-number since_minutes", () => {
-    expect(() => SessionListContract.request.parse({ since_minutes: "60" })).toThrow();
+    expect(() => SessionListContract.request.parse({ ...AUTHORITY, since_minutes: "60" })).toThrow();
   });
 
   it("accepts response with sessions[] + total", () => {
     expect(SessionListContract.response.parse({
       sessions: [
         {
-          sessionKey: "tenant:user:channel",
+          conversationRef: "conversation-ref-1",
           agentId: "default",
-          userId: "user1",
-          channelId: "channel1",
           kind: "dm",
+          endpoint: {
+            channelType: "telegram",
+            channelInstanceId: "account-a",
+            conversationId: "chat-a",
+            threadId: "thread-a",
+            conversationKind: "direct",
+          },
           messageCount: 3,
           totalTokens: 1500,
           updatedAt: 1715000000000,
@@ -241,12 +253,13 @@ describe("SessionListContract", () => {
 });
 
 describe("SessionSearchContract", () => {
-  it("accepts empty request (recent mode)", () => {
-    expect(SessionSearchContract.request.parse({})).toEqual({});
+  it("accepts an explicitly scoped recent-mode request", () => {
+    expect(SessionSearchContract.request.parse(AUTHORITY)).toEqual(AUTHORITY);
   });
 
   it("accepts request with query + scope + summarize", () => {
     expect(SessionSearchContract.request.parse({
+      ...AUTHORITY,
       query: "weather",
       scope: "user",
       limit: 5,
@@ -272,30 +285,35 @@ describe("SessionSearchContract", () => {
 });
 
 describe("SessionHistoryContract", () => {
-  it("accepts valid request with session_key only", () => {
-    expect(SessionHistoryContract.request.parse({ session_key: "k" })).toEqual({
-      session_key: "k",
-    });
+  it("accepts a request with explicit conversation authority", () => {
+    expect(SessionHistoryContract.request.parse(TARGET_AUTHORITY)).toEqual(TARGET_AUTHORITY);
   });
 
   it("accepts request with offset + limit", () => {
     expect(SessionHistoryContract.request.parse({
-      session_key: "k",
+      ...TARGET_AUTHORITY,
       offset: 10,
       limit: 50,
     })).toBeDefined();
   });
 
-  it("rejects request missing session_key", () => {
+  it("rejects request missing conversation authority", () => {
     expect(() => SessionHistoryContract.request.parse({})).toThrow();
   });
 
-  it("accepts response with full session + messages shape", () => {
-    expect(SessionHistoryContract.response.parse({
+  it("preserves authoritative endpoint metadata in the history response", () => {
+    const parsed = SessionHistoryContract.response.parse({
       session: {
-        key: "tenant:user:channel",
+        key: "tenant:agent:default:user:channel",
         agentId: "default",
         channelType: "dm",
+        endpoint: {
+          channelType: "telegram",
+          channelInstanceId: "account-a",
+          conversationId: "chat-a",
+          threadId: "thread-a",
+          conversationKind: "direct",
+        },
         messageCount: 4,
         totalTokens: 1234,
         inputTokens: 500,
@@ -314,7 +332,14 @@ describe("SessionHistoryContract", () => {
       offset: 0,
       limit: 20,
       hasMore: false,
-    })).toBeDefined();
+    });
+    expect(parsed.session.endpoint).toEqual({
+      channelType: "telegram",
+      channelInstanceId: "account-a",
+      conversationId: "chat-a",
+      threadId: "thread-a",
+      conversationKind: "direct",
+    });
   });
 
   it("accepts session.label optional field", () => {
@@ -406,30 +431,29 @@ describe("SessionHistoryContract", () => {
 });
 
 describe("SessionSendContract", () => {
-  it("accepts minimal request", () => {
+  it("accepts a minimal explicitly targeted request", () => {
     expect(SessionSendContract.request.parse({
-      session_key: "k",
+      ...TARGET_AUTHORITY,
       text: "hello",
     })).toBeDefined();
   });
 
   it("accepts request with all optional fields", () => {
     expect(SessionSendContract.request.parse({
-      session_key: "k",
+      ...TARGET_AUTHORITY,
       text: "hi",
       mode: "wait",
       timeout_ms: 5000,
       max_turns: 3,
-      agent_id: "alpha",
     })).toBeDefined();
   });
 
-  it("rejects request missing session_key", () => {
+  it("rejects request missing conversation authority", () => {
     expect(() => SessionSendContract.request.parse({ text: "x" })).toThrow();
   });
 
   it("rejects request missing text", () => {
-    expect(() => SessionSendContract.request.parse({ session_key: "k" })).toThrow();
+    expect(() => SessionSendContract.request.parse(TARGET_AUTHORITY)).toThrow();
   });
 
   it("accepts loose response (delegates to crossSessionSender)", () => {
@@ -545,14 +569,21 @@ describe("SessionRunStatusContract", () => {
       runId: "r1",
       status: "completed",
       agentId: "alpha",
-      task: "do thing",
-      sessionKey: "k",
       startedAt: 1714900000000,
-      completedAt: 1714900010000,
       runtimeMs: 10000,
-      response: "done",
-      tokensUsed: { total: 1234 },
-      cost: { input: 0.01, output: 0.02, total: 0.03 },
+      completion: {
+        endReason: "completed",
+        completedAtMs: 1714900010000,
+        summary: "done",
+      },
+      telemetry: {
+        tokensUsedTotal: 1234,
+        costTotal: 0.03,
+        finishReason: "stop",
+        stepsExecuted: 3,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
     })).toBeDefined();
   });
 
@@ -561,7 +592,6 @@ describe("SessionRunStatusContract", () => {
       runId: "r1",
       status: "running",
       agentId: "alpha",
-      task: "do thing",
       startedAt: 1714900000000,
       runtimeMs: 5000,
     })).toBeDefined();
@@ -572,26 +602,51 @@ describe("SessionRunStatusContract", () => {
       runId: "r1",
       status: "failed",
       agentId: "alpha",
-      task: "do thing",
       startedAt: 0,
       runtimeMs: 100,
-      error: "Tool exec failed",
+      completion: {
+        endReason: "failed",
+        completedAtMs: 100,
+        errorKind: "dependency",
+        summary: "Tool exec failed",
+      },
     })).toBeDefined();
+  });
+
+  it("uses the agent-reachable RPC route and rejects raw provider fields", () => {
+    expect(SessionRunStatusContract.scopes).toEqual(["rpc"]);
+    expect(() => SessionRunStatusContract.response.parse({
+      runId: "r1",
+      status: "completed",
+      agentId: "alpha",
+      startedAt: 0,
+      runtimeMs: 1,
+      completion: { endReason: "completed", completedAtMs: 1 },
+      telemetry: {
+        tokensUsedTotal: 1,
+        costTotal: 0,
+        finishReason: "stop",
+        stepsExecuted: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      response: "raw provider output",
+    })).toThrow();
   });
 });
 
 describe("SessionDeleteContract", () => {
-  it("accepts valid request", () => {
-    expect(SessionDeleteContract.request.parse({ session_key: "k" })).toBeDefined();
+  it("accepts explicit target authority", () => {
+    expect(SessionDeleteContract.request.parse(TARGET_AUTHORITY)).toBeDefined();
   });
 
-  it("rejects request missing session_key", () => {
+  it("rejects request missing target authority", () => {
     expect(() => SessionDeleteContract.request.parse({})).toThrow();
   });
 
   it("accepts response with transcript", () => {
     expect(SessionDeleteContract.response.parse({
-      sessionKey: "k",
+      conversationRef: "conversation-ref-1",
       deleted: true,
       transcript: {
         messages: [{ role: "user", content: "Hi" }],
@@ -603,7 +658,7 @@ describe("SessionDeleteContract", () => {
 
   it("rejects response with deleted: false", () => {
     expect(() => SessionDeleteContract.response.parse({
-      sessionKey: "k",
+      conversationRef: "conversation-ref-1",
       deleted: false,
       transcript: { messages: [], metadata: {}, messageCount: 0 },
     })).toThrow();
@@ -611,18 +666,18 @@ describe("SessionDeleteContract", () => {
 });
 
 describe("SessionResetContract", () => {
-  it("accepts valid request", () => {
-    expect(SessionResetContract.request.parse({ session_key: "k" })).toBeDefined();
+  it("accepts explicit target authority", () => {
+    expect(SessionResetContract.request.parse(TARGET_AUTHORITY)).toBeDefined();
   });
 
   it("response.reset must be literal true", () => {
     expect(SessionResetContract.response.parse({
-      sessionKey: "k",
+      conversationRef: "conversation-ref-1",
       reset: true,
       previousMessageCount: 5,
     })).toBeDefined();
     expect(() => SessionResetContract.response.parse({
-      sessionKey: "k",
+      conversationRef: "conversation-ref-1",
       reset: false,
       previousMessageCount: 5,
     })).toThrow();
@@ -630,13 +685,13 @@ describe("SessionResetContract", () => {
 });
 
 describe("SessionExportContract", () => {
-  it("accepts valid request", () => {
-    expect(SessionExportContract.request.parse({ session_key: "k" })).toBeDefined();
+  it("accepts explicit target authority", () => {
+    expect(SessionExportContract.request.parse(TARGET_AUTHORITY)).toBeDefined();
   });
 
   it("accepts response with full transcript", () => {
     expect(SessionExportContract.response.parse({
-      sessionKey: "k",
+      conversationRef: "conversation-ref-1",
       messages: [
         { role: "user", content: "Hi" },
         { role: "assistant", content: [{ type: "text", text: "Hello" }] },
@@ -650,7 +705,7 @@ describe("SessionExportContract", () => {
 
   it("rejects response missing messageCount", () => {
     expect(() => SessionExportContract.response.parse({
-      sessionKey: "k",
+      conversationRef: "conversation-ref-1",
       messages: [],
       metadata: {},
       createdAt: 0,
@@ -660,20 +715,20 @@ describe("SessionExportContract", () => {
 });
 
 describe("SessionCompactContract", () => {
-  it("accepts valid request", () => {
-    expect(SessionCompactContract.request.parse({ session_key: "k" })).toBeDefined();
+  it("accepts explicit target authority", () => {
+    expect(SessionCompactContract.request.parse(TARGET_AUTHORITY)).toBeDefined();
   });
 
   it("accepts request with instructions", () => {
     expect(SessionCompactContract.request.parse({
-      session_key: "k",
+      ...TARGET_AUTHORITY,
       instructions: "summarize aggressively",
     })).toBeDefined();
   });
 
   it("accepts response with null instructions", () => {
     expect(SessionCompactContract.response.parse({
-      sessionKey: "k",
+      conversationRef: "conversation-ref-1",
       messageCount: 10,
       estimatedTokens: 5000,
       compactionTriggered: true,
@@ -683,7 +738,7 @@ describe("SessionCompactContract", () => {
 
   it("accepts response with string instructions", () => {
     expect(SessionCompactContract.response.parse({
-      sessionKey: "k",
+      conversationRef: "conversation-ref-1",
       messageCount: 10,
       estimatedTokens: 5000,
       compactionTriggered: true,
@@ -693,7 +748,7 @@ describe("SessionCompactContract", () => {
 
   it("response.compactionTriggered must be literal true", () => {
     expect(() => SessionCompactContract.response.parse({
-      sessionKey: "k",
+      conversationRef: "conversation-ref-1",
       messageCount: 0,
       estimatedTokens: 0,
       compactionTriggered: false,
@@ -703,34 +758,32 @@ describe("SessionCompactContract", () => {
 });
 
 describe("SessionResetConversationContract", () => {
-  it("accepts valid request with session_key only", () => {
-    expect(SessionResetConversationContract.request.parse({ session_key: "k" })).toEqual({
-      session_key: "k",
-    });
+  it("accepts explicit target authority", () => {
+    expect(SessionResetConversationContract.request.parse(TARGET_AUTHORITY)).toEqual(TARGET_AUTHORITY);
   });
 
   it("accepts request with optional memory flag", () => {
     expect(SessionResetConversationContract.request.parse({
-      session_key: "k",
+      ...TARGET_AUTHORITY,
       memory: true,
-    })).toEqual({ session_key: "k", memory: true });
+    })).toEqual({ ...TARGET_AUTHORITY, memory: true });
   });
 
   it("accepts request with optional purge_derived flag preserved", () => {
     expect(SessionResetConversationContract.request.parse({
-      session_key: "k",
+      ...TARGET_AUTHORITY,
       memory: true,
       purge_derived: true,
-    })).toEqual({ session_key: "k", memory: true, purge_derived: true });
+    })).toEqual({ ...TARGET_AUTHORITY, memory: true, purge_derived: true });
   });
 
-  it("rejects request missing session_key", () => {
+  it("rejects request missing target authority", () => {
     expect(() => SessionResetConversationContract.request.parse({})).toThrow();
   });
 
   it("accepts response with both layer counts (memoriesDeleted omitted)", () => {
     expect(SessionResetConversationContract.response.parse({
-      sessionKey: "k",
+      conversationRef: "conversation-ref-1",
       lcdRowsDeleted: 12,
       sessionMessagesCleared: 8,
     })).toBeDefined();
@@ -738,16 +791,16 @@ describe("SessionResetConversationContract", () => {
 
   it("accepts response with memoriesDeleted present (memory:true full-forget path)", () => {
     expect(SessionResetConversationContract.response.parse({
-      sessionKey: "k",
+      conversationRef: "conversation-ref-1",
       lcdRowsDeleted: 12,
       sessionMessagesCleared: 8,
       memoriesDeleted: 3,
-    })).toEqual({ sessionKey: "k", lcdRowsDeleted: 12, sessionMessagesCleared: 8, memoriesDeleted: 3 });
+    })).toEqual({ conversationRef: "conversation-ref-1", lcdRowsDeleted: 12, sessionMessagesCleared: 8, memoriesDeleted: 3 });
   });
 
   it("rejects response missing lcdRowsDeleted", () => {
     expect(() => SessionResetConversationContract.response.parse({
-      sessionKey: "k",
+      conversationRef: "conversation-ref-1",
       sessionMessagesCleared: 0,
     })).toThrow();
   });

@@ -7,7 +7,46 @@ import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 import "./dashboard.js";
 import { IcDashboard, formatUptime, formatNumber, formatTokens } from "./dashboard.js";
-import { createMockRpcClient } from "../test-support/mock-rpc-client.js";
+import { createMockRpcClient as createBaseMockRpcClient } from "../test-support/mock-rpc-client.js";
+
+function createMockRpcClient(
+  callImpl?: (...args: never[]) => unknown,
+  overrides?: Partial<RpcClient>,
+): RpcClient {
+  const client = createBaseMockRpcClient(callImpl, overrides);
+  const call = client.call.bind(client) as unknown as (
+    method: string,
+    params?: Record<string, unknown>,
+  ) => Promise<unknown>;
+  const scopedCall = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === "config.read") {
+      return { config: { tenantId: "tenant-a" }, sections: [] };
+    }
+    if (method === "agents.list") return { agents: ["agent-a"] };
+    const result = await call(method, params);
+    if (method !== "session.list") return result;
+    const record = result !== null && typeof result === "object"
+      ? result as Record<string, unknown>
+      : {};
+    if (Array.isArray(record["sessions"])) return result;
+    const total = typeof record["total"] === "number" ? record["total"] : 0;
+    return {
+      ...record,
+      sessions: Array.from({ length: total }, (_, index) => ({
+        conversationRef: `conversation-${index}`,
+        agentId: "agent-a",
+        kind: "dm",
+        messageCount: 0,
+        totalTokens: 0,
+        updatedAt: 0,
+        createdAt: 0,
+      })),
+      total,
+    };
+  });
+  Object.assign(client, { call: scopedCall as RpcClient["call"] });
+  return client;
+}
 
 function createMockApiClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
@@ -387,7 +426,7 @@ describe("IcDashboard", () => {
       expect(
         rpcCalls.filter(([method]) => method === "obs.billing.byAgent"),
       ).toEqual([["obs.billing.byAgent", { agentId: "agent-alpha" }]]);
-      expect(rpcCalls).toHaveLength(16);
+      expect(rpcCalls).toHaveLength(19);
     });
 
     it("rpcClient.call invoked for gateway.status", async () => {
@@ -403,17 +442,64 @@ describe("IcDashboard", () => {
     it("rpcClient.call invoked for obs.delivery.stats", async () => {
       const mockRpc = createMockRpcClient(undefined, {
         call: vi.fn().mockResolvedValue({
-          successRate: 99.5,
+          total: 1000,
+          attempted: 995,
+          success: 990,
+          error: 3,
+          timeout: 2,
+          filtered: 4,
+          aborted: 1,
           avgLatencyMs: 45,
-          totalDelivered: 1000,
-          failed: 5,
         }),
       });
       priv(el).rpcClient = mockRpc;
 
       await priv(el)._loadRpcData();
 
-      expect(mockRpc.call).toHaveBeenCalledWith("obs.delivery.stats");
+      expect(mockRpc.call).toHaveBeenCalledWith("obs.delivery.stats", { sinceMs: 86_400_000 });
+      expect(priv(el)._deliveryStats).toEqual({
+        total: 1000,
+        attempted: 995,
+        success: 990,
+        error: 3,
+        timeout: 2,
+        filtered: 4,
+        aborted: 1,
+        avgLatencyMs: 45,
+      });
+      expect(priv(el)._messagesToday).toBe(1000);
+      expect(priv(el)._errorCount).toBe(5);
+    });
+
+    it("computes the previous-day lifecycle count from the two-day delivery window", async () => {
+      const mockRpc = createMockRpcClient(undefined, {
+        call: vi.fn().mockImplementation((method: string, params?: unknown) => {
+          if (method === "obs.delivery.stats") {
+            const sinceMs = (params as { sinceMs?: number } | undefined)?.sinceMs;
+            return Promise.resolve({
+              total: sinceMs === 172_800_000 ? 160 : 100,
+              attempted: 100,
+              success: 100,
+              error: 0,
+              timeout: 0,
+              filtered: 0,
+              aborted: 0,
+              avgLatencyMs: 10,
+            });
+          }
+          if (method === "obs.billing.total") {
+            return Promise.resolve({ totalTokens: 0, totalCost: 0 });
+          }
+          return Promise.resolve({});
+        }),
+      });
+      priv(el).rpcClient = mockRpc;
+
+      await priv(el)._loadRpcData();
+
+      expect(mockRpc.call).toHaveBeenCalledWith("obs.delivery.stats", { sinceMs: 172_800_000 });
+      expect(priv(el)._messagesToday).toBe(100);
+      expect(priv(el)._prevMessages).toBe(60);
     });
 
     it("rpcClient.call invoked for obs.billing.total with sinceMs", async () => {
@@ -446,7 +532,10 @@ describe("IcDashboard", () => {
 
       await priv(el)._loadRpcData();
 
-      expect(mockRpc.call).toHaveBeenCalledWith("session.list", {});
+      expect(mockRpc.call).toHaveBeenCalledWith("session.list", {
+        tenant_id: "tenant-a",
+        agent_id: "agent-a",
+      });
     });
 
     it("rpcClient.call invoked for mcp.list", async () => {
@@ -567,7 +656,7 @@ describe("IcDashboard", () => {
       expect(priv(el)._sse).toBeNull();
     });
 
-    it("SSE message:received increments _messagesToday", () => {
+    it("SSE message:received leaves the canonical lifecycle count unchanged until reload", () => {
       const mockDispatcher = createMockEventDispatcher();
       priv(el).eventDispatcher = mockDispatcher;
       document.body.appendChild(el);
@@ -576,10 +665,10 @@ describe("IcDashboard", () => {
       priv(el)._messagesToday = 10;
       // SseController listens on document events (EventDispatcher channel 2).
       document.dispatchEvent(new CustomEvent("message:received"));
-      expect(priv(el)._messagesToday).toBe(11);
+      expect(priv(el)._messagesToday).toBe(10);
     });
 
-    it("SSE message:sent increments _messagesToday", () => {
+    it("SSE message:sent leaves the canonical lifecycle count unchanged until reload", () => {
       const mockDispatcher = createMockEventDispatcher();
       priv(el).eventDispatcher = mockDispatcher;
       document.body.appendChild(el);
@@ -587,10 +676,10 @@ describe("IcDashboard", () => {
 
       priv(el)._messagesToday = 5;
       document.dispatchEvent(new CustomEvent("message:sent"));
-      expect(priv(el)._messagesToday).toBe(6);
+      expect(priv(el)._messagesToday).toBe(5);
     });
 
-    it("SSE system:error increments _errorCount", () => {
+    it("SSE system:error leaves the delivery error count unchanged", () => {
       const mockDispatcher = createMockEventDispatcher();
       priv(el).eventDispatcher = mockDispatcher;
       document.body.appendChild(el);
@@ -598,7 +687,7 @@ describe("IcDashboard", () => {
 
       priv(el)._errorCount = 3;
       document.dispatchEvent(new CustomEvent("system:error"));
-      expect(priv(el)._errorCount).toBe(4);
+      expect(priv(el)._errorCount).toBe(3);
     });
 
     it("SSE session:created increments _sessionCount", () => {
@@ -1637,6 +1726,16 @@ describe("IcDashboard", () => {
       const statCards = el.shadowRoot?.querySelectorAll("ic-stat-card");
       const agentCard = statCards![0];
       expect((agentCard as any).value).toBe("2/3");
+    });
+
+    it("labels the error card with its delivery and time-window population", async () => {
+      el.apiClient = createMockApiClient();
+      document.body.appendChild(el);
+      await priv(el)._loadData();
+      await el.updateComplete;
+
+      const statCards = el.shadowRoot?.querySelectorAll("ic-stat-card");
+      expect((statCards![5] as any).label).toBe("Delivery Errors (24h)");
     });
 
     it("stat cards show '---' for RPC-dependent data when rpcClient is null", async () => {

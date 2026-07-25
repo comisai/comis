@@ -71,6 +71,7 @@ function createCapMint(
     resolvedCaps: ["orch:cron", "orch:read"] as AgentCapability[],
     budgetRef: "budget-1",
     sessionKey: "tenant:channel:user",
+    trustLevel: "user",
     rootRunId: "run-1",
     ...overrides,
   };
@@ -149,6 +150,7 @@ describe("buildBrokerSpawnEnv capability-lease mint+inject", () => {
       requestedCaps: ["orch:read", "orch:graph"] as AgentCapability[],
       budgetRef: "b",
       sessionKey: "t:c:u",
+      trustLevel: "user",
       rootRunId: "run-1",
     };
 

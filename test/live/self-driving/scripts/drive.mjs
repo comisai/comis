@@ -10,12 +10,34 @@
 //      answer-aware wire quiescence when the trajectory can't be resolved (graceful, byte-identical to v1).
 //
 // Usage:  node drive.mjs <chatId> "<text>" [quiesceMs=8000] [maxMs=240000] [DATA=/home/comis/.comis]
+//         printf '<one-line text>\n' | node drive.mjs <chatId> -
+//         node drive.mjs <chatId> @/path/to/message.txt
 //   - DATA: data dir (for the trajectory turn-end watch). env DATA also honored. Empty → wire-only mode.
+//   - Use `-` or `@file` for credential-bearing prompts so values never enter argv/process listings.
 //   - NOTE the DAG caveat: a `pipeline`/`graph.execute` turn ENDS at the agent's "running it now" answer,
 //     then the GRAPH runs separately — poll `graph.status`/the daemon log for the final node, not this.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createInterface } from 'node:readline';
 import { rig } from './_rig.mjs';
-const [, , chatIdArg, text, quiesceMsArg, maxMsArg, dataArg] = process.argv;
+const [, , chatIdArg, textArg, quiesceMsArg, maxMsArg, dataArg] = process.argv;
+
+const readStdinLine = async () => {
+  const lines = createInterface({ input: process.stdin, terminal: false });
+  const next = await lines[Symbol.asyncIterator]().next();
+  lines.close();
+  return next.done ? '' : next.value;
+};
+
+const text = textArg === '-'
+  ? await readStdinLine()
+  : textArg?.startsWith('@')
+    ? readFileSync(textArg.slice(1), 'utf8')
+    : textArg;
+if (!text) {
+  console.error('drive.mjs: message text is required; pass text, `-` for one stdin line, or `@file`');
+  process.exit(2);
+}
 const chatId = chatIdArg || rig.chatId;
 const quiesceMs = Number(quiesceMsArg || 8000);
 const maxMs = Number(maxMsArg || 240000);
@@ -37,6 +59,23 @@ const DATA = dataArg || rig.dataDir;
 const fromUser = process.env.FROMUSER ? Number(process.env.FROMUSER) : Number(chatId);
 const emu = JSON.parse(readFileSync(rig.emuWiringPath, 'utf8'));
 const base = emu.apiRoot;
+const tenantId = process.env.TENANT_ID || 'default';
+const agentId = process.env.AGENT_ID || 'default';
+
+// A parallel drive must watch only its own canonical-principal trajectory. Selecting the globally
+// newest file lets one conversation stop on another conversation's session.summary and fabricates
+// an early completion. Resolve the same assertion key as channel ingress, then fail loudly if the
+// emulator identity cannot be established.
+const botResponse = await fetch(`${base}/bot${emu.botToken}/getMe`);
+const botBody = await botResponse.json();
+if (!botResponse.ok || botBody?.ok !== true || !botBody?.result?.id) {
+  console.error('drive.mjs: emulator getMe did not return a bot id');
+  process.exit(2);
+}
+const assertionFields = [tenantId, agentId, 'telegram', `telegram-${botBody.result.id}`, String(fromUser)];
+const assertionKey = assertionFields.map((field) => `${Buffer.byteLength(field, 'utf8')}:${field}`).join('');
+const expectedPrincipalId = `platform_${createHash('sha256').update(assertionKey, 'utf8').digest('base64url')}`;
+const expectedTrajectorySuffix = `${expectedPrincipalId}~peer~${expectedPrincipalId}.jsonl.trajectory.jsonl`;
 
 // Resilient long-poll: a loaded machine or a long slow-model turn (a cold local 35b can run >200s)
 // can transiently ETIMEDOUT a fetch — a crash here aborts the WHOLE drive mid-turn.
@@ -71,12 +110,21 @@ const isProgress = (t) =>
 // --- trajectory turn-end watch (authoritative completion signal) ---
 const resolveTraj = () => {
   try {
-    const dir = `${DATA}/workspace/sessions/default/${chatId}`;
-    const f = readdirSync(dir)
-      .filter((n) => n.endsWith('.jsonl.trajectory.jsonl'))
-      .map((n) => ({ n, m: statSync(`${dir}/${n}`).mtimeMs }))
+    const dir = `${DATA}/workspace/sessions`;
+    const files = [];
+    const visit = (current) => {
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        const path = `${current}/${entry.name}`;
+        if (entry.isDirectory()) visit(path);
+        else if (entry.name.endsWith('.jsonl.trajectory.jsonl')) files.push(path);
+      }
+    };
+    visit(dir);
+    const f = files
+      .filter((path) => path.endsWith(expectedTrajectorySuffix))
+      .map((path) => ({ path, m: statSync(path).mtimeMs }))
       .sort((a, b) => b.m - a.m)[0];
-    return f ? `${dir}/${f.n}` : null;
+    return f?.path ?? null;
   } catch { return null; }
 };
 const trajLineCount = (p) => { try { return readFileSync(p, 'utf8').split('\n').length; } catch { return 0; } };
@@ -143,7 +191,7 @@ while (Date.now() - start < maxMs) {
 // agent turn, so there is correctly no reply. Distinguish that from a real hang
 // by checking the daemon log for the block naming THIS sender — else the driver
 // reports a misleading "[TIMEOUT] — NO SUBSTANTIVE ANSWER" on a correct security
-// block (which briefly read as a wedge-finding during the fleet-marathon SE-H4 drive).
+// block, which otherwise looks like a missing substantive answer.
 const detectAllowFromBlock = () => {
   if (seen.length > 0 || sawAnswer || turnEnded || !DATA) return null;
   try {

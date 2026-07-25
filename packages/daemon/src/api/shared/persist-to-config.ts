@@ -481,7 +481,7 @@ export async function persistToConfig(
     deps.container.eventBus.emit("audit:event", {
       timestamp: systemNowMs(),
       agentId: opts.actingUser ?? "system",
-      tenantId: deps.container.config.tenantId ?? "default",
+      tenantId: deps.container.config.tenantId,
       actionType: opts.actionType,
       classification: "destructive" as const,
       outcome: "success" as const,
@@ -521,7 +521,7 @@ export async function persistToConfig(
     deps.container.eventBus.emit("audit:event", {
       timestamp: systemNowMs(),
       agentId: opts.actingUser ?? "system",
-      tenantId: deps.container.config.tenantId ?? "default",
+      tenantId: deps.container.config.tenantId,
       actionType: opts.actionType,
       classification: "destructive" as const,
       outcome: "failure" as const,

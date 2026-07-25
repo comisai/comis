@@ -19,9 +19,13 @@
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import type { Result } from "@comis/shared";
-import { ok } from "@comis/shared";
+import { fromPromise, ok } from "@comis/shared";
 import { safePath, systemNowMs, redactErrorMessage } from "@comis/core";
-import type { SendMessageOptions, TtsAutoMode } from "@comis/core";
+import type {
+  AttachmentSendReceipt,
+  SendMessageOptions,
+  TtsAutoMode,
+} from "@comis/core";
 import { prepareVoicePayload } from "./voice-sender.js";
 
 // ---------------------------------------------------------------------------
@@ -145,7 +149,7 @@ export interface VoiceResponseContext {
         waveform?: string;
       },
       options?: SendMessageOptions,
-    ): Promise<Result<unknown, Error>>;
+    ): Promise<Result<AttachmentSendReceipt, Error>>;
   };
   /** Channel type (e.g., "telegram", "discord"). */
   readonly channelType: string;
@@ -153,17 +157,26 @@ export interface VoiceResponseContext {
   readonly channelId: string;
   /** Thread context for routing voice to forum topics. */
   readonly sendOptions?: SendMessageOptions;
+  /** Cancels remaining synthesis/delivery work after queue shutdown. */
+  readonly signal?: AbortSignal;
 }
 
 /**
  * Result of a voice response pipeline execution.
  */
-export interface VoiceResponseResult {
-  /** Whether a voice message was successfully sent. */
-  readonly voiceSent: boolean;
-  /** Text with TTS directives stripped (for tagged mode). */
-  readonly cleanedText?: string;
-}
+export type VoiceResponseResult =
+  | {
+      /** A voice attachment was sent, with or without platform tracking. */
+      readonly voiceSent: true;
+      readonly receipt: AttachmentSendReceipt;
+      /** Text with TTS directives stripped (for tagged mode). */
+      readonly cleanedText?: string;
+    }
+  | {
+      /** Voice delivery was skipped or failed so text delivery may proceed. */
+      readonly voiceSent: false;
+      readonly cleanedText?: string;
+    };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -176,6 +189,17 @@ function isOggOpusMime(mimeType: string): boolean {
     mimeType === "audio/opus" ||
     mimeType === "audio/ogg; codecs=opus"
   );
+}
+
+/** Translate both synchronous throws and rejected promises at SDK/I/O boundaries. */
+function captureAsyncBoundary<T>(operation: () => Promise<T>): Promise<Result<T, Error>> {
+  return fromPromise(Promise.resolve().then(operation));
+}
+
+function skippedVoiceResult(cleanedText?: string): Result<VoiceResponseResult, Error> {
+  return ok(cleanedText === undefined
+    ? { voiceSent: false as const }
+    : { voiceSent: false as const, cleanedText });
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +223,8 @@ export async function executeVoiceResponse(
 ): Promise<Result<VoiceResponseResult, Error>> {
   const startMs = systemNowMs();
 
+  if (ctx.signal?.aborted) return skippedVoiceResult();
+
   deps.logger.debug(
     { channelType: ctx.channelType },
     "Voice response pipeline started",
@@ -215,6 +241,8 @@ export async function executeVoiceResponse(
     { autoMode: deps.ttsConfig.autoMode, tagPattern: deps.ttsConfig.tagPattern },
     { responseText: ctx.responseText, hasInboundAudio, hasMediaUrl: false },
   );
+
+  if (ctx.signal?.aborted) return skippedVoiceResult(decision.strippedText);
 
   if (!decision.shouldSynthesize) {
     deps.logger.debug(
@@ -250,12 +278,31 @@ export async function executeVoiceResponse(
   }
 
   // Step 6: Run TTS + conversion + send inside mediaSemaphore
-  return await deps.mediaSemaphore.run(async () => {
+  const voiceAttempt = await captureAsyncBoundary(() => deps.mediaSemaphore.run(
+    async (): Promise<Result<VoiceResponseResult, Error>> => {
+    if (ctx.signal?.aborted) return skippedVoiceResult(decision.strippedText);
     // Step 7: Synthesize
-    const synthResult = await deps.ttsAdapter.synthesize(text, {
-      voice: deps.ttsConfig.voice,
-      format: formatForProvider,
-    });
+    const synthesized = await captureAsyncBoundary(() => deps.ttsAdapter.synthesize(
+      text,
+      {
+        voice: deps.ttsConfig.voice,
+        format: formatForProvider,
+      },
+    ));
+    if (ctx.signal?.aborted) return skippedVoiceResult(decision.strippedText);
+    if (!synthesized.ok) {
+      deps.logger.warn(
+        {
+          err: redactErrorMessage(synthesized.error.message),
+          channelType: ctx.channelType,
+          hint: "TTS synthesis failed; falling back to text-only response",
+          errorKind: "dependency" as const,
+        },
+        "TTS synthesis failed",
+      );
+      return ok({ voiceSent: false as const, cleanedText: decision.strippedText });
+    }
+    const synthResult = synthesized.value;
 
     if (!synthResult.ok) {
       deps.logger.warn(
@@ -305,15 +352,45 @@ export async function executeVoiceResponse(
       managedDir,
       `tts-${randomUUID()}${resolved.extension}`,
     );
-    await writeFile(tempInputPath, synthResult.value.audio);
+    const written = await captureAsyncBoundary(() => writeFile(
+      tempInputPath,
+      synthResult.value.audio,
+    ));
+    if (ctx.signal?.aborted) return skippedVoiceResult(decision.strippedText);
+    if (!written.ok) {
+      deps.logger.warn(
+        {
+          err: redactErrorMessage(written.error.message),
+          channelType: ctx.channelType,
+          hint: "Writing synthesized audio failed; falling back to text-only response",
+          errorKind: "resource" as const,
+        },
+        "TTS temp file write failed",
+      );
+      return ok({ voiceSent: false as const, cleanedText: decision.strippedText });
+    }
 
     // Step 10: Always call prepareVoicePayload (handles conversion, codec verify,
     // waveform extraction, and duration probing for ALL audio types)
-    const payloadResult = await prepareVoicePayload(tempInputPath, {
+    const prepared = await captureAsyncBoundary(() => prepareVoicePayload(tempInputPath, {
       audioConverter: deps.audioConverter!,
       tempDir: managedDir,
       logger: deps.logger,
-    });
+    }));
+    if (ctx.signal?.aborted) return skippedVoiceResult(decision.strippedText);
+    if (!prepared.ok) {
+      deps.logger.warn(
+        {
+          err: redactErrorMessage(prepared.error.message),
+          channelType: ctx.channelType,
+          hint: "Voice payload preparation failed; falling back to text-only response",
+          errorKind: "dependency" as const,
+        },
+        "Voice payload preparation failed",
+      );
+      return ok({ voiceSent: false as const, cleanedText: decision.strippedText });
+    }
+    const payloadResult = prepared.value;
 
     if (!payloadResult.ok) {
       deps.logger.warn(
@@ -331,14 +408,36 @@ export async function executeVoiceResponse(
     const payload = payloadResult.value;
 
     // Step 11: Send voice attachment
-    const sendResult = await ctx.adapter.sendAttachment(ctx.channelId, {
-      type: "audio",
-      url: payload.oggPath,
-      mimeType: "audio/ogg; codecs=opus",
-      isVoiceNote: true,
-      durationSecs: payload.durationSecs,
-      waveform: payload.waveformBase64,
-    }, ctx.sendOptions);
+    if (ctx.signal?.aborted) return skippedVoiceResult(decision.strippedText);
+    const sent = await captureAsyncBoundary(async () => {
+      if (ctx.signal?.aborted) return undefined;
+      return ctx.adapter.sendAttachment(
+        ctx.channelId,
+        {
+          type: "audio",
+          url: payload.oggPath,
+          mimeType: "audio/ogg; codecs=opus",
+          isVoiceNote: true,
+          durationSecs: payload.durationSecs,
+          waveform: payload.waveformBase64,
+        },
+        ctx.sendOptions,
+      );
+    });
+    if (!sent.ok) {
+      deps.logger.warn(
+        {
+          err: redactErrorMessage(sent.error.message),
+          channelType: ctx.channelType,
+          hint: "Voice attachment send failed; falling back to text-only response",
+          errorKind: "platform" as const,
+        },
+        "Voice attachment send failed",
+      );
+      return ok({ voiceSent: false as const, cleanedText: decision.strippedText });
+    }
+    if (sent.value === undefined) return skippedVoiceResult(decision.strippedText);
+    const sendResult = sent.value;
 
     // Step 12: Handle send failure
     if (!sendResult.ok) {
@@ -347,11 +446,23 @@ export async function executeVoiceResponse(
           err: redactErrorMessage(sendResult.error.message),
           channelType: ctx.channelType,
           hint: "Voice attachment send failed; falling back to text-only response",
-          errorKind: "network" as const,
+          errorKind: "platform" as const,
         },
         "Voice attachment send failed",
       );
       return ok({ voiceSent: false, cleanedText: decision.strippedText });
+    }
+
+    const receipt = sendResult.value;
+    if (receipt.kind === "delivered_untracked") {
+      deps.logger.warn(
+        {
+          channelType: ctx.channelType,
+          hint: "Voice delivery completed without a platform message ID. Do not retry; ID-based reactions and attribution are unavailable",
+          errorKind: "platform" as const,
+        },
+        "Voice attachment delivered without platform tracking",
+      );
     }
 
     // Step 13: Success
@@ -370,10 +481,32 @@ export async function executeVoiceResponse(
         ...(deps.ttsConfig.keyless !== undefined ? { keyless: deps.ttsConfig.keyless } : {}),
         ...(deps.ttsConfig.model !== undefined ? { model: deps.ttsConfig.model } : {}),
         ...(deps.ttsConfig.keyless === true ? { costUsd: 0 } : {}),
+        tracking: receipt.kind,
+        ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
       },
       "Voice response sent",
     );
 
-    return ok({ voiceSent: true, cleanedText: decision.strippedText });
-  });
+    return ok({
+      voiceSent: true,
+      receipt,
+      cleanedText: decision.strippedText,
+    });
+    },
+  ));
+
+  if (!voiceAttempt.ok) {
+    deps.logger.warn(
+      {
+        err: redactErrorMessage(voiceAttempt.error.message),
+        channelType: ctx.channelType,
+        hint: "Voice processing failed unexpectedly; falling back to text-only response",
+        errorKind: "internal" as const,
+      },
+      "Voice response pipeline failed",
+    );
+    return ok({ voiceSent: false, cleanedText: decision.strippedText });
+  }
+
+  return voiceAttempt.value;
 }

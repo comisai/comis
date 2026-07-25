@@ -6,7 +6,7 @@
  * Queue two-phase lifecycle resolves the circular dependency between the
  * queue and channel adapters:
  *   1. setupDeliveryQueue() creates the adapter immediately (before setupChannels).
- *   2. drainAndStart() recovers in_flight rows, runs startup drain, then starts
+ *   2. drainAndStart() parks stale in_flight rows, runs startup drain, then starts
  *      both the recurring drain timer and the prune timer AFTER
  *      setupChannels populates channelAdapters.
  * Crash-Safe Delivery Queue.
@@ -19,20 +19,28 @@ import {
   createNoOpDeliveryQueue,
   createNoOpDeliveryMirror,
   isPermanentError,
+  isSafeToRetrySendError,
+  AMBIGUOUS_SEND_OUTCOME_ERROR,
+  EXPLICIT_SEND_REJECTION_ERROR,
+  RETRY_EXHAUSTED_SEND_ERROR,
   computeQueueBackoff,
+  emitObservationalEventSafely,
+  toSafeErrorLogString,
   systemNowMs,
   systemSetInterval,
   systemClearInterval,
 } from "@comis/core";
 import { createSqliteDeliveryQueue, createSqliteDeliveryMirror } from "@comis/memory";
 import type { ComisLogger } from "@comis/infra";
-import { ok, suppressError } from "@comis/shared";
+import { err, fromPromise, ok, suppressError } from "@comis/shared";
 import { createHash } from "node:crypto";
 import type { PluginRegistry } from "@comis/core";
 
 // ===========================================================================
 // Delivery Queue
 // ===========================================================================
+
+const DELIVERY_ENDPOINT_MISMATCH_ERROR = "delivery endpoint unavailable";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -41,7 +49,7 @@ import type { PluginRegistry } from "@comis/core";
 export interface DeliveryQueueResult {
   /** The delivery queue adapter (real or no-op), available immediately. */
   deliveryQueue: DeliveryQueuePort;
-  /** Recovers in_flight rows, runs startup drain, then starts the recurring drain + prune timers. Call AFTER setupChannels. */
+  /** Parks stale in_flight rows, runs startup drain, then starts the recurring drain + prune timers. Call AFTER setupChannels. */
   drainAndStart: () => Promise<void>;
   /** Clears the recurring drain interval AND the prune interval (call on shutdown). */
   shutdown: () => void;
@@ -121,17 +129,23 @@ export async function setupDeliveryQueue(deps: {
 
   // 2. Startup drain + recurring drain timer + prune timer (deferred until channelAdapters populated)
   const drainAndStart = async (): Promise<void> => {
-    // --- Step 1: Recover in_flight rows. ---
-    // Runs UNCONDITIONALLY -- independent of drainOnStartup policy. An 'in_flight'
-    // row from a prior crash is a correctness bug regardless of the drain policy.
+    // A stale in-flight row may already exist on the platform. Park it before
+    // any startup drain instead of converting uncertainty into a duplicate.
     const recoverResult = await deliveryQueue.recoverInFlight();
     if (!recoverResult.ok) {
       logger.warn(
-        { err: recoverResult.error, hint: "Could not recover in_flight rows on startup; messages may stall until next restart", errorKind: "internal" as const },
+        { hint: "Restore delivery queue storage and verify all in-flight platform effects manually before restarting", errorKind: "internal" as const },
         "Delivery queue: recoverInFlight failed",
       );
     } else if (recoverResult.value > 0) {
-      logger.info({ recovered: recoverResult.value }, "Delivery queue: recovered in_flight rows to pending");
+      logger.warn(
+        {
+          parked: recoverResult.value,
+          hint: "Verify the parked platform effects manually; do not re-enqueue them without authoritative receipts",
+          errorKind: "precondition" as const,
+        },
+        "Delivery queue parked interrupted in-flight rows",
+      );
     }
 
     // --- Step 2: Startup drain (existing behavior, unchanged). ---
@@ -219,7 +233,7 @@ export async function drainDeliveryQueue(deps: {
   const pendingResult = await deliveryQueue.pendingEntries();
   if (!pendingResult.ok) {
     logger.warn(
-      { err: pendingResult.error, hint: "Could not fetch pending entries for drain cycle", errorKind: "internal" as const },
+      { err: toSafeErrorLogString(pendingResult.error), hint: "Could not fetch pending entries for drain cycle", errorKind: "internal" as const },
       "Delivery queue drain: failed to fetch pending entries",
     );
     // Treat as "no entries observed" — runOneDrainPass uses this to gate
@@ -249,15 +263,6 @@ export async function drainDeliveryQueue(deps: {
       break;
     }
 
-    attempted++;
-
-    const adapter = channelAdapters.get(entry.channelType);
-    if (!adapter) {
-      await deliveryQueue.fail(entry.id, `No adapter for channel type: ${entry.channelType}`);
-      failed++;
-      continue;
-    }
-
     let options: Record<string, unknown> = {};
     try {
       options = JSON.parse(entry.optionsJson) as Record<string, unknown>;
@@ -265,16 +270,141 @@ export async function drainDeliveryQueue(deps: {
       // Invalid JSON -- send without options
     }
 
-    const sendResult = await adapter.sendMessage(entry.channelId, entry.text, options);
+    const adapter = channelAdapters.get(entry.channelType);
+    const optionThreadId = typeof options.threadId === "string"
+      ? options.threadId
+      : undefined;
+    const endpointMatches = adapter !== undefined
+      && entry.destinationEndpoint.channelType === entry.channelType
+      && entry.destinationEndpoint.channelInstanceId === adapter.channelId
+      && entry.destinationEndpoint.conversationId === entry.channelId
+      && entry.destinationEndpoint.threadId === optionThreadId;
+
+    if (!endpointMatches) {
+      const claimResult = await deliveryQueue.claim(entry.id);
+      if (!claimResult.ok) {
+        logger.warn(
+          {
+            entryId: entry.id,
+            channelType: entry.channelType,
+            hint: "Restore delivery queue storage; the endpoint-mismatched row remains pending and was not sent",
+            errorKind: "internal" as const,
+          },
+          "Delivery queue could not claim an endpoint-mismatched row",
+        );
+        continue;
+      }
+      if (!claimResult.value) continue;
+      attempted++;
+      const failResult = await deliveryQueue.fail(entry.id, DELIVERY_ENDPOINT_MISMATCH_ERROR);
+      if (failResult.ok) {
+        emitObservationalEventSafely({ eventBus, logger }, "delivery:failed", {
+          entryId: entry.id,
+          channelId: entry.channelId,
+          channelType: entry.channelType,
+          error: DELIVERY_ENDPOINT_MISMATCH_ERROR,
+          reason: "permanent_error",
+          timestamp: systemNowMs(),
+        });
+        logger.warn(
+          {
+            entryId: entry.id,
+            channelType: entry.channelType,
+            hint: "Restore the adapter instance named by the queued destination endpoint or create a new authorized delivery",
+            errorKind: "precondition" as const,
+          },
+          "Delivery queue parked a row whose destination endpoint is unavailable",
+        );
+      } else {
+        logger.warn(
+          {
+            entryId: entry.id,
+            channelType: entry.channelType,
+            err: toSafeErrorLogString(failResult.error),
+            hint: "Restore delivery queue storage; the claimed endpoint-mismatched row could not be parked",
+            errorKind: "internal" as const,
+          },
+          "Delivery queue could not park an endpoint-mismatched row",
+        );
+      }
+      failed++;
+      continue;
+    }
+
+    const claimResult = await deliveryQueue.claim(entry.id);
+    if (!claimResult.ok) {
+      logger.warn(
+        {
+          entryId: entry.id,
+          channelType: entry.channelType,
+          hint: "Restore delivery queue storage; the unclaimed row was not sent and remains pending",
+          errorKind: "internal" as const,
+        },
+        "Delivery queue drain could not claim a pending row",
+      );
+      continue;
+    }
+    if (!claimResult.value) continue;
+
+    attempted++;
+
+    // Promise.resolve().then(...) captures both a synchronous SDK throw and a
+    // rejected send promise at the platform boundary.
+    const sendBoundary = await fromPromise(
+      Promise.resolve().then(() => adapter.sendMessage(entry.channelId, entry.text, options)),
+    );
+    const sendResult = sendBoundary.ok ? sendBoundary.value : err(sendBoundary.error);
 
     if (sendResult.ok) {
-      await deliveryQueue.ack(entry.id, sendResult.value);
+      const ackResult = await deliveryQueue.ack(entry.id, sendResult.value);
+      if (!ackResult.ok) {
+        const parkResult = await deliveryQueue.fail(entry.id, AMBIGUOUS_SEND_OUTCOME_ERROR);
+        if (parkResult.ok) {
+          emitObservationalEventSafely({ eventBus, logger }, "delivery:failed", {
+            entryId: entry.id,
+            channelId: entry.channelId,
+            channelType: entry.channelType,
+            error: AMBIGUOUS_SEND_OUTCOME_ERROR,
+            reason: "uncertain_outcome",
+            timestamp: systemNowMs(),
+          });
+        }
+        emitObservationalEventSafely({ eventBus, logger }, "delivery:queue_transition_failed", {
+          deliveryId: entry.id,
+          transition: "ack",
+          errorKind: "dependency",
+          channelId: entry.channelId,
+          channelType: entry.channelType,
+          timestamp: systemNowMs(),
+        });
+        logger.warn(
+          {
+            entryId: entry.id,
+            channelType: entry.channelType,
+            err: toSafeErrorLogString(ackResult.error),
+            hint: "Verify the platform receipt manually; the queue parked this row and will not replay it",
+            errorKind: "dependency" as const,
+          },
+          "Delivery queue could not persist a platform acknowledgement",
+        );
+        failed++;
+        continue;
+      }
+
+      emitObservationalEventSafely({ eventBus, logger }, "delivery:acked", {
+          entryId: entry.id,
+          channelId: entry.channelId,
+          channelType: entry.channelType,
+          messageId: sendResult.value,
+          durationMs: systemNowMs() - drainStart,
+          timestamp: systemNowMs(),
+      });
       delivered++;
 
       // Capture (platform messageId → trajectory scope) for
       // inbound-reaction resolution. Agent-authored OUTBOUND only (the delivery
-      // queue is outbound); entry.traceId === trajectoryId AND options.agentId are
-      // both set from the request ALS at enqueue (delivery-service.ts). The
+      // queue is outbound); entry.traceId === trajectoryId and entry.agentId are
+      // both persisted from the resolved delivery authority at enqueue. The
       // agentId is the load-bearing (tenant, agent) isolation partition the
       // reaction observe()s under — it must be the REAL agent, NEVER the tenantId.
       // A null traceId (no trajectory) OR an absent agentId (a pre-executor /
@@ -282,8 +412,7 @@ export async function drainDeliveryQueue(deps: {
       // tenantId would corrupt cross-agent isolation, so we record
       // nothing rather than fall back. The callback is undefined when
       // learning-outcome is disabled for all agents → zero extra work (byte-identity).
-      const recordAgentId = typeof options.agentId === "string" ? options.agentId : undefined;
-      if (entry.traceId !== null && recordAgentId !== undefined && recordOutboundMessage !== undefined) {
+      if (entry.traceId !== null && recordOutboundMessage !== undefined) {
         // Carry the conversation participant (the inbound sender) persisted
         // into optionsJson at enqueue (delivery-service.ts) so a reaction resolved
         // via this drain path is participant-aware — an unmapped group bystander
@@ -294,7 +423,7 @@ export async function drainDeliveryQueue(deps: {
         recordOutboundMessage(sendResult.value, {
           traceId: entry.traceId,
           tenantId: entry.tenantId,
-          agentId: recordAgentId,
+          agentId: entry.agentId,
           sessionId: entry.traceId, // session identity falls back to the trajectory id (scope-consistent)
           participantId: recordParticipantId,
         });
@@ -302,8 +431,8 @@ export async function drainDeliveryQueue(deps: {
 
       // Emit notification:delivered for notification-origin entries
       if (options.origin === "notification") {
-        eventBus.emit("notification:delivered", {
-          agentId: (options.agentId as string) ?? entry.tenantId ?? "unknown",
+        emitObservationalEventSafely({ eventBus, logger }, "notification:delivered", {
+          agentId: entry.agentId,
           channelType: entry.channelType,
           channelId: entry.channelId,
           messageId: sendResult.value,
@@ -312,14 +441,72 @@ export async function drainDeliveryQueue(deps: {
         });
       }
     } else {
-      const errorMsg = sendResult.error.message;
-
-      if (isPermanentError(errorMsg) || entry.attemptCount >= (entry.maxAttempts || defaultMaxAttempts)) {
-        await deliveryQueue.fail(entry.id, errorMsg);
+      const maxAttempts = entry.maxAttempts || defaultMaxAttempts;
+      if (isPermanentError(sendResult.error.message)) {
+        const error = EXPLICIT_SEND_REJECTION_ERROR;
+        const failResult = await deliveryQueue.fail(entry.id, error);
+        if (failResult.ok) {
+          emitObservationalEventSafely({ eventBus, logger }, "delivery:failed", {
+            entryId: entry.id,
+            channelId: entry.channelId,
+            channelType: entry.channelType,
+            error,
+            reason: "permanent_error",
+            timestamp: systemNowMs(),
+          });
+        }
+        failed++;
+      } else if (!isSafeToRetrySendError(sendResult.error)) {
+        const failResult = await deliveryQueue.fail(entry.id, AMBIGUOUS_SEND_OUTCOME_ERROR);
+        if (failResult.ok) {
+          emitObservationalEventSafely({ eventBus, logger }, "delivery:failed", {
+            entryId: entry.id,
+            channelId: entry.channelId,
+            channelType: entry.channelType,
+            error: AMBIGUOUS_SEND_OUTCOME_ERROR,
+            reason: "uncertain_outcome",
+            timestamp: systemNowMs(),
+          });
+        }
+        logger.warn(
+          {
+            entryId: entry.id,
+            channelType: entry.channelType,
+            hint: "Verify the platform effect manually; the queue parked this row and will not replay it",
+            errorKind: "platform" as const,
+          },
+          "Delivery queue parked a send with an uncertain platform outcome",
+        );
+        failed++;
+      } else if (entry.attemptCount + 1 >= maxAttempts) {
+        const error = RETRY_EXHAUSTED_SEND_ERROR;
+        const failResult = await deliveryQueue.fail(entry.id, error);
+        if (failResult.ok) {
+          emitObservationalEventSafely({ eventBus, logger }, "delivery:failed", {
+            entryId: entry.id,
+            channelId: entry.channelId,
+            channelType: entry.channelType,
+            error,
+            reason: "retries_exhausted",
+            timestamp: systemNowMs(),
+          });
+        }
         failed++;
       } else {
         const nextRetryAt = systemNowMs() + computeQueueBackoff(entry.attemptCount);
-        await deliveryQueue.nack(entry.id, errorMsg, nextRetryAt);
+        const error = EXPLICIT_SEND_REJECTION_ERROR;
+        const nackResult = await deliveryQueue.nack(entry.id, error, nextRetryAt);
+        if (nackResult.ok) {
+          emitObservationalEventSafely({ eventBus, logger }, "delivery:nacked", {
+            entryId: entry.id,
+            channelId: entry.channelId,
+            channelType: entry.channelType,
+            error,
+            attemptCount: entry.attemptCount + 1,
+            nextRetryAt,
+            timestamp: systemNowMs(),
+          });
+        }
         failed++;
       }
     }
@@ -327,7 +514,7 @@ export async function drainDeliveryQueue(deps: {
 
   const durationMs = systemNowMs() - drainStart;
 
-  eventBus.emit("delivery:queue_drained", {
+  emitObservationalEventSafely({ eventBus, logger }, "delivery:queue_drained", {
     entriesAttempted: attempted,
     entriesDelivered: delivered,
     entriesFailed: failed,
@@ -413,11 +600,28 @@ export async function setupDeliveryMirror(deps: {
     version: "1.0.0",
     register(api) {
       api.registerHook("after_delivery", async (event, ctx) => {
-        if (!ctx.sessionKey) return; // No session context -- skip
+        if (ctx.deliveryAuthority === undefined || ctx.destinationEndpoint === undefined) {
+          logger.warn(
+            {
+              channelType: event.channelType,
+              hint: "Ensure every delivery originates from a resolved turn or an explicit internal authority boundary",
+              errorKind: "precondition" as const,
+            },
+            "Delivery mirror record omitted because authority is unavailable",
+          );
+          return;
+        }
         const now = systemNowMs();
-        const idempotencyKey = computeIdempotencyKey(ctx.sessionKey, event.text, now);
+        const idempotencyKey = computeIdempotencyKey(
+          ctx.deliveryAuthority.conversationRef,
+          event.text,
+          now,
+        );
         const result = await deliveryMirror.record({
-          sessionKey: ctx.sessionKey,
+          tenantId: ctx.deliveryAuthority.tenantId,
+          agentId: ctx.deliveryAuthority.agentId,
+          conversationRef: ctx.deliveryAuthority.conversationRef,
+          destinationEndpoint: ctx.destinationEndpoint,
           text: event.text,
           mediaUrls: [],  // HookAfterDeliveryEvent has no mediaUrls field; media URL mirroring deferred
           channelType: event.channelType,
@@ -426,7 +630,11 @@ export async function setupDeliveryMirror(deps: {
           idempotencyKey,
         });
         if (result.ok) {
-          logger.debug({ sessionKey: ctx.sessionKey, channelType: event.channelType, idempotencyKey }, "Mirror entry recorded");
+          logger.debug({
+            conversationRef: ctx.deliveryAuthority.conversationRef,
+            channelType: event.channelType,
+            idempotencyKey,
+          }, "Mirror entry recorded");
         }
         // Recording failures are silently tolerated (fire-and-forget hook)
       });

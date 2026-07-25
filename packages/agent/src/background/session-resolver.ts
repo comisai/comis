@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: session-resolver session-not-found guard; consumed by daemon RPC handlers (subagent-handlers / session-handlers @allow-throw).
 /**
- * BackgroundSessionResolver: composite-key wrapper around ActiveRunRegistry.
+ * BackgroundSessionResolver: conversation-authority wrapper around ActiveRunRegistry.
  *
  * The underlying `activeRunRegistry.has(sessionKey)` and `.get(sessionKey)`
  * take a single formatted-key string. That string would collapse two
@@ -22,7 +22,7 @@
  * @module
  */
 
-import { formatSessionKey } from "@comis/core";
+import type { ConversationRef } from "@comis/core";
 import type { ActiveRunRegistry, RunHandle } from "../executor/active-run-registry.js";
 
 // ---------------------------------------------------------------------------
@@ -41,12 +41,6 @@ import type { ActiveRunRegistry, RunHandle } from "../executor/active-run-regist
  * `formatSessionKey` so the underlying registry's string-keyed Map is
  * addressed deterministically.
  */
-export interface ActiveSessionKey {
-  agentId: string;
-  channelType: string;
-  channelId: string;
-}
-
 /**
  * Public-facing resolver returned by `createBackgroundSessionResolver`.
  *
@@ -64,7 +58,7 @@ export interface BackgroundSessionResolver {
    *          (programming error, parity with manager.promote's
    *          empty-string guards in background-task-manager.ts:96-107).
    */
-  resolveActiveSession(key: ActiveSessionKey): RunHandle | undefined;
+  resolveActiveSession(conversationRef: ConversationRef): RunHandle | undefined;
   /**
    * Check whether a session is registered for the composite key.
    *
@@ -72,7 +66,7 @@ export interface BackgroundSessionResolver {
    * @returns true iff a RunHandle is registered, false otherwise.
    * @throws  Error when any composite-key field is empty / falsy.
    */
-  hasActiveSession(key: ActiveSessionKey): boolean;
+  hasActiveSession(conversationRef: ConversationRef): boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,27 +94,12 @@ export interface BackgroundSessionResolverDeps {
  * Mirrors the shape that production session-managers use when registering
  * handles: `formatSessionKey({tenantId: agentId, channelId:
  * "${channelType}:${channelId}", userId: channelId})`. The output is a
- * deterministic colon-delimited string that round-trips through
- * `parseFormattedSessionKey` (the channelType prefix on channelId is
- * stable across format/parse).
+ * deterministic display label used by the active-run registry.
  *
  * The triple is REQUIRED — empty fields are a programming error
  * (parity with the empty-string guard in
  * `background-task-manager.ts:promote()`).
  */
-function formatComposite(key: ActiveSessionKey): string {
-  if (!key.agentId || !key.channelType || !key.channelId) {
-    throw new Error(
-      `BackgroundSessionResolver: composite key requires non-empty agentId, channelType, channelId; got ${JSON.stringify(key)}`,
-    );
-  }
-  return formatSessionKey({
-    tenantId: key.agentId,
-    channelId: `${key.channelType}:${key.channelId}`,
-    userId: key.channelId,
-  });
-}
-
 /**
  * Create a BackgroundSessionResolver wrapping an ActiveRunRegistry.
  *
@@ -142,13 +121,11 @@ export function createBackgroundSessionResolver(
   const registry = deps.activeRunRegistry;
 
   return {
-    resolveActiveSession(key: ActiveSessionKey): RunHandle | undefined {
-      const formatted = formatComposite(key);
-      return registry.get(formatted);
+    resolveActiveSession(conversationRef: ConversationRef): RunHandle | undefined {
+      return registry.get(conversationRef);
     },
-    hasActiveSession(key: ActiveSessionKey): boolean {
-      const formatted = formatComposite(key);
-      return registry.has(formatted);
+    hasActiveSession(conversationRef: ConversationRef): boolean {
+      return registry.has(conversationRef);
     },
   };
 }

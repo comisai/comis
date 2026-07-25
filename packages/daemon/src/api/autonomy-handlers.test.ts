@@ -47,6 +47,7 @@ function createMockDeps(over: Partial<AutonomyHandlerDeps> = {}): AutonomyHandle
     durableRuns: {
       invalidateForRevoke: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
     },
+    revokeDurableRoot: vi.fn(),
     // A stub evicted-set whose mark/isEvicted/clear are
     // observable. The OPTIONAL dep — present here so the default deps register the
     // autonomy.evict handler; the gating test below omits it to prove the handler
@@ -227,11 +228,13 @@ describe("createAutonomyHandlers — lease.revoke + run.kill", () => {
   it("lease.revoke by rootRunId ALSO calls durableRuns.invalidateForRevoke(rootRunId)", async () => {
     await handlers["lease.revoke"]!({ rootRunId: "R1" });
     expect(deps.durableRuns!.invalidateForRevoke).toHaveBeenCalledWith("R1");
+    expect(deps.revokeDurableRoot).toHaveBeenCalledWith("R1");
   });
 
   it("run.kill ALSO calls durableRuns.invalidateForRevoke(rootRunId)", async () => {
     await handlers["run.kill"]!({ rootRunId: "R1" });
     expect(deps.durableRuns!.invalidateForRevoke).toHaveBeenCalledWith("R1");
+    expect(deps.revokeDurableRoot).toHaveBeenCalledWith("R1");
   });
 
   it("lease.revoke by leaseId (no rootRunId) does NOT invalidate a persisted record", async () => {
@@ -252,6 +255,7 @@ describe("createAutonomyHandlers — lease.revoke + run.kill", () => {
     const h = createAutonomyHandlers(noStoreDeps);
     await expect(h["lease.revoke"]!({ rootRunId: "R1" })).resolves.toEqual({ revoked: 0 });
     await expect(h["run.kill"]!({ rootRunId: "R1" })).resolves.toEqual({ killed: 0 });
+    expect(noStoreDeps.revokeDurableRoot).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -464,7 +468,7 @@ describe("autonomy handlers — deny-by-origin on the dispatch path", () => {
   // PRODUCTION WIRING: the LIVE createRpcDispatch
   // construction site MUST thread deps.container.eventBus into
   // createAutonomyHandlers — otherwise the optional eventBus? is absent in prod,
-  // the handler emits NOTHING, and the fleet's autonomy_revoked/killed counts are
+  // the handler emits NOTHING, and the system's autonomy_revoked/killed counts are
   // silently ZERO. We assert the emit lands on the CONTAINER bus (the real
   // construction path), NOT a harness-injected `...over` spy.
   // -------------------------------------------------------------------------

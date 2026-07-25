@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
 import type { MemoryEntry } from "../domain/memory-entry.js";
-import type { SessionKey } from "../domain/session-key.js";
+import type { MemoryRecallScope, MemoryWriteScope } from "../domain/memory-scope.js";
+
+export type MemoryWriteEntry = Omit<MemoryEntry, "tenantId" | "agentId" | "userId" | "visibility">;
 
 /**
  * Options for searching memory entries.
@@ -15,8 +17,6 @@ export interface MemorySearchOptions {
   trustLevel?: "system" | "learned" | "external";
   /** Filter by tags (entries must have ALL specified tags) */
   tags?: string[];
-  /** Filter by agent ID (when provided, only return memories created by this agent) */
-  agentId?: string;
   /** Read-side NL temporal-range filter. Epoch ms; ANDed onto the ALREADY-scoped
    *  query (tenant_id = ? AND agent_id = ? AND occurred_at BETWEEN ? AND ?) — it can only
    *  NARROW, never widen scope. Absent → no range filter (recall unchanged). Both
@@ -51,7 +51,7 @@ export interface MemoryPort {
    * @param entry - The memory entry to persist (id must be set by caller)
    * @returns The stored entry, or an error
    */
-  store(entry: MemoryEntry): Promise<Result<MemoryEntry, Error>>;
+  store(entry: MemoryWriteEntry, scope: MemoryWriteScope): Promise<Result<MemoryEntry, Error>>;
 
   /**
    * Search for memory entries using text/vector similarity.
@@ -62,7 +62,7 @@ export interface MemoryPort {
    * @returns Array of matching entries with scores, or an error
    */
   search(
-    sessionKey: SessionKey,
+    scope: MemoryRecallScope,
     query: string | number[],
     options?: MemorySearchOptions,
   ): Promise<Result<MemorySearchResult[], Error>>;
@@ -103,7 +103,7 @@ export interface MemoryPort {
    * @returns The two ranked, hydrated candidate lists, or an error
    */
   searchLanes?(
-    sessionKey: SessionKey,
+    scope: MemoryRecallScope,
     query: string | number[],
     options?: MemorySearchOptions,
   ): Promise<
@@ -123,10 +123,13 @@ export interface MemoryPort {
    * Delete a memory entry by its ID.
    *
    * @param id - The UUID of the entry to delete
-   * @param tenantId - Tenant scope (defaults to "default")
+   * @param scope - Required tenant-agent authority scope
    * @returns true if deleted, false if not found, or an error
    */
-  delete(id: string, tenantId?: string): Promise<Result<boolean, Error>>;
+  delete(
+    id: string,
+    scope: { tenantId: string; agentId: string },
+  ): Promise<Result<boolean, Error>>;
 
   /**
    * Delete all memory entries matching a session key

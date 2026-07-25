@@ -52,8 +52,8 @@ describe("stripInternalFields()", () => {
     expect(Object.keys(result)).toHaveLength(0);
   });
 
-  it("exposes 18 dispatcher-injected internal field names in sorted order", () => {
-    expect(INTERNAL_FIELD_NAMES).toHaveLength(18);
+  it("exposes every dispatcher-injected internal field name in sorted order", () => {
+    expect(INTERNAL_FIELD_NAMES).toHaveLength(25);
     const sorted = [...INTERNAL_FIELD_NAMES].sort();
     expect([...INTERNAL_FIELD_NAMES]).toEqual(sorted);
   });
@@ -79,6 +79,13 @@ describe("stripInternalFields()", () => {
     expect(result._outwardStepIndex).toBeUndefined();
   });
 
+  it("includes `_outwardOperationId` and strips a forged inbound value", () => {
+    expect(INTERNAL_FIELD_NAMES as readonly string[]).toContain("_outwardOperationId");
+    const result = stripInternalFields({ _outwardOperationId: "forged-operation", foo: 1 });
+    expect(result).toEqual({ foo: 1 });
+    expect(result._outwardOperationId).toBeUndefined();
+  });
+
   it("includes `_autonomyMode` and strips a forged inbound value", () => {
     // A jailed/external caller must NOT be able to forge `_autonomyMode: "max"`
     // to perturb the chokepoint's deny-vs-escalate decision. The strip drops any
@@ -90,12 +97,12 @@ describe("stripInternalFields()", () => {
     expect(result._autonomyMode).toBeUndefined();
   });
 
-  it("places `_autonomyMode` immediately after `_agentId` (the canonical sort order)", () => {
+  it("keeps abort signal agent identity and autonomy mode in canonical sort order", () => {
     // The array is maintained in JS `.sort()`/localeCompare alphabetical order
     // (asserted by the sorted-order test above). "_agentId" < "_autonomyMode"
-    // (2nd char 'g' < 'u'), so `_autonomyMode` is index 1, right after `_agentId`.
-    // Catches an accidental mis-insertion of the new entry.
-    expect(INTERNAL_FIELD_NAMES[0]).toBe("_agentId");
-    expect(INTERNAL_FIELD_NAMES[1]).toBe("_autonomyMode");
+    // `_abortSignal` sorts first, followed by `_agentId` and `_autonomyMode`.
+    expect(INTERNAL_FIELD_NAMES[0]).toBe("_abortSignal");
+    expect(INTERNAL_FIELD_NAMES[1]).toBe("_agentId");
+    expect(INTERNAL_FIELD_NAMES[2]).toBe("_autonomyMode");
   });
 });

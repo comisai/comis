@@ -1,8 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 // Domain types - Zod schemas as single source of truth
 
-export { AttachmentSchema, VoiceMetaSchema, NormalizedMessageSchema, parseMessage, getMessageTraceId } from "./normalized-message.js";
-export type { Attachment, VoiceMeta, NormalizedMessage } from "./normalized-message.js";
+export {
+  AttachmentSchema,
+  VoiceMetaSchema,
+  INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
+  NormalizedMessageSchema,
+  parseMessage,
+  parseInboundMessageProvenanceBatch,
+  getOriginalInboundMessages,
+  getMessageTraceId,
+} from "./normalized-message.js";
+export type {
+  Attachment,
+  VoiceMeta,
+  OriginalInboundMessage,
+  NormalizedMessage,
+} from "./normalized-message.js";
 export { NormalizedReactionSchema, parseReaction } from "./normalized-reaction.js";
 export type { NormalizedReaction } from "./normalized-reaction.js";
 
@@ -17,6 +31,23 @@ export {
   MemoryExtractionResultSchema,
   MemoryEntitySchema,
 } from "./memory-entry.js";
+export {
+  MemoryVisibilityRequestSchema,
+  MemoryVisibilitySchema,
+  MemoryVisibilityPermissionSchema,
+  MemoryWriteScopeSchema,
+  MemoryRecallScopeSchema,
+  MemoryScopeError,
+  createMemoryRecallScope,
+  resolveMemoryVisibility,
+} from "./memory-scope.js";
+export type {
+  MemoryVisibilityRequest,
+  MemoryVisibility,
+  MemoryVisibilityPermission,
+  MemoryWriteScope,
+  MemoryRecallScope,
+} from "./memory-scope.js";
 export type {
   TrustLevel,
   MemoryEntry,
@@ -38,6 +69,7 @@ export type { ToolCall, TokenUsage, AgentResponse } from "./agent-response.js";
 
 export { SessionKeySchema, parseSessionKey, formatSessionKey, parseFormattedSessionKey } from "./session-key.js";
 export type { SessionKey } from "./session-key.js";
+export { SessionStoreError } from "./session-store-error.js";
 
 export {
   PollInputSchema,
@@ -59,7 +91,7 @@ export {
 export type { RichButton, RichCard, RichEffect } from "./rich-message.js";
 
 export { ApprovalRequestSchema, ApprovalResolutionSchema, SerializedApprovalRequestSchema, SerializedApprovalCacheEntrySchema } from "./approval-request.js";
-export type { ApprovalRequest, ApprovalResolution, SerializedApprovalRequest, SerializedApprovalCacheEntry } from "./approval-request.js";
+export type { ApprovalCallbackOwner, ApprovalRequest, ApprovalResolution, SerializedApprovalRequest, SerializedApprovalCacheEntry } from "./approval-request.js";
 
 export {
   InjectionTypeSchema,
@@ -72,6 +104,44 @@ export { SecretRefSchema, isSecretRef, SecretRefOrStringSchema } from "./secret-
 export type { SecretRef } from "./secret-ref.js";
 
 export {
+  McpInstructionBlockSchema,
+  isMcpInstructionTextSafe,
+  parseMcpInstructionBlock,
+} from "./mcp-instruction-block.js";
+export type { McpInstructionBlock } from "./mcp-instruction-block.js";
+
+export {
+  InstructionSourceKindSchema,
+  InstructionTrustSchema,
+  InstructionStabilitySchema,
+  InstructionSectionSchema,
+  WorkspacePolicySnapshotSchema,
+  computeWorkspacePolicyCombinedHash,
+  hashWorkspacePolicyContent,
+  parseWorkspacePolicySnapshot,
+  verifyWorkspacePolicySnapshot,
+} from "./workspace-policy.js";
+
+export {
+  CanonicalLocaleSchema,
+  ResponseLocaleSourceSchema,
+  ResponseLocalePolicySchema,
+  parseResponseLocalePolicy,
+} from "./response-locale-policy.js";
+export type {
+  ResponseLocaleSource,
+  ResponseLocalePolicy,
+} from "./response-locale-policy.js";
+export type {
+  InstructionSourceKind,
+  InstructionTrust,
+  InstructionStability,
+  InstructionSection,
+  WorkspacePolicySnapshot,
+  WorkspacePolicyVerificationError,
+} from "./workspace-policy.js";
+
+export {
   MemoryExportEnvelopeSchema,
   MemoryExportEntrySchema,
   parseMemoryExportEnvelope,
@@ -80,6 +150,14 @@ export type { MemoryExportEnvelope, MemoryExportEntry } from "./memory-export-en
 
 export { DeliveryOriginSchema, createDeliveryOrigin } from "./delivery-origin.js";
 export type { DeliveryOrigin } from "./delivery-origin.js";
+
+export {
+  DeliveryStatusSchema,
+  DeliveryFailureStageSchema,
+  parseDeliveryFailureStage,
+  parseDeliveryStatus,
+} from "./delivery-status.js";
+export type { DeliveryStatus, DeliveryFailureStage } from "./delivery-status.js";
 
 export {
   NodeStatusSchema,
@@ -114,6 +192,7 @@ export type {
 
 // Subagent context lifecycle types
 export {
+  SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
   SubagentResultSchema,
   SubagentEndReasonSchema,
   parseSubagentResult,
@@ -175,3 +254,52 @@ export type { UnreachableToolEntry } from "./sub-agent-tool-denylist.js";
 // (warn, never internal/ERROR) at every log layer.
 export { classifyTypedRpcError } from "./rpc-error-classification.js";
 export type { TypedRpcErrorKind, TypedRpcErrorClassification } from "./rpc-error-classification.js";
+
+export {
+  ChannelEndpointSchema,
+  PrincipalScopeSchema,
+  PlatformPrincipalAssertionSchema,
+  ConversationPartitionSchema,
+  ConversationScopeSchema,
+  ResolvedTurnScopeSchema,
+  ConversationRefSchema,
+  ConversationLocatorSchema,
+  ConversationScopeError,
+  encodeConversationScope,
+  createConversationRef,
+  createConversationLocator,
+  conversationScopeToSessionKey,
+} from "./conversation-scope.js";
+export type {
+  ChannelEndpoint,
+  PrincipalScope,
+  PlatformPrincipalAssertion,
+  ConversationPartition,
+  ConversationScope,
+  ResolvedTurnScope,
+  ConversationRef,
+  ConversationLocator,
+} from "./conversation-scope.js";
+
+export {
+  AgentExecutionFinishReasonSchema,
+  AgentExecutionAbortReasonSchema,
+  ModelResolutionSourceSchema,
+  ExecutionSideEffectSummarySchema,
+  AgentTurnExecutionOutcomeSchema,
+  classifyAgentFinishErrorKind,
+  classifyAgentAbortErrorKind,
+  classifyAgentTurnExecutionOutcome,
+} from "./agent-execution-outcome.js";
+export type {
+  AgentExecutionFinishReason,
+  AgentExecutionAbortReason,
+  ModelResolutionSource,
+  ExecutionSideEffectSummary,
+  AgentTurnExecutionOutcome,
+} from "./agent-execution-outcome.js";
+export {
+  PrincipalMappingSchema,
+  createPrincipalResolver,
+} from "./principal-resolver.js";
+export type { PrincipalMapping } from "./principal-resolver.js";

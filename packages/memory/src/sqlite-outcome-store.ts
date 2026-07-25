@@ -3,7 +3,8 @@
  * SqliteOutcomeStore: the SOLE adapter for the segregated `OutcomeSignalPort`
  * (@comis/core). It owns ALL the `outcome_events`
  * SQL — the idempotent `observe()` write (one raw observation per signal source),
- * the scoped `resolve()` read+fusion (precedence-first then confidence,
+ * the scoped `resolve()` read+fusion (precedence-first, then terminal recency,
+ * then confidence,
  * fail-closed `unknown`), and the age-based `prune()`.
  *
  * ## Idempotency
@@ -73,7 +74,14 @@ const outcomeRowMapper = createRowMapper(OutcomeEventRowSchema);
 // no `as Foo[]` cast, per untyped-sqlite.test.ts). `d` is the per-turn
 // procedure_descriptor read back (the content-free JSON tool-NAME array; NULL when no
 // procedure ran — SQLite NULL ≠ undefined → `.nullable()`).
-const trajectoryIdRowMapper = createRowMapper(z.object({ t: z.string(), s: z.string(), ts: z.number(), d: z.string().nullable() }));
+const trajectoryIdRowMapper = createRowMapper(z.object({
+  t: z.string(),
+  s: z.string(),
+  ts: z.number(),
+  st: z.string().nullable(),
+  ste: z.union([z.literal(0), z.literal(1)]).nullable(),
+  d: z.string().nullable(),
+}));
 
 // Lenient JSON-string[] parser for the recalled_ids/used_skill_ids columns:
 // corrupt/non-array JSON degrades to [] (never a throw that breaks resolve()).
@@ -114,13 +122,13 @@ function tierRank(source: string): number {
 }
 
 /**
- * Outcome-severity ordering for the same-tier EQUAL-confidence tie-break:
+ * Outcome-severity ordering for the same-tier, same-time, EQUAL-confidence tie-break:
  * HIGHER value wins a tie. A `failure` (then a `corrected` soft-failure) beats a
  * `success`/`unknown` of equal confidence within the SAME tier — the conservative
  * verdict, so a real tool/node failure is NEVER silently masked by an
  * equal-confidence sibling success (the multi-tool / multi-node DAG case). This
- * ONLY breaks ties: precedence (tier) and then strict confidence still decide
- * first, so a higher-confidence success still wins over a lower-confidence failure.
+ * ONLY breaks exact recency-and-confidence ties: precedence (tier), terminal
+ * recency, and then strict confidence decide first.
  *
  * A `Map` (not a plain object) avoids the dynamic object-index lint while the key
  * is a DB-CHECK-constrained closed enum.
@@ -187,9 +195,11 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
   // listStmt's MAX(procedure_descriptor) (see there). A set-union across a turn's runs is a
   // deliberate non-goal for this advisory, single-run-common case.
   const insertStmt = db.prepare(
-    "INSERT INTO outcome_events (id, tenant_id, agent_id, session_id, trajectory_id, outcome, source, confidence, sender_trust, recalled_ids, used_skill_ids, procedure_descriptor, observed_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+    "INSERT INTO outcome_events (id, tenant_id, agent_id, session_id, trajectory_id, outcome, source, confidence, sender_trust, sender_trust_explicit, recalled_ids, used_skill_ids, procedure_descriptor, observed_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(tenant_id, agent_id, trajectory_id, source, observed_at) DO UPDATE SET " +
+      "sender_trust = COALESCE(excluded.sender_trust, sender_trust), " +
+      "sender_trust_explicit = COALESCE(excluded.sender_trust_explicit, sender_trust_explicit), " +
       "recalled_ids = COALESCE(excluded.recalled_ids, recalled_ids), " +
       "used_skill_ids = COALESCE(excluded.used_skill_ids, used_skill_ids), " +
       "procedure_descriptor = COALESCE(excluded.procedure_descriptor, procedure_descriptor)",
@@ -201,7 +211,7 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
   // without it an unindexed scan can return same-tier rows in any order, so
   // an equal-confidence tie-break that keyed on `rows[0]` flipped run-to-run.
   const readStmt = db.prepare(
-    "SELECT id, session_id, trajectory_id, outcome, source, confidence, sender_trust, recalled_ids, used_skill_ids, procedure_descriptor, observed_at " +
+    "SELECT id, session_id, trajectory_id, outcome, source, confidence, sender_trust, sender_trust_explicit, recalled_ids, used_skill_ids, procedure_descriptor, observed_at " +
       "FROM outcome_events WHERE tenant_id = ? AND agent_id = ? AND trajectory_id = ? " +
       "ORDER BY observed_at ASC, id ASC",
   );
@@ -226,7 +236,7 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
   // but ARBITRARY pick among the turn's runs (NOT first- or last-run). Faithful multi-run-per-turn
   // attribution is a non-goal for this advisory, single-run-common case.
   const listStmt = db.prepare(
-    "SELECT trajectory_id AS t, session_id AS s, MAX(observed_at) AS ts, MAX(procedure_descriptor) AS d FROM outcome_events " +
+    "SELECT trajectory_id AS t, session_id AS s, MAX(observed_at) AS ts, MAX(sender_trust) AS st, MAX(sender_trust_explicit) AS ste, MAX(procedure_descriptor) AS d FROM outcome_events " +
       "WHERE tenant_id = ? AND agent_id = ? GROUP BY trajectory_id, session_id ORDER BY ts DESC LIMIT ?",
   );
 
@@ -245,6 +255,7 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
           obs.source,
           obs.confidence,
           obs.senderTrust ?? null,
+          obs.senderTrustExplicit === undefined ? null : Number(obs.senderTrustExplicit),
           obs.recalledIds && obs.recalledIds.length > 0 ? JSON.stringify(obs.recalledIds) : null,
           obs.usedSkillIds && obs.usedSkillIds.length > 0 ? JSON.stringify(obs.usedSkillIds) : null,
           obs.procedureDescriptor && obs.procedureDescriptor.length > 0
@@ -316,28 +327,27 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
           return ok({ outcome: "unknown", confidence: 0, sources: [], recalledIds: [], usedSkillIds: [] });
         }
 
-        // Precedence-first, then confidence, then RECENCY: pick the highest-precedence
-        // tier present, then the MAX-confidence row WITHIN that tier, and on a same-tier
-        // EQUAL-confidence TIE prefer the MOST RECENT observation (the turn's TERMINAL
-        // state). So a transient tool failure the turn RECOVERED from (failure → later
-        // success) resolves to `success`, not `failure` — resolving a self-corrected turn
-        // to failure would wrongly exclude it from skill synthesis AND penalize the
-        // memories/skills that produced the correct answer (Comis's own tool-policy guards
-        // routinely manufacture transient failures). On an EXACT observed_at tie (genuinely
-        // simultaneous signals — e.g. concurrent DAG-node siblings) severity STILL wins, so
-        // a real concurrent failure is never masked. A high-confidence reaction still never
-        // overrides a deterministic tool result.
+        // Precedence-first, then RECENCY, then confidence: pick the highest-precedence
+        // tier present and the MOST RECENT observation within that tier (the turn's
+        // TERMINAL state). A transient tool failure the turn RECOVERED from (failure →
+        // later success) resolves to `success`; conversely, an earlier successful step
+        // cannot mask a lower-confidence terminal domain failure and falsely reinforce
+        // attributed memories or skills. On an EXACT observed_at tie (genuinely
+        // simultaneous signals — e.g. concurrent DAG-node siblings), confidence decides,
+        // then severity breaks an equal-confidence tie. A high-confidence reaction still
+        // never overrides a deterministic tool result.
         let winner = rows[0]!;
         for (const row of rows) {
           const rt = tierRank(row.source);
           const wt = tierRank(winner.source);
-          const sameTierConf = rt === wt && row.confidence === winner.confidence;
+          const sameTier = rt === wt;
+          const sameTierTime = sameTier && row.observed_at === winner.observed_at;
+          const sameTierTimeConf = sameTierTime && row.confidence === winner.confidence;
           const better =
             rt < wt ||
-            (rt === wt && row.confidence > winner.confidence) ||
-            (sameTierConf && row.observed_at > winner.observed_at) ||
-            (sameTierConf &&
-              row.observed_at === winner.observed_at &&
+            (sameTier && row.observed_at > winner.observed_at) ||
+            (sameTierTime && row.confidence > winner.confidence) ||
+            (sameTierTimeConf &&
               outcomeSeverity(row.outcome) > outcomeSeverity(winner.outcome));
           if (better) winner = row;
         }
@@ -402,7 +412,14 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
     // (never a shared/global pool).
     async listTrajectoryIds(
       scope: LearningScope,
-    ): Promise<Result<Array<{ trajectoryId: string; sessionId: string; observedAt: number; procedureDescriptor?: ReadonlyArray<string> }>, Error>> {
+    ): Promise<Result<Array<{
+      trajectoryId: string;
+      sessionId: string;
+      observedAt: number;
+      senderTrust?: string;
+      senderTrustExplicit?: boolean;
+      procedureDescriptor?: ReadonlyArray<string>;
+    }>, Error>> {
       const { tenantId, agentId } = scope;
       if (tenantId === "" || agentId === "") {
         return err(new Error("outcome listTrajectoryIds requires a resolved (tenant, agent) scope"));
@@ -422,6 +439,8 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
               // The turn's ledger timestamp (MAX observed_at across its source rows) — the
               // per-turn window key the reflection source builder slices transcripts by.
               observedAt: r.ts,
+              ...(r.st === null ? {} : { senderTrust: r.st }),
+              ...(r.ste === null ? {} : { senderTrustExplicit: r.ste === 1 }),
               ...(descriptor.length > 0 ? { procedureDescriptor: descriptor } : {}),
             };
           }),

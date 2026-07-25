@@ -1,0 +1,346 @@
+// SPDX-License-Identifier: Apache-2.0
+import { describe, expect, it, vi } from "vitest";
+import { ok } from "@comis/shared";
+import type {
+  ChannelEndpoint,
+  DeliveryService,
+  OutwardSendLedgerPort,
+  TypedEventBus,
+} from "@comis/core";
+import { createConversationLocator } from "@comis/core";
+import { createAnnouncementDelivery } from "./governed-announcement-delivery.js";
+
+type AttachmentRouteOverride = {
+  endpoint?: Partial<ChannelEndpoint>;
+  channelId?: string;
+  options?: { threadId: string };
+};
+
+const eventBus = {
+  emitSafely: vi.fn(() => ({ failures: [], pendingFailures: Promise.resolve([]) })),
+} as unknown as TypedEventBus;
+
+function makeDeliveryService(): DeliveryService {
+  return {
+    deliverToChannel: vi.fn(),
+    drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
+  } as unknown as DeliveryService;
+}
+
+function makeLedger(): OutwardSendLedgerPort {
+  return {
+    allocateStep: vi.fn(async () => ok(0)),
+    lookup: vi.fn(async () => ok(undefined)),
+    begin: vi.fn(async () => ok(undefined)),
+    markUnknown: vi.fn(async () => ok(undefined)),
+    reclaimPreSend: vi.fn(async () => ok(true)),
+    commit: vi.fn(async () => ok(undefined)),
+    markFailed: vi.fn(async () => ok(undefined)),
+    parkUncertain: vi.fn(async () => ok(true)),
+    hasUncertainty: vi.fn(async () => ok(false)),
+    listUnreconciled: vi.fn(async () => ok([])),
+  };
+}
+
+function makeConversation() {
+  const locator = createConversationLocator({
+    tenantId: "default",
+    agentId: "agent-1",
+    partition: { kind: "agent" },
+  });
+  if (!locator.ok) throw locator.error;
+  return locator.value;
+}
+
+function makeChannelPrincipalCaller() {
+  const endpoint = {
+    channelType: "telegram",
+    channelInstanceId: "telegram-primary",
+    conversationId: "chat-1",
+    threadId: "topic-7",
+    conversationKind: "direct" as const,
+  };
+  const locator = createConversationLocator({
+    tenantId: "tenant-a",
+    agentId: "agent-1",
+    partition: {
+      kind: "channel-principal",
+      channelType: "telegram",
+      principalId: "principal-a",
+    },
+  });
+  if (!locator.ok) throw locator.error;
+  return { endpoint, locator: locator.value };
+}
+
+describe("completion announcement delivery wiring", () => {
+  it("returns false without calling the delivery service when no adapter exists", async () => {
+    const deliveryService = makeDeliveryService();
+    const delivery = createAnnouncementDelivery({
+      adaptersByType: new Map(),
+      deliveryService,
+      eventBus,
+    });
+
+    await expect(delivery.sendToChannel("telegram", "chat-1", "text"))
+      .resolves.toBe(false);
+    expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
+  });
+
+  it("blocks a governed attempt before allocation when the root resolver is absent", async () => {
+    const ledger = makeLedger();
+    const deliveryService = makeDeliveryService();
+    const delivery = createAnnouncementDelivery({
+      adaptersByType: new Map(),
+      deliveryService,
+      eventBus,
+      outwardLedger: ledger,
+    });
+
+    const result = await delivery.sendGovernedAnnouncement?.({
+      agentId: "agent-1",
+      callerSessionKey: "default:user1:chan1",
+      runId: "run-1",
+      callerConversation: makeConversation(),
+      destinationEndpoint: makeChannelPrincipalCaller().endpoint,
+      channelType: "telegram",
+      channelId: "chat-1",
+      text: "completion",
+    });
+
+    expect(result).toEqual(ok({ delivered: false, failure: "allocation_blocked" }));
+    expect(ledger.allocateStep).not.toHaveBeenCalled();
+    expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
+  });
+
+  it("passes authenticated caller authority to delivery persistence without ambient context", async () => {
+    const ledger = makeLedger();
+    const deliveryService = makeDeliveryService();
+    vi.mocked(deliveryService.deliverToChannel).mockResolvedValue(ok({
+      chunks: [{
+        status: "accepted" as const,
+        messageId: "telegram-message-1",
+        charCount: 10,
+        retried: false,
+      }],
+      totalChars: 10,
+      platform: {
+        status: "accepted" as const,
+        deliveredChunks: 1,
+        settledAtMs: 1,
+        lastMessageId: "telegram-message-1",
+      },
+      queueDisposition: "settled" as const,
+    }));
+    const adapter = {
+      channelId: "telegram-primary",
+      channelType: "telegram",
+      sendMessage: vi.fn(async () => ok("telegram-message-1")),
+    };
+    const caller = makeChannelPrincipalCaller();
+    const delivery = createAnnouncementDelivery({
+      adaptersByType: new Map([["telegram", adapter]]),
+      deliveryService,
+      eventBus,
+      outwardLedger: ledger,
+      resolveRootRunId: () => ({ ok: true, value: "root-1" }),
+    });
+
+    const request = {
+      agentId: "agent-1",
+      callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
+      callerConversation: caller.locator,
+      destinationEndpoint: caller.endpoint,
+      runId: "run-1",
+      channelType: "telegram",
+      channelId: "chat-1",
+      text: "completion",
+      options: { threadId: "topic-7" },
+    };
+    const result = await delivery.sendGovernedAnnouncement?.(request);
+
+    expect(result?.ok && result.value.delivered).toBe(true);
+    expect(deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      adapter,
+      "chat-1",
+      "completion",
+      {
+        completionMode: "settled",
+        threadId: "topic-7",
+        authority: {
+          tenantId: "tenant-a",
+          agentId: "agent-1",
+          conversationRef: caller.locator.conversationRef,
+        },
+        destinationEndpoint: caller.endpoint,
+      },
+    );
+  });
+
+  it("rejects a governed announcement route that differs from the captured endpoint", async () => {
+    const ledger = makeLedger();
+    const deliveryService = makeDeliveryService();
+    const caller = makeChannelPrincipalCaller();
+    const delivery = createAnnouncementDelivery({
+      adaptersByType: new Map([["telegram", {
+        channelId: "telegram-primary",
+        channelType: "telegram",
+        sendMessage: vi.fn(async () => ok("unexpected-message")),
+      }]]),
+      deliveryService,
+      eventBus,
+      outwardLedger: ledger,
+      resolveRootRunId: () => ({ ok: true, value: "root-1" }),
+    });
+
+    const request = {
+      agentId: "agent-1",
+      callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
+      callerConversation: caller.locator,
+      destinationEndpoint: caller.endpoint,
+      runId: "run-route-mismatch",
+      channelType: "telegram",
+      channelId: "other-chat",
+      text: "must not send",
+      options: { threadId: "topic-7" },
+    };
+    const result = await delivery.sendGovernedAnnouncement?.(request);
+
+    expect(result).toEqual(ok({ delivered: false, failure: "allocation_blocked" }));
+    expect(ledger.allocateStep).not.toHaveBeenCalled();
+    expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, AttachmentRouteOverride]>([
+    ["adapter instance", { endpoint: { channelInstanceId: "telegram-secondary" } }],
+    ["conversation", { channelId: "other-chat" }],
+    ["thread", { options: { threadId: "topic-8" } }],
+    ["conversation kind", { endpoint: { conversationKind: "shared" as const } }],
+  ])("blocks governed attachment delivery when %s authority differs", async (_field, override) => {
+    const ledger = makeLedger();
+    const deliveryService = makeDeliveryService();
+    const sendAttachment = vi.fn(async () => ok({
+      kind: "tracked" as const,
+      messageId: "unexpected-document-message",
+    }));
+    const caller = makeChannelPrincipalCaller();
+    const cleanup = vi.fn(async () => ok(undefined));
+    const delivery = createAnnouncementDelivery({
+      adaptersByType: new Map([["telegram", {
+        channelId: "telegram-primary",
+        channelType: "telegram",
+        sendMessage: vi.fn(async () => ok("unexpected-message")),
+        sendAttachment,
+      }]]),
+      deliveryService,
+      eventBus,
+      outwardLedger: ledger,
+      resolveRootRunId: () => ({ ok: true, value: "root-1" }),
+      prepareCompletionAttachment: vi.fn(async () => ok({
+        path: "/tmp/completion-report.csv",
+        fileName: "completion-report.csv",
+        mimeType: "text/csv",
+        contentDigest: "a".repeat(64),
+        sizeBytes: 128,
+        cleanup,
+      })),
+    });
+
+    const result = await delivery.sendGovernedAnnouncement?.({
+      agentId: "agent-1",
+      callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
+      callerConversation: caller.locator,
+      destinationEndpoint: { ...caller.endpoint, ...override.endpoint },
+      runId: "run-route-mismatch",
+      channelType: "telegram",
+      channelId: override.channelId ?? "chat-1",
+      text: "must not send",
+      options: override.options ?? { threadId: "topic-7" },
+      attachment: {
+        sourceAgentId: "agent-1",
+        path: "/workspace/reports/completion-report.csv",
+      },
+    });
+
+    expect(result).toEqual(ok({ delivered: false, failure: "allocation_blocked" }));
+    expect(ledger.allocateStep).not.toHaveBeenCalled();
+    expect(sendAttachment).not.toHaveBeenCalled();
+    expect(cleanup).not.toHaveBeenCalled();
+  });
+
+  it("delivers a validated generated file as the governed channel operation", async () => {
+    const ledger = makeLedger();
+    const deliveryService = makeDeliveryService();
+    vi.mocked(deliveryService.deliverToChannel).mockResolvedValue(ok({
+      ok: true,
+      totalChunks: 1,
+      deliveredChunks: 1,
+      failedChunks: 0,
+      chunks: [{
+        ok: true,
+        messageId: "text-message",
+        charCount: 10,
+        retried: false,
+      }],
+      totalChars: 10,
+    }));
+    const cleanup = vi.fn(async () => ok(undefined));
+    const sendAttachment = vi.fn(async () => ok({
+      kind: "tracked" as const,
+      messageId: "document-message",
+    }));
+    const delivery = createAnnouncementDelivery({
+      adaptersByType: new Map([["telegram", {
+        channelId: "telegram-primary",
+        channelType: "telegram",
+        sendMessage: vi.fn(async () => ok("text-message")),
+        sendAttachment,
+      }]]),
+      deliveryService,
+      eventBus,
+      outwardLedger: ledger,
+      resolveRootRunId: () => ({ ok: true, value: "root-1" }),
+      prepareCompletionAttachment: vi.fn(async () => ok({
+        path: "/tmp/completion-report.csv",
+        fileName: "completion-report.csv",
+        mimeType: "text/csv",
+        contentDigest: "a".repeat(64),
+        sizeBytes: 128,
+        cleanup,
+      })),
+    });
+
+    const caller = makeChannelPrincipalCaller();
+    const result = await delivery.sendGovernedAnnouncement?.({
+      agentId: "agent-1",
+      callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
+      callerConversation: caller.locator,
+      destinationEndpoint: caller.endpoint,
+      runId: "run-1",
+      channelType: "telegram",
+      channelId: "chat-1",
+      text: "The report is ready.",
+      options: { threadId: "topic-7" },
+      attachment: {
+        sourceAgentId: "agent-1",
+        path: "/workspace/reports/completion-report.csv",
+      },
+    });
+
+    expect(result?.ok && result.value.delivered).toBe(true);
+    expect(sendAttachment).toHaveBeenCalledWith(
+      "chat-1",
+      expect.objectContaining({
+        type: "file",
+        url: "/tmp/completion-report.csv",
+        fileName: "completion-report.csv",
+        mimeType: "text/csv",
+        caption: "The report is ready.",
+      }),
+      { threadId: "topic-7" },
+    );
+    expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
+    expect(ledger.commit).toHaveBeenCalledWith("root-1", 0, "document-message");
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+});

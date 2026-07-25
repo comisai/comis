@@ -33,7 +33,6 @@ agents:
     scheduler:
       cron:
         enabled: true
-        maxConcurrentRuns: 5
         defaultTimezone: "UTC"
 
 # The suite serves its fixture pages from a local HTTP server; loopback
@@ -58,7 +57,6 @@ gateway:
 scheduler:
   cron:
     enabled: true
-    maxConcurrentRuns: 5
     defaultTimezone: "UTC"
   heartbeat:
     intervalMs: 300000

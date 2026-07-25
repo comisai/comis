@@ -19,12 +19,12 @@
  *     under the lease's resolved `workspaceDir` (the executor passes it in `ctx`),
  *     then `.execute()`d. `read`/`grep`/`find`/`ls` are read-only; `write` is the
  *     FIRST general writing core on this surface — confined to a RUN-SCOPED,
- *     EPHEMERAL root (`<workspace>/results/writes`, NOT the persistent workspace
- *     root): every path resolves under that root via `safePath` (a `..`/absolute/
+ *     EPHEMERAL root (`<workspace>/results/<safe-run-id>/writes`, NOT the
+ *     persistent workspace root): every path resolves under that root via `safePath` (a `..`/absolute/
  *     `../…/skills/…` escape is refused BEFORE any write), and it is genuinely
- *     run-EPHEMERAL because `results/` is reaped wholesale by
- *     `ResultRefStore.cleanupRun` on run end — so a written file is GONE after the
- *     run, and the write can never reach the workspace-root discovery/config
+ *     run-EPHEMERAL because its exact run root is reaped by
+ *     `ResultRefStore.cleanupRun` on run end — so a written file is GONE after
+ *     the run without disturbing concurrent runs, and the write can never reach the workspace-root discovery/config
  *     subtrees (`skills/`, `.learned-skills/`, memory, config). The TYPED write
  *     SURFACE is default-OFF (opt-in via `autonomy.write`; the executor gates the
  *     dispatch on `writeSurfaceEnabled` even though `orch:write` is a floor cap) —
@@ -80,11 +80,14 @@ import { createComisFindTool } from "../file-tools/find-tool.js";
 import { createComisLsTool } from "../file-tools/ls-tool.js";
 import { createWebSearchTool } from "../web-search-tool/index.js";
 import type { WebSearchConfig } from "../web-search-tool/web-search-providers.js";
+import { safeResultRunId } from "./result-ref-store.js";
 
 /** The workspace ctx the daemon executor hands each file core (its scoped root). */
 export interface OrchestrateFileCoreContext {
   /** The lease-resolved workspace root; every path is confined under it. */
   readonly workspaceDir: string;
+  /** Exact execution checkpoint/root identity; required by the mutating write core. */
+  readonly runId?: string;
 }
 
 /** A file core the executor calls: `(args, ctx) => result` over the workspace. */
@@ -109,7 +112,7 @@ export interface OrchestrateFileCores {
   sql: OrchestrateFileCore;
   /** Precise JSON extraction via DuckDB `json_extract` (NO eval lib). */
   jsonpath: OrchestrateFileCore;
-  /** Run-scoped, run-ephemeral write confined to results/writes (safePath; the first mutating core). */
+  /** Run-scoped write confined to results/<safe-run-id>/writes (safePath; the first mutating core). */
   write: OrchestrateFileCore;
 }
 
@@ -172,9 +175,9 @@ const DEFAULT_SQL_TIMEOUT_MS = 10_000;
 const SQL_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 
 /**
- * The RUN-SCOPED, EPHEMERAL write root (relative to the lease workspace) the
- * `write` core confines to — a subdir UNDER `results/`, which
- * `ResultRefStore.cleanupRun` reaps WHOLESALE on run end. Confining here (NOT the
+ * The final subdirectory of the RUN-SCOPED, EPHEMERAL write root. The complete
+ * root is `results/<safe-run-id>/writes`; `ResultRefStore.cleanupRun` reaps only
+ * that run's safe-id directory on run end. Confining here (NOT the
  * persistent per-agent workspace root) makes the write genuinely run-ephemeral
  * (a file written this run is gone after the run's cleanupRun) AND isolates it
  * from the workspace-root discovery/config subtrees (`skills/`,
@@ -182,7 +185,7 @@ const SQL_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
  * escapes this root is refused by `safePath` BEFORE any write, so a run can never
  * persist a cross-run skill into the top-priority skill-discovery path.
  */
-const WRITE_SUBDIR = "results/writes";
+const WRITE_SUBDIR = "writes";
 
 /**
  * Build the DuckDB hardening prelude prepended before the (untrusted) model
@@ -637,14 +640,25 @@ export function createOrchestrateExecutorCores(
       );
       return errorResult("write requires a string `path`");
     }
-    // Resolve the RUN-SCOPED, EPHEMERAL write root (<workspace>/results/writes) —
-    // NOT the persistent workspace root. results/ is reaped wholesale by
-    // ResultRefStore.cleanupRun on run end, so a write here is genuinely
-    // run-ephemeral and isolated from the workspace-root discovery/config
-    // subtrees (skills/, .learned-skills/, memory, config).
+    if (ctx.runId === undefined || ctx.runId.length === 0) {
+      log.warn(
+        { errorKind: "precondition" as const, hint: "supply the validated checkpoint or root run identity before dispatching write", toolName: "write" },
+        "orchestrate write missing run identity",
+      );
+      return errorResult("write requires a validated run identity");
+    }
+    // Resolve the RUN-SCOPED, EPHEMERAL write root
+    // (<workspace>/results/<safe-run-id>/writes), not the persistent workspace
+    // root. cleanupRun removes only this run's safe-id directory, keeping writes
+    // isolated from concurrent runs and workspace-root discovery/config subtrees.
     let writeRoot: string;
     try {
-      writeRoot = safePath(ctx.workspaceDir, WRITE_SUBDIR);
+      writeRoot = safePath(
+        ctx.workspaceDir,
+        "results",
+        safeResultRunId(ctx.runId),
+        WRITE_SUBDIR,
+      );
     } catch (err: unknown) {
       log.warn(
         { err, errorKind: "validation" as const, hint: "the run-scoped write root escaped the workspace — refusing", toolName: "write" },
@@ -655,7 +669,7 @@ export function createOrchestrateExecutorCores(
     // Confine the target under the run-scoped write root BEFORE any write (the same
     // safePath confinement the jq/sql/jsonpath cores use). A `..`/absolute escape —
     // or a `../…/skills/…` traversal back into the workspace-root discovery path —
-    // is refused here; the write lands under results/writes only.
+    // is refused here; the write lands under this run's writes directory only.
     try {
       safePath(writeRoot, rawPath);
     } catch (err: unknown) {

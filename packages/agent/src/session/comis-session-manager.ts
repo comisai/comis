@@ -5,7 +5,8 @@
  * Absorbs the lifecycle management into a single
  * interface. Each `withSession` call acquires a per-session write lock,
  * creates or opens the session file via the SDK's SessionManager, executes
- * the callback, sanitizes secrets, and releases the lock.
+ * the callback, projects secrets out before persistence, repairs the durable
+ * file defensively, and releases the lock.
  *
  * Key design decisions:
  * - `SdkSessionManager.open(explicitPath)` handles both new and existing files:
@@ -19,16 +20,54 @@
 import * as os from "node:os";
 import * as pathModule from "node:path";
 import { SessionManager as SdkSessionManager } from "@earendil-works/pi-coding-agent";
-import { formatSessionKey, safePath, systemDateFrom, systemNowDate, systemNowMs, type SessionKey } from "@comis/core";
+import { formatSessionKey, safePath, systemDateFrom, systemNowDate, systemNowMs, type NormalizedMessage, type SessionKey } from "@comis/core";
 import type { ComisLogger, FileLockPort, TypedEventBus } from "@comis/core";
-import { ensureContainedDir, writeRegularFile, buildTraceArtifacts, appendSessionIndexEntry, type SessionTrajectoryHandleRegistry, type TraceArtifactsRunState } from "@comis/observability";
-import { suppressError, type Result } from "@comis/shared";
+import { appendRegularFile, ensureContainedDir, writeRegularFile, buildTraceArtifacts, appendSessionIndexEntry, type SessionTrajectoryHandleRegistry, type TraceArtifactsRunState } from "@comis/observability";
+import { err, ok, suppressError, tryCatch, type Result } from "@comis/shared";
 import { unlink, rm, rmdir } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { sessionKeyToPath } from "./session-key-mapper.js";
+import {
+  sessionKeyToInboundMessageLedgerPath,
+  sessionKeyToPath,
+} from "./session-key-mapper.js";
 import { withSessionLock } from "./session-write-lock.js";
 import { sanitizeSessionSecrets } from "./sanitize-session-secrets.js";
+import { installSecretSafeSessionPersistence } from "./session-manager-internals.js";
+import {
+  planInboundMessageProvenance,
+  type InboundMessageProvenancePlan,
+  type InboundMessageProvenancePlanError,
+} from "./inbound-message-provenance.js";
+import {
+  classifyInboundLedgerIoFailure,
+  findPersistedInboundBatch,
+  inboundLedgerFailure,
+  MAX_INBOUND_PROVENANCE_LEDGER_BYTES,
+  readInboundLedgerIndex,
+  readInboundLedgerSignature,
+  sameInboundLedgerFile,
+  sameInboundLedgerSignature,
+  type InboundLedgerIndex,
+} from "./inbound-message-ledger-transaction.js";
+
+/** Whether an optional session artifact is already absent. */
+function isMissingSessionArtifact(error: unknown): boolean {
+  return error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT";
+}
+
+/** Delete an optional artifact while preserving every non-absence failure. */
+async function unlinkSessionArtifact(filePath: string): Promise<void> {
+  try {
+    await unlink(filePath);
+  } catch (error) {
+    if (isMissingSessionArtifact(error)) return;
+    return Promise.reject(error);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -59,8 +98,8 @@ export interface ComisSessionManagerDeps {
   logger?: ComisLogger;
   /**
    * Optional TypedEventBus. When provided, `destroySession` emits a
-   * `session:ended` event with `exitReason: "destroyed"` BEFORE unlinking
-   * the JSONL transcript (`session.ended`
+   * `session:ended` event with `exitReason: "destroyed"` only after removing
+   * the JSONL transcript and inbound ledger (`session.ended`
    * fires on session-destroy, NOT per-turn). When omitted (test
    * harnesses, ephemeral sub-agent path), the emit step is a silent no-op
    * and `destroySession` still unlinks the file as before.
@@ -71,8 +110,8 @@ export interface ComisSessionManagerDeps {
   eventBus?: TypedEventBus;
   /**
    * Optional session-scoped trajectory recorder registry. When provided,
-   * `destroySession` calls `trajectoryRegistry.close(formattedKey)` AFTER
-   * the `session:ended` emit and BEFORE unlinking the JSONL — the
+   * `destroySession` calls `trajectoryRegistry.close(formattedKey)` after
+   * successful artifact removal and the `session:ended` emit — the
    * registry's `flushAndClose` drains the writer's queue tail so the
    * just-emitted `session.ended` JSONL line lands on disk before the
    * recorder tears down (the trajectory recorder flush-and-close contract).
@@ -133,7 +172,7 @@ export interface SessionMetadata {
   sessionEnd?: {
     type: "session_end";
     timestamp: string;
-    endReason: "success" | "error" | "timeout" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "completed_with_tool_errors" | "context_exhausted" | "output_starved" | "narration_stall" | "spend_exceeded";
+    endReason: "success" | "error" | "timeout" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "completed_with_tool_errors" | "context_exhausted" | "output_starved" | "narration_stall" | "spend_exceeded" | "background_pending";
     durationMs: number;
     totalTokens: number;
     /** Per-session health rollup — additive optional on schemaVersion:1. */
@@ -183,6 +222,28 @@ export interface ComisSessionManager {
   ): Promise<Result<T, "locked" | "error">>;
 
   /**
+   * Append exact pre-serialized JSONL content to the session's durable inbound
+   * message ledger. The caller already holds this session's `withSession` lock;
+   * this method deliberately does not acquire a second lock.
+   */
+  appendInboundMessageLedger(
+    sessionKey: SessionKey,
+    content: string,
+  ): Result<void, Error>;
+
+  /**
+   * Plan and atomically append one physical inbound occurrence while holding
+   * the same per-session lock used by SDK transcript writes. A failed partial
+   * append is truncated back before the lock is released, so an operator retry
+   * cannot duplicate a JSON prefix or poison the ledger.
+   */
+  persistInboundMessage(
+    sessionKey: SessionKey,
+    message: NormalizedMessage,
+    recordedAt: number,
+  ): Promise<Result<InboundMessageProvenancePlan, InboundMessageProvenancePlanError>>;
+
+  /**
    * Destroy a JSONL session file, forcing the next withSession to create a fresh one.
    * Used by /new and /reset commands for pi-executor agents.
    */
@@ -229,6 +290,40 @@ export interface ComisSessionManager {
  * @returns ComisSessionManager instance
  */
 export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisSessionManager {
+  const inboundLedgerIndexes = new Map<string, InboundLedgerIndex>();
+  const appendInboundLedger = (
+    sessionKey: SessionKey,
+    content: string,
+    rollbackOnError: boolean,
+  ): Result<number, Error> => {
+    const pathResult = tryCatch(() =>
+      sessionKeyToInboundMessageLedgerPath(sessionKey, deps.sessionBaseDir));
+    if (!pathResult.ok) return pathResult;
+
+    const directoryResult = ensureContainedDir({
+      dir: dirname(pathResult.value),
+      mode: 0o700,
+      confinedBaseDir: deps.sessionBaseDir,
+    });
+    if (!directoryResult.ok) return err(directoryResult.error);
+
+    const appendResult = appendRegularFile({
+      path: pathResult.value,
+      content,
+      maxFileBytes: MAX_INBOUND_PROVENANCE_LEDGER_BYTES,
+      confinedBaseDir: deps.sessionBaseDir,
+      ...(rollbackOnError
+        ? {
+            rollbackOnError: "caller-holds-exclusive-lock" as const,
+            repairIncompleteFinalLine: "caller-holds-exclusive-lock" as const,
+            fsyncBeforeSuccess: true as const,
+          }
+        : {}),
+    });
+    if (!appendResult.ok) return err(appendResult.error);
+    return ok(appendResult.value.totalBytes);
+  };
+
   return {
     async withSession<T>(
       sessionKey: SessionKey,
@@ -261,19 +356,20 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
         // - New file: creates in-memory header with flushed=false, defers
         //   file write until first assistant message (SDK's _persist guard)
         const sm = SdkSessionManager.open(sessionPath, dirname(sessionPath));
+        const persistenceGuard = installSecretSafeSessionPersistence(
+          sm,
+          deps.logger,
+          sessionKeyStr,
+        );
+        if (!persistenceGuard.ok) return Promise.reject(persistenceGuard.error);
 
         try {
           const result = await fn(sm);
           return result;
         } finally {
-          // ALWAYS sanitize, even on throw — the SDK flushes entries to the
-          // JSONL file before / during fn execution, so a mid-execution
-          // exception can leave unredacted tool parameters (env_value, etc.)
-          // on disk. Running in finally ensures the next reader of the file
-          // (getSessionStats, replay, sessions.inspect RPC) sees the
-          // redacted form even on the error path. Sanitization runs while
-          // we still hold the write lock.
-          sanitizeSessionSecrets(sessionPath);
+          // Defense in depth also repairs entries written by an older process.
+          sanitizeSessionSecrets(sessionPath, deps.logger);
+          persistenceGuard.value.reportRedactions();
         }
       }, {
         retries: 10,
@@ -283,9 +379,174 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
       });
     },
 
+    appendInboundMessageLedger(
+      sessionKey: SessionKey,
+      content: string,
+    ): Result<void, Error> {
+      const appended = appendInboundLedger(sessionKey, content, false);
+      return appended.ok ? ok(undefined) : appended;
+    },
+
+    async persistInboundMessage(
+      sessionKey: SessionKey,
+      message: NormalizedMessage,
+      recordedAt: number,
+    ): Promise<Result<InboundMessageProvenancePlan, InboundMessageProvenancePlanError>> {
+      const plan = planInboundMessageProvenance(message, recordedAt);
+      if (!plan.ok) return plan;
+      const sessionKeyStr = formatSessionKey(sessionKey);
+      const locked = await withSessionLock(
+        deps.fileLock,
+        deps.lockDir,
+        sessionKeyStr,
+        () => {
+          const ledgerPath = sessionKeyToInboundMessageLedgerPath(
+            sessionKey,
+            deps.sessionBaseDir,
+          );
+          const currentSignature = readInboundLedgerSignature(ledgerPath);
+          if (
+            !currentSignature.ok
+            && currentSignature.error.errorKind === "precondition"
+          ) return currentSignature;
+          const cached = inboundLedgerIndexes.get(ledgerPath);
+          let index: InboundLedgerIndex;
+          if (
+            currentSignature.ok
+            && cached !== undefined
+            && sameInboundLedgerSignature(currentSignature.value, cached.signature)
+          ) {
+            index = cached;
+          } else {
+            // A missing, replaced, or externally modified file invalidates the
+            // index. Repair only this cold path so healthy appends stay O(1).
+            const repaired = appendInboundLedger(sessionKey, "", true);
+            if (!repaired.ok) {
+              return err(classifyInboundLedgerIoFailure(repaired.error));
+            }
+            const loaded = readInboundLedgerIndex(
+              ledgerPath,
+              deps.sessionBaseDir,
+            );
+            if (!loaded.ok) return loaded;
+            index = loaded.value;
+            inboundLedgerIndexes.set(ledgerPath, index);
+          }
+          const existing = findPersistedInboundBatch(
+            index,
+            message,
+            plan.value,
+          );
+          if (!existing.ok) return existing;
+          if (existing.value.kind === "complete") {
+            return ok(existing.value.plan);
+          }
+          const selectedPlan = existing.value.kind === "incomplete"
+            ? existing.value.plan
+            : plan.value;
+          const content = existing.value.kind === "incomplete"
+            ? existing.value.missingContent
+            : plan.value.ledgerContent;
+          const appended = appendInboundLedger(
+            sessionKey,
+            content,
+            true,
+          );
+          if (!appended.ok) {
+            inboundLedgerIndexes.delete(ledgerPath);
+            return err(classifyInboundLedgerIoFailure(appended.error));
+          }
+          const after = readInboundLedgerSignature(ledgerPath);
+          if (!after.ok) {
+            inboundLedgerIndexes.delete(ledgerPath);
+            return after;
+          }
+          const expectedBytes = Number(index.signature.size)
+            + Buffer.byteLength(content, "utf8");
+          if (
+            !sameInboundLedgerFile(index.signature, after.value)
+            || appended.value !== expectedBytes
+            || after.value.size !== BigInt(expectedBytes)
+          ) {
+            inboundLedgerIndexes.delete(ledgerPath);
+            return err(inboundLedgerFailure(
+              "Inbound provenance ledger changed during the locked append",
+            ));
+          }
+          const batchId = selectedPlan.payloads[0]?.batchId;
+          if (batchId === undefined) {
+            inboundLedgerIndexes.delete(ledgerPath);
+            return err({
+              error: new Error("Inbound provenance plan has no batch identity"),
+              errorKind: "validation" as const,
+            });
+          }
+          index.batches.set(batchId, selectedPlan.payloads);
+          inboundLedgerIndexes.set(ledgerPath, {
+            signature: after.value,
+            batches: index.batches,
+          });
+          return ok(selectedPlan);
+        },
+        {
+          retries: 10,
+          retryMinTimeout: 1_000,
+          logger: deps.logger,
+          sessionKey: sessionKeyStr,
+        },
+      );
+      if (!locked.ok) {
+        return err({
+          error: new Error(`Inbound provenance session lock failed (${locked.error})`),
+          errorKind: "resource",
+        });
+      }
+      if (!locked.value.ok) {
+        return err(locked.value.error);
+      }
+      return ok(locked.value.value);
+    },
+
     async destroySession(sessionKey: SessionKey): Promise<void> {
       const sessionPath = sessionKeyToPath(sessionKey, deps.sessionBaseDir);
+      const inboundMessageLedgerPath = sessionKeyToInboundMessageLedgerPath(
+        sessionKey,
+        deps.sessionBaseDir,
+      );
       const sessionKeyStr = formatSessionKey(sessionKey);
+
+      // Delete the authoritative session artifacts first. Lifecycle events
+      // may claim `destroyed` only after the locked deletion has succeeded.
+      const destroyResult = await withSessionLock(
+        deps.fileLock,
+        deps.lockDir,
+        sessionKeyStr,
+        async () => {
+          await Promise.all([
+            unlinkSessionArtifact(sessionPath),
+            unlinkSessionArtifact(inboundMessageLedgerPath),
+          ]);
+          const sessionDir = dirname(sessionPath);
+          const toolResultsDir = safePath(sessionDir, "tool-results");
+          await suppressError(
+            rm(toolResultsDir, { recursive: true, force: true }),
+            "tool-results dir may not exist",
+          );
+          try { await rmdir(sessionDir); } catch { /* non-empty or already gone */ }
+        },
+        {
+          retries: 10,
+          retryMinTimeout: 500,
+          logger: deps.logger,
+          sessionKey: sessionKeyStr,
+        },
+      );
+      if (!destroyResult.ok) {
+        return Promise.reject(new Error(
+          `Session artifact removal failed (${destroyResult.error})`,
+        ));
+      }
+      inboundLedgerIndexes.delete(inboundMessageLedgerPath);
 
       // Emit session:ended BEFORE registry close — the bridge translates
       // the EventBus emit to a recorder.recordEvent call (sync), which
@@ -352,26 +613,9 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
       );
       if (deps.trajectoryRegistry !== undefined) {
         // Best-effort: close() swallows per-entry errors. Awaiting it
-        // ensures the flush-tail completes before the JSONL unlink races
-        // the bridge's recordEvent enqueue.
+        // ensures the lifecycle records reach the trajectory before close.
         await deps.trajectoryRegistry.close(sessionKeyStr);
       }
-
-      await withSessionLock(deps.fileLock, deps.lockDir, sessionKeyStr, async () => {
-        try { await unlink(sessionPath); } catch { /* ENOENT ok */ }
-        const sessionDir = dirname(sessionPath);
-        const toolResultsDir = safePath(sessionDir, "tool-results");
-        await suppressError(
-          rm(toolResultsDir, { recursive: true, force: true }),
-          "tool-results dir may not exist",
-        );
-        try { await rmdir(sessionDir); } catch { /* non-empty or already gone */ }
-      }, {
-        retries: 10,
-        retryMinTimeout: 500,
-        logger: deps.logger,
-        sessionKey: sessionKeyStr,
-      });
     },
 
     getSessionPath(sessionKey: SessionKey): string {
@@ -409,6 +653,7 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           ...existing,
           ...(metadata.traceId && { traceId: metadata.traceId }),
           ...(metadata.runId && { runId: metadata.runId }),
+          ...(metadata.sessionKey && { sessionKey: metadata.sessionKey }),
           ...(metadata.sessionEnd && { sessionEnd: metadata.sessionEnd }),
           lastUpdated: systemNowDate().toISOString(),
         };
@@ -488,27 +733,30 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
                   totalCost += cost.total ?? 0;
                 }
               }
-              // Count tool_use content blocks within assistant messages.
-              // The content array is typed `unknown`, so individual blocks
-              // can legitimately be null, undefined, or a primitive (string
-              // content blocks exist in some pi-coding-agent versions).
-              // Guard with object check before reading `.type` to prevent
-              // a TypeError that would be swallowed by the outer catch
-              // (turning a parse hiccup into a silent "no session" result).
+              // Count tool-invocation content blocks within assistant
+              // messages. pi-written sessions carry type "toolCall" (the
+              // SDK's own getSessionStats counts exactly this); "tool_use"
+              // is accepted for entries preserved from Anthropic-wire-format
+              // files. The content array is typed `unknown`, so individual
+              // blocks can legitimately be null, undefined, or a primitive
+              // (string content blocks exist in some pi-coding-agent
+              // versions). Guard with object check before reading `.type` to
+              // prevent a TypeError that would be swallowed by the outer
+              // catch (turning a parse hiccup into a silent "no session"
+              // result).
               if (Array.isArray(msg.message.content)) {
                 for (const block of msg.message.content) {
-                  if (
-                    block !== null &&
-                    typeof block === "object" &&
-                    (block as { type?: string }).type === "tool_use"
-                  ) {
+                  if (block === null || typeof block !== "object") continue;
+                  const blockType = (block as { type?: string }).type;
+                  if (blockType === "toolCall" || blockType === "tool_use") {
                     toolCalls++;
                   }
                 }
               }
             }
-            // Count tool result messages (role === "tool")
-            if (msg.message?.role === "tool") toolResults++;
+            // Count tool result messages: role "toolResult" in pi-written
+            // sessions, "tool" in preserved Anthropic-wire-format entries.
+            if (msg.message?.role === "toolResult" || msg.message?.role === "tool") toolResults++;
           }
         }
 

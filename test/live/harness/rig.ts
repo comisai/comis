@@ -249,6 +249,7 @@ export const SIGNAL_RIG_CHAT = "+15555550199";
  * to the emulator's own string-keyed verbs. The Telegram-ONLY verbs
  * (`injectMedia`/`injectLocation`/`injectCallback`/`injectEdit`/`fail`/
  * `clearFaults`) throw an honest `unsupported_on_channel` — NEVER a silent no-op.
+ * The channel-agnostic `resetChat` delegates to Signal's own reset verb.
  * Signal's media/edit/fault round-trips are NOT part of this
  * foundation-fix; the COMIS_LIVE Stage-C scenario exercises the Signal send/react path.
  */
@@ -281,6 +282,9 @@ export function adaptSignalToControlEmulator(
     },
     outbound(_chat) {
       return emulator.outbound(SIGNAL_RIG_CHAT);
+    },
+    resetChat(_chat) {
+      emulator.resetChat(SIGNAL_RIG_CHAT);
     },
     injectMedia: () => unsupported("injectMedia"),
     injectLocation: () => unsupported("injectLocation"),

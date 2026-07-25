@@ -28,8 +28,27 @@ const PROBE_TIMEOUT_MS = 10_000;
 /** Max buffer for ffmpeg stderr/stdout (10 MB). */
 const MAX_BUFFER = 10 * 1024 * 1024;
 
-/** Maximum stderr chars included in error logs. */
-const STDERR_SNIPPET_LENGTH = 500;
+type ChildProcessFailureClass =
+  | "timeout"
+  | "nonzero_exit"
+  | "signal_exit"
+  | "spawn_error"
+  | "unknown";
+
+/** Classify an execFile failure without forwarding its free-text message. */
+function classifyChildProcessFailure(error: unknown): ChildProcessFailureClass {
+  if (typeof error !== "object" || error === null) return "unknown";
+  const candidate = error as {
+    code?: unknown;
+    killed?: unknown;
+    signal?: unknown;
+  };
+  if (candidate.code === "ETIMEDOUT" || candidate.killed === true) return "timeout";
+  if (typeof candidate.signal === "string" && candidate.signal.length > 0) return "signal_exit";
+  if (typeof candidate.code === "number") return "nonzero_exit";
+  if (typeof candidate.code === "string") return "spawn_error";
+  return "unknown";
+}
 
 /** Result of an audio conversion operation. */
 export interface ConversionResult {
@@ -145,15 +164,20 @@ export function createAudioConverter(deps: AudioConverterDeps): AudioConverter {
         const error = e instanceof Error ? e : new Error(String(e));
         const elapsedMs = systemNowMs() - startMs;
 
-        // Extract stderr from the error if available
-        const stderr = (e as { stderr?: string }).stderr ?? "";
+        const rawStderr = (e as { stderr?: unknown }).stderr;
+        const stderrBytes = typeof rawStderr === "string"
+          ? Buffer.byteLength(rawStderr, "utf8")
+          : Buffer.isBuffer(rawStderr)
+            ? rawStderr.byteLength
+            : 0;
 
         // Log ffmpeg failure
         logger.error(
           {
             binary: "ffmpeg",
-            err: error.message,
-            stderr: stderr.slice(0, STDERR_SNIPPET_LENGTH),
+            failureClass: classifyChildProcessFailure(e),
+            stderrBytes,
+            stderrCaptured: stderrBytes > 0,
             hint: "ffmpeg failed to convert audio — check that the input file is a valid audio format and that libopus is available",
             errorKind: "dependency" as const,
             elapsedMs,

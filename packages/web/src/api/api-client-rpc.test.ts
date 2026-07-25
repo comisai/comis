@@ -21,35 +21,29 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Dev-mode validator is strict — and the api-client has pre-existing payload
-// shape mismatches with the generated contract (e.g. single deleteMemory sends
-// {id} but the contract requires {ids}; listSessions forwards agentId/channelType/
-// search but the contract only allows kind/since_minutes). These are pre-
-// existing wrapper bugs orthogonal to this file's coverage objective; we
-// stub the validators to expose the rpcCall delegation branch underneath.
-// listSessions returns SessionListItem[] (9-field pass-through) —
-// no aliasing, no parsing, no invented fields. Tests reflect that contract.
-vi.mock("./contracts.generated.js", () => ({
-  validateRequest: () => true,
-  validateResponse: () => true,
-  CONTRACTS: {},
-}));
-
 import { createApiClient, type RpcCallFn } from "./api-client.js";
 
 const BASE_URL = "http://localhost:3000";
 const TOKEN = "test-rpc-bearer-token";
+const AUTHORITY = { tenantId: "tenant-a", agentId: "agent-a" } as const;
+const TARGET = { ...AUTHORITY, conversationRef: "cv-a" } as const;
 
 function makeRpc<T>(result: T): RpcCallFn {
   return vi.fn(async () => result) as unknown as RpcCallFn;
 }
 
 describe("createApiClient — memory.browse via rpcCall path", () => {
-  it("delegates browseMemory to rpcCall with method memory.browse and the params object", async () => {
+  it("delegates browseMemory to rpcCall with method memory.browse and the explicit tenant/agent scope", async () => {
     const rpc = makeRpc({ entries: [], total: 0 });
     const client = createApiClient(BASE_URL, TOKEN, rpc);
-    await client.browseMemory({ limit: 10, offset: 5, type: "fact" });
-    expect(rpc).toHaveBeenCalledWith("memory.browse", { limit: 10, offset: 5, type: "fact" });
+    await client.browseMemory({ tenantId: "acme", agentId: "aria", limit: 10, offset: 5, type: "fact" });
+    expect(rpc).toHaveBeenCalledWith("memory.browse", {
+      tenant_id: "acme",
+      agent_id: "aria",
+      limit: 10,
+      offset: 5,
+      memory_type: "fact",
+    });
   });
 
   it("returns the daemon-typed entries+total response from rpcCall without HTTP fallback", async () => {
@@ -58,75 +52,93 @@ describe("createApiClient — memory.browse via rpcCall path", () => {
     ];
     const rpc = makeRpc({ entries, total: 1 });
     const client = createApiClient(BASE_URL, TOKEN, rpc);
-    const result = await client.browseMemory({});
+    const result = await client.browseMemory({ tenantId: "acme", agentId: "aria" });
     expect(result.entries).toEqual(entries);
     expect(result.total).toBe(1);
   });
 });
 
 describe("createApiClient — memory.delete via rpcCall path", () => {
-  it("delegates single deleteMemory to rpcCall memory.delete with id param", async () => {
+  it("delegates single deleteMemory through the contract ids array with explicit tenant/agent", async () => {
     const rpc = makeRpc(undefined);
-    await createApiClient(BASE_URL, TOKEN, rpc).deleteMemory("memory-id-7");
-    expect(rpc).toHaveBeenCalledWith("memory.delete", { id: "memory-id-7" });
+    await createApiClient(BASE_URL, TOKEN, rpc).deleteMemory("memory-id-7", { tenantId: "acme", agentId: "aria" });
+    expect(rpc).toHaveBeenCalledWith("memory.delete", {
+      ids: ["memory-id-7"],
+      tenant_id: "acme",
+      agent_id: "aria",
+    });
   });
 
-  it("delegates deleteMemoryBulk to rpcCall memory.delete with ids array param", async () => {
+  it("delegates deleteMemoryBulk to rpcCall memory.delete with ids array + explicit tenant/agent", async () => {
     const rpc = makeRpc({ deleted: 3 });
-    const r = await createApiClient(BASE_URL, TOKEN, rpc).deleteMemoryBulk(["a", "b", "c"]);
-    expect(rpc).toHaveBeenCalledWith("memory.delete", { ids: ["a", "b", "c"] });
+    const r = await createApiClient(BASE_URL, TOKEN, rpc).deleteMemoryBulk(["a", "b", "c"], { tenantId: "acme", agentId: "aria" });
+    expect(rpc).toHaveBeenCalledWith("memory.delete", {
+      ids: ["a", "b", "c"],
+      tenant_id: "acme",
+      agent_id: "aria",
+    });
     expect(r.deleted).toBe(3);
   });
 });
 
 describe("createApiClient — memory.export via rpcCall path", () => {
-  it("delegates exportMemory with no ids to rpcCall memory.export with empty params", async () => {
-    const rpc = makeRpc("exported-content");
-    const result = await createApiClient(BASE_URL, TOKEN, rpc).exportMemory();
-    expect(rpc).toHaveBeenCalledWith("memory.export", {});
-    expect(result).toBe("exported-content");
+  it("delegates exportMemory with explicit authority to memory.export", async () => {
+    const rpc = makeRpc({ entries: [{ id: "id1", content: "one" }] });
+    const result = await createApiClient(BASE_URL, TOKEN, rpc).exportMemory(AUTHORITY);
+    expect(rpc).toHaveBeenCalledWith("memory.export", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
+    });
+    expect(result).toBe('{"id":"id1","content":"one"}');
   });
 
-  it("delegates exportMemory with ids array to rpcCall memory.export with ids param", async () => {
-    const rpc = makeRpc("ids-export");
-    await createApiClient(BASE_URL, TOKEN, rpc).exportMemory(["id1", "id2"]);
-    expect(rpc).toHaveBeenCalledWith("memory.export", { ids: ["id1", "id2"] });
+  it("filters typed memory export results locally for selected ids", async () => {
+    const rpc = makeRpc({ entries: [{ id: "id1" }, { id: "id2" }, { id: "id3" }] });
+    const result = await createApiClient(BASE_URL, TOKEN, rpc).exportMemory(
+      AUTHORITY,
+      ["id1", "id2"],
+    );
+    expect(rpc).toHaveBeenCalledWith("memory.export", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
+    });
+    expect(result).toBe('{"id":"id1"}\n{"id":"id2"}');
   });
 });
 
 describe("createApiClient — session.list via rpcCall path", () => {
-  it("delegates listSessions to rpcCall session.list with the params object even when empty", async () => {
+  it("delegates listSessions with explicit tenant and agent authority", async () => {
     const rpc = makeRpc({ sessions: [], total: 0 });
-    await createApiClient(BASE_URL, TOKEN, rpc).listSessions();
-    expect(rpc).toHaveBeenCalledWith("session.list", {});
+    await createApiClient(BASE_URL, TOKEN, rpc).listSessions(AUTHORITY);
+    expect(rpc).toHaveBeenCalledWith("session.list", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
+    });
   });
 
-  it("forwards listSessions filter params (agentId/channelType/search) to rpcCall payload", async () => {
+  it("passes contract-supported session filters through RPC", async () => {
     const rpc = makeRpc({ sessions: [], total: 0 });
     await createApiClient(BASE_URL, TOKEN, rpc).listSessions({
+      tenantId: "tenant-a",
       agentId: "alpha",
-      channelType: "telegram",
-      search: "foo",
+      kind: "dm",
+      sinceMinutes: 60,
     });
     expect(rpc).toHaveBeenCalledWith("session.list", {
-      agentId: "alpha",
-      channelType: "telegram",
-      search: "foo",
+      tenant_id: "tenant-a",
+      agent_id: "alpha",
+      kind: "dm",
+      since_minutes: 60,
     });
   });
 
-  it("passes through SessionListItem rows verbatim from the contract response (no aliasing)", async () => {
-    // Tight pass-through — the wrapper does NOT alias raw.key → sessionKey
-    // or compute agentId from the session-key prefix. The daemon-side handler is the
-    // trust boundary; the client returns result.sessions unchanged.
+  it("returns session list rows from the contract response", async () => {
     const rpc = makeRpc({
       sessions: [
         {
-          sessionKey: "agent:alpha:tenant:user:channel",
+          conversationRef: "cv-alpha",
           agentId: "alpha",
-          userId: "user",
-          channelId: "channel",
-          kind: "slack",
+          kind: "dm",
           messageCount: 4,
           totalTokens: 100,
           updatedAt: 1000,
@@ -135,75 +147,105 @@ describe("createApiClient — session.list via rpcCall path", () => {
       ],
       total: 1,
     });
-    const sessions = await createApiClient(BASE_URL, TOKEN, rpc).listSessions();
+    const sessions = await createApiClient(BASE_URL, TOKEN, rpc).listSessions(AUTHORITY);
     expect(sessions[0]?.agentId).toBe("alpha");
-    expect(sessions[0]?.kind).toBe("slack");
+    expect(sessions[0]?.kind).toBe("dm");
     expect(sessions[0]?.messageCount).toBe(4);
-    expect(sessions[0]?.sessionKey).toBe("agent:alpha:tenant:user:channel");
-    expect(sessions[0]?.userId).toBe("user");
-    expect(sessions[0]?.channelId).toBe("channel");
+    expect(sessions[0]?.conversationRef).toBe("cv-alpha");
   });
 });
 
 describe("createApiClient — session.history via rpcCall path", () => {
-  it("delegates getSessionDetail to rpcCall session.history with session_key param", async () => {
+  it("delegates getSessionDetail with the exact conversation authority", async () => {
     const rpc = makeRpc({ session: { key: "k1" }, messages: [] });
-    await createApiClient(BASE_URL, TOKEN, rpc).getSessionDetail("k1");
-    expect(rpc).toHaveBeenCalledWith("session.history", { session_key: "k1" });
+    await createApiClient(BASE_URL, TOKEN, rpc).getSessionDetail(TARGET);
+    expect(rpc).toHaveBeenCalledWith("session.history", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
+      conversation_ref: "cv-a",
+    });
   });
 });
 
 describe("createApiClient — session.reset via rpcCall path", () => {
-  it("delegates single resetSession to rpcCall session.reset with session_key param", async () => {
+  it("delegates single resetSession with an explicit conversation target", async () => {
     const rpc = makeRpc(undefined);
-    await createApiClient(BASE_URL, TOKEN, rpc).resetSession("k2");
-    expect(rpc).toHaveBeenCalledWith("session.reset", { session_key: "k2" });
+    await createApiClient(BASE_URL, TOKEN, rpc).resetSession(TARGET);
+    expect(rpc).toHaveBeenCalledWith("session.reset", {
+      tenant_id: "tenant-a",
+      agent_id: "agent-a",
+      conversation_ref: "cv-a",
+    });
   });
 
-  it("delegates resetSessionsBulk to rpcCall session.reset with keys array param", async () => {
-    const rpc = makeRpc({ reset: 5 });
-    const r = await createApiClient(BASE_URL, TOKEN, rpc).resetSessionsBulk(["a", "b"]);
-    expect(rpc).toHaveBeenCalledWith("session.reset", { keys: ["a", "b"] });
-    expect(r.reset).toBe(5);
+  it("delegates bulk resets as contract-valid point calls", async () => {
+    const rpc = makeRpc({ reset: true });
+    const targets = [TARGET, { ...TARGET, conversationRef: "cv-b" }];
+    const r = await createApiClient(BASE_URL, TOKEN, rpc).resetSessionsBulk(targets);
+    expect(rpc).toHaveBeenNthCalledWith(1, "session.reset", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-a",
+    });
+    expect(rpc).toHaveBeenNthCalledWith(2, "session.reset", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-b",
+    });
+    expect(r.reset).toBe(2);
   });
 });
 
 describe("createApiClient — session.compact via rpcCall path", () => {
-  it("delegates compactSession to rpcCall session.compact with session_key param", async () => {
+  it("delegates compactSession with an explicit conversation target", async () => {
     const rpc = makeRpc(undefined);
-    await createApiClient(BASE_URL, TOKEN, rpc).compactSession("k3");
-    expect(rpc).toHaveBeenCalledWith("session.compact", { session_key: "k3" });
+    await createApiClient(BASE_URL, TOKEN, rpc).compactSession(TARGET);
+    expect(rpc).toHaveBeenCalledWith("session.compact", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-a",
+    });
   });
 });
 
 describe("createApiClient — session.delete via rpcCall path", () => {
-  it("delegates single deleteSession to rpcCall session.delete with session_key param", async () => {
+  it("delegates single deleteSession with an explicit conversation target", async () => {
     const rpc = makeRpc(undefined);
-    await createApiClient(BASE_URL, TOKEN, rpc).deleteSession("k4");
-    expect(rpc).toHaveBeenCalledWith("session.delete", { session_key: "k4" });
+    await createApiClient(BASE_URL, TOKEN, rpc).deleteSession(TARGET);
+    expect(rpc).toHaveBeenCalledWith("session.delete", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-a",
+    });
   });
 
-  it("delegates deleteSessionsBulk to rpcCall session.delete with keys array param", async () => {
-    const rpc = makeRpc({ deleted: 2 });
-    const r = await createApiClient(BASE_URL, TOKEN, rpc).deleteSessionsBulk(["x", "y"]);
-    expect(rpc).toHaveBeenCalledWith("session.delete", { keys: ["x", "y"] });
+  it("delegates bulk deletes as contract-valid point calls", async () => {
+    const rpc = makeRpc({ deleted: true });
+    const targets = [TARGET, { ...TARGET, conversationRef: "cv-b" }];
+    const r = await createApiClient(BASE_URL, TOKEN, rpc).deleteSessionsBulk(targets);
+    expect(rpc).toHaveBeenNthCalledWith(1, "session.delete", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-a",
+    });
+    expect(rpc).toHaveBeenNthCalledWith(2, "session.delete", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-b",
+    });
     expect(r.deleted).toBe(2);
   });
 });
 
 describe("createApiClient — session.export via rpcCall path", () => {
-  it("delegates single exportSession to rpcCall session.export with session_key param", async () => {
-    const rpc = makeRpc("exported-session");
-    const r = await createApiClient(BASE_URL, TOKEN, rpc).exportSession("k5");
-    expect(rpc).toHaveBeenCalledWith("session.export", { session_key: "k5" });
-    expect(r).toBe("exported-session");
+  it("delegates single exportSession with an explicit conversation target", async () => {
+    const rpc = makeRpc({ conversationRef: "cv-a", messages: [] });
+    const r = await createApiClient(BASE_URL, TOKEN, rpc).exportSession(TARGET);
+    expect(rpc).toHaveBeenCalledWith("session.export", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-a",
+    });
+    expect(JSON.parse(r)).toEqual({ conversationRef: "cv-a", messages: [] });
   });
 
-  it("delegates exportSessionsBulk to rpcCall session.export with keys array param", async () => {
-    const rpc = makeRpc("bulk-export");
-    const r = await createApiClient(BASE_URL, TOKEN, rpc).exportSessionsBulk(["a", "b"]);
-    expect(rpc).toHaveBeenCalledWith("session.export", { keys: ["a", "b"] });
-    expect(r).toBe("bulk-export");
+  it("delegates bulk exports as contract-valid point calls", async () => {
+    const rpc = makeRpc({ messages: [] });
+    const targets = [TARGET, { ...TARGET, conversationRef: "cv-b" }];
+    const r = await createApiClient(BASE_URL, TOKEN, rpc).exportSessionsBulk(targets);
+    expect(rpc).toHaveBeenNthCalledWith(1, "session.export", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-a",
+    });
+    expect(rpc).toHaveBeenNthCalledWith(2, "session.export", {
+      tenant_id: "tenant-a", agent_id: "agent-a", conversation_ref: "cv-b",
+    });
+    expect(r.split("\n")).toHaveLength(2);
   });
 });
 
@@ -223,9 +265,11 @@ describe("createApiClient — fetch fallback when rpcCall is not provided", () =
       status: 200,
       json: () => Promise.resolve({}),
     } as Response);
-    await createApiClient(BASE_URL, TOKEN).deleteMemory("memory-1");
+    await createApiClient(BASE_URL, TOKEN).deleteMemory("memory-1", { tenantId: "acme", agentId: "aria" });
     const call = mockFetch.mock.calls[0]!;
     expect(call[0]).toContain("/api/memory/memory-1");
+    expect(call[0]).toContain("tenant=acme");
+    expect(call[0]).toContain("agent=aria");
     expect((call[1] as RequestInit)?.method).toBe("DELETE");
   });
 
@@ -235,10 +279,12 @@ describe("createApiClient — fetch fallback when rpcCall is not provided", () =
       status: 200,
       json: () => Promise.resolve({ deleted: 2 }),
     } as Response);
-    await createApiClient(BASE_URL, TOKEN).deleteMemoryBulk(["id1", "id2"]);
+    await createApiClient(BASE_URL, TOKEN).deleteMemoryBulk(["id1", "id2"], { tenantId: "acme", agentId: "aria" });
     const call = mockFetch.mock.calls[0]!;
     expect(call[0]).toContain("/api/memory/bulk-delete");
     expect((call[1] as RequestInit)?.method).toBe("POST");
+    expect((call[1] as RequestInit)?.body).toContain("acme");
+    expect((call[1] as RequestInit)?.body).toContain("aria");
   });
 
   it("builds the browseMemory query string from every defined parameter on fetch fallback", async () => {
@@ -248,6 +294,7 @@ describe("createApiClient — fetch fallback when rpcCall is not provided", () =
       json: () => Promise.resolve({ entries: [], total: 0 }),
     } as Response);
     await createApiClient(BASE_URL, TOKEN).browseMemory({
+      tenantId: "acme",
       offset: 10,
       limit: 50,
       type: "fact",
@@ -257,11 +304,12 @@ describe("createApiClient — fetch fallback when rpcCall is not provided", () =
       to: 200,
     });
     const url = mockFetch.mock.calls[0]![0] as string;
+    expect(url).toContain("tenant=acme");
+    expect(url).toContain("agent=alpha");
     expect(url).toContain("offset=10");
     expect(url).toContain("limit=50");
     expect(url).toContain("type=fact");
     expect(url).toContain("trust=trusted");
-    expect(url).toContain("agentId=alpha");
     expect(url).toContain("from=100");
     expect(url).toContain("to=200");
   });

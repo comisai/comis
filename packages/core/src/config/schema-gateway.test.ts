@@ -74,6 +74,25 @@ describe("GatewayConfigSchema", () => {
     expect(rMax.success).toBe(true);
   });
 
+  it("accepts DNS, IPv4, and unbracketed IPv6 bind hosts", () => {
+    expect(GatewayConfigSchema.safeParse({ host: "localhost" }).success).toBe(true);
+    expect(GatewayConfigSchema.safeParse({ host: "0.0.0.0" }).success).toBe(true);
+    expect(GatewayConfigSchema.safeParse({ host: "::" }).success).toBe(true);
+    expect(GatewayConfigSchema.safeParse({ host: "2001:db8::1" }).success).toBe(true);
+  });
+
+  it("rejects URL syntax and credential-shaped gateway hosts", () => {
+    for (const host of [
+      "user:pass@example.com",
+      "https://example.com",
+      "example.com/path",
+      "example.com:4766",
+      "[::1]",
+    ]) {
+      expect(GatewayConfigSchema.safeParse({ host }).success, host).toBe(false);
+    }
+  });
+
   it("rejects unknown fields (strictObject enforcement)", () => {
     const result = GatewayConfigSchema.safeParse({ unknownField: "test" });
     expect(result.success).toBe(false);
@@ -184,7 +203,7 @@ describe("GatewayTokenSchema", () => {
     }
   });
 
-  it("rejects empty id", () => {
+  it("rejects gateway tokens with an empty id", () => {
     const result = GatewayTokenSchema.safeParse({ id: "" });
     expect(result.success).toBe(false);
   });

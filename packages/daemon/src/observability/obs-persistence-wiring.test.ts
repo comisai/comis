@@ -21,6 +21,8 @@ import {
   generationQualityEventToRow,
   pipelineAuthoredEventToRow,
   orchestrateRunSummaryEventToRow,
+  trajectoryDegradedEventToRow,
+  backgroundRecoveryEventToRow,
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
@@ -42,7 +44,7 @@ import {
 import type { AuditRowSink } from "./obs-audit-sink.js";
 import type { AuditEventRow } from "@comis/memory";
 import type { ComisLogger } from "@comis/infra";
-import type { EventMap } from "@comis/core";
+import type { ConversationRef, EventMap } from "@comis/core";
 import { runWithContext } from "@comis/core";
 import Database from "better-sqlite3";
 import * as fs from "node:fs";
@@ -50,6 +52,19 @@ import * as os from "node:os";
 import * as nodePath from "node:path";
 import { initSchema, createObservabilityStore, queryCacheBreakRateByReason } from "@comis/memory";
 import type { DiagnosticEvent } from "./diagnostic-collector.js";
+
+function deliveryAuthorityEventFields(channelType: string, conversationId: string) {
+  return {
+    tenantId: "tenant-observability",
+    conversationRef: `cv_${"A".repeat(43)}` as ConversationRef,
+    destinationEndpoint: {
+      channelType,
+      channelInstanceId: "test-instance",
+      conversationId,
+      conversationKind: "direct" as const,
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // tokenUsageEventToRow
@@ -263,20 +278,24 @@ describe("tokenUsageEventToRow", () => {
 // ---------------------------------------------------------------------------
 
 describe("deliveryEventToRow", () => {
-  it("maps success=true to status 'success' with no errorMessage", () => {
+  it("preserves success status with no failure metadata", () => {
     const payload: EventMap["diagnostic:message_processed"] = {
+      ...deliveryAuthorityEventFields("telegram", "chan-1"),
       messageId: "msg-1",
       channelId: "chan-1",
       channelType: "telegram",
       agentId: "agent-1",
       sessionKey: "sk-1",
+      traceId: "trace-1",
+      toolCalls: 2,
+      llmCalls: 3,
       receivedAt: 900,
       executionDurationMs: 80,
       deliveryDurationMs: 20,
       totalDurationMs: 100,
       tokensUsed: 300,
       cost: 0.02,
-      success: true,
+      status: "success",
       finishReason: "end_turn",
       timestamp: 1000,
     };
@@ -288,25 +307,33 @@ describe("deliveryEventToRow", () => {
     expect(row.latencyMs).toBe(100);
     expect(row.tokensTotal).toBe(300);
     expect(row.costTotal).toBe(0.02);
-    expect(row.traceId).toBe("");
+    expect(row.traceId).toBe("trace-1");
+    expect(row.toolCalls).toBe(2);
+    expect(row.llmCalls).toBe(3);
     expect(row.channelType).toBe("telegram");
     expect(row.sessionKey).toBe("sk-1");
   });
 
-  it("maps success=false to status 'error' with finishReason as errorMessage", () => {
+  it("preserves error status, failure stage, kind, and finish reason", () => {
     const payload: EventMap["diagnostic:message_processed"] = {
+      ...deliveryAuthorityEventFields("discord", "chan-2"),
       messageId: "msg-2",
       channelId: "chan-2",
       channelType: "discord",
       agentId: "agent-2",
       sessionKey: "sk-2",
+      traceId: "trace-2",
+      toolCalls: null,
+      llmCalls: null,
       receivedAt: 800,
       executionDurationMs: 150,
       deliveryDurationMs: 50,
       totalDurationMs: 200,
       tokensUsed: 0,
       cost: 0,
-      success: false,
+      status: "error",
+      failureStage: "execution",
+      errorKind: "dependency",
       finishReason: "rate_limited",
       timestamp: 1000,
     };
@@ -315,7 +342,90 @@ describe("deliveryEventToRow", () => {
 
     expect(row.status).toBe("error");
     expect(row.errorMessage).toBe("rate_limited");
+    expect(row.failureStage).toBe("execution");
+    expect(row.errorKind).toBe("dependency");
     expect(row.latencyMs).toBe(200);
+    expect(row.toolCalls).toBeNull();
+    expect(row.llmCalls).toBeNull();
+  });
+
+  it("stores a stable delivery failure reason instead of the successful executor reason", () => {
+    const payload: EventMap["diagnostic:message_processed"] = {
+      ...deliveryAuthorityEventFields("telegram", "chan-2"),
+      messageId: "msg-delivery-error",
+      channelId: "chan-2",
+      channelType: "telegram",
+      agentId: "agent-1",
+      sessionKey: "sk-1",
+      receivedAt: 900,
+      toolCalls: 1,
+      llmCalls: 2,
+      executionDurationMs: 80,
+      deliveryDurationMs: 20,
+      totalDurationMs: 100,
+      tokensUsed: 50,
+      cost: 0.01,
+      status: "error",
+      failureStage: "delivery",
+      errorKind: "platform",
+      finishReason: "stop",
+      timestamp: 1000,
+    };
+
+    expect(deliveryEventToRow(payload)).toMatchObject({
+      status: "error",
+      errorMessage: "delivery_failed",
+      failureStage: "delivery",
+      errorKind: "platform",
+    });
+  });
+
+  it("stores stable late-abort reasons instead of the executor stop reason", () => {
+    const aborted = deliveryEventToRow({
+      ...deliveryAuthorityEventFields("telegram", "chat-a"),
+      messageId: "msg-aborted",
+      channelId: "chat-a",
+      channelType: "telegram",
+      agentId: "agent-a",
+      sessionKey: "default:user-a:chat-a",
+      traceId: "trace-aborted",
+      toolCalls: 0,
+      llmCalls: 1,
+      receivedAt: 900,
+      executionDurationMs: 50,
+      deliveryDurationMs: 50,
+      totalDurationMs: 100,
+      tokensUsed: 10,
+      cost: 0.001,
+      status: "aborted",
+      finishReason: "stop",
+      timestamp: 1_000,
+    });
+    const denied = deliveryEventToRow({
+      ...deliveryAuthorityEventFields("telegram", "chat-a"),
+      messageId: "msg-denied",
+      channelId: "chat-a",
+      channelType: "telegram",
+      agentId: "agent-a",
+      sessionKey: "default:user-a:chat-a",
+      traceId: "trace-denied",
+      toolCalls: 0,
+      llmCalls: 1,
+      receivedAt: 900,
+      executionDurationMs: 100,
+      deliveryDurationMs: 0,
+      totalDurationMs: 100,
+      tokensUsed: 10,
+      cost: 0.001,
+      status: "error",
+      failureStage: "execution",
+      errorKind: "precondition",
+      finishReason: "stop",
+      timestamp: 1_000,
+    });
+
+    expect(aborted.errorMessage).toBe("aborted");
+    expect(denied.errorMessage).toBe("execution_failed");
   });
 });
 
@@ -325,7 +435,7 @@ describe("deliveryEventToRow", () => {
 
 describe("diagnosticEventToRow", () => {
   it("maps DiagnosticEvent fields to DiagnosticRow with JSON.stringify for details", () => {
-    const event: DiagnosticEvent = {
+    const event = {
       id: "diag-1",
       category: "message",
       eventType: "diagnostic:message_processed",
@@ -333,8 +443,9 @@ describe("diagnosticEventToRow", () => {
       agentId: "agent-1",
       channelId: "chan-1",
       sessionKey: "sk-1",
+      traceId: "trace-1",
       data: { foo: "bar", count: 42 },
-    };
+    } as DiagnosticEvent & { traceId: string };
 
     const row = diagnosticEventToRow(event);
 
@@ -345,7 +456,7 @@ describe("diagnosticEventToRow", () => {
     expect(row.sessionKey).toBe("sk-1");
     expect(row.message).toBe("diagnostic:message_processed");
     expect(row.details).toBe(JSON.stringify({ foo: "bar", count: 42 }));
-    expect(row.traceId).toBeUndefined();
+    expect(row.traceId).toBe("trace-1");
   });
 
   it("handles undefined agentId and sessionKey", () => {
@@ -406,11 +517,11 @@ describe("sessionSummaryEventToRow", () => {
     expect(details.breakerTripCount).toBe(1);
     expect(details.turnCount).toBe(24);
     // topErrorKinds and source are carried into the row — both queryable
-    // by the fleet aggregate without opening per-session _session-metadata.json.
+    // by the system aggregate without opening per-session _session-metadata.json.
     expect(details.topErrorKinds).toEqual({ dependency: 8 });
     expect(details.source).toBe("runtime");
     // The named endReason cause is persisted into the row details so
-    // obs.fleet.health can build degradedByCause from the rows alone.
+    // obs.system.health can build degradedByCause from the rows alone.
     expect(details.endReason).toBe("context_exhausted");
   });
 
@@ -488,11 +599,11 @@ describe("dagDegradedEventToRow", () => {
   // Severity must track the reason. The `serialized_wait` member of the
   // closed union is documented (events-messaging.ts) as the bounded-wait signal
   // — normal back-pressure, NOT a degrade. Stamping it `warning` would inflate
-  // the fleet lens's degrade count with a benign event.
+  // the system health view's degrade count with a benign event.
   it("maps the benign session_rebase reason to severity info, not warning", () => {
     // session_rebase = "continued after restart" — the comment on
     // the union member itself says NOT a degradation. At warning severity it
-    // fires once per session start and dominates the fleet's findings.
+    // fires once per session start and dominates the system's findings.
     const row = dagDegradedEventToRow({
       conversationId: "c1",
       agentId: "agent-1",
@@ -548,7 +659,7 @@ describe("dagDegradedEventToRow", () => {
   // security-relevant degrade (`fail_closed_rollover`) fires precisely on a
   // conversationId/sessionKey CONFLICT — so the row must carry conversationId
   // (an identifier, not content — bounded-payload still holds) for the
-  // fleet lens to join on, instead of silently dropping it.
+  // system health view to join on, instead of silently dropping it.
   it("carries conversationId into details so a divergent identifier is recoverable", () => {
     const row = dagDegradedEventToRow({
       conversationId: "conv-divergent",
@@ -619,7 +730,7 @@ describe("channelInboundSilentEventToRow", () => {
     expect(row.traceId).toBeUndefined();
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
-    // The label the generic health_signal:<label> fleet rollup groups on, plus
+    // The label the generic health_signal:<label> system rollup groups on, plus
     // channelType + counts only — no message bodies.
     expect(details).toEqual({
       signal: "channel_ingress_silent",
@@ -667,7 +778,7 @@ describe("channelIngressAuthRejectedEventToRow", () => {
     expect(row.traceId).toBeUndefined();
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
-    // The label the generic health_signal:<label> fleet rollup groups on, plus
+    // The label the generic health_signal:<label> system rollup groups on, plus
     // the channel label + the closed reason class only — no token, header, or body.
     expect(details).toEqual({
       signal: "channel_ingress_auth_rejected",
@@ -771,7 +882,7 @@ describe("wakeGateEventToRow (cron wake-gate fire → cron_wake_gate)", () => {
     expect(row.timestamp).toBe(4242);
     expect(row.category).toBe("cron_wake_gate");
     // INFO: a skip (and a wake) is healthy posture, NOT a degrade alert — the row
-    // must NOT inflate the fleet degrade count (the benign-reason discipline).
+    // must NOT inflate the system degrade count (the benign-reason discipline).
     expect(row.severity).toBe("info");
     expect(row.agentId).toBe("default");
     expect(row.message).toBe("scheduler:wake_gate");
@@ -790,7 +901,7 @@ describe("wakeGateEventToRow (cron wake-gate fire → cron_wake_gate)", () => {
       "toolCalls",
       "wake",
     ]);
-    // The jobId (an id, but the fleet fork rolls up per-AGENT) never lands on the
+    // The jobId (an id, but the system fork rolls up per-AGENT) never lands on the
     // row — never a gate script / gathered payload / prompt substring either.
     expect(row.details ?? "").not.toContain("job-inbox-triage");
     expect(row.details ?? "").not.toMatch(/script|payload|gather|prompt/i);
@@ -847,7 +958,7 @@ describe("mcpReconnectFailedEventToRow", () => {
 // ---------------------------------------------------------------------------
 // mcpConnectFailedEventToRow (MCP INITIAL-connect/install failure →
 // health_signal). Unlike reconnect_failed there is no error BODY to drop —
-// `reason` is a closed enum, safe to carry so `comis fleet` can group by it.
+// `reason` is a closed enum, safe to carry so `comis system-health` can group by it.
 // ---------------------------------------------------------------------------
 
 describe("mcpConnectFailedEventToRow", () => {
@@ -879,7 +990,7 @@ describe("mcpConnectFailedEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// script_zero_hit + summary_language_mismatch (the fleet
+// script_zero_hit + summary_language_mismatch (the system
 // path). Both are visibility-only signals → severity ALWAYS "warning" (no
 // gating, no benign allow-set like dag_degraded's). details carries closed
 // ScriptClass/lane enums + ids + counts ONLY — never query text / summary body.
@@ -974,7 +1085,7 @@ describe("summaryLanguageMismatchEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// generationQualityEventToRow (the memory-generation fleet path).
+// generationQualityEventToRow (the memory-generation system path).
 // Visibility-only → severity ALWAYS "warning". details carries the closed
 // GenerationPass + ScriptClass enums + the three issue booleans ONLY — never the
 // source or generated body. Cron-job passes carry no sessionKey.
@@ -1035,12 +1146,12 @@ describe("generationQualityEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// pipelineAuthoredEventToRow (the fleet authoring path).
+// pipelineAuthoredEventToRow (the system authoring path).
 // Like generationQualityEventToRow: a `pipeline:authored` event → a `health_signal` DiagnosticRow
 // with `signal:"pipeline_authoring"`. details carries closed enums + booleans ONLY
 // (action/tier/schemaValid/repaired) — NEVER a pipeline body, a type_config value,
 // a node task/label, or a graph (§2.7). severity is INFO for a valid author (so a
-// valid authoring does NOT inflate the fleet degrade count) and WARNING for an
+// valid authoring does NOT inflate the system degrade count) and WARNING for an
 // invalid one (the operator-visible small-model miss).
 // ---------------------------------------------------------------------------
 
@@ -1073,7 +1184,7 @@ describe("pipelineAuthoredEventToRow", () => {
     });
   });
 
-  it("maps a VALID author to severity:info (valid authorings do not inflate the fleet degrade count)", () => {
+  it("maps a VALID author to severity:info (valid authorings do not inflate the system degrade count)", () => {
     const row = pipelineAuthoredEventToRow({
       action: "execute",
       capabilityClass: "frontier",
@@ -1115,14 +1226,14 @@ describe("pipelineAuthoredEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// orchestrateRunSummaryEventToRow (the fleet efficiency path).
+// orchestrateRunSummaryEventToRow (the system efficiency path).
 // Like pipelineAuthoredEventToRow: an `orchestrate:run_summary` event → a
 // `health_signal` DiagnosticRow with `signal:"orchestrate_efficiency"`. details
 // carries counts + token ESTIMATES + the closed failureClass ONLY — NEVER the
 // runId, the raw stdout, the resultRefBytes body, or the stderr tail (§2.7). The
 // `sessionKey` rides the row as the correlation key (the event carries it even
 // though the trajectory translator strips it from the trajectory `data`). severity
-// is ALWAYS info: a completed run is standing signal, never a fleet degrade.
+// is ALWAYS info: a completed run is standing signal, never a system degrade.
 // ---------------------------------------------------------------------------
 
 describe("orchestrateRunSummaryEventToRow", () => {
@@ -1217,7 +1328,7 @@ describe("orchestrateRunSummaryEventToRow", () => {
 
 // ---------------------------------------------------------------------------
 // Orchestration-observability — three daemon-side orchestration events
-// that were DARK (no fleet/trajectory surface): a fail-closed sandbox-downgrade
+// that were DARK (no system/trajectory surface): a fail-closed sandbox-downgrade
 // spawn refusal, a dead-lettered sub-agent delivery, and a per-node
 // token-budget breach. Each maps to a `health_signal` DiagnosticRow (the same
 // shape as the generation-quality and pipeline-authoring mappers) carrying CLOSED
@@ -1346,7 +1457,7 @@ describe("nodeBudgetExceededEventToRow", () => {
       graphId: "g", nodeId: "n", agentId: "a", tokenBudget: 5000, tokensUsed: 17770, capSource: "inherit-share", timestamp: 1,
     });
     expect(Object.keys(JSON.parse(row.details ?? "{}"))).toEqual(["signal", "capSource"]);
-    // The aggregate fleet count never needs the raw spend — those are per-incident (explain).
+    // The aggregate system count never needs the raw spend — those are per-incident (explain).
     const serialized = JSON.stringify(row.details);
     expect(serialized).not.toContain("17770");
   });
@@ -1397,8 +1508,14 @@ describe("durableOrphanedEventToRow", () => {
     ]);
   });
 
-  it("carries each closed reason enum verbatim (4-member union)", () => {
-    for (const reason of ["not_resumable", "reread_failed", "invalid_caps", "resume_failed"] as const) {
+  it("carries each closed durable orphan reason enum verbatim", () => {
+    for (const reason of [
+      "not_resumable",
+      "reread_failed",
+      "invalid_record",
+      "invalid_caps",
+      "resume_failed",
+    ] as const) {
       const row = durableOrphanedEventToRow({ rootRunId: "r", reason, timestamp: 1 });
       expect(JSON.parse(row.details ?? "{}").reason).toBe(reason);
     }
@@ -1406,31 +1523,41 @@ describe("durableOrphanedEventToRow", () => {
 });
 
 describe("durableResumedEventToRow", () => {
-  it("maps a durable:resumed payload to an info health_signal row (stepIndex + rootRunId, no body)", () => {
+  it("maps a durable:resumed payload to an info health_signal row with checkpoint identity", () => {
     const row = durableResumedEventToRow({
       rootRunId: "root-resumed",
-      stepIndex: 4,
+      sourceCheckpointId: "checkpoint-source",
+      checkpointId: "checkpoint-4",
+      sourceTerminalReason: "superseded",
       timestamp: 6000,
     });
 
     expect(row.timestamp).toBe(6000);
     expect(row.category).toBe("health_signal");
-    // A resume is healthy recovery, not degradation → info (does not inflate the fleet degrade count).
+    // A resume is healthy recovery, not degradation → info (does not inflate the system degrade count).
     expect(row.severity).toBe("info");
     expect(row.message).toBe("durable:resumed");
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details.signal).toBe("durable_resumed");
-    expect(details.stepIndex).toBe(4);
+    expect(details.sourceCheckpointId).toBe("checkpoint-source");
+    expect(details.sourceTerminalReason).toBe("superseded");
+    expect(details.checkpointId).toBe("checkpoint-4");
     expect(details.rootRunId).toBe("root-resumed");
-    expect(Object.keys(details).sort()).toEqual(["rootRunId", "signal", "stepIndex"]);
+    expect(Object.keys(details).sort()).toEqual([
+      "checkpointId",
+      "rootRunId",
+      "signal",
+      "sourceCheckpointId",
+      "sourceTerminalReason",
+    ]);
   });
 });
 
 describe("autonomyBudgetWarningEventToRow", () => {
   it("maps autonomy:budget_warning to a health_signal row (severity warning) with limb + counts only", () => {
     // The pre-trip budget warning: a session at 80% of an autonomy.budget limb
-    // must surface on the fleet lens BEFORE the abort wedges it (observed
+    // must surface on the system health view BEFORE the abort wedges it (observed
     // live: the wedge arrived with zero warning). Counts + closed labels only.
     const row = autonomyBudgetWarningEventToRow({
       rootRunId: "root-session-default:u1:c1",
@@ -1517,6 +1644,102 @@ describe("autonomyDenialBreakerEventToRow", () => {
     expect(details.rootRunId).toBe("root-deny");
     // Content-free: the closed triple ONLY — never the engine's free-text deny reason.
     expect(Object.keys(details).sort()).toEqual(["denialBreakerTrips", "rootRunId", "signal"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// trajectoryDegradedEventToRow (trajectory resume failure → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("trajectoryDegradedEventToRow", () => {
+  it("maps a trajectory resume failure to an attributed content-free warning row", () => {
+    const row = trajectoryDegradedEventToRow({
+      agentId: "agent-1",
+      sessionKey: "tenant:telegram:chat",
+      traceId: "trace-1",
+      reason: "resume_failed",
+      failureKind: "symlink",
+      timestamp: 10_000,
+    });
+
+    expect(row).toEqual({
+      timestamp: 10_000,
+      category: "health_signal",
+      severity: "warning",
+      agentId: "agent-1",
+      sessionKey: "tenant:telegram:chat",
+      traceId: "trace-1",
+      message: "trajectory_resume_failed",
+      details: JSON.stringify({
+        signal: "trajectory_resume_failed",
+        reason: "resume_failed",
+        failureKind: "symlink",
+      }),
+    });
+    expect(Object.keys(JSON.parse(row.details ?? "{}")).sort()).toEqual([
+      "failureKind",
+      "reason",
+      "signal",
+    ]);
+  });
+
+  it("preserves every closed resume failure kind without accepting an error body", () => {
+    for (const failureKind of [
+      "permission",
+      "confinement",
+      "symlink",
+      "non_regular",
+      "size_limit",
+      "invalid_jsonl",
+      "changed",
+      "io",
+    ] as const) {
+      const row = trajectoryDegradedEventToRow({
+        agentId: "agent-1",
+        sessionKey: "session-1",
+        traceId: "trace-1",
+        reason: "resume_failed",
+        failureKind,
+        timestamp: 10_001,
+      });
+      expect(JSON.parse(row.details ?? "{}")).toEqual({
+        signal: "trajectory_resume_failed",
+        reason: "resume_failed",
+        failureKind,
+      });
+    }
+  });
+});
+
+describe("backgroundRecoveryEventToRow", () => {
+  it("maps a canonical recovery incident to a content-free health warning", () => {
+    const row = backgroundRecoveryEventToRow({
+      agentId: "agent-1",
+      taskId: "task-1",
+      toolName: "report",
+      sessionKey: "tenant:agent-1:telegram:chat:user_a",
+      notified: false,
+      reason: "recovery_retry_required",
+      traceId: null,
+      timestamp: 10_002,
+      trajectoryRecorded: true,
+    });
+
+    expect(row).toEqual({
+      timestamp: 10_002,
+      category: "health_signal",
+      severity: "warning",
+      agentId: "agent-1",
+      sessionKey: "tenant:agent-1:telegram:chat:user_a",
+      traceId: "task-1",
+      message: "background_task_recovery_failed",
+      details: JSON.stringify({
+        signal: "background_task_recovery_failed",
+        reason: "recovery_retry_required",
+        taskId: "task-1",
+        toolName: "report",
+      }),
+    });
   });
 });
 
@@ -1618,6 +1841,7 @@ describe("setupObsPersistence", () => {
     expect(eventBus.on).toHaveBeenCalledWith("context:dag_degraded", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("health:budget_exceeded", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("mcp:server:reconnect_failed", expect.any(Function));
+    expect(eventBus.on).toHaveBeenCalledWith("observability:trajectory_degraded", expect.any(Function));
     // The 2 multilingual health_signal subscriptions.
     expect(eventBus.on).toHaveBeenCalledWith("context:script_zero_hit", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("context:summary_language_mismatch", expect.any(Function));
@@ -1691,7 +1915,13 @@ describe("setupObsPersistence", () => {
     });
     // j-m. The four autonomy/durable lifecycle signals.
     eventBus.emit("durable:orphaned", { rootRunId: "root-1", reason: "not_resumable", timestamp: 1009 });
-    eventBus.emit("durable:resumed", { rootRunId: "root-2", stepIndex: 3, timestamp: 1010 });
+    eventBus.emit("durable:resumed", {
+      rootRunId: "root-2",
+      sourceCheckpointId: "checkpoint-2",
+      checkpointId: "checkpoint-3",
+      sourceTerminalReason: "superseded",
+      timestamp: 1010,
+    });
     eventBus.emit("autonomy:revoked", { rootRunId: "root-3", revoked: 2, timestamp: 1011 });
     eventBus.emit("autonomy:killed", { rootRunId: "root-4", killed: 1, timestamp: 1012 });
     eventBus.emit("autonomy:denial_breaker_tripped", { rootRunId: "root-5", timestamp: 1013 });
@@ -1701,16 +1931,21 @@ describe("setupObsPersistence", () => {
       durationMs: 1200, exitCode: 0, stdoutBytesRaw: 40, stdoutCharsReentered: 40,
       resultRefCount: 2, resultRefBytes: 80000, estSavedTokens: 19960, savedRatio: 0.99, timestamp: 1014,
     });
+    // o. A trajectory recorder could not safely resume its existing JSONL.
+    eventBus.emit("observability:trajectory_degraded", {
+      agentId: "a1", sessionKey: "sk-1", traceId: "trace-1",
+      reason: "resume_failed", failureKind: "invalid_jsonl", timestamp: 1015,
+    });
 
     // Flush the diagnostic buffer.
     vi.advanceTimersByTime(500);
 
-    // Exactly one health_signal row per event (15 total), each with the right message.
+    // Exactly one health_signal row per event (16 total), each with the right message.
     const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
     const healthRows = calls
       .map((c) => c[0] as { category?: string; message?: string; details?: string })
       .filter((r) => r.category === "health_signal");
-    expect(healthRows).toHaveLength(15);
+    expect(healthRows).toHaveLength(16);
     const messages = healthRows.map((r) => r.message).sort();
     expect(messages).toEqual([
       "autonomy:denial_breaker_tripped",
@@ -1728,6 +1963,7 @@ describe("setupObsPersistence", () => {
       "security:sandbox_downgrade_refused",
       "subagent:budget_exceeded",
       "subagent:delivery_deadlettered",
+      "trajectory_resume_failed",
     ]);
     // The autonomy rows carry their closed signal labels.
     expect(JSON.parse(healthRows.find((r) => r.message === "durable:orphaned")!.details ?? "{}").signal).toBe("durable_orphaned");
@@ -1747,6 +1983,12 @@ describe("setupObsPersistence", () => {
     const orchRow = healthRows.find((r) => r.message === "orchestrate:run_summary")!;
     expect(JSON.parse(orchRow.details ?? "{}").signal).toBe("orchestrate_efficiency");
     expect(JSON.parse(orchRow.details ?? "{}").estSavedTokens).toBe(19960);
+    const trajectoryRow = healthRows.find((r) => r.message === "trajectory_resume_failed")!;
+    expect(JSON.parse(trajectoryRow.details ?? "{}")).toEqual({
+      signal: "trajectory_resume_failed",
+      reason: "resume_failed",
+      failureKind: "invalid_jsonl",
+    });
     expect(orchRow.details ?? "").not.toContain("orch-1");
     // The three ORCH-OBS rows carry their closed signal labels.
     expect(JSON.parse(healthRows.find((r) => r.message === "security:sandbox_downgrade_refused")!.details ?? "{}").signal).toBe("sandbox_downgrade_refused");
@@ -1935,18 +2177,22 @@ describe("setupObsPersistence", () => {
 
     // Emit a message processed event
     eventBus.emit("diagnostic:message_processed", {
+      ...deliveryAuthorityEventFields("telegram", "c1"),
       messageId: "m1",
       channelId: "c1",
       channelType: "telegram",
       agentId: "a1",
       sessionKey: "sk-1",
+      traceId: "trace-persisted",
+      toolCalls: 1,
+      llmCalls: 2,
       receivedAt: 900,
       executionDurationMs: 80,
       deliveryDurationMs: 20,
       totalDurationMs: 100,
       tokensUsed: 300,
       cost: 0.02,
-      success: true,
+      status: "success",
       finishReason: "end_turn",
       timestamp: 1000,
     });
@@ -1957,7 +2203,13 @@ describe("setupObsPersistence", () => {
     // Both delivery and diagnostic should be inserted
     expect(obsStore.insertDelivery).toHaveBeenCalledTimes(1);
     expect(obsStore.insertDelivery).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "success", latencyMs: 100 }),
+      expect.objectContaining({
+        status: "success",
+        latencyMs: 100,
+        traceId: "trace-persisted",
+        toolCalls: 1,
+        llmCalls: 2,
+      }),
     );
 
     expect(obsStore.insertDiagnostic).toHaveBeenCalledTimes(1);
@@ -1965,6 +2217,7 @@ describe("setupObsPersistence", () => {
       expect.objectContaining({
         category: "message",
         message: "diagnostic:message_processed",
+        traceId: "trace-persisted",
       }),
     );
 
@@ -2008,10 +2261,12 @@ describe("setupObsPersistence", () => {
     });
 
     eventBus.emit("diagnostic:message_processed", {
+      ...deliveryAuthorityEventFields("telegram", "c1"),
       messageId: "m1", channelId: "c1", channelType: "telegram",
       agentId: "a1", sessionKey: "sk-1", receivedAt: 900,
+      toolCalls: null, llmCalls: null,
       executionDurationMs: 80, deliveryDurationMs: 20, totalDurationMs: 100,
-      tokensUsed: 0, cost: 0, success: true, finishReason: "end_turn",
+      tokensUsed: 0, cost: 0, status: "success", finishReason: "end_turn",
       timestamp: 1000,
     });
 
@@ -2407,12 +2662,15 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     }
   });
 
-  it("the subscriber logs a scrubbed record via .audit() (level 35)", () => {
+  it("the subscriber logs a content-free summary via .audit() without serialized refs", () => {
     const { deps, eventBus, auditLines } = realDeps();
     const result = setupObsPersistence(deps as never);
     eventBus.emit("audit:event", {
       timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "file.delete",
-      kind: "audit", outcome: "success", metadata: { apiKey: "sk-PLANTED-SECRET" },
+      kind: "audit", outcome: "success", metadata: {
+        apiKey: "sk-PLANTED-SECRET",
+        note: "RAW_AUDIT_METADATA_DO_NOT_LOG",
+      },
     });
     result.drainAll();
 
@@ -2420,6 +2678,9 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     const logged = JSON.stringify(auditLines);
     expect(logged).toContain("audit");
     expect(logged).not.toContain("sk-PLANTED-SECRET");
+    expect(logged).not.toContain("RAW_AUDIT_METADATA_DO_NOT_LOG");
+    expect(auditLines[0]).toEqual(expect.objectContaining({ hasRefs: true }));
+    expect(auditLines[0]).not.toHaveProperty("refs");
   });
 
   it("a tenant-less event persists tenant_id='' when no trace context; uses the trace tenant when present", () => {
@@ -2803,9 +3064,9 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
 
 // ---------------------------------------------------------------------------
 // subagentKilledEventToRow — the attributed sub-agent kill → health_signal row.
-// A health-monitor stuck-kill is fleet-visible degradation (warning); a
+// A health-monitor stuck-kill is system-visible degradation (warning); a
 // parent/operator/system kill is deliberate orchestration (info — the
-// BENIGN_DAG_DEGRADED severity discipline, so it never inflates the fleet
+// BENIGN_DAG_DEGRADED severity discipline, so it never inflates the system
 // degrade count). Content-free: closed signal + closed killedBy ONLY — the
 // runtime/idle numbers stay per-incident (trajectory record + failure record).
 // ---------------------------------------------------------------------------
@@ -2870,9 +3131,9 @@ describe("subagentKilledEventToRow", () => {
 // ---------------------------------------------------------------------------
 
 describe("recallDegradedEventToRow", () => {
-  it("maps a memory:recall_degraded payload to a health_signal row the fleet rollup groups on (signal:recall_degraded)", () => {
+  it("maps a memory:recall_degraded payload to a health_signal row the system rollup groups on (signal:recall_degraded)", () => {
     // Live incident: hours of per-turn recall failures were daemon.log-only —
-    // this row is what turns them into a counted `comis fleet` finding.
+    // this row is what turns them into a counted `comis system-health` finding.
     const row = recallDegradedEventToRow({
       agentId: "a1",
       sessionKey: "sk-1",
@@ -2918,10 +3179,10 @@ describe("recallDegradedEventToRow", () => {
 // ---------------------------------------------------------------------------
 
 describe("prefixUnstableEventToRow", () => {
-  it("maps an agent:prefix_unstable payload to a health_signal row the fleet rollup groups on (signal:cache_prefix_churn)", () => {
+  it("maps an agent:prefix_unstable payload to a health_signal row the system rollup groups on (signal:cache_prefix_churn)", () => {
     // Live incident (comis-harel 2026-07-12): ~328k wasted cache-write tokens
     // in one session were visible only as daemon.log WARNs — this row turns a
-    // recurring churn into a counted `comis fleet` finding.
+    // recurring churn into a counted `comis system-health` finding.
     const row = prefixUnstableEventToRow({
       agentId: "default",
       sessionKey: "default:5177:5177:peer:5177",
@@ -2938,7 +3199,7 @@ describe("prefixUnstableEventToRow", () => {
     expect(row.sessionKey).toBe("default:5177:5177:peer:5177");
     expect(row.message).toBe("agent:prefix_unstable");
 
-    // details: closed labels + counts only — the signal label the fleet rollup
+    // details: closed labels + counts only — the signal label the system rollup
     // groups on, and the mutationClass under `reason` so the finding names it.
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details["signal"]).toBe("cache_prefix_churn");

@@ -47,7 +47,7 @@ export const OverflowPolicySchema = z
 export const OverflowConfigSchema = z.strictObject({
     /** Maximum queued messages per session before overflow triggers */
     maxDepth: z.number().int().positive().default(20),
-    /** What to do when maxDepth is reached */
+    /** What to do when maxDepth is exceeded */
     policy: OverflowPolicySchema,
   });
 

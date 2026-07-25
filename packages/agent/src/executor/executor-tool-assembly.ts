@@ -138,8 +138,9 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // -------------------------------------------------------------------
   // 1. Merge per-request tools (AgentTool[]) with deps.customTools
   // -------------------------------------------------------------------
-  let mergedCustomTools = deps.customTools;
-  if (tools && tools.length > 0 && deps.convertTools) {
+  const capabilitiesDisabled = executionOverrides?.capabilityAccess === "none";
+  let mergedCustomTools = capabilitiesDisabled ? [] : deps.customTools;
+  if (!capabilitiesDisabled && tools && tools.length > 0 && deps.convertTools) {
     const converted = deps.convertTools(tools);
     const existingNames = new Set(deps.customTools.map(t => t.name));
     const uniqueConverted = converted.filter(t => !existingNames.has(t.name));
@@ -284,6 +285,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     config,
     deps: {
       workspaceDir: effectiveWorkspaceDir, // AGENTS.md/BOOT.md from the run's working tree.
+      workspacePolicySnapshot: deps.workspacePolicySnapshot,
+      isOnboarding: deps.isOnboarding,
       // Forward the data dir so the recall-trace recorder's base resolves
       // from the same source as the memory.recall_trace reader.
       dataDir: deps.dataDir,
@@ -321,11 +324,12 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       mediaPersistenceEnabled: deps.mediaPersistenceEnabled,
       autonomousMediaEnabled: deps.autonomousMediaEnabled,
       getPromptSkillsXml: deps.getPromptSkillsXml,
+      getPromptSkillLocations: deps.getPromptSkillLocations,
+      getMcpServerInstructions: deps.getMcpServerInstructions,
       subAgentToolNames: deps.subAgentToolNames,
       mcpToolsInherited: deps.mcpToolsInherited,
       isFirstMessageInSession,
       senderTrustDisplayConfig: deps.senderTrustDisplayConfig,
-      documentationConfig: deps.documentationConfig,
       eventBus: deps.eventBus,
       spawnPacket: executionOverrides?.spawnPacket,
       deliveryMirror: deps.deliveryMirror,
@@ -350,6 +354,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     mergedCustomTools,
     logger: deps.logger,
     safetyReinforcement,
+    responseLocalePolicy: executionOverrides?.responseLocalePolicy,
     skipRag: executionOverrides?.skipRag,
     sepEnabled: config.sep?.enabled !== false,
     resolvedModelId: resolvedModel?.id,
@@ -414,7 +419,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     agentDir: deps.agentDir,
     settingsManager,
     noExtensions: true,
-    additionalSkillPaths: config.skills?.discoveryPaths ?? [],
+    additionalSkillPaths: capabilitiesDisabled ? [] : config.skills?.discoveryPaths ?? [],
+    noSkills: capabilitiesDisabled,
     noPromptTemplates: true,
     noThemes: true,
     systemPromptOverride: (_base) => promptResult.systemPrompt,
@@ -576,7 +582,6 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     capabilityClass,
     recentlyUsedToolNames: recentlyUsedTools,
     toolNames: mergedCustomTools.map(t => t.name),
-    contextEngineVersion: config.contextEngine?.version,
     lifecycleDemotedNames,
     discoveryTracker,
     neverDefer: config.deferredTools?.neverDefer,
@@ -713,10 +718,16 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // state (active vs deferred entries). When the port is the no-op, the
   // renderer's gate check still respects port.isCapabilityIndexEnabled();
   // if false, returns EMPTY which the runner filters via .filter(Boolean).
-  const capabilityIndexResult = buildCapabilityIndexContext(
-    deferralResult,
-    deps.toolCapabilityPort,
-  );
+  const capabilityIndexResult = capabilitiesDisabled
+    ? {
+        text: "",
+        capabilityIndexTokens: 0,
+        clusterCount: 0,
+        activeToolCount: 0,
+        deferredToolCount: 0,
+        promptSkillCount: 0,
+      }
+    : buildCapabilityIndexContext(deferralResult, deps.toolCapabilityPort);
 
   // -------------------------------------------------------------------
   // 8. JIT guide wrapping, schema pruning, snapshot, normalization, serializer

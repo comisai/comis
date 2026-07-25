@@ -162,7 +162,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // coordinator) ride whichever session bridge is active. Content-free translators
   // (translate-orchestration-payload.ts) forward closed labels/ids/numbers ONLY — never
   // a path/host/uid value, an announcement body, or a task. These ALSO feed
-  // the fleet lens via obs-persistence-wiring (the daemon-wide aggregate surface).
+  // the system health view via obs-persistence-wiring (the daemon-wide aggregate surface).
   "security:sandbox_downgrade_refused": "security.sandbox_downgrade_refused",
   // An attributed sub-agent kill (killRun chokepoint,
   // packages/agent — arch-scanned, so mapped, NOT allowlisted). The payload's
@@ -177,7 +177,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // via `?.emit`. Bridged here for
   // per-session visibility (how many retries a completion took before landing). Content-free
   // (translate-orchestration-payload.ts): runId + closed channelType + attempt count + transient tag
-  // ONLY. NOTE: unlike its deadlettered sibling, retried is trajectory-only for now (NOT yet a fleet
+  // ONLY. NOTE: unlike its deadlettered sibling, retried is trajectory-only for now (NOT yet a system
   // health_signal/finding — a self-healed retry as a daemon-wide aggregate is a follow-up).
   "subagent:delivery_retried": "subagent.delivery_retried",
   "subagent:budget_exceeded": "subagent.budget_exceeded",
@@ -257,6 +257,20 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "background_task:completed": "background_task.completed",
   "background_task:failed": "background_task.failed",
 
+  // ---- Inferred follow-up task lifecycle ----
+  // These scheduler events carry ids, closed labels, counts, and durations
+  // only. A payload sessionKey, when present, routes the record to its owning
+  // conversation and is stripped by the translator.
+  "scheduler:task_extraction_completed": "scheduler.task_extraction_completed",
+  "scheduler:task_extraction_failed": "scheduler.task_extraction_failed",
+  "scheduler:task_check_started": "scheduler.task_check_started",
+  "scheduler:task_check_terminal": "scheduler.task_check_terminal",
+  "scheduler:task_delivery_history_failed": "scheduler.task_delivery_history_failed",
+  "scheduler:task_cap_deferred": "scheduler.task_cap_deferred",
+  "scheduler:task_store_degraded": "scheduler.task_store_degraded",
+  "scheduler:task_cancelled": "scheduler.task_cancelled",
+  "scheduler:task_store_reset": "scheduler.task_store_reset",
+
   // ---- Terminal drive lifecycle ----
   // A long coding-CLI drive backgrounded at the inline→detached boundary.
   // Content-free (the reason enum only — see translate-payload). Emitted from packages/skills,
@@ -283,6 +297,10 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "orchestrate:run_summary": "orchestrate.run_summary",
 
   // ---- Delivery lifecycle ----
+  // Durable outward-send state changes. The translator persists only the
+  // operation identity and closed transition/outcome labels; bodies, digests,
+  // platform errors, and credentials never cross into the trajectory.
+  "delivery:outward_ledger_transition": "delivery.outward_ledger_transition",
   "delivery:enqueued": "delivery.queued",
   "delivery:complete": "delivery.dispatched",
   // Fires when an abort cut delivery short — including the orchestrator
@@ -480,6 +498,14 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
  */
 export type TrajectoryBridgedEventName = keyof typeof TRAJECTORY_BRIDGE_MAPPING;
 
+export function createTrajectoryEventTypeFilter(
+  eventTypes: readonly string[] | undefined,
+): ((eventName: TrajectoryBridgedEventName) => boolean) | undefined {
+  if (eventTypes === undefined || eventTypes.length === 0) return undefined;
+  const allowed = new Set(eventTypes);
+  return (eventName) => allowed.has(TRAJECTORY_BRIDGE_MAPPING[eventName]);
+}
+
 // ---------------------------------------------------------------------------
 // Attach
 // ---------------------------------------------------------------------------
@@ -492,8 +518,11 @@ export interface AttachTrajectoryParams {
   readonly recorder: TrajectoryRecorder;
   /**
    * Optional filter: when present, only event names that pass the
-   * predicate are subscribed. The predicate runs ONCE per event name
-   * at attach time — it does not run per event emit.
+   * predicate are subscribed, except `session:started` and `session:ended`.
+   * Those lifecycle boundaries are always retained so restart recovery can
+   * distinguish an active session from an explicitly destroyed one. The
+   * predicate runs ONCE per event name at attach time — it does not run per
+   * event emit.
    */
   readonly filter?: (eventName: TrajectoryBridgedEventName) => boolean;
   /**
@@ -547,7 +576,15 @@ export function attachTrajectoryToEventBus(
   // Type assertion narrowing: the as-const mapping makes Object.entries
   // lose precision, so iterate over the typed keys instead.
   for (const eventName of Object.keys(TRAJECTORY_BRIDGE_MAPPING) as Array<TrajectoryBridgedEventName>) {
-    if (filter !== undefined && !filter(eventName)) continue;
+    const requiredLifecycleEvent =
+      eventName === "session:started" || eventName === "session:ended";
+    if (
+      !requiredLifecycleEvent &&
+      filter !== undefined &&
+      !filter(eventName)
+    ) {
+      continue;
+    }
 
     const handler = (payload: unknown) => {
       // Session-scoping: another session's event never lands in this
@@ -555,6 +592,12 @@ export function attachTrajectoryToEventBus(
       if (ownerSessionKey !== undefined) {
         const eventSessionKey = resolveEventSessionKey(payload);
         if (eventSessionKey !== undefined && eventSessionKey !== ownerSessionKey) return;
+      }
+      if (
+        eventName === "background_task:notified"
+        && (payload as EventMap["background_task:notified"]).trajectoryRecorded
+      ) {
+        return;
       }
       const data = translatePayload(eventName, payload);
       const trajectoryType = TRAJECTORY_BRIDGE_MAPPING[eventName];

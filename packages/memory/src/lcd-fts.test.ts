@@ -29,7 +29,7 @@ function baseTablesOnlyDb(): Database.Database {
   db.pragma("foreign_keys = ON");
   db.exec(`
     CREATE TABLE lcd_messages (
-      id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+      id TEXT PRIMARY KEY, conversation_ref TEXT NOT NULL, tenant_id TEXT NOT NULL,
       agent_id TEXT NOT NULL, session_key TEXT NOT NULL, seq INTEGER NOT NULL,
       role TEXT NOT NULL, token_count INTEGER NOT NULL, created_at INTEGER NOT NULL
     );
@@ -39,7 +39,7 @@ function baseTablesOnlyDb(): Database.Database {
       tool_output TEXT, is_error INTEGER, metadata TEXT NOT NULL DEFAULT '{}'
     );
     CREATE TABLE lcd_summaries (
-      summary_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+      summary_id TEXT PRIMARY KEY, conversation_ref TEXT NOT NULL, tenant_id TEXT NOT NULL,
       agent_id TEXT NOT NULL, session_key TEXT NOT NULL, kind TEXT NOT NULL, depth INTEGER NOT NULL,
       earliest_at INTEGER NOT NULL, latest_at INTEGER NOT NULL, descendant_count INTEGER NOT NULL,
       token_count INTEGER NOT NULL, content TEXT NOT NULL, file_ids TEXT NOT NULL DEFAULT '[]',
@@ -54,7 +54,7 @@ describe("lcd-fts — LIKE fallback when FTS5 is unavailable", () => {
     const db = baseTablesOnlyDb();
     db.prepare(`
       INSERT INTO lcd_summaries
-        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+        (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
          earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
       VALUES ('s1','conv-a','t','a','s','leaf',0,1,1,1,1,'the quarterly revenue report','[]',0,0,1)
     `).run();
@@ -97,7 +97,7 @@ describe("lcd-fts — LIKE fallback when FTS5 is unavailable", () => {
     for (let i = 0; i < 5; i++) {
       db.prepare(`
         INSERT INTO lcd_summaries
-          (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+          (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
            earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
         VALUES (?,'conv-a','t','a','s','leaf',0,1,1,1,1,?, '[]',0,0,?)
       `).run(`s${i}`, `keyword match number ${i}`, i);
@@ -144,7 +144,7 @@ function ftsDbReturning(rowsByScope: {
   const real = new Database(":memory:");
   real.pragma("foreign_keys = ON");
   // A minimal real FTS table so the availability probe MATCH compiles+runs.
-  real.exec(`CREATE VIRTUAL TABLE lcd_summaries_fts USING fts5(content, conversation_id UNINDEXED, summary_id UNINDEXED)`);
+  real.exec(`CREATE VIRTUAL TABLE lcd_summaries_fts USING fts5(content, conversation_ref UNINDEXED, summary_id UNINDEXED)`);
 
   return new Proxy(real, {
     get(target, prop, receiver) {
@@ -342,12 +342,12 @@ describe("lcd-fts — scope=both merges fairly across the two FTS tables", () =>
 // ───────────────────────────────────────────────────────────────────────────
 // lcd-fts — cross-agent search isolation within a shared conversation
 // ───────────────────────────────────────────────────────────────────────────
-// Two agents (agent-a, agent-b) share ONE conversation_id (formatSessionKey omits
+// Two agents (agent-a, agent-b) share ONE conversation_ref (formatSessionKey omits
 // agentId). searchLcd must filter the FTS MATCH path AND the LIKE fallback by
 // agent_id so agent A never recovers agent B's hits within the shared
 // conversation — BOTH paths must filter, not just the base-table reads. These
 // tests pass the agent-scoped signature
-// (`searchLcdImpl(db, conversationId, agentId, query, opts)`). The FTS path uses
+// (`searchLcdImpl(db, conversationRef, agentId, query, opts)`). The FTS path uses
 // a real FTS5 db; the LIKE path uses a base-tables-only db (the FTS-absent
 // fallback shape).
 describe("lcd-fts — cross-agent search isolation within a shared conversation", () => {
@@ -363,7 +363,7 @@ describe("lcd-fts — cross-agent search isolation within a shared conversation"
     ensureLcdTables(db);
     const insert = db.prepare(`
       INSERT INTO lcd_summaries
-        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+        (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
          earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
       VALUES (?, 'conv-shared', 'tenant_shared', ?, 'sess-shared', 'leaf', 0, 1, 1, 1, 1, ?, '[]', 0, 0, ?)
     `);
@@ -392,7 +392,7 @@ describe("lcd-fts — cross-agent search isolation within a shared conversation"
     const db = baseTablesOnlyDb();
     const insert = db.prepare(`
       INSERT INTO lcd_summaries
-        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+        (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
          earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
       VALUES (?, 'conv-shared', 'tenant_shared', ?, 'sess-shared', 'leaf', 0, 1, 1, 1, 1, ?, '[]', 0, 0, ?)
     `);
@@ -442,13 +442,13 @@ describe("CJK query with zero FTS hits returns cjkZeroHit=true", () => {
     const db = baseTablesOnlyDb();
     db.prepare(`
       INSERT INTO lcd_summaries
-        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+        (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
          earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
       VALUES ('s1','conv-a','t','a','s','leaf',0,1,1,1,1,'the quarterly revenue report','[]',0,0,1)
     `).run();
     db.prepare(`
       INSERT INTO lcd_summaries
-        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+        (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
          earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
       VALUES ('s2','conv-a','t','a','s','leaf',0,1,1,1,1,'another english summary','[]',0,0,2)
     `).run();
@@ -469,7 +469,7 @@ describe("CJK query WITH matching hits returns cjkZeroHit=false", () => {
     const db = baseTablesOnlyDb();
     db.prepare(`
       INSERT INTO lcd_summaries
-        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+        (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
          earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
       VALUES ('s1','conv-a','t','a','s','leaf',0,1,1,1,1,'你好 greetings','[]',0,0,1)
     `).run();
@@ -496,7 +496,7 @@ describe("Non-CJK query returns cjkZeroHit=false regardless of hit count", () =>
     const db = baseTablesOnlyDb();
     db.prepare(`
       INSERT INTO lcd_summaries
-        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+        (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
          earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
       VALUES ('s1','conv-a','t','a','s','leaf',0,1,1,1,1,'hello world','[]',0,0,1)
     `).run();
@@ -615,21 +615,21 @@ function lcdDbWithTwins(): Database.Database {
  *  pre-normalized by the caller to mirror the real TS-side write path. */
 function seedMessageTwin(
   db: Database.Database,
-  args: { content: string; conversationId?: string; agentId?: string; messageId: string },
+  args: { content: string; conversationRef?: string; agentId?: string; messageId: string },
 ): void {
   db.prepare(
-    "INSERT INTO lcd_messages_fts_tri(content, conversation_id, agent_id, message_id) VALUES (?,?,?,?)",
-  ).run(args.content, args.conversationId ?? "conv-a", args.agentId ?? "agent-a", args.messageId);
+    "INSERT INTO lcd_messages_fts_tri(content, conversation_ref, agent_id, message_id) VALUES (?,?,?,?)",
+  ).run(args.content, args.conversationRef ?? "conv-a", args.agentId ?? "agent-a", args.messageId);
 }
 
 /** Insert a NORMALIZED summary-twin row (the normalized stored shape). */
 function seedSummaryTwin(
   db: Database.Database,
-  args: { content: string; conversationId?: string; agentId?: string; summaryId: string },
+  args: { content: string; conversationRef?: string; agentId?: string; summaryId: string },
 ): void {
   db.prepare(
-    "INSERT INTO lcd_summaries_fts_tri(content, conversation_id, agent_id, summary_id) VALUES (?,?,?,?)",
-  ).run(args.content, args.conversationId ?? "conv-a", args.agentId ?? "agent-a", args.summaryId);
+    "INSERT INTO lcd_summaries_fts_tri(content, conversation_ref, agent_id, summary_id) VALUES (?,?,?,?)",
+  ).run(args.content, args.conversationRef ?? "conv-a", args.agentId ?? "agent-a", args.summaryId);
 }
 
 /** Insert a base lcd_messages row + a text part whose RAW text feeds the scan
@@ -638,11 +638,11 @@ function seedSummaryTwin(
  *  For the scan floor over messages we put the searchable text in metadata.raw.text. */
 function seedBaseMessage(
   db: Database.Database,
-  args: { id: string; seq: number; text: string; conversationId?: string; agentId?: string },
+  args: { id: string; seq: number; text: string; conversationRef?: string; agentId?: string },
 ): void {
   db.prepare(
-    "INSERT INTO lcd_messages(id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-  ).run(args.id, args.conversationId ?? "conv-a", "t", args.agentId ?? "agent-a", "s", args.seq, "user", 1, args.seq);
+    "INSERT INTO lcd_messages(id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+  ).run(args.id, args.conversationRef ?? "conv-a", "t", args.agentId ?? "agent-a", "s", args.seq, "user", 1, args.seq);
   db.prepare(
     "INSERT INTO lcd_message_parts(id, message_id, ordinal, kind, tool_call_id, tool_name, tool_input, tool_output, is_error, metadata) VALUES (?,?,?,?,?,?,?,?,?,?)",
   ).run(`${args.id}-p0`, args.id, 0, "text", null, null, null, null, null,
@@ -652,14 +652,14 @@ function seedBaseMessage(
 /** Insert a base lcd_summaries row (the scan floor over summaries reads .content). */
 function seedBaseSummary(
   db: Database.Database,
-  args: { id: string; content: string; createdAt: number; conversationId?: string; agentId?: string },
+  args: { id: string; content: string; createdAt: number; conversationRef?: string; agentId?: string },
 ): void {
   db.prepare(`
     INSERT INTO lcd_summaries
-      (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+      (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
        earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
     VALUES (?, ?, 't', ?, 's', 'leaf', 0, 1, 1, 1, 1, ?, '[]', 0, 0, ?)
-  `).run(args.id, args.conversationId ?? "conv-a", args.agentId ?? "agent-a", args.content, args.createdAt);
+  `).run(args.id, args.conversationRef ?? "conv-a", args.agentId ?? "agent-a", args.content, args.createdAt);
 }
 
 describe("lcd-fts — word lane stays byte-identical for all-Latin", () => {
@@ -672,7 +672,7 @@ describe("lcd-fts — word lane stays byte-identical for all-Latin", () => {
     );
     // Drive the word-FTS populate the store normally does (renderMessageFtsText → lcd_messages_fts).
     db.prepare(
-      "INSERT INTO lcd_messages_fts(content, conversation_id, agent_id, message_id) VALUES (?,?,?,?)",
+      "INSERT INTO lcd_messages_fts(content, conversation_ref, agent_id, message_id) VALUES (?,?,?,?)",
     ).run("docker compose orchestration", "conv-a", "agent-a", "m1");
 
     const result = searchLcdImpl(db, "conv-a", "agent-a", "docker compose", { limit: 10, scope: "messages" });
@@ -885,7 +885,7 @@ describe("lcd-fts — the bounded normalized-scan floor (all-short / trigram-abs
     // scanCapped would correctly stay false — that is the non-capped path.)
     const insert = db.prepare(`
       INSERT INTO lcd_summaries
-        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+        (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
          earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
       VALUES (?, 'conv-a', 't', 'agent-a', 's', 'leaf', 0, 1, 1, 1, 1, ?, '[]', 0, 0, ?)
     `);
@@ -933,7 +933,7 @@ describe("lcd-fts — the bounded normalized-scan floor (all-short / trigram-abs
     // A message with TWO parts: part 0 (ordinal 0) carries the searchable token AND
     // a marker; part 1 carries a DIFFERENT marker. The token (גם) lives in part 0.
     db.prepare(
-      "INSERT INTO lcd_messages(id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO lcd_messages(id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
     ).run("m-multi", "conv-a", "t", "agent-a", "s", 0, "user", 1, 0);
     const part0Metadata = JSON.stringify({ raw: { type: "text", text: `${HE_SEFARIM} ${HE_GAM}` }, marker: "PART_ZERO_MARKER" });
     const part1Metadata = JSON.stringify({ raw: { type: "text", text: "second part text" }, marker: "PART_ONE_MARKER" });
@@ -962,7 +962,7 @@ describe("lcd-fts — FTS5-absent host: Latin queries keep the LIKE floor (lane 
     const db = baseTablesOnlyDb();
     db.prepare(`
       INSERT INTO lcd_summaries
-        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+        (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
          earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
       VALUES ('s1','conv-a','t','agent-a','s','leaf',0,1,1,1,1,'the quarterly revenue report','[]',0,0,1)
     `).run();

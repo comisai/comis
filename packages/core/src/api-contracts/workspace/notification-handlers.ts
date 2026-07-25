@@ -10,6 +10,7 @@
  */
 import { z } from "zod";
 import { defineContract } from "../types.js";
+import { ChannelEndpointSchema } from "../../domain/conversation-scope.js";
 
 // ===========================================================================
 // --- notification-handlers.ts ---
@@ -23,7 +24,7 @@ import { defineContract } from "../types.js";
  * chains), and maps tool-param names (`channel_type`, `channel_id`)
  * to NotifyUserOptions (`channelType`, `channelId`).
  *
- * Request: `{ message, priority?, channel_type?, channel_id?, origin? }`.
+ * Request: `{ message, priority?, channel_type?, channel_id?, destination_endpoint?, origin? }`.
  * The contract uses the snake_case names the handler reads
  * (`channel_type` / `channel_id`) because tools call into the daemon
  * with snake_case keys; the handler is responsible for the camelCase
@@ -47,6 +48,7 @@ export const NotificationSendContract = defineContract({
     priority: z.enum(["low", "normal", "high", "critical"]).optional(),
     channel_type: z.string().optional(),
     channel_id: z.string().optional(),
+    destination_endpoint: ChannelEndpointSchema.optional(),
     origin: z.string().optional(),
   }),
   response: z.object({

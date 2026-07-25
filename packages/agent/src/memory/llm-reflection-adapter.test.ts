@@ -87,6 +87,32 @@ describe("createLlmReflectionAdapter (untrusted-input boundary + honest error br
     expect(res.value.ops).toBeUndefined();
   });
 
+  it("forwards provider configuration for native auth without fabricating an API key", async () => {
+    (completeSimple as Mock).mockResolvedValue(textResponse(JSON.stringify(FRESH_DOC)));
+    const adapter = createLlmReflectionAdapter({
+      provider: "amazon-bedrock",
+      modelId: "anthropic.claude-sonnet",
+      providerEnv: {
+        AWS_REGION: "il-central-1",
+        AWS_PROFILE: "test-profile",
+      },
+      clock: { now: () => SCOPE.now },
+      logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    const result = await adapter.reflect({ trajectoryText: "successful outcome", currentSections: [] });
+
+    expect(result.ok).toBe(true);
+    const options = (completeSimple as Mock).mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(options).toMatchObject({
+      env: {
+        AWS_REGION: "il-central-1",
+        AWS_PROFILE: "test-profile",
+      },
+    });
+    expect(options).not.toHaveProperty("apiKey");
+  });
+
   it("returns ok({ ops }) for a well-formed delta-op response (existing doc)", async () => {
     (completeSimple as Mock).mockResolvedValue(textResponse(JSON.stringify(DELTA_REFRESH)));
     const adapter = makeAdapter();
@@ -100,6 +126,30 @@ describe("createLlmReflectionAdapter (untrusted-input boundary + honest error br
     if (!res.ok) throw new Error("expected ok");
     expect(res.value.ops).toHaveLength(1);
     expect(res.value.ops?.[0]?.op).toBe("replace");
+  });
+
+  it("logs the resolved model and duration when a reflection call completes", async () => {
+    (completeSimple as Mock).mockResolvedValue(textResponse(JSON.stringify(FRESH_DOC)));
+    const logger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const adapter = createLlmReflectionAdapter({
+      provider: "openai-codex",
+      modelId: "gpt-5.6-sol",
+      apiKey: "test-key",
+      clock: { now: () => SCOPE.now },
+      logger,
+    });
+
+    const res = await adapter.reflect({ trajectoryText: "x", currentSections: [] });
+
+    expect(res.ok).toBe(true);
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "reflect",
+        model: "openai-codex/gpt-5.6-sol",
+        durationMs: 0,
+      }),
+      "reflection call complete",
+    );
   });
 
   it("wraps the UNTRUSTED trajectory with wrapExternalContent BEFORE the LLM (injection-defense keystone)", async () => {
@@ -207,7 +257,12 @@ describe("createLlmReflectionAdapter (untrusted-input boundary + honest error br
 
     expect(res.ok).toBe(false);
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ errorKind: "network", step: "reflect" }),
+      expect.objectContaining({
+        errorKind: "network",
+        step: "reflect",
+        model: "anthropic/claude-x",
+        durationMs: 0,
+      }),
       expect.stringContaining("LLM call failed"),
     );
   });
@@ -302,7 +357,7 @@ describe("reflection LLM usage attribution (onUsage hook)", () => {
   });
 
   // Background reflection runs previously spent tokens with ZERO obs rows —
-  // invisible to fleet/billing (comis-daniel review finding). The hook hands
+  // invisible to system/billing (comis-daniel review finding). The hook hands
   // the SDK usage to the daemon wiring, which attributes it under the
   // synthetic __REFLECT__ session key.
   it("hands the SDK usage (tokens + cost + durationMs) to onUsage on a completed call", async () => {
@@ -379,5 +434,33 @@ describe("reflection LLM usage attribution (onUsage hook)", () => {
 
     expect(res.ok).toBe(true);
     expect(onUsage).not.toHaveBeenCalled();
+  });
+
+  it("forwards caller cancellation into an in-flight reflection model request", async () => {
+    const controller = new AbortController();
+    let modelSignal: AbortSignal | undefined;
+    (completeSimple as Mock).mockImplementation(async (...args: unknown[]) => {
+      modelSignal = (args[2] as { signal?: AbortSignal }).signal;
+      await new Promise<void>((_resolve, reject) => {
+        modelSignal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+      return textResponse(JSON.stringify(FRESH_DOC));
+    });
+    const adapter = createLlmReflectionAdapter({
+      provider: "anthropic",
+      modelId: "claude-x",
+      apiKey: "test-key",
+      clock: { now: () => SCOPE.now },
+      logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      signal: controller.signal,
+    });
+
+    const pending = adapter.reflect({ trajectoryText: "t", currentSections: [] });
+    await vi.waitFor(() => expect(completeSimple).toHaveBeenCalledOnce());
+    controller.abort();
+    const result = await pending;
+
+    expect(modelSignal?.aborted).toBe(true);
+    expect(result.ok).toBe(false);
   });
 });

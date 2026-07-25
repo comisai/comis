@@ -4,7 +4,7 @@
  * logic behind the machine-readable verdict.
  *
  * `buildSupportTriage(inputs)` folds a content-free `DoctorResult` (plus the
- * optional fleet/explain digests) into the deterministic `SupportTriage`
+ * optional system/explain digests) into the deterministic `SupportTriage`
  * verdict. It performs no I/O, holds no clock, and calls no model — every read
  * happens in the caller and is passed in, so the same input always yields a
  * deeply-equal result (the machine-verdict contract).
@@ -21,19 +21,19 @@
  * @module
  */
 
-import type { FleetHealthReport, IncidentReport } from "@comis/core";
+import type { SystemHealthReport, IncidentReport } from "@comis/core";
 import type { DoctorFinding, DoctorResult } from "../doctor/types.js";
 import type { HostSnapshot, SupportTriage, SupportTriageStatus } from "./types.js";
 
 /**
- * Inputs to the reducer. `fleet`/`explain` are optional upstream verdicts that
+ * Inputs to the reducer. `system`/`explain` are optional upstream verdicts that
  * later enrichment populates; they are declared now so the status rule can
  * already consume them without a schema change.
  */
 export interface SupportTriageInputs {
   readonly host: HostSnapshot;
   readonly doctor: DoctorResult;
-  readonly fleet?: FleetHealthReport;
+  readonly system?: SystemHealthReport;
   readonly explain?: IncidentReport;
 }
 
@@ -84,17 +84,17 @@ export function deriveDoctorSignals(doctor: DoctorResult): string[] {
 }
 
 /**
- * Fleet-sourced signals, consumed verbatim — every `finding.code` plus the
+ * System-sourced signals, consumed verbatim — every `finding.code` plus the
  * report's own `likelyRootCause.code` when it made a verdict. The reducer
- * forwards the fleet's short codes as-is (no curated allow-list, no threshold
- * re-derivation): the fleet owns its verdict, so a new finding code surfaces
+ * forwards the system's short codes as-is (no curated allow-list, no threshold
+ * re-derivation): the system owns its verdict, so a new finding code surfaces
  * without a change here. Order follows the report (findings, then the root
  * cause); the caller dedupes into the active-signal set.
  */
-export function deriveFleetSignals(fleet: FleetHealthReport): string[] {
-  const codes = fleet.findings.map((f) => f.code);
-  if (fleet.likelyRootCause !== null) {
-    codes.push(fleet.likelyRootCause.code);
+export function deriveSystemSignals(system: SystemHealthReport): string[] {
+  const codes = system.findings.map((f) => f.code);
+  if (system.likelyRootCause !== null) {
+    codes.push(system.likelyRootCause.code);
   }
   return codes;
 }
@@ -102,29 +102,29 @@ export function deriveFleetSignals(fleet: FleetHealthReport): string[] {
 /**
  * Explain-sourced signal, consumed verbatim — the embedded report's
  * `likelyRootCause.code` when it made a verdict, and nothing otherwise. Like the
- * fleet root-cause append, the reducer forwards the code as-is (no curated
+ * system root-cause append, the reducer forwards the code as-is (no curated
  * allow-list, no re-derivation): the explain assembler owns the verdict, so a
  * new root-cause code surfaces without a change here. The caller dedupes it into
- * the active-signal set after the doctor and fleet signals.
+ * the active-signal set after the doctor and system signals.
  */
 export function deriveExplainSignals(explain: IncidentReport): string[] {
   return explain.likelyRootCause != null ? [explain.likelyRootCause.code] : [];
 }
 
 /**
- * Whether a fleet report carries positive operator evidence — at least one real
+ * Whether a system report carries positive operator evidence — at least one real
  * session or one diagnostic finding. Evidence is keyed on the
  * synthetic-EXCLUDED population (matching `sessions.total`), NOT on the
  * `coverage.sessionSummary.found` read breadcrumb: that flag is
  * synthetic-INCLUSIVE (`rows > 0` over the pre-exclusion row set), so a window
  * holding only synthetic/test rows would otherwise be mistaken for evidence and
  * let a thrown doctor run (zero passes) fall through to a false `healthy`. An
- * absent report (offline read, no fleet at all), a synthetic-only window, or a
+ * absent report (offline read, no system at all), a synthetic-only window, or a
  * coverage-empty one is treated as no evidence, so the status rules never
- * report `healthy` off a fleet that carries no real activity.
+ * report `healthy` off a system that carries no real activity.
  */
-export function fleetHasEvidence(fleet?: FleetHealthReport): boolean {
-  return fleet !== undefined && (fleet.sessions.total > 0 || fleet.findings.length > 0);
+export function systemHasEvidence(system?: SystemHealthReport): boolean {
+  return system !== undefined && (system.sessions.total > 0 || system.findings.length > 0);
 }
 
 /**
@@ -148,19 +148,19 @@ export function buildDoctorSummary(doctor: DoctorResult): SupportTriage["doctorS
 }
 
 /**
- * Content-free summary of the fleet aggregate — the five fields copied verbatim
- * from the `FleetHealthReport` (never recomputed). `degradedRate` and the root
+ * Content-free summary of the system aggregate — the five fields copied verbatim
+ * from the `SystemHealthReport` (never recomputed). `degradedRate` and the root
  * `topErrorKinds`/`breakerTripTotal` are consumed as-is, `findingCodes` is the
  * finding codes in report order, and `likelyRootCause` collapses the report's
  * nullable verdict object to its code (or `null`).
  */
-export function buildFleetSummary(fleet: FleetHealthReport): NonNullable<SupportTriage["fleetSummary"]> {
+export function buildSystemSummary(system: SystemHealthReport): NonNullable<SupportTriage["systemSummary"]> {
   return {
-    degradedRate: fleet.sessions.degradedRate,
-    topErrorKinds: fleet.topErrorKinds.map((e) => ({ kind: e.kind, count: e.count })),
-    breakerTripTotal: fleet.breakerTripTotal,
-    findingCodes: fleet.findings.map((f) => f.code),
-    likelyRootCause: fleet.likelyRootCause !== null ? fleet.likelyRootCause.code : null,
+    degradedRate: system.sessions.degradedRate,
+    topErrorKinds: system.topErrorKinds.map((e) => ({ kind: e.kind, count: e.count })),
+    breakerTripTotal: system.breakerTripTotal,
+    findingCodes: system.findings.map((f) => f.code),
+    likelyRootCause: system.likelyRootCause !== null ? system.likelyRootCause.code : null,
   };
 }
 
@@ -183,7 +183,7 @@ export function buildExplainSummary(explain: IncidentReport): NonNullable<Suppor
 interface StatusContext {
   readonly doctor: DoctorResult;
   readonly signals: readonly string[];
-  readonly fleet?: FleetHealthReport;
+  readonly system?: SystemHealthReport;
   readonly explain?: IncidentReport;
 }
 
@@ -204,16 +204,16 @@ const STATUS_RULES: ReadonlyArray<(ctx: StatusContext) => SupportTriageStatus | 
   (ctx) =>
     ctx.doctor.findings.some((f) => f.status === "fail") ||
     ctx.signals.includes("daemon_down") ||
-    ctx.fleet?.likelyRootCause != null ||
+    ctx.system?.likelyRootCause != null ||
     ctx.explain?.outcome?.degraded === true
       ? "degraded"
       : null,
   // 3. No positive evidence anywhere -> insufficient_evidence (ranked ABOVE
   //    healthy so an empty or offline read is never reported healthy). The
-  //    fleet is now always passed, so an absent OR coverage-empty fleet both
-  //    count as no evidence — never re-derive a fleet threshold here.
+  //    system is now always passed, so an absent OR coverage-empty system both
+  //    count as no evidence — never re-derive a system threshold here.
   (ctx) =>
-    ctx.doctor.passCount === 0 && !fleetHasEvidence(ctx.fleet) && ctx.explain === undefined
+    ctx.doctor.passCount === 0 && !systemHasEvidence(ctx.system) && ctx.explain === undefined
       ? "insufficient_evidence"
       : null,
   // 4. Otherwise the read is positive and clean -> healthy.
@@ -238,7 +238,7 @@ const MAX_NEXT_STEPS = 8;
 
 /** Content-free follow-up commands for a maintainer drilling into the daemon. */
 const MAINTAINER_NEXT_STEPS: readonly string[] = [
-  "comis fleet --since 24",
+  "comis system-health --since 24",
   'comis explain "<sessionKey>"',
 ];
 
@@ -287,7 +287,7 @@ function buildReporterNextSteps(doctor: DoctorResult, signals: readonly string[]
  * with a content-free description. `explain.json` is present only under
  * `--session` and is filtered out of the index otherwise; `audit-summary.json`
  * is attempted on every run and omitted only on an unreadable store (exactly
- * like `fleet.json`/`config-posture.json`).
+ * like `system-health.json`/`config-posture.json`).
  */
 const EVIDENCE_FILES: ReadonlyArray<{ path: string; description: string }> = [
   { path: "issue-summary.md", description: "Human-readable triage summary for a bug report" },
@@ -297,7 +297,7 @@ const EVIDENCE_FILES: ReadonlyArray<{ path: string; description: string }> = [
   },
   { path: "triage.json", description: "Machine-readable triage verdict" },
   { path: "doctor.json", description: "Full diagnostic findings from the health checks" },
-  { path: "fleet.json", description: "Cross-session fleet health digest (counts and short codes)" },
+  { path: "system-health.json", description: "Cross-session system health digest (counts and short codes)" },
   {
     path: "config-posture.json",
     description: "Which config sections are present, plus flagged-key labels",
@@ -334,23 +334,23 @@ const PRIVACY_EXCLUDES: readonly string[] = [
  * byte-stable across runs.
  */
 export function buildSupportTriage(inputs: SupportTriageInputs): SupportTriage {
-  const { host, doctor, fleet, explain } = inputs;
-  // Doctor signals first, then fleet, then explain, deduped first-seen-wins: a
+  const { host, doctor, system, explain } = inputs;
+  // Doctor signals first, then system, then explain, deduped first-seen-wins: a
   // later code that repeats an earlier signal keeps the earlier entry's slot.
   const activeSignals = [
     ...new Set([
       ...deriveDoctorSignals(doctor),
-      ...(fleet !== undefined ? deriveFleetSignals(fleet) : []),
+      ...(system !== undefined ? deriveSystemSignals(system) : []),
       ...(explain !== undefined ? deriveExplainSignals(explain) : []),
     ]),
   ];
   return {
     schemaVersion: 1,
-    status: deriveStatus({ doctor, signals: activeSignals, fleet, explain }),
+    status: deriveStatus({ doctor, signals: activeSignals, system, explain }),
     activeSignals,
     host,
     doctorSummary: buildDoctorSummary(doctor),
-    ...(fleet !== undefined ? { fleetSummary: buildFleetSummary(fleet) } : {}),
+    ...(system !== undefined ? { systemSummary: buildSystemSummary(system) } : {}),
     ...(explain !== undefined ? { explainSummary: buildExplainSummary(explain) } : {}),
     reporterNextSteps: buildReporterNextSteps(doctor, activeSignals),
     maintainerNextSteps: [...MAINTAINER_NEXT_STEPS],

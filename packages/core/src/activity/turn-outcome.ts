@@ -21,7 +21,8 @@ import type { ActivityEvent } from "./activity-event.js";
 export interface FinalDeliveryReceipt {
   ok: true;
   deliveredChunks: number;
-  lastChunkMessageId: string;
+  /** Absent when the final delivery completed without a usable platform ID. */
+  lastChunkMessageId?: string;
   /** Epoch ms captured via ClockPort/systemNowMs immediately after the last chunk's send-promise resolved. */
   deliveredAtMs: number;
 }
@@ -33,6 +34,8 @@ export interface FinalDeliveryReceipt {
  */
 export interface DeliveryFailureReceipt {
   ok: false;
+  /** Total delivery units observed across successful and failed sends. */
+  totalChunks: number;
   deliveredChunks: number;
   failedChunks: number;
   /** ErrorKind from the first failed chunk (or "platform" if unclassified). */

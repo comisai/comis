@@ -57,8 +57,8 @@ function createMockEmbeddingPort(opts?: {
 /** Insert a minimal memory row into the database. */
 function insertMemory(db: Database.Database, id: string, content: string): void {
   db.prepare(
-    `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-     VALUES (?, 'default', 'u1', ?, 'learned', 'semantic', 'agent', '[]', ?)`,
+    `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at)
+     VALUES (?, 'default', 'default', 'u1', 'agent-shared', ?, 'learned', 'semantic', 'agent', '[]', ?)`,
   ).run(id, content, Date.now());
 }
 

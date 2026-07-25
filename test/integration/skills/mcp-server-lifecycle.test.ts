@@ -278,7 +278,7 @@ describe("MCP adapter -- mcpToolsToAgentTools lifecycle", () => {
     expect(calls).toEqual([{ text: "first" }, { text: "second" }]);
   });
 
-  it("delegate Result.err is surfaced without throwing", async () => {
+  it("delegate Result.err is surfaced by throwing at the AgentTool boundary", async () => {
     const callTool = (async (
       _qn: string,
       _args: Record<string, unknown>,
@@ -291,19 +291,15 @@ describe("MCP adapter -- mcpToolsToAgentTools lifecycle", () => {
       params: Record<string, unknown>,
     ) => Promise<unknown>;
 
-    let threw = false;
-    let result: unknown;
-    try {
-      result = await exec("call-err", { text: "anything" });
-    } catch {
-      threw = true;
-    }
-    // The AgentTool contract is "always returns, never throws".
-    expect(threw).toBe(false);
-    expect(result).toBeDefined();
+    // Contract: execute() throws at the AgentTool boundary so pi-agent-core
+    // converts it into a toolResult.isError=true — the transport failure text
+    // reaches the caller through the thrown error.
+    await expect(exec("call-err", { text: "anything" })).rejects.toThrow(
+      /simulated MCP transport failure/,
+    );
   });
 
-  it("delegate Result.ok with isError=true surfaces error text in the wrapped output", async () => {
+  it("delegate Result.ok with isError=true throws the wrapped error text at the boundary", async () => {
     const callTool = (async (
       _qn: string,
       _args: Record<string, unknown>,
@@ -320,13 +316,9 @@ describe("MCP adapter -- mcpToolsToAgentTools lifecycle", () => {
       params: Record<string, unknown>,
     ) => Promise<unknown>;
 
-    const result = await exec("call-isError", {});
-    expect(result).toBeDefined();
-    // Error content should be readable through the AgentTool result; we
-    // don't pin the exact shape (depends on pi-agent-core version) but
-    // assert the failure text reaches the caller in some form.
-    const text = JSON.stringify(result);
-    expect(text).toMatch(/missing arg|error|isError|true/i);
+    // isError=true content is wrapped (external-content security notice) and
+    // thrown at the boundary; the failure text still reaches the caller.
+    await expect(exec("call-isError", {})).rejects.toThrow(/missing arg/);
   });
 });
 

@@ -2,16 +2,16 @@
 // @allow-throw: Explicit credential selections fail closed; caller boundaries translate the error into a user-facing execution failure.
 /**
  * resolveProviderApiKey: shared dispatch helper that routes OAuth-eligible
- * providers through the OAuthTokenManager + AuthStorage.setRuntimeApiKey
- * side-effect, and non-OAuth providers through the existing authStorage path.
+ * providers through the OAuthTokenManager + typed credential-store override,
+ * and non-OAuth providers through the existing store path.
  *
  * Single attachment surface for the per-LLM-call OAuth dispatch
  * hook. Used by PiExecutor.execute() pre-hook (primary LLM call) and the two
  * compaction getApiKey callbacks in executor-context-engine-setup.ts.
  *
  * Return shape is `Promise<string>` (NOT `Result<T,E>`) because the helper
- * bridges Comis's Result-typed manager with pi-coding-agent's
- * `AuthStorage.getApiKey` contract; the throw mirrors pi-coding-agent's own
+ * bridges Comis's Result-typed manager with the credential store's
+ * `getApiKey` contract; the throw mirrors the SDK's own
  * throw-on-failure shape. On OAuthError the helper propagates a thrown Error —
  * no env-var fallback, no retry, no silent rotation. Outer callers
  * (PiExecutor.execute, gateway routes) surface the throw to the user via their
@@ -21,34 +21,34 @@
  * @module
  */
 
-import type { AuthStorage } from "@earendil-works/pi-coding-agent";
-import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { getProviderOAuth } from "@comis/core";
+import type { ComisCredentialStore } from "./auth-storage-adapter.js";
 import type { PerAgentConfig } from "@comis/core";
 import type { OAuthTokenManager } from "./oauth-token-manager.js";
 
 /** Dependencies for the resolveProviderApiKey helper. */
 export interface ResolveProviderApiKeyDeps {
-  /** pi-coding-agent AuthStorage instance for non-OAuth providers and the
+  /** Comis credential store for non-OAuth providers and the
    *  runtime-override target on the OAuth path. */
-  authStorage: AuthStorage;
+  authStorage: ComisCredentialStore;
   /** OAuthTokenManager from auth-provider.ts. When undefined the helper
    *  defensively falls through to authStorage even for OAuth-eligible
    *  providers — matches the "OAuth wiring not yet provided" boot path. */
   oauthManager?: OAuthTokenManager;
   /** Per-agent config carrying optional `oauthProfiles` map. Forwarded to
-   *  `OAuthTokenManager.getApiKey` as the agentContext argument so the
+   *  `OAuthTokenManager.getCredential` as the agentContext argument so the
    *  manager's resolver chain (agent-config -> lastGood -> first available)
    *  observes per-agent profile preference on every call. */
   agentConfig?: PerAgentConfig;
   /** Explicit providers.entries.<provider>.apiKeyName selection. When present,
-   *  AuthStorage is authoritative and ambient/OAuth discovery is disabled. */
+   *  the store is authoritative and ambient/OAuth discovery is disabled. */
   configuredApiKeyName?: string;
 }
 
 /**
  * Resolve the API key for a provider, routing OAuth-eligible providers
- * through the OAuthTokenManager and writing the resolved token into
- * pi-coding-agent's runtime-override Map via setRuntimeApiKey.
+ * through the OAuthTokenManager and writing the resolved OAuth credential into
+ * pi-coding-agent's credential store without changing its credential type.
  *
  * @param providerId - The provider id (e.g. "openai-codex", "anthropic").
  * @param deps - Dispatch dependencies (authStorage, optional oauthManager, optional agentConfig).
@@ -71,17 +71,14 @@ export async function resolveProviderApiKey(
     return configuredKey;
   }
 
-  const oauthProvider = getOAuthProvider(providerId);
+  const oauthProvider = getProviderOAuth(providerId);
   if (oauthProvider && deps.oauthManager) {
-    const result = await deps.oauthManager.getApiKey(providerId, {
+    const result = await deps.oauthManager.getCredential(providerId, {
       oauthProfiles: deps.agentConfig?.oauthProfiles,
     });
     if (result.ok) {
-      // setRuntimeApiKey carries the token into pi-coding-agent's outbound
-      // LLM request via the runtime-override priority path — runtime
-      // overrides take HIGHEST priority.
-      deps.authStorage.setRuntimeApiKey(providerId, result.value);
-      return result.value;
+      deps.authStorage.setRuntimeOAuthCredential(providerId, result.value.credential);
+      return result.value.apiKey;
     }
     // Decide whether to fall back to the plain API-key path. Two conditions
     // must hold:

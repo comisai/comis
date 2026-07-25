@@ -73,7 +73,7 @@ describe.skipIf(!isLive)("Live — CTX-02 summarization (Stage-C)", () => {
   it.skipIf(!canRun).each(SUMMARIZATION_MATRIX)(
     "contextThreshold=$threshold label=$label",
     async ({ threshold, label }) => {
-      const configPath = buildCtxConfig({ version: "dag", contextThreshold: threshold, label, filePrefix: "ctx-sum" });
+      const configPath = buildCtxConfig({ contextThreshold: threshold, label, filePrefix: "ctx-sum" });
       const driver = new ConversationDriver({
         agentId: `ctx-sum-${label}`,
         provider: "anthropic",

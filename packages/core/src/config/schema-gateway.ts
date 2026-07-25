@@ -105,6 +105,13 @@ export const GatewayWebConfigSchema = z.strictObject({
   });
 
 /**
+ * A bind target is a hostname or an unbracketed IP literal, never a URL.
+ * Rejecting URL/userinfo syntax also prevents credential-shaped values from
+ * reaching endpoint diagnostics that render the host alongside its port.
+ */
+const GatewayBindHostSchema = z.union([z.ipv4(), z.ipv6(), z.hostname()]);
+
+/**
  * Gateway server configuration schema.
  *
  * Controls the Hono HTTPS server, mTLS authentication, bearer tokens,
@@ -114,7 +121,7 @@ export const GatewayConfigSchema = z.strictObject({
     /** Enable the gateway server (default: true) */
     enabled: z.boolean().default(true),
     /** Host to bind the server to (default: "127.0.0.1" — secure-by-default, use "0.0.0.0" for external access) */
-    host: z.string().default("127.0.0.1"),
+    host: GatewayBindHostSchema.default("127.0.0.1"),
     /** Port to listen on (default: 4766) */
     port: z.number().int().min(1).max(65535).default(4766),
     /** TLS / mTLS configuration (omit for dev-mode plain HTTP) */

@@ -111,6 +111,16 @@ const KNOWN_ACCEPTABLE: LogPattern[] = [
   // test runner, not a regression.
   { level: "warn", msg: /bwrap installed but smoke test failed/ },
 
+  // Same root cause as the bwrap smoke-test warning above: when the
+  // unprivileged user-namespace preflight fails, the jail cannot be built, so
+  // agent autonomy downshifts to the 'assistant' profile with a one-shot
+  // operator notice. INVARIANT: this fires only where userns is unavailable
+  // (macOS, or a userns-restricted CI/container host); on a userns-enabled host
+  // this WARN must not appear, and the functional Linux jail tests are the
+  // regression guard. Matched on the exact downshift message so it cannot
+  // swallow other autonomy warnings.
+  { level: "warn", msg: /^Agent autonomy downshifted to the 'assistant' profile: the namespace preflight failed/ },
+
   // oauth.storage defaults to "encrypted" (production default per
   // packages/core/src/config/schema-oauth.ts). The daemon emits a one-shot
   // operator notice that hot-reload is unsupported on encrypted SQLite WAL

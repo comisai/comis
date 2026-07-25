@@ -7,17 +7,24 @@
  *
  * @module
  */
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 import type {
   ChannelPort,
+  ConversationRef,
   NormalizedMessage,
+  ResolvedTurnScope,
   SessionKey,
   DeliveryService,
 } from "@comis/core";
+import { createConversationRef, formatSessionKey, QueueConfigSchema, runWithContext, TypedEventBus } from "@comis/core";
 import type { AgentExecutor } from "@comis/agent";
 import { ok } from "@comis/shared";
 
 import { setupAndRoute, type SetupAndRouteDeps } from "./setup-and-route.js";
+import { createCommandQueue } from "../queue/command-queue.js";
+import type { SourceTerminalScope } from "../source-message-terminal.js";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
 // ---------------------------------------------------------------------------
 // Helpers (union of the two source-test helper sets; the route-side adapter
@@ -38,7 +45,7 @@ function makeAdapter(channelType = "telegram"): ChannelPort {
     removeReaction: vi.fn(async () => ok(undefined)),
     deleteMessage: vi.fn(async () => ok(undefined)),
     fetchMessages: vi.fn(async () => ok([])),
-    sendAttachment: vi.fn(async () => ok("att-1")),
+    sendAttachment: vi.fn(async () => ok({ kind: "tracked" as const, messageId: "att-1" })),
     platformAction: vi.fn(async () => ok(undefined)),
   };
 }
@@ -60,22 +67,45 @@ function makeMsg(overrides?: Partial<NormalizedMessage>): NormalizedMessage {
 function makeSessionKey(): SessionKey {
   return {
     tenantId: "default",
+    agentId: "agent-1",
     userId: "user-1",
     channelId: "chat-1",
     peerId: "user-1",
   };
 }
 
+const TURN_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "adapter-1",
+  conversationId: "chat-1",
+  conversationKind: "direct" as const,
+};
+const TURN_SCOPE: ResolvedTurnScope = {
+  conversation: {
+    tenantId: "default",
+    agentId: "agent-1",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: TURN_ENDPOINT,
+      principalId: "user-1",
+    },
+  },
+  principal: { principalId: "user-1" },
+  endpoint: TURN_ENDPOINT,
+};
+const turnConversationRef = createConversationRef(TURN_SCOPE.conversation);
+if (!turnConversationRef.ok) throw turnConversationRef.error;
+const TURN_CONVERSATION_REF: ConversationRef = turnConversationRef.value;
+const EMPTY_INBOUND_PROVENANCE = { payloads: [], ledgerContent: "" } as const;
+
 function makeFakeDeliveryService(): DeliveryService {
   return {
     deliverToChannel: vi.fn(async () =>
       ok({
-        ok: true,
-        totalChunks: 1,
-        deliveredChunks: 1,
-        failedChunks: 0,
-        chunks: [],
-        totalChars: 0,
+        chunks: [{ status: "accepted" as const, messageId: "reply-1", charCount: 2, retried: false }],
+        totalChars: 2,
+        platform: { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: "reply-1" },
+        queueDisposition: "settled" as const,
       }),
     ),
     // DeliveryService provides drainInFlight(). Default fake returns empty
@@ -100,6 +130,7 @@ function makeExecutor(): AgentExecutor {
 function makeMinimalDeps(overrides?: Partial<SetupAndRouteDeps>): SetupAndRouteDeps {
   const eventBus = {
     emit: vi.fn(() => true),
+    emitSafely: vi.fn(() => ({ hadListeners: false, failures: [] })),
     on: vi.fn().mockReturnThis(),
     off: vi.fn().mockReturnThis(),
     once: vi.fn().mockReturnThis(),
@@ -121,6 +152,7 @@ function makeMinimalDeps(overrides?: Partial<SetupAndRouteDeps>): SetupAndRouteD
     eventBus: eventBus as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     logger: logger as any,
+    clock: createFakeClock(2_000),
     deliveryService: makeFakeDeliveryService(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ...(overrides as any),
@@ -145,6 +177,7 @@ describe("setupAndRoute typing controller behavior", () => {
     // Pass no streamingConfig — resolveStreamingConfig falls back to typingMode: "thinking" default
     const eventBus = {
       emit: vi.fn(() => true),
+      emitSafely: vi.fn(() => ({ hadListeners: false, failures: [] })),
       on: vi.fn().mockReturnThis(),
       off: vi.fn().mockReturnThis(),
       once: vi.fn().mockReturnThis(),
@@ -162,11 +195,14 @@ describe("setupAndRoute typing controller behavior", () => {
       makeMsg({ channelType: "irc" }),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     // Typing controller never started -> no typing:started event emitted
@@ -179,6 +215,7 @@ describe("setupAndRoute typing controller behavior", () => {
   it("forces typingMode 'never' on Echo channel even when streamingConfig default is thinking", async () => {
     const eventBus = {
       emit: vi.fn(() => true),
+      emitSafely: vi.fn(() => ({ hadListeners: false, failures: [] })),
       on: vi.fn().mockReturnThis(),
       off: vi.fn().mockReturnThis(),
       once: vi.fn().mockReturnThis(),
@@ -196,11 +233,14 @@ describe("setupAndRoute typing controller behavior", () => {
       makeMsg({ channelType: "echo" }),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     const typingEmits = eventBus.emit.mock.calls.filter(
@@ -212,6 +252,7 @@ describe("setupAndRoute typing controller behavior", () => {
   it("suppresses typing controller on heartbeat-originated messages", async () => {
     const eventBus = {
       emit: vi.fn(() => true),
+      emitSafely: vi.fn(() => ({ hadListeners: false, failures: [] })),
       on: vi.fn().mockReturnThis(),
       off: vi.fn().mockReturnThis(),
       once: vi.fn().mockReturnThis(),
@@ -229,11 +270,14 @@ describe("setupAndRoute typing controller behavior", () => {
       makeMsg({ metadata: { isHeartbeat: true } }),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     const typingEmits = eventBus.emit.mock.calls.filter(
@@ -243,20 +287,17 @@ describe("setupAndRoute typing controller behavior", () => {
   });
 
   it("starts typing immediately when typingMode is 'instant'", async () => {
-    const eventBus = {
-      emit: vi.fn(() => true),
-      on: vi.fn().mockReturnThis(),
-      off: vi.fn().mockReturnThis(),
-      once: vi.fn().mockReturnThis(),
-      removeAllListeners: vi.fn().mockReturnThis(),
-      listenerCount: vi.fn(() => 0),
-      setMaxListeners: vi.fn().mockReturnThis(),
-    };
+    const eventBus = new TypedEventBus();
+    const laterObserver = vi.fn();
+    eventBus.on("typing:started", () => {
+      throw new Error("typing observer failed");
+    });
+    eventBus.on("typing:started", laterObserver);
     // Stub commandQueue with no-op enqueue so routing short-circuits at the
     // queue-mediated path; the setup-side typing assertion is what matters here.
     const noopEnqueue = vi.fn(async () => ok(undefined));
     const deps = makeMinimalDeps({
-      eventBus: eventBus as never,
+      eventBus,
       commandQueue: { enqueue: noopEnqueue } as never,
       streamingConfig: {
         defaultMode: "instant",
@@ -279,22 +320,32 @@ describe("setupAndRoute typing controller behavior", () => {
       makeMsg(),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
-    expect(eventBus.emit).toHaveBeenCalledWith(
-      "typing:started",
+    expect(laterObserver).toHaveBeenCalledWith(
       expect.objectContaining({ mode: "instant" }),
+    );
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: "typing:started",
+        firstListenerIndex: 0,
+      }),
+      "Observational event subscriber failed",
     );
   });
 
   it("suppresses typing in group chat when bot is not mentioned", async () => {
     const eventBus = {
       emit: vi.fn(() => true),
+      emitSafely: vi.fn(() => ({ hadListeners: false, failures: [] })),
       on: vi.fn().mockReturnThis(),
       off: vi.fn().mockReturnThis(),
       once: vi.fn().mockReturnThis(),
@@ -312,11 +363,14 @@ describe("setupAndRoute typing controller behavior", () => {
       makeMsg({ metadata: { telegramChatType: "group", isBotMentioned: false } }),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     const typingEmits = eventBus.emit.mock.calls.filter(
@@ -328,6 +382,7 @@ describe("setupAndRoute typing controller behavior", () => {
   it("enables typing in group chat when bot is mentioned (instant mode emits typing:started)", async () => {
     const eventBus = {
       emit: vi.fn(() => true),
+      emitSafely: vi.fn(() => ({ hadListeners: false, failures: [] })),
       on: vi.fn().mockReturnThis(),
       off: vi.fn().mockReturnThis(),
       once: vi.fn().mockReturnThis(),
@@ -366,15 +421,18 @@ describe("setupAndRoute typing controller behavior", () => {
       }),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     // Mentioned in group + instant mode -> typing:started should be emitted
-    expect(eventBus.emit).toHaveBeenCalledWith(
+    expect(eventBus.emitSafely).toHaveBeenCalledWith(
       "typing:started",
       expect.objectContaining({ mode: "instant" }),
     );
@@ -435,18 +493,15 @@ describe("setupAndRoute steer+followup routing", () => {
     const sessionResolver = {
       resolveActiveSession: vi.fn(() => runHandle),
     };
-    const eventBus = {
-      emit: vi.fn(() => true),
-      on: vi.fn().mockReturnThis(),
-      off: vi.fn().mockReturnThis(),
-      once: vi.fn().mockReturnThis(),
-      removeAllListeners: vi.fn().mockReturnThis(),
-      listenerCount: vi.fn(() => 0),
-      setMaxListeners: vi.fn().mockReturnThis(),
-    };
+    const eventBus = new TypedEventBus();
+    const laterObserver = vi.fn();
+    eventBus.on("steer:injected", () => {
+      throw new Error("steer observer failed");
+    });
+    eventBus.on("steer:injected", laterObserver);
     const deps = makeMinimalDeps({
       sessionResolver: sessionResolver as never,
-      eventBus: eventBus as never,
+      eventBus,
       queueConfig: {
         defaultMode: "steer+followup",
         perChannel: {},
@@ -462,17 +517,28 @@ describe("setupAndRoute steer+followup routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
-    expect(runHandle.steer).toHaveBeenCalledWith("hello");
-    expect(eventBus.emit).toHaveBeenCalledWith(
-      "steer:injected",
+    expect(runHandle.steer).toHaveBeenCalledWith(expect.stringMatching(
+      /SECURITY NOTICE:[\s\S]*<<<UNTRUSTED_[a-f0-9]+>>>[\s\S]*hello[\s\S]*<<<END_UNTRUSTED_/u,
+    ));
+    expect(laterObserver).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: "agent-1" }),
+    );
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: "steer:injected",
+        firstListenerIndex: 0,
+      }),
+      "Observational event subscriber failed",
     );
     // followup must not be invoked after successful steer
     expect(runHandle.followUp).not.toHaveBeenCalled();
@@ -504,15 +570,70 @@ describe("setupAndRoute steer+followup routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     expect(runHandle.steer).toHaveBeenCalledOnce();
-    expect(runHandle.followUp).toHaveBeenCalledWith("hello");
+    expect(runHandle.followUp).toHaveBeenCalledWith(expect.stringMatching(
+      /SECURITY NOTICE:[\s\S]*<<<UNTRUSTED_[a-f0-9]+>>>[\s\S]*hello[\s\S]*<<<END_UNTRUSTED_/u,
+    ));
+  });
+
+  it("sanitizes SDK steer failures before logging them", async () => {
+    const credential = `xoxb-${"s".repeat(32)}`;
+    const runHandle = makeRunHandle({ isStreaming: true, isCompacting: false });
+    runHandle.steer.mockRejectedValueOnce(new Error(`steer failed ${credential}`));
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+      fatal: vi.fn(),
+      trace: vi.fn(),
+      child: vi.fn().mockReturnThis(),
+    };
+    const deps = makeMinimalDeps({
+      sessionResolver: {
+        resolveActiveSession: vi.fn(() => runHandle),
+      } as never,
+      queueConfig: {
+        defaultMode: "steer+followup",
+        perChannel: {},
+      } as never,
+      logger: logger as never,
+    });
+    const adapter = makeAdapter();
+    const msg = makeMsg();
+
+    await setupAndRoute(
+      deps,
+      adapter,
+      msg,
+      msg,
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      makeExecutor(),
+      new Set(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new Map() as any,
+      undefined,
+      EMPTY_INBOUND_PROVENANCE,
+    );
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(String) }),
+      "Steer injection failed",
+    );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(credential);
   });
 
   it("queues as follow-up immediately when session is compacting", async () => {
@@ -522,6 +643,7 @@ describe("setupAndRoute steer+followup routing", () => {
     };
     const eventBus = {
       emit: vi.fn(() => true),
+      emitSafely: vi.fn(() => ({ hadListeners: false, failures: [] })),
       on: vi.fn().mockReturnThis(),
       off: vi.fn().mockReturnThis(),
       once: vi.fn().mockReturnThis(),
@@ -547,18 +669,21 @@ describe("setupAndRoute steer+followup routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     // No steer when compacting
     expect(runHandle.steer).not.toHaveBeenCalled();
     // Direct follow-up
     expect(runHandle.followUp).toHaveBeenCalledOnce();
-    expect(eventBus.emit).toHaveBeenCalledWith(
+    expect(eventBus.emitSafely).toHaveBeenCalledWith(
       "steer:followup_queued",
       expect.objectContaining({ reason: "compacting" }),
     );
@@ -571,6 +696,7 @@ describe("setupAndRoute steer+followup routing", () => {
     };
     const eventBus = {
       emit: vi.fn(() => true),
+      emitSafely: vi.fn(() => ({ hadListeners: false, failures: [] })),
       on: vi.fn().mockReturnThis(),
       off: vi.fn().mockReturnThis(),
       once: vi.fn().mockReturnThis(),
@@ -596,14 +722,17 @@ describe("setupAndRoute steer+followup routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
-    expect(eventBus.emit).toHaveBeenCalledWith(
+    expect(eventBus.emitSafely).toHaveBeenCalledWith(
       "steer:rejected",
       expect.objectContaining({ reason: "not_streaming" }),
     );
@@ -639,14 +768,70 @@ describe("setupAndRoute steer+followup routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     expect(runHandle.followUp).toHaveBeenCalledOnce();
+    expect(enqueue).toHaveBeenCalledOnce();
+  });
+
+  it("sanitizes SDK follow-up failures before logging them", async () => {
+    const credential = `xoxb-${"f".repeat(32)}`;
+    const runHandle = makeRunHandle({ isStreaming: false, isCompacting: false });
+    runHandle.followUp.mockRejectedValueOnce(new Error(`follow-up failed ${credential}`));
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+      fatal: vi.fn(),
+      trace: vi.fn(),
+      child: vi.fn().mockReturnThis(),
+    };
+    const enqueue = vi.fn(async () => ok(undefined));
+    const deps = makeMinimalDeps({
+      sessionResolver: {
+        resolveActiveSession: vi.fn(() => runHandle),
+      } as never,
+      commandQueue: { enqueue } as never,
+      queueConfig: {
+        defaultMode: "steer+followup",
+        perChannel: {},
+      } as never,
+      logger: logger as never,
+    });
+    const adapter = makeAdapter();
+    const msg = makeMsg();
+
+    await setupAndRoute(
+      deps,
+      adapter,
+      msg,
+      msg,
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      makeExecutor(),
+      new Set(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new Map() as any,
+      undefined,
+      EMPTY_INBOUND_PROVENANCE,
+    );
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(String) }),
+      "Follow-up queue failed",
+    );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(credential);
     expect(enqueue).toHaveBeenCalledOnce();
   });
 
@@ -673,11 +858,14 @@ describe("setupAndRoute steer+followup routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     // With mode override to "queue", sessionResolver MUST NOT be queried
@@ -691,10 +879,15 @@ describe("setupAndRoute steer+followup routing", () => {
 // ===========================================================================
 
 describe("setupAndRoute command-queue routing", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("logs warning when command queue rejects enqueue with overflow policy", async () => {
+    const credential = `xoxb-${"q".repeat(32)}`;
     const enqueue = vi.fn(async () => ({
       ok: false as const,
-      error: new Error("Queue overflow"),
+      error: new Error(`Queue overflow ${credential}`),
     }));
     const logger = {
       info: vi.fn(),
@@ -719,19 +912,431 @@ describe("setupAndRoute command-queue routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
-        err: "Queue overflow",
+        err: expect.not.stringContaining(credential),
         hint: expect.stringContaining("command queue"),
       }),
       "Message enqueue failed",
+    );
+    expect(deps.eventBus.emitSafely).toHaveBeenCalledWith(
+      "message:terminal",
+      expect.objectContaining({
+        channelType: "telegram",
+        channelId: "chat-1",
+        sourceMessageId: "msg-1",
+        outcome: "error",
+        reason: "queue_rejected",
+      }),
+    );
+  });
+
+  it("terminalizes work aborted before queued execution begins", async () => {
+    const eventBus = makeMinimalDeps().eventBus;
+    const executor = makeExecutor();
+    const enqueue = vi.fn(async (
+      _sessionKey: SessionKey,
+      queuedMessage: NormalizedMessage,
+      _channelType: string,
+      handler: (
+        messages: NormalizedMessage[],
+        execution: {
+          signal: AbortSignal;
+          receivedAt: number;
+          sourceTerminalScope: SourceTerminalScope;
+        },
+      ) => Promise<void>,
+      sourceTerminalScope: SourceTerminalScope,
+    ) => {
+      const controller = new AbortController();
+      controller.abort();
+      await handler([queuedMessage], {
+        signal: controller.signal,
+        receivedAt: 750,
+        sourceTerminalScope,
+      });
+      return ok(undefined);
+    });
+    const deps = makeMinimalDeps({
+      commandQueue: { enqueue } as never,
+      eventBus,
+    });
+    const msg = makeMsg({
+      id: "00000000-0000-0000-0000-000000000401",
+    });
+
+    await setupAndRoute(
+      deps,
+      makeAdapter(),
+      msg,
+      msg,
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      executor,
+      new Set(),
+      new Map() as never,
+      undefined,
+      EMPTY_INBOUND_PROVENANCE,
+    );
+
+    expect(executor.execute).not.toHaveBeenCalled();
+    expect(eventBus.emitSafely).toHaveBeenCalledWith(
+      "message:terminal",
+      expect.objectContaining({
+        channelType: "telegram",
+        channelId: "chat-1",
+        sourceMessageId: msg.id,
+        outcome: "aborted",
+        reason: "execution_completed",
+      }),
+    );
+  });
+
+  it("does not republish a real queue shutdown rejection at the setup boundary", async () => {
+    const eventBus = new TypedEventBus();
+    const observed: Array<{ sourceMessageId: string; reason: string }> = [];
+    eventBus.on("message:terminal", (event) => observed.push(event));
+    let releaseActive!: () => void;
+    const activeReleased = new Promise<void>((resolve) => {
+      releaseActive = resolve;
+    });
+    let activeStarted!: () => void;
+    const activeReady = new Promise<void>((resolve) => {
+      activeStarted = resolve;
+    });
+    const commandQueue = createCommandQueue({
+      eventBus,
+      config: QueueConfigSchema.parse({
+        defaultMode: "followup",
+        maxConcurrentSessions: 1,
+      }),
+    });
+    const sessionKey = makeSessionKey();
+    const active = commandQueue.enqueue(
+      sessionKey,
+      makeMsg({ id: "00000000-0000-0000-0000-000000000411" }),
+      "telegram",
+      async () => {
+        activeStarted();
+        await activeReleased;
+      },
+    );
+    await activeReady;
+    const waitingMessage = makeMsg({
+      id: "00000000-0000-0000-0000-000000000412",
+    });
+    const deps = makeMinimalDeps({ eventBus, commandQueue });
+
+    const routed = setupAndRoute(
+      deps,
+      makeAdapter(),
+      waitingMessage,
+      waitingMessage,
+      sessionKey,
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      makeExecutor(),
+      new Set(),
+      new Map() as never,
+      undefined,
+      EMPTY_INBOUND_PROVENANCE,
+    );
+    await Promise.resolve();
+    const shutdown = commandQueue.shutdown();
+    releaseActive();
+    await Promise.all([routed, shutdown, active]);
+
+    expect(observed.filter((event) =>
+      event.sourceMessageId === waitingMessage.id)).toEqual([
+      expect.objectContaining({ reason: "queue_rejected" }),
+    ]);
+  });
+
+  it("aborts the authoritative active SDK run when the queue cancels execution", async () => {
+    let resolveExecutorStarted!: () => void;
+    const executorStarted = new Promise<void>((resolve) => {
+      resolveExecutorStarted = resolve;
+    });
+    let resolveExecutor!: () => void;
+    const releaseExecutor = new Promise<void>((resolve) => {
+      resolveExecutor = resolve;
+    });
+    const executor = makeExecutor();
+    vi.mocked(executor.execute).mockImplementation(async () => {
+      resolveExecutorStarted();
+      await releaseExecutor;
+      return {
+        response: "ok",
+        sessionKey: makeSessionKey(),
+        tokensUsed: { input: 0, output: 0, total: 0 },
+        cost: { total: 0 },
+        stepsExecuted: 0,
+        llmCalls: 1,
+        finishReason: "stop" as const,
+      };
+    });
+    const runHandle = {
+      steer: vi.fn(async () => undefined),
+      followUp: vi.fn(async () => undefined),
+      abort: vi.fn(async () => {
+        resolveExecutor();
+      }),
+      isStreaming: vi.fn(() => true),
+      isCompacting: vi.fn(() => false),
+    };
+    const sessionResolver = {
+      resolveActiveSession: vi.fn(() => runHandle),
+    };
+    const enqueue = vi.fn(async (
+      _sessionKey: SessionKey,
+      queuedMessage: NormalizedMessage,
+      _channelType: string,
+      handler: (
+        messages: NormalizedMessage[],
+        execution: {
+          signal: AbortSignal;
+          receivedAt: number;
+          sourceTerminalScope: SourceTerminalScope;
+        },
+      ) => Promise<void>,
+      sourceTerminalScope: SourceTerminalScope,
+    ) => {
+      const controller = new AbortController();
+      const execution = handler([queuedMessage], {
+        signal: controller.signal,
+        receivedAt: 750,
+        sourceTerminalScope,
+      });
+      await executorStarted;
+      controller.abort();
+      await execution;
+      return ok(undefined);
+    });
+    const deps = makeMinimalDeps({
+      commandQueue: { enqueue } as never,
+      sessionResolver: sessionResolver as never,
+    });
+
+    await setupAndRoute(
+      deps,
+      makeAdapter(),
+      makeMsg(),
+      makeMsg(),
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      executor,
+      new Set(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new Map() as any,
+      undefined,
+      EMPTY_INBOUND_PROVENANCE,
+    );
+
+    expect(sessionResolver.resolveActiveSession).toHaveBeenCalledWith(TURN_CONVERSATION_REF);
+    expect(runHandle.abort).toHaveBeenCalledOnce();
+  });
+
+  it("aborts after registration when prompt execution id differs from the request trace", async () => {
+    const traceId = randomUUID();
+    const promptExecutionId = randomUUID();
+    const eventBus = new TypedEventBus();
+    let resolveExecutorStarted!: () => void;
+    const executorStarted = new Promise<void>((resolve) => {
+      resolveExecutorStarted = resolve;
+    });
+    let resolveExecutor!: () => void;
+    const releaseExecutor = new Promise<void>((resolve) => {
+      resolveExecutor = resolve;
+    });
+    const executor = makeExecutor();
+    vi.mocked(executor.execute).mockImplementation(async () => {
+      resolveExecutorStarted();
+      await releaseExecutor;
+      return {
+        response: "ok",
+        sessionKey: makeSessionKey(),
+        tokensUsed: { input: 0, output: 0, total: 0 },
+        cost: { total: 0 },
+        stepsExecuted: 0,
+        llmCalls: 1,
+        finishReason: "stop" as const,
+      };
+    });
+    const runHandle = {
+      steer: vi.fn(async () => undefined),
+      followUp: vi.fn(async () => undefined),
+      abort: vi.fn(async () => {
+        resolveExecutor();
+      }),
+      isStreaming: vi.fn(() => true),
+      isCompacting: vi.fn(() => false),
+    };
+    const sessionResolver = {
+      resolveActiveSession: vi.fn()
+        .mockReturnValueOnce(undefined)
+        .mockReturnValue(runHandle),
+    };
+    const enqueue = vi.fn(async (
+      _sessionKey: SessionKey,
+      queuedMessage: NormalizedMessage,
+      _channelType: string,
+      handler: (
+        messages: NormalizedMessage[],
+        execution: {
+          signal: AbortSignal;
+          receivedAt: number;
+          sourceTerminalScope: SourceTerminalScope;
+        },
+      ) => Promise<void>,
+      sourceTerminalScope: SourceTerminalScope,
+    ) => {
+      const controller = new AbortController();
+      const execution = handler([queuedMessage], {
+        signal: controller.signal,
+        receivedAt: 750,
+        sourceTerminalScope,
+      });
+      await executorStarted;
+      controller.abort();
+      eventBus.emit("prompt:submitted", {
+        agentId: "another-agent",
+        sessionKey: formatSessionKey(makeSessionKey()),
+        traceId: promptExecutionId,
+        promptChars: 1,
+        provider: "test",
+        modelId: "test-model",
+        messageCount: 1,
+        systemDigest: "system-digest",
+        messagesDigest: "messages-digest",
+        timestamp: 800,
+      });
+      expect(sessionResolver.resolveActiveSession).toHaveBeenCalledOnce();
+      eventBus.emit("prompt:submitted", {
+        agentId: "agent-1",
+        sessionKey: formatSessionKey(makeSessionKey()),
+        traceId: promptExecutionId,
+        promptChars: 1,
+        provider: "test",
+        modelId: "test-model",
+        messageCount: 1,
+        systemDigest: "system-digest",
+        messagesDigest: "messages-digest",
+        timestamp: 800,
+      });
+      resolveExecutor();
+      await execution;
+      return ok(undefined);
+    });
+    const deps = makeMinimalDeps({
+      commandQueue: { enqueue } as never,
+      sessionResolver: sessionResolver as never,
+      eventBus,
+    });
+
+    await runWithContext({
+      traceId,
+      startedAt: 700,
+      channelType: "telegram",
+      tenantId: "default",
+      trustLevel: "admin",
+    }, () => setupAndRoute(
+      deps,
+      makeAdapter(),
+      makeMsg(),
+      makeMsg(),
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      executor,
+      new Set(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new Map() as any,
+      undefined,
+      EMPTY_INBOUND_PROVENANCE,
+    ));
+
+    expect(sessionResolver.resolveActiveSession).toHaveBeenCalledTimes(2);
+    expect(runHandle.abort).toHaveBeenCalledOnce();
+    expect(eventBus.listenerCount("prompt:submitted")).toBe(0);
+  });
+
+  it("uses channel ingress time for direct execution diagnostics without a queue", async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const clock = createFakeClock(1_100);
+    const eventBus = makeMinimalDeps().eventBus;
+    const executor = makeExecutor();
+    vi.mocked(executor.execute).mockImplementation(async () => {
+      vi.setSystemTime(1_100);
+      return {
+        response: "ok",
+        sessionKey: makeSessionKey(),
+        tokensUsed: { input: 0, output: 0, total: 0 },
+        cost: { total: 0 },
+        stepsExecuted: 0,
+        llmCalls: 1,
+        finishReason: "stop" as const,
+      };
+    });
+    const deliveryService = makeFakeDeliveryService();
+    vi.mocked(deliveryService.deliverToChannel).mockImplementation(async () => {
+      vi.setSystemTime(1_140);
+      clock.advance(40);
+      return ok({
+        chunks: [{ status: "accepted" as const, messageId: "reply-1", charCount: 2, retried: false }],
+        totalChars: 2,
+        platform: { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 1_140, lastMessageId: "reply-1" },
+        queueDisposition: "settled" as const,
+      });
+    });
+    const deps = makeMinimalDeps({ eventBus, clock, deliveryService });
+    const ingressStartedAt = 800;
+
+    await runWithContext({
+      traceId: randomUUID(),
+      startedAt: ingressStartedAt,
+      channelType: "telegram",
+      tenantId: "default",
+      trustLevel: "admin",
+    }, () => setupAndRoute(
+      deps,
+      makeAdapter(),
+      makeMsg(),
+      makeMsg(),
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      executor,
+      new Set(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      new Map() as any,
+      undefined,
+    ));
+
+    expect(eventBus.emitSafely).toHaveBeenCalledWith(
+      "diagnostic:message_processed",
+      expect.objectContaining({
+        receivedAt: ingressStartedAt,
+        executionDurationMs: 100,
+        deliveryDurationMs: 40,
+        totalDurationMs: 340,
+      }),
     );
   });
 });

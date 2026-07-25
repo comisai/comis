@@ -59,7 +59,7 @@ export interface ProcessRegistry {
   list(): Array<{
     sessionId: string;
     status: string;
-    pid: number | undefined;
+    pid?: number;
     command: string;
     startedAt: number;
     runtimeMs: number;
@@ -220,7 +220,7 @@ export function createProcessRegistry(
       return {
         sessionId: s.id,
         status: s.status,
-        pid: s.pid,
+        ...(s.sandboxed ? {} : { pid: s.pid }),
         command: s.command,
         startedAt: s.startedAt,
         runtimeMs: now - s.startedAt,

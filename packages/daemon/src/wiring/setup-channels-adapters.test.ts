@@ -169,8 +169,10 @@ describe("bootstrapAdapters", () => {
     // undefined for the second arg.
     expect(validateBotToken).toHaveBeenCalledWith("tok123", undefined);
     expect(createTelegramPlugin).toHaveBeenCalledWith(
-      expect.objectContaining({ botToken: "tok123", logger: channelsLogger }),
+      expect.objectContaining({ getBotToken: expect.any(Function), logger: channelsLogger }),
     );
+    const telegramDeps = vi.mocked(createTelegramPlugin).mock.calls[0]?.[0];
+    expect(telegramDeps?.getBotToken()).toBe("tok123");
     expect(result.adaptersByType.get("telegram")).toBe(mockTelegramPlugin.adapter);
     expect(result.tgPlugin).toBe(mockTelegramPlugin);
     expect(channelsLogger.info).toHaveBeenCalledWith(
@@ -192,14 +194,17 @@ describe("bootstrapAdapters", () => {
     expect(validateBotToken).toHaveBeenCalledWith("tok123", "http://127.0.0.1:54321");
     expect(createTelegramPlugin).toHaveBeenCalledWith(
       expect.objectContaining({
-        botToken: "tok123",
+        getBotToken: expect.any(Function),
         apiRoot: "http://127.0.0.1:54321",
       }),
     );
   });
 
   it("skips Telegram adapter when validation fails", async () => {
-    vi.mocked(validateBotToken).mockResolvedValueOnce({ ok: false, error: new Error("bad token") } as any);
+    vi.mocked(validateBotToken).mockResolvedValueOnce({
+      ok: false,
+      error: Object.assign(new Error("bad token"), { failureKind: "auth" as const }),
+    } as any);
     const container = makeContainer({ telegram: { enabled: true, botToken: "invalid" } });
     const result = await bootstrapAdapters({ container, channelsLogger });
 
@@ -207,6 +212,35 @@ describe("bootstrapAdapters", () => {
     expect(channelsLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ errorKind: "auth" }),
       expect.stringContaining("Telegram credential validation failed"),
+    );
+  });
+
+  it("names the configured Telegram API endpoint when validation cannot reach it", async () => {
+    vi.mocked(validateBotToken).mockResolvedValueOnce({
+      ok: false,
+      error: Object.assign(new Error("Network request for getMe failed"), {
+        failureKind: "network" as const,
+      }),
+    } as any);
+    const apiRoot = "http://127.0.0.1:54321";
+    const container = makeContainer({
+      telegram: { enabled: true, botToken: "test-token", apiRoot },
+    });
+
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.has("telegram")).toBe(false);
+    expect(channelsLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "network",
+        hint: expect.stringContaining("channels.telegram.apiRoot"),
+        apiRoot,
+      }),
+      "Telegram credential validation failed",
+    );
+    expect(channelsLogger.warn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ hint: expect.stringContaining("TELEGRAM_BOT_TOKEN") }),
+      expect.any(String),
     );
   });
 
@@ -408,15 +442,46 @@ describe("bootstrapAdapters", () => {
   });
 
   it("falls back to SecretManager when botToken not in config", async () => {
+    const secrets = { TELEGRAM_BOT_TOKEN: "secret-tok" };
     const container = makeContainer(
       { telegram: { enabled: true } },
-      { TELEGRAM_BOT_TOKEN: "secret-tok" },
+      secrets,
     );
     const result = await bootstrapAdapters({ container, channelsLogger });
 
     expect(container.secretManager.get).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
     expect(validateBotToken).toHaveBeenCalledWith("secret-tok", undefined);
     expect(result.adaptersByType.get("telegram")).toBe(mockTelegramPlugin.adapter);
+    const telegramDeps = vi.mocked(createTelegramPlugin).mock.calls[0]?.[0];
+    secrets.TELEGRAM_BOT_TOKEN = "secret-rotated";
+    expect(telegramDeps?.getBotToken()).toBe("secret-rotated");
+  });
+
+  it("keeps an explicit Telegram config token authoritative over the canonical secret", async () => {
+    const secrets = { TELEGRAM_BOT_TOKEN: "secret-before" };
+    const container = makeContainer(
+      { telegram: { enabled: true, botToken: "resolved-at-bootstrap" } },
+      secrets,
+    );
+    await bootstrapAdapters({ container, channelsLogger });
+
+    const telegramDeps = vi.mocked(createTelegramPlugin).mock.calls[0]?.[0];
+    expect(telegramDeps?.getBotToken()).toBe("resolved-at-bootstrap");
+    secrets.TELEGRAM_BOT_TOKEN = "secret-after";
+    expect(telegramDeps?.getBotToken()).toBe("resolved-at-bootstrap");
+  });
+
+  it("refreshes a canonical secret reference that was resolved into config at bootstrap", async () => {
+    const secrets = { TELEGRAM_BOT_TOKEN: "secret-before" };
+    const container = makeContainer(
+      { telegram: { enabled: true, botToken: "secret-before" } },
+      secrets,
+    );
+    await bootstrapAdapters({ container, channelsLogger });
+
+    const telegramDeps = vi.mocked(createTelegramPlugin).mock.calls[0]?.[0];
+    secrets.TELEGRAM_BOT_TOKEN = "secret-after";
+    expect(telegramDeps?.getBotToken()).toBe("secret-after");
   });
 
   it("logs summary when adapters are initialized", async () => {

@@ -254,34 +254,36 @@ describe("createApiClient", () => {
   });
 
   describe("searchMemory()", () => {
+    const AUTH = { tenantId: "acme", agentId: "aria" };
+
     it("URL-encodes query parameter", async () => {
       mockFetch.mockReturnValueOnce(mockJsonResponse({ results: [] }));
-      await client.searchMemory("hello world & more");
+      await client.searchMemory("hello world & more", AUTH);
 
       const callUrl = mockFetch.mock.calls[0][0];
       expect(callUrl).toContain("q=hello%20world%20%26%20more");
     });
 
-    it("passes limit parameter", async () => {
+    it("passes limit and the explicit tenant/agent scope", async () => {
       mockFetch.mockReturnValueOnce(mockJsonResponse({ results: [] }));
-      await client.searchMemory("test", 5);
+      await client.searchMemory("test", AUTH, 5);
 
       const callUrl = mockFetch.mock.calls[0][0];
-      expect(callUrl).toBe(`${BASE_URL}/api/memory/search?q=test&limit=5`);
+      expect(callUrl).toBe(`${BASE_URL}/api/memory/search?q=test&limit=5&tenant=acme&agent=aria`);
     });
 
     it("returns results array from response", async () => {
       const results = [{ id: "m1", content: "test", memoryType: "fact", trustLevel: "high", score: 0.9, createdAt: 123 }];
       mockFetch.mockReturnValueOnce(mockJsonResponse({ results }));
 
-      const result = await client.searchMemory("test");
+      const result = await client.searchMemory("test", AUTH);
       expect(result).toEqual(results);
     });
 
     it("defaults to empty array when results missing", async () => {
       mockFetch.mockReturnValueOnce(mockJsonResponse({}));
 
-      const result = await client.searchMemory("test");
+      const result = await client.searchMemory("test", AUTH);
       expect(result).toEqual([]);
     });
   });
@@ -339,13 +341,13 @@ describe("createApiClient", () => {
   });
 
   describe("getMemoryStats()", () => {
-    it("fetches memory stats from /api/memory/stats", async () => {
+    it("fetches memory stats from /api/memory/stats with the explicit tenant/agent scope", async () => {
       const stats = { totalEntries: 100, byType: { fact: 50 } };
       mockFetch.mockReturnValueOnce(mockJsonResponse(stats));
 
-      const result = await client.getMemoryStats();
+      const result = await client.getMemoryStats({ tenantId: "acme", agentId: "aria" });
       expect(result).toEqual(stats);
-      expect(mockFetch.mock.calls[0][0]).toBe(`${BASE_URL}/api/memory/stats`);
+      expect(mockFetch.mock.calls[0][0]).toBe(`${BASE_URL}/api/memory/stats?tenant=acme&agent=aria`);
     });
   });
 
@@ -366,32 +368,21 @@ describe("createApiClient", () => {
     });
   });
 
-  /* --------------------------------------------------------------------- */
-  /* listSessions tight mapping                                             */
-  /*                                                                        */
-  /* Asserts the pass-through shape: listSessions returns SessionListItem[] */
-  /* with exactly the 9 contract fields — no invented extras, no aliases.   */
-  /* Tightens session.list RPC mapping.                                     */
-  /* --------------------------------------------------------------------- */
-  describe("listSessions tight mapping", () => {
+  describe("listSessions response mapping", () => {
     const EXPECTED_KEYS = [
       "agentId",
-      "channelId",
+      "conversationRef",
       "createdAt",
       "kind",
       "messageCount",
-      "sessionKey",
       "totalTokens",
       "updatedAt",
-      "userId",
     ];
 
     const CONTRACT_ITEM = {
-      sessionKey: "s1",
+      conversationRef: "cv-1",
       agentId: "a",
-      userId: "u",
-      channelId: "c",
-      kind: "discord",
+      kind: "group",
       messageCount: 2,
       totalTokens: 100,
       updatedAt: 1000,
@@ -413,11 +404,11 @@ describe("createApiClient", () => {
       return { rpcCall, calls };
     }
 
-    it("returns items with EXACTLY the 9 contract fields (set equality)", async () => {
+    it("returns items with exactly the contract fields", async () => {
       const { rpcCall } = makeRpcCall();
       const rpcClient = createApiClient(BASE_URL, TOKEN, rpcCall);
 
-      const result = await rpcClient.listSessions();
+      const result = await rpcClient.listSessions({ tenantId: "tenant-a", agentId: "a" });
       expect(result).toHaveLength(1);
       const keys = Object.keys(result[0]!).sort();
       expect(keys).toEqual(EXPECTED_KEYS);
@@ -427,8 +418,8 @@ describe("createApiClient", () => {
       const { rpcCall } = makeRpcCall();
       const rpcClient = createApiClient(BASE_URL, TOKEN, rpcCall);
 
-      const result = await rpcClient.listSessions();
-      const item = result[0]! as Record<string, unknown>;
+      const result = await rpcClient.listSessions({ tenantId: "tenant-a", agentId: "a" });
+      const item = result[0]! as unknown as Record<string, unknown>;
       expect(item).not.toHaveProperty("inputTokens");
       expect(item).not.toHaveProperty("outputTokens");
       expect(item).not.toHaveProperty("toolCalls");
@@ -443,7 +434,7 @@ describe("createApiClient", () => {
       const { rpcCall } = makeRpcCall();
       const rpcClient = createApiClient(BASE_URL, TOKEN, rpcCall);
 
-      const result = await rpcClient.listSessions();
+      const result = await rpcClient.listSessions({ tenantId: "tenant-a", agentId: "a" });
       expect(result[0]).toEqual(CONTRACT_ITEM);
     });
   });

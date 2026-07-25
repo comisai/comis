@@ -33,7 +33,6 @@ agents:
     scheduler:
       cron:
         enabled: true
-        maxConcurrentRuns: 5
         defaultTimezone: "UTC"
 
 gateway:
@@ -53,7 +52,6 @@ gateway:
 scheduler:
   cron:
     enabled: true
-    maxConcurrentRuns: 5
     defaultTimezone: "UTC"
   heartbeat:
     intervalMs: 300000

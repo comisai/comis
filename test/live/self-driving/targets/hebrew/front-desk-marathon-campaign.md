@@ -64,7 +64,7 @@
 **Entry criteria (do not start driving until all hold):** kickoff paste filled (box · desk
 instantiation · optional mailbox · optional business-stack MCPs · model · budget) · box
 reinstalled to THIS build and `/root/comis-deployed-build` confirms your SHA · green baseline
-(`phase0-check.sh` + `rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES** (`comis fleet`
+(`phase0-check.sh` + `rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES** (`comis system-health`
 shows zero `config_posture:unresolved_model`, and the served `capabilityClass` on an `Execution
 complete` line matches the intended tier — an unknown id fails closed to nano silently) ·
 **Counter-confinement gate verified** (the open-counter inbound posture recorded · per-sender

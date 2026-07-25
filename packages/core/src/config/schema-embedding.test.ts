@@ -6,7 +6,7 @@ import { EmbeddingConfigSchema } from "./schema-embedding.js";
 // The optional `embedding.multilingual` advisory config key.
 //
 // An optional boolean (NO default) on the top-level z.strictObject. Undeclared
-// -> the name heuristic infers the multilingual flag for the `comis fleet`
+// -> the name heuristic infers the multilingual flag for the `comis system-health`
 // model-health line (advisory only; no behavior is gated on it). z.strictObject
 // rejects an unknown/typo'd key — the desired strictness.
 // ---------------------------------------------------------------------------

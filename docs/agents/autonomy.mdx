@@ -62,9 +62,9 @@ can **evict** an in-flight run back to `default` -- see
 `standard`'s capability set and attaches a not-yet-available notice (logged at
 boot). Comis **never silently grants** a capability whose
 enforcement floor is not yet built, so you are told rather than over-granted.
-(**Durable runs** are not one of the deferred surfaces -- they ship as an opt-in
-knob orthogonal to the profile; see [Durability & Resume](#durability-resume)
-below.)
+(**Durable runs** are not one of the deferred surfaces -- they are enabled by
+default and remain orthogonal to the profile; see
+[Durability & Resume](#durability-resume) below.)
 </Info>
 
 ### The `unattended` profile
@@ -83,10 +83,12 @@ do.
   the platform **escalates it to your operator** out-of-band. The run keeps going
   on what it *is* allowed to do; it does not sit on a prompt forever.
 - **Outward actions still escalate, never auto-send.** `unattended` does **not**
-  loosen the outward floor. A send to a new channel, a browser action, any
-  hard-to-reverse outward step is still **proposed** for approval, never
+  loosen the outward floor. A send to a non-origin endpoint must already carry
+  exact endpoint authority and the configured grant; browser actions and other
+  hard-to-reverse outward steps are still **proposed** for approval, never
   auto-decided -- exactly as under `standard`. Never-hang changes *waiting* into
-  *escalation*; it does not change *propose* into *send*.
+  *escalation*; it does not mint routing authority or change *propose* into
+  *send*.
 - **The denial breaker stops a retry-loop.** A run that keeps trying a blocked
   capability would otherwise spin -- each attempt denied, the budget draining for
   nothing. After [`denialBreakerN`](/reference/config-yaml#autonomy-agents-autonomy)
@@ -135,13 +137,17 @@ The `standard` profile resolves these nine floor capabilities:
 `orch:message` is on by default but scoped to the agent's **origin channel
 only** -- it answers where it was spoken to. The cap covers the genuinely-outward
 send subset (`message.send`/`reply`/`react`); editing, deleting, fetching, and
-attaching stay admin-only. A send to a **new** channel always escalates for
-approval (it is never auto-decided), configured via `message.channels`.
+attaching stay admin-only. Every call must also match the complete endpoint
+bound to the current turn. `message.channels` controls whether a non-origin
+endpoint already selected by a trusted scheduled run is grantable; it does not
+discover an endpoint or authorize arbitrary `channel_type`/`channel_id`
+coordinates.
 
 Two surfaces are **off** in every default profile because they are outward and
-hard to reverse: `orch:browse` (a real browser) and messaging a **new** channel
-(beyond the agent's own). Opt into the browser explicitly with `browse: true`;
-even then it always escalates for approval -- it is never auto-decided.
+hard to reverse: `orch:browse` (a real browser) and non-origin messaging beyond
+the endpoint already bound to the run. Opt into the browser explicitly with
+`browse: true`; even then it always escalates for approval -- it is never
+auto-decided.
 
 ### Learned procedures stay advisory
 
@@ -292,20 +298,20 @@ original -- it gains no new privilege.
 
 ## Durability & Resume
 
-By default an in-flight autonomy run lives only in the daemon's memory: kill the
-daemon mid-pipeline and that run is gone. Turn on
+Durability is enabled by default for autonomy-bearing agents. A long-running
+run is **resumable across a daemon restart**, with durable duplicate suppression
+and explicit uncertainty parking for outward sends. Set
 [`autonomy.durability.enabled`](/reference/config-yaml#autonomy-agents-autonomy)
-(**off by default** -- a default install builds no durable stores and is
-byte-identical) and a long-running run becomes **resumable across a restart**,
-with an **exactly-once** guarantee on everything it sends outward.
+to `false` only when you deliberately want in-flight runs to remain
+process-local.
 
-```yaml title="~/.comis/config.yaml -- make a cron-fired pipeline survive a restart"
+```yaml title="~/.comis/config.yaml -- opt out of durable autonomy runs"
 agents:
   default:
     autonomy:
       profile: standard
       durability:
-        enabled: true          # opt-in; off by default
+        enabled: false
 ```
 
 **What it gives you:**
@@ -317,24 +323,28 @@ agents:
   it and **notifies the operator** out-of-band. A run is never left in limbo. A
   daemon-wide watchdog sweeps any run whose heartbeat has lapsed past
   `staleHeartbeatMs` (the same fate: resume or orphan-and-notify).
-- **Exactly-once outward sends -- a crash never re-DMs or re-posts.** Every
-  agent-originated outward send is wrapped in a durable three-state ledger
-  (`send_attempt_started` → `unknown_after_send` → `committed`) keyed on a unique
-  `(rootRunId, step-index)` pair. A send that already committed is a no-op on
-  replay; a send that crashed *between* the attempt and the platform
-  acknowledgement is **reconciled** on recovery -- the owning channel is asked
-  "did this actually send?" -- rather than blind-replayed. This is security
-  invariant #12: **a restart mid-pipeline never double-sends.** It covers **both**
+- **Duplicate suppression with honest crash uncertainty.** Every
+  agent-originated outward send is wrapped in a durable, closed five-state
+  ledger (`send_attempt_started`, `unknown_after_send`, `committed`, `failed`,
+  or `unresolved`) keyed by one stable logical operation identity and its
+  `(rootRunId, step-index)` pair. Repeating a retained committed operation
+  returns its prior platform receipt without another send; every other existing
+  state blocks another execution. If a call may have crossed the platform
+  boundary but no durable receipt proves its outcome, the row is atomically
+  parked `unresolved` and escalated. Startup applies that same rule to every
+  `send_attempt_started` or `unknown_after_send` row: it does not query channel
+  history and does not replay the operation. This covers **both**
   the direct [`message.send`/`reply`/`react`](/reference/json-rpc#message-send)
   path **and** the sub-agent completion-announcement path -- the announcement
-  dead-letter queue consults the same ledger on restart, so a recovered
-  announcement is never delivered twice. The typed
+  dead-letter queue uses the same retained operation identity and ledger. The typed
   [`comis_tools.message_send`/`reply`/`react`](/agent-tools/orchestrate#the-typed-mutation-surface-write-and-message)
   outward methods dispatch that same `message.*` path, so they ride the same
-  ledger. **This dedup is active only under durability.** With durability off
-  (the default), an outward send is a best-effort pass-through -- still delivered,
-  just not deduped across a crash; the exactly-once guarantee attaches only once
-  `autonomy.durability.enabled` is on.
+  protection. **This protection is active only under durability.** With
+  durability off (an explicit opt-out), an outward send is a best-effort
+  pass-through -- still delivered, but without a retained operation record
+  across a crash. Even with durability enabled, Comis does not claim universal
+  exactly-once delivery: an ambiguous platform outcome requires operator
+  verification before the operation can be attempted again.
 - **A resumed run never broadens its authority.** On resume the lease is
   re-minted from the run's **persisted, already-attenuated** capabilities -- never
   re-attenuated from a live parent (which could be broader), and never a superset
@@ -344,42 +354,45 @@ agents:
   resume, not re-minted.
 - **DAGs resume at node-boundary granularity.** A cron-fired multi-node
   execution graph interrupted by a restart resumes its **incomplete** nodes;
-  already-completed nodes are **not** re-run, and any outward send a re-run node
-  repeats is deduped by the same ledger. (Intra-node LLM/tool state is not
+  already-completed nodes are **not** re-run. An outward operation repeated with
+  the same retained identity is short-circuited when committed and blocked when
+  uncertain; it is not blindly replayed. (Intra-node LLM/tool state is not
   checkpointed -- resume is per node, not mid-node.)
+- **Plain sub-agents resume from a protected restart boundary.** The durable
+  checkpoint pins the child conversation, task declaration, model, budget,
+  workspace-policy hash, and attenuated capabilities. Recovery validates that
+  descriptor and then re-executes the declared task in the same child
+  conversation. It does not resume a half-finished provider turn.
 
 **The config knobs** (all under `autonomy.durability`):
 
 | Field | Default | What it does |
 |-------|---------|--------------|
-| `enabled` | `false` | Master switch. Off → no durable stores, no watchdog, byte-identical install. |
+| `enabled` | `true` | Master switch. Set `false` to disable durable stores, boot recovery, and the watchdog. |
 | `keepAliveMs` | `30000` | How often a live run stamps its heartbeat (independent of step/spawn completion, so a long child never looks stale). |
 | `staleHeartbeatMs` | `120000` | A run whose heartbeat is older than this is treated as crashed and orphan-swept. Default is 4× `keepAliveMs` -- the conservative ratio that keeps a transiently-slow run from being falsely failed (and its work duplicated). |
 | `recoveryBudgetMs` | `30000` | Wall-clock budget for one recovery pass. A backlog larger than the budget is partially recovered and the remainder deferred to the next pass -- no thundering herd on a large crash backlog. |
+| `orchestrateResume` | `true` | Preserve a timed-out `orchestrate` run's pinned script and last checkpoint so an explicit `orchestrate({resumeRunId})` can restart it from those verified artifacts. |
 
 <Note>
-**Honest per-channel coverage of the exactly-once guarantee.** The "was this
-actually sent?" reconciliation needs a channel that can be **queried** for its
-recent sends. **Discord** and **Slack** can (they fetch recent history and match
-the bot's message), so a crashed-mid-send on those resolves cleanly to
-*sent* (acknowledge once, no replay) or *not-sent* (replay once). **iMessage,
-IRC, and Email cannot** be queried for their sent history -- so a crashed-mid-send
-on those resolves to **unresolved**, which Comis handles by **parking the send
-and escalating to the operator** rather than guessing. That is the safe,
-surfaced outcome: never a silent double-send, and never a silent drop -- you are
-told to decide. This is the truthful shape of invariant #12: the guarantee is
-*full and automatic* on queryable channels, and *parked-and-surfaced* on the
-ones that cannot answer.
+**The uncertainty rule is channel-independent.** Comis does not treat a content
+and time-window match in platform history as proof that one unique operation was
+sent, and absence from a history window does not prove it was not sent. Recovery
+therefore never converts an interrupted send into a `sent` or `not_sent`
+verdict. It parks the operation `unresolved`, blocks automatic replay, and
+escalates with content-free identifiers so an operator can verify the platform
+effect. This is deliberately narrower than exactly-once delivery.
 </Note>
 
 <Note>
 **Resume scope.** A resumed run is re-anchored under the bounded-autonomy
-meter (bounded, killable, and with its outward ledger reconciled across the
-restart) from its persisted checkpoint -- it is **not** re-entered into the agent
-loop from the exact step it was on. Resuming the model turn itself from a
-mid-run step needs a wider checkpoint and is a later enhancement; today's
-guarantee is "the run survives, stays bounded, and never double-sends," not "the
-model picks up its half-finished thought."
+meter (bounded, killable, and with uncertain outward rows parked across the
+restart) from its persisted checkpoint. DAG work resumes at an incomplete node
+boundary, a plain sub-agent restarts its declared task from its validated
+descriptor, and `orchestrate` resumes only through an explicit
+`resumeRunId` against verified pinned artifacts. None of these resumes a
+half-finished provider turn or promises that every platform side effect occurs
+exactly once.
 </Note>
 
 ## Legible Boot Logging

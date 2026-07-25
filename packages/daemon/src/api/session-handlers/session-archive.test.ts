@@ -27,15 +27,62 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { ok, err } from "@comis/shared";
-import { bindSessionArchiveHandlers } from "./session-archive.js";
+import { bindSessionArchiveHandlers as bindSessionArchiveHandlersRaw } from "./session-archive.js";
 import type { SessionHandlerDeps } from "./session-helpers.js";
-import type { ContextStorePort, MemoryPort, MemoryConsolidationStore } from "@comis/core";
+import { createConversationRef, type ContextStorePort, type ConversationScope, type DeliveryMirrorPort, type MemoryPort, type MemoryConsolidationStore } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
 // ---------------------------------------------------------------------------
 
 const SESSION_KEY = "tenant1:user1:chan1";
+const DISPLAY_SESSION_KEY = "tenant1:agent:default:user1:dm:peer:user1";
+
+function bindSessionArchiveHandlers(deps: SessionHandlerDeps): ReturnType<typeof bindSessionArchiveHandlersRaw> {
+  const rawStore = deps.sessionStore as any;
+  const scopeFor = (agentId: string): ConversationScope => ({
+    tenantId: "tenant1",
+    agentId,
+    partition: { kind: "principal", principalId: "user1" },
+  });
+  const refFor = (scope: ConversationScope) => {
+    const result = createConversationRef(scope);
+    if (!result.ok) throw result.error;
+    return result.value;
+  };
+  const store = {
+    ...rawStore,
+    loadByRef: (query: { tenantId: string; agentId: string }, conversationRef: string) => {
+      const raw = rawStore.loadByRef?.(query, conversationRef) ?? rawStore.loadByFormattedKey?.(SESSION_KEY);
+      const normalized = raw && typeof raw === "object" && "ok" in raw ? raw : ok(raw);
+      if (!normalized.ok || normalized.value === undefined) return normalized;
+      const scope = scopeFor(query.agentId);
+      return ok({ ...normalized.value, conversationScope: scope, conversationRef: refFor(scope) });
+    },
+    deleteByRef: (query: { tenantId: string; agentId: string }, conversationRef: string) => {
+      const raw = rawStore.deleteByRef?.(query, conversationRef) ?? rawStore.deleteByFormattedKey?.(SESSION_KEY) ?? false;
+      return raw && typeof raw === "object" && "ok" in raw ? raw : ok(raw);
+    },
+    save: (scope: ConversationScope, messages: unknown[], metadata: Record<string, unknown>) => {
+      const raw = rawStore.save?.(scope, messages, metadata) ?? rawStore.saveByFormattedKey?.(SESSION_KEY, messages, metadata);
+      return raw && typeof raw === "object" && "ok" in raw ? raw : ok(raw);
+    },
+  };
+  const handlers = bindSessionArchiveHandlersRaw({ ...deps, sessionStore: store });
+  return Object.fromEntries(Object.entries(handlers).map(([method, handler]) => [
+    method,
+    (params: Record<string, unknown>) => {
+      const agentId = typeof params.agentId === "string" ? params.agentId : "default";
+      const scope = scopeFor(agentId);
+      return handler({
+        tenant_id: scope.tenantId,
+        agent_id: scope.agentId,
+        conversation_ref: refFor(scope),
+        ...params,
+      });
+    },
+  ])) as ReturnType<typeof bindSessionArchiveHandlersRaw>;
+}
 
 /** Minimal logger stub — every handler reads logger.info or logger.warn. */
 function makeLogger(): SessionHandlerDeps["logger"] {
@@ -123,6 +170,9 @@ function makeDeps(overrides: Partial<SessionHandlerDeps> = {}): SessionHandlerDe
     securityConfig: { agentToAgent: { enabled: true, waitTimeoutMs: 5000 } },
     tenantId: "tenant1",
     logger: makeLogger(),
+    deliveryMirror: {
+      clearSession: vi.fn().mockResolvedValue(ok(0)),
+    } as unknown as DeliveryMirrorPort,
   };
   return { ...base, ...overrides } as SessionHandlerDeps;
 }
@@ -186,15 +236,6 @@ describe("session.reset_conversation handler", () => {
     expect(result.resolvedAgentId).toBe("default");
   });
 
-  it("H2: missing session_key throws 'Missing required parameter: session_key'", async () => {
-    const deps = makeDeps({ lcdStore: makeLcdStore() });
-    const handlers = bindSessionArchiveHandlers(deps);
-
-    await expect(
-      handlers["session.reset_conversation"]!({ _trustLevel: "admin" }),
-    ).rejects.toThrow("Missing required parameter: session_key");
-  });
-
   it("H3: absent deps.lcdStore fails-closed with explicit error", async () => {
     const deps = makeDeps({ lcdStore: undefined });
     const handlers = bindSessionArchiveHandlers(deps);
@@ -226,9 +267,9 @@ describe("session.reset_conversation handler", () => {
     const result = (await handlers["session.reset_conversation"]!({
       session_key: SESSION_KEY,
       _trustLevel: "admin",
-    })) as { sessionKey: string; lcdRowsDeleted: number; sessionMessagesCleared: number };
+    })) as { conversationRef: string; lcdRowsDeleted: number; sessionMessagesCleared: number };
 
-    expect(result.sessionKey).toBe(SESSION_KEY);
+    expect(result.conversationRef).toMatch(/^cv_/);
     expect(result.lcdRowsDeleted).toBe(5);
     expect(result.sessionMessagesCleared).toBe(3);
     expect(lcdStore.deleteConversationLcd).toHaveBeenCalledTimes(1);
@@ -251,7 +292,7 @@ describe("session.reset_conversation handler", () => {
       _trustLevel: "admin",
     });
 
-    expect(clearAgentSessionState).toHaveBeenCalledWith(SESSION_KEY);
+    expect(clearAgentSessionState).toHaveBeenCalledWith(DISPLAY_SESSION_KEY);
   });
 
   it("session.delete (session destroy) also clears executor session-scoped state for the key", async () => {
@@ -264,7 +305,87 @@ describe("session.reset_conversation handler", () => {
       _trustLevel: "admin",
     });
 
-    expect(clearAgentSessionState).toHaveBeenCalledWith(SESSION_KEY);
+    expect(clearAgentSessionState).toHaveBeenCalledWith(DISPLAY_SESSION_KEY);
+  });
+
+  it("session.delete clears delivery-mirror text before the session key can be reused", async () => {
+    const clearSession = vi.fn().mockResolvedValue(ok(1));
+    const deliveryMirror = { clearSession } as unknown as DeliveryMirrorPort;
+    const deps = makeDeps({ deliveryMirror } as unknown as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.delete"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    });
+
+    expect(clearSession).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: "tenant1", agentId: "default", conversationRef: expect.stringMatching(/^cv_/),
+    }));
+  });
+
+  it("session.reset clears delivery-mirror text before starting fresh history", async () => {
+    const clearSession = vi.fn().mockResolvedValue(ok(1));
+    const deliveryMirror = { clearSession } as unknown as DeliveryMirrorPort;
+    const deps = makeDeps({ deliveryMirror } as unknown as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.reset"]!({ session_key: SESSION_KEY });
+
+    expect(clearSession).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: "tenant1", agentId: "default", conversationRef: expect.stringMatching(/^cv_/),
+    }));
+  });
+
+  it("clears pending delivery-mirror text so the next prompt cannot resurrect the reset reply", async () => {
+    const clearSession = vi.fn().mockResolvedValue(ok(1));
+    const deliveryMirror = { clearSession } as unknown as DeliveryMirrorPort;
+    const deps = makeDeps({
+      lcdStore: makeLcdStore(1),
+      deliveryMirror,
+    } as unknown as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    });
+
+    expect(clearSession).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: "tenant1", agentId: "default", conversationRef: expect.stringMatching(/^cv_/),
+    }));
+  });
+
+  it("fails before deleting transcript layers when the delivery mirror cannot be cleared", async () => {
+    const clearSession = vi.fn().mockResolvedValue(err(new Error("mirror unavailable")));
+    const deliveryMirror = { clearSession } as unknown as DeliveryMirrorPort;
+    const lcdStore = makeLcdStore(1);
+    const sessionStore = makeSessionStore();
+    const deps = makeDeps({
+      lcdStore,
+      sessionStore,
+      deliveryMirror,
+    } as unknown as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await expect(
+      handlers["session.reset_conversation"]!({
+        session_key: SESSION_KEY,
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/delivery mirror/i);
+
+    expect(lcdStore.runOnConversation).not.toHaveBeenCalled();
+    expect(sessionStore.saveByFormattedKey).not.toHaveBeenCalled();
+    expect(deps.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "session.reset_conversation",
+        conversationRef: expect.stringMatching(/^cv_/),
+        errorKind: "dependency",
+        hint: expect.stringMatching(/delivery mirror/i),
+      }),
+      expect.stringMatching(/delivery mirror/i),
+    );
   });
 
   it("H4b: deleteConversationLcd called inside runOnConversation (scope threaded correctly)", async () => {
@@ -281,15 +402,15 @@ describe("session.reset_conversation handler", () => {
     expect(lcdStore.runOnConversation).toHaveBeenCalledTimes(1);
     // The scope passed to deleteConversationLcd must contain all three columns
     const deleteArgs = (lcdStore.deleteConversationLcd as ReturnType<typeof vi.fn>).mock.calls[0] as [{
-      conversationId: string;
+      conversationRef: string;
       agentId: string;
       tenantId: string;
       sessionKey: string;
     }];
-    expect(deleteArgs[0].conversationId).toBe(SESSION_KEY);
+    expect(deleteArgs[0].conversationRef).toMatch(/^cv_/);
     expect(deleteArgs[0].agentId).toBe("default");
     expect(deleteArgs[0].tenantId).toBe("tenant1");
-    expect(deleteArgs[0].sessionKey).toBe(SESSION_KEY);
+    expect(deleteArgs[0].sessionKey).toBe(DISPLAY_SESSION_KEY);
   });
 
   it("H4c: sessionStore.saveByFormattedKey called with empty messages preserving metadata", async () => {
@@ -349,27 +470,60 @@ describe("session.reset_conversation handler", () => {
     expect(sessionStore.saveByFormattedKey).toHaveBeenCalledTimes(1);
   });
 
-  it("H6: absent session case — LCD rows exist, no session in store → LCD cleared, sessionMessagesCleared:0, no throw", async () => {
-    // dag conversation has LCD rows but no live session entry (e.g., session was deleted)
-    const lcdStore = makeLcdStore(8);
+  it("resets a live LCD conversation when the control-plane session store has no row", async () => {
+    const conversationScope: ConversationScope = {
+      tenantId: "tenant1",
+      agentId: "default",
+      partition: { kind: "principal", principalId: "user1" },
+    };
+    const conversationRefResult = createConversationRef(conversationScope);
+    if (!conversationRefResult.ok) throw conversationRefResult.error;
+    const conversationRef = conversationRefResult.value;
+    const lcdStore = makeLcdStore(2);
     const sessionStore = {
       ...makeSessionStore(),
-      loadByFormattedKey: vi.fn().mockReturnValue(undefined), // no session
-      saveByFormattedKey: vi.fn(),
+      loadByRef: vi.fn().mockReturnValue(ok(undefined)),
+      save: vi.fn(),
     };
-    const deps = makeDeps({ lcdStore, sessionStore });
-    const handlers = bindSessionArchiveHandlers(deps);
+    const destroyRuntimeSession = vi.fn().mockResolvedValue(true);
+    const contextBrowse = {
+      listConversations: vi.fn().mockReturnValue({
+        conversations: [{
+          conversationRef,
+          tenantId: "tenant1",
+          agentId: "default",
+          sessionKey: DISPLAY_SESSION_KEY,
+          title: null,
+          createdAt: 1000,
+          updatedAt: 2000,
+          messageCount: 2,
+        }],
+        total: 1,
+      }),
+    };
+    const deps = makeDeps({
+      lcdStore,
+      sessionStore,
+      contextBrowse,
+      destroyRuntimeSession,
+    } as unknown as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlersRaw(deps);
 
-    // Must not throw when session is absent
     const result = (await handlers["session.reset_conversation"]!({
-      session_key: SESSION_KEY,
+      tenant_id: "tenant1",
+      agent_id: "default",
+      conversation_ref: conversationRef,
       _trustLevel: "admin",
-    })) as { sessionKey: string; lcdRowsDeleted: number; sessionMessagesCleared: number };
+    })) as { lcdRowsDeleted: number; sessionMessagesCleared: number; runtimeSessionDestroyed?: boolean };
 
-    expect(result.lcdRowsDeleted).toBe(8);
+    expect(result.lcdRowsDeleted).toBe(2);
     expect(result.sessionMessagesCleared).toBe(0);
-    // saveByFormattedKey must NOT have been called (no session to clear)
-    expect(sessionStore.saveByFormattedKey).not.toHaveBeenCalled();
+    expect(result.runtimeSessionDestroyed).toBe(true);
+    expect(sessionStore.save).not.toHaveBeenCalled();
+    expect(destroyRuntimeSession).toHaveBeenCalledWith(
+      { tenantId: "tenant1", agentId: "default" },
+      expect.objectContaining({ tenantId: "tenant1", agentId: "default" }),
+    );
   });
 
   it("H7: --memory but memoryPort ABSENT → graceful-degrade WARN, memoriesDeleted OMITTED", async () => {
@@ -427,7 +581,9 @@ describe("session.reset_conversation handler", () => {
     });
 
     expect(approvalGate.clearApprovalCache).toHaveBeenCalledTimes(1);
-    expect(approvalGate.clearApprovalCache).toHaveBeenCalledWith(SESSION_KEY);
+    expect(approvalGate.clearApprovalCache).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: "tenant1", agentId: "default", conversationRef: expect.stringMatching(/^cv_/),
+    }));
   });
 
   it("H9: response includes both lcdRowsDeleted and sessionMessagesCleared", async () => {
@@ -452,7 +608,7 @@ describe("session.reset_conversation handler", () => {
 
     expect(result["lcdRowsDeleted"]).toBe(7);
     expect(result["sessionMessagesCleared"]).toBe(2);
-    expect(result["sessionKey"]).toBe(SESSION_KEY);
+    expect(result["conversationRef"]).toMatch(/^cv_/);
   });
 });
 
@@ -481,7 +637,7 @@ describe("session.reset_conversation --memory", () => {
       string,
       { tenantId: string; agentId: string },
     ];
-    expect(callArgs[0]).toBe(SESSION_KEY);
+    expect(callArgs[0]).toBe(DISPLAY_SESSION_KEY);
     expect(callArgs[1].tenantId).toBe("tenant1");
     expect(callArgs[1].agentId).toBe("default");
   });
@@ -566,7 +722,7 @@ describe("session.reset_conversation --memory", () => {
     expect(consolidationStore.purgeConsolidatedDerivedFrom).toHaveBeenCalledTimes(1);
     const callArgs = (consolidationStore.purgeConsolidatedDerivedFrom as ReturnType<typeof vi.fn>).mock
       .calls[0] as [string, string, string, string[]];
-    expect(callArgs[0]).toBe(SESSION_KEY);
+    expect(callArgs[0]).toBe(DISPLAY_SESSION_KEY);
     expect(callArgs[1]).toBe("tenant1");
     expect(callArgs[2]).toBe("default"); // agentId threaded
     expect(callArgs[3]).toEqual(["mem-x", "mem-y"]); // this-session ids passed
@@ -592,7 +748,7 @@ describe("session.reset_conversation --memory", () => {
     expect(consolidationStore.unlinkDeletedSources).toHaveBeenCalledTimes(1);
     const callArgs = (consolidationStore.unlinkDeletedSources as ReturnType<typeof vi.fn>).mock
       .calls[0] as [string, string, string];
-    expect(callArgs[0]).toBe(SESSION_KEY);
+    expect(callArgs[0]).toBe(DISPLAY_SESSION_KEY);
     expect(callArgs[1]).toBe("tenant1");
     expect(callArgs[2]).toBe("default"); // agentId threaded (matches the delete scope)
   });
@@ -662,7 +818,20 @@ describe("session.reset_conversation severs the runtime transcript so the forget
       _trustLevel: "admin",
     })) as { runtimeSessionDestroyed: boolean };
 
-    expect(destroyRuntimeSession).toHaveBeenCalledWith(SESSION_KEY);
+    expect(destroyRuntimeSession).toHaveBeenCalledWith(
+      {
+        tenantId: "tenant1",
+        agentId: "default",
+        partition: { kind: "principal", principalId: "user1" },
+      },
+      {
+        tenantId: "tenant1",
+        agentId: "default",
+        userId: "user1",
+        channelId: "dm",
+        peerId: "user1",
+      },
+    );
     expect(result.runtimeSessionDestroyed).toBe(true);
   });
 

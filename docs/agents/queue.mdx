@@ -105,7 +105,7 @@ The queue is a per-session lane on top of a global concurrency gate.
   responds to message 3 before message 2.
 - **Global concurrency** -- Up to `maxConcurrentSessions` lanes can be
   draining at once. Additional lanes wait for a slot.
-- **Backpressure** -- When a lane reaches `maxDepth`, the configured overflow
+- **Backpressure** -- When a lane exceeds `maxDepth`, the configured overflow
   policy (`drop-new`, `drop-old`, or `summarize`) decides which message to
   shed. Drops fire a `queue:overflow` event so observability dashboards can
   surface them.

@@ -13,11 +13,29 @@ export { setupLogging, type LoggingResult } from "./setup-logging.js";
 export { setupObservability, rehydrateSpendFromStore, type ObservabilityResult } from "./setup-observability.js";
 export { setupHealth, type HealthResult, setupMonitoring, type MonitoringResult } from "./setup-health.js";
 export { setupMemory, type MemoryResult } from "./setup-memory.js";
+export { bindLearningOAuthCredentialResolver } from "./setup-learning-judge.js";
 export { setupMedia, createImageGenGetter, type MediaResult } from "./setup-media.js";
 export { createImageProviderSelector, makeUnavailableImagePort } from "./setup-image-provider.js";
 export { setupCrossSession, type CrossSessionResult } from "./setup-cross-session/index.js";
 export { setupAgents, type AgentsResult } from "./setup-agents/index.js";
 export { setupSchedulers, type SchedulersResult } from "./setup-schedulers.js";
+export {
+  createTaskSettledDelivery,
+  type TaskSettledDelivery,
+  type TaskSettledDeliveryDeps,
+  type TaskSettledDeliveryOutcome,
+} from "./task-settled-delivery.js";
+export {
+  createTaskHeartbeatAgentTurnExecutor,
+  TASK_MODEL_TIMEOUT_MS,
+  type TaskHeartbeatAgentTurnExecutorDeps,
+} from "./task-heartbeat-agent-turn-executor.js";
+export {
+  createFollowupTaskRuntime,
+  type FollowupTaskRuntime,
+  type FollowupTaskRuntimeDeps,
+  type FollowupTaskRuntimeError,
+} from "./setup-followup-task-runtime.js";
 export { emitMemoryCostFeatureNotice, type MemoryCostFeatureNoticeDeps } from "./setup-memory-cost-notice.js";
 export { setupChannels, type ChannelsResult } from "./setup-channels/index.js";
 export {
@@ -26,6 +44,7 @@ export {
   createInteractiveCallbackWiring,
   type InteractiveCallbackWiring,
 } from "./setup-interactive-callback.js";
+export { createGraphReportTargetStore } from "./graph-report-target-store.js";
 export { setupMcp, type McpResult } from "./setup-mcp.js";
 export { selectMcpTokenStore, type SelectMcpTokenStoreInput } from "./select-mcp-token-store.js";
 // Boot-path skill-bundle re-merge orchestrator + the thin discovery-only
@@ -37,7 +56,6 @@ export {
   type SetupSkillBundlesDeps,
 } from "./setup-skill-bundles.js";
 export { setupTools, type ToolsResult } from "./setup-tools.js";
-export { setupHeartbeat, type HeartbeatSetupDeps, type HeartbeatSetupResult } from "./setup-heartbeat.js";
 export { setupShutdown, type ShutdownResult } from "./setup-shutdown.js";
 export { setupGateway, type GatewayDeps, type GatewayResult, setupRpcBridge, type RpcBridgeResult } from "./setup-gateway/index.js";
 export {
@@ -73,6 +91,14 @@ export {
 export { setupNotifications, type NotificationContext } from "./setup-notifications.js";
 export { setupBackgroundTasks, type BackgroundTasksContext } from "./setup-background-tasks.js";
 export { setupBackgroundCompletionRunner } from "./setup-background-completion-runner.js";
+export {
+  createBackgroundRecoveryRecorder,
+  type BackgroundRecoveryRecorderDisposition,
+  type BackgroundRecoveryRecorderFailure,
+  type BackgroundRecoveryRecorderFailureKind,
+  type BackgroundRecoveryRecorderDeps,
+  type BackgroundRecoveryTrajectoryInput,
+} from "./background-recovery-recorder.js";
 export { setupTerminalWake, type SetupTerminalWakeDeps, type TerminalWakeContext } from "./setup-terminal-wake.js";
 export type {
   BackgroundCompletionRunnerContext,

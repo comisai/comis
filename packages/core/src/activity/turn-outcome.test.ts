@@ -13,7 +13,7 @@ import type { Result } from "@comis/shared";
 const sampleEvent = {} as ActivityEvent;
 
 describe("FinalDeliveryReceipt", () => {
-  it("requires ok:true + deliveredChunks + lastChunkMessageId + deliveredAtMs", () => {
+  it("preserves the last platform message ID when delivery was tracked", () => {
     const receipt: FinalDeliveryReceipt = {
       ok: true,
       deliveredChunks: 3,
@@ -24,14 +24,30 @@ describe("FinalDeliveryReceipt", () => {
     expect(receipt.deliveredAtMs).toBe(1700000000000);
     expectTypeOf<FinalDeliveryReceipt["ok"]>().toEqualTypeOf<true>();
     expectTypeOf<FinalDeliveryReceipt["deliveredAtMs"]>().toEqualTypeOf<number>();
-    expectTypeOf<FinalDeliveryReceipt["lastChunkMessageId"]>().toEqualTypeOf<string>();
+    expectTypeOf<FinalDeliveryReceipt["lastChunkMessageId"]>()
+      .toEqualTypeOf<string | undefined>();
+  });
+
+  it("permits successful delivery without a platform tracking ID", () => {
+    const receipt: FinalDeliveryReceipt = {
+      ok: true,
+      deliveredChunks: 1,
+      deliveredAtMs: 1700000000000,
+    };
+
+    expect(receipt).toEqual({
+      ok: true,
+      deliveredChunks: 1,
+      deliveredAtMs: 1700000000000,
+    });
   });
 });
 
 describe("DeliveryFailureReceipt", () => {
-  it("requires ok:false + errorKind + truncated lastError + failedChunks + failedAtMs", () => {
+  it("requires total and outcome counts with a bounded error and failure timestamp", () => {
     const receipt: DeliveryFailureReceipt = {
       ok: false,
+      totalChunks: 3,
       deliveredChunks: 1,
       failedChunks: 2,
       errorKind: "platform",
@@ -39,8 +55,10 @@ describe("DeliveryFailureReceipt", () => {
       failedAtMs: 1700000000001,
     };
     expect(receipt.ok).toBe(false);
+    expect(receipt.totalChunks).toBe(3);
     expect(receipt.errorKind).toBe("platform");
     expectTypeOf<DeliveryFailureReceipt["ok"]>().toEqualTypeOf<false>();
+    expectTypeOf<DeliveryFailureReceipt["totalChunks"]>().toEqualTypeOf<number>();
     expectTypeOf<DeliveryFailureReceipt["lastError"]>().toEqualTypeOf<string>();
   });
 });

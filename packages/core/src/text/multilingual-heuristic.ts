@@ -3,8 +3,8 @@
  * Multilingual model-name heuristic (advisory-only). Pure: no I/O/clock/env.
  *
  * Classifies an embedder / reranker model id as `true | false | "unknown"` for
- * the `comis fleet` model-health line, so a degraded non-Latin semantic-recall
- * stack (an English-leaning embedder/reranker) is named in one fleet look. The
+ * the `comis system-health` model-health line, so a degraded non-Latin semantic-recall
+ * stack (an English-leaning embedder/reranker) is named in one system look. The
  * result NEVER gates search/recall behavior — the FTS trigram floor
  * carries recall regardless. Imported by the daemon boot wiring (daemon.ts:1581).
  *
@@ -33,7 +33,7 @@ export const EMBED_MULTILINGUAL = /multilingual|bge-m3|m3e|labse/i;
  * so the embedder literal above FALSE-NEGATIVES it. This pattern matches the
  * `bge-reranker-…m3` family (and the generic multilingual/bge-m3 hints).
  */
-export const RERANK_MULTILINGUAL = /multilingual|bge-reranker-v2-m3|reranker.*m3|bge-m3/i;
+export const RERANK_MULTILINGUAL = /multilingual|bge-reranker-v2-m3|reranker.{0,200}m3|bge-m3/i;
 
 /**
  * Resolve the advisory multilingual flag for a model id.

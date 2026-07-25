@@ -22,7 +22,7 @@
  * @module
  */
 
-import { type KnownProvider } from "@earendil-works/pi-ai";
+import type { BuiltinProvider } from "@earendil-works/pi-ai/compat";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import type { ModelOperationType } from "@comis/core";
 
@@ -134,7 +134,7 @@ function familyKey(id: string): string {
 export function resolveOperationDefaults(provider: string): { fast?: string; mid?: string } {
   if (!_nativeProviderSet.has(provider)) return {};
 
-  const all = getModels(provider as KnownProvider);
+  const all = getModels(provider as BuiltinProvider);
   const textCapableAll = all.filter((m) => m.input?.includes("text"));
   // Operation-tier models must be PINNED, reproducible ids — EXCLUDE floating aliases
   // (`*-latest`). An alias drifts as the provider re-points it and 404s outright once the
@@ -217,14 +217,14 @@ export const OPERATION_TIER_MAP: Record<ModelOperationType, "primary" | "mid" | 
  */
 export const OPERATION_TIMEOUT_DEFAULTS: Partial<Record<ModelOperationType, number>> = {
   heartbeat: 60_000,
-  cron: 150_000,
+  cron: 600_000,
   subagent: 120_000,
   compaction: 60_000,
   taskExtraction: 30_000,
   condensation: 30_000,
   verification: 120_000,  // same ceiling as the critic LLM_TIMEOUT_MS
   outcomeJudge: 30_000,   // mirrors condensation — a fast classification op
-  skillSynthesis: 150_000, // mirrors cron — an offline batch op
+  skillSynthesis: 150_000, // offline batch synthesis ceiling
 };
 
 /**

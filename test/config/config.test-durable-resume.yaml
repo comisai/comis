@@ -9,7 +9,7 @@
 #
 # The chaos test reuses ONE per-fork dataDir across a cleanup()+restart cycle
 # (daemon-harness getForkDataDir is memoized per fork), so memory.db — and the
-# durable_runs + outward_send_ledger rows in it — survive the restart and drive
+# durable_run_checkpoints + outward_send_ledger rows in it — survive the restart and drive
 # boot recovery. The controllable Echo channel is NOT a config channel type; the
 # test registers an EchoChannelAdapter on daemon.adapterRegistry at runtime (the
 # activity-composition precedent), so the wrapped send path reaches it.
@@ -50,7 +50,6 @@ agents:
     scheduler:
       cron:
         enabled: true
-        maxConcurrentRuns: 5
         defaultTimezone: "UTC"
 
 gateway:
@@ -70,7 +69,6 @@ gateway:
 scheduler:
   cron:
     enabled: true
-    maxConcurrentRuns: 5
     defaultTimezone: "UTC"
   heartbeat:
     intervalMs: 300000

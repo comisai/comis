@@ -65,7 +65,7 @@ type VoiceWiringDeps = Pick<
   | "defaultAgentId"
   | "resolveAgentMainProvider"
   | "voiceSelection"
-  // The obs store the voice_degraded fleet emit inserts into (already
+  // The obs store the voice_degraded system emit inserts into (already
   // on MediaApiDeps — no new dep). Optional; absent → the emit no-ops.
   | "obsStore"
 >;
@@ -145,7 +145,7 @@ export function wireVoiceForHandler(
     sessionKey: rawParams._callerSessionKey as string | undefined,
     trajectoryRegistry: deps.trajectoryRegistry,
     logger: deps.logger,
-    // Thread the obsStore so a failure feeds the fleet voice_health finding.
+    // Thread the obsStore so a failure feeds the system voice_health finding.
     ...(deps.obsStore !== undefined ? { obsStore: deps.obsStore } : {}),
     agentId,
     kind,

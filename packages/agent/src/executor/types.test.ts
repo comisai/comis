@@ -11,7 +11,7 @@
 
 import { describe, it, expect } from "vitest";
 import type { ExecutionOverrides, ExecutionResult } from "./types.js";
-import type { ModelOperationType } from "@comis/core";
+import type { ErrorKind, ModelOperationType } from "@comis/core";
 
 describe("ExecutionOverrides type extensions", () => {
   it("accepts promptTimeout with promptTimeoutMs and retryPromptTimeoutMs", () => {
@@ -122,5 +122,22 @@ describe("ExecutionResult.finishReason spend_exceeded member", () => {
     // distinct observability:spend_unpriceable event carries that nuance.
     const bad: ExecutionResult["finishReason"] = "spend_unpriceable";
     void bad;
+  });
+});
+
+describe("ExecutionResult settled contract", () => {
+  it("includes every post-execution terminal reason", () => {
+    const reasons: ExecutionResult["finishReason"][] = [
+      "completed_with_tool_errors",
+      "narration_stall",
+      "background_pending",
+    ];
+    expect(reasons).toHaveLength(3);
+  });
+
+  it("requires a closed error kind on otherwise unclassified error terminals", () => {
+    type ToolErrorResult = Extract<ExecutionResult, { finishReason: "completed_with_tool_errors" }>;
+    const errorKind: ToolErrorResult["terminalErrorKind"] = "dependency" satisfies ErrorKind;
+    expect(errorKind).toBe("dependency");
   });
 });

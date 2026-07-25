@@ -16,6 +16,7 @@
  * Uses port 8505 with a dedicated memory database for isolation.
  */
 
+import { createHash } from "node:crypto";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -30,6 +31,16 @@ import { RPC_FAST_MS } from "../support/timeouts.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const CONFIG_PATH = resolve(__dirname, "../config/config.test-sessions-lifecycle.yaml");
+
+// Session RPCs now address a conversation by explicit authority
+// (tenant_id + agent_id + opaque conversation_ref) rather than a formatted
+// session_key string. The daemon's configured tenant/agent for this fixture.
+const TENANT_ID = "test";
+const AGENT_ID = "default";
+// A well-formed but never-persisted conversation reference (cv_ + 43-char
+// base64url digest). Passes ConversationRefSchema so the handler reaches its
+// store lookup and reports the conversation as not found.
+const NONEXISTENT_REF = `cv_${createHash("sha256").update("nonexistent-conversation").digest("base64url")}`;
 
 // ---------------------------------------------------------------------------
 // Test suite
@@ -104,11 +115,11 @@ describe("Sessions Lifecycle: Non-LLM Integration Tests", () => {
   // ---------------------------------------------------------------------------
 
   describe("session.history RPC", () => {
-    it("session.history with non-existent session key returns error", async () => {
+    it("session.history for a non-existent conversation returns a not-found error", async () => {
       const response = (await sendJsonRpc(
         ws,
         "session.history",
-        { session_key: "nonexistent:key:here" },
+        { tenant_id: TENANT_ID, agent_id: AGENT_ID, conversation_ref: NONEXISTENT_REF },
         msgId++,
         { timeoutMs: RPC_FAST_MS },
       )) as Record<string, unknown>;
@@ -118,14 +129,14 @@ describe("Sessions Lifecycle: Non-LLM Integration Tests", () => {
 
       const error = response.error as Record<string, unknown>;
       expect(typeof error.message).toBe("string");
-      expect((error.message as string).toLowerCase()).toContain("session not found");
+      expect((error.message as string).toLowerCase()).toContain("not found");
     });
 
     it("session.history with valid params format returns structured response", async () => {
       const response = (await sendJsonRpc(
         ws,
         "session.history",
-        { session_key: "test:user1:channel1", offset: 0, limit: 10 },
+        { tenant_id: TENANT_ID, agent_id: AGENT_ID, conversation_ref: NONEXISTENT_REF, offset: 0, limit: 10 },
         msgId++,
         { timeoutMs: RPC_FAST_MS },
       )) as Record<string, unknown>;
@@ -190,7 +201,9 @@ describe("Sessions Lifecycle: Non-LLM Integration Tests", () => {
         ws,
         "session.send",
         {
-          session_key: "test:nonexistent-user:nonexistent-channel",
+          tenant_id: TENANT_ID,
+          agent_id: AGENT_ID,
+          conversation_ref: NONEXISTENT_REF,
           text: "hello",
           mode: "fire-and-forget",
         },
@@ -280,7 +293,7 @@ describe("Sessions Lifecycle: Non-LLM Integration Tests", () => {
       const response = (await sendJsonRpc(
         ws,
         "session.list",
-        {},
+        { tenant_id: TENANT_ID, agent_id: AGENT_ID },
         msgId++,
         { timeoutMs: RPC_FAST_MS },
       )) as Record<string, unknown>;
@@ -329,8 +342,8 @@ describe("Sessions Lifecycle: Non-LLM Integration Tests", () => {
     it("all bridged session methods return valid JSON-RPC 2.0 responses", async () => {
       const methods = [
         { method: "session.status", params: {} },
-        { method: "session.history", params: { session_key: "test:validate:jsonrpc" } },
-        { method: "session.send", params: { session_key: "test:validate:target", text: "ping", mode: "fire-and-forget" } },
+        { method: "session.history", params: { tenant_id: TENANT_ID, agent_id: AGENT_ID, conversation_ref: NONEXISTENT_REF } },
+        { method: "session.send", params: { tenant_id: TENANT_ID, agent_id: AGENT_ID, conversation_ref: NONEXISTENT_REF, text: "ping", mode: "fire-and-forget" } },
         { method: "session.spawn", params: { task: "validate jsonrpc structure", agent: "default", async: true } },
       ];
 

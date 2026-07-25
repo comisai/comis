@@ -13,13 +13,16 @@ import { describe, it, expect, vi } from "vitest";
 import type {
   ChannelPort,
   NormalizedMessage,
+  ResolvedTurnScope,
   SessionKey,
   DeliveryService,
 } from "@comis/core";
+import { createConversationRef, TypedEventBus } from "@comis/core";
 import { ok } from "@comis/shared";
 
 import { evaluateInboundGate } from "./inbound-gate.js";
 import type { GateDeps } from "./inbound-gate.js";
+import { createDeterministicLocalization } from "../localization/deterministic-localization.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -38,7 +41,7 @@ function makeAdapter(channelType = "telegram"): ChannelPort {
     removeReaction: vi.fn(async () => ok(undefined)),
     deleteMessage: vi.fn(async () => ok(undefined)),
     fetchMessages: vi.fn(async () => ok([])),
-    sendAttachment: vi.fn(async () => ok("att-1")),
+    sendAttachment: vi.fn(async () => ok({ kind: "tracked" as const, messageId: "att-1" })),
     platformAction: vi.fn(async () => ok(undefined)),
   };
 }
@@ -60,9 +63,51 @@ function makeMsg(overrides?: Partial<NormalizedMessage>): NormalizedMessage {
 function makeSessionKey(): SessionKey {
   return {
     tenantId: "default",
+    agentId: "agent-1",
     userId: "user-1",
     channelId: "chat-1",
     peerId: "user-1",
+  };
+}
+
+const TURN_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "adapter-1",
+  conversationId: "chat-1",
+  conversationKind: "direct" as const,
+};
+const TURN_SCOPE: ResolvedTurnScope = {
+  conversation: {
+    tenantId: "default",
+    agentId: "agent-1",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: TURN_ENDPOINT,
+      principalId: "user-1",
+    },
+  },
+  principal: { principalId: "user-1" },
+  endpoint: TURN_ENDPOINT,
+};
+const turnConversationRef = createConversationRef(TURN_SCOPE.conversation);
+if (!turnConversationRef.ok) throw turnConversationRef.error;
+const TURN_CONVERSATION_REF = turnConversationRef.value;
+
+function expectedDeliveryOptions(
+  turnScope: ResolvedTurnScope,
+  conversationRef: typeof TURN_CONVERSATION_REF,
+  skipChunking = false,
+) {
+  return {
+    completionMode: "deferred_retry" as const,
+    authority: {
+      tenantId: turnScope.conversation.tenantId,
+      agentId: turnScope.conversation.agentId,
+      conversationRef,
+    },
+    destinationEndpoint: turnScope.endpoint,
+    ...(turnScope.endpoint.threadId === undefined ? {} : { threadId: turnScope.endpoint.threadId }),
+    ...(skipChunking ? { skipChunking: true } : {}),
   };
 }
 
@@ -84,9 +129,14 @@ function makeFakeDeliveryService(): DeliveryService {
   };
 }
 
-function makeDeps(overrides?: Partial<GateDeps>): GateDeps {
-  const eventBus = {
-    emit: vi.fn(() => true),
+function createMockEventBus() {
+  const emit = vi.fn(() => true);
+  return {
+    emit,
+    emitSafely: vi.fn((event: string, payload: unknown) => {
+      emit(event, payload);
+      return { hadListeners: false, failures: [], pendingFailures: Promise.resolve([]) };
+    }),
     on: vi.fn().mockReturnThis(),
     off: vi.fn().mockReturnThis(),
     once: vi.fn().mockReturnThis(),
@@ -94,6 +144,10 @@ function makeDeps(overrides?: Partial<GateDeps>): GateDeps {
     listenerCount: vi.fn(() => 0),
     setMaxListeners: vi.fn().mockReturnThis(),
   };
+}
+
+function makeDeps(overrides?: Partial<GateDeps>): GateDeps {
+  const eventBus = createMockEventBus();
   const logger = {
     info: vi.fn(),
     warn: vi.fn(),
@@ -109,13 +163,14 @@ function makeDeps(overrides?: Partial<GateDeps>): GateDeps {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     logger: logger as any,
     sessionManager: {
-      loadOrCreate: vi.fn(() => []),
-      save: vi.fn(),
-      isExpired: vi.fn(() => false),
-      expire: vi.fn(() => true),
-      cleanStale: vi.fn(() => 0),
+      loadOrCreate: vi.fn(() => ok([])),
+      save: vi.fn(() => ok(undefined)),
+      isExpired: vi.fn(() => ok(false)),
+      expire: vi.fn(() => ok(true)),
+      cleanStale: vi.fn(() => ok(0)),
     },
     deliveryService: makeFakeDeliveryService(),
+    localization: createDeterministicLocalization(),
     ...overrides,
   } as GateDeps;
 }
@@ -144,12 +199,49 @@ describe("evaluateInboundGate /send command", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       sendOverrides as any,
     );
 
     expect(result.action).toBe("handled");
     expect([...overrides.values()]).toContain("on");
+  });
+
+  it("keeps the send override and acknowledgement when its observer throws", async () => {
+    const eventBus = new TypedEventBus();
+    const laterObserver = vi.fn();
+    eventBus.on("sendpolicy:override_changed", () => {
+      throw new Error("private send policy subscriber content");
+    });
+    eventBus.on("sendpolicy:override_changed", laterObserver);
+    const deps = makeDeps({ eventBus });
+    const overrides = new Map<string, "on" | "off" | "inherit">();
+    const result = await evaluateInboundGate(
+      deps,
+      makeAdapter(),
+      makeMsg({ text: "/send on" }),
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      {
+        get: (key: string) => overrides.get(key),
+        set: (key: string, value: "on" | "off" | "inherit") => overrides.set(key, value),
+        delete: (key: string) => overrides.delete(key),
+      },
+    );
+
+    expect(result.action).toBe("handled");
+    expect([...overrides.values()]).toEqual(["on"]);
+    expect(deps.deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      expect.anything(),
+      "chat-1",
+      "Send policy override set to: on",
+      expect.any(Object),
+    );
+    expect(laterObserver).toHaveBeenCalledOnce();
   });
 
   it("refuses /send override when sender is not the session owner", async () => {
@@ -169,6 +261,8 @@ describe("evaluateInboundGate /send command", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       sendOverrides as any,
     );
@@ -200,6 +294,8 @@ describe("evaluateInboundGate /send command", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       sendOverrides as any,
     );
@@ -220,12 +316,29 @@ describe("evaluateInboundGate /config command interception", () => {
     const adapter = makeAdapter();
     const msg = makeMsg({ text: "/config view" });
 
+    const endpoint = { ...TURN_ENDPOINT, threadId: "owner-thread" };
+    const turnScope: ResolvedTurnScope = {
+      ...TURN_SCOPE,
+      endpoint,
+      conversation: {
+        ...TURN_SCOPE.conversation,
+        partition: {
+          kind: "endpoint-conversation-principal",
+          endpoint,
+          principalId: TURN_SCOPE.principal.principalId,
+        },
+      },
+    };
+    const conversationRef = createConversationRef(turnScope.conversation);
+    if (!conversationRef.ok) throw conversationRef.error;
     const result = await evaluateInboundGate(
       deps,
       adapter,
       msg,
       makeSessionKey(),
       "agent-1",
+      turnScope,
+      conversationRef.value,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -236,6 +349,7 @@ describe("evaluateInboundGate /config command interception", () => {
       adapter,
       "chat-1",
       "config view response",
+      expectedDeliveryOptions(turnScope, conversationRef.value),
     );
   });
 
@@ -251,6 +365,8 @@ describe("evaluateInboundGate /config command interception", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -277,15 +393,7 @@ describe("evaluateInboundGate /stop command interception", () => {
         abort,
       })),
     };
-    const eventBus = {
-      emit: vi.fn(() => true),
-      on: vi.fn().mockReturnThis(),
-      off: vi.fn().mockReturnThis(),
-      once: vi.fn().mockReturnThis(),
-      removeAllListeners: vi.fn().mockReturnThis(),
-      listenerCount: vi.fn(() => 0),
-      setMaxListeners: vi.fn().mockReturnThis(),
-    };
+    const eventBus = createMockEventBus();
     const deps = makeDeps({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       sessionResolver: sessionResolver as any,
@@ -301,6 +409,8 @@ describe("evaluateInboundGate /stop command interception", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -336,6 +446,8 @@ describe("evaluateInboundGate /stop command interception", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -347,6 +459,60 @@ describe("evaluateInboundGate /stop command interception", () => {
       "No active execution to stop.",
       expect.any(Object),
     );
+  });
+
+  it("reports the successful stop and reaches later observers when abort observers throw or reject", async () => {
+    const abort = vi.fn(async () => undefined);
+    const eventBus = new TypedEventBus();
+    const laterObserver = vi.fn();
+    eventBus.on("execution:aborted", () => {
+      throw new Error("private sync abort subscriber content");
+    });
+    eventBus.on("execution:aborted", async () => {
+      throw new Error("private async abort subscriber content");
+    });
+    eventBus.on("execution:aborted", laterObserver);
+    const deps = makeDeps({
+      eventBus,
+      sessionResolver: {
+        resolveActiveSession: () => ({
+          isStreaming: () => true,
+          isCompacting: () => false,
+          steer: vi.fn(),
+          followUp: vi.fn(),
+          abort,
+        }),
+      } as never,
+    });
+    const adapter = makeAdapter();
+
+    const result = await evaluateInboundGate(
+      deps,
+      adapter,
+      makeMsg({ text: "/stop" }),
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      { get: () => undefined, set: vi.fn(), delete: vi.fn() },
+    );
+
+    expect(result.action).toBe("handled");
+    expect(abort).toHaveBeenCalledOnce();
+    expect(deps.deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      adapter,
+      "chat-1",
+      "Execution stopped.",
+      expect.any(Object),
+    );
+    expect(deps.deliveryService.deliverToChannel).not.toHaveBeenCalledWith(
+      adapter,
+      "chat-1",
+      expect.stringContaining("Could not stop"),
+      expect.any(Object),
+    );
+    expect(laterObserver).toHaveBeenCalledOnce();
+    await new Promise((resolve) => setImmediate(resolve));
   });
 
   it("reports could-not-stop and logs warn when abort throws", async () => {
@@ -386,6 +552,8 @@ describe("evaluateInboundGate /stop command interception", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -413,21 +581,13 @@ describe("evaluateInboundGate /stop command interception", () => {
 describe("evaluateInboundGate reset trigger phrase gate", () => {
   it("expires session and emits session:expired when reset phrase matches", async () => {
     const sessionManager = {
-      loadOrCreate: vi.fn(() => []),
-      save: vi.fn(),
-      isExpired: vi.fn(() => false),
-      expire: vi.fn(() => true),
-      cleanStale: vi.fn(() => 0),
+      loadOrCreate: vi.fn(() => ok([])),
+      save: vi.fn(() => ok(undefined)),
+      isExpired: vi.fn(() => ok(false)),
+      expire: vi.fn(() => ok(true)),
+      cleanStale: vi.fn(() => ok(0)),
     };
-    const eventBus = {
-      emit: vi.fn(() => true),
-      on: vi.fn().mockReturnThis(),
-      off: vi.fn().mockReturnThis(),
-      once: vi.fn().mockReturnThis(),
-      removeAllListeners: vi.fn().mockReturnThis(),
-      listenerCount: vi.fn(() => 0),
-      setMaxListeners: vi.fn().mockReturnThis(),
-    };
+    const eventBus = createMockEventBus();
     const deps = makeDeps({
       sessionManager,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -443,6 +603,8 @@ describe("evaluateInboundGate reset trigger phrase gate", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -459,6 +621,49 @@ describe("evaluateInboundGate reset trigger phrase gate", () => {
       "Session reset.",
       expect.any(Object),
     );
+  });
+
+  it("keeps the expired session and reset acknowledgement when its observer throws", async () => {
+    const eventBus = new TypedEventBus();
+    const laterObserver = vi.fn();
+    eventBus.on("session:expired", () => {
+      throw new Error("private reset subscriber content");
+    });
+    eventBus.on("session:expired", laterObserver);
+    const sessionManager = {
+      loadOrCreate: vi.fn(() => ok([])),
+      save: vi.fn(() => ok(undefined)),
+      isExpired: vi.fn(() => ok(false)),
+      expire: vi.fn(() => ok(true)),
+      cleanStale: vi.fn(() => ok(0)),
+    };
+    const deps = makeDeps({
+      eventBus,
+      sessionManager,
+      getResetTriggers: () => ["reset"],
+    });
+    const adapter = makeAdapter();
+
+    const result = await evaluateInboundGate(
+      deps,
+      adapter,
+      makeMsg({ text: "reset" }),
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      { get: () => undefined, set: vi.fn(), delete: vi.fn() },
+    );
+
+    expect(result.action).toBe("handled");
+    expect(sessionManager.expire).toHaveBeenCalledOnce();
+    expect(deps.deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      adapter,
+      "chat-1",
+      "Session reset.",
+      expect.any(Object),
+    );
+    expect(laterObserver).toHaveBeenCalledOnce();
   });
 
   // greetingGenerator-based tests deleted: the greetingGenerator deps slot was
@@ -490,6 +695,8 @@ describe("evaluateInboundGate handleSlashCommand directives", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -519,6 +726,8 @@ describe("evaluateInboundGate handleSlashCommand directives", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -544,6 +753,8 @@ describe("evaluateInboundGate handleSlashCommand directives", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );

@@ -11,7 +11,7 @@ import { createMockRpcClient } from "../test-support/mock-rpc-client.js";
 /*  Mock data                                                          */
 /* ------------------------------------------------------------------ */
 
-const MOCK_DELIVERY_STATS = { successRate: 99.2, avgLatencyMs: 234, totalDelivered: 1247, failed: 3 };
+const MOCK_DELIVERY_STATS = { total: 1247, attempted: 1243, success: 1233, error: 7, timeout: 3, filtered: 3, aborted: 1, avgLatencyMs: 234 };
 const MOCK_BILLING_TOTAL = { totalTokens: 845000, totalCost: 6.23 };
 const MOCK_USAGE_24H = Array.from({ length: 24 }, (_, i) => ({ hour: i, tokens: 10000 + i * 1000 }));
 const MOCK_BY_PROVIDER = [
@@ -28,15 +28,26 @@ const MOCK_DIAGNOSTICS = [
   { id: "d3", timestamp: Date.now() - 60_000, category: "message", eventType: "retry:exhausted", data: {} },
 ];
 
-const MOCK_DELIVERY_TRACES = [
+const MOCK_DELIVERY_ROWS = [
   {
+    sourceChannelId: "tg-main",
+    sourceChannelType: "telegram",
+    targetChannelType: "telegram",
+    targetChannelId: "tg-main",
+    deliveredAt: Date.now() - 60_000,
     traceId: "trace-001",
-    timestamp: Date.now() - 60_000,
-    channelType: "telegram",
-    messagePreview: "Hello, how can I help?",
     status: "success" as const,
     latencyMs: 187,
-    stepCount: 3,
+    error: null,
+    agentId: "default",
+    sessionKey: "telegram:tg-main",
+    toolCalls: 1,
+    llmCalls: 2,
+    tokensTotal: 420,
+    costTotal: 0.01,
+    failureStage: null,
+    errorKind: null,
+    evidence: "diagnostic" as const,
     steps: [
       { name: "receive", timestamp: Date.now() - 60_000, durationMs: 5, status: "ok" as const },
       { name: "execute", timestamp: Date.now() - 59_995, durationMs: 170, status: "ok" as const },
@@ -44,26 +55,49 @@ const MOCK_DELIVERY_TRACES = [
     ],
   },
   {
+    sourceChannelId: "dc-server-1",
+    sourceChannelType: "discord",
+    targetChannelType: "discord",
+    targetChannelId: "dc-server-1",
+    deliveredAt: Date.now() - 120_000,
     traceId: "trace-002",
-    timestamp: Date.now() - 120_000,
-    channelType: "discord",
-    messagePreview: "Error processing request",
-    status: "failed" as const,
-    latencyMs: null,
-    stepCount: 1,
+    status: "error" as const,
+    latencyMs: 5,
+    error: "Budget exceeded",
+    agentId: "default",
+    sessionKey: "discord:dc-server-1",
+    toolCalls: 0,
+    llmCalls: 1,
+    tokensTotal: 120,
+    costTotal: 0.002,
+    failureStage: "execution" as const,
+    errorKind: "resource" as const,
+    evidence: "diagnostic" as const,
     steps: [
       { name: "receive", timestamp: Date.now() - 120_000, durationMs: 5, status: "ok" as const },
       { name: "execute", timestamp: Date.now() - 119_995, durationMs: 0, status: "error" as const, error: "Budget exceeded" },
     ],
   },
   {
+    sourceChannelId: "tg-main",
+    sourceChannelType: "telegram",
+    targetChannelType: "telegram",
+    targetChannelId: "tg-main",
+    deliveredAt: Date.now() - 300_000,
     traceId: "trace-003",
-    timestamp: Date.now() - 300_000,
-    channelType: "telegram",
-    messagePreview: "Another message here",
     status: "success" as const,
     latencyMs: 342,
-    stepCount: 5,
+    error: null,
+    agentId: "default",
+    sessionKey: "telegram:tg-main",
+    toolCalls: 0,
+    llmCalls: 1,
+    tokensTotal: 300,
+    costTotal: 0.008,
+    failureStage: null,
+    errorKind: null,
+    evidence: "message_correlation" as const,
+    steps: null,
   },
 ];
 
@@ -119,11 +153,14 @@ const MOCK_CHANNEL_LIST = {
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function createObserveMockRpcClient(): RpcClient & { _callFn: ReturnType<typeof vi.fn> } {
+function createObserveMockRpcClient(
+  deliveryStats = MOCK_DELIVERY_STATS,
+  deliveryRows: ReadonlyArray<Record<string, unknown>> = MOCK_DELIVERY_ROWS,
+): RpcClient & { _callFn: ReturnType<typeof vi.fn> } {
   const callFn = vi.fn().mockImplementation((method: string) => {
     switch (method) {
       case "obs.delivery.stats":
-        return Promise.resolve(MOCK_DELIVERY_STATS);
+        return Promise.resolve(deliveryStats);
       case "obs.billing.total":
         return Promise.resolve(MOCK_BILLING_TOTAL);
       case "obs.billing.usage24h":
@@ -135,7 +172,7 @@ function createObserveMockRpcClient(): RpcClient & { _callFn: ReturnType<typeof 
       case "obs.diagnostics":
         return Promise.resolve(MOCK_DIAGNOSTICS);
       case "obs.delivery.recent":
-        return Promise.resolve(MOCK_DELIVERY_TRACES);
+        return Promise.resolve({ deliveries: deliveryRows });
       case "obs.channels.all":
         return Promise.resolve(MOCK_CHANNEL_ACTIVITY);
       case "agents.list":
@@ -178,7 +215,7 @@ function priv(el: IcObserveView) {
     _loadState: string;
     _activeTab: string;
     _error: string;
-    _requestsToday: number;
+    _lifecycles24h: number;
     _tokensToday: number;
     _costToday: number;
     _errorsToday: number;
@@ -186,7 +223,13 @@ function priv(el: IcObserveView) {
     _billingByProvider: Array<{ provider: string; cost: number }>;
     _billingByAgent: Array<{ agentId: string; percentOfTotal: number }>;
     _diagnosticsEvents: Array<{ id: string; category: string; eventType: string; data: Record<string, unknown> }>;
-    _deliveryTraces: typeof MOCK_DELIVERY_TRACES;
+    _deliveryTraces: Array<{
+      traceId: string;
+      timestamp: number;
+      sourceChannelType: string;
+      targetChannelType: string;
+      status: string;
+    }>;
     _channelActivity: typeof MOCK_CHANNEL_ACTIVITY;
     _deliveryChannelFilter: string;
     _deliveryStatusFilter: string;
@@ -290,14 +333,14 @@ describe("IcObserveView", () => {
     const statCards = el.shadowRoot?.querySelectorAll("ic-stat-card");
     const labels = Array.from(statCards ?? []).map((card) => (card as any).label);
     const values = Array.from(statCards ?? []).map((card) => (card as any).value);
-    // 6 cards: Requests/min, Error Rate, Avg Latency, Active Agents, Tokens (24h), Cost Today
-    expect(labels).toContain("Requests/min");
+    // 6 cards: Lifecycles (24h), Error Rate, Avg Latency, Active Agents, Tokens (24h), Cost Today
+    expect(labels).toContain("Lifecycles (24h)");
     expect(labels).toContain("Error Rate");
     expect(labels).toContain("Avg Latency");
     expect(labels).toContain("Active Agents");
     expect(labels).toContain("Tokens (24h)");
     expect(labels).toContain("Cost Today");
-    expect(values).toContain("1,247"); // requests/min (total requests)
+    expect(values).toContain("1,247"); // completed message lifecycles in 24 hours
     expect(values).toContain("845K");  // tokens
     expect(values).toContain("$6.23"); // cost
     expect(values).toContain("234ms"); // avg latency
@@ -467,7 +510,7 @@ describe("IcObserveView", () => {
       if (method === "obs.billing.byProvider") return Promise.resolve(MOCK_BY_PROVIDER);
       if (method === "obs.billing.byAgent") return Promise.resolve(MOCK_BY_AGENT);
       if (method === "obs.diagnostics") return Promise.resolve(MOCK_DIAGNOSTICS);
-      if (method === "obs.delivery.recent") return Promise.resolve([]);
+      if (method === "obs.delivery.recent") return Promise.resolve({ deliveries: [] });
       if (method === "obs.channels.all") return Promise.resolve([]);
       if (method === "agents.list") return Promise.resolve({ agents: [] });
       if (method === "channels.list") return Promise.resolve({ channels: [], total: 0 });
@@ -493,7 +536,7 @@ describe("IcObserveView", () => {
     expect(tabs).toBeTruthy();
     expect(priv(el)._loadState).toBe("loaded");
     // All data should be at defaults
-    expect(priv(el)._requestsToday).toBe(0);
+    expect(priv(el)._lifecycles24h).toBe(0);
     expect(priv(el)._tokensToday).toBe(0);
     expect(priv(el)._costToday).toBe(0);
   });
@@ -523,7 +566,7 @@ describe("IcObserveView", () => {
       if (method === "obs.billing.total") return Promise.resolve(MOCK_BILLING_TOTAL);
       if (method === "obs.billing.usage24h") return Promise.resolve(MOCK_USAGE_24H);
       if (method === "obs.diagnostics") return Promise.resolve([]);
-      if (method === "obs.delivery.recent") return Promise.resolve([]);
+      if (method === "obs.delivery.recent") return Promise.resolve({ deliveries: [] });
       if (method === "obs.channels.all") return Promise.resolve([]);
       return Promise.resolve({});
     });
@@ -544,7 +587,7 @@ describe("IcObserveView", () => {
       if (method === "obs.billing.usage24h") return Promise.resolve(MOCK_USAGE_24H);
       if (method === "obs.billing.byProvider") return Promise.resolve([]);
       if (method === "obs.billing.byAgent") return Promise.resolve([]);
-      if (method === "obs.delivery.recent") return Promise.resolve([]);
+      if (method === "obs.delivery.recent") return Promise.resolve({ deliveries: [] });
       if (method === "obs.channels.all") return Promise.resolve([]);
       return Promise.resolve({});
     });
@@ -612,6 +655,45 @@ describe("IcObserveView", () => {
     expect(text).toContain("1,247");
   });
 
+  it("normalizes canonical delivery rows into trace view models", async () => {
+    const rows = [{ ...MOCK_DELIVERY_ROWS[0]!, targetChannelType: "slack", targetChannelId: "workspace_a" }];
+    const rpc = createObserveMockRpcClient(MOCK_DELIVERY_STATS, rows);
+    const el = await createElement({ rpcClient: rpc, initialTab: "delivery" });
+    await flush(el);
+
+    expect(priv(el)._deliveryTraces[0]).toMatchObject({
+      traceId: "trace-001",
+      timestamp: MOCK_DELIVERY_ROWS[0]!.deliveredAt,
+      sourceChannelType: "telegram",
+      targetChannelType: "slack",
+      status: "success",
+    });
+    expect((priv(el)._deliveryTraces[0] as { stepCount?: number }).stepCount).toBe(3);
+  });
+
+  it("renders unavailable rates when there are no attempted deliveries", async () => {
+    const rpc = createObserveMockRpcClient({
+      total: 4,
+      attempted: 0,
+      success: 0,
+      error: 0,
+      timeout: 0,
+      filtered: 3,
+      aborted: 1,
+      avgLatencyMs: 0,
+    });
+    const el = await createElement({ rpcClient: rpc, initialTab: "delivery" });
+    await flush(el);
+
+    expect(el.shadowRoot?.querySelector(".stats-summary")?.textContent).toContain("N/A");
+
+    priv(el)._activeTab = "overview";
+    await (el as any).updateComplete;
+    const errorRateCard = Array.from(el.shadowRoot?.querySelectorAll("ic-stat-card") ?? [])
+      .find((card) => (card as any).label === "Error Rate");
+    expect((errorRateCard as any)?.value).toBe("N/A");
+  });
+
   it("26 - delivery tab shows channel filter dropdown", async () => {
     const rpc = createObserveMockRpcClient();
     const el = await createElement({ rpcClient: rpc, initialTab: "delivery" });
@@ -621,10 +703,10 @@ describe("IcObserveView", () => {
     expect(selects?.length).toBeGreaterThanOrEqual(3);
     const channelSelect = selects?.[0] as HTMLSelectElement;
     const options = channelSelect?.querySelectorAll("option");
-    // "All Channels" + unique channel types (telegram, discord)
+    // "All Destinations" + unique target channel types (telegram, discord)
     expect(options?.length).toBeGreaterThanOrEqual(3);
     const optTexts = Array.from(options ?? []).map((o) => o.textContent?.trim());
-    expect(optTexts).toContain("All Channels");
+    expect(optTexts).toContain("All Destinations");
     expect(optTexts).toContain("telegram");
     expect(optTexts).toContain("discord");
   });
@@ -637,12 +719,29 @@ describe("IcObserveView", () => {
     const selects = el.shadowRoot?.querySelectorAll(".filter-select");
     const statusSelect = selects?.[1] as HTMLSelectElement;
     const options = statusSelect?.querySelectorAll("option");
-    expect(options?.length).toBe(4);
+    expect(options?.length).toBe(6);
     const optTexts = Array.from(options ?? []).map((o) => o.textContent?.trim());
     expect(optTexts).toContain("All Statuses");
     expect(optTexts).toContain("Success");
-    expect(optTexts).toContain("Failed");
+    expect(optTexts).toContain("Error");
     expect(optTexts).toContain("Timeout");
+    expect(optTexts).toContain("Filtered");
+    expect(optTexts).toContain("Aborted");
+  });
+
+  it("preserves every canonical lifecycle status from recent deliveries", async () => {
+    const statuses = ["success", "error", "timeout", "filtered", "aborted"] as const;
+    const rows = statuses.map((status, index) => ({
+      ...MOCK_DELIVERY_ROWS[0]!,
+      traceId: `trace-${status}`,
+      status,
+      deliveredAt: MOCK_DELIVERY_ROWS[0]!.deliveredAt - index,
+    }));
+    const rpc = createObserveMockRpcClient(MOCK_DELIVERY_STATS, rows);
+    const el = await createElement({ rpcClient: rpc, initialTab: "delivery" });
+    await flush(el);
+
+    expect(priv(el)._deliveryTraces.map((trace) => trace.status)).toEqual(statuses);
   });
 
   it("28 - delivery tab filters by channel", async () => {
@@ -662,13 +761,30 @@ describe("IcObserveView", () => {
     expect(rows?.length).toBe(2);
   });
 
+  it("filters delivery traces by destination when source and target platforms differ", async () => {
+    const deliveryRows = [
+      { ...MOCK_DELIVERY_ROWS[0]!, traceId: "to-slack", targetChannelType: "slack", targetChannelId: "workspace_a" },
+      { ...MOCK_DELIVERY_ROWS[0]!, traceId: "to-discord", targetChannelType: "discord", targetChannelId: "guild_a" },
+    ];
+    const rpc = createObserveMockRpcClient(MOCK_DELIVERY_STATS, deliveryRows);
+    const el = await createElement({ rpcClient: rpc, initialTab: "delivery" });
+    await flush(el);
+
+    priv(el)._deliveryChannelFilter = "slack";
+    await (el as any).updateComplete;
+
+    const rows = el.shadowRoot?.querySelectorAll("ic-delivery-row") ?? [];
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as unknown as { trace: { targetChannelType: string } }).trace.targetChannelType).toBe("slack");
+  });
+
   it("29 - delivery tab filters by status", async () => {
     const rpc = createObserveMockRpcClient();
     const el = await createElement({ rpcClient: rpc, initialTab: "delivery" });
     await flush(el);
 
-    // Set status filter to failed
-    priv(el)._deliveryStatusFilter = "failed";
+    // Set status filter to error
+    priv(el)._deliveryStatusFilter = "error";
     await (el as any).updateComplete;
 
     const rows = el.shadowRoot?.querySelectorAll("ic-delivery-row");
@@ -770,6 +886,20 @@ describe("IcObserveView", () => {
     expect(errorMsg?.textContent).toContain("Budget exceeded");
   });
 
+  it("delivery trace detail preserves failure stage and error kind", async () => {
+    const rpc = createObserveMockRpcClient();
+    const el = await createElement({ rpcClient: rpc, initialTab: "delivery" });
+    await flush(el);
+
+    priv(el)._expandedTraceId = "trace-002";
+    await (el as any).updateComplete;
+
+    const detailText = el.shadowRoot?.querySelector(".trace-detail")?.textContent ?? "";
+    expect(detailText).toContain("Failure stage: execution");
+    expect(detailText).toContain("Error kind: resource");
+    expect(detailText).toContain("Error: Budget exceeded");
+  });
+
   it("35 - delivery tab sorts traces by timestamp descending", async () => {
     const rpc = createObserveMockRpcClient();
     const el = await createElement({ rpcClient: rpc, initialTab: "delivery" });
@@ -808,6 +938,50 @@ describe("IcObserveView", () => {
     const rateEl = el.shadowRoot?.querySelector(".stats-summary .rate-green");
     expect(rateEl).toBeTruthy();
     expect(rateEl?.textContent).toContain("99.2%");
+  });
+
+  it("loads overview and delivery aggregates with their explicit time windows", async () => {
+    const rpc = createObserveMockRpcClient();
+    const el = await createElement({ rpcClient: rpc, initialTab: "delivery" });
+    await flush(el);
+
+    expect(rpc._callFn).toHaveBeenCalledWith("obs.delivery.stats", { sinceMs: 86_400_000 });
+    expect(rpc._callFn).toHaveBeenCalledWith("obs.delivery.stats", { sinceMs: 3_600_000 });
+    expect(rpc._callFn).toHaveBeenCalledWith("obs.delivery.recent", {
+      sinceMs: 604_800_000,
+      limit: 200,
+    });
+  });
+
+  it("reloads delivery aggregates when the delivery time range changes", async () => {
+    const rpc = createObserveMockRpcClient();
+    const el = await createElement({ rpcClient: rpc, initialTab: "delivery" });
+    await flush(el);
+    rpc._callFn.mockClear();
+
+    const selects = el.shadowRoot?.querySelectorAll(".filter-select") as NodeListOf<HTMLSelectElement>;
+    const timeRange = selects[2]!;
+    timeRange.value = "6h";
+    timeRange.dispatchEvent(new Event("change"));
+    await flush(el);
+
+    expect(rpc._callFn).toHaveBeenCalledWith("obs.delivery.stats", { sinceMs: 21_600_000 });
+  });
+
+  it("clears stale delivery aggregates when a changed time window cannot load", async () => {
+    const rpc = createObserveMockRpcClient();
+    const el = await createElement({ rpcClient: rpc, initialTab: "delivery" });
+    await flush(el);
+    expect(el.shadowRoot?.querySelector(".stats-summary")).toBeTruthy();
+    rpc._callFn.mockRejectedValueOnce(new Error("stats unavailable"));
+
+    const selects = el.shadowRoot?.querySelectorAll(".filter-select") as NodeListOf<HTMLSelectElement>;
+    const timeRange = selects[2]!;
+    timeRange.value = "6h";
+    timeRange.dispatchEvent(new Event("change"));
+    await flush(el);
+
+    expect(el.shadowRoot?.querySelector(".stats-summary")).toBeFalsy();
   });
 
   /* ---- Channel Activity tab tests ---- */
@@ -893,7 +1067,7 @@ describe("IcObserveView", () => {
       if (method === "obs.billing.byProvider") return Promise.resolve(MOCK_BY_PROVIDER);
       if (method === "obs.billing.byAgent") return Promise.resolve(MOCK_BY_AGENT);
       if (method === "obs.diagnostics") return Promise.resolve(MOCK_DIAGNOSTICS);
-      if (method === "obs.delivery.recent") return Promise.resolve(MOCK_DELIVERY_TRACES);
+      if (method === "obs.delivery.recent") return Promise.resolve({ deliveries: MOCK_DELIVERY_ROWS });
       return Promise.resolve({});
     });
     const el = await createElement({ rpcClient: rpc, initialTab: "channels" });
@@ -915,7 +1089,7 @@ describe("IcObserveView", () => {
       if (method === "obs.billing.byProvider") return Promise.resolve(MOCK_BY_PROVIDER);
       if (method === "obs.billing.byAgent") return Promise.resolve(MOCK_BY_AGENT);
       if (method === "obs.diagnostics") return Promise.resolve(MOCK_DIAGNOSTICS);
-      if (method === "obs.delivery.recent") return Promise.resolve(MOCK_DELIVERY_TRACES);
+      if (method === "obs.delivery.recent") return Promise.resolve({ deliveries: MOCK_DELIVERY_ROWS });
       return Promise.resolve({});
     });
     const el = await createElement({ rpcClient: rpc, initialTab: "channels" });
@@ -1077,7 +1251,7 @@ describe("IcObserveView", () => {
       if (method === "obs.billing.usage24h") return Promise.resolve(MOCK_USAGE_24H);
       if (method === "obs.billing.byProvider") return Promise.resolve(MOCK_BY_PROVIDER);
       if (method === "obs.diagnostics") return Promise.resolve(MOCK_DIAGNOSTICS);
-      if (method === "obs.delivery.recent") return Promise.resolve(MOCK_DELIVERY_TRACES);
+      if (method === "obs.delivery.recent") return Promise.resolve({ deliveries: MOCK_DELIVERY_ROWS });
       if (method === "obs.channels.all") return Promise.resolve(MOCK_CHANNEL_ACTIVITY);
       if (method === "channels.list") return Promise.resolve(MOCK_CHANNEL_LIST);
       return Promise.resolve({});
@@ -1107,7 +1281,7 @@ describe("IcObserveView", () => {
       if (method === "obs.billing.usage24h") return Promise.resolve(MOCK_USAGE_24H);
       if (method === "obs.billing.byProvider") return Promise.resolve(MOCK_BY_PROVIDER);
       if (method === "obs.diagnostics") return Promise.resolve(MOCK_DIAGNOSTICS);
-      if (method === "obs.delivery.recent") return Promise.resolve(MOCK_DELIVERY_TRACES);
+      if (method === "obs.delivery.recent") return Promise.resolve({ deliveries: MOCK_DELIVERY_ROWS });
       if (method === "obs.channels.all") return Promise.resolve(MOCK_CHANNEL_ACTIVITY);
       if (method === "channels.list") return Promise.resolve(MOCK_CHANNEL_LIST);
       return Promise.resolve({});
@@ -1159,7 +1333,7 @@ describe("IcObserveView", () => {
       if (method === "obs.billing.usage24h") return Promise.resolve(MOCK_USAGE_24H);
       if (method === "obs.billing.byProvider") return Promise.resolve(MOCK_BY_PROVIDER);
       if (method === "obs.diagnostics") return Promise.resolve(MOCK_DIAGNOSTICS);
-      if (method === "obs.delivery.recent") return Promise.resolve(MOCK_DELIVERY_TRACES);
+      if (method === "obs.delivery.recent") return Promise.resolve({ deliveries: MOCK_DELIVERY_ROWS });
       if (method === "obs.channels.all") return Promise.resolve(MOCK_CHANNEL_ACTIVITY);
       if (method === "channels.list") return Promise.resolve({ channels: [], total: 0 });
       return Promise.resolve({});

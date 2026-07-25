@@ -21,8 +21,8 @@ export const HEX_SECRET_32 = /(?:secret|key|token|password)\s*[:=]\s*["']?[a-f0-
 /** Base64 secret (40+ chars) with keyword prefix */
 export const BASE64_SECRET = /(?:secret|key|token|password)\s*[:=]\s*["']?[A-Za-z0-9+/]{40,}={0,2}/gi;
 
-/** PEM private key header (no optional quantifier group for ReDoS safety) */
-export const PRIVATE_KEY_HEADER = /-----BEGIN\s{1,5}(?:RSA )?PRIVATE\s{1,5}KEY-----/g;
+/** PEM private-key header, including the common algorithm-specific labels. */
+export const PRIVATE_KEY_HEADER = /-----BEGIN[ \t]{1,5}(?:PRIVATE[ \t]{1,5}KEY|RSA[ \t]{1,5}PRIVATE[ \t]{1,5}KEY|DSA[ \t]{1,5}PRIVATE[ \t]{1,5}KEY|EC[ \t]{1,5}PRIVATE[ \t]{1,5}KEY|OPENSSH[ \t]{1,5}PRIVATE[ \t]{1,5}KEY|ENCRYPTED[ \t]{1,5}PRIVATE[ \t]{1,5}KEY|PGP[ \t]{1,5}PRIVATE[ \t]{1,5}KEY[ \t]{1,5}BLOCK)-----/g;
 
 /** GitHub personal/server token (ghp_/ghs_) */
 export const GITHUB_TOKEN = /gh[ps]_[A-Za-z0-9_]{36,}/g;

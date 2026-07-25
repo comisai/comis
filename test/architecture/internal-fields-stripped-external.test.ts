@@ -94,7 +94,7 @@ function subtreeCallsStripInternalFields(node: ts.Node): boolean {
  * `dynamicRouter.registerMethod(<method>, <scope>, <async-arrow>)` call site
  * whose registered handler arrow does NOT forward params through
  * `stripInternalFields`. The handler arrow is the 3rd argument; we recurse the
- * whole file so the call inside the nested for/for loop is found.
+ * whole file so the call inside the registration loop is found.
  */
 function findUnstrippedRegistrations(
   sf: ts.SourceFile,
@@ -133,14 +133,14 @@ function findUnstrippedRegistrations(
 
   visit(sf);
 
-  // Defensive: the file must register through this loop (>=2 sites today: admin
-  // + rpc). If the walker found none, the file shape changed out from under the
+  // Defensive: the file must register through this loop. If the walker found
+  // none, the file shape changed out from under the
   // guard — fail loudly rather than pass vacuously.
-  if (registerCallCount < 2) {
+  if (registerCallCount < 1) {
     violations.push({
       file: REL,
       line: 0,
-      snippet: `expected >= 2 registerMethod call sites (admin + rpc); found ${registerCallCount}`,
+      snippet: `expected at least one registerMethod call site; found ${registerCallCount}`,
     });
   }
 
@@ -155,7 +155,7 @@ describe("setup-gateway-api strips internal fields at the external boundary", ()
     );
   });
 
-  it("BOTH registerMethod branches forward caller params through stripInternalFields() (AST)", () => {
+  it("every registerMethod handler forwards caller params through stripInternalFields() (AST)", () => {
     const src = readFileSync(SETUP_GATEWAY_API_TS, "utf8");
     const sf = ts.createSourceFile(
       SETUP_GATEWAY_API_TS,
@@ -178,19 +178,15 @@ describe("setup-gateway-api strips internal fields at the external boundary", ()
     ).toEqual([]);
   });
 
-  it("admin branch strips THEN injects the trusted _trustLevel (ordering), and the old unstripped spread is gone", () => {
+  it("the unified route strips before conditionally injecting server-owned authority", () => {
     const code = stripComments(readFileSync(SETUP_GATEWAY_API_TS, "utf8"));
-    // Strip-then-inject ordering: stripInternalFields(params) immediately
-    // precedes the _trustLevel:"admin" re-injection.
+    // Strip-then-inject ordering: the unified registration handles both scope
+    // classes and conditionally adds trusted admin authority after stripping.
     expect(code).toMatch(
-      /stripInternalFields\(params \?\? \{\}\),\s*_trustLevel:\s*["']admin["']/,
+      /\.\.\.stripInternalFields\(params \?\? \{\}\),\s*\.\.\.\(adminOnly \|\| authenticatedAsAdmin \? \{ _trustLevel: ["']admin["'] \} : \{\}\),\s*\.\.\.capInject/,
     );
-    // The rpc branch strips FIRST, then spreads the server-side cap
-    // injection (...capInject) AFTER (#240) — so a forged client `_capabilities`
-    // is stripped before the trusted one is added (strip-THEN-inject).
-    expect(code).toMatch(
-      /rpcCall\(\s*c\.method,\s*\{\s*\.\.\.stripInternalFields\(params \?\? \{\}\),\s*\.\.\.capInject\s*\}\s*\)/,
-    );
+    expect(code).toMatch(/const adminOnly = c\.scopes\.length === 1 && c\.scopes\[0\] === ["']admin["']/);
+    expect(code).toMatch(/checkScope\(context\.scopes, ["']admin["']\)/);
     // The pre-patch unstripped admin spread must NOT survive anywhere.
     expect(code).not.toMatch(/\{\s*\.\.\.\(params \?\? \{\}\),\s*_trustLevel/);
   });

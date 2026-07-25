@@ -151,6 +151,44 @@ describe("parseSkillManifest", () => {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // Error-contract divergence from the SDK's parseFrontmatter — pinned on
+  // purpose. The pi SDK parser returns a silent empty frontmatter for a
+  // missing/unterminated block and throws a raw YAMLParseError on malformed
+  // YAML. Comis skill manifests need DESCRIPTIVE, non-throwing errors so a
+  // SKILL.md authoring mistake surfaces as actionable operator feedback, not
+  // as a skill that silently loads with no metadata. These tests exist so a
+  // future "just delegate to the SDK" refactor trips over the contract it
+  // would be giving up.
+  // ---------------------------------------------------------------------------
+
+  it("returns a descriptive error for UNTERMINATED frontmatter (never a silent empty manifest)", () => {
+    const content = `---\nname: test\ndescription: opening marker without a closing one\n`;
+    const result = parseSkillManifest(content);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("missing closing '---' marker");
+    }
+  });
+
+  it("returns a descriptive error for non-object YAML frontmatter (never a cast-through scalar)", () => {
+    const content = `---\njust a scalar string\n---\nbody\n`;
+    const result = parseSkillManifest(content);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/must be an object|Manifest validation failed/);
+    }
+  });
+
+  it("returns a descriptive error for an EMPTY frontmatter block", () => {
+    const content = `---\n\n---\nbody\n`;
+    const result = parseSkillManifest(content);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("Empty frontmatter");
+    }
+  });
+
   it("returns error for unknown fields (strict mode)", () => {
     const content = `---\nname: test\ndescription: A skill\nunknownField: value\n---\n`;
     const result = parseSkillManifest(content);

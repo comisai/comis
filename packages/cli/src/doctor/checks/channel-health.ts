@@ -6,8 +6,8 @@
  * Channel credentials live in the config as `${VAR}` references (e.g.
  * `channels.telegram.botToken: ${TELEGRAM_BOT_TOKEN}`), and the shared
  * doctor resolution substitutes them the way daemon boot does: process env
- * -> `~/.comis/.env` -> the encrypted secret store. A reference nothing
- * resolved is exactly what breaks the adapter at runtime, so that — not a
+ * and active data-dir `.env`, with configured-store values authoritative. An
+ * unresolved reference is exactly what breaks the adapter at runtime, so that — not a
  * bare env-var probe — is what this check reports. (An env-only probe would
  * claim "Missing telegram credentials" on a live deployment whose token
  * sits in the encrypted store.)
@@ -35,7 +35,7 @@ const NON_CHANNEL_KEYS = new Set(["healthCheck"]);
  * Doctor check: channel credential health.
  *
  * For each enabled channel, reports whether all of its `${VAR}` credential
- * references resolved (env, ~/.comis/.env, or the encrypted secret store).
+ * references resolved (process environment, active data-dir `.env`, or configured store).
  * Inline literal credentials count as resolved — the secrets-audit check
  * flags plaintext secrets separately.
  */
@@ -97,7 +97,7 @@ export const channelHealthCheck: DoctorCheck = {
           status: "fail",
           message:
             `Unresolved ${channelType} credential reference(s): ${unresolved.join(", ")}` +
-            " — not in env, ~/.comis/.env, or the encrypted secret store",
+            " — not in the process environment, active data-dir .env, or configured secret store",
           suggestion:
             "Set the variable in the environment or store it via comis secrets set",
           repairable: false,

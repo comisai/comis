@@ -2,7 +2,7 @@
 /**
  * Tests for the CLI entry point (cli.ts).
  *
- * Verifies that all 30 commands are registered on the root program,
+ * Verifies that all 31 commands are registered on the root program,
  * program metadata is correct, and subcommand structure is intact.
  * Does NOT re-test command behavior (covered by per-command behavior tests).
  *
@@ -87,9 +87,9 @@ describe("CLI entry point", () => {
       // Live resolved-caps + remaining-budget read (capabilities.introspect) —
       // the `comis whoami` surface (live-only, no --offline).
       "whoami",
-      // Cross-session FleetHealthReport triage (obs.fleet.health) — the
+      // Cross-session SystemHealthReport triage (obs.system.health) — the
       // remote-admin sibling of `explain`, DISTINCT from the local `health` doctor.
-      "fleet",
+      "system-health",
       // Offline inbound-message extraction per channel (`comis messages`) —
       // content-bearing by design, so it is offline-only with NO RPC sibling.
       "messages",
@@ -103,12 +103,14 @@ describe("CLI entry point", () => {
       "mcp",
       // Cost-attribution exports/reports (`comis cost export`).
       "cost",
+      // Strict RPC-backed cron inventory, history, status, and manual execution.
+      "cron",
       // Operator-only deterministic replay of a recorded run (`comis orchestrate replay`).
       "orchestrate",
     ] as const;
 
-    it("registers exactly 30 commands", () => {
-      expect(program.commands).toHaveLength(30);
+    it("registers exactly 32 commands", () => {
+      expect(program.commands).toHaveLength(32);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {

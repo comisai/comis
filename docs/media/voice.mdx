@@ -451,14 +451,14 @@ resolved selection `source` rung (and, when `auto` skipped a higher rung, the
 — the `errorKind`. The block is content-free: it carries ids, labels, numbers,
 and booleans only, never the audio, the transcript text, or a credential.
 
-### `comis fleet` — the voice-health signal
+### `comis system-health` — the voice-health signal
 
-`comis fleet` surfaces a `voice_health` finding beside `model_health` and
+`comis system-health` surfaces a `voice_health` finding beside `model_health` and
 `config_posture` when transcriptions/syntheses have been degrading across the
 window: the **count of degraded STT/TTS turns** and the **dominant voice
 `errorKind`** (for example, `model_load_failed` pointing at the local whisper
 model cache, or `auth_required` pointing at a missing audio key). Like every
-fleet finding it carries **counts, a short code, and a static hint only — no raw
+system finding it carries **counts, a short code, and a static hint only — no raw
 provider message and no secret — so it is safe to paste into a review.** Drill
 into the worst session it points at with `comis explain`.
 

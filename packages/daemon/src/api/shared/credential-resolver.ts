@@ -30,9 +30,9 @@
  *
  * @module
  */
-import { type KnownProvider } from "@earendil-works/pi-ai";
+import type { BuiltinProvider } from "@earendil-works/pi-ai/compat";
 import { getEnvApiKey, getProviders, getModels } from "@earendil-works/pi-ai/compat";
-import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { getProviderOAuth } from "@comis/core";
 import {
   KEYLESS_PROVIDER_TYPES,
   sanitizeLogString,
@@ -109,7 +109,7 @@ function resolveEffectiveProvider(
   const allProviders = getProviders();
   if (allProviders.length === 0) return targetProvider;
   return allProviders
-    .map((provider) => ({ provider, modelCount: getModels(provider as KnownProvider).length }))
+    .map((provider) => ({ provider, modelCount: getModels(provider as BuiltinProvider).length }))
     .sort((a, b) => b.modelCount - a.modelCount)[0]!.provider;
 }
 
@@ -138,7 +138,7 @@ export function resolveProviderCredential(
 
   // eslint-disable-next-line security/detect-object-injection -- typed Record<string, ProviderEntry> read; effectiveProvider validated above
   const entry = deps.providerEntries?.[effectiveProvider];
-  const oauthProviderSupported = Boolean(getOAuthProvider(effectiveProvider));
+  const oauthProviderSupported = Boolean(getProviderOAuth(effectiveProvider));
 
   // 1. Source A: providers.entries with an explicit apiKeyName. The configured
   // name is authoritative: if it is absent, reject instead of silently using a
@@ -247,7 +247,7 @@ export async function resolveProviderCredentialWithStore(
     return ok(initialResolution);
   }
 
-  if (!getOAuthProvider(effectiveProvider) || !oauthCredentialStore) {
+  if (!getProviderOAuth(effectiveProvider) || !oauthCredentialStore) {
     return ok(initialResolution);
   }
 

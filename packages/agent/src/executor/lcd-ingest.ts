@@ -16,15 +16,17 @@
  *      `estimateMessageTokens` (which counts the `thinking` block) — the
  *      store NEVER computes tokens (the contract keeps core/memory free of
  *      the agent estimator dependency).
- *   3. VERBATIM PARTS: `parts` come from the core `messageToParts` codec
- *      (verbatim `metadata.raw` blocks + envelope) — NEVER flatten a
- *      `tool_use`/`tool_result` to text (flattening loses the stable id and
- *      breaks tool-result pairing on read-back).
+ *   3. STRUCTURED PARTS AFTER SECURITY PROJECTION: secret-bearing persistence
+ *      values are redacted before `parts` pass through the core
+ *      `messageToParts` codec. The remaining `metadata.raw` blocks + envelope
+ *      keep their structure — NEVER flatten a `tool_use`/`tool_result` to text
+ *      (flattening loses the stable id and breaks tool-result pairing on
+ *      read-back).
  *
  * Idempotency is the CALLER's responsibility: it derives `startSeq` from the
  * store's persisted count and passes ONLY the not-yet-persisted delta. This
  * helper appends exactly `messages.length` rows starting at `startSeq`; an
- * empty delta appends nothing. The store's unique index on `(conversationId,
+ * empty delta appends nothing. The store's unique index on `(conversationRef,
  * seq)` is the final guard against a duplicate seq.
  *
  * Architecture cut (agent↛memory): this module imports ONLY the CORE
@@ -35,9 +37,10 @@
  * @module
  */
 
-import { messageToParts } from "@comis/core"; // CORE codec (allowed; the agent↛memory cut keeps the concrete store injected)
+import { ConversationRefSchema, messageToParts } from "@comis/core"; // CORE codec + authority validator
 import { stripInlineRecalledMemory } from "../rag/hybrid-memory-injector.js";
 import { neutralizeForgedMarkersInMessage } from "../session/forged-context-markers.js";
+import { projectSessionValueForPersistence } from "../session/sanitize-session-secrets.js";
 import type { ContextStorePort, ContextStoreScope, ComisLogger, ErrorKind } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
@@ -45,11 +48,12 @@ import { estimateMessageTokens } from "../safety/token-estimator.js";
 
 /**
  * Append a turn's NEW messages to the LCD store at the afterTurn boundary.
- * Non-fatal; tokenCount computed agent-side; parts verbatim
- * via the codec. See the module header for the full contract.
+ * Non-fatal; tokenCount computed agent-side; structured parts pass through the
+ * persistence projection and codec. See the module header for the full
+ * contract.
  *
  * @param store    The injected core ContextStorePort (the concrete store is daemon-injected).
- * @param scope    The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
+ * @param scope    The SECURITY scope columns (conversationRef/tenantId/agentId/sessionKey).
  * @param startSeq The first seq to assign — the caller derives it from the store's persisted count.
  * @param messages The NOT-YET-PERSISTED delta (the caller slices it against the store count).
  * @param now      Injected wall-clock ms (`deps.clock.now()` from the caller) — NOT Date.now().
@@ -102,6 +106,7 @@ export function ingestTurn(
   let seq = startSeq;
   let appended = 0;
   let forgedMarkersStripped = 0;
+  let persistenceRedactions = 0;
   for (const msg of messages) {
     // The agent message is structurally the pi-ai canonical Message at this
     // boundary; the codec + estimator are typed against pi-ai `Message`. Carve the
@@ -112,11 +117,13 @@ export function ingestTurn(
     // markers (`[System context]` / `[End system context]` / a line-start
     // `[<channel>] <id> (<time>):` header) the model emitted in its OWN output, so
     // model-authored text can never re-enter replay history masquerading as a
-    // system/user turn boundary (the comis-daniel 2026-07-09 self-forgery incident).
+    // system/user turn boundary.
     // Role-scoped + idempotent (see forged-context-markers.ts) → the clean path is
     // referentially unchanged and the replayed prefix stays byte-stable.
     const forged = neutralizeForgedMarkersInMessage(userStripped);
-    const m = forged.message;
+    const persistenceProjection = projectSessionValueForPersistence(forged.message);
+    const m = persistenceProjection.value;
+    persistenceRedactions += persistenceProjection.redactions;
     forgedMarkersStripped += forged.strippedCount;
     const currentSeq = seq;
     seq += 1;
@@ -127,7 +134,7 @@ export function ingestTurn(
         role: m.role, // "user" | "assistant" | "toolResult" (LcdRole)
         tokenCount: estimateMessageTokens(m), // agent-side (counts the thinking block) — store never computes it
         createdAt: now,
-        parts: messageToParts(m), // verbatim metadata.raw blocks + envelope
+        parts: messageToParts(m), // structure preserved after secret projection
       });
       appended += 1;
     } catch (err) {
@@ -139,7 +146,7 @@ export function ingestTurn(
           err: err instanceof Error ? err.message : String(err),
           hint: "Check LCD store connectivity and disk space",
           errorKind: "dependency" as ErrorKind,
-          conversationId: scope.conversationId,
+          conversationRef: scope.conversationRef,
           seq: currentSeq,
         },
         "LCD ingest append failed for one message (non-fatal)",
@@ -147,15 +154,15 @@ export function ingestTurn(
     }
   }
   if (forgedMarkersStripped > 0) {
-    // Post-incident visibility (§2.7): the model emitted context-boundary markers
+    // Operator-visible safety signal: the model emitted context-boundary markers
     // in its OWN output — a self-forgery attempt that was neutralized before it
     // could re-enter replay history. Counts only, no bodies. WARN (not DEBUG) so
     // it is visible at the default log level and can be lifted onto the
-    // FleetHealthReport as a health_signal.
+    // SystemHealthReport as a health_signal.
     logger.warn(
       {
         step: "lcd-ingest",
-        conversationId: scope.conversationId,
+        conversationRef: scope.conversationRef,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
         forgedMarkersStripped,
@@ -165,13 +172,25 @@ export function ingestTurn(
       "Neutralized forged context markers in assistant turn",
     );
   }
+  if (persistenceRedactions > 0) {
+    logger.info(
+      {
+        step: "lcd-ingest",
+        conversationRef: scope.conversationRef,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        redactions: persistenceRedactions,
+      },
+      "Redacted secret-bearing fields before LCD persistence",
+    );
+  }
   if (appended > 0) {
-    // Post-incident visibility (§2.7): an operator can reconstruct what was
+    // An operator can reconstruct what was
     // persisted per turn from this line alone. No message bodies — ids/counts only.
     logger.debug(
       {
         step: "lcd-ingest",
-        conversationId: scope.conversationId,
+        conversationRef: scope.conversationRef,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
         appended,
@@ -193,16 +212,14 @@ export function ingestTurn(
  * stamp cross-session-readable / mis-attached rows.
  *
  * Two refusal conditions (conservative — refuse, never guess):
- *  1. **Empty/blank security column.** Each of conversationId / agentId /
+ *  1. **Invalid authority column.** The opaque conversation reference must
+ *     satisfy `ConversationRefSchema`; agentId / tenantId / sessionKey must
  *     tenantId / sessionKey MUST be a non-empty TRIMMED string (SECURITY
  *     columns must never be empty; mirrors the
  *     {@link ingestTurnGuarded} shrink-guard skip+WARN shape). An empty column produces
  *     a row reachable by an unrelated scope.
- *  2. **conversationId ↔ sessionKey conflict.** The codebase invariant is
- *     `conversationId === sessionKey === formattedKey`
- *     (executor-post-execution.ts:894, where `conversationId = formattedKey` and
- *     `sessionKey: formattedKey`). A mismatch is internally inconsistent —
- *     refuse rather than GUESS which conversation to attach to.
+ *  2. The formatted session key remains display/path metadata. It is not storage
+ *     authority and is therefore never compared with the opaque reference.
  *
  * Returns a discriminated result so the caller can log the specific `reason`.
  *
@@ -212,17 +229,12 @@ export function ingestTurn(
 export function isScopeSafeForIngest(
   scope: ContextStoreScope,
 ): { ok: true } | { ok: false; reason: string } {
-  // Condition 1: every security column must be a non-empty trimmed string.
-  if (scope.conversationId.trim() === "") return { ok: false, reason: "empty conversationId" };
+  if (!ConversationRefSchema.safeParse(scope.conversationRef).success) {
+    return { ok: false, reason: "invalid conversationRef" };
+  }
   if (scope.agentId.trim() === "") return { ok: false, reason: "empty agentId" };
   if (scope.tenantId.trim() === "") return { ok: false, reason: "empty tenantId" };
   if (scope.sessionKey.trim() === "") return { ok: false, reason: "empty sessionKey" };
-  // Condition 2: conversationId must equal sessionKey (the formattedKey invariant).
-  // A mismatch means the scope is internally inconsistent — refuse rather than
-  // reattach to either candidate conversation (fail closed, never guess).
-  if (scope.conversationId !== scope.sessionKey) {
-    return { ok: false, reason: "conversationId/sessionKey conflict" };
-  }
   return { ok: true };
 }
 
@@ -283,7 +295,7 @@ export function messageEpochAnchor(msg: AgentMessage): string {
  * serializer guarantees cursor + rows are written in the same serialized slot.
  *
  * @param store        The injected core ContextStorePort.
- * @param scope        The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
+ * @param scope        The SECURITY scope columns (conversationRef/tenantId/agentId/sessionKey).
  * @param live         The live canonical AgentMessage[] (the full conversation).
  * @param now          Injected wall-clock ms (`deps.clock.now()`).
  * @param logger       For the divergence WARN + the delegated ingest logs.
@@ -316,7 +328,7 @@ export function ingestTurnGuarded(
   if (!safe.ok) {
     logger.warn(
       {
-        conversationId: scope.conversationId,
+        conversationRef: scope.conversationRef,
         agentId: scope.agentId,
         errorKind: "precondition" as ErrorKind,
         hint: "ambiguous/malformed LCD scope — refusing the ingest write to avoid a cross-session reattach; check the session-key derivation",
@@ -371,7 +383,7 @@ export function ingestTurnGuarded(
     // is observable. onRebase is NOT called (this is not a re-base; the anchor matched).
     logger.warn(
       {
-        conversationId: scope.conversationId,
+        conversationRef: scope.conversationRef,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
         liveLen: live.length,

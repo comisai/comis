@@ -174,13 +174,13 @@ and you can verify each one by tailing `~/.comis/logs/comis.log`.
 INFO  [channel.telegram] message received { chatId: 12345, senderId: 67890, textChars: 28 }
 
 # 2. Queue serializes per session
-DEBUG [queue.command] enqueued { lane: "normal", sessionKey: "telegram:67890:12345", depth: 0 }
+DEBUG [queue.command] enqueued { lane: "normal", sessionKey: "default:agent:atlas:user_a:telegram", depth: 0 }
 
 # 3. Router picks the agent
 DEBUG [routing.message-router] resolved agent { agentId: "atlas", binding: "channelType=telegram" }
 
 # 4. Session loaded (or created on first contact)
-INFO  [session.lifecycle] loadOrCreate { sessionKey: "telegram:67890:12345", isNew: false, messageCount: 12 }
+INFO  [session.lifecycle] loadOrCreate { sessionKey: "default:agent:atlas:user_a:telegram", isNew: false, messageCount: 12 }
 
 # 5. Identity files loaded
 DEBUG [identity.loader] loaded { agents: true, sizeChars: 8842 }

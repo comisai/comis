@@ -254,7 +254,6 @@ export function recoverEmptyFinalResponse(params: {
             logger.info(
               {
                 hint: "Final assistant message was empty or silent-token-only; recovered text from earlier turn",
-                errorKind: "transient" as ErrorKind,
                 turnIndex: i,
                 recoveredLength: recovered.length,
                 recoveryPass: "standalone",
@@ -581,4 +580,3 @@ export function extractExecutionPlan(params: {
   }
   return undefined;
 }
-

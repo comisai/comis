@@ -98,6 +98,19 @@ describe("config.patch", () => {
     tempConfig.cleanup();
   });
 
+  it.each([
+    ["contributions", "instances.echo"],
+    ["contributions", "activation.enabled"],
+    ["plugins", "plugins.echo.enabled"],
+  ])("rejects contribution topology mutation through config.patch at %s.%s", async (section, key) => {
+    const deps = makeDeps(tempConfig.configPath);
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({ section, key, value: true, _trustLevel: "admin" }),
+    ).rejects.toThrow(/immutable/i);
+  });
+
   it("schedules SIGUSR2 restart after successful write", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);
@@ -124,6 +137,24 @@ describe("config.patch", () => {
       value: "debug",
       restarting: true,
     });
+  });
+
+  it("notifies the committed-config lifecycle before scheduling restart", async () => {
+    const onConfigPersisted = vi.fn((nextConfig: { logLevel: string }) => {
+      expect(nextConfig.logLevel).toBe("debug");
+      expect(readFileSync(tempConfig.configPath, "utf-8")).toContain("logLevel: debug");
+      expect(killSpy).not.toHaveBeenCalled();
+    });
+    const deps = { ...makeDeps(tempConfig.configPath), onConfigPersisted };
+    const handlers = createConfigHandlers(deps);
+
+    await handlers["config.patch"]!({
+      section: "logLevel",
+      value: "debug",
+      _trustLevel: "admin",
+    });
+
+    expect(onConfigPersisted).toHaveBeenCalledOnce();
   });
 
   it("written config file has mode 0o600", async () => {
@@ -740,6 +771,24 @@ describe("config.apply", () => {
     expect(scheduler).toEqual({ cron: { enabled: true } });
   });
 
+  it("notifies the committed-config lifecycle with the validated applied section", async () => {
+    const onConfigPersisted = vi.fn((nextConfig: { scheduler: { tasks: { enabled: boolean } } }) => {
+      expect(nextConfig.scheduler.tasks.enabled).toBe(false);
+      expect(readFileSync(tempConfig.configPath, "utf-8")).toContain("scheduler:");
+      expect(killSpy).not.toHaveBeenCalled();
+    });
+    const deps = { ...makeDeps(tempConfig.configPath), onConfigPersisted };
+    const handlers = createConfigHandlers(deps);
+
+    await handlers["config.apply"]!({
+      section: "scheduler",
+      value: { tasks: { enabled: false } },
+      _trustLevel: "admin",
+    });
+
+    expect(onConfigPersisted).toHaveBeenCalledOnce();
+  });
+
   it("written config file has mode 0o600 after apply", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);
@@ -770,18 +819,17 @@ describe("config.apply", () => {
     expect(killSpy).not.toHaveBeenCalled();
   });
 
-  it("rejects immutable sections", async () => {
-    const deps = makeDeps(tempConfig.configPath);
-    const handlers = createConfigHandlers(deps);
+  it.each(["security", "contributions", "plugins"])(
+    "rejects immutable topology section %s through config.apply",
+    async (section) => {
+      const deps = makeDeps(tempConfig.configPath);
+      const handlers = createConfigHandlers(deps);
 
-    await expect(
-      handlers["config.apply"]!({
-        section: "security",
-        value: {},
-        _trustLevel: "admin",
-      }),
-    ).rejects.toThrow(/immutable/i);
-  });
+      await expect(
+        handlers["config.apply"]!({ section, value: {}, _trustLevel: "admin" }),
+      ).rejects.toThrow(/immutable/i);
+    },
+  );
 
   it("rejects invalid config with validation error", async () => {
     const deps = makeDeps(tempConfig.configPath);
@@ -1800,7 +1848,7 @@ describe("config.patch type coercion", () => {
     const result = await handlers["config.patch"]!({
       section: "scheduler",
       key: "cron",
-      value: '{"enabled":"true","maxConcurrentRuns":"3"}',
+      value: '{"enabled":"true","maxRunsPerTick":"3"}',
       _trustLevel: "admin",
     });
 
@@ -1813,8 +1861,8 @@ describe("config.patch type coercion", () => {
     // JSON string should have been parsed, and nested values coerced
     expect(scheduler.cron.enabled).toBe(true);
     expect(typeof scheduler.cron.enabled).toBe("boolean");
-    expect(scheduler.cron.maxConcurrentRuns).toBe(3);
-    expect(typeof scheduler.cron.maxConcurrentRuns).toBe("number");
+    expect(scheduler.cron.maxRunsPerTick).toBe(3);
+    expect(typeof scheduler.cron.maxRunsPerTick).toBe("number");
   });
 
   it("coerces JSON-stringified object to real object with nested coercion", async () => {
@@ -1825,7 +1873,7 @@ describe("config.patch type coercion", () => {
     const result = await handlers["config.patch"]!({
       section: "scheduler",
       key: "cron",
-      value: '{"enabled":"false","maxConcurrentRuns":"5"}',
+      value: '{"enabled":"false","maxRunsPerTick":"5"}',
       _trustLevel: "admin",
     });
 
@@ -1837,8 +1885,8 @@ describe("config.patch type coercion", () => {
     const scheduler = parsed.scheduler as Record<string, Record<string, unknown>>;
     expect(scheduler.cron.enabled).toBe(false);
     expect(typeof scheduler.cron.enabled).toBe("boolean");
-    expect(scheduler.cron.maxConcurrentRuns).toBe(5);
-    expect(typeof scheduler.cron.maxConcurrentRuns).toBe("number");
+    expect(scheduler.cron.maxRunsPerTick).toBe(5);
+    expect(typeof scheduler.cron.maxRunsPerTick).toBe("number");
   });
 
   it("does not parse invalid JSON strings", async () => {
@@ -1872,7 +1920,7 @@ describe("config.patch type coercion", () => {
     const result = await handlers["config.patch"]!({
       section: "scheduler",
       key: "cron",
-      value: { enabled: "true", maxConcurrentRuns: "5" },
+      value: { enabled: "true", maxRunsPerTick: "5" },
       _trustLevel: "admin",
     });
 
@@ -1884,8 +1932,8 @@ describe("config.patch type coercion", () => {
     const scheduler = parsed.scheduler as Record<string, Record<string, unknown>>;
     expect(scheduler.cron.enabled).toBe(true);
     expect(typeof scheduler.cron.enabled).toBe("boolean");
-    expect(scheduler.cron.maxConcurrentRuns).toBe(5);
-    expect(typeof scheduler.cron.maxConcurrentRuns).toBe("number");
+    expect(scheduler.cron.maxRunsPerTick).toBe(5);
+    expect(typeof scheduler.cron.maxRunsPerTick).toBe("number");
   });
 
   // -------------------------------------------------------------------------

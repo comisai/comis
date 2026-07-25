@@ -29,7 +29,7 @@ import { createMockLogger } from "../support/mock-logger.js";
 describe("INTEGRATION: cross-adapter — plugin factory surface", () => {
   it("createTelegramPlugin returns a plugin with adapter + channelType", () => {
     const plugin = createTelegramPlugin({
-      botToken: "12345:cross-adapter-test",
+      getBotToken: () => "12345:cross-adapter-test",
       logger: createMockLogger(),
     });
     expect(plugin).toBeDefined();

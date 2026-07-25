@@ -105,7 +105,7 @@ export interface RequestBodyInjectorConfig {
   getCacheFenceIndex?: () => number;
   /** Content-free sink for the prefix-stability diagnostic's WARN — the daemon
    *  wires this to emit the `agent:prefix_unstable` event so a recurring
-   *  cached-prefix collapse surfaces as a `comis fleet` cache_prefix_churn
+   *  cached-prefix collapse surfaces as a `comis system-health` cache_prefix_churn
    *  health signal instead of being visible only as a daemon.log WARN. Absent
    *  in non-daemon contexts (the diagnostic still logs its WARN). */
   onPrefixUnstable?: (signal: {

@@ -131,6 +131,7 @@ describe("imessage-adapter -- onNotification runWithContext wrap", () => {
   it("runs handlers inside runWithContext({ traceId, channelType: \"imessage\" })", async () => {
     let ctxTraceId: string | undefined;
     let ctxChannelType: string | undefined;
+    let ctxTrustLevel: string | undefined;
     let stampedTraceId: string | undefined;
     const normalized = makeNormalized();
     vi.mocked(mapImsgToNormalized).mockReturnValue(normalized);
@@ -140,6 +141,7 @@ describe("imessage-adapter -- onNotification runWithContext wrap", () => {
       const ctx = tryGetContext();
       ctxTraceId = ctx?.traceId;
       ctxChannelType = ctx?.channelType;
+      ctxTrustLevel = ctx?.trustLevel;
       stampedTraceId = m.metadata.traceId as string | undefined;
     });
     await adapter.start();
@@ -151,5 +153,6 @@ describe("imessage-adapter -- onNotification runWithContext wrap", () => {
     expect(ctxTraceId).toBeDefined();
     expect(ctxTraceId).toBe(stampedTraceId);
     expect(ctxChannelType).toBe("imessage");
+    expect(ctxTrustLevel).toBe("user");
   });
 });

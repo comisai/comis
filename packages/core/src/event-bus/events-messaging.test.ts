@@ -35,13 +35,17 @@ describe("MessagingEvents payload structure", () => {
     expect(payload.sessionKey.channelId).toBe("c1");
   });
 
-  it("message:sent delivers channelId, messageId, content", () => {
+  it("message:sent carries exact source and target channel identities", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["message:sent"] = {
+      channelType: "telegram",
       channelId: "c1",
       messageId: "msg-001",
       content: "Reply text",
+      sourceChannelType: testMessage.channelType,
+      sourceChannelId: testMessage.channelId,
+      sourceMessageId: testMessage.id,
     };
 
     bus.on("message:sent", handler);
@@ -49,9 +53,49 @@ describe("MessagingEvents payload structure", () => {
 
     expect(handler).toHaveBeenCalledWith(payload);
     const received = handler.mock.calls[0]![0] as EventMap["message:sent"];
+    expect(received.channelType).toBe("telegram");
     expect(received.channelId).toBe("c1");
     expect(received.messageId).toBe("msg-001");
     expect(received.content).toBe("Reply text");
+    expect(received.sourceChannelType).toBe("telegram");
+    expect(received.sourceChannelId).toBe("c1");
+    expect(received.sourceMessageId).toBe(testMessage.id);
+  });
+
+  it("message:terminal carries one exact source identity and closed outcome", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["message:terminal"] = {
+      channelType: "telegram",
+      channelId: "c1",
+      sourceMessageId: testMessage.id,
+      outcome: "filtered",
+      reason: "gate_skipped",
+      timestamp: Date.now(),
+    };
+
+    bus.on("message:terminal", handler);
+    bus.emit("message:terminal", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+  });
+
+  it("response:filtered carries the exact suppressed source message identity", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["response:filtered"] = {
+      channelType: "telegram",
+      channelId: "c1",
+      sourceMessageId: testMessage.id,
+      suppressedBy: "NO_REPLY",
+      timestamp: Date.now(),
+    };
+
+    bus.on("response:filtered", handler);
+    bus.emit("response:filtered", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    expect((handler.mock.calls[0]![0] as EventMap["response:filtered"]).sourceMessageId).toBe(testMessage.id);
   });
 
   it("message:streaming delivers delta + accumulated", () => {
@@ -130,14 +174,13 @@ describe("MessagingEvents payload structure", () => {
     expect(handler.mock.calls[2]![0].mode).toBe("ping-pong");
   });
 
-  it("session:sub_agent_spawned delivers runId, parentSessionKey, agentId, task", () => {
+  it("session:sub_agent_spawned delivers content-free lifecycle identifiers", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["session:sub_agent_spawned"] = {
       runId: "run-001",
       parentSessionKey: "parent-session",
       agentId: "sub-agent-1",
-      task: "summarize conversation",
       timestamp: Date.now(),
     };
 
@@ -149,7 +192,7 @@ describe("MessagingEvents payload structure", () => {
     expect(received.runId).toBe("run-001");
     expect(received.parentSessionKey).toBe("parent-session");
     expect(received.agentId).toBe("sub-agent-1");
-    expect(received.task).toBe("summarize conversation");
+    expect(received).not.toHaveProperty("task");
   });
 
   it("compaction:started delivers agentId, sessionKey, timestamp", () => {
@@ -471,6 +514,35 @@ describe("MessagingEvents payload structure", () => {
 
     // @ts-expect-error - missing content in message:sent
     bus.emit("message:sent", { channelId: "c1", messageId: "m1" });
+
+    // @ts-expect-error - channelType is part of the required channel identity
+    const missingChannelType: EventMap["message:sent"] = {
+      channelId: "c1",
+      messageId: "m1",
+      content: "reply",
+      sourceChannelType: "telegram",
+      sourceChannelId: "c1",
+      sourceMessageId: testMessage.id,
+    };
+    void missingChannelType;
+
+    // @ts-expect-error - filtered terminal events require their channel adapter type
+    const filteredWithoutChannelType: EventMap["response:filtered"] = {
+      channelId: "c1",
+      sourceMessageId: testMessage.id,
+      suppressedBy: "NO_REPLY",
+      timestamp: Date.now(),
+    };
+    void filteredWithoutChannelType;
+
+    // @ts-expect-error - filtered terminal events must identify the inbound source
+    const filteredWithoutSource: EventMap["response:filtered"] = {
+      channelType: "telegram",
+      channelId: "c1",
+      suppressedBy: "NO_REPLY",
+      timestamp: Date.now(),
+    };
+    void filteredWithoutSource;
   });
 
   // The content-free margin-arbiter observability event.
@@ -587,14 +659,13 @@ describe("MessagingEvents payload structure", () => {
 // ---------------------------------------------------------------------------
 
 describe("Subagent context lifecycle events", () => {
-  it("session:sub_agent_spawn_prepared delivers rich payload", () => {
+  it("session:sub_agent_spawn_prepared delivers content-free lifecycle metadata", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["session:sub_agent_spawn_prepared"] = {
       runId: "run-spawn-001",
       parentSessionKey: "parent-session",
       agentId: "sub-agent-1",
-      task: "analyze codebase",
       depth: 1,
       maxDepth: 3,
       artifactCount: 5,
@@ -609,7 +680,7 @@ describe("Subagent context lifecycle events", () => {
     expect(received.runId).toBe("run-spawn-001");
     expect(received.parentSessionKey).toBe("parent-session");
     expect(received.agentId).toBe("sub-agent-1");
-    expect(received.task).toBe("analyze codebase");
+    expect(received).not.toHaveProperty("task");
     expect(received.depth).toBe(1);
     expect(received.maxDepth).toBe(3);
     expect(received.artifactCount).toBe(5);
@@ -676,7 +747,6 @@ describe("Subagent context lifecycle events", () => {
     const payload: EventMap["session:sub_agent_spawn_rejected"] = {
       parentSessionKey: "parent-session",
       agentId: "sub-agent-deep",
-      task: "go deeper",
       reason: "depth_exceeded",
       currentDepth: 3,
       maxDepth: 3,
@@ -723,14 +793,13 @@ describe("Subagent context lifecycle events", () => {
     expect(received.maxChildren).toBe(5);
   });
 
-  it("existing sub_agent_spawned event still works (regression guard)", () => {
+  it("sub_agent_spawned remains content-free when delivered", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["session:sub_agent_spawned"] = {
-      runId: "run-legacy-001",
+      runId: "run-001",
       parentSessionKey: "parent-session",
       agentId: "sub-agent-1",
-      task: "summarize conversation",
       timestamp: Date.now(),
     };
 
@@ -739,8 +808,8 @@ describe("Subagent context lifecycle events", () => {
 
     expect(handler).toHaveBeenCalledOnce();
     const received = handler.mock.calls[0]![0] as EventMap["session:sub_agent_spawned"];
-    expect(received.runId).toBe("run-legacy-001");
-    expect(received.task).toBe("summarize conversation");
+    expect(received.runId).toBe("run-001");
+    expect(received).not.toHaveProperty("task");
   });
 });
 

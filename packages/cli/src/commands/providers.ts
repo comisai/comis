@@ -4,8 +4,9 @@
  *
  * Provides `comis providers list` for browsing available providers from
  * the live pi-ai catalog (with daemon RPC + local fallback). Status
- * column indicates whether a provider's API key is resolvable from the
- * env (mirrors credential-resolver.ts Source B semantics).
+ * column reports the daemon's agent-scoped credential resolution when the
+ * daemon is reachable. Offline fallback reports only keyless or ambient-env
+ * truth and marks all other providers unknown.
  *
  * Mirrors `commands/models.ts` shape -- RPC-first, local catalog
  * fallback, `--format` flag, no `set` subcommand (provider switching
@@ -15,68 +16,10 @@
  */
 
 import type { Command } from "commander";
-import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
-import { withClient, callTyped } from "../client/rpc-client.js";
 import { loadProvidersWithFallback } from "../client/provider-list.js";
-import { createModelCatalog, ModelsListContract } from "@comis/core";
-import type { CatalogEntry } from "@comis/core";
 import { error, info, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable } from "../output/table.js";
-
-/**
- * Provider IDs that don't need an API key.
- *
- * Mirrors `credential-resolver.ts:25 KEYLESS_PROVIDER_TYPES`. Kept as
- * an independent set here because the CLI's status-column logic must
- * answer "is this keyless?" without booting the full credential-
- * resolver dep graph.
- */
-const KEYLESS_PROVIDERS = new Set<string>(["ollama", "lm-studio"]);
-
-/**
- * Load the model count for a single provider via RPC, falling back to
- * the local catalog. Returns 0 if neither source resolves.
- *
- * Mirrors `commands/models.ts:62-83 loadModels()` shape -- same
- * try/catch ladder, same defensive `Array.isArray` narrow.
- */
-async function getModelCount(provider: string): Promise<number> {
-  try {
-    const result = await withClient(async (client) => {
-      return (await callTyped(client, ModelsListContract, { provider })) as unknown as CatalogEntry[];
-    });
-    if (Array.isArray(result)) return result.length;
-  } catch {
-    // Daemon not running -- fall through to local catalog.
-  }
-  try {
-    const catalog = createModelCatalog();
-    catalog.loadStatic();
-    return catalog.getByProvider(provider).length;
-  } catch {
-    return 0;
-  }
-}
-
-/**
- * Resolve the Status column value for a provider.
- *
- * - `keyless`     : provider is in `KEYLESS_PROVIDERS` (ollama, lm-studio)
- * - `configured`  : pi-ai's `getEnvApiKey` resolves a non-empty key
- * - `missing key` : no env key found
- *
- * Mirrors `credential-resolver.ts` Source B semantics. Status reflects
- * only env-key presence; it does NOT include the key value itself
- * (information-disclosure threat).
- */
-function getProviderStatus(
-  provider: string,
-): "keyless" | "configured" | "missing key" {
-  if (KEYLESS_PROVIDERS.has(provider)) return "keyless";
-  const key = getEnvApiKey(provider);
-  return key && key.length > 0 ? "configured" : "missing key";
-}
 
 /**
  * Register the `providers` command group on the program.
@@ -95,29 +38,16 @@ export function registerProvidersCommand(program: Command): void {
     .command("list")
     .description("List available providers from the catalog")
     .option("--format <format>", 'Output format: "table" or "json"', "table")
-    .action(async (options: { format: string }) => {
+    .option("--agent <id>", "Resolve credentials for this agent")
+    .action(async (options: { format: string; agent?: string }) => {
       try {
-        const ids = await withSpinner("Loading providers...", () =>
-          loadProvidersWithFallback(),
+        const rows = await withSpinner("Loading providers...", () =>
+          loadProvidersWithFallback(options.agent),
         );
 
-        if (ids.length === 0) {
+        if (rows.length === 0) {
           info("No providers found in catalog");
           return;
-        }
-
-        // Sequentially fetch model counts. With ~11-23 providers this
-        // is acceptable (single-digit RPC roundtrips). N+1 batching is
-        // an enhancement (DoS disposition: accept).
-        const rows: Array<{
-          provider: string;
-          modelCount: number;
-          status: string;
-        }> = [];
-        for (const id of ids) {
-          const modelCount = await getModelCount(id);
-          const status = getProviderStatus(id);
-          rows.push({ provider: id, modelCount, status });
         }
 
         if (options.format === "json") {
@@ -127,12 +57,21 @@ export function registerProvidersCommand(program: Command): void {
 
         renderTable(
           ["Provider", "Models", "Status"],
-          rows.map((r) => [r.provider, String(r.modelCount), r.status]),
+          rows.map((row) => [
+            row.provider,
+            String(row.modelCount),
+            row.status.replaceAll("_", " "),
+          ]),
         );
 
         info(
           `${rows.length} provider${rows.length !== 1 ? "s" : ""} listed`,
         );
+        if (rows.some((row) => row.status === "unknown")) {
+          info(
+            "Credential status is unknown without the daemon; start it or use a daemon-connected CLI to inspect encrypted credentials.",
+          );
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         error(`Failed to list providers: ${msg}`);

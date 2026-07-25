@@ -10,12 +10,14 @@
  * write-path ContextStorePort (which dozens of agent/skills stubs implement).
  *
  * R4: listConversations filters by agent_id AND tenant_id, so two agents that
- * legitimately share one conversation_id never see each other's conversations.
+ * legitimately share one conversation_ref never see each other's conversations.
  */
 import {
   type AppendMessageInput,
+  type ConversationRef,
   type ContextStoreScope,
   type LcdMessagePart,
+  ConversationRefSchema,
 } from "@comis/core";
 import Database from "better-sqlite3";
 import { describe, it, expect, beforeEach } from "vitest";
@@ -31,6 +33,20 @@ function appendInput(scope: ContextStoreScope, seq: number, createdAt: number): 
   return { scope, seq, role: "user", tokenCount: 3, createdAt, parts: textParts("hello") };
 }
 
+function testConversationRef(fill: string): ConversationRef {
+  return ConversationRefSchema.parse(`cv_${fill.repeat(43)}`);
+}
+
+const REF_0 = testConversationRef("0");
+const REF_1 = testConversationRef("1");
+const REF_2 = testConversationRef("2");
+const REF_3 = testConversationRef("3");
+const REF_4 = testConversationRef("4");
+const REF_SHARED = testConversationRef("s");
+const REF_X = testConversationRef("x");
+const REF_Y = testConversationRef("y");
+const PAGE_REFS = [REF_0, REF_1, REF_2, REF_3, REF_4] as const;
+
 describe("createLcdBrowseStore.listConversations", () => {
   let db: Database.Database;
   let store: ReturnType<typeof createLcdStore>;
@@ -45,8 +61,8 @@ describe("createLcdBrowseStore.listConversations", () => {
   });
 
   it("lists distinct conversations for one agent with message-count and time bounds", () => {
-    const scopeC1: ContextStoreScope = { conversationId: "conv-1", tenantId: "tenant_a", agentId: "agent_a", sessionKey: "conv-1" };
-    const scopeC2: ContextStoreScope = { conversationId: "conv-2", tenantId: "tenant_a", agentId: "agent_a", sessionKey: "conv-2" };
+    const scopeC1: ContextStoreScope = { conversationRef: REF_1, tenantId: "tenant_a", agentId: "agent_a", sessionKey: "conv-1" };
+    const scopeC2: ContextStoreScope = { conversationRef: REF_2, tenantId: "tenant_a", agentId: "agent_a", sessionKey: "conv-2" };
     store.append(appendInput(scopeC1, 0, 1000));
     store.append(appendInput(scopeC1, 1, 2000));
     store.append(appendInput(scopeC2, 0, 5000));
@@ -56,10 +72,10 @@ describe("createLcdBrowseStore.listConversations", () => {
     // Two distinct conversations, most-recently-updated first (conv-2 latest=5000).
     expect(result.total).toBe(2);
     expect(result.conversations).toHaveLength(2);
-    expect(result.conversations[0]!.conversationId).toBe("conv-2");
-    expect(result.conversations[1]!.conversationId).toBe("conv-1");
+    expect(result.conversations[0]!.conversationRef).toBe(REF_2);
+    expect(result.conversations[1]!.conversationRef).toBe(REF_1);
 
-    const c1 = result.conversations.find((c) => c.conversationId === "conv-1")!;
+    const c1 = result.conversations.find((c) => c.conversationRef === REF_1)!;
     expect(c1.tenantId).toBe("tenant_a");
     expect(c1.agentId).toBe("agent_a");
     expect(c1.messageCount).toBe(2);
@@ -67,10 +83,10 @@ describe("createLcdBrowseStore.listConversations", () => {
     expect(c1.updatedAt).toBe(2000); // max created_at
   });
 
-  it("isolates conversations per agent so a shared conversation_id never leaks across agents", () => {
-    // Same conversation_id + tenant + session, DIFFERENT agentId.
-    const scopeA: ContextStoreScope = { conversationId: "conv-shared", tenantId: "tenant_s", agentId: "agent-a", sessionKey: "conv-shared" };
-    const scopeB: ContextStoreScope = { conversationId: "conv-shared", tenantId: "tenant_s", agentId: "agent-b", sessionKey: "conv-shared" };
+  it("isolates conversations per agent so a shared conversation_ref never leaks across agents", () => {
+    // Same conversation_ref + tenant + session, DIFFERENT agentId.
+    const scopeA: ContextStoreScope = { conversationRef: REF_SHARED, tenantId: "tenant_s", agentId: "agent-a", sessionKey: "conv-shared" };
+    const scopeB: ContextStoreScope = { conversationRef: REF_SHARED, tenantId: "tenant_s", agentId: "agent-b", sessionKey: "conv-shared" };
     store.append(appendInput(scopeA, 0, 1000));
     store.append(appendInput(scopeB, 0, 2000));
 
@@ -85,19 +101,19 @@ describe("createLcdBrowseStore.listConversations", () => {
   });
 
   it("does not leak another tenant's conversations under the same agent id", () => {
-    const scopeT1: ContextStoreScope = { conversationId: "conv-x", tenantId: "tenant_1", agentId: "agent_a", sessionKey: "conv-x" };
-    const scopeT2: ContextStoreScope = { conversationId: "conv-y", tenantId: "tenant_2", agentId: "agent_a", sessionKey: "conv-y" };
+    const scopeT1: ContextStoreScope = { conversationRef: REF_X, tenantId: "tenant_1", agentId: "agent_a", sessionKey: "conv-x" };
+    const scopeT2: ContextStoreScope = { conversationRef: REF_Y, tenantId: "tenant_2", agentId: "agent_a", sessionKey: "conv-y" };
     store.append(appendInput(scopeT1, 0, 1000));
     store.append(appendInput(scopeT2, 0, 2000));
 
     const forT1 = browse.listConversations({ tenantId: "tenant_1", agentId: "agent_a" }, { limit: 100, offset: 0 });
     expect(forT1.total).toBe(1);
-    expect(forT1.conversations[0]!.conversationId).toBe("conv-x");
+    expect(forT1.conversations[0]!.conversationRef).toBe(REF_X);
   });
 
   it("paginates with limit and offset while reporting the full total", () => {
     for (let i = 0; i < 5; i++) {
-      const scope: ContextStoreScope = { conversationId: `conv-${i}`, tenantId: "tenant_a", agentId: "agent_a", sessionKey: `conv-${i}` };
+      const scope: ContextStoreScope = { conversationRef: PAGE_REFS[i]!, tenantId: "tenant_a", agentId: "agent_a", sessionKey: `conv-${i}` };
       store.append(appendInput(scope, 0, 1000 + i * 1000));
     }
 
@@ -105,12 +121,12 @@ describe("createLcdBrowseStore.listConversations", () => {
     expect(page1.total).toBe(5);
     expect(page1.conversations).toHaveLength(2);
     // Most recent first: conv-4 (5000), conv-3 (4000).
-    expect(page1.conversations[0]!.conversationId).toBe("conv-4");
+    expect(page1.conversations[0]!.conversationRef).toBe(REF_4);
 
     const page3 = browse.listConversations({ tenantId: "tenant_a", agentId: "agent_a" }, { limit: 2, offset: 4 });
     expect(page3.total).toBe(5);
     expect(page3.conversations).toHaveLength(1); // only conv-0 remains on the last page
-    expect(page3.conversations[0]!.conversationId).toBe("conv-0");
+    expect(page3.conversations[0]!.conversationRef).toBe(REF_0);
   });
 
   it("returns an empty result for an agent with no conversations", () => {

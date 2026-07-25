@@ -95,6 +95,25 @@ function bwrapSmokeTest(): { ok: boolean; stderr: string; signal: NodeJS.Signals
   return bwrapNamespaceProbe([]);
 }
 
+type SandboxStderrClass =
+  | "none"
+  | "permission_denied"
+  | "namespace_unavailable"
+  | "mount_failed"
+  | "unknown";
+
+/** Collapse untrusted bubblewrap stderr into a closed boot-diagnostic class. */
+function classifySandboxStderr(stderr: string): SandboxStderrClass {
+  const normalized = stderr.toLowerCase();
+  if (normalized.trim().length === 0) return "none";
+  if (normalized.includes("operation not permitted") || normalized.includes("permission denied")) {
+    return "permission_denied";
+  }
+  if (normalized.includes("namespace")) return "namespace_unavailable";
+  if (normalized.includes("mount")) return "mount_failed";
+  return "unknown";
+}
+
 /**
  * Result of the namespace preflight. The `namespacePreflightOk` field is
  * structurally assignable to `@comis/core`'s `AutonomyPreflightResult` — feed
@@ -176,19 +195,17 @@ export function detectSandboxProvider(logger?: DetectLogger): SandboxProvider | 
         //
         //  - Bare metal: a non-functional bwrap is a real misconfiguration
         //    (rare on stock Linux). Surface it loudly and return the
-        //    provider so exec fails via bwrap's stderr until the operator
+        //    provider so exec fails via bwrap's own result until the operator
         //    fixes the kernel/userns config — never silently degrade
-        //    sandboxing on a bare-metal host. The warn payload now includes
-        //    `stderr` (the actual bwrap error) and `signal` so operators
-        //    don't have to enable DEBUG logging to diagnose; the hint
-        //    points at stderr first and demotes kernel sysctls to a
-        //    secondary fallback.
+        //    sandboxing on a bare-metal host. The WARN carries a closed stderr
+        //    class, byte count, and signal; child output never enters logs.
         if (isContainer()) {
           logger?.warn(
             {
               hint: "Kernel rejected --unshare-pid + --proc /proc (typically Docker Desktop linuxkit on macOS/Windows). Sandbox auto-disabled so agent exec is functional for development. PRODUCTION DEPLOYMENTS MUST USE A REAL LINUX HOST — see docs/operations/docker.mdx → Platform Support.",
               errorKind: "config" as const,
-              stderr: smoke.stderr,
+              stderrClass: classifySandboxStderr(smoke.stderr),
+              stderrBytes: Buffer.byteLength(smoke.stderr, "utf8"),
               signal: smoke.signal,
             },
             "Exec sandbox DISABLED (kernel limitation; container host) -- shell commands will run UNSANDBOXED. Dev/testing only.",
@@ -197,9 +214,10 @@ export function detectSandboxProvider(logger?: DetectLogger): SandboxProvider | 
         }
         logger?.warn(
           {
-            hint: "Check the `stderr` field above for the actual bwrap error — that's the primary signal. If stderr mentions namespaces or 'Operation not permitted' on a bare-metal host, then as a secondary diagnostic verify `sysctl kernel.unprivileged_userns_clone=1` and AppArmor's `apparmor_restrict_unprivileged_userns=0` (Ubuntu 23.10+). Exec calls will fail until bwrap can run.",
+            hint: "Check the failure class and signal above. For permission_denied or namespace_unavailable on a bare-metal host, verify `sysctl kernel.unprivileged_userns_clone=1` and AppArmor's `apparmor_restrict_unprivileged_userns=0` (Ubuntu 23.10+). Exec calls will fail until bwrap can run.",
             errorKind: "config" as const,
-            stderr: smoke.stderr,
+            stderrClass: classifySandboxStderr(smoke.stderr),
+            stderrBytes: Buffer.byteLength(smoke.stderr, "utf8"),
             signal: smoke.signal,
           },
           "bwrap installed but smoke test failed -- exec sandbox is non-functional on this kernel",

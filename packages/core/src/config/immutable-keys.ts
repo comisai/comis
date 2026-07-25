@@ -107,6 +107,14 @@ export const IMMUTABLE_CONFIG_PREFIXES: readonly string[] = [
   // capability map or detour policy.
   "tooling",
 
+  // Authenticated platform-subject mappings define storage authority.
+  "identity",
+
+  // Linked contribution selection and instance activation are boot topology.
+  "contributions",
+  // Existing plugin activation is the current linked-extension topology.
+  "plugins",
+
   // Broker anti-exfiltration guard — executor section is
   // operator-only. An agent must NOT be able to self-configure
   // executor.broker.bindings to route credentials to an attacker-controlled
@@ -149,7 +157,7 @@ export function getMutableOverridesForSection(section: string, key?: string): st
   const keySegment = key?.split(".")[0]; // Extract first segment (e.g., "default" from "default.budgets.maxDailyUsd")
   return MUTABLE_CONFIG_OVERRIDES
     .filter(p => p.startsWith(section + "."))
-    .map(p => keySegment ? p.replace("*", keySegment) : p);
+    .map(p => keySegment ? p.replaceAll("*", keySegment) : p);
 }
 
 export function isImmutableConfigPath(section: string, key?: string): boolean {
@@ -206,7 +214,6 @@ function objectPathIsPresent(obj: Record<string, unknown>, segments: string[]): 
   let cursor: unknown = obj;
   for (const seg of segments) {
     if (cursor === null || typeof cursor !== "object" || Array.isArray(cursor)) return false;
-    // eslint-disable-next-line security/detect-object-injection -- seg is a literal from OPERATOR_ONLY_AGENT_SUBPATHS, not user-controlled
     if (!(seg in (cursor as Record<string, unknown>))) return false;
     // eslint-disable-next-line security/detect-object-injection -- same
     cursor = (cursor as Record<string, unknown>)[seg];

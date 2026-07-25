@@ -46,4 +46,10 @@ describe("toolFailureHint", () => {
   it("names ENOTDIR with a path hint", () => {
     expect(toolFailureHint("ENOTDIR: not a directory, scandir '/x/file.txt/sub'")).toContain("ENOTDIR");
   });
+
+  it("directs MCP validation failures to the rejected arguments", () => {
+    const hint = toolFailureHint('MCP error -32602: Input validation error: "too_big"');
+    expect(hint).toContain("arguments");
+    expect(hint).not.toBe(GENERIC_TOOL_FAILURE_HINT);
+  });
 });

@@ -23,8 +23,10 @@
  *      fs.openSync/fs.writeFileSync/renameSync (all writes route through the
  *      @comis/observability substrate; no rename → no EXDEV).
  *
- * All filesystem state lives in an mkdtemp tmpdir; the chokidar watcher binds
- * that dir. `now` is injected so expiry math is deterministic.
+ * All filesystem state lives in an mkdtemp tmpdir. Watcher events are emitted
+ * through a local harness so unit-test correctness does not depend on
+ * operating-system event delivery. `now` is injected so expiry math is
+ * deterministic.
  */
 
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
@@ -33,6 +35,55 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createTokenStore, type TokenFile, type TokenStore } from "./token-store.js";
+
+const watcherControl = vi.hoisted(() => {
+  type Handler = (...args: unknown[]) => void;
+  interface FakeWatcher {
+    on(event: string, handler: Handler): FakeWatcher;
+    once(event: string, handler: Handler): FakeWatcher;
+    close(): Promise<void>;
+  }
+
+  let handlers = new Map<string, Handler[]>();
+
+  function removeHandler(event: string, handler: Handler): void {
+    const remaining = (handlers.get(event) ?? []).filter((candidate) => candidate !== handler);
+    handlers.set(event, remaining);
+  }
+
+  function emit(event: string, ...args: unknown[]): void {
+    for (const handler of [...(handlers.get(event) ?? [])]) handler(...args);
+  }
+
+  function create(): FakeWatcher {
+    handlers = new Map<string, Handler[]>();
+    const watcher: FakeWatcher = {
+      on(event, handler) {
+        handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+        return watcher;
+      },
+      once(event, handler) {
+        const onceHandler: Handler = (...args) => {
+          removeHandler(event, onceHandler);
+          handler(...args);
+        };
+        handlers.set(event, [...(handlers.get(event) ?? []), onceHandler]);
+        return watcher;
+      },
+      async close() {
+        handlers.clear();
+      },
+    };
+    queueMicrotask(() => emit("ready"));
+    return watcher;
+  }
+
+  return { create, emit };
+});
+
+vi.mock("chokidar", () => ({
+  watch: vi.fn(() => watcherControl.create()),
+}));
 
 const PINNED_NOW = 1_700_000_000_000; // fixed epoch ms for deterministic expiry
 
@@ -49,12 +100,9 @@ function makeLogger() {
 /**
  * Poll `predicate` until it returns truthy or the attempt budget is exhausted.
  *
- * Replaces a fixed sleep: chokidar's `change` event plus the store's 100ms
- * debounce can exceed ANY fixed wait under heavy suite/coverage load — observed
- * as a flaky stale-cache read (`expected 'AT' to be 'AT-EXTERNAL'`). Polling
- * waits exactly as long as the watcher actually needs (up to ~5s) and never
- * longer. Crucially, each iteration drives a `store` read, which is what
- * triggers the lazy re-read after the watcher clears the cache.
+ * Replaces a fixed sleep while the store's 100ms debounce runs. Each iteration
+ * drives a store read, which triggers the lazy re-read after the watcher clears
+ * the cache.
  */
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
@@ -80,10 +128,6 @@ describe("createTokenStore", () => {
       confinedBaseDir: dir,
       now: () => PINNED_NOW,
       logger,
-      // macOS FSEvents drops ongoing watching under persistent:false (the
-      // production default, kept for clean daemon shutdown on Linux). Tests run
-      // on the dev platform, so opt into persistent watching here.
-      watchPersistent: true,
     });
   });
 
@@ -224,21 +268,21 @@ describe("createTokenStore", () => {
       tokenType: "Bearer",
     };
     writeFileSync(join(dir, "notion.json"), JSON.stringify(external), { mode: 0o600 });
+    watcherControl.emit("change", join(dir, "notion.json"));
 
-    // Poll until the watcher's debounced cache-invalidation lands and the next
-    // read re-reads the external value — no fixed sleep, so not load-sensitive.
-    // The window is generous: under a full-workspace coverage run the fs.watch
-    // event has taken >5s to land (observed flake on a saturated host).
+    // Poll until the debounced cache-invalidation lands and the next read
+    // re-reads the external value. The watcher event itself is explicit: this
+    // unit test verifies the store's event contract without relying on an
+    // operating-system watcher delivering events under suite contention.
     const invalidated = await waitFor(
       async () => (await store.tokens("notion"))?.access_token === "AT-EXTERNAL",
-      { attempts: 600, intervalMs: 25 },
     );
     expect(invalidated).toBe(true);
 
     const second = await store.tokens("notion");
     expect(second?.access_token).toBe("AT-EXTERNAL");
     expect(second?.refresh_token).toBe("RT2");
-  }, 20_000);
+  }, 10_000);
 
   it("keeps the last-good cache and logs WARN on a truncated/partial external write (fail-soft)", async () => {
     await store.saveTokens("notion", {
@@ -255,6 +299,7 @@ describe("createTokenStore", () => {
 
     // Write a truncated (invalid JSON) file directly.
     writeFileSync(join(dir, "notion.json"), '{"accessToken":"AT-', { mode: 0o600 });
+    watcherControl.emit("change", join(dir, "notion.json"));
 
     // The WARN only fires when a read re-parses the file AFTER the watcher
     // clears the cache, so poll BY reading until the fail-soft path logs.

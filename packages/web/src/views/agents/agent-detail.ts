@@ -2,7 +2,12 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
-import type { AgentDetail, AgentBilling, HeartbeatAgentStateDto } from "../../api/types/index.js";
+import type {
+  AgentDetail,
+  AgentBilling,
+  HeartbeatAgentStateDto,
+  HeartbeatWakeTerminalEvent,
+} from "../../api/types/index.js";
 import type { ApiClient } from "../../api/api-client.js";
 import type { RpcClient } from "../../api/rpc-client.js";
 import type { EventDispatcher } from "../../state/event-dispatcher.js";
@@ -431,7 +436,12 @@ export class IcAgentDetail extends LitElement {
     if (!this.eventDispatcher || this._sse) return;
     this._sse = new SseController(this, this.eventDispatcher, {
       "observability:token_usage": () => { this._scheduleReload(); },
-      "scheduler:heartbeat_delivered": () => { this._scheduleReload(); },
+      "scheduler:heartbeat_wake_terminal": (data) => {
+        const event = data as Partial<HeartbeatWakeTerminalEvent>;
+        if (event.target?.kind === "agent" && event.target.agentId === this.agentId) {
+          this._scheduleReload();
+        }
+      },
     });
   }
 
@@ -452,7 +462,11 @@ export class IcAgentDetail extends LitElement {
 
     try {
       // Load primary agent data first to unblock the skeleton
-      const raw = await rpc.call<{ agentId: string; config: Record<string, unknown>; suspended?: boolean }>("agents.get", { agentId: this.agentId });
+      const raw = await rpc.call<{
+        agentId: string;
+        config: Record<string, unknown>;
+        suspended?: boolean;
+      }>("agents.get", { agentId: this.agentId });
       this._agent = this._mapToAgentDetail(raw);
       this._loadState = "loaded";
 
@@ -460,8 +474,10 @@ export class IcAgentDetail extends LitElement {
       const aid = this.agentId;
       Promise.allSettled([
         rpc.call<AgentBilling>("obs.billing.byAgent", { agentId: aid }),
-        rpc.call<{ skills?: DiscoveredSkill[] }>("skills.list", { agentId: aid }).then((r) => r.skills ?? []),
-        rpc.call<{ agents?: HeartbeatAgentStateDto[] }>("heartbeat.states", {}).then((r) => (r.agents ?? []).find(a => a.agentId === aid) ?? null),
+        rpc.call<{ skills?: DiscoveredSkill[] }>("skills.list", { agentId: aid })
+          .then((r) => r.skills ?? []),
+        rpc.call<{ agents?: HeartbeatAgentStateDto[] }>("heartbeat.states", {})
+          .then((r) => (r.agents ?? []).find((a) => a.agentId === aid) ?? null),
       ]).then(([billing, skills, heartbeat]) => {
         this._billing = billing.status === "fulfilled" ? billing.value : null;
         this._skills = skills.status === "fulfilled" && Array.isArray(skills.value) ? skills.value : [];

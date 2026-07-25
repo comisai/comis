@@ -72,7 +72,9 @@ function createMockAdapter(opts: {
     reactToMessage: vi.fn(async () => ok(undefined)),
     deleteMessage: vi.fn(async () => ok(undefined)),
     fetchMessages: vi.fn(async () => ok([])),
-    sendAttachment: vi.fn(async () => ok("msg-attach-1")),
+    sendAttachment: vi.fn(async () =>
+      ok({ kind: "tracked" as const, messageId: "msg-attach-1" })
+    ),
     platformAction: vi.fn(async () => ok({})),
     onMessage: vi.fn(),
   } as any;

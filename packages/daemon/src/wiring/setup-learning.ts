@@ -24,6 +24,7 @@
  */
 
 import {
+  createConversationRef,
   tryGetContext,
   type TypedEventBus,
   type OutcomeSignalPort,
@@ -33,9 +34,9 @@ import {
   type ClockPort,
   type ComisLogger,
   type AppConfig,
+  type ConversationRef,
 } from "@comis/core";
 
-import { deriveTenantFromSessionKey } from "./setup-memory-usefulness-wiring.js";
 import { createSkillTrendTracker } from "./setup-learning-skill-trend.js";
 import { markTrajectoryResolved } from "./setup-learning-dedup.js";
 import {
@@ -54,6 +55,8 @@ export { failureCorroborated, CORROBORATION_MIN_INDEPENDENT, MAX_TRACKED_FAILURE
 
 /** Dependencies for {@link wireLearningOutcome}. */
 export interface LearningOutcomeWiringDeps {
+  /** Configured deployment tenant used when an event fires outside request context. */
+  tenantId: string;
   /** The daemon's typed event bus (source of the tool/graph completion events). */
   eventBus: TypedEventBus;
   /** The sole @comis/memory adapter for the outcome port (the observe/resolve target). */
@@ -127,7 +130,9 @@ export interface LearningOutcomeWiringDeps {
    * with no tool/pipeline signal. Returns the verdict's `outcome` + the CODE-capped reward
    * (≤ 0.7) the daemon `observe()`s as a `source:"judge"` row. OPTIONAL — absent (no judge
    * wired, or the judge disabled for every agent) ⇒ the upgrade path is never entered
-   * (byte-identical). These three fields ARE the {@link JudgeUpgradeDeps} structural subset.
+   * (byte-identical). The returned verdict also carries content-free model, rubric,
+   * evidence, and policy provenance for the completion record. These three fields
+   * ARE the {@link JudgeUpgradeDeps} structural subset.
    */
   outcomeJudge?: OutcomeJudge;
   /** Per-agent judge enable (memory.enabled && learningOutcome.enabled && judge.enabled); absent ⇒ never runs. */
@@ -153,6 +158,10 @@ interface OutcomeScope {
   agentId: string;
   sessionId: string;
   trajectoryId: string;
+  conversationRef?: ConversationRef;
+  workspacePolicyHash?: string;
+  senderTrust?: string;
+  senderTrustExplicit?: boolean;
 }
 
 /**
@@ -160,26 +169,47 @@ interface OutcomeScope {
  * fields win when present (tool:executed / memory:skill_used / diagnostic:message_
  * processed all carry agentId/traceId/sessionKey); ALS is the fallback (graph:completed
  * carries only graphId). Returns `undefined` when neither source yields an agentId AND a
- * trajectory identity (caller skips). Tenant defaults to "default" only when absent; the
- * agentId is NEVER collapsed across agents (cross-agent isolation).
+ * trajectory identity (caller skips). Tenant authority comes from ALS when present
+ * and otherwise from deployment configuration; display session keys never select it.
  */
 function resolveScope(payload: {
   agentId?: string;
   traceId?: string;
   sessionKey?: string;
-}): OutcomeScope | undefined {
+  workspacePolicyHash?: string;
+}, configuredTenantId: string): OutcomeScope | undefined {
   const ctx = tryGetContext();
+  // Internal runtime continuations can complete an authorized turn, but they are
+  // not independent task evidence. With no ledger row, reflection cannot select
+  // or generalize their synthetic request prose.
+  if (ctx?.learningEligible === false) return undefined;
   const agentId = payload.agentId ?? ctx?.agentId;
   const trajectoryId = payload.traceId ?? ctx?.traceId;
   if (agentId === undefined || agentId.length === 0) return undefined;
   if (trajectoryId === undefined || trajectoryId.length === 0) return undefined;
   const sessionKey = payload.sessionKey ?? ctx?.sessionKey;
-  const tenantId = deriveTenantFromSessionKey(sessionKey) ?? ctx?.tenantId ?? "default";
+  const tenantId = ctx?.tenantId ?? configuredTenantId;
+  const conversationRef = ctx?.turnScope === undefined
+    ? undefined
+    : createConversationRef(ctx.turnScope.conversation);
   // sessionId is the conversation identity; the events carry sessionKey (not a
   // distinct sessionId). Use sessionKey when present, else fall back to the
   // trajectory identity (a stable, scope-consistent key).
   const sessionId = sessionKey ?? trajectoryId;
-  return { tenantId, agentId, sessionId, trajectoryId };
+  return {
+    tenantId,
+    agentId,
+    sessionId,
+    trajectoryId,
+    ...(conversationRef?.ok ? { conversationRef: conversationRef.value } : {}),
+    ...(payload.workspacePolicyHash === undefined
+      ? {}
+      : { workspacePolicyHash: payload.workspacePolicyHash }),
+    ...(ctx?.senderTrustTier === undefined ? {} : { senderTrust: ctx.senderTrustTier }),
+    ...(ctx?.senderTrustExplicit === undefined
+      ? {}
+      : { senderTrustExplicit: ctx.senderTrustExplicit }),
+  };
 }
 
 /**
@@ -205,6 +235,10 @@ function observeNonFatal(
       outcome,
       source,
       confidence,
+      ...(scope.senderTrust === undefined ? {} : { senderTrust: scope.senderTrust }),
+      ...(scope.senderTrustExplicit === undefined
+        ? {}
+        : { senderTrustExplicit: scope.senderTrustExplicit }),
       // Thread the per-turn used-skill ids onto observe() so the
       // used_skill_ids COLUMN is written; resolve() union-dedups across rows. Omitted
       // (the tool/pipeline paths) ⇒ the column stays NULL — no behavior change for those paths.
@@ -314,8 +348,9 @@ function recordNonFatal(
  *  - `graph:completed` (DAG)       → observe a `pipeline` outcome, then the shared
  *                                    resolve→consume chain. (`graph:driver_lifecycle`
  *                                    is NOT observed — per-node, floods the ledger.)
- *  - `diagnostic:message_processed` → the single-agent turn's resolve→consume (the
- *                                    common turn never fires graph:completed).
+ *  - `diagnostic:message_processed` → record the completed-turn boundary, then run
+ *                                    resolve→consume (the common turn never fires
+ *                                    graph:completed).
  *
  * The shared chain resolves the fused verdict, runs the reward/forgetting/skill consumers,
  * emits `learning:outcome_observed` (counts/ids only), updates the fail-closed coverage
@@ -348,6 +383,11 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   const refreshSurface = deps.refreshLearnedSkillSurface;
   // Idempotency: the per-trajectory resolve-dedup set (see setup-learning-dedup.ts).
   const resolvedTrajectories = new Set<string>();
+  // Last opt-in tool self-grade per trajectory. Generic tool calls may follow the
+  // grader, so the completion seam persists this explicit terminal state after them.
+  const terminalToolGrades = new Map<string, "success" | "failure">();
+  const terminalGradeKey = (scope: OutcomeScope): string =>
+    `${scope.tenantId}\u0000${scope.agentId}\u0000${scope.trajectoryId}`;
 
   /**
    * The SHARED resolve→consume chain called by BOTH the `graph:completed` (DAG)
@@ -502,8 +542,12 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     const agentId = p.agentId ?? tryGetContext()?.agentId;
     if (agentId === undefined || !deps.learningOutcomeEnabled(agentId)) return;
 
-    const scope = resolveScope(p);
+    const scope = resolveScope(p, deps.tenantId);
     if (scope === undefined) return;
+
+    if (p.selfGradedOutcome !== undefined) {
+      terminalToolGrades.set(terminalGradeKey(scope), p.selfGradedOutcome);
+    }
 
     // The failure signal is the real `success` boolean field. A transport-level
     // / sdk_iserror failure is the highest-confidence deterministic signal; a
@@ -535,7 +579,11 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     // Nothing attributed this turn → no write (avoids an empty attribution row).
     if (p.usedSkillIds.length === 0) return;
 
-    const scope = resolveScope({ agentId: p.agentId, traceId: p.traceId, sessionKey: p.sessionKey });
+    const scope = resolveScope({
+      agentId: p.agentId,
+      traceId: p.traceId,
+      sessionKey: p.sessionKey,
+    }, deps.tenantId);
     if (scope === undefined) return;
 
     // ATTRIBUTION_CONFIDENCE: a neutral, low-confidence `explicit`/`unknown` carrier —
@@ -559,7 +607,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     const agentId = p.agentId ?? tryGetContext()?.agentId;
     if (agentId === undefined || !deps.learningOutcomeEnabled(agentId)) return;
     if (p.usedIds.length === 0) return; // nothing recalled+used → no carrier row
-    const scope = resolveScope({ agentId: p.agentId, traceId: p.traceId, sessionKey: p.sessionKey });
+    const scope = resolveScope({ agentId: p.agentId, traceId: p.traceId, sessionKey: p.sessionKey }, deps.tenantId);
     if (scope === undefined) return;
     void observeNonFatal(deps, scope, "unknown", "explicit", ATTRIBUTION_CONFIDENCE, undefined, p.usedIds);
   });
@@ -581,7 +629,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     const agentId = tryGetContext()?.agentId;
     if (agentId === undefined || !deps.learningOutcomeEnabled(agentId)) return;
     if (!p.toolSequence || p.toolSequence.length === 0) return; // no descriptor → no carrier row
-    const scope = resolveScope({ agentId, traceId: p.traceId, sessionKey: p.sessionKey });
+    const scope = resolveScope({ agentId, traceId: p.traceId, sessionKey: p.sessionKey }, deps.tenantId);
     if (scope === undefined) return;
     void observeNonFatal(deps, scope, "unknown", "explicit", ATTRIBUTION_CONFIDENCE, undefined, undefined, p.toolSequence);
   });
@@ -599,31 +647,54 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     if (agentId === undefined || !deps.learningOutcomeEnabled(agentId)) return;
 
     // graph:completed carries only graphId — recover the scope from ALS.
-    const scope = resolveScope({});
+    const scope = resolveScope({}, deps.tenantId);
     if (scope === undefined) return;
 
-    // Success ONLY on a CLEAN completion; failed/cancelled/running → failure.
-    const outcome: "success" | "failure" = p.status === "completed" ? "success" : "failure";
+    // The last explicit tool grade is the terminal task state even when generic
+    // cleanup/read calls followed it. A later explicit grade still recovers it.
+    const gradeKey = terminalGradeKey(scope);
+    const outcome: "success" | "failure" = terminalToolGrades.get(gradeKey) ??
+      (p.status === "completed" ? "success" : "failure");
+    terminalToolGrades.delete(gradeKey);
     const resolveStart = deps.clock.now();
     void observeNonFatal(deps, scope, outcome, "pipeline", DETERMINISTIC_CONFIDENCE).then(() =>
       resolveAndConsume(scope, resolveStart),
     );
   });
 
-  // ---- Single-agent turn completion → resolve via the per-turn PAYLOAD ----
+  // ---- Turn completion boundary + single-agent resolve via the per-turn PAYLOAD ----
   // graph:completed fires ONLY for DAG runs, so without this handler a single-agent turn
   // never resolves — its tool:executed + memory:skill_used rows (keyed on traceId) go
   // unresolved. diagnostic:message_processed fires once per turn for single-agent turns
   // too (execution-pipeline.ts) and carries agentId/sessionKey/traceId on its PAYLOAD — so
   // resolve keys off the payload NOT the ALS (the emit is outside runWithContext).
   // The trajectoryId is the payload traceId = the SAME key the
-  // tool/skill observe() wrote, so resolve finds the rows. NO pipeline observe; an
-  // absent traceId → skip (fail-closed); the dedup makes a both-events DAG turn resolve once.
+  // tool/skill observe() wrote, so resolve finds the rows. A neutral explicit/unknown
+  // carrier is written FIRST at this completion seam. Besides preserving fusion, its
+  // observedAt is the authoritative upper bound after the executor has persisted the
+  // completed LCD turn; reflection can therefore slice that turn even when every tool
+  // observation preceded the transcript append. An absent traceId → skip
+  // (fail-closed); the dedup makes a both-events DAG turn resolve once.
   deps.eventBus.on("diagnostic:message_processed", (p) => {
     if (!deps.learningOutcomeEnabled(p.agentId)) return;
-    const scope = resolveScope({ agentId: p.agentId, traceId: p.traceId, sessionKey: p.sessionKey });
+    const scope = resolveScope({
+      agentId: p.agentId,
+      traceId: p.traceId,
+      sessionKey: p.sessionKey,
+      workspacePolicyHash: p.workspacePolicyHash,
+    }, deps.tenantId);
     if (scope === undefined) return; // no trajectory identity (absent traceId) → skip
-    resolveAndConsume(scope, deps.clock.now());
+    const resolveStart = deps.clock.now();
+    const gradeKey = terminalGradeKey(scope);
+    const terminalGrade = terminalToolGrades.get(gradeKey);
+    terminalToolGrades.delete(gradeKey);
+    void observeNonFatal(
+      deps,
+      scope,
+      terminalGrade ?? "unknown",
+      terminalGrade === undefined ? "explicit" : "pipeline",
+      terminalGrade === undefined ? ATTRIBUTION_CONFIDENCE : DETERMINISTIC_CONFIDENCE,
+    ).then(() => resolveAndConsume(scope, resolveStart));
   });
 
   // ---- Refresh the per-agent surface the MOMENT a
@@ -758,6 +829,7 @@ export function setupLearningOutcomeWiring(deps: SetupLearningOutcomeDeps): void
   const learningEnabled = (agentId: string): boolean =>
     costFeaturesEnabled && agents[agentId]?.learning?.enabled === true;
   wireLearningOutcome({
+    tenantId: deps.config.tenantId,
     eventBus: deps.eventBus,
     outcomeStore: deps.outcomeStore,
     usefulnessStore: deps.usefulnessStore,

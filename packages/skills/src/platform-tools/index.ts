@@ -59,7 +59,7 @@ export type { RpcDispatchToolConfig, MultiActionDispatchConfig } from "./messagi
 export { createMessageTool } from "./tools/message-tool.js";
 
 // Scheduling
-export { createCronTool, type RpcCall } from "./tools/cron-tool.js";
+export { createCronTool, type RpcCall, type RpcCallMetadata } from "./tools/cron-tool.js";
 
 // Platform actions
 export { createPlatformActionTool } from "./platform-action-tool.js";
@@ -96,7 +96,7 @@ export { createHeartbeatManageTool } from "./tools/heartbeat-manage-tool.js";
 export { createAdminManageTool } from "./admin-manage-factory.js";
 export type { AdminManageDescriptor } from "./admin-manage-factory.js";
 
-// Fleet management
+// Agent administration
 export { createAgentsManageTool } from "./tools/agents-manage-tool.js";
 export { createObsQueryTool } from "./tools/obs-query-tool.js";
 export { createMemoryManageTool } from "./tools/memory-manage-tool.js";

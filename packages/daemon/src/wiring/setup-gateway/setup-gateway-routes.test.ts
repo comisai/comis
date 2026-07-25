@@ -36,6 +36,7 @@ describe("setup-gateway-routes", () => {
       cachedPort: true,
       sessionStore: true,
       getExecutor: true,
+      sessionResolver: true,
       assembleToolsForAgent: true,
       preprocessMessageText: true,
       rpcCall: true,
@@ -48,7 +49,7 @@ describe("setup-gateway-routes", () => {
       resolvedTokens: true,
       suspendedAgents: true,
     };
-    expect(Object.keys(witness).length).toBe(25);
+    expect(Object.keys(witness).length).toBe(26);
   });
 
   it("GatewayResult witness pins the server-handle output keys", () => {

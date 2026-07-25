@@ -9,6 +9,7 @@ import { wrapWithAudit } from "./tool-audit.js";
 import { validateToolEntry } from "./schema-validator.js";
 import { GATEWAY_ACTIONS } from "../../platform-tools/tools/gateway-tool.js";
 import { createMemoryManageTool } from "../../platform-tools/tools/memory-manage-tool.js";
+import { createPlatformToolRegistry } from "../../platform-tools/registry.js";
 
 // ---------------------------------------------------------------------------
 // Ensure metadata is registered before all tests
@@ -41,19 +42,140 @@ function createMockTool(name: string, executeFn?: (...args: any[]) => Promise<an
 // ===========================================================================
 
 describe("tool-metadata-registry -- registry count", () => {
-  it("registers exactly 63 unique tools (registry count assertion)", () => {
+  it("registers exactly 74 unique emitted tool names", () => {
     // The registry pins an exact tool count so an accidental add or removal is
     // caught. Notable entries: video_generate and video_status are EXPLICITLY
     // registered never-export (cost-bearing + outbound delivery); video_status
     // is reserved so its policy is pinned before the tool exists. image_generate
     // is NOT registered here — it rides the default-deny safety net.
-    // obs_fleet_health and obs_explain are slim, READ-ONLY, permission-gated MCP
-    // tools surfacing the obs.fleet.health FleetHealthReport and the obs.explain
+    // obs_system_health and obs_explain are slim, READ-ONLY, permission-gated MCP
+    // tools surfacing the obs.system.health SystemHealthReport and the obs.explain
     // IncidentReport respectively. The three ctx_* in-session expansion tools
     // (ctx_search / ctx_inspect / ctx_expand) are the governed TOOL surface over
     // the LCD store.
     const all = getAllToolMetadata();
-    expect(all.size).toBe(64);
+    expect(all.size).toBe(74);
+  });
+});
+
+describe("tool-metadata-registry -- invocation side-effect coverage", () => {
+  const BUILTIN_EMITTED_NAMES = [
+    "read",
+    "write",
+    "edit",
+    "ls",
+    "grep",
+    "find",
+    "notebook_edit",
+    "apply_patch",
+    "exec",
+    "process",
+    "web_fetch",
+    "web_search",
+  ] as const;
+
+  it("classifies every registered and emitted built-in tool by its exact runtime name", () => {
+    const buildContext = {
+      agentId: "test-agent",
+      rpcCall: async () => ({}),
+    } as never;
+    const platformEmittedNames = createPlatformToolRegistry()
+      .map((descriptor) => descriptor.build(buildContext)?.name)
+      .filter((name): name is string => typeof name === "string");
+    const emittedNames = new Set([...BUILTIN_EMITTED_NAMES, ...platformEmittedNames]);
+    const missingEmitted = [...emittedNames].filter(
+      (name) => getToolMetadata(name)?.invocationSideEffects === undefined,
+    );
+    const missingRegistered = [...getAllToolMetadata()].flatMap(([name, metadata]) =>
+      metadata.invocationSideEffects === undefined ? [name] : [],
+    );
+
+    expect(missingEmitted).toEqual([]);
+    expect(missingRegistered).toEqual([]);
+  });
+
+  it("pins the initial nonempty invocation classifications", () => {
+    expect(getToolMetadata("exec")?.invocationSideEffects).toEqual({
+      kind: "always",
+      capabilities: ["deferred_work"],
+    });
+    expect(getToolMetadata("sessions_send")?.invocationSideEffects).toEqual({
+      kind: "always",
+      capabilities: ["outbound_delivery"],
+    });
+    expect(getToolMetadata("video_generate")?.invocationSideEffects).toEqual({
+      kind: "always",
+      capabilities: ["outbound_delivery", "deferred_work"],
+    });
+    expect(getToolMetadata("video_status")?.invocationSideEffects).toEqual({
+      kind: "always",
+      capabilities: ["deferred_work"],
+    });
+    expect(getToolMetadata("background_tasks")?.invocationSideEffects).toEqual({
+      kind: "always",
+      capabilities: ["deferred_work"],
+    });
+  });
+
+  it("keeps action-classification maps in exact lockstep with reviewed action tuples", () => {
+    for (const name of [
+      "cron",
+      "message",
+      "discord_action",
+      "telegram_action",
+      "pipeline",
+      "heartbeat_manage",
+    ] as const) {
+      const metadata = getToolMetadata(name);
+      const declaration = metadata?.invocationSideEffects;
+      expect(declaration?.kind, `${name} must use by_action classification`).toBe("by_action");
+      if (declaration?.kind !== "by_action") continue;
+      expect(Object.keys(declaration.actions).sort()).toEqual(
+        [...(metadata?.validActions ?? [])].sort(),
+      );
+    }
+  });
+
+  it("classifies only the reviewed publishing and scheduling actions as nonempty", () => {
+    const cron = getToolMetadata("cron")?.invocationSideEffects;
+    const message = getToolMetadata("message")?.invocationSideEffects;
+    const discord = getToolMetadata("discord_action")?.invocationSideEffects;
+    const telegram = getToolMetadata("telegram_action")?.invocationSideEffects;
+    const heartbeat = getToolMetadata("heartbeat_manage")?.invocationSideEffects;
+    expect(cron?.kind === "by_action" ? cron.actions : undefined).toMatchObject({
+      add: ["scheduling"],
+      update: ["scheduling"],
+      remove: ["scheduling"],
+      run: ["scheduling"],
+      wake: ["scheduling"],
+      list: [],
+      status: [],
+      runs: [],
+    });
+    expect(message?.kind === "by_action" ? message.actions : undefined).toMatchObject({
+      send: ["outbound_delivery"],
+      reply: ["outbound_delivery"],
+      attach: ["outbound_delivery"],
+      edit: ["outbound_delivery"],
+      delete: ["outbound_delivery"],
+      react: ["outbound_delivery"],
+      fetch: [],
+    });
+    expect(discord?.kind === "by_action" ? discord.actions.threadReply : undefined).toEqual([
+      "outbound_delivery",
+    ]);
+    expect(telegram?.kind === "by_action" ? telegram.actions.poll : undefined).toEqual([
+      "outbound_delivery",
+    ]);
+    expect(telegram?.kind === "by_action" ? telegram.actions.sticker : undefined).toEqual([
+      "outbound_delivery",
+    ]);
+    expect(heartbeat?.kind === "by_action" ? heartbeat.actions : undefined).toEqual({
+      get: [],
+      update: ["scheduling"],
+      status: [],
+      trigger: ["deferred_work"],
+    });
   });
 });
 
@@ -923,11 +1045,11 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
     ["tokens_manage",    ["list", "create", "revoke", "rotate"], 3],
     ["providers_manage", ["list", "get", "create", "update", "delete", "enable", "disable"], 3],
     ["channels_manage",  ["list", "get", "enable", "disable", "restart", "configure"], 4],
-    ["sessions_manage",  ["delete", "reset", "export", "compact"], 3],
+    ["sessions_manage",  ["delete", "reset", "export", "compact"], 5],
     ["skills_manage",    ["list", "import", "delete", "create", "update"], 6],
     ["memory_manage",    ["stats", "browse", "delete", "flush", "export", "pin", "unpin"], 11],
     ["models_manage",    ["list", "test", "list_providers"], 3],
-    ["heartbeat_manage", ["get", "update", "status", "trigger"], 21],
+    ["heartbeat_manage", ["get", "update", "status", "trigger"], 15],
   ] as const)(
     "registers entry-shape metadata for %s",
     (name, validActions, validKeysCount) => {
@@ -1165,6 +1287,23 @@ describe("tool-metadata-registry -- failure detectors", () => {
     });
   });
 
+  it("web_search flags a failure carried by the AgentToolResult details envelope", () => {
+    const detect = webSearchDetector()!;
+    expect(
+      detect(
+        {
+          content: [{ type: "text", text: "{\"error\":\"all_providers_failed\"}" }],
+          details: {
+            error: "all_providers_failed",
+            message: "All web_search providers failed: duckduckgo: blocked by CAPTCHA challenge",
+            failures: ["duckduckgo: blocked by CAPTCHA challenge"],
+          },
+        },
+        false,
+      ),
+    ).toEqual({ errorKind: "dependency", classifiedField: "error" });
+  });
+
   // REGRESSION (production session 678314278): a SUCCESSFUL web_search (results present, NO
   // top-level `error`) whose snippets contain "rate limit"/"blocked"/"forbidden" as legitimate
   // content must NOT be flagged. This FAILS on the body-substring detector.
@@ -1260,6 +1399,26 @@ describe("tool-metadata-registry -- failure detectors", () => {
     expect(detect({ url: "https://e.com", error: "Fetch failed: connection refused" }, false)).toEqual({
       errorKind: "dependency",
       classifiedField: "error",
+    });
+  });
+
+  it("web_fetch flags a failure carried by the AgentToolResult details envelope", () => {
+    const detect = webFetchDetector()!;
+    expect(
+      detect(
+        {
+          content: [{ type: "text", text: "{\"status\":403}" }],
+          details: {
+            url: "https://example.com",
+            status: 403,
+          },
+        },
+        false,
+      ),
+    ).toEqual({
+      errorKind: "dependency",
+      classifiedField: "status",
+      matchedToken: "403",
     });
   });
 
@@ -1414,6 +1573,19 @@ describe("tool-metadata-registry -- failure detectors", () => {
   });
 });
 
+describe("tool-metadata-registry -- failure alternatives", () => {
+  it("routes exhausted web search providers to browser Google Search", () => {
+    expect(getToolMetadata("web_search")?.failureFallbacks).toEqual([
+      {
+        onErrorCode: "all_providers_failed",
+        toolName: "browser",
+        guidance:
+          "Use browser next: call action start, then action open with a Google Search URL for the same query. Do not call web_search again for this request.",
+      },
+    ]);
+  });
+});
+
 describe("tool-metadata-registry -- co-discovery metadata", () => {
   it("models_manage has coDiscoverWith pointing to agents_manage", () => {
     const meta = getToolMetadata("models_manage");
@@ -1433,6 +1605,18 @@ describe("tool-metadata-registry -- co-discovery metadata", () => {
 // ===========================================================================
 
 describe("tool-metadata-registry -- gateway validateInput patchable path hints", () => {
+  it.each([
+    ["patch", "contributions", "instances.echo"],
+    ["patch", "plugins", "plugins.echo.enabled"],
+    ["apply", "contributions", undefined],
+    ["apply", "plugins", undefined],
+  ])("rejects contribution topology through bridge action %s at %s", async (action, section, key) => {
+    const meta = getToolMetadata("gateway");
+    const error = await meta!.validateInput!({ action, section, key });
+
+    expect(error).toContain("immutable");
+  });
+
   it("redirects to agents_manage and includes patchable paths when rejecting immutable agents path", async () => {
     const meta = getToolMetadata("gateway");
     expect(meta?.validateInput).toBeDefined();

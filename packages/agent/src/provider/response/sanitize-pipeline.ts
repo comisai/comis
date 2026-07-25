@@ -23,6 +23,7 @@
 
 import { stripReasoningTagsFromText } from "../../response-filter/reasoning-tags.js";
 import { findCodeRegions, isInsideCode } from "../../response-filter/code-regions.js";
+import { findPlainRoleContinuations } from "../../response-filter/plain-role-continuation.js";
 import type { ComisLogger } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -156,6 +157,23 @@ export function sanitizeAssistantResponse(
     // "preserve" mode keeps trailing content after unclosed tags — avoids silently
     // dropping legitimate content.
     cleaned = stripReasoningTagsFromText(cleaned, { mode: "preserve", trim: "both" });
+
+    const roleContinuation = findPlainRoleContinuations(cleaned)[0];
+    if (roleContinuation) {
+      const inputLen = cleaned.length;
+      cleaned = cleaned.slice(0, roleContinuation.boundaryStart).trimEnd();
+      logger?.warn(
+        {
+          step: "response-sanitizer",
+          reason: "plain-user-role-continuation",
+          inputLen,
+          outputLen: cleaned.length,
+          hint: "Inspect the provider completion for transcript continuation; the fabricated user-role suffix was removed before delivery",
+          errorKind: "dependency" as const,
+        },
+        "Removed fabricated user-role continuation from assistant response",
+      );
+    }
 
     // Collapse excessive newlines left after block removal
     cleaned = cleaned.replace(/\n{3,}/g, "\n\n");

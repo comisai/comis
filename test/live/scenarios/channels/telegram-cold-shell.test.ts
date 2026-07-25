@@ -269,8 +269,8 @@ describe.skipIf(!isLive)("ACCEPT-01 Option A Stage-C — a cold-shell tg up(p1)�
       expect(parseJson(status.stdout)["gatewayUrl"]).toBe(handle.gatewayUrl);
 
       // ── PROCESS 2b: a FRESH `tg rpc` reaches the LIVE gateway over WS (the daemon
-      //    survived). A structural RPC (no model needed) — obs.fleet.health.
-      const rpc = await runTg(chanliveDir, ["rpc", "obs.fleet.health", '{"since":1}', "--json"], 60_000);
+      //    survived). A structural RPC (no model needed) — obs.system.health.
+      const rpc = await runTg(chanliveDir, ["rpc", "obs.system.health", '{"since":1}', "--json"], 60_000);
       expect(rpc.code, `cross-process tg rpc failed: ${rpc.stderr || rpc.stdout}`).toBe(0);
 
       // ── PROCESS 2c: a FRESH `tg send` drives a real inbound round-trip. The

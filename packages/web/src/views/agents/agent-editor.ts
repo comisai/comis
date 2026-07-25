@@ -3,6 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { RpcClient } from "../../api/rpc-client.js";
+import type { WebRpcMethodMap } from "../../api/contracts.generated.js";
 import type { AgentDetail } from "../../api/types/index.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import { toYaml } from "../../utils/to-yaml.js";
@@ -63,7 +64,10 @@ function createDefaultForm(): Record<string, unknown> {
     "heartbeat.enabled": undefined,
     "heartbeat.intervalMs": undefined,
     "heartbeat.target.channelType": "",
-    "heartbeat.target.channelId": "",
+    "heartbeat.target.channelInstanceId": "",
+    "heartbeat.target.conversationId": "",
+    "heartbeat.target.threadId": "",
+    "heartbeat.target.conversationKind": "",
     "heartbeat.prompt": "",
     "heartbeat.showOk": undefined,
     "heartbeat.showAlerts": undefined,
@@ -99,15 +103,10 @@ function createDefaultForm(): Record<string, unknown> {
     // Broadcast
     "broadcast.groups": "[]",
     // Additional heartbeat fields
-    "heartbeat.target.chatId": "",
-    "heartbeat.target.isDm": undefined,
-    "heartbeat.model": "",
-    "heartbeat.session": "",
     "heartbeat.allowDm": undefined,
     "heartbeat.lightContext": undefined,
     "heartbeat.ackMaxChars": undefined,
     "heartbeat.responsePrefix": "",
-    "heartbeat.skipHeartbeatOnlyDelivery": undefined,
     "heartbeat.alertThreshold": undefined,
     "heartbeat.alertCooldownMs": undefined,
     "heartbeat.staleMs": undefined,
@@ -131,18 +130,10 @@ function createDefaultForm(): Record<string, unknown> {
     "session.compaction.threshold": 50,
     // Context Engine
     "contextEngine.enabled": true,
-    "contextEngine.version": "dag",
     "contextEngine.thinkingKeepTurns": undefined,
     "contextEngine.compactionModel": "",
     "contextEngine.evictionMinAge": undefined,
-    // Pipeline-mode fields
-    "contextEngine.historyTurns": undefined,
-    "contextEngine.observationKeepWindow": undefined,
-    "contextEngine.observationTriggerChars": undefined,
-    "contextEngine.observationDeactivationChars": undefined,
-    "contextEngine.compactionCooldownTurns": undefined,
-    "contextEngine.historyTurnOverrides": "",
-    // DAG-mode fields
+    // Durable context fields
     "contextEngine.freshTailTurns": undefined,
     "contextEngine.contextThreshold": undefined,
     "contextEngine.leafMinFanout": undefined,
@@ -530,7 +521,10 @@ export class IcAgentEditor extends LitElement {
   private async _loadModelCatalog(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const result = await this.rpcClient.call<{ providers?: CatalogProvider[]; totalModels?: number }>("models.list");
+      const result = await this.rpcClient.call<{
+        providers?: CatalogProvider[];
+        totalModels?: number;
+      }>("models.list");
       if (result.providers) {
         this._catalogProviders = result.providers;
       }
@@ -543,7 +537,10 @@ export class IcAgentEditor extends LitElement {
   async _loadTopLevelConfig(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const result = await this.rpcClient.call<{ config: Record<string, unknown>; sections: string[] }>("config.read");
+      const result = await this.rpcClient.call<{
+        config: Record<string, unknown>;
+        sections: string[];
+      }>("config.read");
       const cfg = result.config;
       this._streamingConfig = (cfg.streaming as Record<string, unknown>) ?? {};
       this._deliveryQueueConfig = (cfg.deliveryQueue as Record<string, unknown>) ?? {};
@@ -564,7 +561,11 @@ export class IcAgentEditor extends LitElement {
       return;
     }
     try {
-      await this.rpcClient.call("config.patch", { section, key, value });
+      await this.rpcClient.call("config.patch", {
+        section,
+        key,
+        value: value as WebRpcMethodMap["config.patch"]["params"]["value"],
+      });
       // Update local state to reflect the change
       if (section === "streaming") this._streamingConfig = { ...this._streamingConfig, [key]: value };
       else if (section === "deliveryQueue") this._deliveryQueueConfig = { ...this._deliveryQueueConfig, [key]: value };
@@ -586,9 +587,10 @@ export class IcAgentEditor extends LitElement {
       return;
     }
     try {
-      const params: Record<string, string> = { level };
-      if (module) params.module = module;
-      await this.rpcClient.call("daemon.setLogLevel", params);
+      await this.rpcClient.call("daemon.setLogLevel", {
+        level,
+        ...(module === undefined ? {} : { module }),
+      });
       this._logLevelApplied = module ?? "__global__";
       IcToast.show(`Log level ${module ? `${module}: ` : ""}${level}`, "success");
       systemSetTimeout(() => { this._logLevelApplied = ""; }, 3000);
@@ -609,7 +611,7 @@ export class IcAgentEditor extends LitElement {
     // the stale error bar does not flash through the loading state (P6).
     this._error = "";
     try {
-      const result = await this.rpcClient.call<{ agentId: string; config: Record<string, unknown> }>("agents.get", { agentId: this.agentId });
+      const result = await this.rpcClient.call("agents.get", { agentId: this.agentId });
       const agent = this._mapConfigToDetail(result.agentId, result.config);
       this._populateForm(agent);
       this._loadState = "loaded";
@@ -713,19 +715,17 @@ export class IcAgentEditor extends LitElement {
           showOk: hb.showOk as boolean | undefined,
           showAlerts: hb.showAlerts as boolean | undefined,
           target: hbTarget ? {
-            channelType: hbTarget.channelType as string | undefined,
-            channelId: hbTarget.channelId as string | undefined,
-            chatId: hbTarget.chatId as string | undefined,
-            isDm: hbTarget.isDm as boolean | undefined,
+            channelType: hbTarget.channelType as string,
+            channelInstanceId: hbTarget.channelInstanceId as string,
+            conversationId: hbTarget.conversationId as string,
+            threadId: hbTarget.threadId as string | undefined,
+            conversationKind: hbTarget.conversationKind as "direct" | "shared",
           } : undefined,
           prompt: hb.prompt as string | undefined,
-          model: hb.model as string | undefined,
-          session: hb.session as string | undefined,
           allowDm: hb.allowDm as boolean | undefined,
           lightContext: hb.lightContext as boolean | undefined,
           ackMaxChars: hb.ackMaxChars as number | undefined,
           responsePrefix: hb.responsePrefix as string | undefined,
-          skipHeartbeatOnlyDelivery: hb.skipHeartbeatOnlyDelivery as boolean | undefined,
           alertThreshold: hb.alertThreshold as number | undefined,
           alertCooldownMs: hb.alertCooldownMs as number | undefined,
           staleMs: hb.staleMs as number | undefined,
@@ -866,18 +866,16 @@ export class IcAgentEditor extends LitElement {
     form["heartbeat.showAlerts"] = hb?.showAlerts;
     if (hb?.target) {
       form["heartbeat.target.channelType"] = hb.target.channelType ?? "";
-      form["heartbeat.target.channelId"] = hb.target.channelId ?? "";
-      form["heartbeat.target.chatId"] = hb.target.chatId ?? "";
-      form["heartbeat.target.isDm"] = hb.target.isDm;
+      form["heartbeat.target.channelInstanceId"] = hb.target.channelInstanceId ?? "";
+      form["heartbeat.target.conversationId"] = hb.target.conversationId ?? "";
+      form["heartbeat.target.threadId"] = hb.target.threadId ?? "";
+      form["heartbeat.target.conversationKind"] = hb.target.conversationKind;
     }
     form["heartbeat.prompt"] = hb?.prompt ?? "";
-    form["heartbeat.model"] = hb?.model ?? "";
-    form["heartbeat.session"] = hb?.session ?? "";
     form["heartbeat.allowDm"] = hb?.allowDm;
     form["heartbeat.lightContext"] = hb?.lightContext;
     form["heartbeat.ackMaxChars"] = hb?.ackMaxChars;
     form["heartbeat.responsePrefix"] = hb?.responsePrefix ?? "";
-    form["heartbeat.skipHeartbeatOnlyDelivery"] = hb?.skipHeartbeatOnlyDelivery;
     form["heartbeat.alertThreshold"] = hb?.alertThreshold;
     form["heartbeat.alertCooldownMs"] = hb?.alertCooldownMs;
     form["heartbeat.staleMs"] = hb?.staleMs;
@@ -910,20 +908,10 @@ export class IcAgentEditor extends LitElement {
     const ceDetail = (agent as unknown as Record<string, unknown>).contextEngine as Record<string, unknown> | undefined;
     if (ceDetail) {
       form["contextEngine.enabled"] = ceDetail.enabled ?? true;
-      form["contextEngine.version"] = ceDetail.version ?? "dag";
       form["contextEngine.thinkingKeepTurns"] = ceDetail.thinkingKeepTurns;
       form["contextEngine.compactionModel"] = ceDetail.compactionModel ?? "";
       form["contextEngine.evictionMinAge"] = ceDetail.evictionMinAge;
-      // Pipeline fields
-      form["contextEngine.historyTurns"] = ceDetail.historyTurns;
-      form["contextEngine.observationKeepWindow"] = ceDetail.observationKeepWindow;
-      form["contextEngine.observationTriggerChars"] = ceDetail.observationTriggerChars;
-      form["contextEngine.observationDeactivationChars"] = ceDetail.observationDeactivationChars;
-      form["contextEngine.compactionCooldownTurns"] = ceDetail.compactionCooldownTurns;
-      form["contextEngine.historyTurnOverrides"] = ceDetail.historyTurnOverrides
-        ? JSON.stringify(ceDetail.historyTurnOverrides, null, 2)
-        : "";
-      // DAG fields
+      // Durable context fields
       form["contextEngine.freshTailTurns"] = ceDetail.freshTailTurns;
       form["contextEngine.contextThreshold"] = ceDetail.contextThreshold;
       form["contextEngine.leafMinFanout"] = ceDetail.leafMinFanout;
@@ -1097,19 +1085,17 @@ export class IcAgentEditor extends LitElement {
 
     const hbTarget: Record<string, unknown> = {};
     if (f["heartbeat.target.channelType"]) hbTarget.channelType = f["heartbeat.target.channelType"];
-    if (f["heartbeat.target.channelId"]) hbTarget.channelId = f["heartbeat.target.channelId"];
-    if (f["heartbeat.target.chatId"]) hbTarget.chatId = f["heartbeat.target.chatId"];
-    if (f["heartbeat.target.isDm"] !== undefined && f["heartbeat.target.isDm"] !== "") hbTarget.isDm = Boolean(f["heartbeat.target.isDm"]);
+    if (f["heartbeat.target.channelInstanceId"]) hbTarget.channelInstanceId = f["heartbeat.target.channelInstanceId"];
+    if (f["heartbeat.target.conversationId"]) hbTarget.conversationId = f["heartbeat.target.conversationId"];
+    if (f["heartbeat.target.threadId"]) hbTarget.threadId = f["heartbeat.target.threadId"];
+    if (f["heartbeat.target.conversationKind"]) hbTarget.conversationKind = f["heartbeat.target.conversationKind"];
     if (Object.keys(hbTarget).length > 0) heartbeat.target = hbTarget;
 
     if (f["heartbeat.prompt"]) heartbeat.prompt = f["heartbeat.prompt"];
-    if (f["heartbeat.model"]) heartbeat.model = f["heartbeat.model"];
-    if (f["heartbeat.session"]) heartbeat.session = f["heartbeat.session"];
     if (f["heartbeat.allowDm"] !== undefined && f["heartbeat.allowDm"] !== "") heartbeat.allowDm = Boolean(f["heartbeat.allowDm"]);
     if (f["heartbeat.lightContext"] !== undefined && f["heartbeat.lightContext"] !== "") heartbeat.lightContext = Boolean(f["heartbeat.lightContext"]);
     if (f["heartbeat.ackMaxChars"] !== undefined && f["heartbeat.ackMaxChars"] !== "") heartbeat.ackMaxChars = Number(f["heartbeat.ackMaxChars"]);
     if (f["heartbeat.responsePrefix"]) heartbeat.responsePrefix = f["heartbeat.responsePrefix"];
-    if (f["heartbeat.skipHeartbeatOnlyDelivery"] !== undefined && f["heartbeat.skipHeartbeatOnlyDelivery"] !== "") heartbeat.skipHeartbeatOnlyDelivery = Boolean(f["heartbeat.skipHeartbeatOnlyDelivery"]);
     if (f["heartbeat.alertThreshold"] !== undefined && f["heartbeat.alertThreshold"] !== "") heartbeat.alertThreshold = Number(f["heartbeat.alertThreshold"]);
     if (f["heartbeat.alertCooldownMs"] !== undefined && f["heartbeat.alertCooldownMs"] !== "") heartbeat.alertCooldownMs = Number(f["heartbeat.alertCooldownMs"]);
     if (f["heartbeat.staleMs"] !== undefined && f["heartbeat.staleMs"] !== "") heartbeat.staleMs = Number(f["heartbeat.staleMs"]);
@@ -1163,8 +1149,6 @@ export class IcAgentEditor extends LitElement {
     // Context Engine
     const ce: Record<string, unknown> = {};
     if (f["contextEngine.enabled"] !== undefined) ce.enabled = Boolean(f["contextEngine.enabled"]);
-    const ceVersion = f["contextEngine.version"] as string;
-    if (ceVersion) ce.version = ceVersion;
 
     // Shared fields
     if (f["contextEngine.thinkingKeepTurns"] !== undefined && f["contextEngine.thinkingKeepTurns"] !== "") {
@@ -1175,31 +1159,7 @@ export class IcAgentEditor extends LitElement {
       ce.evictionMinAge = Number(f["contextEngine.evictionMinAge"]);
     }
 
-    // Pipeline-mode fields (only include when version is pipeline)
-    if (ceVersion === "pipeline") {
-      if (f["contextEngine.historyTurns"] !== undefined && f["contextEngine.historyTurns"] !== "") {
-        ce.historyTurns = Number(f["contextEngine.historyTurns"]);
-      }
-      if (f["contextEngine.observationKeepWindow"] !== undefined && f["contextEngine.observationKeepWindow"] !== "") {
-        ce.observationKeepWindow = Number(f["contextEngine.observationKeepWindow"]);
-      }
-      if (f["contextEngine.observationTriggerChars"] !== undefined && f["contextEngine.observationTriggerChars"] !== "") {
-        ce.observationTriggerChars = Number(f["contextEngine.observationTriggerChars"]);
-      }
-      if (f["contextEngine.observationDeactivationChars"] !== undefined && f["contextEngine.observationDeactivationChars"] !== "") {
-        ce.observationDeactivationChars = Number(f["contextEngine.observationDeactivationChars"]);
-      }
-      if (f["contextEngine.compactionCooldownTurns"] !== undefined && f["contextEngine.compactionCooldownTurns"] !== "") {
-        ce.compactionCooldownTurns = Number(f["contextEngine.compactionCooldownTurns"]);
-      }
-      const htoRaw = (f["contextEngine.historyTurnOverrides"] as string) || "";
-      if (htoRaw) {
-        try { ce.historyTurnOverrides = JSON.parse(htoRaw); } catch { /* skip invalid JSON */ }
-      }
-    }
-
-    // DAG-mode fields (only include when version is dag)
-    if (ceVersion === "dag") {
+    // Durable context fields
       if (f["contextEngine.freshTailTurns"] !== undefined && f["contextEngine.freshTailTurns"] !== "") {
         ce.freshTailTurns = Number(f["contextEngine.freshTailTurns"]);
       }
@@ -1247,8 +1207,6 @@ export class IcAgentEditor extends LitElement {
       }
       if (f["contextEngine.summaryModel"]) ce.summaryModel = f["contextEngine.summaryModel"];
       if (f["contextEngine.summaryProvider"]) ce.summaryProvider = f["contextEngine.summaryProvider"];
-    }
-
     if (Object.keys(ce).length > 0) payload.contextEngine = ce;
 
     return payload;
@@ -1343,7 +1301,7 @@ export class IcAgentEditor extends LitElement {
       const payload = this._buildPayload();
 
       if (this._isNew) {
-        const result = await this.rpcClient.call<{ agentId: string }>("agents.create", {
+        const result = await this.rpcClient.call("agents.create", {
           agentId: this._form.id as string,
           config: payload,
         });
@@ -1416,11 +1374,9 @@ export class IcAgentEditor extends LitElement {
 
     // Context Engine
     const ceEnabled = f["contextEngine.enabled"];
-    const ceVersion = f["contextEngine.version"] as string;
     if (ceEnabled !== undefined) {
       const cePrev: Record<string, unknown> = {
         enabled: Boolean(ceEnabled),
-        version: ceVersion || "dag",
       };
       if (f["contextEngine.thinkingKeepTurns"] !== undefined && f["contextEngine.thinkingKeepTurns"] !== "") {
         cePrev.thinkingKeepTurns = Number(f["contextEngine.thinkingKeepTurns"]);
@@ -1429,11 +1385,8 @@ export class IcAgentEditor extends LitElement {
       if (f["contextEngine.evictionMinAge"] !== undefined && f["contextEngine.evictionMinAge"] !== "") {
         cePrev.evictionMinAge = Number(f["contextEngine.evictionMinAge"]);
       }
-      if (ceVersion === "dag" && f["contextEngine.freshTailTurns"] !== undefined && f["contextEngine.freshTailTurns"] !== "") {
+      if (f["contextEngine.freshTailTurns"] !== undefined && f["contextEngine.freshTailTurns"] !== "") {
         cePrev.freshTailTurns = Number(f["contextEngine.freshTailTurns"]);
-      }
-      if (ceVersion === "pipeline" && f["contextEngine.historyTurns"] !== undefined && f["contextEngine.historyTurns"] !== "") {
-        cePrev.historyTurns = Number(f["contextEngine.historyTurns"]);
       }
       preview.contextEngine = cePrev;
     }

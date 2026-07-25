@@ -11,9 +11,13 @@
  */
 
 import { systemNowMs } from "@comis/core";
-import type { ErrorKind } from "@comis/core";
+import type {
+  ErrorKind,
+  ExecutionSideEffectSummary,
+} from "@comis/core";
 import type { ExecutionResult } from "../executor/types.js";
 import type { ContextUsageData } from "../safety/context-window-guard.js";
+import { createBridgeSideEffectSummary } from "./bridge-side-effect-accumulator.js";
 import type { ThinkingBlockHash } from "./thinking-block-hash-invariant.js";
 
 // ---------------------------------------------------------------------------
@@ -46,10 +50,10 @@ export interface BridgeMetricsState {
   textEmitted: boolean;
   lastLlmErrorMessage: string | undefined;
 
-  /** Per-turn capture of outbound delivery events. Populated by pi-event-bridge
+  /** Per-execution capture of outbound delivery events. Populated by pi-event-bridge
    *  on tool_execution_end for `message(action='send'|'reply'|'attach')`.
-   *  Read by executor-post-execution.ts to make sentinel-aware decisions.
-   *  Reset at turn start. */
+   *  Read by the prompt runner to authorize a silent final response only after
+   *  exact-route delivery. The bridge itself is execution-scoped. */
   outboundLog: Array<{ action: string; channelType: string; channelId: string; timestamp: number }>;
 
   // Tool tracking
@@ -77,6 +81,9 @@ export interface BridgeMetricsState {
    *  Incremented in pi-event-bridge's opened branch; forwarded as
    *  `bridgeResult.breakerTripCount` for the session-health rollup. */
   breakerTripCount: number;
+
+  /** Monotonic execution-scoped facts about capability invocation attempts. */
+  sideEffectSummary: ExecutionSideEffectSummary;
 
   // TTL-split cache write token tracking (estimated, normalized to SDK total)
   totalCacheWrite5mTokens: number;
@@ -237,6 +244,7 @@ export function createBridgeMetrics(): BridgeMetricsState {
     failedToolCount: 0,
     failedToolNames: [],
     breakerTripCount: 0,
+    sideEffectSummary: createBridgeSideEffectSummary(),
     cumulativeToolDurationMs: 0,
     cumulativeToolWallclockMs: 0,
     cumulativeLlmDurationMs: 0,
@@ -313,6 +321,7 @@ export function buildBridgeResult(
   totalCostCorrectionDeltaUsd?: number;
   /** Abort redirect message set at bridge abort sites; undefined for normal completions. */
   abortResponse?: string;
+  sideEffectSummary: ExecutionSideEffectSummary;
 } {
   return {
     tokensUsed: {
@@ -372,5 +381,6 @@ export function buildBridgeResult(
     totalCostCorrectionDeltaUsd: metrics.totalCostCorrectionDeltaUsd,
     // Abort redirect message — only set at abort sites; omitted for normal completions.
     abortResponse: metrics.abortResponse,
+    sideEffectSummary: { ...metrics.sideEffectSummary },
   };
 }

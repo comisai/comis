@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { ok, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks. buildExecuteSubAgent imports concrete symbols from
@@ -67,7 +68,18 @@ import {
   type ExecuteSubAgentDeps,
 } from "./setup-cross-session-graph.js";
 import { createWorktreeRegistry } from "../setup-worktree-sweep.js";
-import { SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+import { createConversationLocator, runWithContext, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+import type { ExecutionResult } from "@comis/agent";
+
+function makeConversation(tenantId: string, agentId: string) {
+  const result = createConversationLocator({
+    tenantId,
+    agentId,
+    partition: { kind: "agent" },
+  });
+  if (!result.ok) throw result.error;
+  return result.value;
+}
 
 describe("setup-cross-session-graph", () => {
   it("buildExecuteSubAgent: exported as a callable function", () => {
@@ -135,20 +147,38 @@ describe("setup-cross-session-graph", () => {
   // the bare { promptTimeoutMs } shape is the provenance-collapse bug.
   // -------------------------------------------------------------------------
   describe("promptTimeout provenance from the spawn producer", () => {
-    const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
+    const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1", agentId: "agent-2" };
+    const conversation = makeConversation("t-1", "agent-2");
+
+    function executionResult(
+      overrides: Partial<Omit<ExecutionResult, "finishReason" | "terminalErrorKind">> = {},
+    ): ExecutionResult {
+      return {
+        response: "done",
+        sessionKey,
+        executionId: "child-execution-a",
+        responseLocalePolicy: { source: "unset", enforceLocale: false },
+        sideEffectSummary: {
+          schedulingCapabilityInvoked: false,
+          outboundDeliveryCapabilityInvoked: false,
+          deferredWorkCapabilityInvoked: false,
+          unclassifiedInvocationObserved: false,
+        },
+        tokensUsed: { input: 5, output: 5, total: 10 },
+        cost: { total: 0.01 },
+        finishReason: "stop",
+        stepsExecuted: 1,
+        llmCalls: 1,
+        ...overrides,
+      };
+    }
 
     function makeGraphDeps(metadata: Record<string, unknown>) {
       const capturedOverrides: Array<Record<string, unknown>> = [];
       const executor = {
-        execute: vi.fn(async (...args: unknown[]) => {
+        execute: vi.fn(async (...args: unknown[]): Promise<ExecutionResult> => {
           capturedOverrides.push(args[7] as Record<string, unknown>);
-          return {
-            response: "done",
-            tokensUsed: { total: 10 },
-            cost: { total: 0.01 },
-            finishReason: "stop",
-            stepsExecuted: 1,
-          };
+          return executionResult();
         }),
       };
       const deps = {
@@ -170,7 +200,7 @@ describe("setup-cross-session-graph", () => {
           },
           secretManager: { get: vi.fn(() => "test-key") },
         },
-        sessionStore: { loadByFormattedKey: vi.fn(() => ({ messages: [], metadata })) },
+        sessionStore: { load: vi.fn(() => ({ ok: true, value: { messages: [], metadata } })) },
         assembleToolsForAgent: vi.fn(async () => [{ name: "tool-1" }]),
         getExecutor: vi.fn(() => executor),
         fileLock: {
@@ -188,7 +218,7 @@ describe("setup-cross-session-graph", () => {
       const { deps, capturedOverrides, executor } = makeGraphDeps({ graphSharedDir: "/tmp/graph-shared" });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "task");
 
       expect(executor.execute).toHaveBeenCalledOnce();
       expect(capturedOverrides[0].promptTimeout).toEqual({
@@ -201,13 +231,75 @@ describe("setup-cross-session-graph", () => {
       const { deps, capturedOverrides, executor } = makeGraphDeps({});
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "task");
 
       expect(executor.execute).toHaveBeenCalledOnce();
       expect(capturedOverrides[0].promptTimeout).toEqual({
         promptTimeoutMs: 120_000,
         source: "operation_default",
       });
+    });
+
+    it("acknowledges provider start only after child preparation completes", async () => {
+      const { deps, executor } = makeGraphDeps({});
+      const order: string[] = [];
+      vi.mocked(deps.assembleToolsForAgent).mockImplementation(async () => {
+        order.push("assembled");
+        return [{ name: "tool-1" }] as never;
+      });
+      vi.mocked(executor.execute).mockImplementation(async (...args: unknown[]) => {
+        const overrides = args[7] as {
+          onProviderStart?: () => Result<void, Error>;
+        } | undefined;
+        const started = overrides?.onProviderStart?.();
+        if (started !== undefined && !started.ok) throw started.error;
+        order.push("executed");
+        return executionResult();
+      });
+      const executeSubAgent = buildExecuteSubAgent(deps);
+
+      await executeSubAgent(
+        "agent-2",
+        sessionKey,
+        conversation,
+        "task",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          onProviderStart: () => {
+            order.push("provider-started");
+            return ok(undefined);
+          },
+        },
+      );
+
+      expect(order).toEqual(["assembled", "provider-started", "executed"]);
+    });
+
+    it("does not acknowledge provider start when child preparation rejects", async () => {
+      const { deps, executor } = makeGraphDeps({});
+      vi.mocked(deps.assembleToolsForAgent).mockRejectedValue(new Error("tool preparation failed"));
+      const onProviderStart = vi.fn(() => ok(undefined));
+      const executeSubAgent = buildExecuteSubAgent(deps);
+
+      await expect(executeSubAgent(
+        "agent-2",
+        sessionKey,
+        conversation,
+        "task",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { onProviderStart },
+      )).rejects.toThrow("tool preparation failed");
+
+      expect(executor.execute).not.toHaveBeenCalled();
+      expect(onProviderStart).not.toHaveBeenCalled();
     });
 
     // -----------------------------------------------------------------------
@@ -223,7 +315,8 @@ describe("setup-cross-session-graph", () => {
 
       await executeSubAgent(
         "agent-2",
-        sessionKey as Parameters<typeof executeSubAgent>[1],
+        sessionKey,
+        conversation,
         "task",
         undefined,
         undefined,
@@ -239,10 +332,93 @@ describe("setup-cross-session-graph", () => {
       const { deps, capturedOverrides, executor } = makeGraphDeps({});
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "task");
 
       expect(executor.execute).toHaveBeenCalledOnce();
       expect(capturedOverrides[0].tokenBudget).toBeUndefined();
+    });
+
+    it("threads the executor terminal kind through the subagent execution boundary", async () => {
+      const { deps, executor } = makeGraphDeps({});
+      vi.mocked(executor.execute).mockResolvedValueOnce({
+        ...executionResult({ response: "" }),
+        finishReason: "error",
+        terminalErrorKind: "dependency",
+      });
+      const executeSubAgent = buildExecuteSubAgent(deps);
+
+      const result = await executeSubAgent("agent-2", sessionKey, conversation, "task");
+
+      expect((result as { terminalErrorKind?: string }).terminalErrorKind).toBe("dependency");
+    });
+
+    it("binds child tool assembly to the exact child session and inherited delivery origin", async () => {
+      const { deps } = makeGraphDeps({});
+      const executeSubAgent = buildExecuteSubAgent(deps);
+      const deliveryOrigin = Object.freeze({
+        channelType: "telegram",
+        channelId: "chan-1",
+        userId: "user-1",
+        tenantId: "t-1",
+        threadId: "topic-1",
+      });
+
+      await runWithContext({
+        tenantId: "t-1",
+        userId: "user-1",
+        sessionKey: "t-1:user-1:parent-channel:thread:topic-1",
+        agentId: "parent-agent",
+        traceId: "30000000-0000-4000-8000-000000000003",
+        startedAt: 1_700_000_000_000,
+        trustLevel: "user",
+        channelType: "telegram",
+        deliveryOrigin,
+      }, () => executeSubAgent(
+        "agent-2",
+        { ...sessionKey, threadId: "topic-1" },
+        conversation,
+        "task",
+      ));
+
+      expect(deps.assembleToolsForAgent).toHaveBeenCalledWith("agent-2", expect.objectContaining({
+        sessionKey: { ...sessionKey, threadId: "topic-1" },
+        requesterOrigin: deliveryOrigin,
+      }));
+    });
+
+    it("threads the authenticated parent lease and capability ceiling into child tool assembly", async () => {
+      const { deps } = makeGraphDeps({});
+      const executeSubAgent = buildExecuteSubAgent(deps);
+      const onAssemblyAuthority = vi.fn();
+
+      await executeSubAgent(
+        "agent-2",
+        sessionKey,
+        conversation,
+        "task",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          rootRunId: "root-parent",
+          parentLeaseId: "lease-parent",
+          parentCaps: ["orch:read"],
+          onAssemblyAuthority,
+        },
+      );
+
+      expect(deps.assembleToolsForAgent).toHaveBeenCalledWith(
+        "agent-2",
+        expect.objectContaining({
+          autonomyParent: {
+            rootRunId: "root-parent",
+            leaseId: "lease-parent",
+            caps: ["orch:read"],
+          },
+          onAutonomyAssembly: onAssemblyAuthority,
+        }),
+      );
     });
   });
 
@@ -255,7 +431,8 @@ describe("setup-cross-session-graph", () => {
   // the lifecycle module exists.
   // -------------------------------------------------------------------------
   describe("executeSubAgent worktree create/run/clean wiring", () => {
-    const sessionKey = { channelId: "chan-wt", userId: "user-wt", tenantId: "t-wt" };
+    const sessionKey = { channelId: "chan-wt", userId: "user-wt", tenantId: "t-wt", agentId: "agent-2" };
+    const conversation = makeConversation("t-wt", "agent-2");
     const DATA_DIR = "/data";
     // workspace-agent-2 (resolveWorkspaceDir: <dataDir>/workspace-<agentId>).
     const WORKSPACE = "/data/workspace-agent-2";
@@ -303,7 +480,7 @@ describe("setup-cross-session-graph", () => {
           },
           secretManager: { get: vi.fn(() => "test-key") },
         },
-        sessionStore: { loadByFormattedKey: vi.fn(() => ({ messages: [], metadata: opts.metadata })) },
+        sessionStore: { load: vi.fn(() => ({ ok: true, value: { messages: [], metadata: opts.metadata } })) },
         assembleToolsForAgent: vi.fn(async () => [{ name: "tool-1" }]),
         getExecutor: vi.fn(() => executor),
         fileLock: { acquire: vi.fn(), release: vi.fn(), withLock: vi.fn(), isLocked: vi.fn(async () => false), cleanupStaleLocks: vi.fn(async () => 0) },
@@ -318,7 +495,7 @@ describe("setup-cross-session-graph", () => {
       });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "wt task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "wt task");
 
       // Honest wiring: git worktree add actually ran.
       const addCall = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "add");
@@ -337,7 +514,7 @@ describe("setup-cross-session-graph", () => {
       });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "wt task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "wt task");
 
       expect(gitCalls.some((c) => c.args[0] === "worktree" && c.args[1] === "remove")).toBe(true);
       // Clean worktree reclaimed in-line → registry empty.
@@ -351,7 +528,7 @@ describe("setup-cross-session-graph", () => {
       });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "wt task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "wt task");
 
       // The dangerous op was NEVER attempted on the dirty tree.
       expect(gitCalls.some((c) => c.args[0] === "worktree" && c.args[1] === "remove")).toBe(false);
@@ -367,7 +544,7 @@ describe("setup-cross-session-graph", () => {
       });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "plain task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "plain task");
 
       expect(gitCalls).toHaveLength(0);
       expect(capturedOverrides[0].workspaceDir).toBeUndefined();
@@ -380,7 +557,7 @@ describe("setup-cross-session-graph", () => {
       });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "wt task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "wt task");
 
       // No git calls (no seam), but the child still ran in its shared workspace.
       expect(gitCalls).toHaveLength(0);

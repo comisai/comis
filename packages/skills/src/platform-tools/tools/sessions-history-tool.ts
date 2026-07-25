@@ -20,7 +20,9 @@ import type { RpcCall } from "./cron-tool.js";
 // ── Parameter Schema ────────────────────────────────────────────────
 
 const SessionsHistoryParams = Type.Object({
-  session_key: Type.String({ description: "Target session key to retrieve history for" }),
+  tenant_id: Type.String({ description: "Tenant that owns the target conversation" }),
+  agent_id: Type.String({ description: "Agent that owns the target conversation" }),
+  conversation_ref: Type.String({ description: "Opaque durable reference of the target conversation" }),
   offset: Type.Optional(
     Type.Integer({ description: "Pagination offset (default: 0)" }),
   ),
@@ -43,7 +45,7 @@ export function createSessionsHistoryTool(rpcCall: RpcCall): AgentTool<typeof Se
   return {
     name: "sessions_history",
     label: "Sessions History",
-    description: "View conversation history for a specific session with pagination.",
+    description: "View conversation history for a durable tenant, agent, and conversation reference with pagination. Sub-agent listings expose agentId, conversationRef, and conversationScope.tenantId for this lookup.",
     parameters: SessionsHistoryParams,
 
     async execute(
@@ -52,11 +54,15 @@ export function createSessionsHistoryTool(rpcCall: RpcCall): AgentTool<typeof Se
     ): Promise<AgentToolResult<unknown>> {
       try {
         const p = params as unknown as Record<string, unknown>;
-        const sessionKey = readStringParam(p, "session_key");
+        const tenantId = readStringParam(p, "tenant_id");
+        const agentId = readStringParam(p, "agent_id");
+        const conversationRef = readStringParam(p, "conversation_ref");
         const offset = readNumberParam(p, "offset", false) ?? 0;
         const limit = readNumberParam(p, "limit", false) ?? 20;
         const result = await rpcCall("session.history", {
-          session_key: sessionKey,
+          tenant_id: tenantId,
+          agent_id: agentId,
+          conversation_ref: conversationRef,
           offset,
           limit,
         });

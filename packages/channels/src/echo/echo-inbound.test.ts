@@ -40,6 +40,7 @@ describe("EchoChannelAdapter -- injectMessage runWithContext wrap", () => {
   it("injectMessage wraps handler dispatch in runWithContext", async () => {
     let ctxTraceId: string | undefined;
     let ctxChannelType: string | undefined;
+    let ctxTrustLevel: string | undefined;
     let stampedTraceId: string | undefined;
 
     const adapter = new EchoChannelAdapter();
@@ -47,6 +48,7 @@ describe("EchoChannelAdapter -- injectMessage runWithContext wrap", () => {
       const ctx = tryGetContext();
       ctxTraceId = ctx?.traceId;
       ctxChannelType = ctx?.channelType;
+      ctxTrustLevel = ctx?.trustLevel;
       stampedTraceId = m.metadata.traceId as string | undefined;
     });
 
@@ -56,6 +58,7 @@ describe("EchoChannelAdapter -- injectMessage runWithContext wrap", () => {
     expect(ctxTraceId).toBeDefined();
     expect(ctxTraceId).toBe(stampedTraceId);
     expect(ctxChannelType).toBe("echo");
+    expect(ctxTrustLevel).toBe("user");
   });
 
   it("injectMessage reuses pre-stamped traceId from msg.metadata.traceId", async () => {

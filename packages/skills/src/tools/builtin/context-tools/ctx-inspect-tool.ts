@@ -6,7 +6,7 @@
  * `ContextStorePort`.
  *
  * Composition (no dedicated single-summary getter): filters
- * `getSummaries(conversationId)` by `summaryId`, then composes
+ * `getSummaries(conversationRef)` by `summaryId`, then composes
  * `getSummaryChildren` + `getSummaryMessages`. Returns METADATA ONLY — the
  * summary `content` is NOT surfaced and NOT logged, so the output is not
  * taint-wrapped (metadata is not untrusted content). The agent uses the
@@ -48,7 +48,7 @@ export function createCtxInspectTool(deps: ContextToolDeps): AgentTool<typeof Ct
       // SCOPE — build the (conversation, agent, tenant) read scope from the LIVE
       // context per-call; fail closed without a fully-scoped session.
       const ctxScope = requireCtxScope();
-      const conversationId = ctxScope.conversationId;
+      const conversationRef = ctxScope.conversationRef;
       const summaryId = readStringParam(params, "summaryId", true)!;
       const t0 = deps.nowMs();
 
@@ -70,7 +70,7 @@ export function createCtxInspectTool(deps: ContextToolDeps): AgentTool<typeof Ct
       deps.logger.debug(
         {
           toolName: "ctx_inspect",
-          conversationId,
+          conversationRef,
           summaryId,
           kind: summary.kind,
           depth: summary.depth,
@@ -89,7 +89,7 @@ export function createCtxInspectTool(deps: ContextToolDeps): AgentTool<typeof Ct
       // consistent snapshot (the afterTurn triggers' one-read pattern).
       const endMs = deps.nowMs();
       emitExpansionMetric(deps, "ctx_inspect", {
-        conversationId: ctxScope.conversationId,
+        conversationRef: ctxScope.conversationRef,
         agentId: ctxScope.agentId,
         sessionKey: ctxScope.sessionKey,
         tool: "ctx_inspect",

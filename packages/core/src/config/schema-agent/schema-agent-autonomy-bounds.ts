@@ -97,13 +97,15 @@ export const AutonomySpawnConfigSchema = z.strictObject({
  * the genuinely-outward `orch:message` subset (the outward-quota meter
  * reads it; `message.channels`/`maxPerHour` stay for the channel/hour quota):
  *  - `originOnly` (true) — by default only the agent's OWN origin channel is an
- *    auto-allowable target; a NEW target needs an explicit grant.
+ *    auto-allowable target; a non-origin endpoint already bound to the trusted
+ *    run needs an explicit grant.
  *  - `perTargetGrants` — the explicit per-target grant list (empty default);
  *    a send to a non-origin target is denied unless its id is here.
  *  - `volumeCap` — a per-send volume bound (chars / recipient-weighted units; the
  *    outward-quota meter defines the unit) so a mass-recipient / high-volume send
  *    trips a gate even when reversible. `.positive()`.
- * NB: `orch:browse` stays OFF (an `ALWAYS_ESCALATE_CAPABILITIES` member) —
+ * These quota knobs never discover or mint endpoint authority. `orch:browse`
+ * stays OFF (an `ALWAYS_ESCALATE_CAPABILITIES` member) —
  * no tool maps to it, so no config knob is needed here.
  */
 export const AutonomyOutwardConfigSchema = z.strictObject({

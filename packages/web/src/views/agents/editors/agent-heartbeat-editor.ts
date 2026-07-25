@@ -120,9 +120,13 @@ export class IcAgentHeartbeatEditor extends LitElement {
       <div class="section-title">Delivery Target</div>
       <div class="field-row">
         ${renderTextField(this.form, "heartbeat.target.channelType", "Channel Type", this._onChange, { id: "field-hb-channelType", placeholder: "telegram" })}
-        ${renderTextField(this.form, "heartbeat.target.channelId", "Channel ID", this._onChange, { id: "field-hb-channelId" })}
+        ${renderTextField(this.form, "heartbeat.target.channelInstanceId", "Channel Instance ID", this._onChange, { id: "field-hb-channelInstanceId" })}
       </div>
-      ${renderTextField(this.form, "heartbeat.target.chatId", "Chat ID", this._onChange, { id: "field-hb-chatId", placeholder: "Chat/conversation ID" })}
+      <div class="field-row">
+        ${renderTextField(this.form, "heartbeat.target.conversationId", "Conversation ID", this._onChange, { id: "field-hb-conversationId" })}
+        ${renderTextField(this.form, "heartbeat.target.threadId", "Thread ID", this._onChange, { id: "field-hb-threadId" })}
+      </div>
+      ${renderTextField(this.form, "heartbeat.target.conversationKind", "Conversation Kind", this._onChange, { id: "field-hb-conversationKind", placeholder: "direct or shared" })}
       ${renderTextarea(this.form, "heartbeat.prompt", "Prompt", this._onChange, { id: "field-hb-prompt", placeholder: "Check system health" })}
       <div class="field-row">
         ${renderCheckbox(this.form, "heartbeat.showOk", "Show OK", this._onChange, { id: "field-hb-showOk" })}
@@ -132,13 +136,8 @@ export class IcAgentHeartbeatEditor extends LitElement {
       <hr class="divider" />
       <div class="section-title">Advanced Heartbeat</div>
       <div class="field-row">
-        ${renderTextField(this.form, "heartbeat.model", "Model Override", this._onChange, { id: "field-hb-model", placeholder: "e.g. claude-sonnet-4-5-20250929" })}
-        ${renderTextField(this.form, "heartbeat.session", "Session Key", this._onChange, { id: "field-hb-session" })}
-      </div>
-      <div class="field-row">
         ${renderCheckbox(this.form, "heartbeat.allowDm", "Allow DM", this._onChange, { id: "field-hb-allowDm" })}
         ${renderCheckbox(this.form, "heartbeat.lightContext", "Light Context", this._onChange, { id: "field-hb-lightContext" })}
-        ${renderCheckbox(this.form, "heartbeat.skipHeartbeatOnlyDelivery", "Skip HB-Only Delivery", this._onChange, { id: "field-hb-skipDelivery" })}
       </div>
       <div class="field-row">
         ${renderNumberField(this.form, "heartbeat.ackMaxChars", "Ack Max Chars", this._onChange, { id: "field-hb-ackMaxChars" })}

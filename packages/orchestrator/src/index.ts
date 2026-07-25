@@ -10,6 +10,7 @@
 
 // Inbound pipeline
 export * from "./inbound/inbound-pipeline.js";
+export { createDeterministicLocalization } from "./localization/deterministic-localization.js";
 export * from "./inbound/setup-and-route.js";
 export * from "./inbound/resolve-and-preprocess.js";
 export * from "./inbound/inbound-gate.js";
@@ -18,7 +19,12 @@ export * from "./inbound/inbound-gate.js";
 // and the perf test can import createDedupDetector from @comis/orchestrator.
 // Consumer: test/integration/incident-replay-2026-05-24.test.ts
 export { createDedupDetector } from "./inbound/dedup-detector.js";
-export type { DedupDetector, DedupDetectorOptions, DedupCheckResult } from "./inbound/dedup-detector.js";
+export type {
+  DedupDetector,
+  DedupDetectorOptions,
+  DedupReservation,
+  DedupReservationResult,
+} from "./inbound/dedup-detector.js";
 
 // Execution coordination — execution-deliver travels with
 // execution-pipeline (same ownership bucket). The former
@@ -106,6 +112,8 @@ export {
 export type {
   CommandQueue,
   CommandQueueDeps,
+  QueueExecutionContext,
+  QueueMessageHandler,
   QueueStats,
   SessionLane,
   OverflowResult,
@@ -121,8 +129,20 @@ export type {
 // dm-scope-integration.test.ts live here — other session files
 // (session-lifecycle, session-write-lock, session-reset-policy,
 // session-label-store, comis-session-manager) stay in agent.
-export { buildScopedSessionKey, extractThreadId } from "./session-key/session-key-builder.js";
-export type { DmScopeMode, ScopedSessionKeyParams } from "./session-key/session-key-builder.js";
+export { resolveRoutingPolicy, RoutingPolicyError } from "./routing/routing-policy-resolver.js";
+export type { RoutingPolicyInput } from "./routing/routing-policy-resolver.js";
+export {
+  resolveInternalTurnIdentity,
+  InternalTurnIdentityError,
+  type InternalTurnIdentity,
+  type InternalOriginKind,
+} from "./routing/internal-turn-identity.js";
+
+export {
+  classifyExecutionAbortReason,
+  classifyExecutionFinishReason,
+} from "./execution/execution-lifecycle-outcome.js";
+export type { LifecycleOutcome } from "./execution/execution-lifecycle-outcome.js";
 
 // Cross-session orchestration. These helpers are orchestration over
 // channels, not daemon-internal composition: the cross-session sender
@@ -140,6 +160,7 @@ export type { DmScopeMode, ScopedSessionKeyParams } from "./session-key/session-
 export * from "./cross-session/cross-session-sender.js";
 export * from "./cross-session/announcement-batcher.js";
 export * from "./cross-session/announcement-dead-letter.js";
+export * from "./cross-session/announcement-outward-operation.js";
 
 // Interactive approval router. The single server-side authority
 // that parses signed button callbacks (lookup-FIRST-then-verify), rejects

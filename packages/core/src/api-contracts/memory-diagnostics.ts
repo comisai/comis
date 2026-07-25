@@ -49,8 +49,8 @@ export const MemoryRecallTraceContract = defineContract({
   request: z.object({
     session_key: z.string().optional(),
     trace_id: z.string().optional(),
-    tenant_id: z.string().optional(),
-    agent_id: z.string().optional(),
+    tenant_id: z.string().min(1),
+    agent_id: z.string().min(1),
     // Bound the limit at parse time — positive integer with a sane cap.
     // An unbounded/negative/fractional limit would otherwise flow straight
     // into the file-scan guard (`records.length >= limit`), so reject
@@ -80,7 +80,7 @@ export const MemoryRecallTraceContract = defineContract({
  * provenance (admin-only). The handler reuses the existing
  * `MemoryConsolidationStore.listObservations` SQL-scoped read.
  *
- * Request: `{ tenant_id?, agent_id?, limit? }` — the scope dimensions the
+ * Request: `{ tenant_id, agent_id, limit? }` — the scope dimensions the
  * handler threads; `limit` default applied in the handler.
  *
  * Response: `observations[]` with `id`, a truncated `content` PREVIEW (the
@@ -91,8 +91,8 @@ export const MemoryRecallTraceContract = defineContract({
 export const MemoryObservationsContract = defineContract({
   method: "memory.observations",
   request: z.object({
-    tenant_id: z.string().optional(),
-    agent_id: z.string().optional(),
+    tenant_id: z.string().min(1),
+    agent_id: z.string().min(1),
     // Bound the limit at parse time — it flows straight into `LIMIT ?`.
     limit: z.number().int().positive().max(1000).optional(),
   }),
@@ -122,7 +122,7 @@ export const MemoryObservationsContract = defineContract({
  * `MemoryEntityStore.listEntities(agentId, tenantId, limit)` scoped read
  * (defined in `ports/memory-entity-store.ts`).
  *
- * Request: `{ tenant_id?, agent_id?, limit? }` — scope dimensions + bound.
+ * Request: `{ tenant_id, agent_id, limit? }` — scope dimensions + bound.
  *
  * Response: `entities[]` mirroring `EntityRow` — `id`, `name`,
  * `mentionCount`, optional `firstSeen` / `lastSeen` (epoch ms).
@@ -130,8 +130,8 @@ export const MemoryObservationsContract = defineContract({
 export const MemoryEntitiesContract = defineContract({
   method: "memory.entities",
   request: z.object({
-    tenant_id: z.string().optional(),
-    agent_id: z.string().optional(),
+    tenant_id: z.string().min(1),
+    agent_id: z.string().min(1),
     // Bound the limit at parse time — it flows straight into `LIMIT ?`.
     limit: z.number().int().positive().max(1000).optional(),
   }),
@@ -159,9 +159,9 @@ export const MemoryEntitiesContract = defineContract({
  * snapshot()` (the `@comis/observability` registry) plus the
  * two derived rates. Counters reset on process restart (documented).
  *
- * Request: `{ tenant_id?, agent_id? }` — accepted for symmetry with the other
- * diagnostic contracts; the counters are process-global (the handler may
- * ignore the scope or use it once per-scope counters land).
+ * Request: `{ tenant_id, agent_id }` — explicit operator authority for the
+ * diagnostic request. The counters are process-global, so the current handler
+ * validates but does not filter by this scope.
  *
  * Response: the `RecallCountersSnapshot` fields (`laneUsage{fts,vector,
  * entity}`, `rerankRuns`, `rerankFallbacks`, `consolidationClusters`,
@@ -173,8 +173,8 @@ export const MemoryEntitiesContract = defineContract({
 export const MemoryRecallStatsContract = defineContract({
   method: "memory.recall_stats",
   request: z.object({
-    tenant_id: z.string().optional(),
-    agent_id: z.string().optional(),
+    tenant_id: z.string().min(1),
+    agent_id: z.string().min(1),
   }),
   response: z.object({
     laneUsage: z.object({

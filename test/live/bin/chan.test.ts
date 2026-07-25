@@ -372,12 +372,12 @@ describe("chan/tg CLI — runVerb: rpc passthrough", () => {
     );
   });
 
-  it("fleet is a curated rpc call to obs.fleet.health", async () => {
+  it("system is a curated rpc call to obs.system.health", async () => {
     const rpc = vi.fn().mockResolvedValue({ degraded: 0 });
-    await runVerb("fleet", [], { handle: fakeHandle(), rpc });
+    await runVerb("system", [], { handle: fakeHandle(), rpc });
     expect(rpc).toHaveBeenCalledWith(
       "http://127.0.0.1:1",
-      "obs.fleet.health",
+      "obs.system.health",
       expect.any(Object),
       expect.any(String),
     );

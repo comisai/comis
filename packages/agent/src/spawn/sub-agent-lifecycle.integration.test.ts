@@ -24,6 +24,7 @@ import {
   type SubAgentRunnerDeps,
 } from "./sub-agent-runner.js";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+import { ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Lightweight port wrappers that delegate to globals.
@@ -62,29 +63,11 @@ const testTimers: TimerPort = {
 // ---------------------------------------------------------------------------
 
 function buildDeps(overrides?: Partial<SubAgentRunnerDeps>): SubAgentRunnerDeps {
-  const sessionData = new Map<
-    string,
-    { messages: unknown[]; metadata: Record<string, unknown> }
-  >();
-
   return {
     sessionStore: {
-      save: vi.fn(
-        (
-          key: { tenantId: string; userId: string; channelId: string },
-          messages: unknown[],
-          metadata: Record<string, unknown>,
-        ) => {
-          const formatted = `${key.tenantId}:${key.userId}:${key.channelId}`;
-          sessionData.set(formatted, { messages: [...messages], metadata: { ...metadata } });
-        },
-      ),
-      delete: vi.fn(
-        (key: { tenantId: string; userId: string; channelId: string }) => {
-          const formatted = `${key.tenantId}:${key.userId}:${key.channelId}`;
-          sessionData.delete(formatted);
-        },
-      ),
+      save: vi.fn(() => ok(undefined)),
+      delete: vi.fn(() => ok(false)),
+      loadByRef: vi.fn(() => ok(undefined)),
     },
     executeAgent: vi.fn().mockResolvedValue({
       response: "task completed successfully",
@@ -127,7 +110,7 @@ describe("sub-agent lifecycle integration", () => {
   // 1. Async spawn returns runId immediately
   // -------------------------------------------------------------------------
 
-  it("async spawn returns runId immediately (non-blocking)", () => {
+  it("async spawn returns runId immediately (non-blocking)", async () => {
     // Use a never-resolving promise to prove spawn is non-blocking
     let resolveExec!: (v: unknown) => void;
     vi.mocked(deps.executeAgent).mockReturnValue(
@@ -147,8 +130,11 @@ describe("sub-agent lifecycle integration", () => {
     expect(typeof runId).toBe("string");
     expect(runId.length).toBeGreaterThan(0);
 
-    // executeAgent was called (fire-and-forget in background)
-    expect(deps.executeAgent).toHaveBeenCalledTimes(1);
+    // Durable admission is asynchronous; provider execution starts after it
+    // completes without delaying the synchronous runId return above.
+    await vi.waitFor(() => {
+      expect(deps.executeAgent).toHaveBeenCalledTimes(1);
+    });
 
     // Status is "running"
     const status = runner.getRunStatus(runId);
@@ -168,7 +154,7 @@ describe("sub-agent lifecycle integration", () => {
   // 2. Run completes and status updates
   // -------------------------------------------------------------------------
 
-  it("run completes and status updates to completed with result", async () => {
+  it("run completion retains only the bounded terminal projection", async () => {
     vi.useFakeTimers();
     const runner = createSubAgentRunner(deps);
     const runId = runner.spawn({
@@ -182,20 +168,26 @@ describe("sub-agent lifecycle integration", () => {
     const run = runner.getRunStatus(runId);
     expect(run).toBeDefined();
     expect(run!.status).toBe("completed");
-    expect(run!.result).toBeDefined();
-    expect(run!.result!.response).toBe("task completed successfully");
-    expect(run!.result!.tokensUsed.total).toBe(200);
-    expect(run!.result!.cost.total).toBe(0.02);
-    expect(run!.result!.finishReason).toBe("stop");
-    expect(run!.completedAt).toBeDefined();
-    expect(run!.completedAt).toBeGreaterThanOrEqual(run!.startedAt);
+    if (run?.status !== "completed") throw new Error("expected completed run");
+    expect(run.completion).toEqual(expect.objectContaining({
+      endReason: "completed",
+      summary: "task completed successfully",
+    }));
+    expect(run.telemetry).toEqual(expect.objectContaining({
+      tokensUsedTotal: 200,
+      costTotal: 0.02,
+      finishReason: "stop",
+    }));
+    expect(run.completion.completedAtMs).toBeGreaterThanOrEqual(run.startedAt);
+    expect(run).not.toHaveProperty("result");
+    expect(run).not.toHaveProperty("completedAt");
   });
 
   // -------------------------------------------------------------------------
   // 3. Run failure sets status to "failed"
   // -------------------------------------------------------------------------
 
-  it("run failure sets status to failed with error message", async () => {
+  it("run failure retains only the bounded failure projection", async () => {
     vi.useFakeTimers();
     vi.mocked(deps.executeAgent).mockRejectedValue(new Error("LLM quota exceeded"));
 
@@ -210,8 +202,14 @@ describe("sub-agent lifecycle integration", () => {
     const run = runner.getRunStatus(runId);
     expect(run).toBeDefined();
     expect(run!.status).toBe("failed");
-    expect(run!.error).toBe("LLM quota exceeded");
-    expect(run!.completedAt).toBeDefined();
+    if (run?.status !== "failed") throw new Error("expected failed run");
+    expect(run.completion).toEqual(expect.objectContaining({
+      endReason: "failed",
+      errorKind: "internal",
+      summary: "LLM quota exceeded",
+    }));
+    expect(run).not.toHaveProperty("error");
+    expect(run).not.toHaveProperty("completedAt");
   });
 
   // -------------------------------------------------------------------------
@@ -239,7 +237,7 @@ describe("sub-agent lifecycle integration", () => {
   // 5. Empty allowlist allows any agent
   // -------------------------------------------------------------------------
 
-  it("empty allowlist allows any agent", () => {
+  it("empty allowlist allows any agent", async () => {
     deps.config.allowAgents = [];
 
     const runner = createSubAgentRunner(deps);
@@ -250,7 +248,9 @@ describe("sub-agent lifecycle integration", () => {
     });
 
     expect(typeof runId).toBe("string");
-    expect(deps.executeAgent).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(deps.executeAgent).toHaveBeenCalledTimes(1);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -367,10 +367,14 @@ describe("sub-agent lifecycle integration", () => {
     const saveCall = vi.mocked(deps.sessionStore.save).mock.calls[0]!;
 
     // Session key contains sub-agent-{runId}
-    const sessionKeyArg = saveCall[0] as { tenantId: string; userId: string; channelId: string };
-    expect(sessionKeyArg.userId).toContain("sub-agent-");
-    expect(sessionKeyArg.channelId).toContain("sub-agent:");
+    const sessionKeyArg = saveCall[0];
+    expect(sessionKeyArg.partition.kind).toBe("endpoint-conversation-principal");
+    if (sessionKeyArg.partition.kind !== "endpoint-conversation-principal") return;
+    expect(sessionKeyArg.partition.principalId).toContain("sub-agent:");
+    expect(sessionKeyArg.partition.endpoint.channelType).toBe("sub-agent");
+    expect(sessionKeyArg.partition.endpoint.conversationId).toBe(runId);
     expect(sessionKeyArg.tenantId).toBe("test-tenant");
+    expect(sessionKeyArg.agentId).toBe("researcher");
 
     // Metadata contains expected fields
     const metadata = saveCall[2] as Record<string, unknown>;
@@ -393,18 +397,17 @@ describe("sub-agent lifecycle integration", () => {
       callerSessionKey: "test-tenant:user1:ch1",
     });
 
-    // Spawn event emitted immediately
+    // Durable admission completes asynchronously before provider start and
+    // lifecycle event emission.
+    await vi.advanceTimersByTimeAsync(0);
     expect(deps.eventBus.emit).toHaveBeenCalledWith(
       "session:sub_agent_spawned",
       expect.objectContaining({
         runId,
         agentId: "researcher",
-        task: "event test",
         parentSessionKey: "test-tenant:user1:ch1",
       }),
     );
-
-    await vi.advanceTimersByTimeAsync(0);
 
     // Completion event emitted after execution
     expect(deps.eventBus.emit).toHaveBeenCalledWith(

@@ -43,6 +43,7 @@ import {
   type ConfigHandlerDeps,
   deliverConfigWebhook,
 } from "./config-helpers.js";
+import { runCommittedConfigLifecycle } from "./config-lifecycle.js";
 import { coerceConfigValue, resolveSchemaForPath } from "./config-validate.js";
 import type { PatchBucket } from "./config-write.js";
 
@@ -92,14 +93,10 @@ export function bindConfigExportHandlers(
       const ctx = rawParams._context as { agentId?: string; userId?: string; traceId?: string } | undefined;
 
       try {
-        // Validate section name exists
-        if (!(section in deps.container.config)) {
-          throw new Error(`Unknown config section: "${section}". Valid sections: ${getConfigSections().join(", ")}.`);
-        }
-
-        // Check immutable paths -- entire section is being replaced.
-        // Backstop for direct-RPC clients; LLM tool calls hit the same redirect
-        // earlier via gateway-tool / bridge validator.
+        // Contribution selection and activation topology remain operator-owned
+        // even before a linked contribution has registered its config schema.
+        // Check the shared immutable-path authority before section discovery so
+        // an unlinked namespace cannot fall through as merely unknown.
         if (isImmutableConfigPath(section)) {
           const redirect = getManagedSectionRedirect(section);
           const suffix = redirect
@@ -108,6 +105,11 @@ export function bindConfigExportHandlers(
           throw new Error(
             `Config section "${section}" is immutable and cannot be replaced at runtime.${suffix}`,
           );
+        }
+
+        // Validate section name exists
+        if (!(section in deps.container.config)) {
+          throw new Error(`Unknown config section: "${section}". Valid sections: ${getConfigSections().join(", ")}.`);
         }
 
         // Build replacement: replace the section entirely (NOT deep merge)
@@ -168,6 +170,8 @@ export function bindConfigExportHandlers(
         writeFileSync(tmpPath, yamlStringify(existingLocal), { encoding: "utf-8", mode: 0o600 });
         renameSync(tmpPath, localPath);
 
+        runCommittedConfigLifecycle(deps, validation.data, "config.apply");
+
         // Best-effort git commit
         if (deps.configGitManager) {
           const gitStart = systemNowMs();
@@ -190,7 +194,7 @@ export function bindConfigExportHandlers(
         deps.container.eventBus.emit("audit:event", {
           timestamp: systemNowMs(),
           agentId: ctx?.agentId ?? (rawParams._agentId as string | undefined) ?? "system",
-          tenantId: deps.container.config.tenantId ?? "default",
+          tenantId: deps.container.config.tenantId,
           actionType: "config.apply",
           classification: "destructive",
           outcome: "success",
@@ -238,7 +242,7 @@ export function bindConfigExportHandlers(
         deps.container.eventBus.emit("audit:event", {
           timestamp: systemNowMs(),
           agentId: ctx?.agentId ?? (rawParams._agentId as string | undefined) ?? "system",
-          tenantId: deps.container.config.tenantId ?? "default",
+          tenantId: deps.container.config.tenantId,
           actionType: "config.apply",
           classification: "destructive",
           outcome: "failure",

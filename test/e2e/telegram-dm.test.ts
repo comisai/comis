@@ -8,7 +8,7 @@
  *   2. Adapter outbound sendMessage POSTs to /bot<TOKEN>/sendMessage with
  *      the correct chat_id and text.
  *   3. The mock's getUpdates long-poll delivers inbound updates to the
- *      adapter's MessageHandler (the grammy runner reads from the mock).
+ *      adapter's MessageHandler (the grammY polling loop reads from the mock).
  *
  * Uses a stub bot token (`12345:test`) — no real credentials in tests.
  *
@@ -30,7 +30,7 @@ describe("E2E: telegram × dm — Bot API wire roundtrip against the 127.0.0.1 m
     mock = createMockTelegramServer();
     const handle = await mock.start();
     const plugin = createTelegramPlugin({
-      botToken: "12345:test",
+      getBotToken: () => "12345:test",
       apiRoot: handle.baseUrl,
       logger: createMockLogger(),
     });

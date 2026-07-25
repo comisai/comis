@@ -328,7 +328,10 @@ export class IcIncidentView extends LitElement {
     void this._loadPrometheusFlag(rpc);
 
     try {
-      const raw = await rpc.call<IncidentReportView>("obs.explain", { ...ref, depth: "summary" });
+      const raw = await rpc.call<IncidentReportView>("obs.explain", {
+        ...ref,
+        depth: "summary",
+      });
       this._report = raw;
       this._loadState = "loaded";
     } catch {

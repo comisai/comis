@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# VPS (run as ROOT) — clean slate then relaunch. Wipes the test session + LCD + logs; PRESERVES
-# config.yaml, secrets.db, and the master key (~/.comis/.env). Then restarts the PRODUCTION daemon
-# via systemd (the installed comis.service — the unit handles the SIGUSR2 exit-42 hot-restart, so
-# there is no supervisor to manage).
+# VPS (run as ROOT) — clean slate then relaunch. Wipes the test session + LCD + follow-up tasks +
+# logs; PRESERVES config.yaml, secrets.db, and the master key (~/.comis/.env). Then restarts the
+# PRODUCTION daemon via systemd (the installed comis.service — the unit handles the SIGUSR2 exit-42
+# hot-restart, so there is no supervisor to manage).
 #   Usage:  [WIPE_CRONS=1] bash /root/clean-restart.sh
 # Env: SERVICE (comis), DATA (/home/comis/.comis), COMIS_USER (comis), GW_PORT (4766) —
 # /root/comis-rig.env (rendered by deploy-scripts.sh) supplies per-box values; explicit env wins.
@@ -40,14 +40,18 @@ sleep 1
 sudo -u "$COMIS_USER" bash -c "
   # Wipe ALL default/* session dirs, NOT just default/<CHATID>.
   # A chatId-only wipe leaves STALE per-chat / cron@ / sub-agent dirs from prior (possibly different-config)
-  # runs — they pollute (a) fleet activeChannels, (b) cross-run model greps (a prior CODEX run's cron@ dirs
+  # runs — they pollute (a) system activeChannels, (b) cross-run model greps (a prior CODEX run's cron@ dirs
   # showed gpt-5.x modelIds while THIS run's config was anthropic — a phantom 'chimera'), and (c) re-prime a
   # multi-sender test's session (a different sender's prior-run refusals reload from its surviving JSONL).
   # clean-restart is a from-scratch tool (memory.db is wiped globally below), so wiping every default session
   # is the correct slate. (Targeted single-session severs use session.reset_conversation, not this script.)
   rm -rf '$DATA'/workspace/sessions/default/* '$DATA'/workspace/sessions/*/sub-agent*
   rm -f '$DATA'/memory.db '$DATA'/memory.db-wal '$DATA'/memory.db-shm
-  # NOT just *.log — fleet's activeChannels/activeAgents enumerate session-index.<date>.jsonl
+  # Follow-up task authority is scoped to the sessions and workspace-policy snapshots wiped above.
+  # Keeping it produces either orphaned work or a strict-schema boot failure after a code update.
+  # Remove the authority, reset intent, quarantine, and lock so boot recreates one empty valid store.
+  rm -f '$DATA'/workspace*/.scheduler/tasks.json '$DATA'/workspace*/.scheduler/tasks-reset-intent.json '$DATA'/workspace*/.scheduler/tasks-quarantine.jsonl '$DATA'/workspace*/.scheduler/tasks.lock
+  # NOT just *.log — system's activeChannels/activeAgents enumerate session-index.<date>.jsonl
   # (the whole-day file, not time-windowed), and cache-trace.jsonl pollutes the cache lens, so a
   # bare '*.log' leaves a 'clean' rig surfacing prior runs.
   rm -f '$DATA'/logs/*.log '$DATA'/logs/session-index.*.jsonl* '$DATA'/logs/cache-trace.jsonl
@@ -60,6 +64,10 @@ sudo -u "$COMIS_USER" bash -c "
   # session + memory.db wipe above does NOT catch them. terminal-wake is the LOAD-BEARING one (the
   # re-fire trigger); clearing only terminal-drive leaves the wake-state to resurrect.
   rm -rf '$DATA'/terminal-drive/* '$DATA'/terminal-wake/*
+  # Graceful shutdown captures active channel lanes for replay on the next boot.
+  # A clean slate must remove that handoff after systemd has stopped the daemon,
+  # or the just-wiped session is reconstructed immediately on startup.
+  rm -f '$DATA'/restart-continuations.json
   # Optional (WIPE_CRONS=1): clear the persisted cron store so a from-scratch run inherits NO stale crons
   # from a prior (different-dist) daemon. The daemon re-registers its current cron set from config on boot.
   # ALSO wipe execution.jsonl -- the ExecutionTracker per-job run HISTORY persists there (NOT in memory.db),

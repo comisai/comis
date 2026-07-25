@@ -46,13 +46,25 @@
 import { registerToolMetadata } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 
+/**
+ * Agent tools return structured data in `details`; direct-shape results remain
+ * valid for lightweight and synthetic tools. Detectors inspect the structured
+ * payload rather than the text blocks shown to the model.
+ */
+function structuredPayload(result: unknown): unknown {
+  if (result === null || typeof result !== "object") return result;
+  const details = (result as { details?: unknown }).details;
+  return details !== null && typeof details === "object" ? details : result;
+}
+
 /** Register the web_search / web_fetch failure-detector metadata. */
 export function registerFailureDetectorMetadata(): void {
   registerToolMetadata("web_search", {
     failureDetector: (result, isError) => {
       if (isError) return false; // SDK already flagged it — defer.
-      if (result === null || typeof result !== "object") return false;
-      const r = result as { error?: unknown; message?: unknown; failures?: unknown };
+      const payload = structuredPayload(result);
+      if (payload === null || typeof payload !== "object") return false;
+      const r = payload as { error?: unknown; message?: unknown; failures?: unknown };
       // A real web_search failure is signalled by a top-level `error` MACHINE CODE
       // (invalid_provider / invalid_freshness / all_providers_failed). A SUCCESS payload
       // carries `results` but NO top-level `error` — so a success whose snippet contains
@@ -85,8 +97,9 @@ export function registerFailureDetectorMetadata(): void {
   registerToolMetadata("web_fetch", {
     failureDetector: (result, isError) => {
       if (isError) return false; // SDK already flagged it — defer.
-      if (result === null || typeof result !== "object") return false;
-      const r = result as { error?: unknown; status?: unknown };
+      const payload = structuredPayload(result);
+      if (payload === null || typeof payload !== "object") return false;
+      const r = payload as { error?: unknown; status?: unknown };
       // Classify off the structured failure fields ONLY. A SUCCESS result has a numeric
       // `status` 200 and NO `error` key — its body lives in `r.text` and may contain "403"
       // (e.g. the IBM share price 403.92999267578 — production session 678314278), "blocked",

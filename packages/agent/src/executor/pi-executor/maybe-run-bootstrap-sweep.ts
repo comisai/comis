@@ -10,7 +10,7 @@
  * The trigger runs EXACTLY ONCE per session — gated on the existing
  * `isFirstMessageInSession` signal (`sessionContext.messages.length === 0`),
  * computed once at the top of `runSessionLocked`. Gating only on `contextStore`
- * presence would re-run the sweep on EVERY turn for the life of every dag session.
+ * presence would re-run the sweep on every turn for the life of a session.
  * Exactly-once is already guaranteed by the durable ingest cursor (turns 2+ are
  * idempotent no-ops), so the first-message gate removes per-turn LCD single-flight
  * overhead (`runOnConversation` + `getIngestCursor` + `getMessages` +
@@ -20,8 +20,8 @@
  * The recovery itself is the EXISTING `bootstrapLcdSweep` (epoch cursor + fail-closed
  * identity guard); this helper is only the gate + scope build + delegating call. The scope
  * is built EXACTLY as the afterTurn ingest block does so read scope == write scope:
- * conversationId === sessionKey === formattedKey,
- * agentId === `agentId ?? "default"`.
+ * conversationRef is the opaque authority and sessionKey is the formatted label,
+ * agentId === the executor's bound agent identity.
  *
  * Architecture cut (agent↛memory): imports ONLY the core `ContextStorePort`/`ClockPort`/
  * `ComisLogger`/`TypedEventBus` TYPES + the in-package `bootstrapLcdSweep`. The concrete
@@ -52,13 +52,14 @@ export interface MaybeRunBootstrapSweepState {
    * read, no event) — the durable cursor already covered any gap on the first message.
    */
   readonly isFirstMessageInSession: boolean;
-  /** The injected core ContextStorePort (daemon-injected concrete store). Absent ⇒ no-op. */
-  readonly contextStore: ContextStorePort | undefined;
-  /** The formatted session key — conversationId === sessionKey === formattedKey (well-formed). */
+  /** The injected core ContextStorePort (daemon-injected concrete store). */
+  readonly contextStore: ContextStorePort;
+  /** The formatted display/path session key. */
   readonly formattedKey: string;
+  readonly conversationRef: import("@comis/core").ConversationRef;
   /** The agent's tenant id (frozenDeps.tenantId ?? sessionKey.tenantId at the call site). */
   readonly tenantId: string;
-  /** The agent id (`agentId ?? "default"` — the afterTurn write-scope invariant). */
+  /** The executor's bound agent id. */
   readonly agentId: string;
   /** The JSONL-loaded live canonical AgentMessage[] (session.agent.state.messages). */
   readonly live: AgentMessage[];
@@ -68,15 +69,15 @@ export interface MaybeRunBootstrapSweepState {
   readonly logger: ComisLogger;
   /** For the three content-free context:dag_degraded health signals. */
   readonly eventBus: TypedEventBus;
-  /** Read by `shouldRunLcdStorePasses` inside the sweep — only dag mode reads the LCD store. */
-  readonly config: { contextEngine?: { version?: "pipeline" | "dag" } };
+  /** Read by the context-store pass gate inside the sweep. */
+  readonly config: { contextEngine?: { enabled?: boolean } };
 }
 
 /**
  * Run the bootstrap crash-recovery sweep ONCE at session start, before the first
- * turn proceeds. No-op when this is NOT the first message in the session or when no
- * store is wired. Delegates to {@link bootstrapLcdSweep} (the recovery logic + the
- * `shouldRunLcdStorePasses` dag gate live there; a pipeline agent does no sweep work).
+ * turn proceeds. No-op when this is not the first message in the session.
+ * Delegates to {@link bootstrapLcdSweep}; disabled context assembly does no
+ * sweep work.
  */
 export async function maybeRunBootstrapSweep(
   state: Readonly<MaybeRunBootstrapSweepState>,
@@ -84,10 +85,10 @@ export async function maybeRunBootstrapSweep(
   // Truly run ONCE — gate on the first-message signal. Turns 2+ are already
   // idempotent via the durable ingest cursor; skipping them removes the per-turn LCD
   // single-flight overhead and matches the "Runs ONCE at session start" contract.
-  if (!state.isFirstMessageInSession || !state.contextStore) return;
+  if (!state.isFirstMessageInSession) return;
 
   const scope: ContextStoreScope = {
-    conversationId: state.formattedKey,
+    conversationRef: state.conversationRef,
     tenantId: state.tenantId,
     agentId: state.agentId,
     sessionKey: state.formattedKey,

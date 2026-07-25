@@ -17,14 +17,14 @@
  *  - "no double-append: sweep + subsequent afterTurn" (LOAD-BEARING) — after the
  *    sweep recovers the gap, a SECOND ingestTurnGuarded (the simulated afterTurn)
  *    with the SAME live array appends zero further rows (the cursor guard).
- *  - "fail-closed ambiguous identity" (LOAD-BEARING) — conversationId≠sessionKey
+ *  - "fail-closed ambiguous identity" (LOAD-BEARING) — conversationRef≠sessionKey
  *    → ingestTurnGuarded refuses (isScopeSafeForIngest); the sweep fires the
  *    onFailClosed path → a content-free context:dag_degraded reason
  *    "fail_closed_rollover" is emitted, and NOTHING is written.
  *  - "no-op steady-state" — persisted == cursor.ingestedLiveLen == live.length →
  *    the sweep appends nothing (byte-identical to not running it).
  *  - "pipeline-mode / store-absent → no-op" — store undefined OR
- *    shouldRunLcdStorePasses(config)===false → no store read, no event.
+ *    shouldRunContextStorePasses(config)===false → no store read, no event.
  *  - "rebase continuation emits session_rebase" — live[0] anchor DIFFERS from the
  *    stored cursor (JSONL re-based) → the sweep continue-appends at the store's
  *    current max seq and fires onRebase → context:dag_degraded reason
@@ -41,6 +41,7 @@ import {
   type AppendMessageInput,
   type ContextStorePort,
   type ContextStoreScope,
+  type ConversationRef,
   type TypedEventBus,
 } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -56,22 +57,20 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 // ---------------------------------------------------------------------------
 
 const FIXED_NOW = 1000;
-const CONVERSATION_ID = "conv-bootstrap";
+const CONVERSATION_ID = `cv_${"b".repeat(43)}` as ConversationRef;
 
 const SCOPE: ContextStoreScope = {
-  conversationId: CONVERSATION_ID,
+  conversationRef: CONVERSATION_ID,
   tenantId: "tenant_a",
   agentId: "agent_a",
-  // Invariant: conversationId === sessionKey === formattedKey (the well-formed
-  // case). The fail-closed test deliberately breaks this.
-  sessionKey: CONVERSATION_ID,
+  sessionKey: "tenant_a:agent_a:user_a:channel_a",
 };
 
 /** A fixed wall clock — the sweep reads `clock.now()` (never Date.now()). */
 const clock = { now: () => FIXED_NOW };
 
-/** A dag config (the store passes are gated on shouldRunLcdStorePasses === dag). */
-const dagConfig = { contextEngine: { version: "dag" as const } };
+/** Canonical context assembly is enabled. */
+const canonicalConfig = { contextEngine: { enabled: true } };
 
 function userMsg(ts: number, text: string): AgentMessage {
   return { role: "user", timestamp: ts, content: text } as unknown as AgentMessage;
@@ -178,7 +177,7 @@ describe("bootstrapLcdSweep (bootstrap crash-recovery sweep)", () => {
     expect(store.getIngestCursor(SCOPE)!.ingestedLiveLen).toBe(3);
 
     // Act: session start → the bootstrap sweep runs with the FULL live array.
-    await bootstrapLcdSweep({ store, scope: SCOPE, live, clock, logger, eventBus, config: dagConfig });
+    await bootstrapLcdSweep({ store, scope: SCOPE, live, clock, logger, eventBus, config: canonicalConfig });
 
     // Assert: the 2-message gap is continue-appended (3 → 5), seqs continuous,
     // and the cursor bumps to live.length (5) — the exactly-once guard armed.
@@ -208,7 +207,7 @@ describe("bootstrapLcdSweep (bootstrap crash-recovery sweep)", () => {
     ingestTurnGuarded(store, SCOPE, live.slice(0, 3), FIXED_NOW, logger);
 
     // Bootstrap sweep recovers the 2-message gap.
-    await bootstrapLcdSweep({ store, scope: SCOPE, live, clock, logger, eventBus, config: dagConfig });
+    await bootstrapLcdSweep({ store, scope: SCOPE, live, clock, logger, eventBus, config: canonicalConfig });
     expect(store.getMessages(SCOPE).length).toBe(5);
 
     // The subsequent afterTurn (same live array, no new messages this first turn)
@@ -227,17 +226,16 @@ describe("bootstrapLcdSweep (bootstrap crash-recovery sweep)", () => {
     const logger = createMockLogger();
     const { eventBus, emit } = makeEventBus();
 
-    // Ambiguous identity: conversationId !== sessionKey (the silent cross-session
-    // reattach threat). isScopeSafeForIngest refuses BEFORE any write.
+    // Invalid opaque authority is refused before any write.
     const ambiguousScope: ContextStoreScope = {
-      conversationId: "conv-A",
+      conversationRef: "conv-A" as ConversationRef,
       tenantId: "tenant_a",
       agentId: "agent_a",
       sessionKey: "conv-B",
     };
     const live: AgentMessage[] = [userMsg(1, "u0"), assistantMsg(2, "a0")];
 
-    await bootstrapLcdSweep({ store, scope: ambiguousScope, live, clock, logger, eventBus, config: dagConfig });
+    await bootstrapLcdSweep({ store, scope: ambiguousScope, live, clock, logger, eventBus, config: canonicalConfig });
 
     // Nothing written — the refuse path skips the append entirely.
     expect(store.getMessages(ambiguousScope).length).toBe(0);
@@ -270,13 +268,13 @@ describe("bootstrapLcdSweep (bootstrap crash-recovery sweep)", () => {
     expect(store.getMessages(SCOPE).length).toBe(3);
 
     // The sweep is a no-op — delta = live.slice(3) = [].
-    await bootstrapLcdSweep({ store, scope: SCOPE, live, clock, logger, eventBus, config: dagConfig });
+    await bootstrapLcdSweep({ store, scope: SCOPE, live, clock, logger, eventBus, config: canonicalConfig });
 
     expect(store.getMessages(SCOPE).length).toBe(3); // unchanged
     expect(degradedEmits(emit)).toHaveLength(0);
   });
 
-  it("pipeline-mode → no-op: shouldRunLcdStorePasses(config)===false skips the sweep entirely (no store read, no event)", async () => {
+  it("disabled context assembly skips the recovery sweep without reading the store", async () => {
     const { store, reads, appended } = makeSpyStore();
     const logger = createMockLogger();
     const { eventBus, emit } = makeEventBus();
@@ -289,23 +287,12 @@ describe("bootstrapLcdSweep (bootstrap crash-recovery sweep)", () => {
       clock,
       logger,
       eventBus,
-      config: { contextEngine: { version: "pipeline" } },
+      config: { contextEngine: { enabled: false } },
     });
 
-    // A pipeline agent does NO sweep work — no store read, no append, no event.
+    // Disabled context assembly does no sweep work.
     expect(reads()).toBe(0);
     expect(appended).toHaveLength(0);
-    expect(emit).not.toHaveBeenCalled();
-  });
-
-  it("store-absent → no-op: undefined store skips the sweep (no event, no throw)", async () => {
-    const logger = createMockLogger();
-    const { eventBus, emit } = makeEventBus();
-    const live: AgentMessage[] = [userMsg(1, "u0")];
-
-    await expect(
-      bootstrapLcdSweep({ store: undefined, scope: SCOPE, live, clock, logger, eventBus, config: dagConfig }),
-    ).resolves.toBeUndefined();
     expect(emit).not.toHaveBeenCalled();
   });
 
@@ -326,7 +313,7 @@ describe("bootstrapLcdSweep (bootstrap crash-recovery sweep)", () => {
     const epochB: AgentMessage[] = [userMsg(9_000_000, "epoch-b u0"), assistantMsg(9_000_001, "epoch-b a0")];
     expect(messageEpochAnchor(epochB[0]!)).not.toBe(messageEpochAnchor(epochA[0]!));
 
-    await bootstrapLcdSweep({ store, scope: SCOPE, live: epochB, clock, logger, eventBus, config: dagConfig });
+    await bootstrapLcdSweep({ store, scope: SCOPE, live: epochB, clock, logger, eventBus, config: canonicalConfig });
 
     // Continue-append at the store's current max seq (2 → 4); seqs 2,3 added.
     const rows = store.getMessages(SCOPE);

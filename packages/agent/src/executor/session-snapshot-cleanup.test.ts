@@ -79,6 +79,30 @@ vi.mock("./stream-wrappers/tool-schema-cache.js", () => ({
 // (The default vitest config does not auto-mock @comis/core.)
 
 import { clearSessionState, wireSessionStateCleanup } from "./session-snapshot-cleanup.js";
+import { conversationScopeToSessionKey, formatSessionKey, type ConversationScope } from "@comis/core";
+
+function makeConversationScope(agentId = "bot1"): ConversationScope {
+  return {
+    tenantId: "t1",
+    agentId,
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: {
+        channelType: "test",
+        channelInstanceId: "test-instance",
+        conversationId: "c1",
+        conversationKind: "direct",
+      },
+      principalId: "u1",
+    },
+  };
+}
+
+function displayKey(scope: ConversationScope): string {
+  const projected = conversationScopeToSessionKey(scope);
+  if (!projected.ok) throw projected.error;
+  return formatSessionKey(projected.value);
+}
 
 describe("session-snapshot-cleanup", () => {
   beforeEach(() => {
@@ -160,7 +184,7 @@ describe("session-snapshot-cleanup", () => {
   describe("wireSessionStateCleanup", () => {
     it("subscribes to session:expired and calls clearSessionState on event", () => {
       // Minimal event bus stub
-      let capturedHandler: ((payload: { sessionKey: { tenantId: string; userId: string; channelId: string }; reason: string }) => void) | undefined;
+      let capturedHandler: ((payload: { conversationScope: ConversationScope; reason: string }) => void) | undefined;
       const eventBus = {
         on: vi.fn((_event: string, handler: typeof capturedHandler) => {
           capturedHandler = handler;
@@ -175,12 +199,12 @@ describe("session-snapshot-cleanup", () => {
       // Simulate event emission
       expect(capturedHandler).toBeDefined();
       capturedHandler!({
-        sessionKey: { tenantId: "t1", userId: "u1", channelId: "c1" },
+        conversationScope: makeConversationScope(),
         reason: "idle-timeout",
       });
 
       // formatSessionKey should produce "t1:u1:c1" for this input
-      const expectedKey = "t1:u1:c1";
+      const expectedKey = displayKey(makeConversationScope());
 
       expect(mockClearSessionToolNameSnapshot).toHaveBeenCalledWith(expectedKey);
       expect(mockClearSessionBootstrapFileSnapshot).toHaveBeenCalledWith(expectedKey);
@@ -196,8 +220,8 @@ describe("session-snapshot-cleanup", () => {
       expect(mockClearSessionLastResponseTs).toHaveBeenCalledWith(expectedKey);
     });
 
-    it("formats session key without agent prefix even when agentId is set", () => {
-      let capturedHandler: ((payload: { sessionKey: { agentId: string; tenantId: string; userId: string; channelId: string }; reason: string }) => void) | undefined;
+    it("keeps agent identity in the derived cleanup key", () => {
+      let capturedHandler: ((payload: { conversationScope: ConversationScope; reason: string }) => void) | undefined;
       const eventBus = {
         on: vi.fn((_event: string, handler: typeof capturedHandler) => {
           capturedHandler = handler;
@@ -207,14 +231,14 @@ describe("session-snapshot-cleanup", () => {
       wireSessionStateCleanup(eventBus as never);
 
       capturedHandler!({
-        sessionKey: { agentId: "bot1", tenantId: "t1", userId: "u1", channelId: "c1" },
+        conversationScope: makeConversationScope("bot1"),
         reason: "manual-reset",
       });
 
       // formatSessionKey does not emit an `agent:<agentId>:` prefix even
       // when `key.agentId` is set — the field is retained on the schema for
       // caller ergonomics but is intentionally not serialized.
-      const expectedKey = "t1:u1:c1";
+      const expectedKey = displayKey(makeConversationScope("bot1"));
 
       expect(mockClearSessionDeliveredGuides).toHaveBeenCalledWith(expectedKey);
       expect(mockClearSessionToolSchemaSnapshotHash).toHaveBeenCalledWith(expectedKey);

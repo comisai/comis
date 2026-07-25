@@ -27,7 +27,7 @@ import { resolveSessionFilePath } from "./obs-explain-readers.js";
 
 // A production-shaped session key — maps to tenant "default", channel
 // "678314278", file "678314278~peer~678314278.jsonl" (userId[~peer~peerId]).
-const SESSION_KEY = "default:678314278:678314278:peer:678314278";
+const SESSION_KEY = "default:agent:default:678314278:678314278:peer:678314278";
 const REAL_TENANT = "default";
 const REAL_CHANNEL = "678314278";
 const REAL_SESSION_FILE = "678314278~peer~678314278.jsonl";

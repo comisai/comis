@@ -71,7 +71,7 @@ describe.skipIf(!isLive)("Live — CTX-04 expansion loop (Stage-C)", () => {
     "expansion tool=$label",
     async ({ tool, label }) => {
       // Low contextThreshold to force quick compaction (15 turns at 0.4 threshold).
-      const configPath = buildCtxConfig({ version: "dag", contextThreshold: 0.4, label: `exp-${label}`, filePrefix: "ctx-exp" });
+      const configPath = buildCtxConfig({ contextThreshold: 0.4, label: `exp-${label}`, filePrefix: "ctx-exp" });
       const driver = new ConversationDriver({
         agentId: `ctx-exp-${label}`,
         provider: "anthropic",

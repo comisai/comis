@@ -10,7 +10,9 @@ Comis uses a `TypedEventBus` for cross-module communication. Instead of packages
 
 The `TypedEventBus` wraps Node.js `EventEmitter` with a type-safe generic interface. All typed events are defined in the `EventMap` interface, which is composed from 5 domain-specific sub-interfaces (`MessagingEvents`, `AgentEvents`, `ChannelEvents`, `InfraEvents`, `TerminalEvents`).
 
-API methods include `emit()`, `on()`, `off()`, `once()`, `removeAllListeners()`, `listenerCount()`, and `setMaxListeners()`. All methods are constrained by `EventMap` -- you cannot emit an event name that does not exist in the map, and every payload is type-checked at compile time.
+API methods include `emit()`, `emitSafely()`, `on()`, `off()`, `once()`, `removeAllListeners()`, `listenerCount()`, and `setMaxListeners()`. All methods are constrained by `EventMap` -- you cannot emit an event name that does not exist in the map, and every payload is type-checked at compile time.
+
+Use `emit()` when subscriber failure is part of the publisher's control flow and must surface. Use `emitSafely()` for observational notifications after an authoritative state change or external side effect. It invokes every subscriber in registration order, contains synchronous throws, and contains promise rejections without delaying the publisher. Publishers must log both the immediate `failures` and the asynchronously resolved `pendingFailures` with bounded, sanitized error metadata; neither failure path may alter the authoritative result.
 
 ```typescript
 import type { TypedEventBus, EventMap } from "@comis/core";
@@ -92,9 +94,10 @@ Message lifecycle, session management, subagent lifecycle, compaction, context e
 | `execution:prompt_timeout` | agentId, sessionKey, timeoutMs, timestamp |
 | `execution:signed_replay_recovered` | agentId, sessionKey, blocksRemoved, thoughtSignaturesStripped, succeeded, timestamp |
 | `message:received` | message, sessionKey |
-| `message:sent` | channelId, messageId, content |
+| `message:terminal` | channelType, channelId, sourceMessageId, outcome, reason, timestamp |
+| `message:sent` | channelType, channelId, messageId, content, sourceChannelType, sourceChannelId, sourceMessageId |
 | `message:streaming` | channelId, messageId, delta, accumulated |
-| `response:filtered` | channelId, suppressedBy, timestamp |
+| `response:filtered` | channelType, channelId, sourceMessageId, suppressedBy, timestamp |
 | `session:created` | sessionKey, timestamp |
 | `session:expired` | sessionKey, reason |
 | `session:cross_send` | fromSessionKey, toSessionKey, mode, timestamp |
@@ -189,7 +192,7 @@ Subscribe to this event for driver-level monitoring, logging, or triggering down
 
 **Per-subagent cost rollup:** the `graph:completed` payload carries an optional `nodeTokenSpend` (nodeId → tokens) and `nodeCost` (nodeId → corrected dollars) ledger, present only when at least one node recorded the respective metric. `nodeCost` accumulates each node's `graph:node_updated` cost delta — the same corrected dollars that feed the graph-wide total — so a per-subagent corrected-$ rollup (a node plus all its descendants) is computable from the bus alone. Both maps are counts/ids only (never task text or sub-agent output).
 
-**Pipeline authoring telemetry:** `pipeline:authored` fires once per `pipeline` authoring invocation -- `graph.define` and `graph.execute` -- carrying the `action` (`define` or `execute`), the calling model's server-resolved `capabilityClass` tier (`frontier` / `mid` / `small` / `nano`, or `unknown` when the tier cannot be resolved), whether the call parsed and validated against the graph schema (`schemaValid`, the real verdict -- `false` is still emitted, and the user-facing validation error still throws), and `repaired`. A present-but-malformed authoring call that fails schema **either** at the request-contract parse **or** at the graph parse/validate step counts as `schemaValid: false`; only the bespoke pre-checks (a `define` call with no `nodes`, or an `execute` call rejected by the agent-to-agent policy gate) emit nothing -- an empty/garbage call or a policy rejection is not an authoring attempt. The emit is **best-effort**: a telemetry failure (e.g. an observability-buffer write error) is logged and swallowed, never surfaced as the `graph.define`/`graph.execute` result. The payload is counts, ids, and enum labels only -- never a pipeline body, a node `type_config` value, a task or label string, or any secret. The tier is resolved daemon-side from the authoring agent, never tool-supplied. `repaired` is `false` unless the small-model graph repair producer (`orchestration.authoring.repairProducer`, default `true`) repaired the call -- opted out (`false`), it stays `false`. The fleet aggregate of this event -- the small-model pipeline-authoring failure rate and the pre-committed build/defer gate -- is surfaced by [`obs.fleet.health`](/reference/json-rpc#obs-fleet-health).
+**Pipeline authoring telemetry:** `pipeline:authored` fires once per `pipeline` authoring invocation -- `graph.define` and `graph.execute` -- carrying the `action` (`define` or `execute`), the calling model's server-resolved `capabilityClass` tier (`frontier` / `mid` / `small` / `nano`, or `unknown` when the tier cannot be resolved), whether the call parsed and validated against the graph schema (`schemaValid`, the real verdict -- `false` is still emitted, and the user-facing validation error still throws), and `repaired`. A present-but-malformed authoring call that fails schema **either** at the request-contract parse **or** at the graph parse/validate step counts as `schemaValid: false`; only the bespoke pre-checks (a `define` call with no `nodes`, or an `execute` call rejected by the agent-to-agent policy gate) emit nothing -- an empty/garbage call or a policy rejection is not an authoring attempt. The emit is **best-effort**: a telemetry failure (e.g. an observability-buffer write error) is logged and swallowed, never surfaced as the `graph.define`/`graph.execute` result. The payload is counts, ids, and enum labels only -- never a pipeline body, a node `type_config` value, a task or label string, or any secret. The tier is resolved daemon-side from the authoring agent, never tool-supplied. `repaired` is `false` unless the small-model graph repair producer (`orchestration.authoring.repairProducer`, default `true`) repaired the call -- opted out (`false`), it stays `false`. The system aggregate of this event -- the small-model pipeline-authoring failure rate and the pre-committed build/defer gate -- is surfaced by [`obs.system.health`](/reference/json-rpc#obs-system-health).
 
 **Small-model graph authoring:** `graph:repaired` and `graph:synthesized_from_intent` are the audit events for the small-model DAG-authoring layer (on by default -- see [`orchestration.authoring`](/reference/config-yaml#orchestration)). Both are **counts/ids/enums-only** -- the payload carries the matched/requested canonical `pattern` (`research-fanout` / `debate` / `vote` / `map-reduce`, a closed enum), the resulting `nodeCount`, and correlation ids; **never** a graph body, a node `type_config` value, a task or label string, or the one-line intent text. Both emits are **best-effort** (a telemetry failure is logged and swallowed, never surfaced as the operation result), and both fire **after** the synthesized/repaired graph passes the same validation a hand-authored graph runs -- so the event always reflects a *governed* graph.
 
@@ -271,7 +274,7 @@ Channel registration, sender blocking, command queuing, streaming delivery, typi
 
 </Accordion>
 
-<Accordion title="InfraEvents (55 events)">
+<Accordion title="InfraEvents">
 
 Approval gates, config patches, plugin lifecycle, hook execution, auth token rotation, diagnostics, media file extraction, scheduler (cron, heartbeat, tasks), process metrics, observability admin, agent hot-add/remove, MCP server connection lifecycle, notifications, background task lifecycle, system lifecycle, secret management, security warnings, and lifecycle reaction events.
 
@@ -283,14 +286,16 @@ Approval gates, config patches, plugin lifecycle, hook execution, auth token rot
 | `approval:resolved` | requestId, approved, approvedBy, reason, resolvedAt |
 | `auth:token_rotated` | provider, profileName, expiresAtMs, timestamp |
 | `background_task:cancelled` | agentId, taskId, toolName, timestamp |
-| `background_task:completed` | agentId, taskId, toolName, durationMs, timestamp |
-| `background_task:failed` | agentId, taskId, toolName, error, durationMs, timestamp |
+| `background_task:completed` | agentId, taskId, toolName, durationMs, origin, timestamp |
+| `background_task:failed` | agentId, taskId, toolName, error, durationMs, origin, timestamp |
+| `background_task:notified` | agentId, taskId, toolName, sessionKey, notified, reason, traceId, timestamp, trajectoryRecorded |
 | `background_task:promoted` | agentId, taskId, toolName, timestamp |
+| `background_task:reentered` | taskId, agentId, sessionKey, hopCount, traceId, timestamp |
 | `config:patched` | section, key, patchedBy, timestamp |
 | `diagnostic:billing_snapshot` | providers, totalCost, timestamp |
 | `diagnostic:channel_health` | channels, timestamp |
-| `diagnostic:message_processed` | messageId, channelId, channelType, agentId, sessionKey, receivedAt, executionDurationMs, deliveryDurationMs, totalDurationMs, tokensUsed, cost, success, finishReason, timestamp |
-| `diagnostic:webhook_delivered` | webhookId, source, event, statusCode, success, durationMs, error, timestamp |
+| `diagnostic:message_processed` | messageId, channelId, channelType, agentId, sessionKey, receivedAt, executionDurationMs, deliveryDurationMs, totalDurationMs, tokensUsed, cost, status, finishReason, failureStage, errorKind, timestamp |
+| `diagnostic:webhook_delivered` | webhookId, source, event, statusCode, success, durationMs, failureReason, timestamp |
 | `hook:executed` | hookName, pluginId, durationMs, success, error, timestamp |
 | `mcp:server:connected` | serverName, transport, toolCount, durationMs, timestamp |
 | `mcp:server:connect_failed` | serverName, transport, reason, timestamp |
@@ -312,13 +317,17 @@ Approval gates, config patches, plugin lifecycle, hook execution, auth token rot
 | `reaction:phase_changed` | messageId, channelType, channelId, chatId, phase, emoji, previousPhase, timestamp |
 | `reaction:stall_detected` | messageId, channelType, channelId, chatId, phase, severity, stallMs, timestamp |
 | `reaction:terminal` | messageId, channelType, channelId, chatId, phase, emoji, timestamp |
+| `scheduler:cron_execution_started` | executionId, bootId, jobId, agentId, scheduledForMs, trigger, workKind, rootRunId, startedAtMs |
+| `scheduler:cron_execution_terminal` | executionId, bootId, jobId, agentId, scheduledForMs, trigger, workKind, terminalAtMs, durationMs, outcomeKind, executionStatus, deliveryStatus, continuationStatus, queueDisposition, deliveredChunks, failedChunks, ambiguousChunks, errorKind |
+| `scheduler:cron_model_drift` | executionId, previousExecutionId, jobId, agentId, previousModelResolved, modelResolved, previousModelResolutionSource, modelResolutionSource, timestamp, workKind, action |
+| `scheduler:cron_ownership_reconciliation` | agentId, durationMs, timestamp, status, recoveredBeforeStart, ownerLostAfterStart, settledFromTerminal, retainedCurrentBoot, errorCode, errorKind |
+| `scheduler:cron_store_reset` | agentId, operationId, target, beforeDigests, afterDigests, reactivated, timestamp |
 | `scheduler:heartbeat_alert` | agentId, consecutiveErrors, classification, reason, backoffMs, timestamp |
-| `scheduler:heartbeat_check` | checksRun, alertsRaised, timestamp |
-| `scheduler:heartbeat_delivered` | agentId, channelType, channelId, chatId, level, outcome, reason, durationMs, timestamp |
-| `scheduler:job_completed` | jobId, jobName, agentId, durationMs, success, error, timestamp |
-| `scheduler:job_result` | jobId, jobName, agentId, result, success, deliveryTarget, timestamp, payloadKind, sessionStrategy, maxHistoryTurns, cronJobModel, onComplete |
-| `scheduler:job_started` | jobId, jobName, agentId, timestamp |
+| `scheduler:heartbeat_wake_admitted` | correlationId, target, lane, retainedReason, disposition, timestamp |
+| `scheduler:heartbeat_wake_deferred` | correlationId, target, lane, reason, nextEligibleAtMs, errorKind, timestamp |
+| `scheduler:heartbeat_wake_terminal` | correlationId, target, lane, retainedReason, status, cancellationReason, eventEntryCount, durationMs, errorKind, timestamp |
 | `scheduler:job_suspended` | jobId, jobName, agentId, consecutiveErrors, lastError, timestamp, deliveryTarget |
+| `scheduler:wake_gate` | jobId, agentId, wake, durationMs, toolCalls, estTurnsSaved, failedOpen, timestamp |
 | `secret:accessed` | secretName, agentId, outcome, timestamp |
 | `secret:modified` | secretName, action, timestamp |
 | `security:warn` | category, agentId, message, timestamp |

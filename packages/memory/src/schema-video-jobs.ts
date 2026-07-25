@@ -30,6 +30,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { requireTableInfoRows } from "./schema-introspection.js";
 
 /**
  * Create the `video_jobs` table + its indexes idempotently.
@@ -69,12 +70,10 @@ export function ensureVideoJobTable(db: Database.Database): void {
   // once and re-running ensureVideoJobTable never throws (a duplicate ADD COLUMN
   // would). The off-turn background poller resolves the per-session trajectory
   // recorder by this key to stitch a background-completed render to its turn.
-  // PRAGMA table_info shape is the sanctioned inline-object cast (the
-  // schema.ts:50 / schema-pinned.ts:22 column-exists precedent) — the
-  // untyped-sqlite gate exempts `as { ... }[]` (a one-off PRAGMA projection, not
-  // a domain row that needs the RowMapper); `as Array<{...}>` would trip it.
   const cols = new Set(
-    (db.prepare(`PRAGMA table_info(video_jobs)`).all() as { name: string }[]).map((r) => r.name),
+    requireTableInfoRows(db.prepare(`PRAGMA table_info(video_jobs)`).all(), "video_jobs").map(
+      (row) => row.name,
+    ),
   );
   if (!cols.has("session_key")) {
     db.exec(`ALTER TABLE video_jobs ADD COLUMN session_key TEXT`);

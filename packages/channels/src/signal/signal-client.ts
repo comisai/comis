@@ -100,14 +100,20 @@ function normalizeBaseUrl(url: string): string {
   }
   // If protocol already specified, keep it (user override)
   if (/^https?:\/\//i.test(trimmed)) {
-    return trimmed.replace(/\/+$/, "");
+    return trimTrailingSlashes(trimmed);
   }
   // Default to http for localhost (signal-cli daemon runs locally)
   // Default to https for all other hosts (security: no cleartext over network)
   const hostPart = trimmed.split(":")[0].split("/")[0].toLowerCase();
   const isLocalhost = hostPart === "localhost" || hostPart === "127.0.0.1" || hostPart === "::1" || hostPart === "[::1]";
   const protocol = isLocalhost ? "http" : "https";
-  return `${protocol}://${trimmed}`.replace(/\/+$/, "");
+  return trimTrailingSlashes(`${protocol}://${trimmed}`);
+}
+
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end--;
+  return value.slice(0, end);
 }
 
 // ---------------------------------------------------------------------------

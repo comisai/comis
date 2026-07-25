@@ -107,7 +107,7 @@ function makeCtx(
     responseText: "hello there",
     originalMessage: { attachments: [] },
     adapter: {
-      sendAttachment: vi.fn(async () => ok({})),
+      sendAttachment: vi.fn(async () => ok({ kind: "delivered_untracked" as const })),
     } as unknown as VoiceResponseContext["adapter"],
     channelType: "echo",
     channelId: "echo-live",

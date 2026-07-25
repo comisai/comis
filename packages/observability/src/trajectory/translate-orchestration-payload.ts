@@ -110,7 +110,7 @@ export function translateOrchestrationPayload(
     case "subagent:budget_exceeded":
       // The per-incident breach view for `comis explain` — graphId/
       // nodeId ids + the closed capSource + the two token NUMBERS (counts; the
-      // explain view DOES want them, unlike the fleet aggregate) — NEVER a task or output.
+      // explain view DOES want them, unlike the system aggregate) — NEVER a task or output.
       // agentId/timestamp envelope-only.
       return { graphId: payload.graphId, nodeId: payload.nodeId, capSource: payload.capSource, tokenBudget: payload.tokenBudget, tokensUsed: payload.tokensUsed };
 

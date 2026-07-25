@@ -94,6 +94,8 @@ export const MemorySearchFilesContract = defineContract({
   request: z.object({
     query: z.string(),
     limit: z.number().optional(),
+    tenantId: z.string().min(1).optional(),
+    agentId: z.string().optional(),
   }),
   response: z.object({
     results: z.array(
@@ -227,6 +229,9 @@ export const MemoryStoreContract = defineContract({
     content: z.string().min(1),
     tags: z.array(z.string()).optional(),
     trustLevel: z.string().optional(),
+    visibility: z.string(),
+    tenantId: z.string().min(1).optional(),
+    agentId: z.string().optional(),
   }),
   response: z.object({
     stored: z.literal(true),
@@ -235,12 +240,27 @@ export const MemoryStoreContract = defineContract({
   scopes: ["rpc"] as const,
 });
 
+export const MemoryChangeVisibilityContract = defineContract({
+  method: "memory.change_visibility",
+  request: z.object({
+    id: z.string().min(1),
+    tenantId: z.string().min(1),
+    agentId: z.string().min(1),
+    visibility: z.string(),
+  }),
+  response: z.object({
+    changed: z.boolean(),
+    id: z.string().optional(),
+  }),
+  scopes: ["admin"] as const,
+});
+
 // ---------------------------------------------------------------------------
 // memory.stats
 // ---------------------------------------------------------------------------
 
 /**
- * `memory.stats` — return MemoryStats for a tenant (+ optional agent).
+ * `memory.stats` — return MemoryStats for one explicit tenant-agent scope.
  * The handler returns whatever `deps.memoryApi.stats(tenantId, agentId)`
  * yields; the underlying `MemoryStats` shape carries provider-specific
  * keys (totalEntries, byType, byTrustLevel, byAgent, totalSessions,
@@ -253,8 +273,8 @@ export const MemoryStoreContract = defineContract({
 export const MemoryStatsContract = defineContract({
   method: "memory.stats",
   request: z.object({
-    tenant_id: z.string().optional(),
-    agent_id: z.string().optional(),
+    tenant_id: z.string().min(1),
+    agent_id: z.string().min(1),
   }),
   response: z.record(z.string(), z.unknown()),
   scopes: ["admin"] as const,
@@ -282,8 +302,8 @@ export const MemoryStatsContract = defineContract({
 export const MemoryBrowseContract = defineContract({
   method: "memory.browse",
   request: z.object({
-    tenant_id: z.string().optional(),
-    agent_id: z.string().optional(),
+    tenant_id: z.string().min(1),
+    agent_id: z.string().min(1),
     offset: z.number().optional(),
     limit: z.number().optional(),
     sort: z.string().optional(),
@@ -321,7 +341,8 @@ export const MemoryDeleteContract = defineContract({
   method: "memory.delete",
   request: z.object({
     ids: z.array(z.string()).min(1),
-    tenant_id: z.string().optional(),
+    tenant_id: z.string().min(1),
+    agent_id: z.string().min(1),
   }),
   response: z.object({
     deleted: z.number(),
@@ -336,29 +357,29 @@ export const MemoryDeleteContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `memory.flush` — wipe ALL memory entries for a tenant scope (+
- * optional agent narrowing). Admin-only. Destructive.
+ * `memory.flush` — wipe non-system, non-pinned memory entries for one
+ * explicit tenant-agent scope. Admin-only. Destructive. Deployment-wide
+ * maintenance uses a separate host-only authority surface.
  *
  * Bespoke pre-Zod validation:
  *   - `_trustLevel !== "admin"` → `"Admin access required for memory
  *     flush"`.
  *
  * Response: `{ flushed: true, entriesRemoved, scope: { tenantId,
- * agentId: string | null } }`. `agentId` is intentionally nullable —
- * `null` indicates a tenant-wide flush (no agent narrowing).
+ * agentId } }`.
  */
 export const MemoryFlushContract = defineContract({
   method: "memory.flush",
   request: z.object({
-    tenant_id: z.string().optional(),
-    agent_id: z.string().optional(),
+    tenant_id: z.string().min(1),
+    agent_id: z.string().min(1),
   }),
   response: z.object({
     flushed: z.literal(true),
     entriesRemoved: z.number(),
     scope: z.object({
       tenantId: z.string(),
-      agentId: z.nullable(z.string()),
+      agentId: z.string(),
     }),
   }),
   scopes: ["admin"] as const,
@@ -380,8 +401,8 @@ export const MemoryFlushContract = defineContract({
 export const MemoryExportContract = defineContract({
   method: "memory.export",
   request: z.object({
-    tenant_id: z.string().optional(),
-    agent_id: z.string().optional(),
+    tenant_id: z.string().min(1),
+    agent_id: z.string().min(1),
     offset: z.number().optional(),
     limit: z.number().optional(),
   }),
@@ -437,6 +458,7 @@ export const MEMORY_CONTRACTS = [
   MemoryAskContract,
   MemoryGetFileContract,
   MemoryStoreContract,
+  MemoryChangeVisibilityContract,
   MemoryStatsContract,
   MemoryBrowseContract,
   MemoryDeleteContract,

@@ -75,7 +75,7 @@ export const TOOL_SUMMARIES: Record<string, string> = {
   sessions_history: "Fetch another session's conversation history",
   sessions_send: "Send message to another session",
   sessions_spawn: "Spawn sub-agent for background work",
-  subagents: "List, steer, or kill sub-agents",
+  subagents: "List, wait for, steer, or kill sub-agents",
   pipeline: "Execute multi-node DAG workflow pipelines",
   session_status: "Show agent status and usage",
   session_search: "Search full session transcript history",
@@ -94,7 +94,7 @@ export const TOOL_SUMMARIES: Record<string, string> = {
   slack_action: "Perform actions on Slack platform",
   whatsapp_action: "Perform actions on WhatsApp platform",
   // Privileged / Supervisor
-  agents_manage: "Manage full agent fleet (admin)",
+  agents_manage: "Manage full agent system (admin)",
   obs_query: "Query platform diagnostics data (admin)",
   sessions_manage: "Manage session lifecycle operations (admin)",
   memory_manage: "Admin memory CRUD operations (admin)",
@@ -149,8 +149,8 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   sessions_history: "Fetch conversation history for another session or sub-agent.",
   // Confusable pair: sessions_send / message
   sessions_send: "Send message to another session. For chat channel messages, use message.",
-  sessions_spawn: "Spawn a sub-agent session for background work (sync or async).",
-  subagents: "List, steer, or kill sub-agent runs for this session.",
+  sessions_spawn: "Start a background sub-agent and return its run ID immediately.",
+  subagents: "List, wait for, steer, or kill sub-agent runs for this session.",
   pipeline: "Define, execute, monitor, and cancel multi-node DAG execution graphs.",
   session_status: "Show agent status card: usage, model, steps. Optional per-session model override.",
   // Confusable pair: session_search / memory_search
@@ -173,7 +173,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
 
   // ----- Privileged / Supervisor (dynamic: admin suffix) -----
   agents_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Manage agent fleet: list, create, get, update, delete, suspend, resume. For batch creation, pass workspace.role/identity inline to skip the 2-step write flow.";
+    const base = "Manage agent system: list, create, get, update, delete, suspend, resume. For batch creation, pass workspace.role/identity inline to skip the 2-step write flow.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   obs_query: (ctx: ToolDescriptionContext): string => {
@@ -260,8 +260,8 @@ export const TOOL_ORDER: string[] = [
  * Not all tools need guides -- most are self-explanatory from their lean description.
  */
 export const TOOL_GUIDES: Record<string, string> = {
-  agents_manage: `## Single-call creation (PREFERRED for batch fleet creation)
-For batch creation (multiple agents in one turn) and any case where you already know the agent's role and identity, use the SINGLE-CALL form. This collapses the previous 3-call workflow (create + 2× write) into 1 call per agent — critical when creating fleets of 5+ agents in parallel.
+  agents_manage: `## Single-call creation (PREFERRED for batch system creation)
+For batch creation (multiple agents in one turn) and any case where you already know the agent's role and identity, use the SINGLE-CALL form. This collapses the previous 3-call workflow (create + 2× write) into 1 call per agent — critical when creating systems of 5+ agents in parallel.
 
 agents_manage({action:"create", agent_id, config:{
   name, model, provider, maxSteps,
@@ -283,15 +283,15 @@ Step 2 — call write({path: "~/.comis/workspace-{agent_id}/ROLE.md", content: "
 Workspace.profile values: "full" or "specialist" ONLY. No "none", "minimal", "compact", or other values.
 ## Workspace Customization Guide
 Each agent gets a workspace at ~/.comis/workspace-{agentId}/ with these files:
-IDENTITY.md (CRITICAL): Set Name, Creature, Vibe, Emoji. A filled Name auto-skips onboarding.
+IDENTITY.md (CRITICAL): Set the agent identity. Filling this file does not complete onboarding.
 ROLE.md (CRITICAL): Agent role, behavioral guidelines, domain conventions.
 USER.md: Pre-fill with known user info (name, timezone, language).
 TOOLS.md: Replace defaults with actual tool notes, or clear.
-BOOTSTRAP.md: Write empty string to skip interactive onboarding.
+BOOTSTRAP.md: Write an empty string to complete onboarding; its content is the sole pending-state signal.
 AGENTS.md: DO NOT MODIFY (read-only platform instructions).
 SOUL.md: DO NOT MODIFY (read-only core personality).
 ## Workspace Profile
-workspace_profile: 'specialist' (~800 tokens) for task workers and fleet sub-agents.
+workspace_profile: 'specialist' (~800 tokens) for task workers and system sub-agents.
 workspace_profile: 'full' (~9K tokens) for user-facing agents on channels.
 ## Tool Defaults
 All built-in tools ENABLED by default (except browser). Do NOT disable tools unless explicitly requested.
@@ -439,8 +439,8 @@ When the user says "add" / "also" / "in addition", read first. When they say "se
 ### Clearing a Field
 \`persistToConfig\` cannot remove keys via patch — only set or replace. To clear an apiKeyName (e.g., to convert a cloud provider to keyless), the recipe is: disable > delete > recreate without apiKeyName. Direct YAML edits also work for operators with shell access.
 
-### Fleet-Wide Operations
-providers_manage and agents_manage operate on one entity at a time. For fleet-wide provider/model/failover changes: (1) create new provider(s) first, (2) agents_manage list to discover agents, (3) agents_manage update x N in parallel (one call per agent in the same turn). Group agents by model tier for tiered failover (e.g. opus agents get different fallbacks than sonnet agents).`,
+### System-Wide Operations
+providers_manage and agents_manage operate on one entity at a time. For deployment-wide provider/model/failover changes: (1) create new provider(s) first, (2) agents_manage list to discover agents, (3) agents_manage update x N in parallel (one call per agent in the same turn). Group agents by model tier for tiered failover (e.g. opus agents get different fallbacks than sonnet agents).`,
 
   pipeline: `## Pipeline Usage Guide
 Use 'define' action first to validate graph structure before save/execute.
@@ -501,6 +501,8 @@ Do NOT add --force, --no-verify, or -f flags unless the user specifically reques
 ## Sleep & Polling
 Do not use standalone \`sleep\` commands to wait for background work. Instead:
 - Use \`background: true\` and the \`process\` tool to poll completion
+- \`process status\` is the only authoritative completion signal for a registered background session
+- Never inspect a returned process ID from another \`exec\` call; process IDs are isolated between sandbox invocations
 - If polling an external process, check status directly rather than sleeping first
 - Keep any necessary sleep to 2 seconds or less
 ## Exit Codes
@@ -535,11 +537,13 @@ CRITICAL: Never send messages to channels the user has not explicitly specified 
   write: `## Write Guide
 Do NOT create documentation files (*.md, README, CHANGELOG) or config boilerplate unless the user explicitly requests it. Avoid creating new files when editing an existing file achieves the same goal.
 For modifying existing files, prefer the edit tool -- it sends only the diff, preserves encoding, and provides fuzzy matching. Use write only for creating new files or complete rewrites where most of the content changes.
+For BOOTSTRAP.md completion, use write with an empty content string. Never use edit to clear it. A successful clear is terminal: stop using tools and do not ask another setup question.
 The tool validates JSON, YAML, and JSONC syntax after writing config files. If validation fails, fix the syntax error immediately.`,
 
   edit: `## Edit Guide
 When copying text from read output into oldText, strip the line number prefix. The read tool outputs lines as "lineNumber<tab>content" -- only the content AFTER the tab is actual file text. Never include line numbers in oldText or newText.
 Use the smallest unique oldText that identifies the target (typically 2-4 lines of surrounding context). Merge adjacent changes into one edit entry rather than multiple sequential edits to the same region.
+Never use edit to clear BOOTSTRAP.md. Use write with an empty content string so onboarding completion is an explicit full-file transition.
 When the edit fails with [not_read]: read state resets each message. Read the file in this response before editing, even if you read it in a previous message.
 When the edit fails with [text_not_found]: (1) Did you include line numbers? (2) Did indentation change? (3) Is the text stale from a prior read? Re-read the file and retry with fresh content.
 When the edit fails with [duplicate_match]: add more surrounding context to make oldText unique, or use replaceAll if all occurrences should change.`,
@@ -618,11 +622,11 @@ You MUST delegate tasks to a sub-agent when the work matches ANY of these criter
 - **Time-intensive operations**: Any task where tool execution alone will take >30 seconds
 
 ### How to Delegate
-1. Use \`sessions_spawn\` with \`async=true\` and a **goal-oriented** task description
+1. Use \`sessions_spawn\` with a **goal-oriented** task description; every spawn runs in the background
 2. Describe WHAT to accomplish, not HOW -- the sub-agent has its own skills and will read SKILL.md itself
 3. Do NOT copy-paste skill instructions, shell commands, or step-by-step procedures into the task
 4. Include user context the sub-agent needs (e.g., desired style, dimensions, topic) but not tool instructions
-5. Set \`announce_channel_type\` and \`announce_channel_id\` for result delivery
+5. Result delivery is bound automatically to the authenticated request route; do not supply route identifiers
 6. Tell the user the task is delegated and give them the runId
 7. Continue the conversation -- the result will be announced automatically when done
 
@@ -631,7 +635,7 @@ When a task has independent subtasks, spawn multiple sub-agents in parallel:
 - Call \`sessions_spawn\` multiple times in the SAME response (parallel tool calls)
 - Each sub-agent gets a focused, self-contained task description
 - All sub-agents run concurrently and announce results independently
-- Use \`subagents\` (action="list") to check progress of all running sub-agents
+- Use \`subagents\` (action="wait") to collect owned results without polling; use action="list" only for a status snapshot
 
 ### Do NOT Delegate
 - Quick lookups, single-file reads, simple questions, status checks
@@ -720,7 +724,7 @@ When you call a gated action, the following happens automatically:
 
 Do not ask the user for permission before calling a gated action -- the approval gate handles that. Just call the tool and the system manages the rest.
 
-### Fleet Management Patterns
+### System Management Patterns
 
 - **Create vs reuse**: Before creating a new agent, check if one with the right configuration already exists (agents_manage get). Reuse when possible.
 - **Workspace files**: After creating a new agent, customize its workspace files -- ROLE.md (role/behavior), TOOLS.md (tool notes), IDENTITY.md (name/vibe). AGENTS.md and SOUL.md are read-only platform files.

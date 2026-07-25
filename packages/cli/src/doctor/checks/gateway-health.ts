@@ -29,7 +29,10 @@ function parseHostPort(url: string): { host: string; port: number } | null {
       const port = parsed.port
         ? Number(parsed.port)
         : parsed.protocol === "https:" ? 443 : 80;
-      return { host: parsed.hostname, port };
+      const host = parsed.hostname.startsWith("[") && parsed.hostname.endsWith("]")
+        ? parsed.hostname.slice(1, -1)
+        : parsed.hostname;
+      return { host, port };
     }
 
     // Try as host:port
@@ -60,6 +63,16 @@ export const gatewayHealthCheck: DoctorCheck = {
     const findings: DoctorFinding[] = [];
 
     if (!context.gatewayUrl) {
+      if (context.config?.gateway.enabled === false) {
+        findings.push({
+          category: CATEGORY,
+          check: "Gateway enabled",
+          status: "skip",
+          message: "Gateway connectivity not checked because gateway.enabled is false",
+          repairable: false,
+        });
+        return findings;
+      }
       // A valid config always carries a gateway section (schema defaults),
       // so a missing URL means the config itself did not resolve — say WHY
       // instead of claiming nothing is configured.

@@ -6,7 +6,7 @@
  * prompt-cache breaks — a clean `GROUP BY json_extract(details,'$.reason')` over the
  * EXISTING `obs_diagnostics` table + `idx_obs_diag_category` (NO new table, NO new
  * index). Standalone (not on the `ObservabilityStore` interface) — a focused
- * analytics read consumed by the fleet/explain surfaces; the `cache-stats-queries.ts`
+ * analytics read consumed by the system/explain surfaces; the `cache-stats-queries.ts`
  * sibling-module precedent. Parameterized bind args (the reason value is read out of
  * the JSON `details`, never interpolated into SQL).
  *

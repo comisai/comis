@@ -80,10 +80,15 @@ export function makeDeliveryService(
     hookRunner: overrides.hookRunner ?? makeNoopHookRunner(),
     deliveryQueue: overrides.deliveryQueue ?? createNoOpDeliveryQueue(),
     logger: overrides.logger ?? createMockLogger(),
+    clock: overrides.clock ?? {
+      now: () => Date.now(),
+      nowDate: () => new Date(),
+    },
     eventBus: overrides.eventBus ?? createMockEventBus(),
     retryEngine: overrides.retryEngine,
     maxCharsOverride: overrides.maxCharsOverride,
     replyMode: overrides.replyMode,
+    recordOutboundMessage: overrides.recordOutboundMessage,
     // in-flight outbound tracking is now internal to
     // createDeliveryService (see DeliveryService.drainInFlight). Tests that
     // need to observe in-flight Set state should drive it through the

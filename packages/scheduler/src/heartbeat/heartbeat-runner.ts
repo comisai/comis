@@ -1,217 +1,318 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * HeartbeatRunner: Orchestrates periodic heartbeat checks across
- * pluggable sources, applying quiet hours suppression and relevance
- * filtering before surfacing notifications.
- *
- */
+/** Deadline-bounded, timer-free monitoring runner owned by the wake coordinator. */
+import type {
+  ClockPort,
+  ComisLogger,
+  ErrorKind,
+  TimerHandle,
+  TimerPort,
+  TypedEventBus,
+} from "@comis/core";
+import { err, fromPromise, ok, type Result } from "@comis/shared";
+import { SCHEDULER_TERMINATION_GRACE_MS } from "../cron/cron-runtime.js";
+import type {
+  HeartbeatWakeReason,
+  MonitoringHeartbeatOutcome,
+} from "./wake-coordinator.js";
+import {
+  HeartbeatSourceIdSchema,
+  MonitoringSourceDiagnosticSchema,
+  type HeartbeatSourcePort,
+} from "./heartbeat-source.js";
 
-import { type TypedEventBus, sanitizeLogString, systemSetInterval, systemClearInterval } from "@comis/core";
-import type { Result } from "@comis/shared";
-import type { HeartbeatSourcePort, HeartbeatCheckResult } from "./heartbeat-source.js";
-import type { QuietHoursConfig } from "./quiet-hours.js";
-import type { NotificationVisibility } from "./relevance-filter.js";
-import type { SchedulerLogger } from "../shared-types.js";
-import { isInQuietHours } from "./quiet-hours.js";
-import { classifyHeartbeatResult, shouldNotify } from "./relevance-filter.js";
+type MonitoringTrigger = Exclude<HeartbeatWakeReason, "task">;
 
-/** Notification payload delivered to the onNotification callback. */
-export interface HeartbeatNotification {
-  sourceId: string;
-  sourceName: string;
-  text: string;
-  level: "ok" | "alert" | "critical";
-  timestamp: number;
-  metadata?: Record<string, unknown>;
-}
+export type MonitoringHeartbeatError =
+  | { readonly code: "invalid_input"; readonly errorKind: "validation" }
+  | { readonly code: "not_bound" | "precondition_failed"; readonly errorKind: "precondition" };
 
-/** Dependencies for creating a HeartbeatRunner. */
 export interface HeartbeatRunnerDeps {
-  /** Initial set of heartbeat sources to check. */
-  sources: HeartbeatSourcePort[];
-  /** Event bus for emitting scheduler:heartbeat_check events. */
-  eventBus: TypedEventBus;
-  /** Logger instance. */
-  logger: SchedulerLogger;
-  /** Heartbeat configuration (intervalMs, visibility). */
-  config: {
-    intervalMs: number;
-    showOk: boolean;
-    showAlerts: boolean;
-  };
-  /** Quiet hours configuration. */
-  quietHoursConfig: QuietHoursConfig;
-  /** Whether critical alerts bypass quiet hours. */
-  criticalBypass: boolean;
-  /** Callback invoked when a notification should be delivered. */
-  onNotification: (notification: HeartbeatNotification) => void;
-  /** Optional lock function to prevent concurrent checks. */
-  lockFn?: <T>(lockPath: string, fn: () => Promise<T>) => Promise<Result<T, "locked" | "error">>;
-  /** Lock file directory (used with lockFn). */
-  lockDir?: string;
-  /** Injectable clock for testing (defaults to Date.now). */
-  nowMs?: () => number;
+  sources: readonly HeartbeatSourcePort[];
+  clock: ClockPort;
+  timers: TimerPort;
+  eventBus: Pick<TypedEventBus, "emit">;
+  logger: Pick<ComisLogger, "debug" | "info" | "warn" | "error">;
+  staleMs: number;
 }
 
-/** HeartbeatRunner public interface. */
 export interface HeartbeatRunner {
-  /** Start the periodic heartbeat interval. */
-  start(): void;
-  /** Stop the periodic heartbeat interval. */
-  stop(): void;
-  /** Run a single round of checks across all sources. */
-  runOnce(): Promise<void>;
-  /** Add a source at runtime. */
-  registerSource(source: HeartbeatSourcePort): void;
-  /** Remove a source by ID at runtime. */
+  runOnce(
+    trigger: MonitoringTrigger,
+    signal: AbortSignal,
+  ): Promise<Result<MonitoringHeartbeatOutcome, MonitoringHeartbeatError>>;
+  registerSource(source: HeartbeatSourcePort): Result<void, MonitoringHeartbeatError>;
   unregisterSource(sourceId: string): boolean;
+  isBusy(): boolean;
+  shutdown(): void;
 }
 
-/**
- * Create a HeartbeatRunner that periodically checks all registered sources.
- *
- * For each source in runOnce():
- * 1. Call source.check() to get the raw result
- * 2. Classify the result text (ok/alert/critical)
- * 3. Check quiet hours status
- * 4. Apply shouldNotify filter
- * 5. Emit scheduler:heartbeat_check event
- * 6. If notification passes filter, call onNotification callback
- *
- * If lockFn is provided, runOnce wraps the check loop in a lock
- * to prevent concurrent execution from overlapping intervals.
- */
+interface Snapshot {
+  checksRun: number;
+  checksCompleted: number;
+  checksFailed: number;
+  alertsRaised: number;
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T): void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
+
+function isMonitoringTrigger(value: string): value is MonitoringTrigger {
+  return value === "interval"
+    || value === "manual"
+    || value === "hook"
+    || value === "wake"
+    || value === "exec-event"
+    || value === "cron";
+}
+
+/** Create a monitoring runner with no interval ownership or user-delivery surface. */
 export function createHeartbeatRunner(deps: HeartbeatRunnerDeps): HeartbeatRunner {
-  const {
-    eventBus,
-    logger,
-    config,
-    quietHoursConfig,
-    criticalBypass,
-    onNotification,
-    lockFn,
-    lockDir,
-  } = deps;
-  const getNow = deps.nowMs ?? Date.now;
-
   const sources = new Map<string, HeartbeatSourcePort>();
+  let accepting = true;
+  let busy = false;
+  let activeController: AbortController | undefined;
+
   for (const source of deps.sources) {
-    sources.set(source.id, source);
-  }
-
-  let timer: ReturnType<typeof setInterval> | null = null;
-
-  const visibility: NotificationVisibility = {
-    showOk: config.showOk,
-    showAlerts: config.showAlerts,
-  };
-
-  async function doChecks(): Promise<void> {
-    let checksRun = 0;
-    let alertsRaised = 0;
-    const now = getNow();
-
-    for (const source of sources.values()) {
-      let result: HeartbeatCheckResult;
-      try {
-        result = await source.check();
-        checksRun++;
-      } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        logger.error({
-          sourceId: source.id, sourceName: source.name,
-          err: errMsg,
-          hint: "Check heartbeat source implementation for unhandled exceptions",
-          errorKind: "dependency" as const,
-        }, "Heartbeat source error");
-        checksRun++;
-        // Treat source errors as alerts
-        // Sanitize error text before including in notification to prevent credential leaks
-        result = {
-          sourceId: source.id,
-          text: `Error checking source: ${sanitizeLogString(errMsg)}`,
-          timestamp: now,
-        };
-      }
-
-      const level = classifyHeartbeatResult(result.text);
-      const quietNow = isInQuietHours(quietHoursConfig, now);
-
-      const notify = shouldNotify({
-        level,
-        visibility,
-        isQuietHours: quietNow,
-        criticalBypass,
-      });
-
-      if (level === "alert" || level === "critical") {
-        alertsRaised++;
-      }
-
-      if (notify) {
-        onNotification({
-          sourceId: source.id,
-          sourceName: source.name,
-          text: result.text,
-          level,
-          timestamp: result.timestamp,
-          metadata: result.metadata,
-        });
-      }
-    }
-
-    eventBus.emit("scheduler:heartbeat_check", {
-      checksRun,
-      alertsRaised,
-      timestamp: now,
-    });
-
-    logger.debug({ checksRun, alertsRaised }, "Heartbeat tick complete");
-  }
-
-  async function runOnce(): Promise<void> {
-    if (lockFn && lockDir) {
-      const lockPath = `${lockDir}/heartbeat.lock`;
-      const lockResult = await lockFn(lockPath, doChecks);
-      if (!lockResult.ok) {
-        if (lockResult.error === "locked") {
-          logger.warn({ hint: "Previous heartbeat check still running; consider increasing intervalMs", errorKind: "resource" as const }, "Heartbeat check skipped");
-        } else {
-          logger.error({ hint: "Lock acquisition failed; check lockDir permissions and disk space", errorKind: "internal" as const }, "Heartbeat check lock error");
-        }
-        return;
-      }
-    } else {
-      await doChecks();
+    const registered = registerSource(source);
+    if (!registered.ok) {
+      accepting = false;
+      break;
     }
   }
 
   return {
-    start(): void {
-      if (timer !== null) return;
-      timer = systemSetInterval(() => {
-        void runOnce();
-      }, config.intervalMs);
-      timer.unref();
-      logger.info({ intervalMs: config.intervalMs, sourceCount: sources.size }, "HeartbeatRunner started");
-    },
-
-    stop(): void {
-      if (timer !== null) {
-        systemClearInterval(timer);
-        timer = null;
-        logger.info("HeartbeatRunner stopped");
-      }
-    },
-
     runOnce,
-
-    registerSource(source: HeartbeatSourcePort): void {
-      sources.set(source.id, source);
-    },
-
-    unregisterSource(sourceId: string): boolean {
+    registerSource,
+    unregisterSource(sourceId) {
       return sources.delete(sourceId);
     },
+    isBusy: () => busy,
+    shutdown() {
+      accepting = false;
+      activeController?.abort("shutdown");
+    },
+  };
+
+  function registerSource(
+    source: HeartbeatSourcePort,
+  ): Result<void, MonitoringHeartbeatError> {
+    if (!accepting) return err({ code: "not_bound", errorKind: "precondition" });
+    const sourceId = HeartbeatSourceIdSchema.safeParse(source.id);
+    if (!sourceId.success || sources.has(source.id)) {
+      return err({ code: "invalid_input", errorKind: "validation" });
+    }
+    sources.set(source.id, source);
+    return ok(undefined);
+  }
+
+  async function runOnce(
+    trigger: MonitoringTrigger,
+    signal: AbortSignal,
+  ): Promise<Result<MonitoringHeartbeatOutcome, MonitoringHeartbeatError>> {
+    if (!isMonitoringTrigger(trigger)) {
+      return err({ code: "invalid_input", errorKind: "validation" });
+    }
+    if (!accepting || busy || signal.aborted || !Number.isSafeInteger(deps.staleMs) || deps.staleMs <= 0) {
+      return err({ code: "precondition_failed", errorKind: "precondition" });
+    }
+
+    busy = true;
+    const startedAtMs = deps.clock.now();
+    const snapshot: Snapshot = {
+      checksRun: 0,
+      checksCompleted: 0,
+      checksFailed: 0,
+      alertsRaised: 0,
+    };
+    const controller = new AbortController();
+    activeController = controller;
+    const aborted = deferred<"aborted">();
+    const onParentAbort = (): void => controller.abort(signal.reason ?? "shutdown");
+    signal.addEventListener("abort", onParentAbort, { once: true });
+    const onAbort = (): void => aborted.resolve("aborted");
+    controller.signal.addEventListener("abort", onAbort, { once: true });
+    const deadline = deps.timers.setTimeout(() => controller.abort("deadline"), deps.staleMs);
+    deadline.unref();
+
+    const checks = runChecks(snapshot, controller.signal);
+    const first = await Promise.race([
+      checks.then(() => "settled" as const),
+      aborted.promise,
+    ]);
+    if (first === "settled") {
+      cleanup(deadline, signal, onParentAbort, controller.signal, onAbort);
+      busy = false;
+      activeController = undefined;
+      const outcome = settledOutcome(trigger, snapshot, elapsed(startedAtMs));
+      logCompletion(outcome);
+      return ok(outcome);
+    }
+
+    deadline.cancel();
+    const graceElapsed = deferred<"grace_elapsed">();
+    const grace = deps.timers.setTimeout(
+      () => graceElapsed.resolve("grace_elapsed"),
+      SCHEDULER_TERMINATION_GRACE_MS,
+    );
+    grace.unref();
+    const afterAbort = await Promise.race([
+      checks.then(() => "settled" as const),
+      graceElapsed.promise,
+    ]);
+    const abortReason = controller.signal.reason;
+    if (afterAbort === "settled") {
+      cleanup(grace, signal, onParentAbort, controller.signal, onAbort);
+      busy = false;
+      activeController = undefined;
+      const outcome = abortedOutcome(
+        trigger,
+        abortReason === "deadline" ? "deadline" : abortReason === "target_removed" ? "target_removed" : "shutdown",
+        snapshot,
+        elapsed(startedAtMs),
+      );
+      logCompletion(outcome);
+      return ok(outcome);
+    }
+
+    cleanup(grace, signal, onParentAbort, controller.signal, onAbort);
+    void checks.finally(() => {
+      busy = false;
+      activeController = undefined;
+      deps.logger.info({
+        durationMs: elapsed(startedAtMs),
+        checksRun: snapshot.checksRun,
+        checksCompleted: snapshot.checksCompleted,
+        checksFailed: snapshot.checksFailed,
+        alertsRaised: snapshot.alertsRaised,
+      }, "Monitoring heartbeat late settlement complete");
+    });
+    const outcome: MonitoringHeartbeatOutcome = {
+      status: "unsettled",
+      trigger,
+      reason: "deadline_termination_unestablished",
+      errorKind: "timeout",
+      checksRun: snapshot.checksRun,
+      checksCompleted: snapshot.checksCompleted,
+      checksFailed: snapshot.checksFailed,
+      alertsRaised: snapshot.alertsRaised,
+      durationMs: elapsed(startedAtMs),
+    };
+    logCompletion(outcome);
+    return ok(outcome);
+  }
+
+  async function runChecks(snapshot: Snapshot, signal: AbortSignal): Promise<void> {
+    for (const source of sources.values()) {
+      if (signal.aborted) break;
+      snapshot.checksRun += 1;
+      const invoked = await fromPromise(source.check(signal));
+      snapshot.checksCompleted += 1;
+      if (!invoked.ok) {
+        recordFailure(source.id, "source_rejected", "dependency", snapshot);
+        continue;
+      }
+      if (!invoked.value.ok) {
+        recordFailure(source.id, invoked.value.error.code, invoked.value.error.errorKind, snapshot);
+        continue;
+      }
+      const diagnostic = MonitoringSourceDiagnosticSchema.safeParse(invoked.value.value);
+      if (!diagnostic.success) {
+        recordFailure(source.id, "invalid_diagnostic", "validation", snapshot);
+        continue;
+      }
+      if (diagnostic.data.level !== "ok") snapshot.alertsRaised += 1;
+      deps.logger.debug({
+        sourceId: source.id,
+        level: diagnostic.data.level,
+        diagnosticCode: diagnostic.data.code,
+        counters: diagnostic.data.counters,
+        step: "monitoring_source_check",
+      }, "Monitoring source check complete");
+    }
+  }
+
+  function recordFailure(
+    sourceId: string,
+    sourceErrorCode: string,
+    errorKind: ErrorKind,
+    snapshot: Snapshot,
+  ): void {
+    snapshot.checksFailed += 1;
+    snapshot.alertsRaised += 1;
+    deps.logger.error({
+      sourceId,
+      sourceErrorCode,
+      step: "monitoring_source_check",
+      errorKind,
+      hint: "Inspect the classified monitoring adapter and its external dependency",
+    }, "Monitoring source check failed");
+  }
+
+  function elapsed(startedAtMs: number): number {
+    return Math.max(0, deps.clock.now() - startedAtMs);
+  }
+
+  function logCompletion(outcome: MonitoringHeartbeatOutcome): void {
+    deps.logger.info({
+      status: outcome.status,
+      trigger: outcome.trigger,
+      checksRun: outcome.checksRun,
+      checksFailed: outcome.checksFailed,
+      alertsRaised: outcome.alertsRaised,
+      durationMs: outcome.durationMs,
+    }, "Monitoring heartbeat execution complete");
+  }
+}
+
+function cleanup(
+  timer: TimerHandle,
+  parentSignal: AbortSignal,
+  onParentAbort: () => void,
+  signal: AbortSignal,
+  onAbort: () => void,
+): void {
+  timer.cancel();
+  parentSignal.removeEventListener("abort", onParentAbort);
+  signal.removeEventListener("abort", onAbort);
+}
+
+function settledOutcome(
+  trigger: MonitoringTrigger,
+  snapshot: Snapshot,
+  durationMs: number,
+): MonitoringHeartbeatOutcome {
+  return {
+    status: "settled",
+    trigger,
+    checksRun: snapshot.checksRun,
+    checksFailed: snapshot.checksFailed,
+    alertsRaised: snapshot.alertsRaised,
+    durationMs,
+  };
+}
+
+function abortedOutcome(
+  trigger: MonitoringTrigger,
+  reason: "deadline" | "shutdown" | "target_removed",
+  snapshot: Snapshot,
+  durationMs: number,
+): MonitoringHeartbeatOutcome {
+  return {
+    status: "aborted",
+    trigger,
+    reason,
+    errorKind: reason === "deadline" ? "timeout" : "precondition",
+    checksRun: snapshot.checksRun,
+    checksFailed: snapshot.checksFailed,
+    alertsRaised: snapshot.alertsRaised,
+    durationMs,
   };
 }

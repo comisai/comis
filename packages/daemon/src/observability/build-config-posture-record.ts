@@ -3,7 +3,7 @@
  * Record a config-posture SNAPSHOT at boot.
  *
  * Captures the three log-file-only security-posture FINDINGS as a single
- * point-in-time `obs_diagnostics` row at startup, so the fleet lens
+ * point-in-time `obs_diagnostics` row at startup, so the system health view
  * can query a daemon's posture without grepping `daemon.log`:
  *   - `tlsOff`               — the gateway is running without TLS (recomputed
  *                              from `gateway.{tls, allowInsecureHttp}` at the
@@ -105,8 +105,8 @@ export function countPricingGaps(
  * FAIL_CLOSED_PROFILE nano/8192, so every non-trivial turn context-exhausts).
  * Neither the chimeric NOR the pricing detector catches it: a non-native provider
  * like `openai-codex` resolves `"free"` (not `"unknown"`) for an unknown model, and
- * the model family still parses, so both return clean (the live fleet-marathon
- * `gpt-5.6` incident). Operator-declared custom models (`providers.entries.<p>.models`)
+ * the model family still parses, so both return clean. Operator-declared custom models
+ * (`providers.entries.<p>.models`)
  * are legitimately absent from the static catalog and are EXEMPTED (no false-flag).
  * Lives here (not inline in daemon.ts) to keep daemon.ts under its 3000-line cap.
  * Count only — the caller persists the COUNT, never agent ids/model names.
@@ -146,10 +146,10 @@ const MEDIA_PROVIDER_ENV_KEY: Readonly<Record<string, string>> = {
 
 /**
  * Count configured media pipelines (imageGeneration / transcription / tts /
- * videoGeneration) whose PINNED provider's credential is ABSENT — the pipeline
- * will fail at first use (the incident-day image-gen unavailability). The
+ * videoGeneration) whose pinned provider's credential is absent — the pipeline
+ * will fail at first use. The
  * chimeric/pricing detectors only watch the main COMPLETION pipeline, so a
- * media credential gap was invisible to `comis fleet`; this makes it a boot
+ * media credential gap was invisible to `comis system-health`; this makes it a boot
  * COUNT (never provider names — the no-free-text contract).
  *
  * `hasSecret` is `container.secretManager.has`. `imageCodexAvailable` is the

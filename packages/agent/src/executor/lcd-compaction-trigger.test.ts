@@ -40,10 +40,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 // ---------------------------------------------------------------------------
 
 const FIXED_NOW = 5000;
-const CONVERSATION_ID = "conv-trigger";
+const CONVERSATION_ID = `cv_${"t".repeat(43)}`;
 
 const SCOPE: ContextStoreScope = {
-  conversationId: CONVERSATION_ID,
+  conversationRef: CONVERSATION_ID,
   tenantId: "tenant_a",
   agentId: "agent_a",
   sessionKey: "sess-a",

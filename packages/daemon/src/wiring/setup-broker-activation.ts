@@ -19,7 +19,14 @@ import type {
   IssuedLease,
   MintLeaseInput,
 } from "@comis/infra";
-import { attenuateCaps, type AgentCapability, type OutputGuardPort } from "@comis/core";
+import {
+  attenuateCaps,
+  type AgentCapability,
+  type DeliveryOrigin,
+  type OutputGuardPort,
+  type ResolvedTurnScope,
+  type UserTrustLevel,
+} from "@comis/core";
 
 /**
  * Broker context threaded from daemon bootFoundation into tool assembly.
@@ -70,6 +77,12 @@ export interface CapabilityMintDeps {
   budgetRef: string;
   /** The session key the lease is minted for. */
   sessionKey: string;
+  /** Exact authenticated trust captured for the lease. */
+  trustLevel: UserTrustLevel;
+  /** Immutable requester route captured beside the session principal. */
+  deliveryOrigin?: DeliveryOrigin;
+  /** Canonical request authority captured beside the display session key. */
+  turnScope?: ResolvedTurnScope;
   /** The root-run id the lease is scoped to. */
   rootRunId: string;
   /**
@@ -169,6 +182,9 @@ export function buildBrokerSpawnEnv(
       caps,
       budgetRef: capMint.budgetRef,
       sessionKey: capMint.sessionKey,
+      trustLevel: capMint.trustLevel,
+      ...(capMint.deliveryOrigin !== undefined ? { deliveryOrigin: capMint.deliveryOrigin } : {}),
+      ...(capMint.turnScope !== undefined ? { turnScope: capMint.turnScope } : {}),
       rootRunId: capMint.rootRunId,
       ...(capMint.parentLeaseId !== undefined ? { parentLeaseId: capMint.parentLeaseId } : {}),
     };

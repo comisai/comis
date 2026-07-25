@@ -177,7 +177,7 @@ comis explain "<sessionKey|traceId|rootRunId>" --offline
 For a wider operational view:
 
 ~~~bash
-comis fleet --since 24
+comis system-health --since 24
 comis security audit-log
 ~~~
 

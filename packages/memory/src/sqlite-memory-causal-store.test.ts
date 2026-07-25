@@ -18,8 +18,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import type { MemoryEntry, MemoryConfig } from "@comis/core";
-import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
+import type { ConversationRef, MemoryEntry, MemoryConfig, MemoryRecallScope } from "@comis/core";
+import { ScopedMemoryTestAdapter as SqliteMemoryAdapter } from "../../../test/support/scoped-memory-adapter.js";
 import { createSqliteMemoryCausalStore } from "./sqlite-memory-causal-store.js";
 import type Database from "better-sqlite3";
 
@@ -46,6 +46,7 @@ function makeEntry(overrides: Partial<MemoryEntry>): MemoryEntry {
     tenantId: overrides.tenantId ?? "tenant_a",
     agentId: overrides.agentId ?? "agent_a",
     userId: overrides.userId ?? "user_a",
+    visibility: overrides.visibility ?? { kind: "agent-shared" },
     content: overrides.content ?? "neutral content",
     trustLevel: overrides.trustLevel ?? "learned",
     source: overrides.source ?? { who: "agent", channel: "test" },
@@ -55,8 +56,18 @@ function makeEntry(overrides: Partial<MemoryEntry>): MemoryEntry {
   };
 }
 
-const SCOPE_A = { tenantId: "tenant_a", agentId: "agent_a", now: 1_700_000_000_000 } as const;
-const READ_A = { tenantId: "tenant_a", agentId: "agent_a" } as const;
+function makeRecallScope(tenantId: string, agentId: string): MemoryRecallScope {
+  return {
+    tenantId,
+    agentId,
+    conversationRef: `cv_${"A".repeat(43)}` as ConversationRef,
+    principalId: "user_a",
+    includeAgentShared: true,
+  };
+}
+
+const READ_A = makeRecallScope("tenant_a", "agent_a");
+const SCOPE_A = { ...READ_A, now: 1_700_000_000_000 };
 
 describe("createSqliteMemoryCausalStore", () => {
   let adapter: SqliteMemoryAdapter;
@@ -239,7 +250,7 @@ describe("createSqliteMemoryCausalStore", () => {
 
       // Read with the SAME seed id but agent_b scope -> the (tenant, agent) WHERE
       // excludes agent_a's edge; coincident memory ids do NOT leak across scope.
-      const read = await store.causalLane([cause], { tenantId: "tenant_a", agentId: "agent_b" }, 10);
+      const read = await store.causalLane([cause], makeRecallScope("tenant_a", "agent_b"), 10);
       expect(read.ok).toBe(true);
       if (read.ok) expect(read.value).toEqual([]);
     });
@@ -264,7 +275,7 @@ describe("createSqliteMemoryCausalStore", () => {
       const written = await store.linkCausal(cause, "token-ddd", SCOPE_A, 1);
       expect(written.ok && written.value).toBe(1);
 
-      const read = await store.causalLane([cause], { tenantId: "tenant_b", agentId: "agent_a" }, 10);
+      const read = await store.causalLane([cause], makeRecallScope("tenant_b", "agent_a"), 10);
       expect(read.ok).toBe(true);
       if (read.ok) expect(read.value).toEqual([]);
     });
@@ -283,7 +294,7 @@ describe("createSqliteMemoryCausalStore", () => {
       expect(edgeCount()).toBe(1);
 
       // Delete the target via the EXISTING adapter path (foreign_keys=ON -> CASCADE).
-      const del = await adapter.delete(effectId, "tenant_a");
+      const del = await adapter.delete(effectId, { tenantId: "tenant_a", agentId: "agent_a" });
       expect(del.ok && del.value).toBe(true);
 
       // The edge is gone — both the table row and the lane result.
@@ -300,7 +311,7 @@ describe("createSqliteMemoryCausalStore", () => {
       expect(written.ok && written.value).toBe(1);
       expect(edgeCount()).toBe(1);
 
-      const del = await adapter.delete(causeId, "tenant_a");
+      const del = await adapter.delete(causeId, { tenantId: "tenant_a", agentId: "agent_a" });
       expect(del.ok && del.value).toBe(true);
       expect(edgeCount()).toBe(0);
     });

@@ -23,10 +23,20 @@ function makeContext(trustLevel: "admin" | "user" | "guest"): RequestContext {
   return {
     tenantId: "default",
     userId: "test-user",
-    sessionKey: "test-session",
+    agentId: "test-agent",
+    sessionKey: "default:agent:test-agent:test-user:chat-1",
+    turnScope: {
+      conversation: { tenantId: "default", agentId: "test-agent", partition: { kind: "agent" } },
+      principal: { principalId: "test-user" },
+      endpoint: { channelType: "telegram", channelInstanceId: "test-instance", conversationId: "chat-1", conversationKind: "direct" },
+    },
     traceId: crypto.randomUUID(),
     startedAt: Date.now(),
     trustLevel,
+    channelType: "telegram",
+    deliveryOrigin: Object.freeze({
+      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+    }),
   };
 }
 
@@ -168,6 +178,7 @@ describe("channels_manage tool", () => {
         expect.objectContaining({
           toolName: "channels_manage",
           action: "channels.enable",
+          agentId: "test-agent",
         }),
       );
       expect(mockRpcCall).toHaveBeenCalledWith("channels.enable", { channel_type: "telegram", _trustLevel: "admin" });
@@ -215,6 +226,7 @@ describe("channels_manage tool", () => {
         expect.objectContaining({
           toolName: "channels_manage",
           action: "channels.disable",
+          agentId: "test-agent",
         }),
       );
       expect(mockRpcCall).toHaveBeenCalledWith("channels.disable", { channel_type: "telegram", _trustLevel: "admin" });
@@ -262,6 +274,7 @@ describe("channels_manage tool", () => {
         expect.objectContaining({
           toolName: "channels_manage",
           action: "channels.restart",
+          agentId: "test-agent",
         }),
       );
       expect(mockRpcCall).toHaveBeenCalledWith("channels.restart", { channel_type: "telegram", _trustLevel: "admin" });
@@ -330,6 +343,7 @@ describe("channels_manage tool", () => {
         expect.objectContaining({
           toolName: "channels_manage",
           action: "channels.configure",
+          agentId: "test-agent",
         }),
       );
       // Verify result

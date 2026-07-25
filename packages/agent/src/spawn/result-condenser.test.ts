@@ -78,6 +78,7 @@ function createTestParams(overrides?: Partial<CondenseParams>): CondenseParams {
     fullResult: "Short result text",
     task: "test task",
     runId: "r1",
+    tenantId: "tenant-authority",
     sessionKey: "s1",
     agentId: "a1",
     ...overrides,
@@ -332,16 +333,17 @@ describe("ResultCondenser", () => {
     });
   });
 
-  it("uses simplified tenantId-based directory naming in disk path", async () => {
+  it("uses explicit tenant authority for the disk path instead of the display session key", async () => {
     const deps = createTestDeps({ maxResultTokens: 1000 });
     const condenser = createResultCondenser(deps);
 
     const result = await condenser.condense(createTestParams({
       sessionKey: "default:user:channel",
+      tenantId: "tenant-authority",
     }));
 
     // Simplified naming: {tenantId}/{runId}.json -- no colons, tenantId only
-    expect(result.diskPath).toContain("/default/");
+    expect(result.diskPath).toContain("/tenant-authority/");
     expect(result.diskPath).not.toContain("default:user:channel");
     expect(result.diskPath).not.toContain("default_user_channel");
   });

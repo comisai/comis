@@ -127,19 +127,18 @@ describe("PLAT-02 Stage-B — layering / cascade precedence", () => {
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
-  it("mergeLayered: later layer wins (via the raw merged out-param)", () => {
-    const raw: { value?: Record<string, unknown> } = {};
-    mergeLayered([{ tenantId: "first" }, { tenantId: "second" }], raw);
-    expect(raw.value?.tenantId).toBe("second");
+  it("mergeLayered: later layer wins", () => {
+    const r = mergeLayered([{ tenantId: "first" }, { tenantId: "second" }]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.tenantId).toBe("second");
   });
 
   it("loadLayered: explicit YAML beats the envLayer (defaults < envLayer < YAML)", () => {
     const fileA = writeTmpConfigFile(tmpDir, "layerA.yaml", "tenantId: from-yaml");
-    const raw: { value?: Record<string, unknown> } = {};
-    const r = loadLayered([fileA], { envLayer: { tenantId: "from-env" }, rawMergedOut: raw });
+    const r = loadLayered([fileA], { envLayer: { tenantId: "from-env" } });
     expect(r.ok).toBe(true);
     // The YAML layer is applied after the envLayer, so it wins.
-    expect(raw.value?.tenantId).toBe("from-yaml");
+    if (r.ok) expect(r.value.tenantId).toBe("from-yaml");
   });
 });
 

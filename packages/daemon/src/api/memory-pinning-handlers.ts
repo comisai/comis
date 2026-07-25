@@ -40,7 +40,7 @@ export function createMemoryPinningHandlers(
 
       const start = systemNowMs();
       const p = MemoryPinContract.request.parse(stripInternalFields(rawParams));
-      const tenantId = p.tenant_id ?? deps.tenantId;
+      const tenantId = p.tenant_id;
       // Forward agent_id from the request so the UPDATE is scoped
       // to (id, tenant_id, agent_id) — cross-agent pinning within a tenant is impossible.
       const agentId = p.agent_id;
@@ -89,7 +89,7 @@ export function createMemoryPinningHandlers(
 
       const start = systemNowMs();
       const p = MemoryUnpinContract.request.parse(stripInternalFields(rawParams));
-      const tenantId = p.tenant_id ?? deps.tenantId;
+      const tenantId = p.tenant_id;
       // Forward agent_id from the request so the UPDATE stays agent-scoped.
       const agentId = p.agent_id;
 

@@ -3,15 +3,15 @@
  * Hybrid memory injection: splits RAG results between inline (with user
  * message) and system prompt placement for optimal LLM attention.
  *
- * The top-1 highest-scoring memory is inlined with the user message for
- * maximum attention weight. Remaining memories go into the system prompt
- * as additional sections (same format as current RAG retriever).
+ * The top-1 highest-scoring same-sender memory is inlined with the user message
+ * for maximum attention weight. Unknown-sender, cross-sender, and remaining
+ * memories go into the system prompt as annotated sections.
  *
  * @module
  */
 
 import type { MemorySearchResult, WrapExternalContentOptions } from "@comis/core";
-import { systemDateFrom } from "@comis/core";
+import { scrubSecretsFromText, systemDateFrom } from "@comis/core";
 import { sanitizeToolOutput } from "../safety/tool-output-safety.js";
 import { formatMemorySection } from "./rag-retriever.js";
 
@@ -71,7 +71,7 @@ export interface HybridMemoryInjector {
    * Split memory results into inline and system prompt portions.
    *
    * @param results - Memory search results, pre-sorted by score descending
-   * @param maxChars - Maximum character budget for system prompt sections
+   * @param maxChars - Maximum character budget for all injected recall text
    * @returns Split injection result
    */
   split(results: MemorySearchResult[], maxChars: number): HybridMemoryInjection;
@@ -92,6 +92,9 @@ export function createHybridMemoryInjector(opts?: {
   /** Minimum score threshold for inline injection. Default: 0.7 */
   inlineMinScore?: number;
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
+  /** Current conversation sender. Foreign memories stay recallable in the
+   *  annotated system section but are not promoted beside the user message. */
+  requesterUserId?: string;
 }): HybridMemoryInjector {
   const inlineMinScore = opts?.inlineMinScore ?? 0.7;
 
@@ -104,9 +107,13 @@ export function createHybridMemoryInjector(opts?: {
 
       const top = results[0];
       const topScore = top.score ?? 0;
+      const hasInlineSenderProvenance =
+        opts?.requesterUserId === undefined || top.entry.userId === opts.requesterUserId;
 
-      // Check if top-1 qualifies for inline injection
-      if (topScore >= inlineMinScore) {
+      // Only same-sender top-1 recall receives the high-salience inline position.
+      // Unknown and cross-sender memories remain available in the annotated
+      // system section, where their provenance warning cannot be separated.
+      if (topScore >= inlineMinScore && hasInlineSenderProvenance) {
         // Format top-1 as inline memory
         const date = systemDateFrom(top.entry.createdAt).toISOString().split("T")[0];
         // Surface the EVENT date only when present; absent → the inline
@@ -116,14 +123,35 @@ export function createHybridMemoryInjector(opts?: {
           typeof top.entry.occurredAt === "number"
             ? `, occurred ${systemDateFrom(top.entry.occurredAt).toISOString().split("T")[0]}`
             : "";
-        const sanitized = sanitizeToolOutput(top.entry.content);
+        const sanitized = sanitizeToolOutput(scrubSecretsFromText(top.entry.content).text);
         const inlineMemory = `\n[Relevant context from memory: ${sanitized} (recorded ${date}${occurred})]\n`;
+
+        // If the top hit cannot fit as a complete inline envelope, keep the
+        // canonical formatter as the only placement. It either fits a complete
+        // annotated entry or emits nothing; recall text is never cut mid-entry.
+        if (inlineMemory.length > maxChars) {
+          const section = formatMemorySection(
+            results,
+            maxChars,
+            opts?.onSuspiciousContent,
+            opts?.requesterUserId,
+          );
+          return {
+            inlineMemory: undefined,
+            systemPromptSections: section ? [section] : [],
+          };
+        }
 
         // Format remaining results for system prompt
         const remaining = results.slice(1);
         const systemPromptSections: string[] = [];
         if (remaining.length > 0) {
-          const section = formatMemorySection(remaining, maxChars, opts?.onSuspiciousContent);
+          const section = formatMemorySection(
+            remaining,
+            Math.max(0, maxChars - inlineMemory.length),
+            opts?.onSuspiciousContent,
+            opts?.requesterUserId,
+          );
           if (section) {
             systemPromptSections.push(section);
           }
@@ -133,7 +161,12 @@ export function createHybridMemoryInjector(opts?: {
       }
 
       // Top-1 didn't qualify -- all go to system prompt
-      const section = formatMemorySection(results, maxChars, opts?.onSuspiciousContent);
+      const section = formatMemorySection(
+        results,
+        maxChars,
+        opts?.onSuspiciousContent,
+        opts?.requesterUserId,
+      );
       const systemPromptSections = section ? [section] : [];
       return { inlineMemory: undefined, systemPromptSections };
     },

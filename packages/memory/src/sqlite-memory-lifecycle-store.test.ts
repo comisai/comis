@@ -39,7 +39,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { MemoryConfig, MemoryEntry, SessionKey } from "@comis/core";
-import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
+import { ScopedMemoryTestAdapter as SqliteMemoryAdapter } from "../../../test/support/scoped-memory-adapter.js";
 import { ensureMemoryColumns } from "./schema.js";
 import {
   createSqliteMemoryLifecycleStore,
@@ -143,8 +143,8 @@ function insertMemory(
   target
     .prepare(
       `INSERT INTO memories
-        (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, occurred_at, proof_count, pinned)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)`,
+        (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at, occurred_at, proof_count, pinned)
+       VALUES (?, ?, ?, ?, 'agent-shared', ?, ?, ?, ?, '[]', ?, ?, ?, ?)`,
     )
     .run(
       opts.id,

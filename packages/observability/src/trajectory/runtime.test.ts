@@ -21,13 +21,21 @@
  *
  * @module
  */
-import { afterEach, beforeEach, describe, it, expect } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, existsSync } from "node:fs";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWithContext } from "@comis/core";
 
-import { createTrajectoryRecorder, MAX_TRAJECTORY_WRITERS, TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES } from "./runtime.js";
+import {
+  createTrajectoryRecorder as createTrajectoryRecorderResult,
+  MAX_TRAJECTORY_WRITERS,
+  TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES,
+} from "./runtime.js";
+import type {
+  TrajectoryRecorder,
+  TrajectoryRecorderInit,
+} from "./types.js";
 
 let tmpDir: string;
 let savedEnv: string | undefined;
@@ -54,6 +62,14 @@ function readLines(filePath: string): unknown[] {
     .split("\n")
     .filter((l) => l.length > 0)
     .map((l) => JSON.parse(l));
+}
+
+function createTrajectoryRecorder(
+  init: TrajectoryRecorderInit,
+): TrajectoryRecorder | null {
+  const result = createTrajectoryRecorderResult(init);
+  if (!result.ok) throw result.error;
+  return result.value;
 }
 
 describe("createTrajectoryRecorder -- well-formed event records", () => {
@@ -100,6 +116,254 @@ describe("createTrajectoryRecorder -- well-formed event records", () => {
       expect(lines[i].seq).toBe(i + 1);
       expect(lines[i].data.i).toBe(i);
     }
+  });
+
+  it("continues after the maximum persisted sequence when a daemon reopens a real session layout", async () => {
+    const channelDir = join(tmpDir, "workspace", "sessions", "default", "telegram");
+    mkdirSync(channelDir, { recursive: true });
+    const sessionFile = join(channelDir, "chat.jsonl");
+    writeFileSync(sessionFile, "", { mode: 0o600 });
+    const metadataFile = sessionFile.replace(/\.jsonl$/, "_session-metadata.json");
+    writeFileSync(metadataFile, JSON.stringify({ sessionId: "default:user:telegram:chat" }), {
+      mode: 0o600,
+    });
+    const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
+    const persisted = [290, 291, 1, 17].map((seq) =>
+      JSON.stringify({
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        source: "runtime",
+        type: "model.completed",
+        seq,
+        agentId: "default",
+        sessionId: "default:user:telegram:chat",
+        traceId: "trace-before-restart",
+        entryId: `entry-${seq}`,
+        data: {},
+      }),
+    );
+    writeFileSync(trajectoryFile, `${persisted.join("\n")}\n`, { mode: 0o600 });
+
+    const warn = vi.fn();
+    const logger = {
+      level: "warn",
+      trace: vi.fn(),
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn,
+      error: vi.fn(),
+      fatal: vi.fn(),
+      audit: vi.fn(),
+      child: vi.fn(),
+    };
+    logger.child.mockReturnValue(logger);
+    const recorder = createTrajectoryRecorder({
+      agentId: "default",
+      sessionId: "default:user:telegram:chat",
+      sessionFile,
+      confinedBaseDir: tmpDir,
+      logger,
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.recordEvent("tool.call", { toolName: "read-only-status" });
+    await recorder!.flush();
+
+    const lines = readLines(trajectoryFile) as Array<{ seq: number }>;
+    expect(lines.map((line) => line.seq)).toEqual([290, 291, 1, 17, 292]);
+    expect(existsSync(`${sessionFile}.trajectory-path.json`)).toBe(true);
+    expect(existsSync(metadataFile)).toBe(true);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "validation",
+        sequenceRegressions: 1,
+        hint: expect.any(String),
+      }),
+      "Trajectory recorder found non-monotonic persisted sequence values",
+    );
+  });
+
+  it("applies the soft capture cap to bytes persisted before a recorder reopen", async () => {
+    const channelDir = join(tmpDir, "workspace", "sessions", "default", "telegram");
+    mkdirSync(channelDir, { recursive: true });
+    const sessionFile = join(channelDir, "bounded.jsonl");
+    writeFileSync(sessionFile, "", { mode: 0o600 });
+    const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
+    const persistedLine = `${JSON.stringify({
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      source: "runtime",
+      type: "model.completed",
+      seq: 52,
+      agentId: "default",
+      sessionId: "default:user:telegram:bounded",
+      traceId: "trace-before-restart",
+      entryId: "entry-52",
+      data: { padding: "x".repeat(4096) },
+    })}\n`;
+    writeFileSync(trajectoryFile, persistedLine, { mode: 0o600 });
+
+    const recorder = createTrajectoryRecorder({
+      agentId: "default",
+      sessionId: "default:user:telegram:bounded",
+      sessionFile,
+      confinedBaseDir: tmpDir,
+      budgets: { captureMaxBytes: Buffer.byteLength(persistedLine) + 64 },
+    });
+    expect(recorder).not.toBeNull();
+    expect(recorder!.recordEvent("tool.call", { toolName: "read-only-status" })).toBe("dropped");
+    await recorder!.flush();
+
+    const lines = readLines(trajectoryFile) as Array<{ seq: number; type: string; data: Record<string, unknown> }>;
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toMatchObject({
+      seq: 53,
+      type: "trace.truncated",
+      data: { reason: "trajectory-runtime-file-size-limit", droppedEvents: 1 },
+    });
+  });
+
+  it("does not advance the high-water mark from foreign or invalid trajectory rows", async () => {
+    const sessionFile = join(tmpDir, "filtered.jsonl");
+    writeFileSync(sessionFile, "", { mode: 0o600 });
+    const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
+    const rows = [
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        source: "runtime",
+        type: "model.completed",
+        seq: 7,
+        agentId: "default",
+        sessionId: "sid-filtered",
+        traceId: "trace-valid",
+        entryId: "entry-valid",
+      },
+      {
+        traceSchema: "foreign-trajectory",
+        schemaVersion: 1,
+        seq: 999,
+        sessionId: "sid-filtered",
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        seq: 888,
+        sessionId: "sid-other",
+      },
+    ];
+    writeFileSync(trajectoryFile, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+
+    const recorder = createTrajectoryRecorder({
+      agentId: "default",
+      sessionId: "sid-filtered",
+      sessionFile,
+      confinedBaseDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+    expect(recorder!.recordEvent("tool.call", { toolName: "read-only-status" })).toBe("queued");
+    await recorder!.flush();
+
+    const lines = readLines(trajectoryFile) as Array<{ seq: number }>;
+    expect(lines.at(-1)?.seq).toBe(8);
+  });
+
+  it("keeps a reopened recorder terminal after a persisted soft-cap sentinel", async () => {
+    const sessionFile = join(tmpDir, "soft-closed.jsonl");
+    writeFileSync(sessionFile, "", { mode: 0o600 });
+    const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
+    const terminal = {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      source: "runtime",
+      type: "trace.truncated",
+      seq: 41,
+      agentId: "default",
+      sessionId: "sid-soft-closed",
+      traceId: "trace-before-restart",
+      entryId: "entry-41",
+      data: { reason: "trajectory-runtime-file-size-limit", droppedEvents: 1 },
+    };
+    const persisted = `${JSON.stringify(terminal)}\n`;
+    writeFileSync(trajectoryFile, persisted, { mode: 0o600 });
+
+    const recorder = createTrajectoryRecorder({
+      agentId: "default",
+      sessionId: "sid-soft-closed",
+      sessionFile,
+      confinedBaseDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+    expect(recorder!.recordEvent("tool.call", { toolName: "must-not-run" })).toBe("dropped");
+    await recorder!.flushAndClose();
+
+    expect(readFileSync(trajectoryFile, "utf8")).toBe(persisted);
+  });
+
+  it("rejects a symlinked persisted trajectory at the recorder read boundary", () => {
+    const sessionFile = join(tmpDir, "symlinked.jsonl");
+    writeFileSync(sessionFile, "", { mode: 0o600 });
+    const outside = join(tmpDir, "outside-trajectory.jsonl");
+    writeFileSync(
+      outside,
+      `${JSON.stringify({
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        source: "runtime",
+        type: "model.completed",
+        seq: 500,
+        agentId: "default",
+        sessionId: "sid-symlinked",
+        traceId: "outside-trace",
+        entryId: "outside-entry",
+      })}\n`,
+      { mode: 0o600 },
+    );
+    symlinkSync(outside, `${sessionFile}.trajectory.jsonl`);
+    const result = createTrajectoryRecorderResult({
+      agentId: "default",
+      sessionId: "sid-symlinked",
+      sessionFile,
+      confinedBaseDir: tmpDir,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.failureKind).toBe("symlink");
+  });
+
+  it("separates the next event from a malformed trailing fragment without rewriting history", async () => {
+    const sessionFile = join(tmpDir, "partial-tail.jsonl");
+    writeFileSync(sessionFile, "", { mode: 0o600 });
+    const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
+    const valid = JSON.stringify({
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      source: "runtime",
+      type: "model.completed",
+      seq: 9,
+      agentId: "default",
+      sessionId: "sid-partial-tail",
+      traceId: "trace-before-restart",
+      entryId: "entry-9",
+    });
+    writeFileSync(trajectoryFile, `${valid}\n{"partial"`, { mode: 0o600 });
+
+    const recorder = createTrajectoryRecorder({
+      agentId: "default",
+      sessionId: "sid-partial-tail",
+      sessionFile,
+      confinedBaseDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+    expect(recorder!.recordEvent("tool.call", { toolName: "after-partial" })).toBe(
+      "queued",
+    );
+    await recorder!.flush();
+
+    const physicalLines = readFileSync(trajectoryFile, "utf8")
+      .split("\n")
+      .filter((line) => line.length > 0);
+    expect(physicalLines.at(-2)).toBe('{"partial"');
+    expect(JSON.parse(physicalLines.at(-1) ?? "{}").seq).toBe(10);
   });
 });
 

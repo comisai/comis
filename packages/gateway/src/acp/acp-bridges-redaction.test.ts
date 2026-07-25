@@ -60,6 +60,7 @@ const ACP_SESSION_ID = "peer-cross-bridge-1";
 /** A sessionKey whose peerId reverse-resolves to ACP_SESSION_ID. */
 const ACP_SESSION_KEY = formatSessionKey({
   tenantId: "default",
+  agentId: "a1",
   userId: "ide-user",
   channelId: "acp",
   peerId: ACP_SESSION_ID,
@@ -246,9 +247,10 @@ describe("ACP bridges cross-surface redaction sweep (§19.6 M6, whole-surface)",
       eventBus: bus,
       executionPlanPort: planPort.port,
       getConnection,
+      resolveAcpSessionId: () => ACP_SESSION_ID,
     });
-    const activityUnsubscribe = activityBridge.subscribe(makeTurnContext());
-    const approvalUnsubscribe = approvalBridge.subscribe(makeTurnContext());
+    const activityUnsubscribe = activityBridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
+    const approvalUnsubscribe = approvalBridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     // Drive realistic events through every bridge.
     // 1) Activity: a tool start/progress/end sequence (params carry sentinel).

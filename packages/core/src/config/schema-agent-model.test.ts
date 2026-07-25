@@ -307,6 +307,24 @@ describe("OperationModelsSchema", () => {
     expect(result.cron?.timeout).toBe(150_000);
   });
 
+  it("accepts a per-agent outcome judge model override", () => {
+    const result = OperationModelsSchema.parse({
+      outcomeJudge: { model: "anthropic:claude-haiku-4-5-20251001", timeout: 30_000 },
+    });
+
+    expect(result.outcomeJudge?.model).toBe("anthropic:claude-haiku-4-5-20251001");
+    expect(result.outcomeJudge?.timeout).toBe(30_000);
+  });
+
+  it("accepts a per-agent skill synthesis model override", () => {
+    const result = OperationModelsSchema.parse({
+      skillSynthesis: { model: "openai-codex:gpt-5.6-sol", timeout: 180_000 },
+    });
+
+    expect(result.skillSynthesis?.model).toBe("openai-codex:gpt-5.6-sol");
+    expect(result.skillSynthesis?.timeout).toBe(180_000);
+  });
+
   it("accepts 'primary' keyword as a nested model value", () => {
     const result = OperationModelsSchema.parse({
       heartbeat: { model: "primary" },

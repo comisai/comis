@@ -2,20 +2,35 @@
 /**
  * HEARTBEAT.md content classifier for preflight file gate.
  *
- * Classifies file content as "effectively empty" when it contains only
- * structural Markdown (headers, empty list items) and whitespace -- meaning
- * no actual heartbeat task instructions exist.
+ * Classifies content as empty when it contains only comments, structural
+ * Markdown, and whitespace, meaning no heartbeat instruction exists.
  *
  * @module
  */
 
 /**
- * Regex matching lines that carry no heartbeat instruction content:
+ * Line shapes that carry no heartbeat instruction content:
  * - Empty / whitespace only
  * - Markdown ATX headers (# through ######, requires space after hashes)
  * - Empty list items (-, *, + with optional checkbox and no text after)
+ *
+ * Matched on pre-trimmed slices so no pattern has adjacent ambiguous
+ * quantifiers — the previous single-regex form (`^\s*(?:…|[-*+]\s*(?:…)?\s*)?$`)
+ * backtracked quadratically on a long whitespace run with one trailing
+ * non-whitespace char (~19s of event-loop block at 200k chars), and a
+ * workspace file line is exactly that kind of untrusted input.
  */
-const EFFECTIVELY_EMPTY_LINE = /^\s*(?:#{1,6}\s.*|[-*+]\s*(?:\[[\sx]\])?\s*)?$/;
+const ATX_HEADER_LINE = /^#{1,6}\s/;
+const EMPTY_LIST_ITEM_LINE = /^[-*+]\s*(?:\[[\sx]\])?$/;
+
+function isEffectivelyEmptyLine(line: string): boolean {
+  // trimStart only: the header rule needs the whitespace AFTER the hashes
+  // preserved (`## ` is structural, bare `##` is content).
+  const stripped = line.trimStart();
+  if (stripped === "") return true;
+  if (ATX_HEADER_LINE.test(stripped)) return true;
+  return EMPTY_LIST_ITEM_LINE.test(stripped.trimEnd());
+}
 
 /**
  * Classify HEARTBEAT.md content as effectively empty.
@@ -32,7 +47,25 @@ const EFFECTIVELY_EMPTY_LINE = /^\s*(?:#{1,6}\s.*|[-*+]\s*(?:\[[\sx]\])?\s*)?$/;
  * the caller must handle ENOENT separately.
  */
 export function isHeartbeatContentEffectivelyEmpty(content: string): boolean {
-  if (!content.trim()) return true;
-  const lines = content.split("\n");
-  return lines.every(line => EFFECTIVELY_EMPTY_LINE.test(line));
+  const withoutComments = stripHtmlComments(content);
+  if (!withoutComments.trim()) return true;
+  const lines = withoutComments.split("\n");
+  return lines.every(isEffectivelyEmptyLine);
+}
+
+function stripHtmlComments(content: string): string {
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < content.length) {
+    const start = content.indexOf("<!--", cursor);
+    if (start === -1) {
+      parts.push(content.slice(cursor));
+      break;
+    }
+    parts.push(content.slice(cursor, start));
+    const end = content.indexOf("-->", start + 4);
+    if (end === -1) break;
+    cursor = end + 3;
+  }
+  return parts.join("");
 }

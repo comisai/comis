@@ -41,9 +41,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import { startTestDaemon, type TestDaemonHandle } from "../support/daemon-harness.js";
 import { openAuthenticatedWebSocket, sendJsonRpc } from "../support/ws-helpers.js";
 import { EchoChannelAdapter } from "@comis/channels";
+import type { NormalizedMessage } from "@comis/core";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -73,6 +75,12 @@ async function sendNotification(
 }
 
 describe("continuous delivery-queue drainer (integration)", () => {
+  const echoEndpoint = {
+    channelType: "echo",
+    channelInstanceId: "delivery-recurring-test",
+    conversationId: "delivery-recurring-authoritative",
+    conversationKind: "direct",
+  };
   let handle: TestDaemonHandle;
   let echoAdapter: EchoChannelAdapter;
   // Monotonic id sequence so each WebSocket request has a unique id (avoids
@@ -99,6 +107,21 @@ describe("continuous delivery-queue drainer (integration)", () => {
     // mark each entry as failed.
     handle.daemon.adapterRegistry.set("echo", echoAdapter);
     handle.daemon.deliveryAdapters.set("echo", echoAdapter);
+
+    const channelManager = handle.daemon.channelManager;
+    if (!channelManager) {
+      throw new Error("Channel manager unavailable in delivery integration fixture");
+    }
+    await channelManager.injectMessage("echo", {
+      id: randomUUID(),
+      channelId: echoEndpoint.conversationId,
+      channelType: "echo",
+      senderId: "user_a",
+      text: "/help",
+      timestamp: Date.now(),
+      attachments: [],
+      metadata: {},
+    } satisfies NormalizedMessage);
   }, 120_000);
 
   afterAll(async () => {
@@ -133,7 +156,8 @@ describe("continuous delivery-queue drainer (integration)", () => {
         {
           message: "post-startup delivery",
           channel_type: "echo",
-          channel_id: "delivery-recurring-test",
+          channel_id: echoEndpoint.conversationId,
+          destination_endpoint: echoEndpoint,
           origin: "test",
         },
         nextRpcId++,
@@ -170,7 +194,8 @@ describe("continuous delivery-queue drainer (integration)", () => {
         {
           message: "depth check",
           channel_type: "echo",
-          channel_id: "delivery-recurring-test",
+          channel_id: echoEndpoint.conversationId,
+          destination_endpoint: echoEndpoint,
           origin: "test",
         },
         nextRpcId++,
@@ -253,7 +278,8 @@ describe("continuous delivery-queue drainer (integration)", () => {
             {
               message: `throughput msg ${i}`,
               channel_type: "echo",
-              channel_id: "delivery-recurring-test",
+              channel_id: echoEndpoint.conversationId,
+              destination_endpoint: echoEndpoint,
               origin: `throughput-${i}`,
               _agentId: `throughput-agent-${i}`,
             },
@@ -304,6 +330,39 @@ describe("continuous delivery-queue drainer (integration)", () => {
       expect(uniqueTexts.size).toBe(N);
     },
     60_000,
+  );
+
+  // -------------------------------------------------------------------------
+  // A configured primaryChannel supplies routing coordinates, not endpoint
+  // authority. When that configured route is untracked, notification.send
+  // continues to the recent-session level and uses its authoritative endpoint.
+  // -------------------------------------------------------------------------
+
+  it(
+    "notification.send falls back from an untracked primaryChannel to the recent authoritative endpoint",
+    async () => {
+      const beforeCount = echoAdapter.getSentMessages().length;
+
+      // No channel_type / channel_id: the configured primaryChannel is
+      // untracked, so resolution continues to the inbound-seeded recent route.
+      const response = (await sendNotification(
+        handle,
+        { message: "primary-channel fallback delivery", origin: "test" },
+        nextRpcId++,
+      )) as { result?: { success?: boolean }; error?: unknown };
+
+      expect(response.error).toBeUndefined();
+      expect(response.result?.success).toBe(true);
+
+      const deadline = Date.now() + 3_000;
+      while (echoAdapter.getSentMessages().length < beforeCount + 1 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(echoAdapter.getSentMessages()).toHaveLength(beforeCount + 1);
+      expect(echoAdapter.getSentMessages().at(-1)?.channelId)
+        .toBe(echoEndpoint.conversationId);
+    },
+    20_000,
   );
 
   // -------------------------------------------------------------------------

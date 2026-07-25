@@ -20,11 +20,8 @@ import type {
   SessionListItem,
   SessionMessage,
 } from "./types/index.js";
-import {
-  validateRequest,
-  validateResponse,
-  type MethodName,
-} from "./contracts.generated.js";
+import type { RpcClient } from "./rpc-client.js";
+import type { SessionAuthority, SessionTarget } from "./session-scope.js";
 /** Memory search result (api-client local -- not shared with other modules) */
 export interface MemorySearchResult {
   readonly id: string;
@@ -53,24 +50,31 @@ export interface ChatHistoryMessage {
 export type SseEventHandler = (event: string, data: unknown) => void;
 
 /** RPC call function signature for JSON-RPC 2.0 method invocation */
-export type RpcCallFn = <T>(method: string, params?: unknown) => Promise<T>;
+export type RpcCallFn = RpcClient["call"];
+
+/**
+ * The explicit tenant/agent a memory operation is scoped to. The daemon's
+ * memory RPCs and REST endpoints require both — there is no silent default.
+ */
+export interface MemoryAuthority {
+  readonly tenantId: string;
+  readonly agentId: string;
+}
 
 /** Parameters for browsing memory entries */
-export interface BrowseMemoryParams {
+export interface BrowseMemoryParams extends MemoryAuthority {
   readonly offset?: number;
   readonly limit?: number;
   readonly type?: string;
   readonly trust?: string;
-  readonly agentId?: string;
   readonly from?: number;
   readonly to?: number;
 }
 
 /** Parameters for listing sessions */
-export interface ListSessionsParams {
-  readonly agentId?: string;
-  readonly channelType?: string;
-  readonly search?: string;
+export interface ListSessionsParams extends SessionAuthority {
+  readonly kind?: string;
+  readonly sinceMinutes?: number;
 }
 
 /**
@@ -83,10 +87,10 @@ export interface ApiClient {
   getChannels(): Promise<ChannelInfo[]>;
   /** Fetch recent activity entries */
   getActivity(limit?: number): Promise<ActivityEntry[]>;
-  /** Search memory */
-  searchMemory(query: string, limit?: number): Promise<MemorySearchResult[]>;
-  /** Get memory statistics */
-  getMemoryStats(): Promise<Record<string, unknown>>;
+  /** Search memory within an explicit tenant/agent scope */
+  searchMemory(query: string, authority: MemoryAuthority, limit?: number): Promise<MemorySearchResult[]>;
+  /** Get memory statistics for an explicit tenant/agent scope */
+  getMemoryStats(authority: MemoryAuthority): Promise<Record<string, unknown>>;
   /** Send a chat message */
   chat(message: string, agentId?: string, sessionKey?: string): Promise<ChatResponse>;
   /** Load chat history */
@@ -96,85 +100,35 @@ export interface ApiClient {
 
   // --- Memory management methods ---
 
-  /** Browse memory entries (paginated, no query needed) */
+  /** Browse memory entries (paginated, no query needed) within an explicit tenant/agent scope */
   browseMemory(params: BrowseMemoryParams): Promise<{ entries: MemoryEntry[]; total: number }>;
-  /** Delete a memory entry by ID */
-  deleteMemory(id: string): Promise<void>;
-  /** Delete multiple memory entries */
-  deleteMemoryBulk(ids: string[]): Promise<{ deleted: number }>;
+  /** Delete a memory entry by ID within an explicit tenant/agent scope */
+  deleteMemory(id: string, authority: MemoryAuthority): Promise<void>;
+  /** Delete multiple memory entries within an explicit tenant/agent scope */
+  deleteMemoryBulk(ids: string[], authority: MemoryAuthority): Promise<{ deleted: number }>;
   /** Export memory entries as JSONL string */
-  exportMemory(ids?: string[]): Promise<string>;
+  exportMemory(authority: MemoryAuthority, ids?: string[]): Promise<string>;
 
   // --- Session management methods ---
 
   /** List all sessions */
-  listSessions(params?: ListSessionsParams): Promise<SessionListItem[]>;
+  listSessions(params: ListSessionsParams): Promise<SessionListItem[]>;
   /** Get session detail with history */
-  getSessionDetail(key: string): Promise<{ session: SessionInfo; messages: SessionMessage[] }>;
+  getSessionDetail(target: SessionTarget): Promise<{ session: SessionInfo; messages: SessionMessage[] }>;
   /** Reset a session */
-  resetSession(key: string): Promise<void>;
+  resetSession(target: SessionTarget): Promise<void>;
   /** Compact a session */
-  compactSession(key: string): Promise<void>;
+  compactSession(target: SessionTarget): Promise<void>;
   /** Delete a session */
-  deleteSession(key: string): Promise<void>;
+  deleteSession(target: SessionTarget): Promise<void>;
   /** Export session as JSONL */
-  exportSession(key: string): Promise<string>;
+  exportSession(target: SessionTarget): Promise<string>;
   /** Bulk reset sessions */
-  resetSessionsBulk(keys: string[]): Promise<{ reset: number }>;
+  resetSessionsBulk(targets: SessionTarget[]): Promise<{ reset: number }>;
   /** Bulk export sessions */
-  exportSessionsBulk(keys: string[]): Promise<string>;
+  exportSessionsBulk(targets: SessionTarget[]): Promise<string>;
   /** Bulk delete sessions */
-  deleteSessionsBulk(keys: string[]): Promise<{ deleted: number }>;
-}
-
-/**
- * Dev-mode validation gate, applied to the browser.
- *
- * In Vite dev/build, `import.meta.env.DEV` is `true` for `vite dev` and `false`
- * for production builds. Validation surfaces contract drift fast in development
- * but never crashes a production SPA on an unexpected daemon response shape —
- * the daemon-side handler is the trust boundary; the browser-side validator is
- * a sanity check.
- *
- * Wrapped in try/catch so non-Vite runtimes (unit tests, SSR, etc.) safely
- * fall through to `false` without ReferenceError on `import.meta.env`.
- */
-function isDevValidationActive(): boolean {
-  try {
-    const meta = import.meta as { env?: { DEV?: boolean } };
-    return meta.env?.DEV === true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Typed JSON-RPC call helper — dispatches through the generated CONTRACTS map.
- *
- * Validates request + response against the inlined JSON Schema literals in
- * `./contracts.generated.ts` when DEV mode is active. Production builds skip
- * validation (defense-in-depth: the daemon validates server-side, which is the
- * load-bearing trust boundary).
- *
- * @internal Used by every method-wrapper below that dispatches over the RPC
- *           channel; consolidates the prior `rpcCall(method, params)` pattern
- *           through the single generated artifact.
- */
-function typedCall<T>(
-  rpcCall: RpcCallFn,
-  method: MethodName,
-  params: unknown,
-): Promise<T> {
-  const validating = isDevValidationActive();
-  if (validating && !validateRequest(method, params)) {
-    throw new Error(`Invalid RPC request for ${method}`);
-  }
-  return rpcCall<T>(method, params).then((raw) => {
-    if (validating && !validateResponse(method, raw)) {
-      throw new Error(`Invalid RPC response for ${method}`);
-    }
-    return raw;
-  });
+  deleteSessionsBulk(targets: SessionTarget[]): Promise<{ deleted: number }>;
 }
 
 /**
@@ -277,15 +231,24 @@ export function createApiClient(
       return result.entries ?? [];
     },
 
-    async searchMemory(query: string, limit = 10): Promise<MemorySearchResult[]> {
+    async searchMemory(
+      query: string,
+      authority: MemoryAuthority,
+      limit = 10,
+    ): Promise<MemorySearchResult[]> {
       const result = await fetchJson<{ results?: MemorySearchResult[] }>(
-        `/api/memory/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+        `/api/memory/search?q=${encodeURIComponent(query)}&limit=${limit}`
+          + `&tenant=${encodeURIComponent(authority.tenantId)}`
+          + `&agent=${encodeURIComponent(authority.agentId)}`,
       );
       return result.results ?? [];
     },
 
-    async getMemoryStats(): Promise<Record<string, unknown>> {
-      return fetchJson<Record<string, unknown>>("/api/memory/stats");
+    async getMemoryStats(authority: MemoryAuthority): Promise<Record<string, unknown>> {
+      return fetchJson<Record<string, unknown>>(
+        `/api/memory/stats?tenant=${encodeURIComponent(authority.tenantId)}`
+          + `&agent=${encodeURIComponent(authority.agentId)}`,
+      );
     },
 
     async chat(message: string, agentId?: string, sessionKey?: string): Promise<ChatResponse> {
@@ -311,19 +274,27 @@ export function createApiClient(
     async browseMemory(
       params: BrowseMemoryParams,
     ): Promise<{ entries: MemoryEntry[]; total: number }> {
-      if (rpcCall) {
-        return typedCall<{ entries: MemoryEntry[]; total: number }>(
-          rpcCall,
-          "memory.browse",
-          params,
-        );
+      if (rpcCall && params.from === undefined && params.to === undefined) {
+        const result = await rpcCall("memory.browse", {
+          tenant_id: params.tenantId,
+          agent_id: params.agentId,
+          ...(params.offset !== undefined ? { offset: params.offset } : {}),
+          ...(params.limit !== undefined ? { limit: params.limit } : {}),
+          ...(params.type !== undefined ? { memory_type: params.type } : {}),
+          ...(params.trust !== undefined ? { trust_level: params.trust } : {}),
+        });
+        return {
+          entries: result.entries as unknown as MemoryEntry[],
+          total: result.total,
+        };
       }
       const qs = new URLSearchParams();
+      if (params.tenantId) qs.set("tenant", params.tenantId);
+      if (params.agentId) qs.set("agent", params.agentId);
       if (params.offset !== undefined) qs.set("offset", String(params.offset));
       if (params.limit !== undefined) qs.set("limit", String(params.limit));
       if (params.type) qs.set("type", params.type);
       if (params.trust) qs.set("trust", params.trust);
-      if (params.agentId) qs.set("agentId", params.agentId);
       if (params.from !== undefined) qs.set("from", String(params.from));
       if (params.to !== undefined) qs.set("to", String(params.to));
       const query = qs.toString();
@@ -332,125 +303,203 @@ export function createApiClient(
       );
     },
 
-    async deleteMemory(id: string): Promise<void> {
+    async deleteMemory(id: string, authority: MemoryAuthority): Promise<void> {
       if (rpcCall) {
-        await typedCall<void>(rpcCall, "memory.delete", { id });
+        await rpcCall("memory.delete", {
+          ids: [id],
+          tenant_id: authority.tenantId,
+          agent_id: authority.agentId,
+        });
         return;
       }
-      await fetchJson(`/api/memory/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const qs = new URLSearchParams({ tenant: authority.tenantId, agent: authority.agentId });
+      await fetchJson(`/api/memory/${encodeURIComponent(id)}?${qs.toString()}`, { method: "DELETE" });
     },
 
-    async deleteMemoryBulk(ids: string[]): Promise<{ deleted: number }> {
+    async deleteMemoryBulk(ids: string[], authority: MemoryAuthority): Promise<{ deleted: number }> {
       if (rpcCall) {
-        return typedCall<{ deleted: number }>(rpcCall, "memory.delete", { ids });
+        return rpcCall("memory.delete", {
+          ids,
+          tenant_id: authority.tenantId,
+          agent_id: authority.agentId,
+        });
       }
       return fetchJson<{ deleted: number }>("/api/memory/bulk-delete", {
         method: "POST",
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ ids, tenant: authority.tenantId, agent: authority.agentId }),
       });
     },
 
-    async exportMemory(ids?: string[]): Promise<string> {
+    async exportMemory(authority: MemoryAuthority, ids?: string[]): Promise<string> {
       if (rpcCall) {
-        return typedCall<string>(rpcCall, "memory.export", ids ? { ids } : {});
+        const result = await rpcCall("memory.export", {
+          tenant_id: authority.tenantId,
+          agent_id: authority.agentId,
+        });
+        const selected = ids === undefined
+          ? result.entries
+          : result.entries.filter((entry) => ids.includes(String(entry.id)));
+        return selected.map((entry) => JSON.stringify(entry)).join("\n");
       }
       return fetchText("/api/memory/export", {
         method: "POST",
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ ids, tenant: authority.tenantId, agent: authority.agentId }),
       });
     },
 
     // --- Session management methods ---
 
-    async listSessions(params?: ListSessionsParams): Promise<SessionListItem[]> {
+    async listSessions(params: ListSessionsParams): Promise<SessionListItem[]> {
       if (rpcCall) {
-        const result = await typedCall<{
-          sessions: SessionListItem[];
-          total: number;
-        }>(rpcCall, "session.list", params ?? {});
+        const result = await rpcCall("session.list", {
+          tenant_id: params.tenantId,
+          agent_id: params.agentId,
+          ...(params.kind !== undefined ? { kind: params.kind } : {}),
+          ...(params.sinceMinutes !== undefined
+            ? { since_minutes: params.sinceMinutes }
+            : {}),
+        });
         return result.sessions;
       }
       const qs = new URLSearchParams();
-      if (params?.agentId) qs.set("agentId", params.agentId);
-      if (params?.channelType) qs.set("channelType", params.channelType);
-      if (params?.search) qs.set("search", params.search);
+      qs.set("tenantId", params.tenantId);
+      qs.set("agentId", params.agentId);
+      if (params.kind) qs.set("kind", params.kind);
+      if (params.sinceMinutes !== undefined) qs.set("sinceMinutes", String(params.sinceMinutes));
       const query = qs.toString();
-      return fetchJson<SessionListItem[]>(`/api/sessions${query ? `?${query}` : ""}`);
+      return fetchJson<SessionListItem[]>(`/api/sessions?${query}`);
     },
 
     async getSessionDetail(
-      key: string,
+      target: SessionTarget,
     ): Promise<{ session: SessionInfo; messages: SessionMessage[] }> {
       if (rpcCall) {
-        return typedCall<{ session: SessionInfo; messages: SessionMessage[] }>(
-          rpcCall,
-          "session.history",
-          { session_key: key },
-        );
+        return rpcCall("session.history", {
+          tenant_id: target.tenantId,
+          agent_id: target.agentId,
+          conversation_ref: target.conversationRef,
+        }) as Promise<{
+          session: SessionInfo;
+          messages: SessionMessage[];
+        }>;
       }
+      const qs = new URLSearchParams({ tenantId: target.tenantId, agentId: target.agentId });
       return fetchJson<{ session: SessionInfo; messages: SessionMessage[] }>(
-        `/api/sessions/${encodeURIComponent(key)}`,
+        `/api/sessions/${encodeURIComponent(target.conversationRef)}?${qs.toString()}`,
       );
     },
 
-    async resetSession(key: string): Promise<void> {
+    async resetSession(target: SessionTarget): Promise<void> {
       if (rpcCall) {
-        await typedCall<void>(rpcCall, "session.reset", { session_key: key });
+        await rpcCall("session.reset", {
+          tenant_id: target.tenantId,
+          agent_id: target.agentId,
+          conversation_ref: target.conversationRef,
+        });
         return;
       }
-      await fetchJson(`/api/sessions/${encodeURIComponent(key)}/reset`, { method: "POST" });
+      const qs = new URLSearchParams({ tenantId: target.tenantId, agentId: target.agentId });
+      await fetchJson(
+        `/api/sessions/${encodeURIComponent(target.conversationRef)}/reset?${qs.toString()}`,
+        { method: "POST" },
+      );
     },
 
-    async compactSession(key: string): Promise<void> {
+    async compactSession(target: SessionTarget): Promise<void> {
       if (rpcCall) {
-        await typedCall<void>(rpcCall, "session.compact", { session_key: key });
+        await rpcCall("session.compact", {
+          tenant_id: target.tenantId,
+          agent_id: target.agentId,
+          conversation_ref: target.conversationRef,
+        });
         return;
       }
-      await fetchJson(`/api/sessions/${encodeURIComponent(key)}/compact`, { method: "POST" });
+      const qs = new URLSearchParams({ tenantId: target.tenantId, agentId: target.agentId });
+      await fetchJson(
+        `/api/sessions/${encodeURIComponent(target.conversationRef)}/compact?${qs.toString()}`,
+        { method: "POST" },
+      );
     },
 
-    async deleteSession(key: string): Promise<void> {
+    async deleteSession(target: SessionTarget): Promise<void> {
       if (rpcCall) {
-        await typedCall<void>(rpcCall, "session.delete", { session_key: key });
+        await rpcCall("session.delete", {
+          tenant_id: target.tenantId,
+          agent_id: target.agentId,
+          conversation_ref: target.conversationRef,
+        });
         return;
       }
-      await fetchJson(`/api/sessions/${encodeURIComponent(key)}`, { method: "DELETE" });
+      const qs = new URLSearchParams({ tenantId: target.tenantId, agentId: target.agentId });
+      await fetchJson(
+        `/api/sessions/${encodeURIComponent(target.conversationRef)}?${qs.toString()}`,
+        { method: "DELETE" },
+      );
     },
 
-    async exportSession(key: string): Promise<string> {
+    async exportSession(target: SessionTarget): Promise<string> {
       if (rpcCall) {
-        return typedCall<string>(rpcCall, "session.export", { session_key: key });
+        const result = await rpcCall("session.export", {
+          tenant_id: target.tenantId,
+          agent_id: target.agentId,
+          conversation_ref: target.conversationRef,
+        });
+        return JSON.stringify(result, null, 2);
       }
-      return fetchText(`/api/sessions/${encodeURIComponent(key)}/export`);
+      const qs = new URLSearchParams({ tenantId: target.tenantId, agentId: target.agentId });
+      return fetchText(
+        `/api/sessions/${encodeURIComponent(target.conversationRef)}/export?${qs.toString()}`,
+      );
     },
 
-    async resetSessionsBulk(keys: string[]): Promise<{ reset: number }> {
+    async resetSessionsBulk(targets: SessionTarget[]): Promise<{ reset: number }> {
       if (rpcCall) {
-        return typedCall<{ reset: number }>(rpcCall, "session.reset", { keys });
+        const results = await Promise.all(
+          targets.map((target) => rpcCall("session.reset", {
+            tenant_id: target.tenantId,
+            agent_id: target.agentId,
+            conversation_ref: target.conversationRef,
+          })),
+        );
+        return { reset: results.length };
       }
       return fetchJson<{ reset: number }>("/api/sessions/bulk-reset", {
         method: "POST",
-        body: JSON.stringify({ keys }),
+        body: JSON.stringify({ targets }),
       });
     },
 
-    async exportSessionsBulk(keys: string[]): Promise<string> {
+    async exportSessionsBulk(targets: SessionTarget[]): Promise<string> {
       if (rpcCall) {
-        return typedCall<string>(rpcCall, "session.export", { keys });
+        const results = await Promise.all(
+          targets.map((target) => rpcCall("session.export", {
+            tenant_id: target.tenantId,
+            agent_id: target.agentId,
+            conversation_ref: target.conversationRef,
+          })),
+        );
+        return results.map((result) => JSON.stringify(result)).join("\n");
       }
       return fetchText("/api/sessions/bulk-export", {
         method: "POST",
-        body: JSON.stringify({ keys }),
+        body: JSON.stringify({ targets }),
       });
     },
 
-    async deleteSessionsBulk(keys: string[]): Promise<{ deleted: number }> {
+    async deleteSessionsBulk(targets: SessionTarget[]): Promise<{ deleted: number }> {
       if (rpcCall) {
-        return typedCall<{ deleted: number }>(rpcCall, "session.delete", { keys });
+        const results = await Promise.all(
+          targets.map((target) => rpcCall("session.delete", {
+            tenant_id: target.tenantId,
+            agent_id: target.agentId,
+            conversation_ref: target.conversationRef,
+          })),
+        );
+        return { deleted: results.length };
       }
       return fetchJson<{ deleted: number }>("/api/sessions/bulk-delete", {
         method: "POST",
-        body: JSON.stringify({ keys }),
+        body: JSON.stringify({ targets }),
       });
     },
   };

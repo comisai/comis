@@ -18,9 +18,14 @@ import { filterExecutionResponse, type FilterDeps } from "./execution-filter.js"
 // ---------------------------------------------------------------------------
 
 function makeDeps(overrides?: Partial<FilterDeps>): FilterDeps {
+  const emit = vi.fn((_event: string, _payload: unknown) => true);
   return {
     eventBus: {
-      emit: vi.fn(() => true),
+      emit,
+      emitSafely: vi.fn((event: string, payload: unknown) => ({
+        hadListeners: emit(event, payload),
+        failures: [],
+      })),
       on: vi.fn().mockReturnThis(),
       off: vi.fn().mockReturnThis(),
     } as any,
@@ -91,7 +96,7 @@ describe("filterExecutionResponse - narration suppression", () => {
     }
   });
 
-  it("preserves accumulated text when no <final> tags are present (backward compat)", async () => {
+  it("preserves accumulated text when no <final> tags are present", async () => {
     const deps = makeDeps();
     const accumulated = "Just plain text without tags";
 
@@ -142,7 +147,7 @@ describe("filterExecutionResponse - narration suppression", () => {
     }
   });
 
-  it("returns empty/not-deliver when accumulated is empty string", async () => {
+  it("returns the fallback acknowledgment when accumulated text is empty", async () => {
     const deps = makeDeps();
 
     const result = await filterExecutionResponse(
@@ -152,9 +157,9 @@ describe("filterExecutionResponse - narration suppression", () => {
       undefined, false, undefined, "stop",
     );
 
-    expect(result.deliver).toBe(false);
-    if (!result.deliver) {
-      expect(result.reason).toBe("empty_stop_ack");
+    expect(result.deliver).toBe(true);
+    if (result.deliver) {
+      expect(result.text).toContain("completed the requested operations");
     }
   });
 });
@@ -167,7 +172,7 @@ describe("filterExecutionResponse - fallback ack on empty stop response", () => 
   const msg = makeMessage();
   const sessionKey = makeSessionKey();
 
-  it("sends canned acknowledgment when response is empty and finishReason is 'stop'", async () => {
+  it("returns a canned acknowledgment for receipt-tracked delivery after an empty stop", async () => {
     const deps = makeDeps();
     const adapter = makeAdapter();
 
@@ -178,15 +183,13 @@ describe("filterExecutionResponse - fallback ack on empty stop response", () => 
       undefined, false, undefined, "stop",
     );
 
-    expect(result.deliver).toBe(false);
-    if (!result.deliver) {
-      expect(result.reason).toBe("empty_stop_ack");
+    expect(result.deliver).toBe(true);
+    if (result.deliver) {
+      expect(result.text).toBe(
+        "I completed the requested operations but wasn't able to generate a summary. Please check the results or ask me to continue.",
+      );
     }
-    expect(adapter.sendMessage).toHaveBeenCalledWith(
-      msg.channelId,
-      "I completed the requested operations but wasn't able to generate a summary. Please check the results or ask me to continue.",
-      { replyTo: undefined },
-    );
+    expect(adapter.sendMessage).not.toHaveBeenCalled();
   });
 
   it("silently skips delivery when response is empty and finishReason is 'error'", async () => {
@@ -207,7 +210,7 @@ describe("filterExecutionResponse - fallback ack on empty stop response", () => 
     expect(adapter.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("prefers resource abort message over stop ack when both conditions apply", async () => {
+  it("prefers the resource-abort message over the normal empty-stop acknowledgment", async () => {
     const deps = makeDeps();
     const adapter = makeAdapter();
 
@@ -218,9 +221,9 @@ describe("filterExecutionResponse - fallback ack on empty stop response", () => 
       undefined, true, "budget_exceeded", "stop",
     );
 
-    expect(result.deliver).toBe(false);
-    if (!result.deliver) {
-      expect(result.reason).toBe("resource_abort_empty");
+    expect(result.deliver).toBe(true);
+    if (result.deliver) {
+      expect(result.text).toContain("processing limit");
     }
   });
 });

@@ -27,6 +27,7 @@ import type {
   ClockPort,
   OutputGuardPort,
 } from "@comis/core";
+import { toSafeErrorLogString } from "@comis/core";
 
 import type { ExecutionResult } from "../types.js";
 import { PromptTimeoutError } from "../prompt-timeout.js";
@@ -93,13 +94,13 @@ export function applyPromptRunOutcome(
 
 /**
  * Translate an exception thrown out of `runPrompt` into the canonical
- * `ExecutionResult` shape: log the raw error for operators, classify
+ * `ExecutionResult` shape: log a bounded redacted error message, classify
  * via `classifyPromptTimeout` / `classifyError`, write a safe
  * user-facing message, and run the OutputGuard over the response if
  * configured.
  *
  * Never exposes raw error internals (API keys, URLs, stack traces) to the
- * user — the raw error is already logged at warn level above.
+ * user, persistent error context, or warning logs.
  */
 export function handleEnvelopeException(
   state: MessageEnvelopeState,
@@ -117,7 +118,7 @@ export function handleEnvelopeException(
   // ContextExhaustionError is a clean escalation — it means
   // the pre-flight fit check determined the conversation cannot fit in the context
   // window even after all down-shifts.  It must map to "context_exhausted" so
-  // END_REASON_MAP fires the correct degradation cause for fleet-health reporting.
+  // END_REASON_MAP fires the correct degradation cause for system-health reporting.
   // Handle it BEFORE the generic classification so it is never mis-labeled "error".
   if (error instanceof ContextExhaustionError) {
     deps.logger.warn(
@@ -154,9 +155,10 @@ export function handleEnvelopeException(
   const classifiedOuter = isPromptTimeout
     ? classifyPromptTimeout(error, { agentId }, durationMs)
     : classifyError(error);
+  const safeErrorMessage = toSafeErrorLogString(error);
   deps.logger.warn(
     {
-      err: error,
+      err: safeErrorMessage,
       durationMs,
       hint: classifiedOuter.hint ?? "PiExecutor unexpected error",
       errorKind: (isPromptTimeout ? "timeout" : "internal") as ErrorKind,
@@ -165,14 +167,13 @@ export function handleEnvelopeException(
   );
   state.result.finishReason = isPromptTimeout ? "prompt_timeout" : "error";
   // Never expose raw error internals (API keys, URLs, stack traces) to users.
-  // The raw error is already logged to deps.logger.warn above for operator diagnostics.
   // The classified userMessage stays generic/user-safe — the knob detail
   // rides ONLY the hint above.
   state.result.response = classifiedOuter.userMessage;
   state.result.errorContext = {
     errorType: isPromptTimeout ? "PromptTimeout" : "UnexpectedError",
     retryable: classifiedOuter.retryable,
-    originalError: error instanceof Error ? error.message : String(error),
+    originalError: safeErrorMessage,
   };
 
   // OutputGuard: scan catch-block error responses (unified in executor-response-filter.ts)

@@ -8,12 +8,15 @@
 // "Stripped transient inline-recall from cached prefix" (both bit this run).
 //
 // Usage:  node logscan.mjs [--log PATH] [--level 50,60] [--kind k1,k2] [--msg SUBSTR]
-//                          [--method M] [--module M] [--fields a,b,c] [--last N] [--uniq] [--raw]
+//                          [--method M] [--module M] [--trace ID] [--since ISO|EPOCH_MS]
+//                          [--fields a,b,c] [--last N] [--uniq] [--raw]
 //   node logscan.mjs --level 50,60                  # all ERROR/FATAL (default fields)
 //   node logscan.mjs --level 50,60 --uniq           # ...grouped by projection + count (triage)
 //   node logscan.mjs --msg "not reachable" --fields method,err
 //   node logscan.mjs --kind resource --last 10
 //   node logscan.mjs --method graph.execute --raw   # full matched lines
+//   node logscan.mjs --trace <traceId> --level 40,50,60
+//   node logscan.mjs --since 2026-07-17T18:30:00Z --fields time,level,msg
 //
 // Defaults: --log = ALL of <dataDir>/logs/daemon*.log (the structured Pino logs — the authoritative
 // record under the systemd install; the old supervisor capture is gone) · --fields level,module,msg,
@@ -41,6 +44,17 @@ const kinds = new Set(csv(opt('kind')));
 const msgSub = opt('msg');
 const method = opt('method');
 const moduleF = opt('module');
+const traceId = opt('trace');
+const sinceRaw = opt('since');
+const sinceMs = sinceRaw === undefined
+  ? undefined
+  : /^\d+$/.test(sinceRaw)
+    ? Number(sinceRaw)
+    : Date.parse(sinceRaw);
+if (sinceRaw !== undefined && !Number.isFinite(sinceMs)) {
+  console.error(`logscan: invalid --since value "${sinceRaw}" — use ISO-8601 or epoch milliseconds`);
+  process.exit(2);
+}
 const fields = csv(opt('fields', 'level,module,msg,errorKind,hint'));
 const last = Number(opt('last', '0'));
 const uniq = flag('uniq');
@@ -55,6 +69,11 @@ const matches = (j) => {
   if (kinds.size && !kinds.has(j.errorKind)) return false;
   if (moduleF && j.module !== moduleF) return false;
   if (method && j.method !== method) return false;
+  if (traceId && j.traceId !== traceId) return false;
+  if (sinceMs !== undefined) {
+    const recordMs = typeof j.time === 'number' ? j.time : Date.parse(j.time);
+    if (!Number.isFinite(recordMs) || recordMs < sinceMs) return false;
+  }
   if (msgSub) {
     const hay = `${j.msg || ''} ${(j.err && (j.err.message || '')) || ''} ${j.hint || ''}`;
     if (!hay.includes(msgSub)) return false;

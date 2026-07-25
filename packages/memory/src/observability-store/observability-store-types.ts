@@ -26,6 +26,12 @@ import { createRowMapper } from "../row-mapper.js";
 import type { CacheStatsQueriesSlice } from "./cache-stats-types.js";
 import type { CacheBreakQueriesSlice } from "./cache-break-types.js";
 import type { PricingCoverageSlice } from "./pricing-coverage-types.js";
+import type {
+  DeliveryQueryParams,
+  DeliveryRow,
+  DeliveryStats,
+  DeliveryStatsQuery,
+} from "./delivery-types.js";
 
 export type {
   CacheStatsWindowRow,
@@ -34,6 +40,12 @@ export type {
   CacheStatsByAgentRow,
   CacheStatsQueriesSlice,
 } from "./cache-stats-types.js";
+export type {
+  DeliveryQueryParams,
+  DeliveryRow,
+  DeliveryStats,
+  DeliveryStatsQuery,
+} from "./delivery-types.js";
 
 // ---------------------------------------------------------------------------
 // Row mappers (typed row parsing via createRowMapper) — module-level, prepared
@@ -155,25 +167,6 @@ export interface AuditEventRow {
   refs: string | null;
 }
 
-/** A delivery row (insert or query result). */
-export interface DeliveryRow {
-  id?: number;
-  timestamp: number;
-  traceId: string;
-  agentId: string;
-  channelType: string;
-  channelId: string;
-  sessionKey?: string;
-  status: string;
-  latencyMs: number;
-  errorMessage?: string;
-  messagePreview?: string;
-  toolCalls?: number;
-  llmCalls?: number;
-  tokensTotal?: number;
-  costTotal?: number;
-}
-
 /** A diagnostic row (insert or query result). */
 export interface DiagnosticRow {
   id?: number;
@@ -192,7 +185,7 @@ export interface ChannelSnapshotRow {
   id?: number;
   timestamp: number;
   channelType: string;
-  channelId?: string;
+  channelId: string;
   status: string;
   messagesSent?: number;
   messagesReceived?: number;
@@ -312,8 +305,9 @@ export interface CostBucketFilter {
 /**
  * Per-session health rollup (A1 `aggregateSessionsInWindow`): reduced over ALL
  * in-window `session_summary` rows per key (one per execution) — additive fields
- * sum, `degraded` ORs, `endReason` keeps the latest degraded execution's cause.
- * `source` is the provenance enum the A2 reducer filters on. */
+ * sum, real degradations remain sticky, and a clean continuation resolves a
+ * transitional `background_pending` state. `source` is the provenance enum the
+ * A2 reducer filters on. */
 export interface SessionSummaryRollup {
   sessionKey: string;
   lastTs: number;
@@ -326,16 +320,6 @@ export interface SessionSummaryRollup {
   source: string;
   /** Mapped terminal `endReason` (NAMED cause); missing/blank → `"unknown"`. `degradedByCause` buckets on it. */
   endReason: string;
-}
-
-/** Delivery status breakdown statistics. */
-export interface DeliveryStats {
-  total: number;
-  success: number;
-  error: number;
-  timeout: number;
-  filtered: number;
-  avgLatencyMs: number;
 }
 
 /** Valid observability table names (short form). */
@@ -351,14 +335,6 @@ export interface ResetResult {
 
 /** Alias for ResetResult (same shape). */
 export type PruneResult = ResetResult;
-
-/** Query parameters for delivery queries. */
-export interface DeliveryQueryParams {
-  sinceMs?: number;
-  channelType?: string;
-  status?: string;
-  limit?: number;
-}
 
 /**
  * Filter surface for `queryAuditEvents` — mirrors the
@@ -397,7 +373,6 @@ export interface DiagnosticQueryParams {
 }
 
 /** The ObservabilityStore interface. */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface ObservabilityStore extends CacheStatsQueriesSlice, CacheBreakQueriesSlice, PricingCoverageSlice {
   // Token usage
   insertTokenUsage(entry: TokenUsageRow): void;
@@ -430,13 +405,13 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice, CacheBreakQu
    */
   getRollingSpendUsd(windowMs: number): AgentRollingSpend[];
 
-  // Diagnostics — cross-session per-session rollup (A1, fleet aggregate)
+  // Diagnostics — cross-session per-session rollup (A1, system aggregate)
   aggregateSessionsInWindow(sinceMs: number): SessionSummaryRollup[];
 
   // Delivery
   insertDelivery(entry: DeliveryRow): void;
   queryDelivery(params?: DeliveryQueryParams): DeliveryRow[];
-  deliveryStats(sinceMs?: number): DeliveryStats;
+  deliveryStats(params?: DeliveryStatsQuery): DeliveryStats;
 
   // Diagnostics
   insertDiagnostic(entry: DiagnosticRow): void;

@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { chmodSync, existsSync } from "node:fs";
 import { normalizeForSearch } from "@comis/core";
 import { isVecAvailable } from "./schema.js";
-import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
+import { ScopedMemoryTestAdapter as SqliteMemoryAdapter } from "../../../test/support/scoped-memory-adapter.js";
 
 /** Default test config using in-memory SQLite. */
 const testConfig: MemoryConfig = {
@@ -407,7 +407,7 @@ describe("SqliteMemoryAdapter", () => {
       const entry = makeEntry();
       await adapter.store(entry);
 
-      const result = await adapter.delete(entry.id);
+      const result = await adapter.delete(entry.id, { tenantId: "default", agentId: "default" });
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value).toBe(true);
@@ -422,7 +422,7 @@ describe("SqliteMemoryAdapter", () => {
     });
 
     it("returns false for non-existent entry", async () => {
-      const result = await adapter.delete("non-existent");
+      const result = await adapter.delete("non-existent", { tenantId: "default", agentId: "default" });
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value).toBe(false);
@@ -434,7 +434,10 @@ describe("SqliteMemoryAdapter", () => {
       await adapter.store(entry);
 
       // Delete with wrong tenant should not remove
-      const result = await adapter.delete(entry.id, "tenant-y");
+      const result = await adapter.delete(entry.id, {
+        tenantId: "tenant-y",
+        agentId: "default",
+      });
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value).toBe(false);
@@ -459,7 +462,7 @@ describe("SqliteMemoryAdapter", () => {
         expect(before.value.length).toBe(1);
       }
 
-      await adapter.delete(entry.id);
+      await adapter.delete(entry.id, { tenantId: "default", agentId: "default" });
 
       // Should no longer be searchable
       const after = await adapter.search(testSessionKey, "searchterm");
@@ -475,7 +478,7 @@ describe("SqliteMemoryAdapter", () => {
       const entry = makeEntry({ embedding: [0.5, 0.5, 0.5, 0.5] });
       await adapter.store(entry);
 
-      await adapter.delete(entry.id);
+      await adapter.delete(entry.id, { tenantId: "default", agentId: "default" });
 
       // Check vec_memories directly
       const vecRow = adapter
@@ -668,7 +671,7 @@ describe("SqliteMemoryAdapter", () => {
       expect(row.agent_id).toBe("default");
     });
 
-    it("search without agentId returns all agents' memories", async () => {
+    it("search without agentId remains scoped to the session's default agent", async () => {
       await adapter.store(
         makeEntry({ agentId: "agent-a", content: "agent alpha cucumber data" }),
       );
@@ -679,11 +682,11 @@ describe("SqliteMemoryAdapter", () => {
         makeEntry({ agentId: "default", content: "default agent cucumber data" }),
       );
 
-      // Search without agentId filter should return all
+      // An omitted agent filter never widens recall across agent partitions.
       const results = await adapter.search(testSessionKey, "cucumber");
       expect(results.ok).toBe(true);
       if (results.ok) {
-        expect(results.value.length).toBe(3);
+        expect(results.value.map((item) => item.entry.agentId)).toEqual(["default"]);
       }
     });
   });
@@ -1525,18 +1528,18 @@ describe("SqliteMemoryAdapter — listPinned does not return expired pinned entr
     // Insert a pinned entry that is already expired.
     const expiredId = crypto.randomUUID();
     db.prepare(
-      `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type,
+      `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type,
         source_who, tags, created_at, expires_at, has_embedding)
-       VALUES (?, 't1', 'agent-a', 'user-1', 'expired pinned', 'learned', 'semantic', 'agent', '[]', ?, ?, 0)`,
+       VALUES (?, 't1', 'agent-a', 'user-1', 'agent-shared', 'expired pinned', 'learned', 'semantic', 'agent', '[]', ?, ?, 0)`,
     ).run(expiredId, now - 10000, now - 1000); // expires_at in the past
     db.prepare("UPDATE memories SET pinned = 1 WHERE id = ?").run(expiredId);
 
     // Insert a live pinned entry.
     const liveId = crypto.randomUUID();
     db.prepare(
-      `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type,
+      `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type,
         source_who, tags, created_at, expires_at, has_embedding)
-       VALUES (?, 't1', 'agent-a', 'user-1', 'live pinned', 'learned', 'semantic', 'agent', '[]', ?, NULL, 0)`,
+       VALUES (?, 't1', 'agent-a', 'user-1', 'agent-shared', 'live pinned', 'learned', 'semantic', 'agent', '[]', ?, NULL, 0)`,
     ).run(liveId, now - 5000);
     db.prepare("UPDATE memories SET pinned = 1 WHERE id = ?").run(liveId);
 
@@ -2048,9 +2051,12 @@ describe("SqliteMemoryAdapter.searchLanes dimension-mismatch diagnosability", ()
    *  only runs inside initSchema). */
   function breakVectorLane(adapter: SqliteMemoryAdapter): void {
     const db = adapter.getDb();
+    db.prepare(
+      "INSERT OR IGNORE INTO memory_authority_partitions (tenant_id, agent_id, visibility_key) VALUES ('default', 'default', 'agent-shared')",
+    ).run();
     db.exec("DROP TABLE vec_memories");
     db.exec(
-      "CREATE VIRTUAL TABLE vec_memories USING vec0(memory_id TEXT PRIMARY KEY, embedding float[8] distance_metric=cosine)",
+      "CREATE VIRTUAL TABLE vec_memories USING vec0(memory_id TEXT PRIMARY KEY, embedding float[8] distance_metric=cosine, authority_partition_id INTEGER PARTITION KEY)",
     );
   }
 

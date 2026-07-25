@@ -305,7 +305,7 @@ that gap:
 - A dedicated **missed-inbound alert** compares the time since the last inbound
   activity to `missedInboundThresholdMs` (default **6 hours**). On breach it
   emits a `channel:inbound_silent` event and a WARN that surfaces as a
-  `comis fleet` health signal. Lower the threshold for a busy bot where a few
+  `comis system-health` health signal. Lower the threshold for a busy bot where a few
   hours of silence is itself a red flag.
 
 ## Live-smoke checklist
