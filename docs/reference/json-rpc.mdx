@@ -3929,10 +3929,11 @@ Send notifications through configured channels.
 The daemon resolves every notification to a complete endpoint before enqueueing
 it. Explicit `channel_type` plus `channel_id`, a configured primary channel,
 and automatic recent-session selection are accepted only when they resolve to
-tracked endpoint authority. `destination_endpoint` supplies the complete
-routing identity directly and is cross-checked while the handler binds delivery
-authority. Resolution fails closed when the endpoint or its active adapter
-instance is unavailable.
+tracked endpoint authority. `destination_endpoint` is an exact endpoint claim,
+not caller-minted authority: all five fields must match the tracked endpoint for
+that agent, including channel instance, optional thread, and direct/shared kind.
+Resolution fails closed when the tracked endpoint or its active adapter instance
+is unavailable.
 
 <CodeGroup>
 ```json Request

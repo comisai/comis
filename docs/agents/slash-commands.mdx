@@ -73,6 +73,11 @@ command system. Availability can still depend on daemon wiring, sender trust,
 session ownership, and whether a live SDK session exists. A command that needs a
 live execution surface reports that it is unavailable when the surface is absent.
 
+Deterministic command, approval, and gate responses return to the complete
+authenticated turn endpoint, including the configured channel instance,
+conversation, and source thread. A response to a threaded command never falls
+back to the channel root.
+
 <CardGroup cols={2}>
   <Card title="Sessions" icon="comments" href="/agents/sessions">
     How conversations are stored and managed

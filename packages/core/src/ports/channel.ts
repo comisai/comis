@@ -207,7 +207,8 @@ export interface ChannelPort {
    *
    * Platform notes:
    * - Discord: Fetches from channel message history (requires Read Message History permission)
-   * - Slack: Uses conversations.history API
+   * - Slack: Fetches channel history or restricts results to `threadId`; it must
+   *   not fall back from a selected thread to channel-root history
    * - iMessage: Reads from local `chats.messages` SQLite store
    * - Telegram, WhatsApp, Signal, LINE, IRC, Email: method omitted -- no history API; capability gate (features.fetchHistory) blocks the call
    *

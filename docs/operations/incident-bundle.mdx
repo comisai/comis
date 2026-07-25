@@ -215,7 +215,8 @@ The `/export-trajectory` slash command gives the daemon owner a way to trigger a
 from within Telegram itself, without needing terminal access.
 
 **Owner gate:** Only the configured daemon owner can invoke this command. A non-owner invocation is
-answered with `Access denied: /export-trajectory is owner-only.` in the same chat — the command name
+answered with `Access denied: /export-trajectory is owner-only.` at the source endpoint under the
+[slash-command scope rules](/agents/slash-commands#scope-and-delivery) — the command name
 `export-trajectory` is in `KNOWN_COMMANDS`, so the text never reaches the LLM, but the handler still
 replies rather than staying silent.
 
@@ -235,14 +236,15 @@ When the owner types `/export-trajectory` in a direct message with the bot:
 
 When the owner types `/export-trajectory` in a group chat:
 
-1. The bot replies in the group: `"Bundle sent to owner DM."`
+1. The bot replies in the source group thread: `"Bundle sent to owner DM."`
 2. The bot sends the bundle path to the owner's personal DM.
 3. **The bundle path never appears in the group thread.** This is an enforced invariant — the
    bundle path is routed exclusively to the owner's DM, not to `deliverToChannel`.
 
 <Warning>
 Owner gate is enforced at the slash-command handler. A non-owner invocation is rejected with an
-`Access denied: /export-trajectory is owner-only.` reply in the same chat — the command name
+`Access denied: /export-trajectory is owner-only.` reply at the source endpoint under the
+[slash-command scope rules](/agents/slash-commands#scope-and-delivery) — the command name
 `export-trajectory` is in `KNOWN_COMMANDS` so the text never reaches the LLM, but the handler
 answers the denial rather than staying silent.
 </Warning>

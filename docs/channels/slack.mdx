@@ -199,14 +199,16 @@ Once connected to Slack, your agent can:
 
 - Send, edit, and delete messages in any channel it has been invited to
 - React to messages with emoji shortnames (`thumbsup`, `eyes`, etc.)
-- Reply in threads (Slack reply chains via `thread_ts`)
+- Keep message replies and file uploads in the selected Slack thread via
+  `thread_ts`
 - Send files and images (up to 1 GB per attachment)
 - Create interactive buttons for user choices
 - Send Block Kit sections, contexts, and image blocks for rich formatting
 - Use mrkdwn formatting (bold `*text*`, italic `_text_`, strikethrough `~text~`, code, links, lists)
 - Stream responses with live editing (updates every 400 ms)
 - Mention users and channels (`<@userId>`, `<#channelId>`)
-- Fetch message history for conversation context (`conversations.history`)
+- Fetch root-channel history with `conversations.history`, or the selected
+  thread with `conversations.replies`
 - Pin/unpin messages, set channel topic and purpose, archive or unarchive
   channels, create new channels, invite or kick members, list members, and
   add channel bookmarks via [platform actions](/agent-tools/platform-actions)

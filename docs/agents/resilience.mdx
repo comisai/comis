@@ -253,6 +253,11 @@ is likewise parked uncertain. The content-free
 `comis explain` distinguish live-turn consumption, continuation delivery,
 fallback delivery, retry, and either parked state.
 
+Completion announcements and their attachments use the captured endpoint as
+authority. Before an upload, Comis verifies the caller partition plus the exact
+adapter instance, conversation, optional thread, and direct/shared kind. A
+mismatch returns an allocation-blocked outcome before any platform call.
+
 ```yaml
 security:
   agentToAgent:
