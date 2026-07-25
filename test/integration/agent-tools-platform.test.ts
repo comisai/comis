@@ -39,7 +39,7 @@ import {
   type TestDaemonHandle,
 } from "../support/daemon-harness.js";
 import { EchoChannelAdapter } from "@comis/channels";
-import type { ChannelPort } from "@comis/core";
+import type { ChannelEndpoint, ChannelPort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Path resolution
@@ -62,6 +62,30 @@ type RpcCall = (
   params: Record<string, unknown>,
 ) => Promise<unknown>;
 
+const PLATFORM_ENDPOINTS = {
+  discord: { channelInstanceId: "discord-test", conversationIdKey: "channel_id" },
+  telegram: { channelInstanceId: "telegram-test", conversationIdKey: "chat_id" },
+  slack: { channelInstanceId: "slack-test", conversationIdKey: "channel_id" },
+  whatsapp: { channelInstanceId: "whatsapp-test", conversationIdKey: "group_jid" },
+} as const;
+
+function selectedEndpointForAction(
+  method: string,
+  params: Record<string, unknown>,
+): ChannelEndpoint | undefined {
+  const channelType = method.slice(0, method.indexOf(".")) as keyof typeof PLATFORM_ENDPOINTS;
+  const target = PLATFORM_ENDPOINTS[channelType];
+  if (target === undefined) return undefined;
+  const conversationId = params[target.conversationIdKey];
+  if (typeof conversationId !== "string") return undefined;
+  return {
+    channelType,
+    channelInstanceId: target.channelInstanceId,
+    conversationId,
+    conversationKind: "shared",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
@@ -82,7 +106,11 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
     handle = await startTestDaemon({ configPath: AGENT_TOOLS_CONFIG_PATH });
 
     // Access internal rpcCall from daemon instance
-    rpcCall = (handle.daemon as any).rpcCall as RpcCall;
+    const rawRpcCall = (handle.daemon as any).rpcCall as RpcCall;
+    rpcCall = async (method, params) => {
+      const endpoint = selectedEndpointForAction(method, params);
+      return rawRpcCall(method, endpoint === undefined ? params : { ...params, endpoint });
+    };
 
     // Access adapter registry (same Map that rpcCall's resolveAdapter reads from)
     registry = (handle.daemon as any).adapterRegistry as Map<
@@ -361,6 +389,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
       async () => {
         const result = (await rpcCall("discord.action", {
           action: "guild_info",
+          channel_id: "discord-channel-1",
           guild_id: "guild-789",
           _trustLevel: "admin",
         })) as { action: string; params: Record<string, unknown>; echoed: boolean };
@@ -426,6 +455,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
       async () => {
         const result = (await rpcCall("discord.action", {
           action: "kick",
+          channel_id: "discord-channel-1",
           guild_id: "guild-789",
           user_id: "user-001",
           reason: "Test kick",
@@ -444,6 +474,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
       async () => {
         const result = (await rpcCall("discord.action", {
           action: "ban",
+          channel_id: "discord-channel-1",
           guild_id: "guild-789",
           user_id: "user-002",
           reason: "Test ban",
@@ -463,6 +494,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
       async () => {
         const result = (await rpcCall("discord.action", {
           action: "role_add",
+          channel_id: "discord-channel-1",
           guild_id: "guild-789",
           user_id: "user-001",
           role_id: "role-moderator",
@@ -481,6 +513,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
       async () => {
         const result = (await rpcCall("discord.action", {
           action: "role_remove",
+          channel_id: "discord-channel-1",
           guild_id: "guild-789",
           user_id: "user-001",
           role_id: "role-moderator",
@@ -498,6 +531,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
       async () => {
         const result = (await rpcCall("discord.action", {
           action: "unban",
+          channel_id: "discord-channel-1",
           guild_id: "guild-789",
           user_id: "user-002",
           _trustLevel: "admin",
@@ -883,6 +917,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
       async () => {
         const result = (await rpcCall("slack.action", {
           action: "create_channel",
+          channel_id: "C12345678",
           name: "new-test-channel",
           is_private: false,
           _trustLevel: "admin",
@@ -1073,6 +1108,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
       async () => {
         const result = (await rpcCall("whatsapp.action", {
           action: "profile_status",
+          group_jid: "12345@g.us",
           status_text: "Available",
           _trustLevel: "admin",
         })) as { action: string; echoed: boolean };
@@ -1147,6 +1183,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
         // even for arbitrary action names (real adapters would reject unsupported ones)
         const result = (await rpcCall("discord.action", {
           action: "some_custom_action",
+          channel_id: "ch-1",
           custom_param: "custom_value",
           _trustLevel: "admin",
         })) as { action: string; params: Record<string, unknown>; echoed: boolean };

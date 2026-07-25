@@ -219,6 +219,12 @@ async function driveAutonomySend(
   return rpcCall("message.send", {
     channel_type: ECHO_TYPE,
     channel_id: args.channelId,
+    endpoint: {
+      channelType: ECHO_TYPE,
+      channelInstanceId: args.channelId,
+      conversationId: args.channelId,
+      conversationKind: "direct",
+    },
     text: args.text,
     _capabilities: ["orch:message"],
     _trustLevel: "admin",
