@@ -4,7 +4,7 @@ import type {
   SendMessageOptions,
   StreamingConfig,
 } from "@comis/core";
-import { PerChannelStreamingConfigSchema } from "@comis/core";
+import { PerChannelStreamingConfigSchema, tryGetContext } from "@comis/core";
 
 /** Metadata fields propagated when a follow-up stays in a channel thread. */
 export const THREAD_PROPAGATION_KEYS = [
@@ -14,12 +14,15 @@ export const THREAD_PROPAGATION_KEYS = [
   "telegramThreadScope",
 ] as const;
 
-/** Build thread-related send options from inbound message metadata. */
+/** Build thread-related send options from authenticated turn authority or metadata. */
 export function buildThreadSendOpts(
   metadata?: Record<string, unknown>,
 ): Pick<SendMessageOptions, "threadId" | "extra"> | undefined {
-  const threadId = metadata?.threadId as string | undefined;
-  if (!threadId) return undefined;
+  const turnEndpoint = tryGetContext()?.turnScope?.endpoint;
+  const threadId = turnEndpoint === undefined
+    ? metadata?.threadId
+    : turnEndpoint.threadId;
+  if (typeof threadId !== "string" || threadId.length === 0) return undefined;
   return {
     threadId,
     extra: metadata?.telegramThreadScope

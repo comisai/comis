@@ -22,6 +22,7 @@ import { sanitizeAssistantResponse, createThinkingTagFilter } from "@comis/agent
 
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";
 import { emitObservationalEvent } from "./execution-event-emitter.js";
+import { buildThreadSendOpts } from "./execution-routing-config.js";
 import type { TypingLifecycleController } from "@comis/channels";
 
 // ---------------------------------------------------------------------------
@@ -229,7 +230,7 @@ export async function executeLlm(
       await adapter.sendMessage(
         effectiveMsg.channelId,
         "I'm having trouble processing your request right now. Please try again in a moment.",
-        { replyTo },
+        { replyTo, ...buildThreadSendOpts(effectiveMsg.metadata) },
       // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
       ).catch(() => { /* adapter logs internally */ });
 
