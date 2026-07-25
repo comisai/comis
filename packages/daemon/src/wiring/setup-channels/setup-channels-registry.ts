@@ -28,6 +28,7 @@ import type { RpcCall } from "@comis/skills/platform-tools";
 import { bootstrapAdapters } from "../setup-channels-adapters.js";
 import { buildMediaPipeline } from "../setup-channels-media.js";
 import { buildAndStartChannelManager } from "./setup-channels-runtime.js";
+import type { GraphReportDurability } from "./graph-report-delivery.js";
 
 // Re-export the unused VoiceResponsePipelineDeps + LifecycleReactor types to
 // silence lint and document the public-surface boundary: callers of this
@@ -79,6 +80,8 @@ export interface ChannelsDeps {
   container: AppContainer;
   /** Absolute Comis data root resolved by the daemon composition root. */
   dataDir: string;
+  /** Durable receipt ownership for authenticated graph-report uploads. */
+  graphReportDurability: GraphReportDurability;
   /** Per-agent executor instances keyed by agentId. */
   executors: Map<string, AgentExecutor>;
   /** Default agent ID from routing config. */
@@ -423,6 +426,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       ssrfFetcher,
       linkRunner,
       deliveryService,
+      graphReportDurability: deps.graphReportDurability,
       adaptersByType,
       channelPlugins,
       clock: deps.clock,

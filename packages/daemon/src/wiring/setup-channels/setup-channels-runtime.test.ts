@@ -42,6 +42,7 @@ describe("setup-channels-runtime", () => {
       ssrfFetcher: true,
       linkRunner: true,
       deliveryService: true,
+      graphReportDurability: true,
       adaptersByType: true,
       channelPlugins: true,
       clock: true,
@@ -74,7 +75,7 @@ describe("setup-channels-runtime", () => {
       // when absent; tests inject a known map to assert the production path is active).
       channelCredentialMap: true,
     };
-    expect(Object.keys(witness).length).toBe(36);
+    expect(Object.keys(witness).length).toBe(37);
   });
 
   it("ChannelManagerBuildResult witness pins the manager handle output keys", () => {

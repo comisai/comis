@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Owner-validated graph report attachment delivery. */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, unlink, type FileHandle } from "node:fs/promises";
-import type { ChannelPort, ClockPort, ComisLogger, DeliverToChannelOptions, DeliveryService } from "@comis/core";
-import { ChannelEndpointSchema, ConversationRefSchema, safePath, sanitizeLogString } from "@comis/core";
+import type { ChannelPort, ClockPort, ComisLogger, DeliverToChannelOptions, DeliveryService, OutwardSendLedgerPort, RootRunIdResolver, SessionKey } from "@comis/core";
+import { ChannelEndpointSchema, ConversationRefSchema, formatSessionKey, safePath, sanitizeLogString } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
+import { wrapOutwardSend } from "../../api/outward-ledger-wrap.js";
 
 const GRAPH_ID_RE = /^[a-f0-9-]{8,64}$/i;
 const MAX_METADATA_BYTES = 1024 * 1024;
@@ -126,6 +127,12 @@ export interface GraphReportDeliveryDeps {
   clock: ClockPort;
   logger: ComisLogger;
   deliveryService: DeliveryService;
+  durability: GraphReportDurability;
+}
+
+export interface GraphReportDurability {
+  outwardLedger: OutwardSendLedgerPort | undefined;
+  resolveRootRunId: RootRunIdResolver | undefined;
 }
 
 export type GraphReportRequestHandler = (
@@ -134,6 +141,7 @@ export type GraphReportRequestHandler = (
   channelId: string,
   adapter: ChannelPort,
   options: DeliverToChannelOptions,
+  sessionKey: SessionKey,
 ) => Promise<void>;
 
 /** Build the post-authentication report handler used by the inbound callback gate. */
@@ -161,7 +169,7 @@ export function createGraphReportRequestHandler(
     }
   };
 
-  return async (graphId, channelType, channelId, adapter, options): Promise<void> => {
+  return async (graphId, channelType, channelId, adapter, options, sessionKey): Promise<void> => {
     const startedAt = deps.clock.now();
     const endpoint = ChannelEndpointSchema.safeParse(options.destinationEndpoint);
     const conversationRef = ConversationRefSchema.safeParse(options.authority?.conversationRef);
@@ -327,6 +335,19 @@ export function createGraphReportRequestHandler(
       return;
     }
 
+    const { outwardLedger, resolveRootRunId } = deps.durability;
+    const rootRun = resolveRootRunId?.(options.authority.agentId, sessionKey);
+    if (!outwardLedger || !rootRun?.ok || rootRun.value.length === 0) {
+      deps.logger.warn({
+        graphId,
+        channelType,
+        errorKind: "precondition" as const,
+        hint: "Restore the outward ledger and authenticated session root before requesting the report again",
+      }, "Graph report durable delivery unavailable");
+      await sendUnavailable(adapter, channelId, options);
+      return;
+    }
+
     const reportContent = await readPinnedRegularFile(selected.path, selected, MAX_REPORT_BYTES);
     if (!reportContent.ok) {
       deps.logger.warn({
@@ -350,17 +371,63 @@ export function createGraphReportRequestHandler(
       return;
     }
 
-    const delivered = await fromPromise(adapter.sendAttachment(
+    const operationId = `graph-report:${createHash("sha256")
+      .update(JSON.stringify({
+        graphId,
+        agentId: options.authority.agentId,
+        sessionKey: formatSessionKey(sessionKey),
+        endpoint: endpoint.data,
+      }))
+      .digest("hex")}`;
+    const allocated = await outwardLedger.allocateStep(rootRun.value, operationId);
+    if (!allocated.ok) {
+      await fromPromise(unlink(snapshot.value));
+      deps.logger.warn({
+        graphId,
+        channelType,
+        errorKind: "dependency" as const,
+        hint: "Restore outward-ledger writes before retrying the report request",
+      }, "Graph report durable allocation failed");
+      return;
+    }
+
+    const attachment = {
+      type: "file" as const,
+      url: snapshot.value,
+      fileName: `report-${graphId.slice(0, 8)}.md`,
+      mimeType: "text/markdown",
+      caption,
+    };
+    const delivered = await wrapOutwardSend({
+      ledger: outwardLedger,
+      rootRunId: rootRun.value,
+      outwardStepIndex: allocated.value,
+      agentId: options.authority.agentId,
+      channelType,
       channelId,
-      {
-        type: "file",
-        url: snapshot.value,
-        fileName: `report-${graphId.slice(0, 8)}.md`,
-        mimeType: "text/markdown",
-        caption,
+      operationKind: "message_send",
+      operationOptions: {
+        destinationEndpoint: endpoint.data,
+        attachmentDigest: createHash("sha256").update(reportContent.value).digest("hex"),
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
       },
-      endpoint.data.threadId === undefined ? undefined : { threadId: endpoint.data.threadId },
-    ));
+      text: caption,
+      doSend: async () => {
+        const sentBoundary = await fromPromise(adapter.sendAttachment!(
+          channelId,
+          attachment,
+          endpoint.data.threadId === undefined ? undefined : { threadId: endpoint.data.threadId },
+        ));
+        if (!sentBoundary.ok) return sentBoundary;
+        if (!sentBoundary.value.ok) return sentBoundary.value;
+        if (sentBoundary.value.value.kind !== "tracked") {
+          return err(new Error("Graph report upload returned no durable platform receipt"));
+        }
+        return ok({ messageId: sentBoundary.value.value.messageId });
+      },
+      logger: deps.logger,
+    });
     const cleaned = await fromPromise(unlink(snapshot.value));
     if (!cleaned.ok) {
       deps.logger.warn({
@@ -377,19 +444,7 @@ export function createGraphReportRequestHandler(
         channelId,
         errorMessage: sanitizeLogString(delivered.error.message),
         errorKind: "platform" as const,
-        hint: "Check the channel adapter upload implementation and retry the report request",
-      }, "Graph report attachment delivery rejected");
-      return;
-    }
-    const sent = delivered.value;
-    if (!sent.ok) {
-      deps.logger.warn({
-        graphId,
-        channelType,
-        channelId,
-        errorMessage: sanitizeLogString(sent.error.message),
-        errorKind: "platform" as const,
-        hint: "Check the channel adapter upload permissions and retry the report request",
+        hint: "Inspect the retained outward operation and channel upload health before retrying",
       }, "Graph report attachment delivery failed");
       return;
     }

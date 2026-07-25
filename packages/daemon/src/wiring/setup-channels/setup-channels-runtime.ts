@@ -18,7 +18,7 @@ import { type VoiceResponsePipelineDeps, createLifecycleReactor, reactWithFallba
 import { buildReadOnlyChannelRegistry, buildChannelCredentialMap } from "./setup-channels-registry-builder.js";
 import { buildActivityRenderers, type ActivityRendererFactory } from "./setup-channels-activity-renderers.js";
 import { resolveActivityKillSwitchSlice } from "./activity-kill-switch.js";
-import { createGraphReportRequestHandler } from "./graph-report-delivery.js";
+import { createGraphReportRequestHandler, type GraphReportDurability } from "./graph-report-delivery.js";
 import { createChannelManager, createDeterministicLocalization, processInboundMessage, type ChannelManager } from "@comis/orchestrator";
 import { DmScopeConfigSchema, RetryConfigSchema, createRetryEngine } from "@comis/core";
 import {
@@ -48,6 +48,7 @@ export interface ChannelManagerBuildDeps {
   ssrfFetcher: SsrfGuardedFetcher;
   linkRunner: LinkRunner;
   deliveryService: DeliveryService;
+  graphReportDurability: GraphReportDurability;
   adaptersByType: Map<string, ChannelPort>;
   /** Per-channel plugin map; consumers read `plugin.capabilities` for
    *  features.reactions, replyToMetaKey, etc. */
@@ -354,6 +355,7 @@ export async function buildAndStartChannelManager(
         clock: deps.clock,
         logger: channelsLogger,
         deliveryService,
+        durability: deps.graphReportDurability,
       }),
       approvalGate: deps.approvalGate,
       // Signed button-callback verifier (inbound-gate.ts), via pipelineDeps = deps.

@@ -257,6 +257,7 @@ function makeDeps(overrides: Partial<ChannelsDeps> & { container?: AppContainer 
   return {
     container,
     dataDir: "/tmp/comis-channel-test",
+    graphReportDurability: { outwardLedger: undefined, resolveRootRunId: undefined },
     executors: new Map(),
     defaultAgentId: "agent1",
     sessionManager: {

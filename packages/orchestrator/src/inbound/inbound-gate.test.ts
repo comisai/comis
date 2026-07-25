@@ -471,6 +471,7 @@ describe("evaluateInboundGate button-callback intercept", () => {
       "chat-1",
       adapter,
       expectedDeliveryOptions(ownerThreadScope, ownerThreadRef.value, true),
+      makeSessionKey(),
     );
     expect(route).toHaveBeenCalledWith(expect.objectContaining({
       channelType: "telegram",

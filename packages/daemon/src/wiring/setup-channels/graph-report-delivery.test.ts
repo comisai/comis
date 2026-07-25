@@ -148,18 +148,13 @@ describe("graph report delivery", () => {
       clock: createFakeClock(1),
       logger: makeLogger(),
       deliveryService: makeDeliveryService(),
-      outwardLedger,
-      resolveRootRunId: vi.fn(() => ok("root-1")),
-    } as unknown as Parameters<typeof createGraphReportRequestHandler>[0]);
+      durability: {
+        outwardLedger,
+        resolveRootRunId: vi.fn(() => ok("root-1")),
+      },
+    });
 
-    await (handler as unknown as (
-      graphId: string,
-      channelType: string,
-      channelId: string,
-      adapter: ChannelPort,
-      options: DeliverToChannelOptions,
-      sessionKey: SessionKey,
-    ) => Promise<void>)(
+    await handler(
       GRAPH_ID,
       "telegram",
       "chat-1",
@@ -197,9 +192,10 @@ describe("graph report delivery", () => {
       clock: createFakeClock(1),
       logger: makeLogger(),
       deliveryService,
+      durability: { outwardLedger: undefined, resolveRootRunId: undefined },
     });
 
-    await handler(GRAPH_ID, "telegram", "chat-1", adapter, routeOptions());
+    await handler(GRAPH_ID, "telegram", "chat-1", adapter, routeOptions(), requestSession());
 
     expect(deliveryService.deliverToChannel).toHaveBeenCalledTimes(1);
     const text = vi.mocked(deliveryService.deliverToChannel).mock.calls[0]?.[2];
@@ -229,9 +225,10 @@ describe("graph report delivery", () => {
       clock: createFakeClock(1),
       logger,
       deliveryService,
+      durability: { outwardLedger: undefined, resolveRootRunId: undefined },
     });
 
-    await handler(GRAPH_ID, "telegram", "chat-1", adapter, routeOptions());
+    await handler(GRAPH_ID, "telegram", "chat-1", adapter, routeOptions(), requestSession());
 
     expect(adapter.sendAttachment).not.toHaveBeenCalled();
     expect(deliveryService.deliverToChannel).toHaveBeenCalledWith(
@@ -270,9 +267,13 @@ describe("graph report delivery", () => {
       clock: createFakeClock(1),
       logger: makeLogger(),
       deliveryService: makeDeliveryService(),
+      durability: {
+        outwardLedger: makeOutwardLedger(),
+        resolveRootRunId: vi.fn(() => ok("root-1")),
+      },
     });
 
-    await handler(GRAPH_ID, "telegram", "chat-1", adapter, routeOptions());
+    await handler(GRAPH_ID, "telegram", "chat-1", adapter, routeOptions(), requestSession());
 
     expect(deliveredPath).not.toBe(reportPath);
     expect(deliveredPath).not.toContain(graphDir);
@@ -289,6 +290,7 @@ describe("graph report delivery", () => {
       clock: createFakeClock(1),
       logger: makeLogger(),
       deliveryService,
+      durability: { outwardLedger: undefined, resolveRootRunId: undefined },
     });
 
     await handler(GRAPH_ID, "telegram", "chat-1", adapter, routeOptions({
@@ -299,7 +301,7 @@ describe("graph report delivery", () => {
         threadId: "topic-1",
         conversationKind: "shared",
       },
-    }));
+    }), requestSession());
 
     expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
     expect(adapter.sendMessage).not.toHaveBeenCalled();

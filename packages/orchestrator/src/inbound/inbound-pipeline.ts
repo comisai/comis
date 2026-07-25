@@ -150,6 +150,7 @@ export interface InboundPipelineDeps {
     channelId: string,
     adapter: ChannelPort,
     options: DeliverToChannelOptions,
+    sessionKey: SessionKey,
   ) => Promise<void>;
   /** Handle general slash commands via command handler. Returns CommandResult or undefined if not a command. */
   handleSlashCommand?: (text: string, sessionKey: SessionKey, agentId: string) => Promise<{ handled: boolean; response?: string; directives?: Record<string, unknown>; cleanedText?: string } | undefined>;

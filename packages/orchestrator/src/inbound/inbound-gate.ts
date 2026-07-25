@@ -141,6 +141,7 @@ async function routeInteractiveCallback(
           turnScope.endpoint.conversationId,
           adapter,
           inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
+          sessionKey,
         );
         break;
       }

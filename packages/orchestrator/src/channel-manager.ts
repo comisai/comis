@@ -241,7 +241,7 @@ export interface ChannelManagerDeps {
   /** When true, lifecycle reactor handles queued/thinking reactions -- skip ack reaction in inbound pipeline. */
   lifecycleReactionsEnabled?: boolean;
   /** Deliver a graph report only after the inbound signed-callback router validates its owner. */
-  onGraphReportRequest?: (graphId: string, channelType: string, channelId: string, adapter: ChannelPort, options: DeliverToChannelOptions) => Promise<void>;
+  onGraphReportRequest?: (graphId: string, channelType: string, channelId: string, adapter: ChannelPort, options: DeliverToChannelOptions, sessionKey: SessionKey) => Promise<void>;
   /** Response prefix config for template-based prefix/suffix on agent responses. */
   responsePrefixConfig?: { template: string; position: "prepend" | "append" };
   /** Template context builder for response prefix variables. */
