@@ -176,7 +176,10 @@ export type AuthStorage = ComisCredentialStore;
 export const PROVIDER_SECRET_KEYS: Readonly<Record<string, readonly string[]>> = {
   "amazon-bedrock": ["AWS_BEARER_TOKEN_BEDROCK"],
   "github-copilot": ["COPILOT_GITHUB_TOKEN"],
-  anthropic: ["ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN"],
+  // ANTHROPIC_AUTH_TOKEN authenticates Anthropic-compatible gateways that
+  // require `Authorization: Bearer` instead of an `x-api-key` header. It ranks
+  // last so a direct API key or OAuth token still wins when both are present.
+  anthropic: ["ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"],
   "ant-ling": ["ANT_LING_API_KEY"],
   openai: ["OPENAI_API_KEY"],
   "azure-openai-responses": ["AZURE_OPENAI_API_KEY"],
@@ -204,6 +207,8 @@ export const PROVIDER_SECRET_KEYS: Readonly<Record<string, readonly string[]>> =
   "kimi-coding": ["KIMI_API_KEY"],
   "cloudflare-workers-ai": ["CLOUDFLARE_API_KEY"],
   "cloudflare-ai-gateway": ["CLOUDFLARE_API_KEY"],
+  "qwen-token-plan": ["QWEN_TOKEN_PLAN_API_KEY"],
+  "qwen-token-plan-cn": ["QWEN_TOKEN_PLAN_CN_API_KEY"],
   xiaomi: ["XIAOMI_API_KEY"],
   "xiaomi-token-plan-cn": ["XIAOMI_TOKEN_PLAN_CN_API_KEY"],
   "xiaomi-token-plan-ams": ["XIAOMI_TOKEN_PLAN_AMS_API_KEY"],

@@ -117,6 +117,7 @@ describe("createAuthStorageAdapter", () => {
     expect(getProviderSecretNames("anthropic")).toEqual([
       "ANTHROPIC_API_KEY",
       "ANTHROPIC_OAUTH_TOKEN",
+      "ANTHROPIC_AUTH_TOKEN",
     ]);
     expect(getProviderSecretNames("google")).toEqual([
       "GOOGLE_API_KEY",

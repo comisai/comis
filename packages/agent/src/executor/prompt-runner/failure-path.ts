@@ -64,8 +64,8 @@ export async function processFailurePath(
       );
 
     // Install recovery wrapper as outermost (wraps the existing composed chain)
-    const originalStreamFn = session.agent.streamFn;
-    session.agent.streamFn = recoveryWrapper(originalStreamFn);
+    const originalStreamFn = session.agent.streamFunction;
+    session.agent.streamFunction = recoveryWrapper(originalStreamFn);
 
     try {
       const admitted = guardProviderDispatch();
@@ -108,7 +108,7 @@ export async function processFailurePath(
     } finally {
       // Restore original stream fn (recovery wrapper is single-use anyway,
       // but restoring avoids leaving a stale passthrough in the chain)
-      session.agent.streamFn = originalStreamFn;
+      session.agent.streamFunction = originalStreamFn;
     }
   }
 

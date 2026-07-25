@@ -129,7 +129,7 @@ const {
     isStreaming: false,
     isCompacting: false,
     messages: [] as any[],
-    agent: { setSystemPrompt: mockSetSystemPrompt, beforeToolCall: undefined as any, streamFn: mockStreamFn, state: { model: null } },
+    agent: { setSystemPrompt: mockSetSystemPrompt, beforeToolCall: undefined as any, streamFunction: mockStreamFn, state: { model: null } },
     getSessionStats: vi.fn().mockReturnValue({
       tokens: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, total: 150 },
       cost: 0,
@@ -651,8 +651,8 @@ describe("PiExecutor", () => {
       session: mockSession,
       extensionsResult: {},
     });
-    // Reset streamFn to original mock (PiExecutor replaces it with wrapper chain)
-    mockSession.agent.streamFn = mockStreamFn;
+    // Reset streamFunction to original mock (PiExecutor replaces it with wrapper chain)
+    mockSession.agent.streamFunction = mockStreamFn;
     // Reset steering mocks
     mockSteer.mockResolvedValue(undefined);
     mockFollowUp.mockResolvedValue(undefined);
@@ -3400,16 +3400,16 @@ describe("PiExecutor", () => {
   // -------------------------------------------------------------------------
 
   describe("stream wrapper chain", () => {
-    it("applies stream wrapper chain to session.agent.streamFn", async () => {
+    it("applies stream wrapper chain to session.agent.streamFunction", async () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
       await executor.execute(testMessage, testSessionKey);
 
-      // After execution, mockSession.agent.streamFn should have been replaced
+      // After execution, mockSession.agent.streamFunction should have been replaced
       // by the composed wrapper chain (no longer the original mockStreamFn)
-      expect(mockSession.agent.streamFn).not.toBe(mockStreamFn);
-      expect(typeof mockSession.agent.streamFn).toBe("function");
+      expect(mockSession.agent.streamFunction).not.toBe(mockStreamFn);
+      expect(typeof mockSession.agent.streamFunction).toBe("function");
     });
 
     it("wrapper chain includes config resolver with config values", async () => {
@@ -3423,8 +3423,8 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey);
 
-      // Call the wrapped streamFn with an Anthropic model
-      const wrappedStreamFn = mockSession.agent.streamFn;
+      // Call the wrapped streamFunction with an Anthropic model
+      const wrappedStreamFn = mockSession.agent.streamFunction;
       const model = { provider: "anthropic" } as any;
       const context = { systemPrompt: "test", messages: [], tools: [] };
 
@@ -3451,7 +3451,7 @@ describe("PiExecutor", () => {
       await executor.execute(testMessage, testSessionKey);
 
       // Call with a non-Anthropic model to verify maxTokens/temperature without cacheRetention
-      const wrappedStreamFn = mockSession.agent.streamFn;
+      const wrappedStreamFn = mockSession.agent.streamFunction;
       const model = { provider: "openai" } as any;
       const context = { systemPrompt: "test", messages: [], tools: [] };
 
@@ -3474,7 +3474,7 @@ describe("PiExecutor", () => {
       await executor.execute(testMessage, testSessionKey);
 
       // Exercise the wrapped stream function with Anthropic model
-      const wrappedStreamFn = mockSession.agent.streamFn;
+      const wrappedStreamFn = mockSession.agent.streamFunction;
       const model = { provider: "anthropic" } as any;
       const context = { systemPrompt: "test", messages: [], tools: [] };
 
@@ -3983,7 +3983,7 @@ describe("PiExecutor", () => {
       );
       expect(traceLog).toBeUndefined();
 
-      // The wrapped streamFn should have only 4 base wrappers applied
+      // The wrapped streamFunction should have only 4 base wrappers applied
       // (validationErrorFormatter + toolResultSizeBouncer + configResolver + requestBodyInjector)
       // -- verify via single "Stream wrappers composed" summary log
       const debugCalls = (deps.logger.debug as Mock).mock.calls;
@@ -4071,7 +4071,7 @@ describe("PiExecutor", () => {
         "stubFilterInjector",
       ]);
 
-      // api-payload-trace wrapper is innermost (closest to base SDK streamFn),
+      // api-payload-trace wrapper is innermost (closest to base SDK streamFunction),
       // meaning it sees the final options including injected cacheRetention.
     });
 
@@ -4110,8 +4110,8 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
-      // Exercise the wrapped streamFn -- triggers the api-payload trace writer.
-      const wrappedStreamFn = mockSession.agent.streamFn;
+      // Exercise the wrapped streamFunction -- triggers the api-payload trace writer.
+      const wrappedStreamFn = mockSession.agent.streamFunction;
       const model = { id: "claude-test", provider: "anthropic" } as any;
       const context = { systemPrompt: "test", messages: [], tools: [] };
       wrappedStreamFn(model, context, {});
@@ -4141,10 +4141,10 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
-      // Exercise the wrapped streamFn -- this triggers the api-payload
+      // Exercise the wrapped streamFunction -- this triggers the api-payload
       // trace writer, which calls appendJsonlLine -> rotation check ->
       // statSync (legacy rotation lives in api-payload-trace-writer).
-      const wrappedStreamFn = mockSession.agent.streamFn;
+      const wrappedStreamFn = mockSession.agent.streamFunction;
       const model = { id: "claude-test", provider: "anthropic" } as any;
       const context = { systemPrompt: "test", messages: [], tools: [] };
       wrappedStreamFn(model, context, {});

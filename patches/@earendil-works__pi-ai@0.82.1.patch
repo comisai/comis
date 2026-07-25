@@ -1,16 +1,17 @@
 diff --git a/dist/utils/error-body.js b/dist/utils/error-body.js
-index e92f49d46692fc365524f859e9ffe101c0e2fd9f..c9ee36f8893ac00bba1426b2bbb8e88a4ed677f2 100644
+index 4b148ca716e0145fd73c7195b8afaaeef26c5b28..dbafeacc56a56a5944459714e348d2e34073d083 100644
 --- a/dist/utils/error-body.js
 +++ b/dist/utils/error-body.js
-@@ -68,13 +68,21 @@ function pickBodyText(error) {
-     const responseBody = error.$response?.body;
-     if (typeof responseBody === "string")
+@@ -70,7 +70,7 @@ function pickBodyText(error) {
          return responseBody;
+     if (isReadableStreamLike(responseBody))
+         return undefined;
 -    if (isNonEmptyObject(responseBody))
 +    if (isNonEmptyJsonBody(responseBody))
          return safeJsonStringify(responseBody);
      return undefined;
  }
+@@ -80,6 +80,14 @@ function isReadableStreamLike(value) {
  function isNonEmptyObject(value) {
      return typeof value === "object" && value !== null && Object.keys(value).length > 0;
  }

@@ -4,7 +4,7 @@
  *
  * PiExecutor drives the agent loop by mutating properties on the live
  * AgentSession's agent (pi-executor.ts): `beforeToolCall`, `afterToolCall`,
- * `streamFn`, `transformContext`, and `state.messages`. That surface is a
+ * `streamFunction`, `transformContext`, and `state.messages`. That surface is a
  * plain-property contract with no compile-time seam on our side — a silent
  * SDK rename passes every mocked unit test and only surfaces at runtime.
  * This suite constructs a REAL AgentSession (in-memory managers, offline
@@ -62,13 +62,21 @@ describe("session.agent mutation surface — REAL SDK boundary", () => {
     expect(session.agent.afterToolCall).toBe(after);
   });
 
-  it("accepts a streamFn override and reads it back", () => {
+  it("accepts a streamFunction override and reads it back", () => {
     const custom: StreamFn = (() => {
       throw new Error("never invoked in this contract test");
     }) as unknown as StreamFn;
 
-    session.agent.streamFn = custom;
-    expect(session.agent.streamFn).toBe(custom);
+    // Assert the SDK populates the property BEFORE overriding it. A plain
+    // assignment always round-trips, so `assign then read back` alone passes
+    // even when the SDK has renamed the property out from under us and the
+    // executor's wrapper chain is writing to a dead own-property that the
+    // agent loop never calls. Pinning the pre-override value is what makes a
+    // rename fail here instead of silently disabling every stream wrapper.
+    expect(typeof session.agent.streamFunction).toBe("function");
+
+    session.agent.streamFunction = custom;
+    expect(session.agent.streamFunction).toBe(custom);
   });
 
   it("accepts a transformContext hook as a typed property (no cast needed)", () => {

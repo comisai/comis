@@ -482,7 +482,7 @@ describe("processFailurePath — knob-named timeout diagnostics", () => {
     } as unknown as ExecutionResult;
     const params = {
       msg: { channelId },
-      session: { agent: { streamFn: vi.fn() } },
+      session: { agent: { streamFunction: vi.fn() } },
       sessionKey: { tenantId: "t1", channelId, userId: "u1" },
       agentId: "my-agent",
       executionId: "exec-timeout-diagnostics",
@@ -595,11 +595,11 @@ describe("processFailurePath — knob-named timeout diagnostics", () => {
     const prompt = vi.fn();
     const denial = new Error("execution terminalized");
     (params.session as unknown as {
-      agent: { streamFn: unknown };
+      agent: { streamFunction: unknown };
       prompt: ReturnType<typeof vi.fn>;
-    }).agent.streamFn = originalStreamFn;
+    }).agent.streamFunction = originalStreamFn;
     (params.session as unknown as {
-      agent: { streamFn: unknown };
+      agent: { streamFunction: unknown };
       prompt: ReturnType<typeof vi.fn>;
     }).prompt = prompt;
     params.executionOverrides = {
@@ -614,7 +614,7 @@ describe("processFailurePath — knob-named timeout diagnostics", () => {
     );
 
     expect(prompt).not.toHaveBeenCalled();
-    expect((params.session as unknown as { agent: { streamFn: unknown } }).agent.streamFn)
+    expect((params.session as unknown as { agent: { streamFunction: unknown } }).agent.streamFunction)
       .toBe(originalStreamFn);
     expect(outcome).toMatchObject({
       promptSucceeded: false,

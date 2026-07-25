@@ -52,8 +52,8 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
     expect(source).toMatch(/escalatedMaxTokens/);
   });
 
-  it("restores session.agent.streamFn in a finally block (one-shot wrapper)", () => {
-    expect(source).toMatch(/} finally \{[\s\S]+?session\.agent\.streamFn = originalStreamFn/);
+  it("restores session.agent.streamFunction in a finally block (one-shot wrapper)", () => {
+    expect(source).toMatch(/} finally \{[\s\S]+?session\.agent\.streamFunction = originalStreamFn/);
   });
 
   it("restores the session and propagates terminal denial before retry dispatch", async () => {
@@ -67,7 +67,7 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
       session: {
         agent: {
           state: { model: { maxTokens: 8_192 } },
-          streamFn: originalStreamFn,
+          streamFunction: originalStreamFn,
         },
         prompt,
       },
@@ -124,7 +124,7 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
 
     expect(prompt).not.toHaveBeenCalled();
     expect(admissionChecks).toBe(1);
-    expect((params as { session: { agent: { streamFn: unknown } } }).session.agent.streamFn)
+    expect((params as { session: { agent: { streamFunction: unknown } } }).session.agent.streamFunction)
       .toBe(originalStreamFn);
     expect(result).toMatchObject({
       promptSucceeded: false,
@@ -141,7 +141,7 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
     const onProviderStart = vi.fn(() => err(denial));
     const params = {
       session: {
-        agent: { streamFn: originalStreamFn },
+        agent: { streamFunction: originalStreamFn },
         prompt,
       },
       config: { maxContextChars: 10_000 },
@@ -161,7 +161,7 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
 
     expect(onProviderStart).toHaveBeenCalledTimes(1);
     expect(prompt).not.toHaveBeenCalled();
-    expect((params as { session: { agent: { streamFn: unknown } } }).session.agent.streamFn)
+    expect((params as { session: { agent: { streamFunction: unknown } } }).session.agent.streamFunction)
       .toBe(originalStreamFn);
     expect(result).toMatchObject({
       promptSucceeded: false,
@@ -180,7 +180,7 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
       session: {
         agent: {
           state: { model: { maxTokens: 8_192 } },
-          streamFn: vi.fn(),
+          streamFunction: vi.fn(),
         },
         prompt,
       },
