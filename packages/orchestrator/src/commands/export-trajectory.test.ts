@@ -70,7 +70,10 @@ function makeDeliveryService() {
   return { deliverToChannel: vi.fn(async () => undefined) };
 }
 
-function makeDeliveryOptions(): DeliverToChannelOptions {
+function makeDeliveryOptions(
+  conversationKind: "direct" | "shared" = "direct",
+  conversationId = "chat-1",
+): DeliverToChannelOptions {
   return {
     completionMode: "deferred_retry",
     authority: {
@@ -81,9 +84,9 @@ function makeDeliveryOptions(): DeliverToChannelOptions {
     destinationEndpoint: {
       channelType: "telegram",
       channelInstanceId: "adapter-1",
-      conversationId: "chat-1",
+      conversationId,
       threadId: "owner-thread",
-      conversationKind: "direct",
+      conversationKind,
     },
     threadId: "owner-thread",
     skipChunking: true,
@@ -166,8 +169,8 @@ describe("handleExportTrajectory", () => {
     expect(result).toEqual({ action: "handled" });
   });
 
-  it("rejects group export before creating or sending a sensitive bundle", async () => {
-    vi.mocked(isGroupMessage).mockReturnValue(true);
+  it("rejects a shared authenticated endpoint even when metadata looks direct", async () => {
+    vi.mocked(isGroupMessage).mockReturnValue(false);
     const msg = makeMsg({ senderId: "owner-1", channelId: "group-1" });
     const sessionKey = makeKey("owner-1");
     const adapter = makeAdapter();
@@ -180,7 +183,7 @@ describe("handleExportTrajectory", () => {
       agentId: "a",
       adapter,
       deliveryService,
-      deliveryOptions: makeDeliveryOptions(),
+      deliveryOptions: makeDeliveryOptions("shared", "group-1"),
       exportSessionBundle,
       logger: makeLogger(),
     });
