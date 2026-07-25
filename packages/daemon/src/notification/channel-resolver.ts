@@ -2,10 +2,10 @@
 /**
  * Channel resolver for proactive notifications with 4-level fallback.
  * Resolution order:
- *   1. Explicit channelType + channelId (caller-specified)
- *   2. Platform match (channelType only, look up channelId from recent sessions)
- *   3. Primary channel (from agent notification config)
- *   4. Most recent session (across all platforms)
+ *   1. Explicit complete endpoint, or coordinates backed by a tracked endpoint
+ *   2. Platform match backed by the most recent endpoint on that platform
+ *   3. Configured primary channel backed by a tracked endpoint
+ *   4. Most recent tracked endpoint across all platforms
  * Returns a Result with the resolved channel or a "no_channel" error
  * listing which levels were attempted.
  */

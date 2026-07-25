@@ -18,7 +18,7 @@
  * assembly). Each suppress decision is reviewable here; the gate forces an
  * explicit choice for any future tool (no silent default).
  *
- * `message` (cross-channel send/reply/react/edit/delete/fetch/attach) is
+ * `message` (endpoint-scoped send/reply/react/edit/delete/fetch/attach) is
  * suppressed here rather than given a spec: it is the agent-to-channel plumbing
  * tool, distinct from the user-facing chat reply path, and is NOT in the §17.6
  * table. If a later phase decides its mutations are operator-meaningful, replace
@@ -45,7 +45,7 @@ const SUPPRESSED_TOOL_NAMES: readonly string[] = [
   "list_prompts",
   "list_resources",
   "read_resource",
-  // cross-channel messaging plumbing (NOT the user-facing reply path)
+  // endpoint-scoped messaging plumbing (NOT the user-facing reply path)
   "message",
   // scheduling (poll/registration, not user-meaningful per spec §10.3)
   "cron",

@@ -19,6 +19,16 @@ icon: "gavel"
 
 All platform action tools follow the same pattern: call the tool with an `action` parameter specifying what to do, plus any additional parameters that action requires. The action set per platform reflects what each platform's bot/API actually exposes -- Slack and WhatsApp do not have direct equivalents of Discord's role system, for example, and Telegram's API is the only one that exposes native polls.
 
+<Warning>
+Every platform action is also bound to the complete endpoint for the current
+turn. Include the platform's conversation coordinate (`channel_id`, `chat_id`,
+or `group_jid`) even for an action whose platform API primarily targets a
+server, user, or bot setting. The coordinate must match the authoritative
+channel instance, conversation, optional thread, and direct/shared kind already
+resolved for the turn; missing or conflicting authority fails before the
+adapter action runs.
+</Warning>
+
 ## Auth and bot permissions
 
 Each tool reads its credentials from the same place its channel adapter does. There is no separate auth surface for platform actions -- if your bot is connected and can send messages, it can attempt platform actions, subject to the bot's own platform permissions.
@@ -612,6 +622,7 @@ The agent filters the fetched results client-side for the earliest message after
 # 2. Pin the first message
 tool: discord_action
 action: pin
+channel_id: "general"
 message_id: "<id from step 1>"
 ```
 

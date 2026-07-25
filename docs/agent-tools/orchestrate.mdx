@@ -217,9 +217,12 @@ file written this run is gone the next run. It is **not** a persistent store, an
 the workspace-root skill-discovery or config subtrees (`skills/`, `.learned-skills/`, memory,
 config), so a jailed turn can never plant a cross-run skill. Enable the surface per agent with
 `autonomy.write: true`. `message_send`/`reply`/`react` target the agent's **own origin channel** by
-default — a send to a new channel escalates for approval (see [Autonomy](/agents/autonomy#what-standard-turns-on))
-— and the [`message.*`](/reference/json-rpc#message-send) edit/delete/fetch subset stays admin-only,
-not part of `orch:message`.
+default. Their coordinates must match the complete endpoint carried by the
+lease; a different or missing endpoint fails closed instead of being inferred
+from `channel_type` and `channel_id`. See
+[Autonomy](/agents/autonomy#what-standard-turns-on). The
+[`message.*`](/reference/json-rpc#message-send) edit/delete/fetch subset stays
+admin-only, not part of `orch:message`.
 
 ### Worked example — fetch, transform, send in one turn
 

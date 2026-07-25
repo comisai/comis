@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unified message tool: multi-action tool for cross-channel messaging.
+ * Unified message tool for endpoint-scoped channel operations.
  *
  * Supports 7 actions: send, reply, react, edit, delete, fetch, attach.
  * Destructive action (delete) requires confirmation via action gate.
  * All actions delegate to the messaging backend via rpcCall indirection.
- * Requires channel_type for explicit adapter resolution.
+ * Requires channel_type for adapter resolution; the daemon independently
+ * requires the requested coordinates to match the authoritative turn endpoint.
  *
  * @module
  */
@@ -135,7 +136,7 @@ const MessageToolParams = Type.Object({
  * requiresConfirmation:true when the action is classified as destructive.
  *
  * @param rpcCall - RPC call function for delegating to the messaging backend
- * @returns AgentTool implementing the cross-channel messaging interface
+ * @returns AgentTool implementing endpoint-scoped messaging
  */
 const VALID_ACTIONS = ["send", "reply", "react", "edit", "delete", "fetch", "attach"] as const;
 

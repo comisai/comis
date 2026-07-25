@@ -1129,7 +1129,8 @@ Get the current resource usage and configuration summary for the calling agent's
 
 Retrieve the conversation history for a session. Returns the raw message array stored in the session, including both user and assistant turns.
 
-In session responses, `ChannelEndpoint` is the complete exact routing identity:
+`ChannelEndpoint` is the complete exact routing identity used by session,
+message, notification, and platform-action RPCs:
 `{ channelType, channelInstanceId, conversationId, threadId?, conversationKind: "direct" | "shared" }`.
 It is projected from the conversation's authoritative scope and is omitted only
 when that scope is not endpoint-bound.
@@ -3573,7 +3574,7 @@ Discord platform action dispatch. Sends a platform-specific action to the Discor
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ action: string, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. See [Discord channel docs](/channels/discord) for available actions. |
+| **Parameters** | `{ action: string, channel_id: string, endpoint?: ChannelEndpoint, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. Gateway clients must supply the exact endpoint. See [Discord channel docs](/channels/discord) for available actions. |
 | **Returns** | Platform-specific result object |
 
 <CodeGroup>
@@ -3583,6 +3584,13 @@ Discord platform action dispatch. Sends a platform-specific action to the Discor
   "method": "discord.action",
   "params": {
     "action": "set_status",
+    "channel_id": "channel789",
+    "endpoint": {
+      "channelType": "discord",
+      "channelInstanceId": "discord-main",
+      "conversationId": "channel789",
+      "conversationKind": "shared"
+    },
     "status": "online",
     "activity": "Monitoring channels"
   },
@@ -3749,10 +3757,12 @@ Cross-channel message operations: send, reply, edit, delete, fetch, react, and
 attach files. `message.send`, `message.reply`, and `message.react` are
 `rpc`-scoped outward operations guarded by the `orch:message` capability.
 Editing, deleting, fetching, and attaching remain `admin`-scoped. Every method
-identifies its target with only `channel_type` and `channel_id`; the contract
-cannot distinguish channel instances, threads, or direct/shared conversation
-kind. A client holding a complete `ChannelEndpoint` must fail closed instead of
-discarding those qualifiers.
+requires the complete [`ChannelEndpoint`](#session-history) for its target and
+verifies the channel type, adapter instance, and conversation ID against the
+other request coordinates. The request schema keeps `endpoint` optional only
+because an authenticated in-process turn can supply the same endpoint through
+request context; gateway clients must send it explicitly. Missing or
+conflicting authority fails closed before any adapter action.
 
 <Note>
 **Durable duplicate suppression for autonomy-originated sends.** When
@@ -3784,7 +3794,7 @@ best-effort pass-through operations.
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ channel_type: string, channel_id: string, text: string, buttons?: object[][], cards?: object[], effects?: object[], thread_reply?: boolean }` |
+| **Parameters** | `{ channel_type: string, channel_id: string, endpoint?: ChannelEndpoint, text: string, buttons?: object[][], cards?: object[], effects?: object[], thread_reply?: boolean }` |
 | **Returns** | `{ messageId: string, channelId: string }` |
 
 <CodeGroup>
@@ -3795,6 +3805,12 @@ best-effort pass-through operations.
   "params": {
     "channel_type": "telegram",
     "channel_id": "chat123",
+    "endpoint": {
+      "channelType": "telegram",
+      "channelInstanceId": "telegram-main",
+      "conversationId": "chat123",
+      "conversationKind": "direct"
+    },
     "text": "Hello from the API!"
   },
   "id": 1
@@ -3817,7 +3833,7 @@ best-effort pass-through operations.
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ channel_type: string, channel_id: string, text: string, message_id: string, buttons?: object[][], cards?: object[], effects?: object[], thread_reply?: boolean }` |
+| **Parameters** | `{ channel_type: string, channel_id: string, endpoint?: ChannelEndpoint, text: string, message_id: string, buttons?: object[][], cards?: object[], effects?: object[], thread_reply?: boolean }` |
 | **Returns** | `{ messageId: string, channelId: string }` |
 
 ### `message.edit`
@@ -3825,7 +3841,7 @@ best-effort pass-through operations.
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ channel_type: string, channel_id: string, message_id: string, text: string }` |
+| **Parameters** | `{ channel_type: string, channel_id: string, endpoint?: ChannelEndpoint, message_id: string, text: string }` |
 | **Returns** | `{ edited: true, channelId: string, messageId: string }` |
 
 ### `message.delete`
@@ -3833,7 +3849,7 @@ best-effort pass-through operations.
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ channel_type: string, channel_id: string, message_id: string }` |
+| **Parameters** | `{ channel_type: string, channel_id: string, endpoint?: ChannelEndpoint, message_id: string }` |
 | **Returns** | `{ deleted: true, channelId: string, messageId: string }` |
 
 ### `message.fetch`
@@ -3841,7 +3857,7 @@ best-effort pass-through operations.
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ channel_type: string, channel_id: string, limit?: number, before?: string }` |
+| **Parameters** | `{ channel_type: string, channel_id: string, endpoint?: ChannelEndpoint, limit?: number, before?: string }` |
 | **Returns** | `{ messages: object[], channelId: string }` |
 
 <CodeGroup>
@@ -3852,6 +3868,12 @@ best-effort pass-through operations.
   "params": {
     "channel_type": "discord",
     "channel_id": "channel789",
+    "endpoint": {
+      "channelType": "discord",
+      "channelInstanceId": "discord-main",
+      "conversationId": "channel789",
+      "conversationKind": "shared"
+    },
     "limit": 10
   },
   "id": 1
@@ -3875,7 +3897,7 @@ best-effort pass-through operations.
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ channel_type: string, channel_id: string, message_id: string, emoji: string }` |
+| **Parameters** | `{ channel_type: string, channel_id: string, endpoint?: ChannelEndpoint, message_id: string, emoji: string }` |
 | **Returns** | `{ reacted: true, channelId: string, messageId: string, emoji: string }` |
 
 ### `message.attach`
@@ -3883,7 +3905,7 @@ best-effort pass-through operations.
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ channel_type: string, channel_id: string, attachment_url: string, attachment_type?: "image" \| "file" \| "audio" \| "video", mime_type?: string, file_name?: string, caption?: string }` |
+| **Parameters** | `{ channel_type: string, channel_id: string, endpoint?: ChannelEndpoint, attachment_url: string, attachment_type?: "image" \| "file" \| "audio" \| "video", mime_type?: string, file_name?: string, caption?: string }` |
 | **Returns** | `{ receipt: { kind: "tracked", messageId: string } \| { kind: "delivered_untracked" }, channelId: string }` |
 
 </Accordion>
@@ -3901,8 +3923,16 @@ Send notifications through configured channels.
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ message: string, priority?: string, channel_type?: string, channel_id?: string }` |
-| **Returns** | `{ success: boolean, entryId?: string }` |
+| **Parameters** | `{ message: string, priority?: string, channel_type?: string, channel_id?: string, destination_endpoint?: ChannelEndpoint, origin?: string }` |
+| **Returns** | `{ success: boolean, entryId?: string, error?: string }` |
+
+The daemon resolves every notification to a complete endpoint before enqueueing
+it. Explicit `channel_type` plus `channel_id`, a configured primary channel,
+and automatic recent-session selection are accepted only when they resolve to
+tracked endpoint authority. `destination_endpoint` supplies the complete
+routing identity directly and is cross-checked while the handler binds delivery
+authority. Resolution fails closed when the endpoint or its active adapter
+instance is unavailable.
 
 <CodeGroup>
 ```json Request
@@ -3943,7 +3973,7 @@ Slack platform action dispatch. Sends a platform-specific action to the Slack ch
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ action: string, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. See [Slack channel docs](/channels/slack) for available actions. |
+| **Parameters** | `{ action: string, channel_id: string, endpoint?: ChannelEndpoint, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. Gateway clients must supply the exact endpoint. See [Slack channel docs](/channels/slack) for available actions. |
 | **Returns** | Platform-specific result object |
 
 <CodeGroup>
@@ -3953,7 +3983,13 @@ Slack platform action dispatch. Sends a platform-specific action to the Slack ch
   "method": "slack.action",
   "params": {
     "action": "set_topic",
-    "channel": "C0123456",
+    "channel_id": "C0123456",
+    "endpoint": {
+      "channelType": "slack",
+      "channelInstanceId": "slack-main",
+      "conversationId": "C0123456",
+      "conversationKind": "shared"
+    },
     "topic": "Sprint 42 updates"
   },
   "id": 1
@@ -4309,7 +4345,7 @@ Telegram platform action dispatch. Sends a platform-specific action to the Teleg
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ action: string, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. See [Telegram channel docs](/channels/telegram) for available actions. |
+| **Parameters** | `{ action: string, chat_id: string, endpoint?: ChannelEndpoint, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. Gateway clients must supply the exact endpoint. See [Telegram channel docs](/channels/telegram) for available actions. |
 | **Returns** | Platform-specific result object |
 
 <CodeGroup>
@@ -4320,6 +4356,12 @@ Telegram platform action dispatch. Sends a platform-specific action to the Teleg
   "params": {
     "action": "send_message",
     "chat_id": "123456",
+    "endpoint": {
+      "channelType": "telegram",
+      "channelInstanceId": "telegram-main",
+      "conversationId": "123456",
+      "conversationKind": "shared"
+    },
     "text": "Hello from Telegram action"
   },
   "id": 1
@@ -4352,7 +4394,7 @@ WhatsApp platform action dispatch. Sends a platform-specific action to the Whats
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ action: string, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. See [WhatsApp channel docs](/channels/whatsapp) for available actions. |
+| **Parameters** | `{ action: string, group_jid: string, endpoint?: ChannelEndpoint, ...platformParams }` -- the `action` string selects the operation; additional parameters vary per action. Gateway clients must supply the exact endpoint. See [WhatsApp channel docs](/channels/whatsapp) for available actions. |
 | **Returns** | Platform-specific result object |
 
 <CodeGroup>
@@ -4362,6 +4404,13 @@ WhatsApp platform action dispatch. Sends a platform-specific action to the Whats
   "method": "whatsapp.action",
   "params": {
     "action": "send_template",
+    "group_jid": "group123",
+    "endpoint": {
+      "channelType": "whatsapp",
+      "channelInstanceId": "whatsapp-main",
+      "conversationId": "group123",
+      "conversationKind": "shared"
+    },
     "to": "1234567890",
     "template": "welcome_message"
   },

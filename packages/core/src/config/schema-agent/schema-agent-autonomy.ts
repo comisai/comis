@@ -85,11 +85,12 @@ import { capIsAutoApprovable } from "./schema-agent-autonomy-escalate.js";
  * messaging, and the daemon gates `message.send/reply/react` on
  * `requireCapability(_, "orch:message")`. The held cap is what lets the most
  * fundamental agent action — sending a message to the channel it was spoken to
- * — pass that gate. The ORIGIN-vs-new-channel scoping rides the separate
- * `message.channels` config (`["origin"]` by default): origin sends are
- * auto-allowable under quota, while a send to a NEW channel is an
- * `autoApprovable:false` floor item enforced by the message config + the
- * per-target grant — NOT by removing the cap from the held set. The
+ * — pass that gate. After the delivery boundary verifies the complete endpoint
+ * already bound to the turn, ORIGIN-vs-non-origin quota scoping rides the
+ * separate `message.channels` config (`["origin"]` by default): origin sends
+ * are auto-allowable under quota, while a non-origin target needs the message
+ * config + per-target grant. Those knobs never discover or mint endpoint
+ * authority. The
  * cap-literal `orch:message` is therefore floor-contained +
  * `autoApprovable:true` (origin); only its non-origin TARGET escalates. The cap
  * covers send/reply/react ONLY — edit/delete/fetch/attach stay admin-only.
@@ -115,8 +116,8 @@ export type AutonomyProfileName = (typeof AUTONOMY_PROFILE_NAMES)[number];
 
 /**
  * The origin-channel message posture. `standard` resolves
- * `channels: ["origin"]` (own channel only) under an hourly quota; any NEW
- * target is an explicit per-target grant (`autoApprovable:false`).
+ * `channels: ["origin"]` (own channel only) under an hourly quota; a non-origin
+ * endpoint already bound to a trusted run needs an explicit per-target grant.
  */
 export const AutonomyMessageConfigSchema = z.strictObject({
   /** Allowed outward channels. 'origin' = the agent's own channel. */

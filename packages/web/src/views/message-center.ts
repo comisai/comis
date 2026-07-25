@@ -184,8 +184,8 @@ const PLATFORM_ACTIONS: Record<string, PlatformActionGroup[]> = {
 /**
  * Message center view for the Comis operator console.
  *
- * Displays endpoint-authoritative stored history. Native history and mutations
- * remain unavailable when their RPC input cannot carry the selected endpoint.
+ * Displays endpoint-authoritative history. Native history and mutations remain
+ * unavailable until discovery supplies the complete selected endpoint.
  *
  * Accessed via `#/messages/:type` route.
  *

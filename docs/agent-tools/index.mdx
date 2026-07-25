@@ -87,9 +87,10 @@ Scheduling tools let agents create automated tasks that run on a timer. Agents c
 
 ### Messaging
 
-The message tool works across all connected channels -- Discord, Telegram, Slack, WhatsApp, and every other supported platform. Agents can send new messages, reply to specific messages, add emoji reactions, edit or delete messages, fetch message history, and send file attachments.
-
-Agents can also send messages to channels they are not currently conversing in, making the message tool ideal for notifications, alerts, and cross-channel coordination.
+The message tool provides one interface across supported platforms for sending,
+replying, reacting, editing, deleting, fetching history, and attaching files at
+the current authoritative conversation endpoint. Use `notify_user` for
+proactive delivery that must resolve a configured or recently tracked endpoint.
 
 | Tool | Description | Guide |
 |------|-------------|-------|

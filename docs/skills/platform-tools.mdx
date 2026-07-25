@@ -5,7 +5,7 @@ icon: "puzzle-piece"
 ---
 
 Platform tools are built specifically for Comis. They let agents do things
-like schedule tasks, send messages across channels, manage sessions, analyze
+like schedule tasks, operate on channel messages, manage sessions, analyze
 media, control infrastructure, and perform platform-specific actions. Unlike
 built-in tools (which handle files and web access), platform tools are about
 working within the Comis ecosystem.
@@ -51,14 +51,14 @@ messaged them. Agents can adjust the heartbeat interval or disable it entirely.
 
 ### Messaging
 
-The `message` tool is how agents communicate across channels. It supports
-sending new messages, replying to specific messages, adding reactions, editing
-previous messages, and deleting messages. A single agent can message across
-different platforms -- posting to Discord and Telegram from the same
-conversation.
+The `message` tool operates on the authoritative endpoint attached to the
+current turn. It supports sending new messages, replying to specific messages,
+adding reactions, editing previous messages, and deleting messages without
+collapsing channel instance, thread, or conversation-kind identity.
 
 This is one of the most frequently used platform tools. Whenever an agent
-needs to proactively reach out (not just reply), it uses the `message` tool.
+needs proactive endpoint resolution rather than its current turn endpoint, it
+uses `notify_user`.
 
 ### Sessions
 
@@ -199,7 +199,9 @@ Four individual tools for long-term memory operations:
 Sends a proactive notification to the user outside of the normal
 request-response flow. Supports priority levels and automatic channel
 resolution. The daemon-side handler applies rate limiting, deduplication,
-quiet hours enforcement, and channel resolution guards before delivery.
+quiet hours enforcement, and channel resolution guards before delivery. Every
+route must resolve to a complete tracked endpoint; missing authority fails
+closed.
 
 **Parameters:**
 
@@ -207,8 +209,8 @@ quiet hours enforcement, and channel resolution guards before delivery.
 |-----------|------|----------|-------------|
 | `message` | `string` | Yes | Notification text to send to the user |
 | `priority` | `string` | No | Priority level: `low`, `normal` (default), `high`, or `critical`. `critical` bypasses quiet hours. |
-| `channel_type` | `string` | No | Target channel type (e.g., `telegram`, `discord`). Omit for auto-resolution. |
-| `channel_id` | `string` | No | Target channel/chat ID. Required when `channel_type` is specified. |
+| `channel_type` | `string` | No | Target channel type (e.g., `telegram`, `discord`). Omit for auto-resolution from tracked endpoint activity. |
+| `channel_id` | `string` | No | Target conversation ID. Required with `channel_type`; the pair must resolve to a tracked endpoint. |
 
 ### Image Generation
 

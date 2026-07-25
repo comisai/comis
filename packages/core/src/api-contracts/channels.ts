@@ -65,6 +65,13 @@
  * is the adapter's own typing; the contract is type narrowing + dev-mode
  * shape-regression canary.
  *
+ * Every native message and platform-action handler also requires a complete
+ * `ChannelEndpoint` and verifies its channel type, adapter instance, and
+ * conversation ID against the requested coordinates. `endpoint` remains
+ * optional in the request schemas because an authenticated in-process turn may
+ * supply the same authority through request context; an external caller must
+ * provide it explicitly.
+ *
  * **Allowlist compliance.** All schemas use the 12-shape allowlist:
  * z.object, z.string (bare `z.string()` everywhere — no `.url()` /
  * `.regex()` refinements), z.number, z.boolean, z.literal, z.enum, z.array,
@@ -351,7 +358,7 @@ export const ChannelsRestartContract = defineContract({
 
 /**
  * `message.send` — Send a text message via a channel adapter. Rpc-scoped
- * (see the scope rationale on the contract). Handler path: message-handlers.ts:104-123.
+ * (see the scope rationale on the contract). Handler: message-handlers.ts.
  *
  * Authorizes channel access via `authorizeChannelAccess`. Resolves adapter
  * via `resolveAdapter`. Optional rich content (`buttons`, `cards`, `effects`)
@@ -361,7 +368,7 @@ export const ChannelsRestartContract = defineContract({
  * content shapes (RichButton[][], RichCard[], RichEffect[] from @comis/core).
  * Tight modeling would re-encode the entire rich-content surface.
  *
- * Request: `{ channel_type, channel_id, text, buttons?, cards?, effects?, thread_reply? }`.
+ * Request: `{ channel_type, channel_id, endpoint?, text, buttons?, cards?, effects?, thread_reply? }`.
  * Response: `{ messageId, channelId }`.
  */
 export const MessageSendContract = defineContract({
@@ -394,13 +401,13 @@ export const MessageSendContract = defineContract({
 
 /**
  * `message.reply` — Reply to an existing message via a channel adapter.
- * Rpc-scoped. Handler path: message-handlers.ts:125-146.
+ * Rpc-scoped. Handler: message-handlers.ts.
  *
  * Resolves inbound UUID `message_id` to platform-native id via
  * `inboundMessageIdResolver` before adapter call. Same rich content options
  * as message.send.
  *
- * Request: `{ channel_type, channel_id, message_id, text, buttons?, cards?, effects?, thread_reply? }`.
+ * Request: `{ channel_type, channel_id, endpoint?, message_id, text, buttons?, cards?, effects?, thread_reply? }`.
  * Response: `{ messageId, channelId }`.
  */
 export const MessageReplyContract = defineContract({
@@ -430,13 +437,13 @@ export const MessageReplyContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `message.react` — React to a message with an emoji. Rpc-scoped. Handler
- * path: message-handlers.ts:148-159.
+ * `message.react` — React to a message with an emoji. Rpc-scoped. Handler:
+ * message-handlers.ts.
  *
  * Capability-gated (`reactions` feature). Resolves inbound UUID via
  * `inboundMessageIdResolver` before adapter call.
  *
- * Request: `{ channel_type, channel_id, message_id, emoji }`.
+ * Request: `{ channel_type, channel_id, endpoint?, message_id, emoji }`.
  * Response: `{ reacted: true, channelId, messageId, emoji }`.
  */
 export const MessageReactContract = defineContract({
@@ -464,8 +471,8 @@ export const MessageReactContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `message.edit` — Edit an existing message. Admin-only. Handler path:
- * message-handlers.ts:163-175.
+ * `message.edit` — Edit an existing message. Admin-only. Handler:
+ * message-handlers.ts.
  *
  * edit/delete/fetch/attach STAY admin-only (deny-by-origin) and
  * are NOT part of `orch:message` — the cap exposes only the genuinely-outward
@@ -474,7 +481,7 @@ export const MessageReactContract = defineContract({
  * Capability-gated (`editMessages` feature). Resolves inbound UUID. Text is
  * formatted via `formatForChannel` before adapter.editMessage call.
  *
- * Request: `{ channel_type, channel_id, message_id, text }`.
+ * Request: `{ channel_type, channel_id, endpoint?, message_id, text }`.
  * Response: `{ edited: true, channelId, messageId }`.
  */
 export const MessageEditContract = defineContract({
@@ -499,12 +506,12 @@ export const MessageEditContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `message.delete` — Delete a message. Admin-only. Handler path:
- * message-handlers.ts:177-187.
+ * `message.delete` — Delete a message. Admin-only. Handler:
+ * message-handlers.ts.
  *
  * Capability-gated (`deleteMessages` feature). Resolves inbound UUID.
  *
- * Request: `{ channel_type, channel_id, message_id }`.
+ * Request: `{ channel_type, channel_id, endpoint?, message_id }`.
  * Response: `{ deleted: true, channelId, messageId }`.
  */
 export const MessageDeleteContract = defineContract({
@@ -528,8 +535,8 @@ export const MessageDeleteContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `message.fetch` — Fetch recent messages from a channel. Admin-only. Handler
- * path: message-handlers.ts:189-200.
+ * `message.fetch` — Fetch recent messages from a channel. Admin-only. Handler:
+ * message-handlers.ts.
  *
  * Capability-gated (`fetchHistory` feature). `limit` defaults to 20.
  *
@@ -537,7 +544,7 @@ export const MessageDeleteContract = defineContract({
  * from `@comis/core`; each channel's wire format differs (Telegram exposes
  * `from`/`text`/`date`, Discord exposes `author`/`content`/`timestamp`).
  *
- * Request: `{ channel_type, channel_id, limit?, before? }`.
+ * Request: `{ channel_type, channel_id, endpoint?, limit?, before? }`.
  * Response: `{ messages: LooseArray, channelId }`.
  */
 export const MessageFetchContract = defineContract({
@@ -562,8 +569,7 @@ export const MessageFetchContract = defineContract({
 
 /**
  * `message.attach` — Send a file/image/audio/video attachment via a channel.
- * Admin-only. Handler path: message-handlers.ts:202-309 (largest handler in
- * the message-handlers file).
+ * Admin-only. Handler: message-handlers.ts.
  *
  * Capability-gated (`attachments` feature). Resolves `file://` URLs and
  * absolute paths to validated local paths (workspace-bounded via `safePath`).
@@ -576,7 +582,7 @@ export const MessageFetchContract = defineContract({
  * `attachment_type` enum: `"image" | "file" | "audio" | "video"` (defaults to
  * `"file"` when missing).
  *
- * Request: `{ channel_type, channel_id, attachment_url, attachment_type?,
+ * Request: `{ channel_type, channel_id, endpoint?, attachment_url, attachment_type?,
  * mime_type?, file_name?, caption? }`.
  * Response: `{ receipt, channelId }`. Both receipt variants mean delivered;
  * `delivered_untracked` carries no synthetic platform ID.
@@ -609,15 +615,15 @@ export const MessageAttachContract = defineContract({
 
 /**
  * `discord.action` — Discord-specific platform action (channel pin/unpin,
- * voice connect/disconnect, role management, etc.). Admin-only. Handler
- * path: message-handlers.ts:311-325.
+ * voice connect/disconnect, role management, etc.). Admin-only. Handler:
+ * message-handlers.ts.
  *
  * LOOSE-RECORD for request + response: platform-action parameters vary
  * by action (e.g., `pin_message` carries `message_id`; `voice_connect`
  * carries `voice_channel_id`); response is `adapter.platformAction`'s return
  * value, which is action-dependent.
  *
- * Request: `{ action, channel_id?, ... arbitrary platform-specific fields }`.
+ * Request: `{ action, channel_id, endpoint?, ... arbitrary platform-specific fields }`.
  * Response: LooseRecord (varies by action).
  */
 export const DiscordActionContract = defineContract({
@@ -633,12 +639,11 @@ export const DiscordActionContract = defineContract({
 
 /**
  * `telegram.action` — Telegram-specific platform action (set commands, pin
- * message, manage admins, etc.). Admin-only. Handler path:
- * message-handlers.ts:327-341.
+ * message, manage admins, etc.). Admin-only. Handler: message-handlers.ts.
  *
  * LOOSE-RECORD for request + response.
  *
- * Request: `{ action, chat_id?, ... arbitrary platform-specific fields }`.
+ * Request: `{ action, chat_id, endpoint?, ... arbitrary platform-specific fields }`.
  * Response: LooseRecord.
  */
 export const TelegramActionContract = defineContract({
@@ -654,12 +659,11 @@ export const TelegramActionContract = defineContract({
 
 /**
  * `slack.action` — Slack-specific platform action (pin message, invite to
- * channel, manage workspaces, etc.). Admin-only. Handler path:
- * message-handlers.ts:343-357.
+ * channel, manage workspaces, etc.). Admin-only. Handler: message-handlers.ts.
  *
  * LOOSE-RECORD for request + response.
  *
- * Request: `{ action, channel_id?, ... arbitrary platform-specific fields }`.
+ * Request: `{ action, channel_id, endpoint?, ... arbitrary platform-specific fields }`.
  * Response: LooseRecord.
  */
 export const SlackActionContract = defineContract({
@@ -675,12 +679,12 @@ export const SlackActionContract = defineContract({
 
 /**
  * `whatsapp.action` — WhatsApp-specific platform action (group admin
- * promote/demote, group settings, etc.). Admin-only. Handler path:
- * message-handlers.ts:359-373.
+ * promote/demote, group settings, etc.). Admin-only. Handler:
+ * message-handlers.ts.
  *
  * LOOSE-RECORD for request + response.
  *
- * Request: `{ action, group_jid?, ... arbitrary platform-specific fields }`.
+ * Request: `{ action, group_jid, endpoint?, ... arbitrary platform-specific fields }`.
  * Response: LooseRecord.
  */
 export const WhatsappActionContract = defineContract({

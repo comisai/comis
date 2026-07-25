@@ -83,10 +83,12 @@ do.
   the platform **escalates it to your operator** out-of-band. The run keeps going
   on what it *is* allowed to do; it does not sit on a prompt forever.
 - **Outward actions still escalate, never auto-send.** `unattended` does **not**
-  loosen the outward floor. A send to a new channel, a browser action, any
-  hard-to-reverse outward step is still **proposed** for approval, never
+  loosen the outward floor. A send to a non-origin endpoint must already carry
+  exact endpoint authority and the configured grant; browser actions and other
+  hard-to-reverse outward steps are still **proposed** for approval, never
   auto-decided -- exactly as under `standard`. Never-hang changes *waiting* into
-  *escalation*; it does not change *propose* into *send*.
+  *escalation*; it does not mint routing authority or change *propose* into
+  *send*.
 - **The denial breaker stops a retry-loop.** A run that keeps trying a blocked
   capability would otherwise spin -- each attempt denied, the budget draining for
   nothing. After [`denialBreakerN`](/reference/config-yaml#autonomy-agents-autonomy)
@@ -135,13 +137,17 @@ The `standard` profile resolves these nine floor capabilities:
 `orch:message` is on by default but scoped to the agent's **origin channel
 only** -- it answers where it was spoken to. The cap covers the genuinely-outward
 send subset (`message.send`/`reply`/`react`); editing, deleting, fetching, and
-attaching stay admin-only. A send to a **new** channel always escalates for
-approval (it is never auto-decided), configured via `message.channels`.
+attaching stay admin-only. Every call must also match the complete endpoint
+bound to the current turn. `message.channels` controls whether a non-origin
+endpoint already selected by a trusted scheduled run is grantable; it does not
+discover an endpoint or authorize arbitrary `channel_type`/`channel_id`
+coordinates.
 
 Two surfaces are **off** in every default profile because they are outward and
-hard to reverse: `orch:browse` (a real browser) and messaging a **new** channel
-(beyond the agent's own). Opt into the browser explicitly with `browse: true`;
-even then it always escalates for approval -- it is never auto-decided.
+hard to reverse: `orch:browse` (a real browser) and non-origin messaging beyond
+the endpoint already bound to the run. Opt into the browser explicitly with
+`browse: true`; even then it always escalates for approval -- it is never
+auto-decided.
 
 ### Learned procedures stay advisory
 

@@ -6,8 +6,8 @@ icon: "envelope"
 
 The Message Center lets you browse endpoint-scoped history across connected
 channels from one interface. Native send, reply, reaction, moderation, and
-platform actions are available only when their RPC contract can represent the
-selected target without losing endpoint identity.
+platform actions are available only after the selected chat has supplied a
+complete authoritative endpoint.
 
 ## Routes
 
@@ -21,10 +21,10 @@ selected target without losing endpoint identity.
 - `channels.get(channel_type)` -- bot identity (used to label the operator attribution dialog)
 - `obs.channels.all` -- activity labels for endpoint-authoritative chat picker rows
 - `session.list` and `session.history` -- chat discovery and stored history, matched by complete endpoint identity (channel instance, conversation, thread, and kind) rather than a display key
-- `message.fetch(channel_type, channel_id, limit?)` -- native recent history only when the selected target can be represented by those two fields
-- `message.send`, `message.reply`, `message.react`, `message.edit`, `message.delete` -- native compose and modify operations when the selected target can be represented unambiguously
-- `message.attach` -- URL-based attachment delivery
-- `discord.action`, `telegram.action`, `slack.action`, `whatsapp.action` -- platform-specific actions
+- `message.fetch(channel_type, channel_id, endpoint, limit?)` -- native recent history for the exact selected endpoint
+- `message.send`, `message.reply`, `message.react`, `message.edit`, `message.delete` -- native compose and modify operations carrying that same endpoint
+- `message.attach` -- endpoint-authorized URL-based attachment delivery
+- `discord.action`, `telegram.action`, `slack.action`, `whatsapp.action` -- endpoint-authorized platform-specific actions
 
 Every send/edit/delete action requires a confirmation dialog that explicitly attributes the action to the operator (not the agent), so the audit log records *who* did the action.
 
@@ -45,11 +45,12 @@ account and thread qualifiers.
 <Note>
 Every current picker row preserves the complete endpoint returned by
 `session.list`, including the channel instance, optional thread, and
-direct/shared kind. The native message RPCs currently accept only
-`channel_type` and `channel_id`; they cannot carry that complete endpoint. The
-Message Center therefore reads stored history through `session.history` and
-disables native message mutations and platform actions for those rows instead
-of collapsing the target to a bare conversation ID. See the
+direct/shared kind. The Message Center passes that endpoint to every native
+history, mutation, attachment, and platform-action RPC. If endpoint discovery
+returns no row or fails, native history is not requested and all relevant
+controls remain disabled; a channel type is never substituted for a missing
+conversation ID. Channels without native history use `session.history`, but
+only after an exact endpoint match. See the
 [`message.send` contract](/reference/json-rpc#message-send).
 </Note>
 
@@ -68,8 +69,8 @@ Click a message row to select it. The selected message highlights and becomes th
 
 ### Message Actions
 
-When the selected target is representable by the native RPC contract, platform
-capabilities determine whether you can perform these actions:
+When the selected chat has an authoritative endpoint, platform capabilities
+determine whether you can perform these actions:
 
 - **Reply** -- compose a reply to a selected message (opens a confirmation dialog with operator attribution)
 - **React** -- add an emoji reaction from a curated set of 24 common emoji

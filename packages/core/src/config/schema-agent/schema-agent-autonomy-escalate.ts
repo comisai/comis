@@ -26,10 +26,12 @@ import { type AgentCapability } from "../../security/capability.js";
  *
  * `orch:browse` (the browser) is the always-escalate cap-LITERAL member.
  * `orch:message` is deliberately NOT here: the floor item is
- * "orch:message to a NON-ORIGIN channel", and that target scoping rides the
- * `message.channels` config (`["origin"]` default + the per-target grant),
- * NOT the cap literal. The cap-literal `orch:message` is auto-approvable to the
- * agent's OWN origin channel under quota (the capable default), so it
+ * "orch:message to a NON-ORIGIN channel", and after the exact destination
+ * endpoint is supplied by trusted turn context, that quota scoping rides the
+ * `message.channels` config (`["origin"]` default + the per-target grant), not
+ * the cap literal. The config never creates endpoint authority. The cap-literal
+ * `orch:message` is auto-approvable to the agent's OWN origin channel under
+ * quota (the capable default), so it
  * resolves `autoApprovable:true` while the non-origin send is gated by the
  * message config — modeling it as an always-escalate cap-literal would
  * incorrectly forbid even origin sends. `report:issue` is a deputy cap

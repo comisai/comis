@@ -322,7 +322,7 @@ behavior.
 | `durability.keepAliveMs` | `number` | `30000` | Keep-alive write cadence in milliseconds — how often a live run stamps its heartbeat, independent of step/spawn completion so a long-running child never looks stale. Positive integer. |
 | `durability.recoveryBudgetMs` | `number` | `30000` | Wall-clock recovery budget in milliseconds for one boot/watchdog pass. A backlog larger than the budget is partially recovered and the remainder deferred to the next pass (no thundering herd on a large crash backlog). Positive integer. |
 | `durability.orchestrateResume` | `boolean` | `true` | Preserve a timed-out `orchestrate` run's pinned script and last checkpoint so an explicit `orchestrate({resumeRunId})` can restart it from verified artifacts. Set `false` to kill and clean timed-out runs without retaining resumable artifacts. |
-| `message` | `object` | `{ channels: ["origin"], maxPerHour: 20 }` | Outward-message posture. `channels` lists allowed channels (`"origin"` = the agent's own); `maxPerHour` is the rolling-hour send quota. A new channel is an explicit, always-escalating grant. |
+| `message` | `object` | `{ channels: ["origin"], maxPerHour: 20 }` | Outward-message posture. `channels` lists allowed targets (`"origin"` = the agent's own); `maxPerHour` is the rolling-hour send quota. A non-origin target still requires the exact endpoint already bound to a trusted run; this grant never discovers or mints routing authority. |
 | `web` | `boolean` | _(from profile)_ | Toggle for `orch:web` (untrusted external content). |
 | `analyze` | `boolean` | _(from profile)_ | Toggle for `orch:analyze` (cost-bearing media analysis). |
 | `write` | `boolean` | _(from profile)_ | Toggle for `orch:write` (jailed workspace mutation). |
