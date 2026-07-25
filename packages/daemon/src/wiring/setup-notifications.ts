@@ -28,7 +28,7 @@ export interface SetupNotificationDeps {
   agents: Record<string, PerAgentConfig>;
   quietHoursConfig: { enabled: boolean; start: string; end: string; timezone: string };
   criticalBypass: boolean;
-  activeAdapterTypes: ReadonlySet<string>;
+  activeAdapterTypes: Pick<ReadonlySet<string>, "has">;
   /** The tenant every minted notification authority is bound to. */
   tenantId: string;
   /** Resolve a channel type to its registered adapter's instance id (ChannelPort.channelId). */

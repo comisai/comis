@@ -2266,7 +2266,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     eventBus: container.eventBus, deliveryQueue, agents,
     quietHoursConfig: container.config.scheduler.quietHours,
     criticalBypass: container.config.scheduler.quietHours.criticalBypass,
-    activeAdapterTypes: new Set(adaptersByType.keys()),
+    activeAdapterTypes: { has: (channelType) => adaptersByType.has(channelType) },
     tenantId: container.config.tenantId,
     // Live lookup (adaptersByType is mutated as adapters register): the resolved
     // channel type's adapter instance id, mirroring ingress's channelInstanceId.

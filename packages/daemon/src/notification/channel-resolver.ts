@@ -22,7 +22,7 @@ export interface ResolvedChannel {
 
 export interface ChannelResolverDeps {
   /** Set of active adapter channel types (e.g., "telegram", "discord"). */
-  activeAdapterTypes: ReadonlySet<string>;
+  activeAdapterTypes: Pick<ReadonlySet<string>, "has">;
   getRecentSessionEndpoint: (
     agentId: string,
     channelType: string,
