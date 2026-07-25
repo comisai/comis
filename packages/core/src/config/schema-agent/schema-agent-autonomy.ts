@@ -89,8 +89,7 @@ import { capIsAutoApprovable } from "./schema-agent-autonomy-escalate.js";
  * already bound to the turn, ORIGIN-vs-non-origin quota scoping rides the
  * separate `message.channels` config (`["origin"]` by default): origin sends
  * are auto-allowable under quota, while a non-origin target needs the message
- * config + per-target grant. Those knobs never discover or mint endpoint
- * authority. The
+ * config + per-target grant. Those knobs never discover or mint endpoint authority. The
  * cap-literal `orch:message` is therefore floor-contained +
  * `autoApprovable:true` (origin); only its non-origin TARGET escalates. The cap
  * covers send/reply/react ONLY — edit/delete/fetch/attach stay admin-only.
