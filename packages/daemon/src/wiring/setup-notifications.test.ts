@@ -100,6 +100,17 @@ function deliveryFields(agentId: string, channelId: string) {
   };
 }
 
+function recordDestination(
+  ctx: ReturnType<typeof setupNotifications>,
+  agentId: string,
+  channelId: string,
+): void {
+  ctx.sessionTracker.recordActivity(
+    agentId,
+    deliveryFields(agentId, channelId).destinationEndpoint,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Build a deps object for `setupNotifications` with sensible test defaults.
 // ---------------------------------------------------------------------------
@@ -182,14 +193,9 @@ describe("setupNotifications -- daemon wiring", () => {
     deps.activeAdapterTypes = new Set<string>(["discord"]);
 
     const ctx = setupNotifications(deps);
-    // Seed a recent session for agent-default so the channel resolver has a
-    // fallback target. agent-disabled never reaches resolution.
-    ctx.sessionTracker.recordActivity("agent-default", {
-      channelType: "discord",
-      channelInstanceId: "discord-test",
-      conversationId: "discord-test-channel-1",
-      conversationKind: "direct",
-    });
+    // Seed the exact authoritative destination for the enabled agent.
+    // agent-disabled never reaches resolution.
+    recordDestination(ctx, "agent-default", "discord-test-channel-3");
 
     const disabledResult = await ctx.notificationService.notifyUser({
       agentId: "agent-disabled",
@@ -225,6 +231,7 @@ describe("setupNotifications -- daemon wiring", () => {
     deps.activeAdapterTypes = new Set<string>(["discord"]);
 
     const ctx = setupNotifications(deps);
+    recordDestination(ctx, "agent-x", "discord-test-channel-1");
     const result = await ctx.notificationService.notifyUser({
       agentId: "agent-x",
       message: "hello world",
@@ -269,6 +276,7 @@ describe("setupNotifications -- daemon wiring", () => {
     deps.activeAdapterTypes = new Set<string>(["discord"]);
 
     const ctx = setupNotifications(deps);
+    recordDestination(ctx, "agent-critical", "discord-test-channel-1");
     const result = await ctx.notificationService.notifyUser({
       agentId: "agent-critical",
       message: "urgent",
@@ -316,6 +324,7 @@ describe("setupNotifications -- daemon wiring", () => {
       });
       deps.activeAdapterTypes = new Set<string>(["discord"]);
       const ctx = setupNotifications(deps);
+      recordDestination(ctx, "agent-1", "discord-test-channel-1");
       return { ctx, deliveryQueue, eventBus };
     };
 
