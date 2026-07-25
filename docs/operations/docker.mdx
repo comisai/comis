@@ -545,7 +545,7 @@ The repository ships two automated Docker workflows:
 
 | Workflow | Registry | Trigger |
 |----------|----------|---------|
-| `docker-release.yml` | GitHub Container Registry (`ghcr.io`) | Push to `main` or `v*` tag |
+| `docker-release.yml` | GitHub Container Registry (`ghcr.io`) | Push to `main` or `v*` tag; pull requests that change `Dockerfile`, `Dockerfile.web`, or `.dockerignore` |
 | `dockerhub-release.yml` | Docker Hub (`comisai/comis`) | `v*` tag only |
 
 Both workflows build multi-arch manifests (`linux/amd64` + `linux/arm64`) and

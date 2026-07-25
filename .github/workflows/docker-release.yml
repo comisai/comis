@@ -4,12 +4,22 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  # PR builds are scoped to the image definition itself. A `packages/**` +
+  # `pnpm-lock.yaml` filter matches nearly every dependency PR, and a multi-arch
+  # image build (amd64 + a native arm64 runner) is the most expensive job in the
+  # repository — that combination saturates the hosted-runner concurrency budget
+  # and starves the required `ci-success` gate. The drift class this filter used
+  # to guard (a workspace package missing from the Dockerfile's hand-maintained
+  # COPY list) is covered by test/architecture/dockerfile-workspace-packages.test.ts,
+  # which runs on every PR; a dependency bump that breaks the image still fails
+  # the push-to-main build before any tag is cut.
   pull_request:
     branches: [main]
     paths:
-      - "packages/**"
       - "Dockerfile"
-      - "pnpm-lock.yaml"
+      - "Dockerfile.web"
+      - ".dockerignore"
+      - ".github/workflows/docker-release.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
