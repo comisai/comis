@@ -4,8 +4,8 @@
 # Global ARGs — declared before any FROM so they can be used in FROM instructions.
 # For reproducible builds, override with pinned digests:
 #   docker build --build-arg COMIS_NODE_BOOKWORM_IMAGE=node:22-bookworm@sha256:<digest> ...
-ARG COMIS_NODE_BOOKWORM_IMAGE="node:22-bookworm@sha256:c601a46abb4d2ab80a9dc3da208d50d1122642d53f17a101926ace71e5a9bf1c"
-ARG COMIS_NODE_BOOKWORM_SLIM_IMAGE="node:22-bookworm-slim@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4"
+ARG COMIS_NODE_BOOKWORM_IMAGE="node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37"
+ARG COMIS_NODE_BOOKWORM_SLIM_IMAGE="node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3"
 ARG COMIS_VARIANT="slim"
 
 FROM ${COMIS_NODE_BOOKWORM_IMAGE} AS build
