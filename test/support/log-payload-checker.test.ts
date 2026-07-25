@@ -25,7 +25,8 @@
 import { describe, it, expect } from "vitest";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { checkLogPayloads, resetCacheForTest } from "./log-payload-checker.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -124,6 +125,46 @@ describe("checkLogPayloads -- closed errorKind via TS TypeChecker", () => {
     if (first.length > 0) {
       expect(second[0]?.literal).toBe(first[0]?.literal);
       expect(second[0]?.line).toBe(first[0]?.line);
+    }
+  });
+
+  it("invalidates cached results when an imported errorKind type changes", () => {
+    clearCache();
+    const fixtureDir = mkdtempSync(resolve(tmpdir(), "log-payload-checker-"));
+    const rootFile = resolve(fixtureDir, "root.ts");
+    const dependencyFile = resolve(fixtureDir, "error-kind.ts");
+    writeFileSync(
+      rootFile,
+      [
+        'import type { ExternalErrorKind } from "./error-kind.js";',
+        "declare const logger: { warn(payload: unknown, message: string): void };",
+        "declare const errorKind: ExternalErrorKind;",
+        'logger.warn({ errorKind }, "dependency-derived kind");',
+      ].join("\n"),
+      "utf8",
+    );
+
+    try {
+      writeFileSync(
+        dependencyFile,
+        'export type ExternalErrorKind = "internal";\n',
+        "utf8",
+      );
+      expect(checkLogPayloads([rootFile])).toEqual([]);
+
+      writeFileSync(
+        dependencyFile,
+        'export type ExternalErrorKind = "off-union-value";\n',
+        "utf8",
+      );
+      expect(
+        checkLogPayloads([rootFile]).some(
+          (violation) => violation.literal === "off-union-value",
+        ),
+      ).toBe(true);
+    } finally {
+      rmSync(fixtureDir, { recursive: true, force: true });
+      clearCache();
     }
   });
 
