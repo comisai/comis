@@ -4,6 +4,10 @@ This file records user-visible changes to Comis. Detailed release history is ava
 
 ## [Unreleased]
 
+## [1.0.55] - 2026-07-25
+
+Aggregates the user-visible changes since 1.0.53, including those first published in the [v1.0.54 release](https://github.com/comisai/comis/releases/tag/v1.0.54).
+
 ### Added
 
 - A focused public website, contributor onboarding, issue templates, and security reporting guidance.
@@ -49,7 +53,8 @@ This file records user-visible changes to Comis. Detailed release history is ava
 
 ## [1.0.53] - 2026-07-13
 
-Current published baseline. See the [v1.0.53 release](https://github.com/comisai/comis/releases/tag/v1.0.53) for its generated notes and artifacts.
+See the [v1.0.53 release](https://github.com/comisai/comis/releases/tag/v1.0.53) for its generated notes and artifacts.
 
-[Unreleased]: https://github.com/comisai/comis/compare/v1.0.53...HEAD
+[Unreleased]: https://github.com/comisai/comis/compare/v1.0.55...HEAD
+[1.0.55]: https://github.com/comisai/comis/releases/tag/v1.0.55
 [1.0.53]: https://github.com/comisai/comis/releases/tag/v1.0.53
