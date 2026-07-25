@@ -404,7 +404,16 @@ jobs:
   # ci-success — single required green check that aggregates every job above
   # ---------------------------------------------------------------------------
   ci-success:
-    if: always()
+    # `!cancelled()` rather than `always()`. Both run the aggregator when an
+    # upstream FAILS or is SKIPPED — the cases the gate exists for — but
+    # `always()` also keeps it alive when the run itself is cancelled, e.g. by
+    # the `cancel-in-progress` concurrency rule above. A cancelled run's real
+    # jobs end immediately while this one stays queued waiting for a runner, so
+    # the run never reaches a terminal state and keeps holding the concurrency
+    # group: every later run on that ref then sits at `pending` with no jobs,
+    # and only a force-cancel clears it. Skipping the aggregator on cancellation
+    # lets the run finish and releases the group.
+    if: ${{ !cancelled() }}
     needs: [build, unit, coverage, integration, e2e, tarball, audit]
     runs-on: ubuntu-latest
     steps:

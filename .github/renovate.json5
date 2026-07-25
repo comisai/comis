@@ -15,8 +15,15 @@
                   "@comis/skills", "@comis/cli", "@comis/daemon", "@comis/comis", "@comis/web"],
 
   "labels": ["dependencies"],
-  "prConcurrentLimit": 10,
-  "prHourlyLimit": 4,
+
+  // Every open PR costs a full CI fan-out, and each push to the base branch
+  // would otherwise rebase all of them at once — each rebase cancels whatever
+  // was already running and re-queues the whole set, so a busy trunk keeps the
+  // queue permanently churning and the required `ci-success` gate never lands.
+  // Rebase only when a branch actually conflicts; keep the open set small.
+  "rebaseWhen": "conflicted",
+  "prConcurrentLimit": 2,
+  "prHourlyLimit": 1,
 
   "lockFileMaintenance": {
     "enabled": true,
@@ -34,22 +41,15 @@
       "groupSlug": "patch-updates"
     },
 
-    // --- Group minor production dep updates ---
+    // --- Group minor updates (prod + dev) into one PR ---
+    // Split prod/dev groups doubled the CI fan-out for no review benefit: both
+    // land in the same lockfile and are reviewed together anyway.
     {
-      "description": "Group minor production dependency updates",
+      "description": "Group minor dependency updates",
       "matchUpdateTypes": ["minor"],
-      "matchDepTypes": ["dependencies"],
-      "groupName": "Minor production updates",
-      "groupSlug": "minor-prod"
-    },
-
-    // --- Group minor dev dep updates ---
-    {
-      "description": "Group minor dev dependency updates",
-      "matchUpdateTypes": ["minor"],
-      "matchDepTypes": ["devDependencies"],
-      "groupName": "Minor dev updates",
-      "groupSlug": "minor-dev"
+      "matchDepTypes": ["dependencies", "devDependencies"],
+      "groupName": "Minor updates",
+      "groupSlug": "minor"
     },
 
     // --- Major updates: separate PRs, never auto-merge ---

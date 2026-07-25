@@ -1,9 +1,12 @@
 name: CodeQL
 
+# Analysis runs on the trunk and on a weekly sweep. A per-PR run adds a job to
+# every open branch for a scan whose findings are re-derived on the merge commit
+# minutes later, and that duplication competes for the same hosted-runner budget
+# as the required `ci-success` gate. Findings surface on `main` and in the weekly
+# sweep instead of on the PR.
 on:
   push:
-    branches: [main]
-  pull_request:
     branches: [main]
   schedule:
     - cron: "0 6 * * 1" # Weekly Monday 06:00 UTC
