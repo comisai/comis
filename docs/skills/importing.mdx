@@ -40,11 +40,13 @@ the daemon-wide skills directory and are restricted to the default agent.
 An install that needs acknowledgement returns a
 `[skill_vet_confirm:<verdict>]` or `[skill_reimport_confirm]` error. Review the
 reported rule ids and counts, then repeat the identical command with
-`--confirm`. Confirmation never skips scanning and cannot override a blocked
-community bundle.
+`--confirm` or `--force`. Both flags send the same explicit acknowledgement;
+`--force` is also the spelling used when replacing a colliding bundled MCP
+name. Neither flag skips scanning or overrides a blocked community bundle.
 
 ```bash
 comis skills import ./summarize.skill --confirm
+comis skills import ./summarize.skill --force
 ```
 
 Inspect installed provenance without reading skill bodies:
@@ -85,7 +87,7 @@ using stored or deflate compression. Comis preflights the central directory
 before inflation and rejects:
 
 - absolute paths, traversal, links, device-like members, and ambiguous roots;
-- encrypted entries, ZIP64, data descriptors, and unsupported compression;
+- encrypted entries, ZIP64 records, and unsupported compression;
 - excessive archive bytes, file count, path depth, per-file size, expanded
   total size, or compression ratio;
 - an archive whose bytes change between preflight and extraction.
@@ -105,8 +107,8 @@ own tier.
 | `community` | allow | confirm | block |
 | `agent-authored` | allow | confirm | block |
 
-`force: true` in JSON-RPC, or `--confirm` in the CLI, changes only `confirm` to
-allow. It never changes `block`.
+`force: true` in JSON-RPC, or `--confirm`/`--force` in the CLI, changes only
+`confirm` to allow. It never changes `block`.
 
 The first successful install pins a canonical SHA-256 hash in
 `installed-skills.json`. Re-importing identical bytes is a no-op. Changed bytes

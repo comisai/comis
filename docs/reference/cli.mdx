@@ -1714,16 +1714,17 @@ Manage installed prompt skills through the typed daemon RPC surface.
 comis skills list [--agent <id>] [--format table|json]
 comis skills info <name> [--agent <id>] [--format table|json]
 comis skills import <reference> [--source github|archive|wellknown|registry]
-  [--registry <id>] [--scope local|shared] [--agent <id>] [--confirm]
-  [--format text|json]
+  [--registry <id>] [--scope local|shared] [--agent <id>] [--confirm] [--force]
+  [--format table|json]
 comis skills remove <name> [--scope local|shared] [--agent <id>]
 ```
 
 The import command infers GitHub URLs, `wellknown:` references,
 `registry:<configured-id>:<slug[@version]>` references, archive URLs ending in
 `.skill`/`.zip`, and local archive paths. Use `--source` when the reference is
-ambiguous. `--confirm` acknowledges a caution verdict or same-tier replacement;
-it never skips scanning and cannot override a blocked bundle.
+ambiguous. `--confirm` and `--force` both acknowledge a caution verdict or
+same-tier replacement; `--force` also permits an explicitly reviewed bundled
+MCP-name replacement. Neither skips scanning or overrides a blocked bundle.
 
 `list` shows scope, install source, trust, verdict, and a content-hash prefix.
 `info` prints the full content-free provenance record. All mutating operations

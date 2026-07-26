@@ -24,7 +24,8 @@
  *   only tier no import path can reach.
  * - `operator` — written by the operator (the default agent) through
  *   create/update/upload, or a remote registry the operator explicitly promoted.
- * - `community` — any remote origin. The default and the ceiling for imports.
+ * - `community` — the default for remote origins. An operator-configured
+ *   well-known index or registry may explicitly promote its imports.
  * - `agent-authored` — written at runtime by a non-default agent.
  */
 export type SkillTrustTier = "first-party" | "operator" | "community" | "agent-authored";

@@ -159,8 +159,12 @@ At **install time** the outcome depends on both the findings and where the skill
 |---|---|
 | `first-party` | skills the daemon seeds itself |
 | `operator` | skills you author (`create`/`update`/`upload` as the default agent) |
-| `community` | any remote import |
+| `community` | remote imports by default |
 | `agent-authored` | skills an agent writes at runtime |
+
+An operator-allowlisted well-known index or registry may explicitly set
+`trust: operator`. That configured policy promotes imports from that source;
+claims inside the bundle or registry response never do.
 
 The tier and the verdict together decide what happens:
 

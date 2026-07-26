@@ -80,7 +80,7 @@ export interface SkillProvenanceRecord {
   readonly importedAt: string;
   /** Who performed the install. */
   readonly importedBy: { readonly agentId: string; readonly userId?: string };
-  /** Derived tier — never declared by the skill (INV-V3). */
+  /** Derived tier — never declared by the skill. */
   readonly trust: SkillTrustTier;
   /** The vetting verdict at install time. */
   readonly verdict: "safe" | "caution" | "dangerous";

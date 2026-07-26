@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Spec for `deriveSkillTrustTier` (INV-V3: trust is derived, never declared).
- *
- * Pre-patch state: `./trust-tier.js` does not exist. These tests fail at
- * import resolution, which is the correct tests-first state for a new pure
- * module.
+ * Contract tests for `deriveSkillTrustTier`: trust is derived, never declared.
  *
  * The derivation must be a function of the CALL (source + calling identity)
  * and nothing else. It deliberately mirrors the identity comparison the

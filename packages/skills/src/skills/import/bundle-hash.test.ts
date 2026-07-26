@@ -2,11 +2,8 @@
 /**
  * Spec for the canonical bundle content hash.
  *
- * Pre-patch state: `./bundle-hash.js` does not exist.
- *
- * The hash is the anchor for the sibling doc's tamper detection
- * (`SKILL-ARCHIVE-IMPORT-DESIGN.md` WS-1): a re-import whose hash differs from
- * a higher-trust incumbent is refused. That only works if the canonicalization
+ * The hash anchors tamper detection: a re-import whose hash differs from a
+ * higher-trust incumbent is refused. That only works if the canonicalization
  * is stable across sources — the same skill fetched as an archive, as a
  * per-file well-known bundle, or via the GitHub Contents walk must hash
  * identically. Hence: sort by path, then `path \0 bytes` per member.

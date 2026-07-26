@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Spec for the structural rules (WS-V2).
- *
- * Pre-patch state: `./bundle-structure.js` does not exist.
+ * Contract tests for the structural rules.
  *
  * Structural rules catch what regexes cannot: a native payload, a symlink, a
  * traversal path, a bomb-shaped member count. They run FIRST so an oversized
  * bundle is rejected before any NFKC normalization or regex pass.
  *
- * Severity discipline (R1): only genuinely-unambiguous conditions are
- * CRITICAL. Size and count breaches are WARN — a legitimately large skill is
- * plausible, a Mach-O binary in a prompt skill is not.
+ * Hard safety and resource-limit violations are CRITICAL. Advisory metadata
+ * anomalies remain WARN so an operator can review them.
  */
 import { describe, it, expect } from "vitest";
 import { checkBundleStructure, DEFAULT_BUNDLE_LIMITS } from "./bundle-structure.js";
@@ -172,12 +169,12 @@ describe("bundle structure — bounds (limit breaches BLOCK)", () => {
     expect(severityOf(over, "BUNDLE_TOO_MANY_FILES")).toBe("CRITICAL");
   });
 
-  it("warns when a single member exceeds maxEntryBytes", () => {
+  it("blocks when a single member exceeds maxEntryBytes", () => {
     const big = "a".repeat(DEFAULT_BUNDLE_LIMITS.maxEntryBytes + 1);
     expect(ids([SKILL_MD, { path: "references/big.md", content: big }])).toContain("BUNDLE_FILE_TOO_LARGE");
   });
 
-  it("warns when the bundle total exceeds maxBundleBytes", () => {
+  it("blocks when the bundle total exceeds maxBundleBytes", () => {
     // Each member is under the per-entry cap; the TOTAL is what breaches.
     const per = Math.floor(DEFAULT_BUNDLE_LIMITS.maxEntryBytes / 2);
     const count = Math.ceil(DEFAULT_BUNDLE_LIMITS.maxBundleBytes / per) + 1;

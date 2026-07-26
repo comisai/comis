@@ -6,20 +6,6 @@
  * is written into a live skills directory, across the whole bundle rather than
  * only the SKILL.md body.
  *
- * Pre-patch state (what each test proves is missing):
- *   - `skills.import` runs NO content scan at all — it walks the GitHub
- *     Contents API and writes every file (skill-handlers.ts:323-476).
- *   - `skills.upload` runs NO content scan at all (skill-handlers.ts:160-321).
- *   - `skills.create` / `skills.update` DO scan, but only
- *     `scanSkillContent(params.content)` — a single string. A multi-file
- *     bundle's `references/` and `scripts/` members are never inspected on
- *     any path, at install or at load.
- *   - The load-time scanner (skill-registry-discovery.ts:192) sees only the
- *     sanitized SKILL.md body, and only blocks when
- *     `contentScanning.blockOnCritical` is set.
- *   - A malformed-frontmatter skill installs successfully and then goes
- *     invisible at discovery (discovery.ts:374-380 logs a WARN and skips).
- *
  * Fixture patterns are the real CRITICAL rules from
  * `packages/core/src/security/patterns/content-scanner.ts`:
  *   EXEC_SUBSHELL      `$(curl …)`
@@ -294,7 +280,7 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// INV-V1 — vet before write, zero files on reject
+// Vet before write, leaving zero files on rejection.
 // ---------------------------------------------------------------------------
 
 describe("skills.import — pre-write vetting gate", () => {
@@ -861,7 +847,7 @@ describe("skills.import — pre-write vetting gate", () => {
       }),
     ).rejects.toThrow(/skill_vet_rejected|security scan|EXEC_SUBSHELL/i);
 
-    // INV-V1: a reject leaves nothing behind.
+    // A reject leaves nothing behind.
     expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual([]);
   });
 
@@ -934,7 +920,7 @@ describe("skills.import — pre-write vetting gate", () => {
     expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual([]);
   });
 
-  it("INV-V2: contentScanning.enabled=false does NOT disable the install gate", async () => {
+  it("keeps the install gate enabled when load-time content scanning is disabled", async () => {
     mockGitHubDir("skills/my-skill", { "SKILL.md": CRITICAL_BODY_SKILL_MD });
     // An operator may relax LOAD-time scanning; the INSTALL door stays shut.
     const handlers = createSkillHandlers(
@@ -1030,7 +1016,7 @@ describe("skills.import — pre-write vetting gate", () => {
   });
 
   it("installs a code-bearing skill prompt-only and logs the dropped executable key", async () => {
-    // A foreign skill's runnable half is discarded, not mapped (INV-V4). The
+    // A foreign skill's runnable half is discarded, not mapped. The
     // operator must be able to see that the skill is degraded.
     const withEntrypoint = `---\nname: my-skill\ndescription: Has a script entrypoint.\nentrypoint: main.py\n---\n\nSummarize the document.\n`;
     mockGitHubDir("skills/my-skill", { "SKILL.md": withEntrypoint });
@@ -1072,7 +1058,7 @@ describe("skills.import — pre-write vetting gate", () => {
     ).rejects.toThrow(/and 4 more CRITICAL findings/);
   });
 
-  it("accepts kebab-case frontmatter (WS-V3 mapping) rather than blocking it", async () => {
+  it("accepts mapped kebab-case frontmatter rather than blocking it", async () => {
     mockGitHubDir("skills/my-skill", { "SKILL.md": KEBAB_CASE_SKILL_MD });
     const handlers = createSkillHandlers(makeDeps(wsDir));
 
@@ -1082,15 +1068,8 @@ describe("skills.import — pre-write vetting gate", () => {
       _agentId: "agent-a",
     });
 
-    // The gate makes a parse failure a block, so the mapper must land with it:
-    // a kebab-case-only skill is benign and must not be newly rejected.
-    //
-    // NOTE: this test passes PRE-patch for the wrong reason — `skills.import`
-    // does not validate the manifest at all today, so the kebab key only
-    // surfaces later as `Manifest validation failed` at load. It is a
-    // regression guard for the gate (post-patch it must still pass, via the
-    // WS-V3 mapper), NOT proof that the mapper works. The mapper's own proof
-    // is `frontmatter-map.test.ts`.
+    // The install gate treats parse failure as a block, so the mapper must run
+    // before strict manifest validation.
     expect(result).toMatchObject({ ok: true, name: "my-skill" });
   });
 });

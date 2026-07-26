@@ -393,7 +393,7 @@ One entry per skill, keyed `<scope>:<name>` so a `local` and a `shared` skill of
 }
 ```
 
-`source` records which install path produced the skill (`create`, `update`, `upload`, or a remote source). `ref` is a public locator and is absent for locally-authored skills — it never carries credentials. `trust` is **derived from the install call**, never declared by the skill itself: a remote import is always `community`, local authoring by the default agent is `operator`, and only the daemon's own seeding is `first-party`. See [Security Scanning](/skills/security-scanning) for how the verdict is produced.
+`source` records which install path produced the skill (`create`, `update`, `upload`, or a remote source). `ref` is a public locator and is absent for locally-authored skills — it never carries credentials. `trust` is **derived from the install call**, never declared by the skill itself: remote imports default to `community`, an operator-configured well-known index or registry may explicitly promote its imports to `operator`, local authoring by the default agent is `operator`, and only the daemon's own seeding is `first-party`. See [Security Scanning](/skills/security-scanning) for how the verdict is produced.
 
 The record is content-free by construction — a hash and counts, never scanned text — so it is safe to read, log, and paste into a review.
 

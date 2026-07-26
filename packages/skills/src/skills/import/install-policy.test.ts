@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Spec for the trust × verdict install-policy matrix.
+ * Contract tests for the trust × verdict install-policy matrix.
  *
- * Pre-patch state: `./install-policy.js` does not exist.
- *
- * Replaces the fixed fail-closed policy the vetting gate shipped with. The
- * same finding set now yields different decisions depending on where the skill
+ * The same finding set yields different decisions depending on where the skill
  * came from: an operator's own CRITICAL is a confirmable mistake, a stranger's
  * is not.
  *

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Spec for the foreign-frontmatter mapper (WS-V3).
- *
- * Pre-patch state: `./frontmatter-map.js` does not exist.
+ * Contract tests for the foreign-frontmatter mapper.
  *
  * Why this module exists: `SkillManifestSchema` is a `z.strictObject`
  * (`../manifest/schema.ts:168`), so an unknown key is a PARSE FAILURE. The
@@ -222,7 +220,7 @@ describe("frontmatter-map — drop, never reinterpret", () => {
     ["run", "python main.py"],
     ["postInstall", "./setup.sh"],
     ["scripts", { install: "npm i" }],
-  ])("drops the code-execution key %s with a dropped_executable warning (INV-V4)", (key, value) => {
+  ])("drops the code-execution key %s with a dropped_executable warning", (key, value) => {
     const { parsed, frontmatter, warnings } = mapAndParse({ name: "s", description: "d", [key]: value });
     expect(parsed.success).toBe(true);
     expect(frontmatter[key]).toBeUndefined();
@@ -240,7 +238,7 @@ describe("frontmatter-map — drop, never reinterpret", () => {
     expect(warnings.map((w) => w.key).sort()).toEqual(["entrypoint", "x-vendor-a", "x-vendor-b"]);
   });
 
-  it("carries no VALUES in the warnings — keys and actions only (INV-V5)", () => {
+  it("carries no values in warnings, only keys and actions", () => {
     const { warnings } = mapAndParse({
       name: "s",
       description: "d",

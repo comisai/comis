@@ -2,9 +2,6 @@
 /**
  * Spec for the durable skill-provenance store.
  *
- * Pre-patch state: `./skill-provenance-store.js` does not exist. These tests
- * fail at import resolution, the correct tests-first state for a new module.
- *
  * The store answers "which skills are installed, from where, at what content
  * hash, at what trust" — durably, so the answer survives a daemon restart. It
  * is the anchor everything downstream needs: tamper detection on re-import, the
