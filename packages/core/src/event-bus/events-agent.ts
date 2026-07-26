@@ -36,13 +36,16 @@ export interface AgentEvents {
     reason: string;
     violations: string[];
     source?: "seed" | "backfill" | "create" | "update" | "upload" | "github" | "archive" | "wellknown" | "registry";
-    stage?: "vet";
+    stage?: "fetch" | "preflight" | "unpack" | "vet" | "write" | "bundle";
     policyKey?:
       | "skills.installVetting"
       | "skills.installVetting.maxEntries"
       | "skills.installVetting.maxBundleBytes"
       | "skills.installVetting.maxEntryBytes"
-      | "skills.installVetting.maxPathDepth";
+      | "skills.installVetting.maxPathDepth"
+      | "skills.import.registries"
+      | "skills.import.maxArchiveBytes"
+      | "skills.import.maxCompressionRatio";
     timestamp: number;
   };
 

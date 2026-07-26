@@ -73,9 +73,15 @@ import {
   evaluateInstallVettingGate,
   runInstallVettingGate,
 } from "../skills/vet-install-gate.js";
-import { resolveSkillImportSource } from "../skills/resolve-skill-import-source.js";
+import {
+  resolveSkillImportSource,
+  SkillImportResolutionError,
+} from "../skills/resolve-skill-import-source.js";
 import { installSkillDirectory } from "../skills/skill-directory-swap.js";
-import { recordSkillImportCompletion } from "../skills/skill-import-observability.js";
+import {
+  recordSkillImportCompletion,
+  recordSkillImportFailure,
+} from "../skills/skill-import-observability.js";
 import { collectSkillBundleFiles } from "../skills/skill-provenance-backfill.js";
 import {
   provenanceKey,
@@ -401,7 +407,34 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
 
       const importStartedMs = systemNowMs();
       const resolved = await resolveSkillImportSource(params, deps, callingAgentId);
-      if (!resolved.ok) throw resolved.error;
+      if (!resolved.ok) {
+        const source = params.source ?? "github";
+        const failure =
+          resolved.error instanceof SkillImportResolutionError
+            ? resolved.error
+            : new SkillImportResolutionError({
+                message: resolved.error.message,
+                source,
+                stage: "fetch",
+                code: "source_resolution_failed",
+                errorKind: "internal",
+                hint: "Review the source configuration and daemon diagnostics, then retry.",
+              });
+        recordSkillImportFailure({
+          eventBus: deps.eventBus,
+          logger: deps.logger,
+          ...(failure.skillName !== undefined && { skillName: failure.skillName }),
+          source: failure.source,
+          stage: failure.stage,
+          code: failure.code,
+          ...(failure.policyKey !== undefined && { policyKey: failure.policyKey }),
+          errorKind: failure.errorKind,
+          hint: failure.hint,
+          agentId: callingAgentId,
+          startedMs: importStartedMs,
+        });
+        throw failure;
+      }
       const { name, files: fetchedFiles, source, ref, registryTrust, evidence } = resolved.value;
       deps.logger.debug({ method: "skills.import", source, step: "fetch", fileCount: fetchedFiles.length }, "Skill import source resolved");
 
@@ -578,17 +611,19 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         files: fetchedFiles,
       });
       if (!installed.ok) {
-        logger.warn(
-          {
-            err: installed.error,
-            skillName: name,
-            agentId: callingAgentId,
-            hint:
-              "The staged skill-directory swap failed before post-install hooks; check data-directory ownership and available space.",
-            errorKind: "resource" as const,
-          },
-          "Skill import directory transaction failed",
-        );
+        recordSkillImportFailure({
+          eventBus: deps.eventBus,
+          logger: deps.logger,
+          skillName: name,
+          source,
+          stage: "write",
+          code: "skill_directory_commit_failed",
+          errorKind: "resource",
+          hint:
+            "The staged skill-directory swap failed; check data-directory ownership and available space, then retry.",
+          agentId: callingAgentId,
+          startedMs: importStartedMs,
+        });
         throw installed.error;
       }
       deps.logger.debug({ method: "skills.import", source, step: "write", fileCount: fetchedFiles.length }, "Skill import files committed");
@@ -612,6 +647,19 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         }),
       );
       if (!hooked.ok) {
+        recordSkillImportFailure({
+          eventBus: deps.eventBus,
+          logger: deps.logger,
+          skillName: name,
+          source,
+          stage: "bundle",
+          code: "bundle_hook_failed",
+          errorKind: "dependency",
+          hint:
+            "Review the bundled MCP declarations and dependency checks; the imported skill bytes are being rolled back.",
+          agentId: callingAgentId,
+          startedMs: importStartedMs,
+        });
         const rolledBack = installed.value.rollback();
         if (scope === "shared" && deps.skillRegistries) {
           for (const registry of deps.skillRegistries.values()) registry.init();

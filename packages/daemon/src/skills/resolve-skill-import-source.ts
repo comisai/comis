@@ -8,6 +8,7 @@ import {
   type SkillRegistryEvidence,
 } from "@comis/skills";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
+import type { ErrorKind } from "@comis/core";
 import type { WorkspaceApiDeps } from "../api/types.js";
 import { fetchGitHubDir } from "../api/github-skill-fetch.js";
 import { readVettingLimits } from "./vet-install-gate.js";
@@ -18,6 +19,195 @@ import {
 } from "./import-fetch.js";
 import { fetchWellKnownSkill } from "./wellknown-skill-fetch.js";
 import { fetchRegistrySkillBundle } from "./registry-client.js";
+import type { RegistryClientError } from "./registry-client.js";
+
+/** Import stages surfaced to logs and the request trajectory. */
+export type SkillImportFailureStage =
+  | "fetch"
+  | "preflight"
+  | "unpack"
+  | "vet"
+  | "write"
+  | "bundle";
+
+/** Config key responsible for an import refusal, when one exists. */
+export type SkillImportPolicyKey =
+  | "skills.import.registries"
+  | "skills.import.maxArchiveBytes"
+  | "skills.import.maxCompressionRatio"
+  | "skills.installVetting.maxEntries"
+  | "skills.installVetting.maxEntryBytes"
+  | "skills.installVetting.maxBundleBytes"
+  | "skills.installVetting.maxPathDepth";
+
+/** Structured source-resolution failure used by boundary diagnostics. */
+export class SkillImportResolutionError extends Error {
+  readonly source: ResolvedSkillImportSource["source"];
+  readonly stage: SkillImportFailureStage;
+  readonly code: string;
+  readonly errorKind: ErrorKind;
+  readonly hint: string;
+  readonly policyKey: SkillImportPolicyKey | undefined;
+  readonly skillName: string | undefined;
+
+  constructor(input: {
+    readonly message: string;
+    readonly source: ResolvedSkillImportSource["source"];
+    readonly stage: SkillImportFailureStage;
+    readonly code: string;
+    readonly errorKind: ErrorKind;
+    readonly hint: string;
+    readonly policyKey?: SkillImportPolicyKey;
+    readonly skillName?: string;
+  }) {
+    super(input.message);
+    this.name = "SkillImportResolutionError";
+    this.source = input.source;
+    this.stage = input.stage;
+    this.code = input.code;
+    this.errorKind = input.errorKind;
+    this.hint = input.hint;
+    this.policyKey = input.policyKey;
+    this.skillName = input.skillName;
+  }
+}
+
+function resolutionError(
+  error: Error,
+  metadata: Omit<ConstructorParameters<typeof SkillImportResolutionError>[0], "message">,
+): SkillImportResolutionError {
+  if (error instanceof SkillImportResolutionError) return error;
+  return new SkillImportResolutionError({ ...metadata, message: error.message });
+}
+
+const ARCHIVE_RESOURCE_CODES = new Set([
+  "archive_size_exceeded",
+  "archive_entry_count_exceeded",
+  "archive_entry_size_exceeded",
+  "archive_total_size_exceeded",
+  "archive_ratio_exceeded",
+]);
+
+function archivePolicyKey(code: string, message: string): SkillImportPolicyKey | undefined {
+  if (code === "archive_size_exceeded" || message.includes("maxArchiveBytes")) {
+    return "skills.import.maxArchiveBytes";
+  }
+  if (code === "archive_ratio_exceeded") return "skills.import.maxCompressionRatio";
+  if (code === "archive_entry_count_exceeded") return "skills.installVetting.maxEntries";
+  if (code === "archive_entry_size_exceeded") return "skills.installVetting.maxEntryBytes";
+  if (code === "archive_total_size_exceeded") return "skills.installVetting.maxBundleBytes";
+  return undefined;
+}
+
+function classifyArchiveError(error: Error): SkillImportResolutionError {
+  if (error instanceof SkillImportResolutionError) return error;
+  const archiveCode = /^([a-z_]+):/.exec(error.message)?.[1];
+  const code =
+    archiveCode?.startsWith("archive_") === true
+      ? archiveCode
+      : error.message.includes("maxArchiveBytes")
+        ? "archive_size_exceeded"
+        : error.message.includes("base64")
+          ? "archive_encoding_invalid"
+          : "archive_fetch_failed";
+  const policyKey = archivePolicyKey(code, error.message);
+  const isArchivePreflight = code.startsWith("archive_") && code !== "archive_fetch_failed";
+  return resolutionError(error, {
+    source: "archive",
+    stage: isArchivePreflight ? "preflight" : "fetch",
+    code,
+    errorKind: ARCHIVE_RESOURCE_CODES.has(code) || policyKey === "skills.import.maxArchiveBytes"
+      ? "resource"
+      : code === "archive_fetch_failed"
+        ? "dependency"
+        : "validation",
+    hint:
+      policyKey === undefined
+        ? "Use one bounded, unencrypted ZIP archive with a single prompt-skill root."
+        : `Review the archive, then change ${policyKey} only when the additional resource use is expected.`,
+    ...(policyKey !== undefined && { policyKey }),
+  });
+}
+
+function classifyWellKnownError(error: Error, skillName?: string): SkillImportResolutionError {
+  if (error instanceof SkillImportResolutionError) return error;
+  const notAllowlisted = error.message.includes("skills.import.registries");
+  const entryCap = error.message.includes("skills.installVetting.maxEntryBytes");
+  const bundleCap = error.message.includes("skills.installVetting.maxBundleBytes");
+  const invalidRef = error.message.startsWith("Well-known skill ref");
+  const policyKey = notAllowlisted
+    ? "skills.import.registries"
+    : entryCap
+      ? "skills.installVetting.maxEntryBytes"
+      : bundleCap
+        ? "skills.installVetting.maxBundleBytes"
+        : undefined;
+  return resolutionError(error, {
+    source: "wellknown",
+    stage: "fetch",
+    code: notAllowlisted
+      ? "source_not_allowlisted"
+      : entryCap || bundleCap
+        ? "source_size_exceeded"
+        : invalidRef
+          ? "source_ref_invalid"
+          : "source_fetch_failed",
+    errorKind: notAllowlisted ? "config" : entryCap || bundleCap ? "resource" : invalidRef ? "validation" : "dependency",
+    hint: notAllowlisted
+      ? "Add the reviewed base to skills.import.registries for this agent, then retry."
+      : policyKey !== undefined
+        ? `Review the fetched bundle, then change ${policyKey} only when the additional resource use is expected.`
+        : "Check the well-known reference, validated index shape, and outbound network access.",
+    ...(policyKey !== undefined && { policyKey }),
+    ...(skillName !== undefined && { skillName }),
+  });
+}
+
+function classifyRegistryError(error: RegistryClientError, skillName?: string): SkillImportResolutionError {
+  const configFailure =
+    error.kind === "registry_not_configured" || error.kind === "invalid_registry_config";
+  const validationFailure =
+    error.kind === "invalid_ref" || error.kind === "invalid_response" || error.kind === "identity_mismatch";
+  const archiveCode = /^([a-z_]+):/.exec(error.message)?.[1];
+  const code = archiveCode?.startsWith("archive_") === true ? archiveCode : error.kind;
+  const policyKey =
+    configFailure
+      ? "skills.import.registries"
+      : error.message.includes("maxArchiveBytes")
+        ? "skills.import.maxArchiveBytes"
+        : archivePolicyKey(code, error.message);
+  return new SkillImportResolutionError({
+    message: `${error.kind}: ${error.message}. ${error.hint}`,
+    source: "registry",
+    stage: error.kind === "invalid_archive" ? "preflight" : error.kind === "identity_mismatch" ? "vet" : "fetch",
+    code,
+    errorKind: configFailure
+      ? "config"
+      : ARCHIVE_RESOURCE_CODES.has(code) || policyKey === "skills.import.maxArchiveBytes"
+        ? "resource"
+        : validationFailure || error.kind === "invalid_archive"
+          ? "validation"
+          : "dependency",
+    hint: error.hint,
+    ...(policyKey !== undefined && { policyKey }),
+    ...(skillName !== undefined && { skillName }),
+  });
+}
+
+function sourceIdentityError(
+  source: "github" | "wellknown",
+  error: Error,
+  skillName: string,
+): SkillImportResolutionError {
+  return resolutionError(error, {
+    source,
+    stage: "vet",
+    code: "source_identity_mismatch",
+    errorKind: "validation",
+    hint: "Make the source name and the SKILL.md manifest name identical, then retry.",
+    skillName,
+  });
+}
 
 /** Current RPC request variants. */
 export type SkillImportSourceRequest =
@@ -204,7 +394,23 @@ async function resolveArchive(
     "Skill archive unpacked",
   );
   const parsedManifest = parseSkillBundleManifest(unpacked.value);
-  if (!parsedManifest.ok) return err(new Error(parsedManifest.error.message));
+  if (!parsedManifest.ok) {
+    return err(
+      new SkillImportResolutionError({
+        message: parsedManifest.error.message,
+        source: "archive",
+        stage: "vet",
+        code:
+          parsedManifest.error.kind === "missing"
+            ? "BUNDLE_MANIFEST_MISSING"
+            : parsedManifest.error.kind === "not_prompt"
+              ? "BUNDLE_MANIFEST_NOT_PROMPT"
+              : "BUNDLE_MANIFEST_UNPARSEABLE",
+        errorKind: "validation",
+        hint: "Provide one valid prompt-skill manifest at the archive root, then retry.",
+      }),
+    );
+  }
   return ok({
     name: parsedManifest.value.manifest.name,
     files: unpacked.value,
@@ -220,7 +426,8 @@ export async function resolveSkillImportSource(
   callingAgentId: string,
 ): Promise<Result<ResolvedSkillImportSource, Error>> {
   if (request.source === "archive") {
-    return resolveArchive(request, deps, callingAgentId);
+    const resolved = await resolveArchive(request, deps, callingAgentId);
+    return resolved.ok ? resolved : err(classifyArchiveError(resolved.error));
   }
   if (request.source === "wellknown") {
     const importConfig = deps.agents[callingAgentId]?.skills?.import;
@@ -239,9 +446,13 @@ export async function resolveSkillImportSource(
       ...(deps.skillImportFetchDeps !== undefined && { fetchDeps: deps.skillImportFetchDeps }),
       logger: deps.logger,
     });
-    if (!fetched.ok) return fetched;
+    if (!fetched.ok) {
+      return err(classifyWellKnownError(fetched.error));
+    }
     const identity = requireMatchingManifestName(fetched.value.files, fetched.value.name);
-    if (!identity.ok) return identity;
+    if (!identity.ok) {
+      return err(sourceIdentityError("wellknown", identity.error, fetched.value.name));
+    }
     return ok({
       name: fetched.value.name,
       files: fetched.value.files,
@@ -270,22 +481,7 @@ export async function resolveSkillImportSource(
       }),
     });
     if (!fetched.ok) {
-      deps.logger.warn(
-        {
-          method: "skills.import",
-          source: "registry",
-          registryId: request.registry,
-          step: "fetch",
-          hint: fetched.error.hint,
-          errorKind:
-            fetched.error.kind === "registry_not_configured" ||
-            fetched.error.kind === "invalid_registry_config"
-              ? ("config" as const)
-              : ("dependency" as const),
-        },
-        "Registry skill resolution failed",
-      );
-      return err(new Error(`${fetched.error.kind}: ${fetched.error.message}. ${fetched.error.hint}`));
+      return err(classifyRegistryError(fetched.error));
     }
     return ok({
       name: fetched.value.name,
@@ -298,22 +494,43 @@ export async function resolveSkillImportSource(
   }
 
   const url = request.url.trim();
-  if (url.length === 0) return err(new Error("URL is required"));
+  if (url.length === 0) {
+    return err(
+      new SkillImportResolutionError({
+        message: "URL is required",
+        source: "github",
+        stage: "fetch",
+        code: "source_ref_invalid",
+        errorKind: "validation",
+        hint: "Provide one GitHub directory URL, then retry.",
+      }),
+    );
+  }
   const parsed = parseGitHubDirUrl(url);
   if (parsed === undefined) {
     return err(
-      new Error(
-        "Invalid GitHub URL. Expected: https://github.com/{owner}/{repo}/tree/{branch}/{path}",
-      ),
+      new SkillImportResolutionError({
+        message: "Invalid GitHub URL. Expected: https://github.com/{owner}/{repo}/tree/{branch}/{path}",
+        source: "github",
+        stage: "fetch",
+        code: "source_ref_invalid",
+        errorKind: "validation",
+        hint: "Provide one GitHub directory URL in the documented tree form, then retry.",
+      }),
     );
   }
   const segments = parsed.path.split("/").filter(Boolean);
   const name = segments[segments.length - 1];
   if (!validSkillName(name)) {
     return err(
-      new Error(
-        `Invalid skill name derived from URL: "${name}". Must be lowercase alphanumeric with hyphens.`,
-      ),
+      new SkillImportResolutionError({
+        message: `Invalid skill name derived from URL: "${name}". Must be lowercase alphanumeric with hyphens.`,
+        source: "github",
+        stage: "fetch",
+        code: "source_identity_invalid",
+        errorKind: "validation",
+        hint: "Rename the source directory to a valid skill identifier, then retry.",
+      }),
     );
   }
   const fetched = await fromPromise(
@@ -325,11 +542,42 @@ export async function resolveSkillImportSource(
       deps.skillImportFetchDeps,
     ),
   );
-  if (!fetched.ok) return fetched;
+  if (!fetched.ok) {
+    const resourceFailure = fetched.error.message.includes("exceed");
+    const policyKey = fetched.error.message.includes("maxEntryBytes")
+      ? "skills.installVetting.maxEntryBytes"
+      : fetched.error.message.includes("maxBundleBytes")
+        ? "skills.installVetting.maxBundleBytes"
+        : undefined;
+    return err(
+      resolutionError(fetched.error, {
+        source: "github",
+        stage: "fetch",
+        code: resourceFailure ? "source_size_exceeded" : "source_fetch_failed",
+        errorKind: resourceFailure ? "resource" : "dependency",
+        hint:
+          policyKey === undefined
+            ? "Check the repository URL and outbound network access, then retry."
+            : `Review the fetched bundle, then change ${policyKey} only when the additional resource use is expected.`,
+        ...(policyKey !== undefined && { policyKey }),
+        skillName: name,
+      }),
+    );
+  }
   if (fetched.value.length === 0) {
-    return err(new Error("No files found at the given URL"));
+    return err(
+      new SkillImportResolutionError({
+        message: "No files found at the given URL",
+        source: "github",
+        stage: "fetch",
+        code: "source_empty",
+        errorKind: "validation",
+        hint: "Point the import at a non-empty skill directory, then retry.",
+        skillName: name,
+      }),
+    );
   }
   const identity = requireMatchingManifestName(fetched.value, name);
-  if (!identity.ok) return identity;
+  if (!identity.ok) return err(sourceIdentityError("github", identity.error, name));
   return ok({ name, files: fetched.value, source: "github", ref: url });
 }
