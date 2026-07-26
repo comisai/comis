@@ -17,6 +17,13 @@
 import { cpSync, mkdirSync, existsSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  findUnhoistedRuntimeDeps,
+  readManifest,
+  resolveBundledSourceDir,
+  serializeBundledManifest,
+  thirdPartyBundledPackages,
+} from "./bundled-manifest.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const comisRoot = resolve(__dirname, "..");
@@ -47,6 +54,32 @@ const WORKSPACE_PACKAGES = (ownPkgJson.bundledDependencies ?? [])
 
 if (WORKSPACE_PACKAGES.length === 0) {
   console.error("ERROR: bundledDependencies @comis/* entries empty in packages/comis/package.json");
+  process.exit(1);
+}
+
+// --- Step 0: Verify third-party bundled packages are fully hoisted ---
+// Their bundled copies ship without a dependency list (steps 4 and 5), so the
+// umbrella is the only thing that installs what they import. Check before
+// writing anything: a missing hoist produces a tarball that installs fine
+// locally and breaks only under `npm install -g`.
+const unhoisted = [];
+for (const name of thirdPartyBundledPackages(ownPkgJson)) {
+  const sourceDir = resolveBundledSourceDir(monoRoot, name, ownPkgJson.dependencies?.[name]);
+  if (sourceDir === null) {
+    console.error(`ERROR: bundled ${name} is not installed — run pnpm install`);
+    process.exit(1);
+  }
+  const missing = findUnhoistedRuntimeDeps(readManifest(sourceDir), ownPkgJson);
+  if (missing.length > 0) {
+    unhoisted.push(`${name} needs ${missing.join(", ")}`);
+  }
+}
+if (unhoisted.length > 0) {
+  console.error("ERROR: bundled packages depend on packages the umbrella does not provide:");
+  for (const line of unhoisted) {
+    console.error(`  ${line}`);
+  }
+  console.error("Add each as an exact pin to packages/comis/package.json dependencies.");
   process.exit(1);
 }
 
@@ -85,13 +118,12 @@ for (const pkg of WORKSPACE_PACKAGES) {
 
   // Copy package.json with dependencies stripped — all external deps are
   // listed at the comisai top level, so bundled packages don't need their own.
-  // This prevents npm from trying to install transitive deps (like baileys)
-  // from the bundled packages, which causes preinstall script failures.
-  const bundledPkgJson = JSON.parse(readFileSync(join(srcDir, "package.json"), "utf8"));
-  delete bundledPkgJson.dependencies;
-  delete bundledPkgJson.devDependencies;
-  delete bundledPkgJson.peerDependencies;
-  writeFileSync(join(destDir, "package.json"), JSON.stringify(bundledPkgJson, null, 2) + "\n");
+  // A bundled copy that keeps its dependency list makes npm treat those deps
+  // as part of this bundle and skip unpacking them; see bundled-manifest.js.
+  writeFileSync(
+    join(destDir, "package.json"),
+    serializeBundledManifest(readManifest(srcDir)),
+  );
 
   // Copy extra files listed in the package's "files" field beyond dist/
   const pkgJson = JSON.parse(readFileSync(join(srcDir, "package.json"), "utf8"));
@@ -160,6 +192,17 @@ for (const entry of ["dist", "README.md", "package.json"]) {
     console.error(`ERROR: required patched provider file is missing: ${source}`);
     process.exit(1);
   }
+  if (entry === "package.json") {
+    // Rewritten, never copied: a registry manifest carries a dependency list,
+    // and npm then counts those dependencies as part of this bundle and skips
+    // unpacking them in a global install. Step 0 verified the umbrella
+    // provides them instead.
+    writeFileSync(
+      join(patchedProviderDest, entry),
+      serializeBundledManifest(readManifest(patchedProviderSource)),
+    );
+    continue;
+  }
   cpSync(source, join(patchedProviderDest, entry), { recursive: true });
 }
 console.log("  bundled patched @earendil-works/pi-ai@0.80.10");
@@ -180,6 +223,7 @@ for (const [name, version] of Object.entries(FORCE_BUNDLE)) {
   }
   if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
   cpSync(src, dest, { recursive: true });
+  writeFileSync(join(dest, "package.json"), serializeBundledManifest(readManifest(src)));
   console.log(`  force-bundled ${name}@${version}`);
 }
 

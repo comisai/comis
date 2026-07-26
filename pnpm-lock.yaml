@@ -365,6 +365,12 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: 0.22.1
         version: 0.22.1(zod@4.4.3)
+      '@anthropic-ai/sdk':
+        specifier: '>=0.91.1'
+        version: 0.109.0(zod@4.4.3)
+      '@aws-sdk/client-bedrock-runtime':
+        specifier: 3.1048.0
+        version: 3.1048.0
       '@clack/core':
         specifier: 1.4.2
         version: 1.4.2
@@ -458,6 +464,9 @@ importers:
       '@line/bot-sdk':
         specifier: 10.8.0
         version: 10.8.0
+      '@mistralai/mistralai':
+        specifier: 2.2.6
+        version: 2.2.6(@opentelemetry/api@1.9.1)
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(zod@4.4.3)
@@ -530,6 +539,9 @@ importers:
       '@slack/web-api':
         specifier: 7.16.0
         version: 7.16.0
+      '@smithy/node-http-handler':
+        specifier: 4.7.3
+        version: 4.7.3
       '@whiskeysockets/baileys':
         specifier: 7.0.0-rc13
         version: 7.0.0-rc13(sharp@0.35.0(patch_hash=f38dd2caaf1e1797825b7e195970a91e90263c1dc98242adecb1fb8edc9bdef2))
@@ -590,6 +602,12 @@ importers:
       hono-rate-limiter:
         specifier: 0.5.3
         version: 0.5.3(hono@4.12.27)
+      http-proxy-agent:
+        specifier: 7.0.2
+        version: 7.0.2
+      https-proxy-agent:
+        specifier: 7.0.6
+        version: 7.0.6
       iconv-lite:
         specifier: 0.7.2
         version: 0.7.2
@@ -644,6 +662,9 @@ importers:
       p-queue:
         specifier: 9.3.0
         version: 9.3.0
+      partial-json:
+        specifier: 0.1.7
+        version: 0.1.7
       pdfjs-dist:
         specifier: 5.7.284
         version: 5.7.284
@@ -6876,6 +6897,18 @@ snapshots:
       zod-to-json-schema: 3.25.2(zod@4.4.3)
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  '@mistralai/mistralai@2.2.6(@opentelemetry/api@1.9.1)':
+    dependencies:
+      '@opentelemetry/semantic-conventions': 1.41.1
+      ws: 8.21.0
+      zod: 4.4.3
+      zod-to-json-schema: 3.25.2(zod@4.4.3)
+    optionalDependencies:
+      '@opentelemetry/api': 1.9.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
