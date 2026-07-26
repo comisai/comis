@@ -76,6 +76,12 @@ export interface RunInstallVettingGateArgs {
   readonly failurePhase?: "scan" | "create" | "update" | "load";
 }
 
+/** Side-effect-free gate result plus elapsed evaluation time, before audit or enforcement. */
+export interface EvaluatedInstallVetting {
+  readonly vetted: VetSkillBundleResult;
+  readonly durationMs: number;
+}
+
 /** Bounds block under `agents.<id>.skills.installVetting`, when present. */
 export interface InstallVettingConfig {
   readonly maxEntries?: number;
@@ -160,9 +166,10 @@ export function formatVetConfirm(
  *   and the caller did not pass `force`. The caller's outer try/catch
  *   (rpc-dispatch.ts) converts either to an RPC error.
  */
-export function runInstallVettingGate(args: RunInstallVettingGateArgs): VetSkillBundleResult {
-  const { deps, source, skillName, files, callingAgentId, ctx } = args;
-
+export function evaluateInstallVettingGate(
+  args: RunInstallVettingGateArgs,
+): EvaluatedInstallVetting {
+  const { deps, source, files, callingAgentId } = args;
   const trust = deriveSkillTrustTier({
     source,
     callingAgentId,
@@ -178,6 +185,16 @@ export function runInstallVettingGate(args: RunInstallVettingGateArgs): VetSkill
     ...(limits !== undefined && { limits }),
   });
   const durationMs = systemNowMs() - started;
+  return { vetted, durationMs };
+}
+
+export function runInstallVettingGate(
+  args: RunInstallVettingGateArgs,
+  evaluated: EvaluatedInstallVetting = evaluateInstallVettingGate(args),
+): VetSkillBundleResult {
+  const { deps, source, skillName, files, callingAgentId, ctx } = args;
+  const { vetted, durationMs } = evaluated;
+  const trust = vetted.trust;
 
   // `force` is a REQUEST-level acknowledgement, applied here rather than inside
   // the pure gate: it upgrades a `confirm` to an `allow` and can never override

@@ -824,6 +824,25 @@ describe("skill install — provenance recording", () => {
     expect(mockRunBundleInstallHook).toHaveBeenCalledTimes(1);
   });
 
+  it("refuses a same-hash re-import when the live incumbent was modified", async () => {
+    mockGitHubDir("skills/my-skill", { "SKILL.md": CLEAN_SKILL_MD });
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+    const params = {
+      url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+      scope: "local",
+      _agentId: "agent-a",
+    };
+    await handlers["skills.import"]!(params);
+    fs.writeFileSync(
+      join(wsDir, "skills", "my-skill", "SKILL.md"),
+      CLEAN_SKILL_MD.replace("Follow these steps", "Locally modified steps"),
+    );
+
+    await expect(handlers["skills.import"]!(params)).rejects.toThrow(
+      /skill_reimport_tampered.*installed-skills\.json/i,
+    );
+  });
+
   it("refuses a lower-trust re-import over an operator-owned skill", async () => {
     const handlers = createSkillHandlers(makeDeps(wsDir));
     await handlers["skills.create"]!({

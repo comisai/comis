@@ -9,6 +9,7 @@ This file records user-visible changes to Comis. Detailed release history is ava
 - Skills are now vetted before installation. Every file in a skill bundle is scanned, not just `SKILL.md`, and nothing is written to disk unless the result is acceptable for where the skill came from. The gate runs on all four install paths (`create`, `update`, `upload`, and `import`) and cannot be disabled — `skills.contentScanning` continues to govern load-time scanning only.
 - Skill installs are now decided by origin as well as content. Skills you author yourself, skills imported from a remote source, and skills an agent writes at runtime are held to different bars: a warning in a remote skill asks for explicit confirmation, and a critical finding in one is refused outright and cannot be forced. The same finding in a skill you wrote asks rather than refuses. See [Security Scanning](https://docs.comis.ai/skills/security-scanning) for the full matrix.
 - Comis now records where each installed skill came from — its origin, content hash, trust tier, and vetting result — in `~/.comis/installed-skills.json`. The record is owner-only and carries no skill text.
+- Skills can now be imported from operator-allowlisted well-known indexes and from bounded `.skill`/ZIP archives supplied as uploads or public URLs. Remote reads use SSRF validation, DNS pinning, redirect revalidation, and byte caps; archives are preflighted for traversal, links, encryption, unsupported ZIP features, and bomb-shaped compression before inflation.
 - Bundle structure is now checked at install: unsafe member paths, symlinks, binaries detected by content rather than by extension, and bundles that exceed size or file-count limits are all refused. New `skills.installVetting` settings tune those limits.
 - `skills.update` accepts a `force` parameter, matching the other skill-install methods.
 
@@ -17,6 +18,7 @@ This file records user-visible changes to Comis. Detailed release history is ava
 - Skills whose frontmatter uses the community kebab-case spelling (`allowed-tools`, `argument-hint`) now install and load. They previously installed but failed validation when the agent tried to use them.
 - Importing or uploading a skill can now be refused for content that was previously written to disk unexamined. Two failure shapes are distinct: one asks you to review the named findings and re-run with `force`, the other cannot be overridden.
 - Bundled MCP servers declared by community or agent-authored skills are validated but no longer persisted or connected automatically. Operators can opt in per agent with `skills.import.autoConnectBundledMcp`; operator-authored and shipped skills retain their existing behavior.
+- Re-importing identical skill bytes is now a no-op. Changed bytes require explicit confirmation, lower-trust sources cannot replace higher-trust incumbents, and a live directory that no longer matches its recorded hash is refused. Confirmed replacements use an atomic directory swap with rollback if post-install validation fails.
 
 ### Fixed
 

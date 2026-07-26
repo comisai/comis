@@ -74,7 +74,10 @@ function collectDirectoryFiles(root: string): Result<SkillBundleFile[], Error> {
 }
 
 /** Collect a discovered folder skill or normalize a root Markdown skill to SKILL.md. */
-function collectSkillFiles(skillDir: string, manifestPath: string): Result<SkillBundleFile[], Error> {
+export function collectSkillBundleFiles(
+  skillDir: string,
+  manifestPath: string,
+): Result<SkillBundleFile[], Error> {
   const canonicalManifest = safePath(skillDir, "SKILL.md");
   if (manifestPath === canonicalManifest) return collectDirectoryFiles(skillDir);
   return tryCatch(() => [{ path: "SKILL.md", content: readFileSync(manifestPath), type: "file" }]);
@@ -84,7 +87,7 @@ function collectSkillFiles(skillDir: string, manifestPath: string): Result<Skill
 export function backfillSkillProvenance(
   args: BackfillSkillProvenanceArgs,
 ): Result<SkillProvenanceRecord, Error> {
-  const files = collectSkillFiles(args.skillDir, args.manifestPath);
+  const files = collectSkillBundleFiles(args.skillDir, args.manifestPath);
   if (!files.ok) return files;
 
   const vetted = vetSkillBundle({ files: files.value, trust: "operator" });

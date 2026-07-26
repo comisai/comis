@@ -57,14 +57,25 @@ import {
 } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import { createLogger } from "@comis/infra";
+import { decideSkillReimport, vetSkillBundle } from "@comis/skills";
+import { fromPromise } from "@comis/shared";
 import { rmSync, existsSync } from "node:fs";
 import type { RpcHandler } from "./types.js";
 import { bundleInstallResponseFields, runPostInstallHooks, forgetSkillProvenanceOnDelete } from "../skills/post-install-hooks.js";
 // Pre-write vetting gate. Runs on the WHOLE bundle between scope resolution and
 // the first file write on all four install paths, so a blocked bundle leaves
 // zero files on disk. Not operator-disableable — see the module header.
-import { runInstallVettingGate } from "../skills/vet-install-gate.js";
+import {
+  evaluateInstallVettingGate,
+  runInstallVettingGate,
+} from "../skills/vet-install-gate.js";
 import { resolveSkillImportSource } from "../skills/resolve-skill-import-source.js";
+import { installSkillDirectory } from "../skills/skill-directory-swap.js";
+import { collectSkillBundleFiles } from "../skills/skill-provenance-backfill.js";
+import {
+  provenanceKey,
+  readSkillProvenance,
+} from "../skills/skill-provenance-store.js";
 
 const logger = createLogger({ name: "skill-handlers" });
 
@@ -341,6 +352,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         );
       }
 
+      const importStartedMs = systemNowMs();
       const resolved = await resolveSkillImportSource(params, deps, callingAgentId);
       if (!resolved.ok) throw resolved.error;
       const { name, files: fetchedFiles, source, ref, registryTrust } = resolved.value;
@@ -361,84 +373,170 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       }
 
       const skillDir = safePath(skillsBaseDir, name);
-
-      // Prevent overwrite
-      if (existsSync(skillDir)) {
-        throw new Error(`Skill directory already exists: ${name}`);
-      }
-
-      // Vet the whole fetched bundle BEFORE the first write (throws on block).
-      const vetted = runInstallVettingGate({
+      const gateArgs = {
         deps, source, skillName: name, callingAgentId,
         files: fetchedFiles.map((f) => ({ path: f.path, content: f.content })),
         ctx: (rawParams as { _context?: { userId?: string } })._context, force: rawParams.force === true,
         ...(registryTrust !== undefined && { registryTrust }),
-      });
+      } as const;
+      const evaluated = evaluateInstallVettingGate(gateArgs);
 
-      // Route skill-folder dir creation + per-file writes
-      // through the shared fs-safe substrate so every artifact honors
-      // the §1.4 `0o700`/`0o600` invariant. Mirrors the skills.upload
-      // migration; same scope-resolved `skillsBaseDir` confinement bound.
-      const skillDirResult = ensureContainedDir({
-        dir: skillDir,
-        mode: 0o700,
-        confinedBaseDir: skillsBaseDir,
-      });
-      if (!skillDirResult.ok) {
-        logger.warn(
-          {
-            err: skillDirResult.error,
-            skillName: name,
-            agentId: callingAgentId,
-            hint: "Imported skill dir creation rejected by fs-safe substrate; check parent dir mode / symlink",
-            errorKind: "resource" as const,
-          },
-          "Skill import dir creation failed",
-        );
-        throw new Error(`Skill directory creation failed: ${skillDirResult.error.message}`);
-      }
-      for (const file of fetchedFiles) {
-        const filePath = safePath(skillDir, file.path);
-        const parentDir = filePath.substring(0, filePath.lastIndexOf("/"));
-        if (parentDir && !existsSync(parentDir)) {
-          const parentDirResult = ensureContainedDir({
-            dir: parentDir,
-            mode: 0o700,
-            confinedBaseDir: skillsBaseDir,
-          });
-          if (!parentDirResult.ok) {
-            logger.warn(
-              {
-                err: parentDirResult.error,
-                skillName: name,
-                agentId: callingAgentId,
-                hint: "Nested parent dir creation rejected by fs-safe substrate",
-                errorKind: "resource" as const,
-              },
-              "Skill import nested parent dir creation failed",
-            );
-            throw new Error(`Skill nested parent dir creation failed: ${parentDirResult.error.message}`);
-          }
-        }
-        const writeResult = writeRegularFile({
-          path: filePath,
-          content:
-            typeof file.content === "string" ? file.content : Buffer.from(file.content),
-          confinedBaseDir: skillsBaseDir,
-        });
-        if (!writeResult.ok) {
+      if (existsSync(skillDir)) {
+        const incumbent = readSkillProvenance(dataDir)[provenanceKey(scope, name)];
+        if (incumbent === undefined) {
           logger.warn(
             {
-              err: writeResult.error,
+              method: "skills.import",
               skillName: name,
-              agentId: callingAgentId,
-              hint: "Imported skill file write rejected by fs-safe substrate",
+              hint:
+                "The destination is untracked. Review and explicitly delete it before importing the same name.",
+              errorKind: "precondition" as const,
+            },
+            "Skill re-import found an untracked incumbent",
+          );
+          throw new Error(
+            `[skill_reimport_untracked] Skill directory ${name} already exists without durable provenance; ` +
+            "refusing to overwrite unknown bytes",
+          );
+        }
+        const liveFiles = collectSkillBundleFiles(
+          skillDir,
+          safePath(skillDir, "SKILL.md"),
+        );
+        if (!liveFiles.ok) {
+          logger.warn(
+            {
+              method: "skills.import",
+              skillName: name,
+              err: liveFiles.error.message,
+              hint:
+                "The incumbent could not be hashed. Check skill-directory permissions and member types before retrying.",
               errorKind: "resource" as const,
             },
-            "Skill import file write failed",
+            "Skill re-import could not verify incumbent bytes",
           );
-          throw new Error(`Skill file write failed: ${writeResult.error.message}`);
+          throw new Error(
+            `[skill_reimport_unreadable] Could not verify live skill ${name}: ${liveFiles.error.message}`,
+          );
         }
+        const liveHash = vetSkillBundle({
+          files: liveFiles.value,
+          trust: incumbent.trust,
+        }).contentHash;
+        if (liveHash !== incumbent.contentHash) {
+          logger.warn(
+            {
+              method: "skills.import",
+              skillName: name,
+              incumbentTrust: incumbent.trust,
+              hint:
+                "The live directory changed after provenance was recorded. Review the local changes and remove or restore the incumbent before retrying.",
+              errorKind: "precondition" as const,
+            },
+            "Skill re-import detected incumbent tampering",
+          );
+          throw new Error(
+            `[skill_reimport_tampered] Live bytes for ${name} differ from installed-skills.json; ` +
+            "refusing to overwrite until the incumbent is reviewed",
+          );
+        }
+        const reimportDecision = decideSkillReimport({
+          incumbentHash: incumbent.contentHash,
+          incumbentTrust: incumbent.trust,
+          candidateHash: evaluated.vetted.contentHash,
+          candidateTrust: evaluated.vetted.trust,
+          confirmed: rawParams.force === true,
+        });
+        if (reimportDecision === "no_op") {
+          logger.info(
+            {
+              method: "skills.import",
+              skillName: name,
+              source,
+              trust: evaluated.vetted.trust,
+              fileCount: fetchedFiles.length,
+              unchanged: true,
+              durationMs: systemNowMs() - importStartedMs,
+            },
+            "Skill re-import matched installed bytes",
+          );
+          const result = {
+            ok: true as const,
+            path: skillDir,
+            name,
+            fileCount: fetchedFiles.length,
+            unchanged: true,
+          };
+          if (IS_DEV) SkillsImportContract.response.parse(result);
+          return result;
+        }
+        if (reimportDecision === "refuse") {
+          logger.warn(
+            {
+              method: "skills.import",
+              skillName: name,
+              incumbentTrust: incumbent.trust,
+              candidateTrust: evaluated.vetted.trust,
+              hint:
+                "A lower-trust source cannot replace this skill. Remove the incumbent explicitly only after reviewing its provenance.",
+              errorKind: "precondition" as const,
+            },
+            "Skill re-import refused by trust policy",
+          );
+          throw new Error(
+            `[skill_reimport_refused] incumbent=${incumbent.trust} candidate=${evaluated.vetted.trust}`,
+          );
+        }
+        if (reimportDecision === "confirm") {
+          const candidateCritical = evaluated.vetted.findings.filter(
+            (finding) => finding.severity === "CRITICAL",
+          ).length;
+          logger.warn(
+            {
+              method: "skills.import",
+              skillName: name,
+              incumbentTrust: incumbent.trust,
+              candidateTrust: evaluated.vetted.trust,
+              findingCounts: {
+                critical: candidateCritical,
+                warn: evaluated.vetted.findings.length - candidateCritical,
+              },
+              hint:
+                "Review the counts-only re-import difference, then repeat the same call with force: true to replace the incumbent.",
+              errorKind: "precondition" as const,
+            },
+            "Skill re-import requires confirmation",
+          );
+          throw new Error(
+            `[skill_reimport_confirm] Different bytes require force: true; findingCounts ` +
+            `incumbent={critical:${incumbent.findingCounts.critical},warn:${incumbent.findingCounts.warn}} ` +
+            `candidate={critical:${candidateCritical},warn:${evaluated.vetted.findings.length - candidateCritical}}`,
+          );
+        }
+      }
+
+      // Enforce the content policy only after collision policy has established
+      // that this call may write. Reuse the evaluation so each candidate is
+      // scanned exactly once.
+      const vetted = runInstallVettingGate(gateArgs, evaluated);
+      const installed = installSkillDirectory({
+        skillsBaseDir,
+        skillDir,
+        files: fetchedFiles,
+      });
+      if (!installed.ok) {
+        logger.warn(
+          {
+            err: installed.error,
+            skillName: name,
+            agentId: callingAgentId,
+            hint:
+              "The staged skill-directory swap failed before post-install hooks; check data-directory ownership and available space.",
+            errorKind: "resource" as const,
+          },
+          "Skill import directory transaction failed",
+        );
+        throw installed.error;
       }
 
       // Scope-aware re-discovery
@@ -449,9 +547,71 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
-      const hooks = await runPostInstallHooks(deps, name, skillDir, rawParams, { scope, source, ref, vetted, callingAgentId });
+      const hooked = await fromPromise(
+        runPostInstallHooks(deps, name, skillDir, rawParams, {
+          scope,
+          source,
+          ref,
+          vetted,
+          callingAgentId,
+        }),
+      );
+      if (!hooked.ok) {
+        const rolledBack = installed.value.rollback();
+        if (scope === "shared" && deps.skillRegistries) {
+          for (const registry of deps.skillRegistries.values()) registry.init();
+        } else {
+          deps.skillRegistries?.get(callingAgentId)?.init();
+        }
+        if (!rolledBack.ok) {
+          logger.error(
+            {
+              err: rolledBack.error,
+              skillName: name,
+              hint:
+                "The post-install hook failed and the incumbent rollback also failed; inspect the live skill directory before retrying.",
+              errorKind: "internal" as const,
+            },
+            "Skill import rollback failed",
+          );
+        }
+        throw hooked.error;
+      }
+      const finalized = installed.value.finalize();
+      if (!finalized.ok) {
+        logger.warn(
+          {
+            err: finalized.error,
+            skillName: name,
+            hint:
+              "The new skill is installed, but its private swap backup could not be removed; check data-directory ownership.",
+            errorKind: "resource" as const,
+          },
+          "Skill import swap cleanup failed",
+        );
+      }
 
-      const result = { ok: true as const, path: skillDir, name, fileCount: fetchedFiles.length, ...bundleInstallResponseFields(hooks) };
+      const result = { ok: true as const, path: skillDir, name, fileCount: fetchedFiles.length, unchanged: false, ...bundleInstallResponseFields(hooked.value) };
+      const criticalCount = vetted.findings.filter(
+        (finding) => finding.severity === "CRITICAL",
+      ).length;
+      logger.info(
+        {
+          method: "skills.import",
+          skillName: name,
+          source,
+          trust: vetted.trust,
+          verdict: vetted.verdict,
+          fileCount: fetchedFiles.length,
+          findingCounts: {
+            critical: criticalCount,
+            warn: vetted.findings.length - criticalCount,
+          },
+          unchanged: false,
+          durationMs: systemNowMs() - importStartedMs,
+        },
+        "Skill import complete",
+      );
       if (IS_DEV) SkillsImportContract.response.parse(result);
       return result;
     },

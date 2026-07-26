@@ -15592,6 +15592,9 @@ export const CONTRACTS = {
         "fileCount": {
           "type": "number"
         },
+        "unchanged": {
+          "type": "boolean"
+        },
         "pendingMcpServers": {
           "type": "array",
           "items": {

@@ -174,6 +174,7 @@ export const SkillsImportContract = defineContract({
     path: z.string(),
     name: z.string(),
     fileCount: z.number(),
+    unchanged: z.boolean().optional(),
     ...BundleInstallResponseShape,
   }),
   // orch:skill surface, rpc-scoped (see skills.upload rationale).

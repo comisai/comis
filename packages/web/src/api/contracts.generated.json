@@ -15416,6 +15416,9 @@
         "fileCount": {
           "type": "number"
         },
+        "unchanged": {
+          "type": "boolean"
+        },
         "pendingMcpServers": {
           "type": "array",
           "items": {

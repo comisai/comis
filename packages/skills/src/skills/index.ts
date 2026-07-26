@@ -94,6 +94,8 @@ export { deriveSkillTrustTier } from "./import/trust-tier.js";
 // SkillTrustTier is consumed by the daemon's provenance store, which persists
 // the derived tier; SkillInstallSource by both that store and the install gate.
 export type { SkillInstallSource, SkillTrustTier } from "./import/trust-tier.js";
+export { decideSkillReimport } from "./import/reimport-policy.js";
+export type { SkillReimportDecision } from "./import/reimport-policy.js";
 export {
   parseWellKnownIndex,
   resolveWellKnownSkill,
