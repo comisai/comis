@@ -28,6 +28,7 @@ import {
   SKILL_PROVENANCE_FILE_NAME,
   type SkillProvenanceRecord,
 } from "./skill-provenance-store.js";
+import { recordSeededSkillProvenance } from "./skill-provenance-backfill.js";
 
 let dataDir: string;
 
@@ -107,6 +108,31 @@ describe("readSkillProvenance — absent and malformed files", () => {
 });
 
 describe("recordSkillProvenance", () => {
+  it("records freshly seeded bundle bytes as shared first-party provenance", () => {
+    const skillDir = join(dataDir, "skills", "bundled-example");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: bundled-example\ndescription: Bundled example\ntype: prompt\n---\n\nUse this skill.\n",
+    );
+
+    const result = recordSeededSkillProvenance({
+      dataDir,
+      name: "bundled-example",
+      agentId: "default",
+      skillDir,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(readSkillProvenance(dataDir)["shared:bundled-example"]).toMatchObject({
+      source: "seed",
+      trust: "first-party",
+      verdict: "safe",
+      importedBy: { agentId: "default" },
+      backfilled: false,
+    });
+  });
+
   it("writes the record and reads it back under the scoped key", () => {
     const result = recordSkillProvenance(dataDir, "local", "my-skill", record());
     expect(result.ok).toBe(true);

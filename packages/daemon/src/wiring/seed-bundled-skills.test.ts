@@ -11,6 +11,26 @@ import { describe, it, expect, vi } from "vitest";
 import { seedBundledSkills } from "./seed-bundled-skills.js";
 
 describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled skills", () => {
+  it("records first-party provenance only after a bundled skill is seeded", () => {
+    const recordSeedProvenance = vi.fn();
+    const deps = {
+      bundledRoot: "/b",
+      skillsTarget: "/t",
+      listSkillNames: () => ["new-skill", "current-skill"],
+      bundledVersion: (_root: string, name: string) =>
+        name === "new-skill" ? "1.0.0" : "2.0.0",
+      installedVersion: (_target: string, name: string) =>
+        name === "new-skill" ? undefined : "2.0.0",
+      seed: vi.fn(),
+      recordSeedProvenance,
+    };
+
+    seedBundledSkills(deps);
+
+    expect(recordSeedProvenance).toHaveBeenCalledTimes(1);
+    expect(recordSeedProvenance).toHaveBeenCalledWith("new-skill");
+  });
+
   it("seeds missing skills, RE-seeds version-changed skills, and SKIPS up-to-date ones", () => {
     const bundled: Record<string, string> = { "skill-creator": "1.1.1", "claude-code": "1.0.0", codex: "1.0.0" };
     const installed: Record<string, string | undefined> = {
