@@ -54,6 +54,7 @@ data directory.
 ├── skills/                  # seeded skill library — bundled claude-code/codex/skill-creator skills (re-seeded on version change) + any added skills
 │   └── <name>/SKILL.md      # one dir per skill (the agent auto-discovers these by description)
 ├── installed-skills.json    # skill provenance — origin, content hash, trust tier (0o600)
+├── skill-index-cache/       # validated well-known indexes, keyed by URL hash (0o600 files)
 ├── identity/
 │   └── device.json          # Ed25519 device identity (auto-generated)
 └── devices/                 # paired device records (if pairing is used)
@@ -66,6 +67,7 @@ Some entries only appear under specific conditions.
 - `auth-profiles.json`, `mcp-tokens/`, `secrets.json` — only present when `security.storage: file`. In `encrypted` mode, OAuth profiles and secrets live in `secrets.db` tables instead.
 - `.daemon.lock` — present only while the daemon is running. Safe to delete when the daemon is stopped (it will be recreated on the next start).
 - `installed-skills.json` — created on the first skill install; absent on a daemon that has never installed one.
+- `skill-index-cache/` — created after the first well-known index fetch; entries expire according to `skills.import.indexCacheTtlMs`.
 - `daemon.console.log` — present only when the daemon was launched by the CLI (the `comis init` wizard's start step or `comis daemon start`). Under systemd the process output goes to the journal instead, and under pm2 to `~/.pm2/logs/` — so this file is absent in those setups.
 - `broker.sock` — present only when the credential broker is active (`executor.broker.enabled: true` in `config.yaml`). Ephemeral — deleted and recreated on each daemon start.
 - `cap.sock` — present only when an autonomy-bearing agent is configured (the loopback capability endpoint). Ephemeral — `0600` owner-only, deleted and recreated on each daemon start. The lease **bearer** itself is never persisted — it is re-minted on each resume from the run's persisted (attenuated) capabilities and exact trust level, so there is still no `cap.db` / lease-secret table on disk. The transient [bounded-autonomy](/agents/autonomy) control-plane *counters* (the per-root spawn-ceiling counters, the call-rate windows, and the outward-quota windows) remain **in-memory** and reset on restart. The in-flight **run state** need not be ephemeral, though: when [`autonomy.durability.enabled`](/reference/config-yaml#autonomy-agentsautonomy) is on (**on by default** — full capability out of the box), the daemon persists each run's checkpoint and its outward-send ledger to `memory.db` (the [`durable_run_checkpoints` + `outward_send_ledger`](#memory-db) tables), so a cron-fired pipeline **survives a daemon restart** — on resume the lease is re-minted from those persisted attenuated caps and trust level, and the consumed budget is re-seeded from the record. With durability off (an explicit opt-out) the data-dir layout is unchanged by autonomy and those tables are never written. See [Durability & Resume](/agents/autonomy#durability-resume).
@@ -400,6 +402,18 @@ Deleting a skill drops its entry. If you remove a skill directory by hand, the e
 </Note>
 
 A missing or malformed file reads as empty rather than failing startup — provenance is evidence, not a lock.
+
+### `skill-index-cache/`
+
+Validated projections of operator-allowlisted well-known skill indexes. The
+filename is a SHA-256 digest of the index URL, so remote URL text does not become
+a filesystem path. Files are daemon-private and contain the validated index
+shape plus its fetch time, never downloaded skill contents.
+
+An unexpired entry avoids a network request. If refresh fails after expiry,
+Comis may use the stale validated projection and reports degraded coverage; it
+still fetches and vets every selected skill file normally. Safe to delete while
+the daemon is stopped—the next well-known import fetches the index again.
 
 ### `terminal-drive/`
 

@@ -132,6 +132,11 @@ In a multi-agent setup, each named agent automatically discovers skills from its
 own workspace directory. Skills can be scoped as agent-local or shared across all
 agents. See [Prompt Skills](/skills/prompt-skills) for the full scoping model.
 
+Skills can also be imported from repository directories, bounded `.skill`/ZIP
+archives, operator-allowlisted well-known indexes, and configured registries.
+Every source uses the same pre-write security gate and durable provenance. See
+[Importing Skills](/skills/importing).
+
 See [Prompt Skills](/skills/prompt-skills) for a walkthrough on creating your
 first skill.
 
@@ -181,6 +186,9 @@ See [Tool Policy](/skills/tool-policy) for details on configuring tool access.
   </Card>
   <Card title="Prompt Skills" icon="file-lines" href="/skills/prompt-skills">
     Write custom instruction files to teach agents new behaviors
+  </Card>
+  <Card title="Importing Skills" icon="file-import" href="/skills/importing">
+    Import vetted prompt skills with trust and provenance controls
   </Card>
   <Card title="MCP Integration" icon="plug" href="/skills/mcp">
     Connect to external tool servers using the Model Context Protocol

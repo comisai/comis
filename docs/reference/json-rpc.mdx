@@ -2700,16 +2700,16 @@ Test connectivity to an MCP server without changing its state. Returns the round
 
 <Accordion title="skills (6 methods)">
 
-Prompt skill management: list, create, upload, import from GitHub, update, and delete skills.
+Prompt skill management: list, create, upload, multi-source import, update, and delete skills.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
 | `skills.list` | `rpc` | List prompt skills for an agent |
-| `skills.create` | `admin` | Create a new skill from SKILL.md content (single-file shortcut) |
-| `skills.upload` | `admin` | Upload a skill folder (files + SKILL.md) |
-| `skills.import` | `admin` | Import a skill from a GitHub repository URL |
-| `skills.update` | `admin` | Update an existing skill's SKILL.md content |
-| `skills.delete` | `admin` | Delete a skill |
+| `skills.create` | `rpc` | Create a new skill from SKILL.md content (single-file shortcut) |
+| `skills.upload` | `rpc` | Upload a skill folder (files + SKILL.md) |
+| `skills.import` | `rpc` | Import from GitHub, an archive, a well-known index, or a configured registry |
+| `skills.update` | `rpc` | Update an existing skill's SKILL.md content |
+| `skills.delete` | `rpc` | Delete a skill |
 
 ### `skills.list`
 
@@ -2736,7 +2736,7 @@ When a community or agent-authored skill declares bundled MCP servers, Comis com
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
+| **Scope** | `rpc` plus the in-handler `orch:skill` capability gate |
 | **Parameters** | `{ name: string, agentId?: string, scope?: "local" \| "shared", force?: boolean, files: Array<{ path: string, content: string }> }` |
 | **Returns** | `{ ok: true, path: string, pendingMcpServers?: Array<{ name, transport, reason }>, hint?: string }` |
 
@@ -2776,11 +2776,17 @@ The optional `scope` parameter controls where the skill is written. `"local"` (d
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ url: string, agentId?: string, scope?: "local" \| "shared", force?: boolean }` |
-| **Returns** | `{ ok: true, path: string, name: string, fileCount: number, pendingMcpServers?: Array<{ name, transport, reason }>, hint?: string }` |
+| **Scope** | `rpc` plus the in-handler `orch:skill` capability gate |
+| **Parameters** | GitHub `{ source?: "github", url, ... }`; archive `{ source: "archive", archiveBase64 \| archiveUrl, ... }`; well-known `{ source: "wellknown", ref, ... }`; registry `{ source: "registry", registry, ref, ... }`; each accepts `agentId?`, `scope?`, and `force?` |
+| **Returns** | `{ ok: true, path, name, fileCount, unchanged?, trust, verdict, contentHash, warnings, pendingMcpServers?, hint? }` |
 
-Accepts GitHub directory URLs in the format: `https://github.com/{owner}/{repo}/tree/{branch}/{path}`
+GitHub URLs use
+`https://github.com/{owner}/{repo}/tree/{branch}/{path}`. Archive payloads are
+canonical base64 ZIP bytes or a public URL. Well-known references use
+`wellknown:<allowlisted-base>#<skill-name>`. Registry imports identify an
+allowlisted registry by `registry` id and a `ref` of `slug` or `slug@version`.
+Every remote read is SSRF-validated and bounded; every resulting file map goes
+through the same pre-write gate. See [Importing Skills](/skills/importing).
 
 The optional scope parameter works the same as in skills.upload -- "local" (default) imports to the agent's workspace, "shared" imports to the global directory (default agent only).
 
@@ -2790,7 +2796,7 @@ Create a new skill by providing its full SKILL.md content directly — a conveni
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
+| **Scope** | `rpc` plus the in-handler `orch:skill` capability gate |
 | **Parameters** | `{ name: string, content: string, agentId?: string, scope?: "local" \| "shared", force?: boolean }` |
 | **Returns** | `{ ok: true, path: string, name: string, pendingMcpServers?: Array<{ name, transport, reason }>, hint?: string }` |
 
@@ -2828,7 +2834,7 @@ Replace the SKILL.md content of an existing skill. The skill directory must alre
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
+| **Scope** | `rpc` plus the in-handler `orch:skill` capability gate |
 | **Parameters** | `{ name: string, content: string, agentId?: string, scope?: "local" \| "shared", force?: boolean }` |
 | **Returns** | `{ ok: true, name: string, pendingMcpServers?: Array<{ name, transport, reason }>, hint?: string }` |
 
@@ -2836,7 +2842,7 @@ Replace the SKILL.md content of an existing skill. The skill directory must alre
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
+| **Scope** | `rpc` plus the in-handler `orch:skill` capability gate |
 | **Parameters** | `{ name: string, agentId?: string, scope?: "local" \| "shared" }` |
 | **Returns** | `{ ok: true }` |
 

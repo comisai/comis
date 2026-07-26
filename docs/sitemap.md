@@ -76,6 +76,7 @@ Open-source security-first runtime for AI agents that learn and act across sessi
 - [Built-in Tools](https://docs.comis.ai/skills/built-in-tools) — Reference for built-in file, shell, web, and browser tools
 - [Platform Tools](https://docs.comis.ai/skills/platform-tools) — Overview of all Comis-specific tools agents can use for messaging, scheduling, and administration
 - [Prompt Skills](https://docs.comis.ai/skills/prompt-skills) — Create discoverable Markdown procedures that agents can select and read
+- [Importing Skills](https://docs.comis.ai/skills/importing) — Import prompt skills from repositories, archives, well-known indexes, and configured registries
 - [Skill Examples](https://docs.comis.ai/skills/examples) — Complete skill walkthroughs you can follow step by step
 - [Skill Manifest](https://docs.comis.ai/skills/manifest) — Complete reference for the SKILL.md file format and all available fields
 - [Security Scanning](https://docs.comis.ai/skills/security-scanning) — What Comis checks for when loading custom skills

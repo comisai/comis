@@ -114,6 +114,7 @@
               "skills/built-in-tools",
               "skills/platform-tools",
               "skills/prompt-skills",
+              "skills/importing",
               "skills/examples",
               "skills/manifest",
               "skills/security-scanning",

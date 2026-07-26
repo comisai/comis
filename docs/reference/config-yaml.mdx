@@ -984,6 +984,40 @@ is no key to turn the gate off.
 | `maxBundleBytes` | `number` | `33554432` | Maximum total bytes across the bundle (32 MiB) |
 | `maxPathDepth` | `number` | `10` | Maximum path depth for any member |
 
+**Skill Import (agents.*.skills.import)**
+
+Remote well-known and registry imports are disabled until their bases are
+allowlisted here. The object is strict: unknown keys fail configuration load.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `registries` | `array` | `[]` | Operator-allowlisted remote bases. Each entry is `{ id, base, kind: "wellknown" \| "registry", trust?: "community" \| "operator" }`; trust defaults to `community` |
+| `autoConnectBundledMcp` | `boolean` | `false` | Persist and connect bundled MCP declarations from community or agent-authored skills after validation |
+| `maxArchiveBytes` | `number` | `8388608` | Maximum compressed archive bytes accepted before preflight (8 MiB) |
+| `maxCompressionRatio` | `number` | `100` | Maximum declared expanded-to-compressed ratio for one archive entry |
+| `indexCacheTtlMs` | `number` | `3600000` | Validated well-known index cache lifetime in milliseconds |
+
+```yaml
+agents:
+  default:
+    skills:
+      import:
+        registries:
+          - id: public-index
+            base: https://skills.example.com
+            kind: wellknown
+            trust: community
+          - id: community
+            base: https://registry.example.com/api/v1
+            kind: registry
+            trust: community
+        autoConnectBundledMcp: false
+```
+
+Registry publisher and security fields are retained as evidence but never
+grant trust. Setting `trust: operator` is an explicit operator promotion. See
+[Importing Skills](/skills/importing).
+
 WARN findings are reported but do not block loading under the default policy.
 The learned-document validator follows the same critical-only rejection boundary,
 so warning-level jailbreak-like language can be admitted.

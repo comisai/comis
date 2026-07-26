@@ -1,0 +1,144 @@
+---
+title: "Importing Skills"
+description: "Import prompt skills from repositories, archives, well-known indexes, and configured registries"
+icon: "file-import"
+---
+
+Comis can import prompt skills from four source types. Every source resolves to
+the same bounded file map, passes through the same pre-write vetting gate, and
+records durable provenance after the install succeeds.
+
+Imported skills remain prompt-only. They add instructions, not an executable
+skill runtime. A skill can still declare bundled MCP servers, which are the one
+code-bearing exception; those declarations are validated and held pending for
+community and agent-authored skills unless an operator explicitly enables
+connection.
+
+## Import from the CLI
+
+```bash
+# GitHub directory
+comis skills import https://github.com/example/skills/tree/main/summarize
+
+# Local .skill or ZIP archive
+comis skills import ./summarize.skill
+
+# Public archive URL
+comis skills import https://downloads.example.com/summarize.skill --source archive
+
+# Operator-allowlisted well-known index
+comis skills import 'wellknown:https://skills.example.com#summarize'
+
+# Operator-configured registry
+comis skills import 'summarize@1.2.3' --source registry --registry community
+```
+
+Use `--scope local|shared` to select the existing skill scope. Local is the
+default and writes to the selected agent's workspace. Shared imports write to
+the daemon-wide skills directory and are restricted to the default agent.
+
+An install that needs acknowledgement returns a
+`[skill_vet_confirm:<verdict>]` or `[skill_reimport_confirm]` error. Review the
+reported rule ids and counts, then repeat the identical command with
+`--confirm`. Confirmation never skips scanning and cannot override a blocked
+community bundle.
+
+```bash
+comis skills import ./summarize.skill --confirm
+```
+
+Inspect installed provenance without reading skill bodies:
+
+```bash
+comis skills list
+comis skills info summarize
+comis skills list --format json
+```
+
+The list includes scope, install source, trust, verdict, and a content-hash
+prefix. `info` shows the full provenance record and any registry evidence.
+
+## Sources
+
+| Source | Reference | Configuration | Trust default |
+|--------|-----------|---------------|---------------|
+| `github` | A public GitHub directory URL | None | `community` |
+| `archive` | A local `.skill`/ZIP file or public archive URL | None for local bytes | `community` for import |
+| `wellknown` | `wellknown:<base-url>#<skill-name>` | Matching `kind: wellknown` allowlist entry | `community` |
+| `registry` | Slug or `slug@version` plus registry id | Matching `kind: registry` allowlist entry | `community` |
+
+Remote reads use URL validation, DNS-pinned connections, redirect
+revalidation, timeouts, and byte limits. Well-known indexes name individual
+files under `<base>/<skill-name>/`; every named path is validated before any
+skill file is fetched. Registry metadata is treated as evidence only. A
+publisher or security claim from a registry never bypasses Comis's own gate.
+
+Well-known and registry sources are disabled until their base is present in
+`agents.<id>.skills.import.registries`. A registry entry may explicitly set
+`trust: operator`; that is an operator policy decision, not a trust grant from
+the remote service.
+
+## Archive safety
+
+Archive processing is in-memory and supports bounded, unencrypted ZIP files
+using stored or deflate compression. Comis preflights the central directory
+before inflation and rejects:
+
+- absolute paths, traversal, links, device-like members, and ambiguous roots;
+- encrypted entries, ZIP64, data descriptors, and unsupported compression;
+- excessive archive bytes, file count, path depth, per-file size, expanded
+  total size, or compression ratio;
+- an archive whose bytes change between preflight and extraction.
+
+An archive must contain one `SKILL.md`, either at its root or inside one common
+top-level directory. Multi-skill archives are refused.
+
+## Trust and replacement policy
+
+Trust is derived from the install path and caller. A skill cannot declare its
+own tier.
+
+| Trust | Safe | Caution | Dangerous |
+|-------|------|---------|-----------|
+| `first-party` | allow | allow | allow |
+| `operator` | allow | allow | confirm |
+| `community` | allow | confirm | block |
+| `agent-authored` | allow | confirm | block |
+
+`force: true` in JSON-RPC, or `--confirm` in the CLI, changes only `confirm` to
+allow. It never changes `block`.
+
+The first successful install pins a canonical SHA-256 hash in
+`installed-skills.json`. Re-importing identical bytes is a no-op. Changed bytes
+at the same trust tier require confirmation, a lower-trust source cannot
+replace a higher-trust incumbent, and manual changes to the live directory are
+refused until reviewed. Replacements use a private atomic swap and roll back if
+post-install processing fails.
+
+## Bundled MCP declarations
+
+For `community` and `agent-authored` skills, bundled MCP declarations complete
+schema, collision, secret, and dependency-vulnerability checks but are not
+persisted or connected by default. The import response and provenance record
+contain content-free `pendingMcpServers` descriptors.
+
+To accept those declarations, set the installing agent's
+`skills.import.autoConnectBundledMcp: true`, restart to load immutable workspace
+policy, and repeat the import. Leave the setting false unless the server
+commands, endpoints, and required credentials have been reviewed.
+
+## Observability
+
+Successful and rejected imports emit content-free trajectory events. Within an
+agent request, `comis explain <sessionKey-or-traceId>` shows the source, trust,
+verdict, hash, finding counts, and pending MCP count.
+
+`comis system-health` adds the deployment-wide skill exposure summary:
+imported skills, community-tier skills, registry imports, registry records no
+longer present in the current allowlist, and skills with pending MCP entries.
+Offline reports still read provenance but mark registry allowlist coverage as
+unavailable.
+
+See [Security Scanning](/skills/security-scanning) for the scanner and policy
+details, and [Data Directory](/operations/data-directory#installed-skillsjson)
+for the durable record.
