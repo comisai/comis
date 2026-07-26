@@ -295,7 +295,8 @@ afterEach(() => {
 
 describe("skills.import — pre-write vetting gate", () => {
   it("imports uploaded archive bytes through unpacking, vetting, and provenance", async () => {
-    const handlers = createSkillHandlers(makeDeps(wsDir));
+    const logger = createMockLogger();
+    const handlers = createSkillHandlers(makeDeps(wsDir, { logger }));
     const archive = makeStoredArchive({
       "my-skill/SKILL.md": CLEAN_SKILL_MD,
       "my-skill/references/guide.md": "# Guide\n\nBenign support text.\n",
@@ -318,6 +319,17 @@ describe("skills.import — pre-write vetting gate", () => {
       ref: "uploaded",
       trust: "community",
     });
+    const stages = (logger.debug as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .map(([fields]) => (fields as { step?: string }).step)
+      .filter((step): step is string => step !== undefined);
+    expect(stages).toEqual(expect.arrayContaining([
+      "fetch",
+      "preflight",
+      "unpack",
+      "vet",
+      "write",
+      "bundle",
+    ]));
   });
 
   it("fetches a remote archive through the bounded import substrate", async () => {
