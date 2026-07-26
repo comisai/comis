@@ -22,6 +22,8 @@ import {
   mkdirSync as nodeMkdirSync,
   cpSync as nodeCpSync,
 } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { resolve as pathResolve } from "node:path";
 import { safePath } from "@comis/core";
 import { recordSeededSkillProvenance } from "../skills/skill-provenance-backfill.js";
 
@@ -74,6 +76,24 @@ export function seedBundledSkills(deps: SeedBundledSkillsDeps): { seeded: string
     }
   }
   return { seeded, skipped };
+}
+
+/** Seed repository-shipped skills into one agent's shared skill directory. */
+export function seedDefaultBundledSkills(deps: {
+  dataDir: string;
+  agentId: string;
+  logger?: SeedBundledSkillsDeps["logger"];
+}): { seeded: string[]; skipped: string[] } {
+  const bundledRoot = pathResolve(fileURLToPath(import.meta.url), "../../../bundled-skills");
+  return seedBundledSkills(
+    defaultSeedBundledSkillsDeps(
+      bundledRoot,
+      safePath(deps.dataDir, "skills"),
+      deps.dataDir,
+      deps.agentId,
+      deps.logger,
+    ),
+  );
 }
 
 /** Extract `version:` from the first 512 bytes of a SKILL.md (mirrors the old daemon IIFE regex). */

@@ -3050,6 +3050,48 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
+      "autoConnectBundledMcp": false,
+      "indexCacheTtlMs": 3600000,
+      "maxArchiveBytes": 8388608,
+      "maxCompressionRatio": 100,
+      "registries": []
+    },
+    "immutable": true,
+    "path": "agents.skills.import",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.skills.import.autoConnectBundledMcp",
+    "type": "boolean"
+  },
+  {
+    "default": 3600000,
+    "immutable": true,
+    "path": "agents.skills.import.indexCacheTtlMs",
+    "type": "integer"
+  },
+  {
+    "default": 8388608,
+    "immutable": true,
+    "path": "agents.skills.import.maxArchiveBytes",
+    "type": "integer"
+  },
+  {
+    "default": 100,
+    "immutable": true,
+    "path": "agents.skills.import.maxCompressionRatio",
+    "type": "integer"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "agents.skills.import.registries",
+    "type": "array"
+  },
+  {
+    "default": {
       "maxBundleBytes": 33554432,
       "maxEntries": 200,
       "maxEntryBytes": 4194304,
@@ -19735,6 +19777,87 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           ],
           "type": "object"
         },
+        "import": {
+          "additionalProperties": false,
+          "default": {
+            "autoConnectBundledMcp": false,
+            "indexCacheTtlMs": 3600000,
+            "maxArchiveBytes": 8388608,
+            "maxCompressionRatio": 100,
+            "registries": []
+          },
+          "properties": {
+            "autoConnectBundledMcp": {
+              "default": false,
+              "type": "boolean"
+            },
+            "indexCacheTtlMs": {
+              "default": 3600000,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxArchiveBytes": {
+              "default": 8388608,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxCompressionRatio": {
+              "default": 100,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "registries": {
+              "default": [],
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "base": {
+                    "format": "uri",
+                    "type": "string"
+                  },
+                  "id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "wellknown",
+                      "registry"
+                    ],
+                    "type": "string"
+                  },
+                  "trust": {
+                    "default": "community",
+                    "enum": [
+                      "community",
+                      "operator"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "base",
+                  "kind",
+                  "trust"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "registries",
+            "autoConnectBundledMcp",
+            "maxArchiveBytes",
+            "maxCompressionRatio",
+            "indexCacheTtlMs"
+          ],
+          "type": "object"
+        },
         "installVetting": {
           "additionalProperties": false,
           "default": {
@@ -20334,6 +20457,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "runtimeEligibility",
         "contentScanning",
         "installVetting",
+        "import",
         "execSandbox",
         "toolDiscovery",
         "watchEnabled",
@@ -31011,6 +31135,87 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 ],
                 "type": "object"
               },
+              "import": {
+                "additionalProperties": false,
+                "default": {
+                  "autoConnectBundledMcp": false,
+                  "indexCacheTtlMs": 3600000,
+                  "maxArchiveBytes": 8388608,
+                  "maxCompressionRatio": 100,
+                  "registries": []
+                },
+                "properties": {
+                  "autoConnectBundledMcp": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "indexCacheTtlMs": {
+                    "default": 3600000,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "maxArchiveBytes": {
+                    "default": 8388608,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "maxCompressionRatio": {
+                    "default": 100,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "registries": {
+                    "default": [],
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "base": {
+                          "format": "uri",
+                          "type": "string"
+                        },
+                        "id": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "wellknown",
+                            "registry"
+                          ],
+                          "type": "string"
+                        },
+                        "trust": {
+                          "default": "community",
+                          "enum": [
+                            "community",
+                            "operator"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "base",
+                        "kind",
+                        "trust"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "registries",
+                  "autoConnectBundledMcp",
+                  "maxArchiveBytes",
+                  "maxCompressionRatio",
+                  "indexCacheTtlMs"
+                ],
+                "type": "object"
+              },
               "installVetting": {
                 "additionalProperties": false,
                 "default": {
@@ -31610,6 +31815,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "runtimeEligibility",
               "contentScanning",
               "installVetting",
+              "import",
               "execSandbox",
               "toolDiscovery",
               "watchEnabled",

@@ -108,7 +108,7 @@ import {
   type SessionTrackerRegistry,
 } from "@comis/agent";
 import { resolveAgentMainProvider } from "./wiring/setup-agents/setup-agents-tooling.js";
-import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-bundled-skills.js";
+import { seedDefaultBundledSkills } from "./wiring/seed-bundled-skills.js";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir, type AppConfig } from "@comis/core";
 import { createWorkspacePolicyResolveDir } from "./wiring/workspace-policy-resolve-dir.js";
@@ -148,8 +148,6 @@ import { exportSessionBundleFromKey } from "./export-session-bundle.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { resolve as pathResolve } from "node:path";
 import { createExecGit } from "./config/exec-git.js";
 import {
   saveLastKnownGood,
@@ -1558,19 +1556,11 @@ async function bootFoundation(
   // Every `bundled-skills/<name>/` (skill-creator, claude-code, codex, …) is seeded into
   // `<dataDir>/skills/<name>`, so shipping a bundled skill is ZERO engine code. Idempotent:
   // re-seeds only when missing or the bundled `version:` differs (see seed-bundled-skills.ts).
-  {
-    // Relative path resolves to packages/daemon/bundled-skills from this file in packages/daemon/src/.
-    const bundledSkillsRoot = pathResolve(fileURLToPath(import.meta.url), "../../bundled-skills");
-    seedBundledSkills(
-      defaultSeedBundledSkillsDeps(
-        bundledSkillsRoot,
-        safePath(dataDir, "skills"),
-        dataDir,
-        container.config.routing.defaultAgentId,
-        agentLogger,
-      ),
-    );
-  }
+  seedDefaultBundledSkills({
+    dataDir,
+    agentId: container.config.routing.defaultAgentId,
+    logger: agentLogger,
+  });
 
   // Mutate boot with all Group A foundation fields. The 2 forward-ref slots
   // (channelPluginsRef, bgNotifyRef) were eagerly initialized by

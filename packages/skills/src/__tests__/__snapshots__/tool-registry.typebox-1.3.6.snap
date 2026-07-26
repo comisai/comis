@@ -3056,6 +3056,14 @@
           ],
           "description": "Skill management action. Valid values: list (show installed skills), import (install from GitHub URL), delete (remove skill by name), create (create new skill from content), update (modify existing skill content)"
         },
+        "archiveUrl": {
+          "description": "Remote .skill or ZIP URL for an archive import.",
+          "type": "string"
+        },
+        "confirm": {
+          "description": "Confirm a caution verdict or replacement after reviewing the findings.",
+          "type": "boolean"
+        },
         "content": {
           "description": "Full SKILL.md content including frontmatter. Required for create and update actions. The agent should generate complete SKILL.md content with --- frontmatter --- and body.",
           "type": "string"
@@ -3066,6 +3074,14 @@
         },
         "name": {
           "description": "Skill name. Required for delete, create, and update actions.",
+          "type": "string"
+        },
+        "ref": {
+          "description": "Well-known or registry skill reference.",
+          "type": "string"
+        },
+        "registry": {
+          "description": "Operator-configured registry id for a registry import.",
           "type": "string"
         },
         "scope": {
@@ -3082,8 +3098,29 @@
           "default": "local",
           "description": "Skill scope (default: local). Valid values: local (calling agent's workspace), shared (global skills visible to all agents)."
         },
+        "source": {
+          "anyOf": [
+            {
+              "const": "github",
+              "type": "string"
+            },
+            {
+              "const": "archive",
+              "type": "string"
+            },
+            {
+              "const": "wellknown",
+              "type": "string"
+            },
+            {
+              "const": "registry",
+              "type": "string"
+            }
+          ],
+          "description": "Import source. Omit only for a URL-based GitHub import."
+        },
         "url": {
-          "description": "GitHub directory URL to import skills from. Required for import action.",
+          "description": "GitHub directory URL. Required when import source is github or omitted.",
           "type": "string"
         }
       },

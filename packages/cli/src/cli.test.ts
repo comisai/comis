@@ -2,7 +2,7 @@
 /**
  * Tests for the CLI entry point (cli.ts).
  *
- * Verifies that all 31 commands are registered on the root program,
+ * Verifies that all 33 commands are registered on the root program,
  * program metadata is correct, and subcommand structure is intact.
  * Does NOT re-test command behavior (covered by per-command behavior tests).
  *
@@ -107,10 +107,13 @@ describe("CLI entry point", () => {
       "cron",
       // Operator-only deterministic replay of a recorded run (`comis orchestrate replay`).
       "orchestrate",
+      // Installed-skill lifecycle management (`skills.list`, `skills.import`,
+      // `skills.remove`, and `skills.info`).
+      "skills",
     ] as const;
 
-    it("registers exactly 32 commands", () => {
-      expect(program.commands).toHaveLength(32);
+    it("registers exactly 33 commands", () => {
+      expect(program.commands).toHaveLength(33);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {

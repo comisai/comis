@@ -80,8 +80,6 @@ export type { PromptSkillDescription } from "./prompt/processor.js";
 // skill-handlers.ts moved to the gate; the load-time scanner imports it directly.
 export { parseSkillBundleManifest, vetSkillBundle } from "./import/vet-bundle.js";
 export type {
-  ParsedSkillBundleManifest,
-  SkillBundleManifestError,
   VetSkillBundleResult,
   SkillBundleFile,
   SkillBundleFinding,
@@ -95,35 +93,20 @@ export { deriveSkillTrustTier } from "./import/trust-tier.js";
 // the derived tier; SkillInstallSource by both that store and the install gate.
 export type { SkillInstallSource, SkillTrustTier } from "./import/trust-tier.js";
 export { decideSkillReimport } from "./import/reimport-policy.js";
-export type { SkillReimportDecision } from "./import/reimport-policy.js";
 export {
   parseWellKnownIndex,
   resolveWellKnownSkill,
 } from "./import/sources/wellknown-index.js";
-export type {
-  ResolvedWellKnownSkill,
-  WellKnownIndex,
-  WellKnownIndexError,
-} from "./import/sources/wellknown-index.js";
-export {
-  DEFAULT_SKILL_ARCHIVE_LIMITS,
-  unpackSkillArchive,
-} from "./import/archive-unpack.js";
-export type {
-  ArchiveError,
-  ArchiveErrorCode,
-  SkillArchiveLimits,
-} from "./import/archive-unpack.js";
+export type { WellKnownIndex } from "./import/sources/wellknown-index.js";
+export { unpackSkillArchive } from "./import/archive-unpack.js";
+export type { SkillArchiveLimits } from "./import/archive-unpack.js";
 export {
   mapSkillRegistryResolution,
   parseSkillRegistryRef,
   resolveSkillRegistryVersion,
 } from "./import/sources/registry-source.js";
 export type {
-  RegistryError,
-  SkillRegistryAdapter,
   SkillRegistryEvidence,
-  SkillRegistryRef,
   SkillRegistryResolution,
 } from "./import/sources/registry-source.js";
 
