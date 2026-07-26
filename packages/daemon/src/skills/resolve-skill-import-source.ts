@@ -101,9 +101,16 @@ function archivePolicyKey(code: string, message: string): SkillImportPolicyKey |
 
 function classifyArchiveError(error: Error): SkillImportResolutionError {
   if (error instanceof SkillImportResolutionError) return error;
+  const invalidRef =
+    error.message.startsWith("Invalid URL") ||
+    error.message.startsWith("Archive URL") ||
+    error.message.includes("URL must use") ||
+    error.message.includes("URL hostname");
   const archiveCode = /^([a-z_]+):/.exec(error.message)?.[1];
   const code =
-    archiveCode?.startsWith("archive_") === true
+    invalidRef
+      ? "source_ref_invalid"
+      : archiveCode?.startsWith("archive_") === true
       ? archiveCode
       : error.message.includes("maxArchiveBytes")
         ? "archive_size_exceeded"
@@ -122,7 +129,9 @@ function classifyArchiveError(error: Error): SkillImportResolutionError {
         ? "dependency"
         : "validation",
     hint:
-      policyKey === undefined
+      invalidRef
+        ? "Provide one credential-free public archive URL, then retry."
+        : policyKey === undefined
         ? "Use one bounded, unencrypted ZIP archive with a single prompt-skill root."
         : `Review the archive, then change ${policyKey} only when the additional resource use is expected.`,
     ...(policyKey !== undefined && { policyKey }),
