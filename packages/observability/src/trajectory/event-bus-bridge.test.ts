@@ -76,6 +76,61 @@ function makeBus(): TypedEventBus {
   return new TypedEventBus();
 }
 
+describe("attachTrajectoryToEventBus -- skill import events", () => {
+  it("maps imported and rejected skills to content-free trajectory records", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("skill:imported", {
+      skillName: "summarize",
+      source: "registry",
+      scope: "local",
+      trust: "community",
+      verdict: "safe",
+      contentHash: `sha256:${"a".repeat(64)}`,
+      fileCount: 2,
+      findingCounts: { critical: 0, warn: 0 },
+      pendingMcpCount: 1,
+      agentId: "default",
+      timestamp: Date.now(),
+    });
+    bus.emit("skill:rejected", {
+      skillName: "unsafe",
+      reason: "Skill install blocked by pre-write vetting gate",
+      violations: ["EXEC_SUBSHELL"],
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toEqual([
+      {
+        type: "skill.imported",
+        data: {
+          skillName: "summarize",
+          source: "registry",
+          scope: "local",
+          trust: "community",
+          verdict: "safe",
+          contentHash: `sha256:${"a".repeat(64)}`,
+          fileCount: 2,
+          findingCounts: { critical: 0, warn: 0 },
+          pendingMcpCount: 1,
+        },
+        parentEntryId: undefined,
+      },
+      {
+        type: "skill.rejected",
+        data: {
+          skillName: "unsafe",
+          reason: "Skill install blocked by pre-write vetting gate",
+          violations: ["EXEC_SUBSHELL"],
+        },
+        parentEntryId: undefined,
+      },
+    ]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

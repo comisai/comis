@@ -449,6 +449,7 @@ describe("skills.import — pre-write vetting gate", () => {
 
   it("imports a configured registry archive and persists its evidence without trust promotion", async () => {
     const archive = makeStoredArchive({ "my-skill/SKILL.md": CLEAN_SKILL_MD });
+    const eventBus = createMockEventBus();
     const skillRegistry = makeRegistry();
     (skillRegistry.getPromptSkillDescriptions as unknown as ReturnType<typeof vi.fn>).mockReturnValue([
       {
@@ -502,6 +503,7 @@ describe("skills.import — pre-write vetting gate", () => {
     });
     const handlers = createSkillHandlers(
       makeDeps(wsDir, {
+        eventBus,
         skillRegistries: new Map([["agent-a", skillRegistry]]),
         agents: {
           "agent-a": {
@@ -573,6 +575,18 @@ describe("skills.import — pre-write vetting gate", () => {
       ],
     });
     expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "skill:imported",
+      expect.objectContaining({
+        skillName: "my-skill",
+        source: "registry",
+        scope: "local",
+        trust: "community",
+        verdict: "safe",
+        fileCount: 1,
+        pendingMcpCount: 0,
+      }),
+    );
   });
 
   it("does not let a passing registry verdict bypass the local critical-content gate", async () => {

@@ -64,6 +64,29 @@ describe("AgentEvents payload structure", () => {
     expect(received.violations).toEqual(["eval() usage", "network access"]);
   });
 
+  it("skill:imported delivers content-free provenance and gate summaries", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["skill:imported"] = {
+      skillName: "summarize",
+      source: "registry",
+      scope: "local",
+      trust: "community",
+      verdict: "safe",
+      contentHash: `sha256:${"a".repeat(64)}`,
+      fileCount: 2,
+      findingCounts: { critical: 0, warn: 0 },
+      pendingMcpCount: 1,
+      agentId: "default",
+      timestamp: Date.now(),
+    };
+
+    bus.on("skill:imported", handler);
+    bus.emit("skill:imported", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+  });
+
   it("skill:prompt_invoked delivers invokedBy union", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
