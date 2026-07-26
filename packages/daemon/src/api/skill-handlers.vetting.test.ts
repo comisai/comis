@@ -1248,7 +1248,8 @@ describe("skill install — provenance recording", () => {
 
   it("refuses a same-hash re-import when the live incumbent was modified", async () => {
     mockGitHubDir("skills/my-skill", { "SKILL.md": CLEAN_SKILL_MD });
-    const handlers = createSkillHandlers(makeDeps(wsDir));
+    const eventBus = createMockEventBus();
+    const handlers = createSkillHandlers(makeDeps(wsDir, { eventBus }));
     const params = {
       url: "https://github.com/owner/repo/tree/main/skills/my-skill",
       scope: "local",
@@ -1262,6 +1263,15 @@ describe("skill install — provenance recording", () => {
 
     await expect(handlers["skills.import"]!(params)).rejects.toThrow(
       /skill_reimport_tampered.*installed-skills\.json/i,
+    );
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "skill:rejected",
+      expect.objectContaining({
+        skillName: "my-skill",
+        source: "github",
+        stage: "vet",
+        violations: ["skill_reimport_tampered"],
+      }),
     );
   });
 
@@ -1293,7 +1303,8 @@ describe("skill install — provenance recording", () => {
 
   it("requires force for a changed equal-tier re-import and then replaces it", async () => {
     mockGitHubDir("skills/my-skill", { "SKILL.md": CLEAN_SKILL_MD });
-    const handlers = createSkillHandlers(makeDeps(wsDir));
+    const eventBus = createMockEventBus();
+    const handlers = createSkillHandlers(makeDeps(wsDir, { eventBus }));
     const params = {
       url: "https://github.com/owner/repo/tree/main/skills/my-skill",
       scope: "local",
@@ -1306,6 +1317,15 @@ describe("skill install — provenance recording", () => {
     mockGitHubDir("skills/my-skill", { "SKILL.md": revised });
     await expect(handlers["skills.import"]!(params)).rejects.toThrow(
       /skill_reimport_confirm.*findingCounts/i,
+    );
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "skill:rejected",
+      expect.objectContaining({
+        skillName: "my-skill",
+        source: "github",
+        stage: "vet",
+        violations: ["skill_reimport_confirmation_required"],
+      }),
     );
 
     const result = await handlers["skills.import"]!({ ...params, force: true });
