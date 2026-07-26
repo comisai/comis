@@ -158,6 +158,29 @@ describe("umbrella-bundling -- bidirectional 5-way alignment vs bundledDependenc
     ).toEqual({ referencesBundledDeps: true, hasLiteralArray: false });
   });
 
+  // Dimension 1b — prepack.js must not hard-code the patched provider version.
+  //
+  // prepack.js bundles the patched `@earendil-works/pi-ai` and logs which
+  // version it bundled. That log line is the record an operator reads to confirm
+  // what a published tarball actually carries, so a hard-coded literal is worse
+  // than useless once the pin moves: it reports a version that is not in the
+  // tarball. The literal went stale exactly this way when the provider was
+  // upgraded and prepack.js kept announcing the previous release.
+  //
+  // The version must be derived from the bundled package's own manifest. This is
+  // non-tautological — prepack.js is independent code, and reintroducing any
+  // `pi-ai@<semver>` string literal in it fails here.
+  it("prepack.js derives the patched provider version (no hard-coded pi-ai version)", () => {
+    const source = readPrepackSource();
+    const hardCoded = [...source.matchAll(/pi-ai@(\d+\.\d+\.\d+)/g)].map((m) => m[0]);
+    expect(
+      hardCoded,
+      "prepack.js must derive the patched @earendil-works/pi-ai version from the bundled " +
+        "package's manifest (readManifest(patchedProviderSource).version), never a literal — " +
+        "a literal silently misreports what the published tarball carries once the pin moves.",
+    ).toEqual([]);
+  });
+
   // Dimension 2 — exports map vs canonical source.
   it("exports map includes every namespaced bundled package (except web)", () => {
     const pkg = readUmbrellaPackageJson();

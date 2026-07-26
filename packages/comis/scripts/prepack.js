@@ -205,7 +205,11 @@ for (const entry of ["dist", "README.md", "package.json"]) {
   }
   cpSync(source, join(patchedProviderDest, entry), { recursive: true });
 }
-console.log("  bundled patched @earendil-works/pi-ai@0.80.10");
+// Report the version actually bundled. A hard-coded literal here silently goes
+// stale on the next provider bump and then misreports what the tarball carries.
+console.log(
+  `  bundled patched @earendil-works/pi-ai@${readManifest(patchedProviderSource).version}`,
+);
 
 // --- Step 5: Bundle native-dep helpers that npm fails to install ---
 // npm's reify creates empty directories for transitive deps of non-bundled
