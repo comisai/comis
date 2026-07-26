@@ -119,6 +119,28 @@ export function parseSkillRegistryRef(
   return ok({ slug, ...(version !== undefined && { version }) });
 }
 
+/** Validate detail metadata and select an exact requested or latest version. */
+export function resolveSkillRegistryVersion(
+  ref: SkillRegistryRef,
+  detailInput: unknown,
+): Result<string, RegistryError> {
+  const detail = RegistryDetailSchema.safeParse(detailInput);
+  if (!detail.success) {
+    return err({ kind: "invalid_response", message: `Invalid registry detail: ${detail.error.message}` });
+  }
+  if (detail.data.skill.slug !== ref.slug) {
+    return err({
+      kind: "identity_mismatch",
+      message: `Registry resolved ${ref.slug} as ${detail.data.skill.slug}`,
+    });
+  }
+  const version = ref.version ?? detail.data.latestVersion?.version;
+  if (version === undefined || !isValidVersion(version)) {
+    return err({ kind: "invalid_response", message: "Registry detail omitted a valid version" });
+  }
+  return ok(version);
+}
+
 function normalizeCheckedAt(value: number | string | null | undefined): string | undefined {
   if (value === null || value === undefined) return undefined;
   return typeof value === "number" ? systemDateFrom(value).toISOString() : value;
@@ -131,20 +153,9 @@ export function mapSkillRegistryResolution(args: {
   readonly verdict: unknown;
   readonly downloadUrl: string;
 }): Result<SkillRegistryResolution, RegistryError> {
-  const detail = RegistryDetailSchema.safeParse(args.detail);
-  if (!detail.success) {
-    return err({ kind: "invalid_response", message: `Invalid registry detail: ${detail.error.message}` });
-  }
-  if (detail.data.skill.slug !== args.ref.slug) {
-    return err({
-      kind: "identity_mismatch",
-      message: `Registry resolved ${args.ref.slug} as ${detail.data.skill.slug}`,
-    });
-  }
-  const version = args.ref.version ?? detail.data.latestVersion?.version;
-  if (version === undefined || !isValidVersion(version)) {
-    return err({ kind: "invalid_response", message: "Registry detail omitted a valid version" });
-  }
+  const resolvedVersion = resolveSkillRegistryVersion(args.ref, args.detail);
+  if (!resolvedVersion.ok) return resolvedVersion;
+  const version = resolvedVersion.value;
 
   const verdict = RegistryVerdictSchema.safeParse(args.verdict);
   if (!verdict.success) {

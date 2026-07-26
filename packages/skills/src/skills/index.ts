@@ -117,6 +117,7 @@ export type {
 export {
   mapSkillRegistryResolution,
   parseSkillRegistryRef,
+  resolveSkillRegistryVersion,
 } from "./import/sources/registry-source.js";
 export type {
   RegistryError,

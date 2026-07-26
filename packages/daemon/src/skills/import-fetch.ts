@@ -27,6 +27,7 @@ export interface SkillImportResponse {
 export interface SkillImportRequestInit {
   readonly method?: string;
   readonly headers?: Record<string, string>;
+  readonly body?: string;
   readonly signal?: AbortSignal;
   readonly redirect?: "manual";
 }
