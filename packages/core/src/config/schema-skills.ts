@@ -77,6 +77,33 @@ const ContentScanningSchema = z.strictObject({
 });
 
 /**
+ * Bounds for the install-time vetting gate — the pre-write, bundle-wide
+ * inspection every skill-install path runs before its first file write
+ * (`packages/skills/src/skills/import/vet-bundle.ts`).
+ *
+ * There is deliberately NO `enabled` key. `contentScanning` above governs
+ * LOAD-time scanning and an operator may relax it; the INSTALL gate is not
+ * disableable, so a deployment cannot configure its way into writing unvetted
+ * skill files. Only the bounds are tunable, because a legitimately large skill
+ * is plausible while an unvetted write never is.
+ *
+ * Two defaults deliberately match the caps the GitHub Contents walk already
+ * enforces (`packages/daemon/src/api/github-skill-fetch.ts`) so a bundle that
+ * passes the existing fetch bounds passes these too: `maxEntries` mirrors its
+ * 200-file cap and `maxPathDepth` its 10-level recursion cap.
+ */
+const InstallVettingSchema = z.strictObject({
+  /** Maximum members per bundle; `.skillignore` matches are excluded (default: 200). */
+  maxEntries: z.number().int().positive().default(200),
+  /** Maximum bytes for a single member (default: 4 MiB). */
+  maxEntryBytes: z.number().int().positive().default(4 * 1024 * 1024),
+  /** Maximum total bytes across all counted members (default: 32 MiB). */
+  maxBundleBytes: z.number().int().positive().default(32 * 1024 * 1024),
+  /** Maximum path depth for any member (default: 10). */
+  maxPathDepth: z.number().int().positive().default(10),
+});
+
+/**
  * Exec tool OS-level sandbox configuration.
  *
  * Controls whether child processes spawned by the exec tool are wrapped
@@ -386,6 +413,9 @@ export const SkillsConfigSchema = z.strictObject({
 
     /** Content scanning: detect dangerous patterns in skill bodies at load time */
     contentScanning: ContentScanningSchema.default(() => ContentScanningSchema.parse({})),
+
+    /** Install-time vetting gate bounds. The gate itself is not disableable. */
+    installVetting: InstallVettingSchema.default(() => InstallVettingSchema.parse({})),
 
     /** Exec tool OS-level sandbox configuration */
     execSandbox: ExecSandboxSchema.default(() => ExecSandboxSchema.parse({})),

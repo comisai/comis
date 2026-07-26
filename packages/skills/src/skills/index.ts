@@ -68,8 +68,28 @@ export {
 export { expandSkillForInvocation, formatAvailableSkillsXml } from "./prompt/processor.js";
 export type { PromptSkillDescription } from "./prompt/processor.js";
 
-// Content scanner (security scan before write)
-export { scanSkillContent, type ContentScanResult, type ContentScanFinding } from "./prompt/content-scanner.js";
+// Install vetting gate — the pre-write, bundle-wide inspection every skill
+// install path runs before its first file write. The daemon side
+// (`packages/daemon/src/skills/vet-install-gate.ts`) assembles the file map and
+// owns the fs/audit half; everything exported here is pure.
+//
+// Deliberately narrow: only what `packages/daemon` imports is re-exported. The
+// remaining pieces (checkBundleStructure, hashSkillBundle, mapForeignFrontmatter,
+// DEFAULT_BUNDLE_LIMITS, …) are internals of the gate and are imported by path
+// inside this package. `scanSkillContent` likewise lost its barrel consumer when
+// skill-handlers.ts moved to the gate; the load-time scanner imports it directly.
+export { vetSkillBundle } from "./import/vet-bundle.js";
+export type {
+  VetSkillBundleResult,
+  SkillBundleFile,
+  SkillBundleFinding,
+} from "./import/vet-bundle.js";
+export { deriveSkillTrustTier } from "./import/trust-tier.js";
+export type { SkillInstallSource } from "./import/trust-tier.js";
+
+// Skill audit emitter — consumed by the daemon's install-vetting gate so it can
+// record a vet verdict without a direct event-bus wiring of its own.
+export { emitSkillAudit } from "./audit/skill-audit.js";
 
 // Integrations -- MCP client manager
 export { createMcpClientManager, qualifyToolName, parseQualifiedName } from "./integrations/mcp-client/index.js";

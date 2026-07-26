@@ -962,10 +962,27 @@ A pre-delivery critic that checks the terminal response against the GoalAnchor c
 
 **Content Scanning (agents.*.skills.contentScanning)**
 
+Applies to **load-time** scanning only. It does not affect the install-time
+vetting gate, which cannot be disabled -- see
+[Security Scanning](/skills/security-scanning).
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `true` | Enable content scanning at skill load time |
 | `blockOnCritical` | `boolean` | `true` | Block skill loading when CRITICAL findings are present |
+
+**Install Vetting (agents.*.skills.installVetting)**
+
+Bounds for the install-time vetting gate, which inspects every file in a skill
+bundle before anything is written to disk. These tune the gate's limits; there
+is no key to turn the gate off.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxEntries` | `number` | `200` | Maximum members per bundle (ignore-file matches excluded) |
+| `maxEntryBytes` | `number` | `4194304` | Maximum bytes for a single member (4 MiB) |
+| `maxBundleBytes` | `number` | `33554432` | Maximum total bytes across the bundle (32 MiB) |
+| `maxPathDepth` | `number` | `10` | Maximum path depth for any member |
 
 WARN findings are reported but do not block loading under the default policy.
 The learned-document validator follows the same critical-only rejection boundary,

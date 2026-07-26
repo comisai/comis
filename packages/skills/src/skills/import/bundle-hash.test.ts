@@ -23,7 +23,7 @@ describe("hashSkillBundle — shape", () => {
     expect(hashSkillBundle([A])).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 
-  it("is deterministic", () => {
+  it("is deterministic across repeated calls on the same bundle", () => {
     expect(hashSkillBundle([A, B])).toBe(hashSkillBundle([A, B]));
   });
 });

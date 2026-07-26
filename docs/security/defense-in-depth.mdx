@@ -217,7 +217,10 @@ layers ensure that skill content is safe before your agent uses it.
     documentation and configuration options.
 
     Default: `skills.contentScanning.enabled: true`,
-    `skills.contentScanning.blockOnCritical: true`
+    `skills.contentScanning.blockOnCritical: true`.
+    Scanning runs at two points: an install-time gate over every file in a
+    skill bundle (not disableable), and a load-time scan of the `SKILL.md`
+    body (governed by the keys above).
   </Accordion>
 
   <Accordion title="Sanitization Pipeline" icon="broom">

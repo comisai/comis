@@ -194,7 +194,7 @@ describe("skills.upload handler", () => {
     await expect(
       handlers["skills.upload"]!({
         name: "my-skill",
-        files: [{ path: "SKILL.md", content: "---\nname: my-skill\n---" }],
+        files: [{ path: "SKILL.md", content: "---\nname: my-skill\ndescription: test skill\n---" }],
       }),
     ).rejects.toThrow(/Agent ID is required/i);
   });
@@ -299,7 +299,7 @@ describe("skills.upload handler", () => {
       name: "new-skill",
       scope: "local",
       files: [
-        { path: "SKILL.md", content: "---\nname: new-skill\n---\nBody" },
+        { path: "SKILL.md", content: "---\nname: new-skill\ndescription: test skill\n---\nBody" },
         { path: "ref/extra.md", content: "extra content" },
       ],
       _agentId: "agent-a",
@@ -347,7 +347,7 @@ describe("skills.upload handler", () => {
     await handlers["skills.upload"]!({
       name: "shared-skill",
       scope: "shared",
-      files: [{ path: "SKILL.md", content: "x" }],
+      files: [{ path: "SKILL.md", content: "---\nname: shared-skill\ndescription: test skill\n---\nBody" }],
       _agentId: "default-agent",
     });
     expect(reg1.init).toHaveBeenCalled();
@@ -371,7 +371,7 @@ describe("skills.upload handler", () => {
       name: "mode-skill",
       scope: "local",
       files: [
-        { path: "SKILL.md", content: "---\nname: mode-skill\n---\nBody" },
+        { path: "SKILL.md", content: "---\nname: mode-skill\ndescription: test skill\n---\nBody" },
         { path: "nested/extra.md", content: "nested content" },
       ],
       _agentId: "agent-a",
@@ -556,7 +556,7 @@ describe("skills.import handler", () => {
         );
       }
       // download_url responses (raw file content)
-      return new Response("body content", { status: 200 });
+      return new Response("---\nname: my-skill\ndescription: test skill\n---\nBody", { status: 200 });
     });
     const handlers = createSkillHandlers(
       makeDeps({
@@ -599,7 +599,7 @@ describe("skills.import handler", () => {
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      return new Response("body content", { status: 200 });
+      return new Response("---\nname: my-skill\ndescription: test skill\n---\nBody", { status: 200 });
     });
     const handlers = createSkillHandlers(
       makeDeps({
@@ -837,7 +837,7 @@ describe("skills.create handler", () => {
     await expect(
       handlers["skills.create"]!({
         name: "my-skill",
-        content: "---\nname: my-skill\n---",
+        content: "---\nname: my-skill\ndescription: test skill\n---",
       }),
     ).rejects.toThrow(/Agent ID is required/i);
   });
@@ -848,7 +848,7 @@ describe("skills.create handler", () => {
     await expect(
       handlers["skills.create"]!({
         name: "Invalid!",
-        content: "---\nname: x\n---",
+        content: "---\nname: x\ndescription: test skill\n---",
         _agentId: "agent-a",
       }),
     ).rejects.toThrow(/Invalid skill name/i);
@@ -872,7 +872,7 @@ describe("skills.create handler", () => {
       handlers["skills.create"]!({
         name: "my-skill",
         scope: "shared",
-        content: "---\nname: my-skill\n---",
+        content: "---\nname: my-skill\ndescription: test skill\n---",
         _agentId: "intruder",
       }),
     ).rejects.toThrow(/Only the default agent/i);
@@ -884,7 +884,7 @@ describe("skills.create handler", () => {
       handlers["skills.create"]!({
         name: "my-skill",
         scope: "local",
-        content: "---\nname: my-skill\n---",
+        content: "---\nname: my-skill\ndescription: test skill\n---",
         _agentId: "agent-a",
       }),
     ).rejects.toThrow(/No workspace directory/i);
@@ -900,7 +900,7 @@ describe("skills.create handler", () => {
       handlers["skills.create"]!({
         name: "existing",
         scope: "local",
-        content: "---\nname: existing\n---",
+        content: "---\nname: existing\ndescription: test skill\n---",
         _agentId: "agent-a",
       }),
     ).rejects.toThrow(/already exists/i);
@@ -1038,7 +1038,7 @@ describe("skills.update handler", () => {
     await expect(
       handlers["skills.update"]!({
         name: "my-skill",
-        content: "---\nname: my-skill\n---",
+        content: "---\nname: my-skill\ndescription: test skill\n---",
       }),
     ).rejects.toThrow(/Agent ID is required/i);
   });
@@ -1048,7 +1048,7 @@ describe("skills.update handler", () => {
     await expect(
       handlers["skills.update"]!({
         name: "BadName",
-        content: "x",
+        content: "---\nname: my-skill\ndescription: test skill\n---\nBody",
         _agentId: "agent-a",
       }),
     ).rejects.toThrow(/Invalid skill name/i);
@@ -1070,7 +1070,7 @@ describe("skills.update handler", () => {
     await expect(
       handlers["skills.update"]!({
         name: "my-skill",
-        content: "---\nname: my-skill\n---",
+        content: "---\nname: my-skill\ndescription: test skill\n---",
         _agentId: "agent-a",
       }),
     ).rejects.toThrow(/Skill registry not found/i);
@@ -1084,7 +1084,7 @@ describe("skills.update handler", () => {
     await expect(
       handlers["skills.update"]!({
         name: "missing",
-        content: "x",
+        content: "---\nname: my-skill\ndescription: test skill\n---\nBody",
         _agentId: "agent-a",
       }),
     ).rejects.toThrow(/Skill not found/i);
@@ -1119,7 +1119,10 @@ describe("skills.update handler", () => {
     await expect(
       handlers["skills.update"]!({
         name: "ghost-skill",
-        content: "new content",
+        // Must be a VALID manifest: the vetting gate runs before the
+        // on-disk existence check, so invalid content would fail the gate
+        // instead of reaching the branch this test targets.
+        content: "---\nname: ghost-skill\ndescription: test skill\n---\nBody",
         _agentId: "agent-a",
       }),
     ).rejects.toThrow(/SKILL\.md not found/i);
@@ -1141,7 +1144,7 @@ describe("skills.update handler", () => {
     );
     const result = await handlers["skills.update"]!({
       name: "update-me",
-      content: "---\nname: update-me\n---\nNEW BODY",
+      content: "---\nname: update-me\ndescription: test skill\n---\nNEW BODY",
       _agentId: "agent-a",
     });
     expect(result.ok).toBe(true);
@@ -1170,7 +1173,7 @@ describe("skills.update handler", () => {
     );
     await handlers["skills.update"]!({
       name: "mode-update",
-      content: "---\nname: mode-update\n---\nNEW BODY",
+      content: "---\nname: mode-update\ndescription: test skill\n---\nNEW BODY",
       _agentId: "agent-a",
     });
     const skillFile = join(skillDir, "SKILL.md");
@@ -1201,7 +1204,7 @@ describe("install-hook wiring", () => {
     await handlers["skills.upload"]!({
       name: "bundle-skill",
       scope: "local",
-      files: [{ path: "SKILL.md", content: "---\nname: bundle-skill\n---\nBody" }],
+      files: [{ path: "SKILL.md", content: "---\nname: bundle-skill\ndescription: test skill\n---\nBody" }],
       _agentId: "agent-a",
     });
     expect(mockRunBundleInstallHook.mock.calls.length).toBe(1);
@@ -1228,7 +1231,7 @@ describe("install-hook wiring", () => {
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      return new Response("---\nname: import-bundle\n---\nBody", { status: 200 });
+      return new Response("---\nname: import-bundle\ndescription: test skill\n---\nBody", { status: 200 });
     });
     const handlers = createSkillHandlers(
       makeDeps({
@@ -1324,7 +1327,7 @@ describe("install-hook wiring", () => {
     );
     await handlers["skills.update"]!({
       name: "updated-skill",
-      content: "---\nname: updated-skill\n---\nNEW BODY",
+      content: "---\nname: updated-skill\ndescription: test skill\n---\nNEW BODY",
       _agentId: "agent-a",
     });
     expect(mockRunBundleInstallHook.mock.calls.length).toBe(1);
@@ -1384,7 +1387,7 @@ describe("install-hook wiring", () => {
     const uploadResult = await handlers["skills.upload"]!({
       name: "no-bundle-upload",
       scope: "local",
-      files: [{ path: "SKILL.md", content: "---\nname: no-bundle-upload\n---\nBody" }],
+      files: [{ path: "SKILL.md", content: "---\nname: no-bundle-upload\ndescription: test skill\n---\nBody" }],
       _agentId: "agent-a",
     });
     const createResult = await handlers["skills.create"]!({

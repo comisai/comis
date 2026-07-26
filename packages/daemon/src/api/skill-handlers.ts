@@ -42,7 +42,6 @@
  * @module
  */
 
-import { scanSkillContent } from "@comis/skills";
 import {
   safePath,
   SkillsListContract,
@@ -61,6 +60,10 @@ import { createLogger } from "@comis/infra";
 import { rmSync, existsSync } from "node:fs";
 import type { RpcHandler } from "./types.js";
 import { runBundleInstallHook } from "../skills/bundle-install-helper.js";
+// Pre-write vetting gate. Runs on the WHOLE bundle between scope resolution and
+// the first file write on all four install paths, so a blocked bundle leaves
+// zero files on disk. Not operator-disableable — see the module header.
+import { runInstallVettingGate } from "../skills/vet-install-gate.js";
 
 const logger = createLogger({ name: "skill-handlers" });
 
@@ -230,6 +233,13 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`Skill directory already exists: ${params.name}`);
       }
 
+      // Vet the whole bundle BEFORE the first write (throws on block).
+      runInstallVettingGate({
+        deps, source: "upload", skillName: params.name, callingAgentId,
+        files: params.files.map((f) => ({ path: f.path, content: f.content })),
+        ctx: (rawParams as { _context?: { userId?: string } })._context,
+      });
+
       // Route skill-folder dir creation + per-file writes
       // through the shared fs-safe substrate so every artifact honors
       // the §1.4 `0o700`/`0o600` invariant. `confinedBaseDir` is the
@@ -394,6 +404,13 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       if (existsSync(skillDir)) {
         throw new Error(`Skill directory already exists: ${name}`);
       }
+
+      // Vet the whole fetched bundle BEFORE the first write (throws on block).
+      runInstallVettingGate({
+        deps, source: "github", skillName: name, callingAgentId,
+        files: fetchedFiles.map((f) => ({ path: f.path, content: f.content })),
+        ctx: (rawParams as { _context?: { userId?: string } })._context,
+      });
 
       // Route skill-folder dir creation + per-file writes
       // through the shared fs-safe substrate so every artifact honors
@@ -590,22 +607,22 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error("Content is required for create action. Provide full SKILL.md content.");
       }
 
-      // Security scan before write
-      const scanResult = scanSkillContent(params.content);
-      if (!scanResult.clean) {
-        const criticalFindings = scanResult.findings.filter((f) => f.severity === "CRITICAL");
-        if (criticalFindings.length > 0) {
-          const summary = criticalFindings.map((f) => f.description).join("; ");
-          logger.warn({ skillName: params.name, agentId: callingAgentId, scanSummary: summary, hint: "Remove injection patterns, crypto mining, or obfuscated content from skill body", errorKind: "validation" as const }, "Skill create rejected: content scan failed");
-          deps.eventBus?.emit("skill:failed", { skillName: params.name, error: `Content scan failed: ${summary}`, phase: "scan", agentId: callingAgentId, timestamp: systemNowMs() });
-          throw new Error(`Skill content rejected by security scan: ${summary}`);
-        }
-      }
-
-      // Scope guard
+      // Scope guard. Runs BEFORE the vetting gate: authorization is the cheaper,
+      // more specific failure, and a caller who may not write here should get
+      // that answer rather than a content verdict.
       if (scope === "shared" && callingAgentId !== deps.defaultAgentId) {
         throw new Error(`Only the default agent ("${deps.defaultAgentId}") can manage shared skills. Agent "${callingAgentId}" must use scope: "local".`);
       }
+
+      // Vet before write (throws on block). Supersedes the former inline
+      // scanSkillContent call: same rules, but manifest-aware and via the one
+      // gate every install path shares.
+      runInstallVettingGate({
+        deps, source: "create", skillName: params.name, callingAgentId,
+        files: [{ path: "SKILL.md", content: params.content }],
+        ctx: (rawParams as { _context?: { userId?: string } })._context,
+        failurePhase: "scan",
+      });
 
       // Resolve scope directory (reuse existing pattern from skills.upload)
       const dataDir = deps.container.config.dataDir || ".";
@@ -718,17 +735,13 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`Only the default agent ("${deps.defaultAgentId}") can manage shared skills. Agent "${callingAgentId}" must use scope: "local".`);
       }
 
-      // Security scan before write
-      const scanResult = scanSkillContent(params.content);
-      if (!scanResult.clean) {
-        const criticalFindings = scanResult.findings.filter((f) => f.severity === "CRITICAL");
-        if (criticalFindings.length > 0) {
-          const summary = criticalFindings.map((f) => f.description).join("; ");
-          logger.warn({ skillName: params.name, agentId: callingAgentId, scanSummary: summary, hint: "Remove injection patterns, crypto mining, or obfuscated content from skill body", errorKind: "validation" as const }, "Skill update rejected: content scan failed");
-          deps.eventBus?.emit("skill:failed", { skillName: params.name, error: `Content scan failed: ${summary}`, phase: "scan", agentId: callingAgentId, timestamp: systemNowMs() });
-          throw new Error(`Skill content rejected by security scan: ${summary}`);
-        }
-      }
+      // Vet before write (throws on block, leaving the prior SKILL.md intact).
+      runInstallVettingGate({
+        deps, source: "update", skillName: params.name, callingAgentId,
+        files: [{ path: "SKILL.md", content: params.content }],
+        ctx: (rawParams as { _context?: { userId?: string } })._context,
+        failurePhase: "scan",
+      });
 
       // Resolve path from skill's actual location
       const skillMdPath = safePath(skill.location, "SKILL.md");

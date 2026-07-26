@@ -1,14 +1,38 @@
 ---
 title: "Security Scanning"
-description: "What Comis checks for when loading custom skills"
+description: "What Comis checks when installing and loading custom skills"
 icon: "shield-check"
 ---
 
-When Comis loads a Markdown prompt skill, it sanitizes the skill body and, by default, scans that sanitized text for known dangerous patterns. Critical findings can block that prompt skill from loading. This is a heuristic content filter, not malware analysis, code isolation, or a guarantee that an untrusted skill is safe.
+Comis inspects skill content at two points: an **install-time vetting gate** that runs before any file is written to disk, and a **load-time scan** each time a prompt skill is read into context. Both use the same six categories of dangerous patterns. This is a heuristic content filter, not malware analysis, code isolation, or a guarantee that an untrusted skill is safe.
+
+## When Scanning Happens
+
+<CardGroup cols={2}>
+  <Card title="Install time" icon="shield-check">
+    Runs on **every** file in the skill bundle before the first byte is written. Applies to all four install paths: `skills.create`, `skills.update`, `skills.upload`, and `skills.import`. A CRITICAL finding refuses the install with **zero files written**.
+  </Card>
+  <Card title="Load time" icon="file-import">
+    Runs on the sanitized `SKILL.md` body each time the skill is loaded into context. Catches a skill edited directly on disk after installation.
+  </Card>
+</CardGroup>
+
+The two differ in scope and in what an operator may change:
+
+| | Install gate | Load-time scan |
+|---|---|---|
+| Surface | Every text file in the bundle | The `SKILL.md` body only |
+| Also checks | Bundle structure, manifest validity | — |
+| Operator-disableable | **No** | Yes (`contentScanning.enabled`) |
+| On CRITICAL | Install refused, nothing written | Skill not loaded (when `blockOnCritical`) |
+
+<Warning>
+  `contentScanning.enabled: false` relaxes only the **load-time** scan. It does not disable the install gate — a deployment cannot configure its way into writing unvetted skill files.
+</Warning>
 
 ## What Gets Scanned
 
-The content scanner checks sanitized **prompt-skill bodies** for six categories of dangerous patterns. It does not scan or confine arbitrary code, MCP server executables, browser processes, or other integrations. Pattern matching can have false positives and false negatives, so operators must still review third-party skills and everything they instruct an agent to invoke.
+The content scanner checks skill text for six categories of dangerous patterns. At install time it reads every text member of the bundle -- the `SKILL.md` body **and** support files such as `references/`, `scripts/`, `templates/`, and `assets/`. It does not scan or confine arbitrary code, MCP server executables, browser processes, or other integrations. Pattern matching can have false positives and false negatives, so operators must still review third-party skills and everything they instruct an agent to invoke.
 
 <AccordionGroup>
   <Accordion title="Command Injection" icon="terminal">
@@ -100,13 +124,42 @@ In addition to scanning for threats, every prompt skill body goes through a four
   </Step>
 </Steps>
 
+## Bundle Structure Checks
+
+Beyond pattern matching, the install gate checks the **shape** of the bundle -- conditions a regular expression cannot see. These run first, so an oversized or malformed bundle is refused before any pattern matching happens.
+
+Refused outright:
+
+- **No `SKILL.md`** at the bundle root, or a manifest whose frontmatter does not parse or does not validate. Previously such a skill installed successfully and then silently failed to appear.
+- **A non-prompt `type`.** Comis skills are prompt-only.
+- **Unsafe member paths** -- absolute paths, `..` traversal, drive-letter prefixes, or excessive nesting depth.
+- **Symlink or hardlink members.** A skill has no legitimate use for one.
+- **Binary or executable members**, detected by file contents rather than by extension, so a payload named `notes.md` is still caught.
+- **Bound breaches** -- too many files, too large a bundle, or too large a single file. See [Configuration](#configuration).
+
+Logged as warnings, but installed:
+
+- An executable bit on a member that is not a recognized script type.
+- Deep (but permitted) directory nesting.
+- A manifest matched only case-insensitively (`skill.md` rather than `SKILL.md`).
+
+A bundle may ship a `.skillignore` file with gitignore-style patterns to exclude development artifacts from the structure checks. It never affects pattern scanning, and it cannot exclude `SKILL.md`.
+
+## Frontmatter Normalization
+
+Skills authored for other agent runtimes often spell manifest fields in kebab-case (`allowed-tools`, `argument-hint`). The install gate maps these onto their Comis equivalents so such skills install rather than failing validation.
+
+Fields with no Comis equivalent are **dropped with a logged warning that names the key** -- never silently reinterpreted. Fields implying code execution (a script entrypoint, a `run` command, an install hook) are also dropped: the skill installs as its prompt body only, with a warning recording exactly what was discarded. If both spellings of a field are present, the Comis-native camelCase key wins and the other is reported.
+
 ## What Happens When a Threat is Found
 
 The scanner classifies each finding by severity:
 
-- **CRITICAL findings:** The skill is **blocked from loading entirely** when `contentScanning.blockOnCritical` is enabled (which it is by default). The agent never sees the skill content. A log entry records what was found and why it was blocked.
+- **CRITICAL findings at install time:** the install is **refused** and no files are written. The error names each finding's file, line, rule, and category so you can fix the skill and retry.
 
-- **WARN findings:** The skill **loads normally**, but a warning is logged. Review the warning and decide whether the skill is safe. Obfuscated encoding, for example, may be legitimate -- some skills include base64 data for valid reasons.
+- **CRITICAL findings at load time:** the skill is **blocked from loading entirely** when `contentScanning.blockOnCritical` is enabled (which it is by default). The agent never sees the skill content. A log entry records what was found and why it was blocked.
+
+- **WARN findings:** the skill **installs and loads normally**, but a warning is logged. Review the warning and decide whether the skill is safe. Obfuscated encoding, for example, may be legitimate -- some skills include base64 data for valid reasons.
 
 <Info>
   Even if a prompt skill passes content scanning, it still goes through the sanitization pipeline. These controls reduce specific prompt-content risks, but they do not establish a process sandbox or prove that the skill's instructions are trustworthy.
@@ -127,24 +180,32 @@ Content scanning is enabled by default. You can adjust its behavior in your conf
 ```yaml
 skills:
   contentScanning:
-    enabled: true            # Enable or disable scanning (default: true)
-    blockOnCritical: true    # Block skills with CRITICAL findings (default: true)
+    enabled: true            # Load-time scanning (default: true)
+    blockOnCritical: true    # Block loading on CRITICAL findings (default: true)
+  installVetting:
+    maxEntries: 200                # Members per bundle (default: 200)
+    maxEntryBytes: 4194304         # Bytes per member, 4 MiB (default)
+    maxBundleBytes: 33554432       # Bytes per bundle, 32 MiB (default)
+    maxPathDepth: 10               # Member path depth (default: 10)
 ```
 
+The `installVetting` block tunes the install gate's **bounds** only. There is no switch to turn the install gate off.
+
 <Warning>
-Disabling content scanning or setting `blockOnCritical` to `false` removes an important security layer. Only do this if you fully trust every skill that Comis will load, and you understand the risks.
+Setting `contentScanning.enabled` to `false` or `blockOnCritical` to `false` removes the load-time layer. Only do this if you fully trust every skill that Comis will load, and you understand the risks. Neither setting affects the install gate.
 </Warning>
 
 ## How Scanning Fits into the Security Stack
 
 Prompt-skill scanning is one layer in the Comis [defense-in-depth](/security/defense-in-depth) security model:
 
-1. **Content scanning** flags known patterns before a prompt skill loads (this page)
-2. **Sanitization** removes selected hidden or obfuscated content from prompt-skill bodies (this page)
-3. **Agent tool policy** filters registered tools by the configured profile and allow/deny rules ([Tool Policy](/skills/tool-policy))
-4. **Tool-specific validation** constrains the particular operation being requested
-5. **Exec sandboxing**, when a supported provider is active, confines only child processes launched through ordinary `exec`; MCP servers, browsers, and in-process tools are outside it ([Sandbox](/security/sandbox))
-6. **Completed-response scanning** can catch secret-shaped content before non-streaming delivery; already-emitted streaming deltas cannot be retracted
+1. **Install vetting** inspects every file in a skill bundle, plus its structure and manifest, before anything is written to disk (this page)
+2. **Content scanning** flags known patterns before a prompt skill loads (this page)
+3. **Sanitization** removes selected hidden or obfuscated content from prompt-skill bodies (this page)
+4. **Agent tool policy** filters registered tools by the configured profile and allow/deny rules ([Tool Policy](/skills/tool-policy))
+5. **Tool-specific validation** constrains the particular operation being requested
+6. **Exec sandboxing**, when a supported provider is active, confines only child processes launched through ordinary `exec`; MCP servers, browsers, and in-process tools are outside it ([Sandbox](/security/sandbox))
+7. **Completed-response scanning** can catch secret-shaped content before non-streaming delivery; already-emitted streaming deltas cannot be retracted
 
 These layers have different scopes. Verify the controls that apply to the exact skill, tool, host, and delivery mode you deploy.
 

@@ -10,7 +10,11 @@ export type SkillAuditAction =
   | "skill.prompt.invoke"
   | "skill.validation.coercion"
   | "skill.scan"
-  | "skill.scan.reject";
+  | "skill.scan.reject"
+  /** Pre-write install vetting passed (allow or confirm). */
+  | "skill.vet"
+  /** Pre-write install vetting blocked the bundle — zero files written. */
+  | "skill.vet.reject";
 
 /**
  * Options for emitting a skill audit event.
@@ -107,6 +111,17 @@ export function emitSkillAudit(eventBus: TypedEventBus, opts: SkillAuditOptions)
         skillName: opts.skillName,
         reason: "Skill blocked: CRITICAL content scan findings",
         violations: (opts.metadata?.["findings"] as Array<{ ruleId: string }> | undefined)?.map(f => f.ruleId) ?? [],
+        timestamp: now,
+      });
+      break;
+    case "skill.vet.reject":
+      // The install gate refused the bundle before any write. `violations`
+      // carries rule ids only — never matched text (audit metadata is
+      // content-free; see test/architecture/audit-metadata-content-free.test.ts).
+      eventBus.emit("skill:rejected", {
+        skillName: opts.skillName,
+        reason: "Skill install blocked by pre-write vetting gate",
+        violations: (opts.metadata?.["ruleIds"] as string[] | undefined) ?? [],
         timestamp: now,
       });
       break;

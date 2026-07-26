@@ -143,8 +143,12 @@ describe("bundle structure — member type", () => {
   });
 });
 
-describe("bundle structure — bounds (all WARN)", () => {
-  it("passes at exactly maxEntries and warns at one over", () => {
+describe("bundle structure — bounds (limit breaches BLOCK)", () => {
+  // A cap that is exceeded and then allowed anyway is not a cap. Limit
+  // breaches are CRITICAL so they block; the tunability the operator needs
+  // comes from the config knobs, not from making the breach advisory.
+  // Genuinely-advisory rules (EXEC_BIT, DEEP_NEST, MANIFEST_CASE) stay WARN.
+  it("passes at exactly maxEntries and blocks at one over", () => {
     const at = [SKILL_MD, ...Array.from({ length: DEFAULT_BUNDLE_LIMITS.maxEntries - 1 }, (_, i) => ({
       path: `references/f${i}.md`,
       content: "x",
@@ -153,7 +157,7 @@ describe("bundle structure — bounds (all WARN)", () => {
 
     const over = [...at, { path: "references/one-more.md", content: "x" }];
     expect(ids(over)).toContain("BUNDLE_TOO_MANY_FILES");
-    expect(severityOf(over, "BUNDLE_TOO_MANY_FILES")).toBe("WARN");
+    expect(severityOf(over, "BUNDLE_TOO_MANY_FILES")).toBe("CRITICAL");
   });
 
   it("warns when a single member exceeds maxEntryBytes", () => {
