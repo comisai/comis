@@ -136,8 +136,11 @@ export function mapForeignFrontmatter(raw: Record<string, unknown>): MapForeignF
   const warnings: MappingWarning[] = [];
   // Author-supplied comis: block is the base; host-runtime mappings merge over
   // it without clobbering keys the author set explicitly.
-  const comisBlock: Record<string, unknown> = isPlainObject(raw["comis"]) ? { ...raw["comis"] } : {};
-  let comisTouched = isPlainObject(raw["comis"]);
+  const nativeComis = raw["comis"];
+  const hasNativeComis = Object.hasOwn(raw, "comis");
+  const validNativeComis = isPlainObject(nativeComis);
+  const comisBlock: Record<string, unknown> = validNativeComis ? { ...nativeComis } : {};
+  let comisTouched = validNativeComis;
 
   // Pass 1 — native keys straight through (so a camelCase twin always wins a
   // conflict with its kebab alias, regardless of YAML key order).
@@ -165,21 +168,56 @@ export function mapForeignFrontmatter(raw: Record<string, unknown>): MapForeignF
       for (const metaKey of Object.keys(metadata).sort()) {
         if (HOST_RUNTIME_KEYS.includes(metaKey)) {
           const block = metadata[metaKey];
-          if (isPlainObject(block)) {
-            const os = normalizeOs(block["os"]);
-            if (os && comisBlock["os"] === undefined) {
-              comisBlock["os"] = os;
-              comisTouched = true;
-            }
-            const requires = normalizeRequires(block["requires"]);
-            if (requires && comisBlock["requires"] === undefined) {
-              comisBlock["requires"] = requires;
-              comisTouched = true;
-            }
+          const qualifiedBlock = `metadata.${metaKey}`;
+          if (!isPlainObject(block)) {
+            warnings.push({ key: qualifiedBlock, action: "dropped_unmappable" });
+            continue;
           }
-          continue; // consumed (fully or partially) — never left to fail the parse
+          for (const runtimeKey of Object.keys(block).sort()) {
+            const qualifiedKey = `${qualifiedBlock}.${runtimeKey}`;
+            if (runtimeKey === "os") {
+              const os = normalizeOs(block[runtimeKey]);
+              if (os === undefined) {
+                warnings.push({ key: qualifiedKey, action: "dropped_unmappable" });
+              } else if (comisBlock["os"] === undefined) {
+                comisBlock["os"] = os;
+                comisTouched = true;
+              } else {
+                warnings.push({ key: qualifiedKey, action: "duplicate_key" });
+              }
+              continue;
+            }
+            if (runtimeKey === "requires") {
+              const requires = normalizeRequires(block[runtimeKey]);
+              if (requires === undefined) {
+                warnings.push({ key: qualifiedKey, action: "dropped_unmappable" });
+              } else if (comisBlock["requires"] === undefined) {
+                comisBlock["requires"] = requires;
+                comisTouched = true;
+              } else {
+                warnings.push({ key: qualifiedKey, action: "duplicate_key" });
+              }
+              continue;
+            }
+            warnings.push({
+              key: qualifiedKey,
+              action: EXECUTABLE_KEYS.has(runtimeKey)
+                ? "dropped_executable"
+                : "dropped_unmappable",
+            });
+          }
+          continue;
         }
-        remaining[metaKey] = metadata[metaKey];
+        if (typeof metadata[metaKey] === "string") {
+          remaining[metaKey] = metadata[metaKey];
+        } else {
+          warnings.push({
+            key: `metadata.${metaKey}`,
+            action: EXECUTABLE_KEYS.has(metaKey)
+              ? "dropped_executable"
+              : "dropped_unmappable",
+          });
+        }
       }
       if (Object.keys(remaining).length > 0) out["metadata"] = remaining;
       continue;
@@ -206,7 +244,13 @@ export function mapForeignFrontmatter(raw: Record<string, unknown>): MapForeignF
     warnings.push({ key, action: "dropped_unmappable" });
   }
 
-  if (comisTouched && Object.keys(comisBlock).length > 0) out["comis"] = comisBlock;
+  if (comisTouched && Object.keys(comisBlock).length > 0) {
+    out["comis"] = comisBlock;
+  } else if (hasNativeComis && !validNativeComis) {
+    // `comis` is a native field. Preserve an invalid native value so strict
+    // manifest validation reports it instead of silently deleting it.
+    out["comis"] = nativeComis;
+  }
 
   return { frontmatter: out, warnings };
 }
