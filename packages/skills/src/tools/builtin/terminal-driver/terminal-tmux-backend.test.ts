@@ -22,6 +22,8 @@
 
 import { describe, it, expect, vi } from "vitest";
 
+import { resolve } from "node:path";
+
 import {
   tmuxSessionName,
   buildTmuxSpawnArgv,
@@ -30,6 +32,7 @@ import {
   buildTmuxAttachArgv,
   buildTmuxSetOptionArgv,
   createTmuxBackend,
+  tmuxSocketPathForSession,
   type TmuxBackendDeps,
 } from "./terminal-tmux-backend.js";
 import type { FakePtyLike } from "./terminal-worker-types.js";
@@ -137,6 +140,15 @@ describe("terminal-tmux-backend — pure command builders (every command -S the 
     // the server booted with, not the daemon's current one). So a rotated secret (e.g. the ADO
     // PAT) would never reach a new drive on a long-lived server. Injecting the current (already
     // scrubbed) env per session with `-e` overrides the stale global per-pane — the freshness fix.
+    // SECURITY: an env VALUE must never reach argv. `/proc/<pid>/cmdline` is WORLD-READABLE,
+    // while `/proc/<pid>/environ` is owner-only 0400 — so putting env on the command line
+    // publishes every secret the drive needs to any local account. Proven on the live VPS:
+    // a `-e AZURE_DEVOPS_EXT_PAT=<pat>` tmux argv was read by an unrelated `ubuntu` user via
+    // `ps`, while that same process's `environ` returned EACCES. Freshness is achieved
+    // structurally instead — one tmux SERVER PER SESSION, born with the scrubbed env in its
+    // own process environment (see tmuxSocketPathForSession), so there is nothing stale to
+    // override and nothing to leak.
+    const secret = "pat-super-secret-value";
     const argv = buildTmuxSpawnArgv({
       tmuxPath,
       socketPath: SOCK,
@@ -145,24 +157,38 @@ describe("terminal-tmux-backend — pure command builders (every command -S the 
       binArgv: ["--flag"],
       cols: 120,
       rows: 40,
-      env: { PATH: "/usr/bin", AZURE_DEVOPS_EXT_PAT: "current-pat", TERM: "xterm-256color" },
     });
-    // Each entry rides as a distinct `-e` `KEY=VALUE` pair, BEFORE the `--` command separator.
+    expect(argv).not.toContain("-e");
+    expect(argv.join(" ")).not.toContain(secret);
+    expect(argv.join(" ")).not.toContain("AZURE_DEVOPS_EXT_PAT");
+    // The driven command still trails the `--` verbatim.
     const sep = argv.indexOf("--");
-    const ePairs: string[] = [];
-    for (let i = 0; i < sep; i++) {
-      if (argv[i] === "-e") ePairs.push(argv[i + 1]!);
-    }
-    expect(ePairs).toEqual(
-      expect.arrayContaining(["PATH=/usr/bin", "AZURE_DEVOPS_EXT_PAT=current-pat", "TERM=xterm-256color"]),
-    );
-    // The driven command still trails the `--` verbatim (env injection never displaces it).
     expect(argv.slice(sep)).toEqual(["--", "/usr/local/bin/claude", "--flag"]);
   });
 
-  it("buildTmuxSpawnArgv: emits NO `-e` when env is absent (optional — the pure builder stays minimal)", () => {
+  it("buildTmuxSpawnArgv: accepts no env at all — the type itself forbids putting env on argv", () => {
     const argv = buildTmuxSpawnArgv({ tmuxPath, socketPath: SOCK, name: "comis-abc", bin: "/bin/sh", binArgv: [], cols: 80, rows: 24 });
     expect(argv).not.toContain("-e");
+    // Nothing resembling KEY=VALUE may appear before the command separator.
+    const sep = argv.indexOf("--");
+    expect(argv.slice(0, sep).filter((a) => /^[A-Z_][A-Z0-9_]*=/.test(a))).toEqual([]);
+  });
+
+  it("tmuxSocketPathForSession: one server PER SESSION, under the data dir, never /tmp", () => {
+    // Per-SESSION socket ⇒ per-session tmux SERVER. That is what lets the server be started
+    // with this drive's scrubbed env in its own (private) process environment: fresh by
+    // construction, no `-e`, no argv exposure. It also makes the socket a pure function of the
+    // session id — stable across daemon restarts, unlike the previous per-BOOT
+    // `tmux-<daemonPid>.sock` whose name changed on every restart and needed a dual-socket
+    // fallback. And it isolates faults: killing one drive's server cannot take down another's.
+    const a = tmuxSocketPathForSession("/data/x/terminal-worker", "sess-aaa");
+    const b = tmuxSocketPathForSession("/data/x/terminal-worker", "sess-bbb");
+    expect(a).toBe(resolve("/data/x/terminal-worker", "tmux-sess-aaa.sock"));
+    expect(a).not.toBe(b);
+    expect(a.startsWith("/tmp")).toBe(false);
+    // Must stay well under the ~108-char AF_UNIX sun_path limit for a real uuid session id.
+    const real = tmuxSocketPathForSession("/home/comis/.comis/terminal-worker", "551429eb-ddb9-4666-b800-8b6a17e1324a");
+    expect(real.length).toBeLessThan(108);
   });
 
   it("buildTmuxHasSessionArgv probes by name on the same socket (the re-attach decision)", () => {
@@ -222,15 +248,26 @@ describe("terminal-tmux-backend — createTmuxBackend create-vs-re-attach decisi
     expect(f.attachName).toBe("comis-abc");
   });
 
-  it("CREATE threads the CURRENT env onto new-session as `-e` (each fresh drive gets today's env, not the server's boot-time env)", () => {
+  it("CREATE never puts an env VALUE on the new-session command line (argv is world-readable)", () => {
+    // The drive's env legitimately carries operator secrets it needs — an ADO PAT, registry
+    // creds. Those MUST travel in the tmux server's own process environment (owner-only 0400),
+    // never in argv: `/proc/<pid>/cmdline` is world-readable, so a `-e KEY=VALUE` publishes
+    // every one of them to any local account. Verified live: an unrelated `ubuntu` user read a
+    // real ADO PAT out of the comis daemon's tmux argv via `ps`, while `environ` gave EACCES.
+    // Env freshness — the reason `-e` existed — now comes from one tmux SERVER PER SESSION,
+    // started with this env in its process environment, so there is no stale server-global
+    // value to override in the first place.
     const f = makeFake({ hasSession: false });
-    createTmuxBackend(f.deps({ env: { PATH: "/usr/bin", AZURE_DEVOPS_EXT_PAT: "rotated-today" } as NodeJS.ProcessEnv }));
+    const secret = "pat-rotated-today-super-secret";
+    createTmuxBackend(f.deps({ env: { PATH: "/usr/bin", AZURE_DEVOPS_EXT_PAT: secret } as NodeJS.ProcessEnv }));
     const created = f.oneShot.find((a) => a.includes("new-session"))!;
-    const sep = created.indexOf("--");
-    const ePairs: string[] = [];
-    for (let i = 0; i < sep; i++) if (created[i] === "-e") ePairs.push(created[i + 1]!);
-    expect(ePairs).toEqual(expect.arrayContaining(["PATH=/usr/bin", "AZURE_DEVOPS_EXT_PAT=rotated-today"]));
+    expect(created).not.toContain("-e");
+    expect(created.join(" ")).not.toContain(secret);
+    expect(created.join(" ")).not.toContain("AZURE_DEVOPS_EXT_PAT");
+    // No tmux invocation of ANY kind may carry the secret (set-option, has-session, attach…).
+    for (const argv of f.oneShot) expect(argv.join(" ")).not.toContain(secret);
   });
+
 
   it("RE-ATTACHES (NO new-session) when hasSession is true (survival after a restart)", () => {
     const f = makeFake({ hasSession: true });

@@ -123,7 +123,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 // construction site; every `?` seam is injectable-for-tests with a production
 // default (clock/timers), a daemon-bound obs hook (onSpawnFailed/onTerminalEvent),
 // or genuinely config-conditional (bwrapPath, unsafeDisableSandbox — the jail
-// seam pair forwarded onto the create frame; currentTmuxSocket; egressControl).
+// seam pair forwarded onto the create frame; tmuxSocketForSession; egressControl).
 // The durability seams are already bundled into ONE nested object
 // ({@link TerminalDurabilityDeps}) — the remaining fields describe distinct
 // wiring chokepoints and are not a further cluster-split candidate.
@@ -159,12 +159,24 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
   bwrapPath?: string;
   /** Operator jail opt-out (`skills.terminal.unsafeDisableSandbox`) — forwarded onto the create frame. `true` ⇒ the worker spawns the CLI DIRECTLY (no bwrap), env-scrub preserved, forced non-durable PTY. A security downgrade for bwrap-less hosts, surfaced in config_posture; default/absent ⇒ the fail-closed jail. */
   unsafeDisableSandbox?: boolean;
-  /** This daemon generation's PER-BOOT tmux `-S` socket — stamped on a durable
-   *  session's handle + descriptor at create so a restart re-attaches it from its OWN server while
-   *  new sessions get a fresh per-boot server in the live mount namespace. MUST equal the worker's
-   *  `COMIS_TERMINAL_TMUX_SOCKET` env (both daemon-supplied from the same source). Absent ⇒ the
-   *  worker/probe legacy single-socket default. */
-  currentTmuxSocket?: string;
+  /**
+   * Resolve the tmux `-S` socket for ONE session — i.e. that session's OWN tmux server (a
+   * server is identified by its socket). Stamped on a durable session's handle + descriptor at
+   * create, so the daemon probe / reaper and a later recover-on-boot all address the socket the
+   * session ACTUALLY runs on.
+   *
+   * It is a FUNCTION of the session id, not a daemon-wide constant, and that is load-bearing:
+   * one server per session is what lets the server be started with the drive's scrubbed env in
+   * its own PROCESS environment (owner-only) instead of restated as `-e KEY=VALUE` on the
+   * world-readable command line. Stamping a single boot-wide socket here would record a server
+   * the session never ran on — recover-on-boot would probe an empty socket and the durable
+   * drive would silently fail to re-attach, while the reaper killed the wrong target. Both are
+   * `string`, so only a test can catch that mismatch.
+   *
+   * MUST agree with the worker's own derivation (`tmuxSocketPathForSession`) — same dir, same
+   * session id. Absent ⇒ no socket is stamped and the worker derives it.
+   */
+  tmuxSocketForSession?: (sessionId: string) => string;
   /** Daemon-injected no-secret egress port — the daemon->worker-main seam for `listed-hosts`; a live `net` server, so (unlike bwrapPath) NOT frame-serialized. Type-only from @comis/core. */
   egressControl?: EgressControlPort;
   /** Allocate a real per-session jail workspace dir; default {@link allocateSessionWorkspace} (world-rwx mkdtemp under os.tmpdir()). `create` threads it onto the frame as workspace+cwd so the jail binds RW + --chdirs in (else it defaults to HOME, which uid 65534 cannot use). Injectable for a data-dir-rooted daemon allocator; cleanup is the paired {@link cleanupWorkspace}. */
@@ -475,9 +487,11 @@ export function createTerminalSessionRegistry(
         ? {
             durable: true,
             tmuxName: req.tmuxName ?? tmuxSessionName(sessionId),
-            // Stamp this boot's per-boot socket so the daemon probe / reaper target THIS
-            // session's server, and a future restart re-attaches it from this (now prior-boot) socket.
-            ...(deps.currentTmuxSocket !== undefined ? { tmuxSocket: deps.currentTmuxSocket } : {}),
+            // Stamp THIS SESSION's own socket so the daemon probe / reaper target the server it
+            // actually runs on, and a future restart re-attaches from that same socket.
+            ...(deps.tmuxSocketForSession !== undefined
+              ? { tmuxSocket: deps.tmuxSocketForSession(sessionId) }
+              : {}),
           }
         : {}),
     };
@@ -486,7 +500,7 @@ export function createTerminalSessionRegistry(
     // Persist the durable descriptor at CREATE-time, BEFORE the create frame (no orphan window); non-durable persists nothing.
     if (req.durable && deps.durability?.descriptorStore !== undefined) {
       deps.durability.descriptorStore.persist(
-        buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId), tmuxSocket: deps.currentTmuxSocket, allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope }),
+        buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId), tmuxSocket: deps.tmuxSocketForSession?.(sessionId), allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope }),
       );
     }
 

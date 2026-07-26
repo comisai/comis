@@ -18,8 +18,6 @@ import {
   buildWakeDurabilityDeps,
   buildIsTmuxAlive,
   buildKillTmux,
-  isTmuxServerStranded,
-  recreateStrandedTmuxServerOnBoot,
 } from "./terminal-durable-wiring.js";
 
 // Recorded execFileSync invocations from the module's DEFAULT probes (every
@@ -299,115 +297,5 @@ describe("buildKillTmux — deterministic durable-evict kill-session by name", (
     let ran = false;
     buildKillTmux(undefined, socketPath, () => { ran = true; })("comis-abc");
     expect(ran).toBe(false);
-  });
-});
-
-// A durable tmux server that SURVIVES a daemon restart
-// (KillMode=process) is STRANDED in the prior daemon generation's mount namespace — systemd
-// PrivateTmp/ProtectHome give every daemon START a fresh mount ns, so the surviving server
-// (forked by the OLD daemon) sits in a now-dismantled ns. Its EXISTING sessions keep running
-// (their bwrap was set up when the ns was healthy) but EVERY NEW `bwrap` session it forks dies
-// ~2.5s (exit 1 — mount setup runs in the torn-down ns). Observed: server mnt ns 4026532294 ≠
-// restarted daemon mnt ns 4026532302; a new claude AND a plain `sh` new-session both die while
-// the re-attached durable one survives. The fix recreates the stranded server on boot.
-describe("isTmuxServerStranded — the stranded-mount-namespace detector", () => {
-  it("STRANDED when the surviving server's mnt ns differs from this daemon's (the post-restart strand)", () => {
-    expect(isTmuxServerStranded("mnt:[4026532294]", "mnt:[4026532302]")).toBe(true);
-  });
-
-  it("NOT stranded when the server shares THIS daemon's mnt ns (a healthy first-boot server)", () => {
-    expect(isTmuxServerStranded("mnt:[4026532302]", "mnt:[4026532302]")).toBe(false);
-  });
-
-  it("NOT stranded (the SAFE direction) when the server ns is unknowable — no server / unreadable", () => {
-    // A probe that cannot confirm STRANDED must never assert it (never needlessly kill a server).
-    expect(isTmuxServerStranded(undefined, "mnt:[4026532302]")).toBe(false);
-  });
-
-  it("NOT stranded (the SAFE direction) when THIS daemon's own mnt ns is unreadable", () => {
-    expect(isTmuxServerStranded("mnt:[4026532294]", undefined)).toBe(false);
-  });
-});
-
-describe("recreateStrandedTmuxServerOnBoot — kill the stranded server so new sessions get a fresh one", () => {
-  const base = (over: Record<string, unknown> = {}) => ({
-    socketPath: "/data/x/terminal-worker/tmux.sock",
-    tmuxPath: "/usr/bin/tmux",
-    logger: makeLogger(),
-    ...over,
-  });
-
-  it("kills the server when it is stranded (ns mismatch) — new sessions then fork a fresh server in the live ns", () => {
-    const killServer = vi.fn();
-    const r = recreateStrandedTmuxServerOnBoot(
-      base({
-        readServerMntNs: () => "mnt:[4026532294]", // the surviving prior-generation server
-        readDaemonMntNs: () => "mnt:[4026532302]", // THIS daemon
-        killServer,
-      }) as never,
-    );
-    expect(r.stranded).toBe(true);
-    expect(r.killed).toBe(true);
-    expect(killServer).toHaveBeenCalledTimes(1);
-    expect(killServer).toHaveBeenCalledWith("/data/x/terminal-worker/tmux.sock");
-  });
-
-  it("does NOT kill a healthy server sharing this daemon's ns (durable sessions survive a no-op boot)", () => {
-    const killServer = vi.fn();
-    const r = recreateStrandedTmuxServerOnBoot(
-      base({
-        readServerMntNs: () => "mnt:[4026532302]",
-        readDaemonMntNs: () => "mnt:[4026532302]",
-        killServer,
-      }) as never,
-    );
-    expect(r.stranded).toBe(false);
-    expect(r.killed).toBe(false);
-    expect(killServer).not.toHaveBeenCalled();
-  });
-
-  it("does NOT kill when there is no server / the ns is unreadable (nothing to recreate, SAFE)", () => {
-    const killServer = vi.fn();
-    const r = recreateStrandedTmuxServerOnBoot(
-      base({ readServerMntNs: () => undefined, readDaemonMntNs: () => "mnt:[4026532302]", killServer }) as never,
-    );
-    expect(r.killed).toBe(false);
-    expect(killServer).not.toHaveBeenCalled();
-  });
-
-  it("absent tmuxPath ⇒ no-op (no tmux on this host — durable already degrades to the lost floor)", () => {
-    const killServer = vi.fn();
-    const r = recreateStrandedTmuxServerOnBoot(
-      base({ tmuxPath: undefined, readServerMntNs: () => "mnt:[4026532294]", readDaemonMntNs: () => "mnt:[4026532302]", killServer }) as never,
-    );
-    expect(r.killed).toBe(false);
-    expect(killServer).not.toHaveBeenCalled();
-  });
-});
-
-// On a clean first boot the durable socket does not exist, so the DEFAULT
-// one-shot `tmux -S <socket> display-message -p '#{pid}'` probe fails. Pre-fix
-// the exec inherited the child's stderr, so the tmux client's raw
-// "error connecting to <socket> (No such file or directory)" landed
-// UNSTRUCTURED in the daemon's stderr/journald between Pino JSON lines on
-// every fresh install. Contract: the probe's stderr is piped/ignored — never
-// inherited — and the probe fault stays the silent-safe `undefined`.
-describe("recreateStrandedTmuxServerOnBoot — the DEFAULT server-pid probe must not inherit the tmux client's stderr", () => {
-  it("configures the probe exec with a piped/ignored stderr so a socketless first boot leaks no raw tmux error line", () => {
-    execFileSyncCalls.length = 0;
-    const r = recreateStrandedTmuxServerOnBoot({
-      socketPath: "/data/.comis/terminal-worker/tmux.sock",
-      tmuxPath: "/usr/bin/tmux",
-      logger: makeLogger(),
-      readDaemonMntNs: () => "mnt:[4026532302]",
-    });
-    // The failing probe stays the SAFE direction: unknown ns, nothing stranded.
-    expect(r).toEqual({ stranded: false, killed: false });
-
-    const probe = execFileSyncCalls.find((c) => c.args.includes("display-message"));
-    expect(probe).toBeDefined();
-    const stdio = probe!.options?.stdio;
-    const stderrCfg = Array.isArray(stdio) ? stdio[2] : stdio;
-    expect(["pipe", "ignore"]).toContain(stderrCfg);
   });
 });

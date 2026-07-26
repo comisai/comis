@@ -70,6 +70,10 @@ export {
 // liveness probe derives the SAME `<dataDir>/terminal-worker/tmux.sock` the worker binds.
 // Importing for the re-export runs no side effect: worker-main's `main()` is `isEntryScript`-guarded.
 export { terminalWorkerDir, resolveTmuxSocketPath } from "./terminal-worker-main.js";
+// One tmux server PER SESSION: the daemon stamps a durable session's handle/descriptor with
+// the SAME path the worker derives, so probe / reaper / recover-on-boot all address the server
+// the session actually runs on.
+export { tmuxSocketPathForSession } from "./terminal-tmux-backend.js";
 
 // The no-secret host-allowlist egress proxy (EgressControlPort impl),
 // moved here from @comis/daemon so the standalone worker process can construct

@@ -81,13 +81,14 @@ export interface SessionDescriptor {
    */
   tmuxName: string;
   /**
-   * Per-generation tmux server: the explicit `-S` socket path the durable
-   * session's tmux server is bound to — the PER-BOOT socket of the daemon generation that created
-   * it (`<durableDir>/tmux-<gen>.sock`). Persisting it per-session is what lets a restart re-attach
-   * the surviving session from its OWN server while NEW sessions get a fresh server (in the live
-   * mount namespace) on the new boot's socket — so a stranded prior-generation ns never breaks new
-   * `bwrap` sessions. OPTIONAL: absent on a descriptor persisted without one (e.g. non-durable),
-   * where the caller falls back to the boot socket. Validated as a non-empty string when present.
+   * ONE tmux server per session: the explicit `-S` socket path this durable session's own tmux
+   * server is bound to — `<durableDir>/tmux-<sessionId>.sock`. A create always starts a fresh
+   * server, so a NEW session is never placed on a server a prior daemon generation forked (whose
+   * mount namespace systemd has since dismantled, killing every new `bwrap` in it). Persisting the
+   * socket lets a restart re-attach the SURVIVOR from its own server, including one created on an
+   * older build's per-boot socket. OPTIONAL: absent on a descriptor persisted without one (e.g.
+   * non-durable), where the caller derives it from the session id. Validated as a non-empty string
+   * when present.
    */
   tmuxSocket?: string;
   /** The allow-entry id to re-stamp VERBATIM on re-attach (WHERE not WHAT). */
