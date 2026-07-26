@@ -45,6 +45,8 @@
  * @module
  */
 
+import { resolve as pathResolve } from "node:path";
+
 import type { FakePtyLike } from "./terminal-worker-types.js";
 
 /**
@@ -78,22 +80,49 @@ function tmuxSocketHead(tmuxPath: string, socketPath: string | undefined): strin
 }
 
 /**
- * Build `tmux new-session -d -s <name> -x <cols> -y <rows> [-e K=V …] -- <bin> <binArgv…>`: a
+ * The socket for ONE drive session — hence one tmux SERVER per session, since a tmux server
+ * is identified by its socket.
+ *
+ * This is what makes the pane env both FRESH and PRIVATE. A pane inherits the tmux SERVER's
+ * global environment, captured ONCE when that server starts and never refreshed; with a
+ * server SHARED across drives, a later drive's pane sees the value the server booted with, so
+ * a rotated secret (e.g. the ADO PAT) would never reach it. A server per session is instead
+ * born together with the session, from the scrubbed env in the starting invocation's own
+ * PROCESS environment — fresh by construction, with nothing stale to override and so no need
+ * to restate env on the command line (`/proc/<pid>/cmdline` is world-readable; `environ` is
+ * owner-only 0400).
+ *
+ * Two further properties fall out of it:
+ *   - the socket is a PURE FUNCTION of the session id, so it is stable across daemon
+ *     restarts — unlike a per-BOOT `tmux-<daemonPid>.sock`, whose name changed on every
+ *     restart and so needed a dual-socket (boot + legacy) re-attach fallback;
+ *   - FAULT ISOLATION: `kill-server` (or a crashed server) affects exactly one drive. On a
+ *     shared server it destroys every concurrent drive at once.
+ *
+ * Cost is one ~4 MB tmux process per live drive — ~0.2% of the ~2.4 GB a driven CLI itself
+ * costs, so the drive's own memory bounds concurrency long before server count matters.
+ *
+ * Lives under the data dir (NEVER `/tmp`: systemd `PrivateTmp=yes` gives each daemon start a
+ * fresh private `/tmp`, so a `/tmp` socket is unreachable from a restarted daemon). Short by
+ * design — well under the ~108-char `AF_UNIX` `sun_path` limit even with a uuid session id.
+ */
+export function tmuxSocketPathForSession(dir: string, sessionId: string): string {
+  return pathResolve(dir, `tmux-${sessionId}.sock`);
+}
+
+/**
+ * Build `tmux new-session -d -s <name> -x <cols> -y <rows> -- <bin> <binArgv…>`: a
  * DETACHED named session whose command is the driven CLI. Detached (`-d`) so the tmux
  * server owns the PTY and the session outlives the worker (survival). The driven
  * `{bin,binArgv}` ride at the tail VERBATIM (the worker's already-composed plan command).
  *
- * ENV FRESHNESS (`-e`). A pane inherits the tmux SERVER's GLOBAL environment, which is
- * captured ONCE when the server first starts and NEVER refreshed — so on a long-lived server
- * (it outlives daemon restarts by design) a later session's pane would see the value the
- * server booted with, not the daemon's current one (proven live on tmux 3.4: a 2nd session's
- * pane read the boot-time value; a `-e KEY=VALUE` pane read the injected one). A rotated
- * secret (e.g. the ADO PAT) would otherwise never reach a new drive. So each session's
- * `{opts.env}` (the worker's already-SCRUBBED env) is injected per-session via `-e`, which
- * overrides the stale server-global value on that pane — decoupling the pane env from the
- * server's boot-time capture. Injected BEFORE `--` (env options precede the command); every
- * value is a plain string passed as a distinct argv element (execFileSync, no shell), so no
- * escaping is needed. Absent/empty env ⇒ no `-e` (the pure builder stays minimal).
+ * NO ENV ON ARGV — deliberately, and the type gives no way to pass any. The env reaches the
+ * pane through the PROCESS environment of the invocation that starts this session's server
+ * (see {@link tmuxSocketPathForSession}), which is owner-only `0400`; argv
+ * (`/proc/<pid>/cmdline`) is WORLD-READABLE, so a `-e KEY=VALUE` would publish every secret
+ * the drive carries to any local account. That was a real leak: an unrelated local user read
+ * a live ADO PAT out of the daemon's tmux argv with `ps`, while the same process's `environ`
+ * returned EACCES.
  */
 export function buildTmuxSpawnArgv(opts: {
   tmuxPath: string;
@@ -103,13 +132,7 @@ export function buildTmuxSpawnArgv(opts: {
   binArgv: readonly string[];
   cols: number;
   rows: number;
-  /** The scrubbed child env — injected per-session as `-e KEY=VALUE` for freshness (see above). */
-  env?: NodeJS.ProcessEnv;
 }): string[] {
-  const envArgs: string[] = [];
-  for (const [key, value] of Object.entries(opts.env ?? {})) {
-    if (typeof value === "string") envArgs.push("-e", `${key}=${value}`);
-  }
   return [
     ...tmuxSocketHead(opts.tmuxPath, opts.socketPath),
     "new-session",
@@ -120,7 +143,6 @@ export function buildTmuxSpawnArgv(opts: {
     String(opts.cols),
     "-y",
     String(opts.rows),
-    ...envArgs,
     "--",
     opts.bin,
     ...opts.binArgv,
@@ -180,8 +202,11 @@ export interface TmuxBackendDeps {
   cols: number;
   /** Terminal rows for the detached session (and the attach pty). */
   rows: number;
-  /** The child environment (the worker's scrubbed env) — passed to the one-shot tmux commands AND the attach pty. */
-  env: NodeJS.ProcessEnv;
+  // NOTE: no `env` field. The child environment is bound by the WORKER into the
+  // {@link TmuxBackendDeps.runOneShot} / {@link TmuxBackendDeps.spawnAttachPty} closures, so it
+  // travels in each tmux invocation's own PROCESS environment (owner-only `0400`). The backend
+  // therefore never handles env at all — which is precisely why it cannot leak one onto the
+  // world-readable command line.
   /** Absolute tmux path (operator/daemon-resolved — like the resolved bwrapPath). */
   tmuxPath: string;
   /**
@@ -237,7 +262,7 @@ export interface TmuxBackendDeps {
  * (the worker's `reattach` handler) then replies `ok:false`, NEVER a fresh CLI.
  */
 export function createTmuxBackend(deps: TmuxBackendDeps): FakePtyLike | undefined {
-  const { sessionId, bin, argv, cols, rows, env, tmuxPath, socketPath, hasSession, runOneShot, spawnAttachPty, forceAttachOnly } =
+  const { sessionId, bin, argv, cols, rows, tmuxPath, socketPath, hasSession, runOneShot, spawnAttachPty, forceAttachOnly } =
     deps;
   const name = tmuxSessionName(sessionId);
 
@@ -249,9 +274,11 @@ export function createTmuxBackend(deps: TmuxBackendDeps): FakePtyLike | undefine
     // fresh new-session (a double-drive).
     if (forceAttachOnly === true) return undefined;
     // Fresh session: create it DETACHED (the tmux server owns the PTY so it outlives this worker).
-    // The scrubbed `env` rides as per-session `-e` so this pane gets the CURRENT env (freshness),
-    // not whatever the server captured at its boot — see buildTmuxSpawnArgv.
-    runOneShot(buildTmuxSpawnArgv({ tmuxPath, socketPath, name, bin, binArgv: argv, cols, rows, env }));
+    // No env on argv. `socketPath` is this SESSION's own socket, so this invocation is what
+    // starts the session's tmux server, and the server inherits the scrubbed env from the
+    // runner's PROCESS environment (owner-only) — fresh by construction, nothing published to
+    // the world-readable command line. See tmuxSocketPathForSession / buildTmuxSpawnArgv.
+    runOneShot(buildTmuxSpawnArgv({ tmuxPath, socketPath, name, bin, binArgv: argv, cols, rows }));
   }
 
   // Configure the session for TRANSPARENT pty-driving (idempotent ⇒ safe on re-attach too):

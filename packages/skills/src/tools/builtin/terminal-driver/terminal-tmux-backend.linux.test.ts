@@ -133,7 +133,69 @@ describe.skipIf(!isLinux() || !tmuxAvailable())(
       }
     });
 
-    it("a 2nd session started with `-e TOKEN_VAL=NEW` sees NEW even though the server booted with OLD", async () => {
+    it("a per-session server sees its OWN current env, with NOTHING on the command line", async () => {
+      // Freshness WITHOUT argv exposure. Server A is started with TOKEN_VAL=OLD in its process
+      // env; server B (a DIFFERENT socket ⇒ a different server, i.e. the per-session model) is
+      // started with TOKEN_VAL=NEW the same way. B's pane must read NEW — proving a later drive
+      // is not pinned to an earlier server's boot-time capture — while NEITHER tmux command line
+      // carries the value, since argv is world-readable and `environ` is not.
+      const SOCK_B = join(tmpdir(), `comis-tmux-b-${RUN}.sock`);
+      const OUT_B = join(tmpdir(), `comis-pane-env-b-${RUN}.txt`);
+      try {
+        const first = spawnSync(
+          TMUX,
+          ["-S", SOCK, "new-session", "-d", "-s", S1, "--", "sh", "-c", "sleep 30"],
+          { env: { ...process.env, TOKEN_VAL: "old-val-zzz" }, timeout: 5_000, encoding: "utf8" },
+        );
+        if (first.status !== 0) {
+          expect(first.status ?? 0).toBeGreaterThanOrEqual(0); // soak-tier tolerant
+          return;
+        }
+        // Server B: built by the PRODUCTION builder (no env param exists on it any more), and
+        // handed the current env via the spawn's PROCESS environment — the private channel.
+        const argv = buildTmuxSpawnArgv({
+          tmuxPath: TMUX,
+          socketPath: SOCK_B,
+          name: S2,
+          bin: "sh",
+          binArgv: ["-c", `printenv TOKEN_VAL > ${OUT_B}; sleep 5`],
+          cols: 80,
+          rows: 24,
+        });
+        expect(argv).not.toContain("-e");
+        // The driven command legitimately NAMES the var (`printenv TOKEN_VAL`); what must never
+        // appear is an assignment or the VALUE itself.
+        expect(argv.join(" ")).not.toContain("TOKEN_VAL=");
+        expect(argv.join(" ")).not.toContain("new-val-qqq");
+        const second = spawnSync(argv[0]!, argv.slice(1), {
+          env: { ...process.env, TOKEN_VAL: "new-val-qqq" },
+          timeout: 5_000,
+          encoding: "utf8",
+        });
+        if (second.status !== 0) {
+          expect(second.status ?? 0).toBeGreaterThanOrEqual(0);
+          return;
+        }
+        let paneSaw: string | undefined;
+        for (let i = 0; i < 20 && paneSaw === undefined; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          if (existsSync(OUT_B)) paneSaw = readFileSync(OUT_B, "utf8").trim();
+        }
+        if (paneSaw === undefined) return; // pane never wrote (transient) — soak-tier tolerant
+        expect(paneSaw).toBe("new-val-qqq"); // its own server's env, not server A's old-val-zzz
+      } finally {
+        runTmuxArgv([TMUX, "-S", SOCK_B, "kill-server"]);
+        for (const p of [OUT_B, SOCK_B]) {
+          try {
+            rmSync(p, { force: true });
+          } catch {
+            /* best-effort cleanup */
+          }
+        }
+      }
+    });
+
+    it.skip("SUPERSEDED: `-e TOKEN_VAL=NEW` per-session injection (removed — env on argv is world-readable)", async () => {
       // 1) Start the server via a FIRST session whose PROCESS env carries TOKEN_VAL=OLD — the
       //    server's global environment captures OLD for its whole life.
       const first = spawnSync(

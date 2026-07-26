@@ -64,6 +64,7 @@ const ESCALATION_REASONS = new Set<string>([
 import {
   createTerminalSessionRegistry,
   terminalWorkerDir,
+  tmuxSocketPathForSession,
   buildProductionSpawnWorker,
   resolveWorkerMainPath,
   createTerminalEgressProxy,
@@ -416,9 +417,13 @@ function getOrCreateTerminalRegistry(
     const agentWs = deps.agentWorkspaceDir;
     registry = createTerminalSessionRegistry({
       spawnWorker: buildProductionSpawnWorker(resolveWorkerJsPath(deps.dataDir), deps.dataDir, bootTmuxSocketPath(deps.dataDir)),
-      // Stamp this boot's per-boot socket on durable handles/descriptors (MUST match the
-      // worker's COMIS_TERMINAL_TMUX_SOCKET above — both from bootTmuxSocketPath).
-      currentTmuxSocket: bootTmuxSocketPath(deps.dataDir),
+      // Stamp EACH durable session's OWN socket on its handle/descriptor. One tmux server per
+      // session, so this MUST be derived per session id and MUST match the worker's own
+      // derivation (`tmuxSocketPathForSession`, same dir + id) — otherwise the descriptor
+      // records a server the session never ran on and recover-on-boot silently fails to
+      // re-attach while the reaper kills the wrong target.
+      tmuxSocketForSession: (sessionId: string) =>
+        tmuxSocketPathForSession(terminalWorkerDir(deps.dataDir), sessionId),
       logger: deps.skillsLogger,
       nowMs: systemNowMs,
       // The daemon-resolved bwrap path rides the create

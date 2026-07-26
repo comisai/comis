@@ -87,6 +87,7 @@ export {
   resolveWorkerMainPath,
   terminalWorkerDir,
   resolveTmuxSocketPath,
+  tmuxSocketPathForSession,
   createTerminalEgressProxy,
   prepareAgentTerminalWorkspace,
   matchAllowEntry,

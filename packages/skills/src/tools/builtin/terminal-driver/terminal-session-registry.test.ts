@@ -267,18 +267,24 @@ describe("createTerminalSessionRegistry — durable evict kill-sessions the deta
   // a never-tasked webhook drive lingered as an idle `claude` after kill fired, while a manual
   // kill-session by name reaped it. evictInternal now deterministically kill-sessions a durable
   // handle's tmux by name via the injected durability.killTmuxSession.
-  it("kill of a DURABLE session calls durability.killTmuxSession(comis-<id>, socket)", async () => {
+  it("kill of a DURABLE session reaps THIS session's own server (comis-<id> on its own socket)", async () => {
+    // The reap must target the socket this session actually runs on. With one server per
+    // session, a boot-wide socket here would kill the wrong server — or, worse, another live
+    // drive's — instead of this one.
     const killTmuxSession = vi.fn();
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(
-      baseDeps(() => fake.child, { currentTmuxSocket: "/sock/tmux-1.sock", durability: { killTmuxSession } }),
+      baseDeps(() => fake.child, {
+        tmuxSocketForSession: (id: string) => `/sock/tmux-${id}.sock`,
+        durability: { killTmuxSession },
+      }),
     );
     const { sessionId } = await registry.create(
       { allowId: "claude", bin: "/c", argv: [], cols: 80, rows: 24, durable: true },
       OWNER,
     );
     await registry.kill(sessionId, OWNER);
-    expect(killTmuxSession).toHaveBeenCalledWith(`comis-${sessionId}`, "/sock/tmux-1.sock");
+    expect(killTmuxSession).toHaveBeenCalledWith(`comis-${sessionId}`, `/sock/tmux-${sessionId}.sock`);
   });
 
   it("kill of a NON-durable session does NOT kill-session (no durable tmux to reap)", async () => {
@@ -2334,12 +2340,25 @@ describe("createTerminalSessionRegistry — recover-on-boot re-attach", () => {
     expect(persisted.tmuxName).toBe("comis-x");
   });
 
-  it("stamps this boot's currentTmuxSocket on the durable descriptor (so a restart re-attaches it from its OWN per-boot server, not this boot's fresh one)", async () => {
+  it("stamps THIS SESSION's own socket on the durable descriptor (the socket the session actually runs on)", async () => {
+    // The descriptor must record the socket the session REALLY lives on. Each durable session
+    // now gets its OWN tmux server (one server per socket), so the recorded value has to be
+    // derived PER SESSION. Stamping a single daemon-wide value here would record a server the
+    // session never ran on: recover-on-boot would probe that socket, find nothing, and the
+    // durable drive would silently fail to re-attach — while `killTmuxSession` reaped the wrong
+    // target. Both values are `string`, so the compiler cannot catch that mismatch; this test is
+    // the guard.
     const fake = makeFakeWorker();
     const store = fakeDescriptorStore();
-    const SOCK = "/data/x/terminal-worker/tmux-99.sock";
+    const seen: string[] = [];
     const registry = createTerminalSessionRegistry(
-      baseDeps(() => fake.child, { durability: { descriptorStore: store }, currentTmuxSocket: SOCK }),
+      baseDeps(() => fake.child, {
+        durability: { descriptorStore: store },
+        tmuxSocketForSession: (id: string) => {
+          seen.push(id);
+          return `/data/x/terminal-worker/tmux-${id}.sock`;
+        },
+      }),
     );
 
     await registry.create(
@@ -2347,11 +2366,11 @@ describe("createTerminalSessionRegistry — recover-on-boot re-attach", () => {
       DURABLE_OWNER,
     );
 
-    // The per-boot socket rides the persisted descriptor — recover-on-boot reads it to probe +
-    // re-attach THIS session's surviving server (the live-handle stamp is exercised by the daemon
-    // probe tests; list() is a sanitized public view without it).
     const persisted = store.persist.mock.calls[0]![0] as SessionDescriptor;
-    expect(persisted.tmuxSocket).toBe(SOCK);
+    // Resolved with the session's OWN id — not a boot-wide constant.
+    expect(seen.length).toBeGreaterThan(0);
+    expect(persisted.tmuxSocket).toBe(`/data/x/terminal-worker/tmux-${persisted.sessionId}.sock`);
+    expect(persisted.tmuxSocket).toContain(persisted.sessionId);
   });
 
   it("create does NOT persist a descriptor for a NON-durable session (today's spawn floor unchanged)", async () => {

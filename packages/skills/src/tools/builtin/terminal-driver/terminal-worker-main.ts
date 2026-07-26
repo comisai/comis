@@ -41,7 +41,7 @@ import { fileURLToPath } from "node:url";
 import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
 import { createStdioPump } from "./terminal-worker-stdio-pump.js";
 import { createTerminalEgressProxy } from "./terminal-egress-proxy.js";
-import { createTmuxBackend } from "./terminal-tmux-backend.js";
+import { createTmuxBackend, tmuxSocketPathForSession } from "./terminal-tmux-backend.js";
 import type { TmuxBackendLike, FakePtyLike, PtyModuleLike } from "./terminal-worker-types.js";
 
 /**
@@ -217,35 +217,47 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
         env: { ...a.env, TERM: a.env.TERM ?? "xterm-256color" },
       });
   return {
-    spawn: (a) =>
+    spawn: (a) => {
+      // ONE tmux SERVER PER SESSION (a server is identified by its socket). This invocation
+      // starts that server, so it inherits `a.env` — already scrubbed — from the runner's own
+      // PROCESS environment (owner-only 0400). Freshness is therefore structural: the server is
+      // born with the session, so there is no stale server-global value to override and no need
+      // to restate env as `-e KEY=VALUE` on the WORLD-READABLE command line (which leaked a live
+      // ADO PAT to an unrelated local account via `ps`). It also isolates faults — killing one
+      // drive's server can no longer take down every concurrent drive.
+      const socket = tmuxSocketPathForSession(durableDir(), a.sessionId);
       // The create path never sets forceAttachOnly → createTmuxBackend always returns a
       // handle here; the `?? throwingHandle` would be dead, so we assert non-undefined.
-      createTmuxBackend({
+      return createTmuxBackend({
         sessionId: a.sessionId,
         bin: a.bin,
         argv: a.argv,
         cols: a.cols,
         rows: a.rows,
-        env: a.env,
         tmuxPath,
-        socketPath: bootSocket,
-        hasSession: hasSessionOn(bootSocket, a.env),
+        socketPath: socket,
+        hasSession: hasSessionOn(socket, a.env),
         runOneShot: runOneShot(a.env),
-        spawnAttachPty: spawnAttachPtyOn(bootSocket, a),
-      })!,
+        spawnAttachPty: spawnAttachPtyOn(socket, a),
+      })!;
+    },
     // Recover-on-boot re-attach — attach to an EXISTING session ONLY
     // (forceAttachOnly). The driven command is NOT re-spawned (the surviving pane is attached),
     // so bin/argv are empty; a gone session returns undefined → the worker replies ok:false.
     // Target the SURVIVOR's own per-boot socket (`a.tmuxSocket`), NOT this boot's.
     reattach: (a) => {
-      const socket = a.tmuxSocket ?? legacySocket;
+      // Prefer the socket the descriptor RECORDED (a session created before per-session
+      // sockets sits on a per-boot `tmux-<daemonPid>.sock`, or on the legacy single socket).
+      // Otherwise DERIVE it: the socket is a pure function of the session id, so it is stable
+      // across daemon restarts — which is what removes the old generation-mismatch problem
+      // where the new daemon's socket name never matched the one holding the survivors.
+      const socket = a.tmuxSocket ?? tmuxSocketPathForSession(durableDir(), a.sessionId);
       return createTmuxBackend({
         sessionId: a.sessionId,
         bin: "",
         argv: [],
         cols: a.cols,
         rows: a.rows,
-        env: a.env,
         tmuxPath,
         socketPath: socket,
         hasSession: hasSessionOn(socket, a.env),
