@@ -114,6 +114,33 @@ describe("emitSkillAudit — skill.scan branches", () => {
     });
   });
 
+  it("emits install rejection source, stage, and policy without bundle content", () => {
+    const { emit, bus } = createMockEventBus();
+    emitSkillAudit(bus as TypedEventBus, {
+      agentId: "agent-1",
+      tenantId: "default",
+      userId: "user-1",
+      skillName: "blocked-skill",
+      action: "skill.vet.reject",
+      outcome: "denied",
+      metadata: {
+        source: "registry",
+        ruleIds: ["EXEC_SUBSHELL"],
+      },
+    });
+
+    const skillRejectedCall = emit.mock.calls.find((call) => call[0] === "skill:rejected");
+    expect(skillRejectedCall?.[1]).toEqual({
+      skillName: "blocked-skill",
+      reason: "Skill install blocked by pre-write vetting gate",
+      violations: ["EXEC_SUBSHELL"],
+      source: "registry",
+      stage: "vet",
+      policyKey: "skills.installVetting",
+      timestamp: expect.any(Number),
+    });
+  });
+
   it("does not emit any skill-specific event when validation.coercion action is audited", () => {
     const { emit, bus } = createMockEventBus();
     emitSkillAudit(bus as TypedEventBus, {

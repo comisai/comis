@@ -99,6 +99,9 @@ describe("attachTrajectoryToEventBus -- skill import events", () => {
       skillName: "unsafe",
       reason: "Skill install blocked by pre-write vetting gate",
       violations: ["EXEC_SUBSHELL"],
+      source: "registry",
+      stage: "vet",
+      policyKey: "skills.installVetting",
       timestamp: Date.now(),
     });
 
@@ -124,6 +127,9 @@ describe("attachTrajectoryToEventBus -- skill import events", () => {
           skillName: "unsafe",
           reason: "Skill install blocked by pre-write vetting gate",
           violations: ["EXEC_SUBSHELL"],
+          source: "registry",
+          stage: "vet",
+          policyKey: "skills.installVetting",
         },
         parentEntryId: undefined,
       },
