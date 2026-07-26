@@ -15183,6 +15183,37 @@
         },
         "name": {
           "type": "string"
+        },
+        "pendingMcpServers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "sse",
+                  "http"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "transport",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "hint": {
+          "type": "string"
         }
       },
       "required": [
@@ -15283,6 +15314,37 @@
         },
         "fileCount": {
           "type": "number"
+        },
+        "pendingMcpServers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "sse",
+                  "http"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "transport",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "hint": {
+          "type": "string"
         }
       },
       "required": [
@@ -15399,6 +15461,37 @@
         },
         "name": {
           "type": "string"
+        },
+        "pendingMcpServers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "sse",
+                  "http"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "transport",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "hint": {
+          "type": "string"
         }
       },
       "required": [
@@ -15468,6 +15561,37 @@
           "const": true
         },
         "path": {
+          "type": "string"
+        },
+        "pendingMcpServers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "sse",
+                  "http"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "transport",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "hint": {
           "type": "string"
         }
       },

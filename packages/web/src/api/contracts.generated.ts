@@ -15359,6 +15359,37 @@ export const CONTRACTS = {
         },
         "name": {
           "type": "string"
+        },
+        "pendingMcpServers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "sse",
+                  "http"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "transport",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "hint": {
+          "type": "string"
         }
       },
       "required": [
@@ -15459,6 +15490,37 @@ export const CONTRACTS = {
         },
         "fileCount": {
           "type": "number"
+        },
+        "pendingMcpServers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "sse",
+                  "http"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "transport",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "hint": {
+          "type": "string"
         }
       },
       "required": [
@@ -15575,6 +15637,37 @@ export const CONTRACTS = {
         },
         "name": {
           "type": "string"
+        },
+        "pendingMcpServers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "sse",
+                  "http"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "transport",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "hint": {
+          "type": "string"
         }
       },
       "required": [
@@ -15644,6 +15737,37 @@ export const CONTRACTS = {
           "const": true
         },
         "path": {
+          "type": "string"
+        },
+        "pendingMcpServers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "sse",
+                  "http"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "transport",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "hint": {
           "type": "string"
         }
       },

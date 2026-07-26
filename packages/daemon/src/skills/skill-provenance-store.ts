@@ -56,6 +56,13 @@ export interface SkillProvenanceEvidence {
   readonly registryDecision?: string;
 }
 
+/** Content-free bundled MCP entry withheld from persistence and connection. */
+export interface PendingSkillMcpServer {
+  readonly name: string;
+  readonly transport: "stdio" | "sse" | "http";
+  readonly reason: string;
+}
+
 /** One installed skill's provenance. */
 export interface SkillProvenanceRecord {
   /** Which install path produced this skill. */
@@ -80,6 +87,8 @@ export interface SkillProvenanceRecord {
   readonly findingCounts: { readonly critical: number; readonly warn: number };
   /** Optional registry metadata. Evidence for the operator, never a trust grant. */
   readonly evidence?: SkillProvenanceEvidence;
+  /** Bundled MCP entries waiting for explicit operator activation. */
+  readonly pendingMcpServers?: readonly PendingSkillMcpServer[];
   /**
    * Set when the record was synthesized by a one-time backfill of skills that
    * predate this store, rather than observed at install. Weaker provenance, and
@@ -128,7 +137,19 @@ function isValidRecord(value: unknown): value is SkillProvenanceRecord {
   const counts = r["findingCounts"];
   if (counts === null || typeof counts !== "object" || Array.isArray(counts)) return false;
   const c = counts as Record<string, unknown>;
-  return typeof c["critical"] === "number" && typeof c["warn"] === "number";
+  if (typeof c["critical"] !== "number" || typeof c["warn"] !== "number") return false;
+  const pending = r["pendingMcpServers"];
+  if (pending === undefined) return true;
+  if (!Array.isArray(pending)) return false;
+  return pending.every((entry) => {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return false;
+    const p = entry as Record<string, unknown>;
+    return (
+      typeof p["name"] === "string" &&
+      (p["transport"] === "stdio" || p["transport"] === "sse" || p["transport"] === "http") &&
+      typeof p["reason"] === "string"
+    );
+  });
 }
 
 /**

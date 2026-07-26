@@ -59,7 +59,7 @@ import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import { createLogger } from "@comis/infra";
 import { rmSync, existsSync } from "node:fs";
 import type { RpcHandler } from "./types.js";
-import { runPostInstallHooks, forgetSkillProvenanceOnDelete } from "../skills/post-install-hooks.js";
+import { bundleInstallResponseFields, runPostInstallHooks, forgetSkillProvenanceOnDelete } from "../skills/post-install-hooks.js";
 // Pre-write vetting gate. Runs on the WHOLE bundle between scope resolution and
 // the first file write on all four install paths, so a blocked bundle leaves
 // zero files on disk. Not operator-disableable — see the module header.
@@ -323,9 +323,9 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
-      await runPostInstallHooks(deps, params.name, skillDir, rawParams, { scope, source: "upload", vetted, callingAgentId });
+      const hooks = await runPostInstallHooks(deps, params.name, skillDir, rawParams, { scope, source: "upload", vetted, callingAgentId });
 
-      const result = { ok: true as const, path: skillDir };
+      const result = { ok: true as const, path: skillDir, ...bundleInstallResponseFields(hooks) };
       if (IS_DEV) SkillsUploadContract.response.parse(result);
       return result;
     },
@@ -485,9 +485,9 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
-      await runPostInstallHooks(deps, name, skillDir, rawParams, { scope, source: "github", ref: url, vetted, callingAgentId });
+      const hooks = await runPostInstallHooks(deps, name, skillDir, rawParams, { scope, source: "github", ref: url, vetted, callingAgentId });
 
-      const result = { ok: true as const, path: skillDir, name, fileCount: fetchedFiles.length };
+      const result = { ok: true as const, path: skillDir, name, fileCount: fetchedFiles.length, ...bundleInstallResponseFields(hooks) };
       if (IS_DEV) SkillsImportContract.response.parse(result);
       return result;
     },
@@ -692,9 +692,9 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
-      await runPostInstallHooks(deps, params.name, skillDir, rawParams, { scope, source: "create", vetted, callingAgentId });
+      const hooks = await runPostInstallHooks(deps, params.name, skillDir, rawParams, { scope, source: "create", vetted, callingAgentId });
 
-      const result = { ok: true as const, path: skillDir, name: params.name };
+      const result = { ok: true as const, path: skillDir, name: params.name, ...bundleInstallResponseFields(hooks) };
       if (IS_DEV) SkillsCreateContract.response.parse(result);
       return result;
     },
@@ -785,9 +785,9 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
-      await runPostInstallHooks(deps, params.name, skill.location, rawParams, { scope, source: "update", vetted, callingAgentId });
+      const hooks = await runPostInstallHooks(deps, params.name, skill.location, rawParams, { scope, source: "update", vetted, callingAgentId });
 
-      const result = { ok: true as const, name: params.name };
+      const result = { ok: true as const, name: params.name, ...bundleInstallResponseFields(hooks) };
       if (IS_DEV) SkillsUpdateContract.response.parse(result);
       return result;
     },

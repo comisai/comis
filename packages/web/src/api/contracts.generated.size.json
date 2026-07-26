@@ -1,8 +1,8 @@
 {
-  "totalMinified": 186388,
-  "totalGzipped": 18651,
+  "totalMinified": 187388,
+  "totalGzipped": 18702,
   "budget": {
-    "minified": 187000,
+    "minified": 188000,
     "gzipped": 38912
   },
   "overBudget": false,
@@ -194,12 +194,12 @@
     "session.send": 521,
     "session.spawn": 891,
     "session.status": 605,
-    "skills.create": 573,
+    "skills.create": 858,
     "skills.delete": 430,
-    "skills.import": 561,
+    "skills.import": 846,
     "skills.list": 623,
-    "skills.update": 541,
-    "skills.upload": 675,
+    "skills.update": 826,
+    "skills.upload": 960,
     "slack.action": 268,
     "subagent.kill": 369,
     "subagent.list": 590,

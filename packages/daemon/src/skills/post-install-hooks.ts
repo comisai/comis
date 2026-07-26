@@ -65,6 +65,7 @@ export interface PostInstallProvenanceArgs {
 function buildRecord(
   args: PostInstallProvenanceArgs,
   userId: string | undefined,
+  bundleResult: ApplyBundleInstallResult,
 ): SkillProvenanceRecord {
   const critical = args.vetted.findings.filter((f) => f.severity === "CRITICAL").length;
   return {
@@ -76,6 +77,9 @@ function buildRecord(
     trust: args.vetted.trust,
     verdict: args.vetted.verdict,
     findingCounts: { critical, warn: args.vetted.findings.length - critical },
+    ...(bundleResult.pendingMcpServers !== undefined && {
+      pendingMcpServers: bundleResult.pendingMcpServers,
+    }),
   };
 }
 
@@ -114,7 +118,7 @@ export async function runPostInstallHooks(
   const dataDir = (deps.container?.config?.dataDir as string | undefined) ?? "";
   if (dataDir.length > 0) {
     const userId = (rawParams as { _context?: { userId?: string } })._context?.userId;
-    const record = buildRecord(provenance, userId);
+    const record = buildRecord(provenance, userId, bundleResult);
     const written = recordSkillProvenance(dataDir, provenance.scope, skillId, record);
     if (!written.ok) {
       deps.logger.warn(
@@ -134,6 +138,19 @@ export async function runPostInstallHooks(
   }
 
   return bundleResult;
+}
+
+/** Project the operator-visible pending fields onto an install RPC response. */
+export function bundleInstallResponseFields(result: ApplyBundleInstallResult): {
+  pendingMcpServers?: ApplyBundleInstallResult["pendingMcpServers"];
+  hint?: string;
+} {
+  return {
+    ...(result.pendingMcpServers !== undefined && {
+      pendingMcpServers: result.pendingMcpServers,
+    }),
+    ...(result.hint !== undefined && { hint: result.hint }),
+  };
 }
 
 /**

@@ -47,6 +47,19 @@ const SkillUploadFileSchema = z.object({
  */
 const SkillScopeSchema = z.enum(["local", "shared"]);
 
+/** Content-free bundled MCP descriptor returned when trust policy withholds activation. */
+const PendingMcpServerSchema = z.object({
+  name: z.string(),
+  transport: z.enum(["stdio", "sse", "http"]),
+  reason: z.string(),
+});
+
+/** Optional fields shared by all skill-install responses. */
+const BundleInstallResponseShape = {
+  pendingMcpServers: z.array(PendingMcpServerSchema).optional(),
+  hint: z.string().optional(),
+};
+
 // ===========================================================================
 // --- skill-handlers.ts ---
 // ===========================================================================
@@ -103,6 +116,7 @@ export const SkillsUploadContract = defineContract({
   response: z.object({
     ok: z.literal(true),
     path: z.string(),
+    ...BundleInstallResponseShape,
   }),
   // skills.* mutating methods are the orchestration/skill surface the
   // capability model owns (orch:skill), NOT control plane. Scoped rpc (not
@@ -136,6 +150,7 @@ export const SkillsImportContract = defineContract({
     path: z.string(),
     name: z.string(),
     fileCount: z.number(),
+    ...BundleInstallResponseShape,
   }),
   // orch:skill surface, rpc-scoped (see skills.upload rationale).
   scopes: ["rpc"] as const,
@@ -196,6 +211,7 @@ export const SkillsCreateContract = defineContract({
     ok: z.literal(true),
     path: z.string(),
     name: z.string(),
+    ...BundleInstallResponseShape,
   }),
   // orch:skill surface, rpc-scoped (see skills.upload rationale).
   scopes: ["rpc"] as const,
@@ -225,6 +241,7 @@ export const SkillsUpdateContract = defineContract({
   response: z.object({
     ok: z.literal(true),
     name: z.string(),
+    ...BundleInstallResponseShape,
   }),
   // orch:skill surface, rpc-scoped (see skills.upload rationale).
   scopes: ["rpc"] as const,
