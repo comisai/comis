@@ -330,6 +330,11 @@ describe("skills.import — pre-write vetting gate", () => {
       "fetch",
       "preflight",
       "unpack",
+      "structure",
+      "manifest",
+      "map",
+      "scan",
+      "decide",
       "vet",
       "write",
       "bundle",
@@ -855,8 +860,12 @@ describe("skills.import — pre-write vetting gate", () => {
       "references/a.md": "benign",
       "references/b.md": "benign",
     });
+    const logger = createMockLogger();
     const handlers = createSkillHandlers(
-      makeDeps(wsDir, { agents: { "agent-a": { skills: { installVetting: { maxEntries: 2 } } } } as never }),
+      makeDeps(wsDir, {
+        logger,
+        agents: { "agent-a": { skills: { installVetting: { maxEntries: 2 } } } } as never,
+      }),
     );
 
     await expect(
@@ -868,6 +877,14 @@ describe("skills.import — pre-write vetting gate", () => {
     ).rejects.toThrow(/BUNDLE_TOO_MANY_FILES/i);
 
     expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "skills.vet",
+        errorKind: "resource",
+        hint: expect.stringMatching(/Bundle has 3 members, over maxEntries 2.*skills\.installVetting\.maxEntries/s),
+      }),
+      "Skill install blocked by pre-write vetting gate",
+    );
   });
 
   it("falls back to the default agent's installVetting bounds when the caller has none", async () => {
@@ -1356,7 +1373,8 @@ describe("skill install — confirm and force", () => {
 
   it("refuses a WARN-only community import until it is confirmed, writing zero files", async () => {
     mockGitHubDir("skills/my-skill", { "SKILL.md": WARN_BODY });
-    const handlers = createSkillHandlers(makeDeps(wsDir));
+    const eventBus = createMockEventBus();
+    const handlers = createSkillHandlers(makeDeps(wsDir, { eventBus }));
 
     await expect(
       handlers["skills.import"]!({
@@ -1367,6 +1385,15 @@ describe("skill install — confirm and force", () => {
     ).rejects.toThrow(/skill_vet_confirm:caution/);
 
     expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual([]);
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "skill:rejected",
+      expect.objectContaining({
+        skillName: "my-skill",
+        source: "github",
+        stage: "vet",
+        violations: expect.arrayContaining(["ENV_PRINTENV"]),
+      }),
+    );
   });
 
   it("names the findings and the exact re-run in the confirmation message", async () => {
