@@ -57,12 +57,12 @@ describe("terminal-worker-main helpers", () => {
     expect(durableDir()).toBe(resolve("/data/x", "terminal-worker"));
   });
 
-  it("resolveTmuxSocketPath = <durableDir>/tmux.sock — a STABLE socket under the data dir, NEVER /tmp (PrivateTmp survival)", () => {
-    // The tmux server's socket MUST live on the persistent, shared data dir — NOT the
-    // default /tmp. systemd `PrivateTmp=yes` gives every daemon start a FRESH private
-    // /tmp, so a /tmp socket is unreachable from the restarted daemon and re-attach
-    // fails even when KillMode=process keeps the tmux server process alive (proven live
-    // on the VPS 2026-06-16). The data-dir socket is reachable by both generations.
+  it("resolveTmuxSocketPath = <durableDir>/tmux.sock — the LEGACY fallback socket, under the data dir and NEVER /tmp", () => {
+    // No session is created on this socket any more (each drive derives its own from the session
+    // id); it is the daemon-side fallback for a descriptor persisted before the per-session field.
+    // It must still live on the persistent data dir, NOT the default /tmp: systemd
+    // `PrivateTmp=yes` gives every daemon start a FRESH private /tmp, so a /tmp socket is
+    // unreachable from the restarted daemon even when KillMode=process keeps the server alive.
     const sock = resolveTmuxSocketPath("/data/x/terminal-worker");
     expect(sock).toBe(resolve("/data/x/terminal-worker", "tmux.sock"));
     expect(sock.startsWith("/tmp")).toBe(false);

@@ -67,15 +67,15 @@ export function durableDir(): string {
 }
 
 /**
- * The explicit tmux `-S` socket path: `<durableDir>/tmux.sock`. The durability survival key —
- * the socket lives on the PERSISTENT, shared data dir, NOT tmux's default
- * `/tmp/tmux-<uid>/default`. systemd `PrivateTmp=yes` gives every daemon START a fresh
- * private /tmp, so a /tmp socket is unreachable from the restarted daemon and re-attach
- * fails even though `KillMode=process` keeps the tmux server process alive (proven live
- * on the VPS 2026-06-16). The data-dir socket is reachable by BOTH daemon generations, so
- * the restarted daemon re-attaches by name. Short path by design (well under the ~108-char
- * AF_UNIX `sun_path` limit). The dir is `mkdir`'d in {@link main} (the `--allow-fs-write`
- * scope), so the socket's parent always exists before the tmux server binds it.
+ * The LEGACY single tmux `-S` socket: `<durableDir>/tmux.sock`. NO session is created on it
+ * any more — a drive's server socket is derived per session id ({@link tmuxSocketPathForSession}).
+ * It remains the daemon-side FALLBACK for a durable session whose persisted descriptor predates
+ * the per-session socket field, where `isTmuxAlive(name, socket?)` has no socket to target; a
+ * probe against it simply fails, which is the safe direction ("not alive").
+ *
+ * Under the data dir, never `/tmp`: systemd `PrivateTmp=yes` gives every daemon START a fresh
+ * private /tmp, so a /tmp socket is unreachable from a restarted daemon even though
+ * `KillMode=process` keeps the tmux server process alive.
  */
 export function resolveTmuxSocketPath(dir: string): string {
   return pathResolve(dir, "tmux.sock");
@@ -170,18 +170,12 @@ export function warnIfDurableTmuxUnavailable(tmuxPath: string | undefined, logge
  * pty backend uses (the attach client is an ordinary pty).
  */
 export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): TmuxBackendLike {
-  // The STABLE data-dir socket every tmux command targets via `-S` — so the server
-  // binds it and a restarted daemon re-attaches to the SAME socket (NOT the PrivateTmp-private
-  // /tmp default, which the new daemon generation cannot reach).
-  // NEW sessions are created on this daemon generation's PER-BOOT socket
-  // (the daemon injects COMIS_TERMINAL_TMUX_SOCKET = `<durableDir>/tmux-<gen>.sock`), so a restart's
-  // new sessions get a fresh tmux server in the LIVE mount namespace — a stranded prior-generation
-  // ns never breaks new bwrap sessions. A RE-ATTACH instead targets the SURVIVING
-  // session's OWN (prior-boot) socket, threaded per-frame from its descriptor (`a.tmuxSocket`). The
-  // legacy single socket is the fallback for both (no env / an older descriptor without it).
-  const legacySocket = resolveTmuxSocketPath(durableDir());
-  // eslint-disable-next-line no-restricted-syntax -- worker PROCESS entry: the daemon threads the (non-secret) per-boot tmux socket via env when forking; not a SecretManager value.
-  const bootSocket = process.env.COMIS_TERMINAL_TMUX_SOCKET ?? legacySocket;
+  // Every tmux command targets a socket under the DATA DIR via `-S` (never the PrivateTmp-private
+  // /tmp default, which a restarted daemon generation cannot reach). The socket is chosen
+  // PER CALL, not once here: a create derives it from the session id
+  // ({@link tmuxSocketPathForSession} — one server per drive), and a re-attach prefers the socket
+  // its descriptor RECORDED (`a.tmuxSocket`, which may be a pre-upgrade per-boot socket) before
+  // falling back to the same derivation.
   // The has-session probe runs with the SCRUBBED session env, same as new-session. `has-session`
   // does not start a server on tmux 3.4, so new-session (also scrubbed) is the sole server-starting
   // command — but passing the scrubbed env here too makes "the tmux server is only ever started

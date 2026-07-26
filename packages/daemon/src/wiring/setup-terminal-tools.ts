@@ -227,24 +227,6 @@ function resolveWorkerJsPath(_dataDir: string): string {
 }
 
 /**
- * A per-generation tmux server: this daemon generation's PER-BOOT tmux `-S`
- * socket — `<dataDir>/terminal-worker/tmux-<daemonPid>.sock`. MEMOIZED so EVERY agent's registry
- * (the descriptor/handle stamp) AND the worker (`COMIS_TERMINAL_TMUX_SOCKET`) share ONE socket per
- * daemon process. Keyed on the daemon PID: stable for the daemon's life (so a worker respawn reuses
- * it), unique per restart (a new daemon PID → a new socket). So a restart's NEW sessions are created
- * on a fresh server in the LIVE mount namespace — a stranded prior-generation ns (PrivateTmp/
- * ProtectHome + KillMode=process) never breaks new bwrap sessions — while a surviving
- * durable re-attaches from its OWN (prior-boot) socket recorded on its descriptor.
- */
-let cachedBootTmuxSocket: string | undefined;
-function bootTmuxSocketPath(dataDir: string): string {
-  if (cachedBootTmuxSocket === undefined) {
-    cachedBootTmuxSocket = `${terminalWorkerDir(dataDir)}/tmux-${process.pid}.sock`;
-  }
-  return cachedBootTmuxSocket;
-}
-
-/**
  * Build the daemon-side reaper eviction hooks for one agent —
  * mirrors the `onSpawnFailed` template. `onEvict` closes the observability loop on
  * EVERY reaped session: it emits `terminal:session_evicted` (the audited reason) +
@@ -416,7 +398,7 @@ function getOrCreateTerminalRegistry(
     // it to string inside the arrow). Present ⇒ sessions are PERSISTENT + agent-scoped.
     const agentWs = deps.agentWorkspaceDir;
     registry = createTerminalSessionRegistry({
-      spawnWorker: buildProductionSpawnWorker(resolveWorkerJsPath(deps.dataDir), deps.dataDir, bootTmuxSocketPath(deps.dataDir)),
+      spawnWorker: buildProductionSpawnWorker(resolveWorkerJsPath(deps.dataDir), deps.dataDir),
       // Stamp EACH durable session's OWN socket on its handle/descriptor. One tmux server per
       // session, so this MUST be derived per session id and MUST match the worker's own
       // derivation (`tmuxSocketPathForSession`, same dir + id) — otherwise the descriptor
