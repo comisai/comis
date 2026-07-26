@@ -157,6 +157,38 @@ describe("frontmatter-map — host namespaces", () => {
       { key: "metadata.runtime.vendorPolicy", action: "dropped_unmappable" },
     ]);
   });
+
+  it("warns for dropped fields nested inside a mapped prerequisite block", () => {
+    const { parsed, frontmatter, warnings } = mapAndParse({
+      name: "s",
+      description: "d",
+      metadata: {
+        runtime: {
+          requires: {
+            bins: ["ffmpeg"],
+            command: "./bootstrap.sh",
+            vendorCheck: true,
+          },
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect((frontmatter["comis"] as Record<string, unknown>)["requires"]).toEqual({
+      bins: ["ffmpeg"],
+      env: [],
+    });
+    expect(warnings).toEqual([
+      {
+        key: "metadata.runtime.requires.command",
+        action: "dropped_executable",
+      },
+      {
+        key: "metadata.runtime.requires.vendorCheck",
+        action: "dropped_unmappable",
+      },
+    ]);
+  });
 });
 
 describe("frontmatter-map — drop, never reinterpret", () => {
