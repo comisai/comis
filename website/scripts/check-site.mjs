@@ -398,7 +398,7 @@ check(deploymentWorkflow.includes('"assets/comis-social-preview.png"'), "Website
 const packageJson = JSON.parse(await readFile(path.join(websiteDir, "package.json"), "utf8"));
 sameValues(Object.keys(packageJson.dependencies).sort(), ["@astrojs/sitemap", "astro"], "Website runtime dependencies");
 sameValues(Object.keys(packageJson.devDependencies).sort(), ["@tailwindcss/vite", "tailwindcss"], "Website development dependencies");
-check(packageJson.dependencies.astro === "7.0.9", "Astro must stay on the audited release");
+check(packageJson.dependencies.astro === "7.1.0", "Astro must stay on the audited release");
 
 if (failures.length > 0) {
   console.error(`Website validation failed with ${failures.length} issue${failures.length === 1 ? "" : "s"}:`);

@@ -366,20 +366,49 @@ describe("@comis/agent -- architecture invariants", () => {
     ).toBe(false);
   });
 
+  // The invariant is that declarations are REACHABLE through sharp's exports
+  // map, not that they sit at any one key. Two shapes satisfy it: a single
+  // `types` beside the conditions, or a `types` inside each condition. sharp
+  // <=0.35.0 shipped neither and needed a local patch to add the flat form;
+  // 0.35.3 ships the per-condition form natively, which is strictly better
+  // because ESM and CJS get their own declaration file. Asserting either shape
+  // keeps the gate on the property that matters — TypeScript NodeNext must not
+  // fall back to scanning ancestor node_modules — instead of pinning a literal
+  // that turns every upstream restructuring into a false failure.
   it("installed sharp exposes declarations through its package exports", () => {
     const sharpPackagePath = resolve(PKG_ROOT, "node_modules/sharp/package.json");
     const sharpPackage = JSON.parse(readFileSync(sharpPackagePath, "utf8")) as {
       exports?: {
         "."?: {
           types?: string;
+          import?: string | { types?: string };
+          require?: string | { types?: string };
         };
       };
     };
 
+    const root = sharpPackage.exports?.["."];
+    const conditionTypes = (entry: string | { types?: string } | undefined): string | undefined =>
+      typeof entry === "object" ? entry.types : undefined;
+
+    const declarations = root?.types
+      ? [root.types]
+      : [conditionTypes(root?.import), conditionTypes(root?.require)].filter(
+          (value): value is string => typeof value === "string",
+        );
+
     expect(
-      sharpPackage.exports?.["."]?.types,
-      "sharp must export its bundled declarations so TypeScript NodeNext resolution does not depend on ancestor node_modules",
-    ).toBe("./lib/index.d.ts");
+      declarations.length > 0,
+      "sharp must export its bundled declarations so TypeScript NodeNext resolution does not " +
+        `depend on ancestor node_modules. Found exports["."] = ${JSON.stringify(root)}`,
+    ).toBe(true);
+
+    for (const declaration of declarations) {
+      expect(
+        existsSync(resolve(dirname(sharpPackagePath), declaration)),
+        `sharp exports the declaration ${declaration} but that file is absent from the installed package`,
+      ).toBe(true);
+    }
   });
 
   // ---------------------------------------------------------------------------
