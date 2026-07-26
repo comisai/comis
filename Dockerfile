@@ -18,7 +18,7 @@ WORKDIR /build
 # current at build time, producing non-reproducible builds. The pinned
 # version mirrors the host's `pnpm --version` output at the time of this
 # change. Bump together with the host pnpm version when upgrading.
-RUN corepack enable && corepack prepare pnpm@10.34.4 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
 
 # Copy dependency manifests first (layer caching)
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
@@ -245,7 +245,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 # line-~16 pin so build and runtime use identical pnpm semantics.
 ENV COREPACK_HOME=/usr/local/share/corepack
 RUN mkdir -p "$COREPACK_HOME" && chmod 777 "$COREPACK_HOME" && \
-    corepack enable && corepack prepare pnpm@10.34.4 --activate
+    corepack enable && corepack prepare pnpm@10.34.5 --activate
 
 # Create non-root user and data directory
 # Node base images ship a "node" user at UID/GID 1000 — rename it to "comis"

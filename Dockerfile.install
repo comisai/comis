@@ -34,7 +34,7 @@ ARG COMIS_INSTALL_BASE_IMAGE="ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a
 FROM ${COMIS_INSTALL_NODE_IMAGE} AS packer
 
 WORKDIR /build
-RUN corepack enable && corepack prepare pnpm@10.34.4 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
 
 # Workspace manifests first (layer caching)
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
