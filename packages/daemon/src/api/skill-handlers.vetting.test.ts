@@ -334,7 +334,15 @@ describe("skills.import — pre-write vetting gate", () => {
       _agentId: "agent-a",
     });
 
-    expect(result).toMatchObject({ ok: true, name: "my-skill", fileCount: 1 });
+    expect(result).toMatchObject({
+      ok: true,
+      name: "my-skill",
+      fileCount: 1,
+      trust: "community",
+      verdict: "safe",
+      contentHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      warnings: [],
+    });
     expect(fetchSpy).toHaveBeenCalledWith(
       "https://example.com/my-skill.skill",
       expect.objectContaining({ redirect: "manual" }),
@@ -522,7 +530,15 @@ describe("skills.import — pre-write vetting gate", () => {
       _agentId: "agent-a",
     });
 
-    expect(result).toMatchObject({ ok: true, name: "my-skill", fileCount: 1 });
+    expect(result).toMatchObject({
+      ok: true,
+      name: "my-skill",
+      fileCount: 1,
+      trust: "community",
+      verdict: "safe",
+      contentHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      warnings: [],
+    });
     expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual(["SKILL.md"]);
     expect(readSkillProvenance(join(wsDir, "data"))["local:my-skill"]).toMatchObject({
       source: "registry",
