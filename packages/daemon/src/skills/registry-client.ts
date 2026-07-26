@@ -268,7 +268,13 @@ export async function resolveRegistryMetadata(args: {
       ),
     );
   }
-  return ok({ resolution: resolution.value, registryTrust: config.trust });
+  return ok({
+    resolution: {
+      ...resolution.value,
+      evidence: { ...resolution.value.evidence, registryId: config.id },
+    },
+    registryTrust: config.trust,
+  });
 }
 
 /** Resolve, download, and safely unpack one configured registry skill. */

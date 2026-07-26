@@ -118,6 +118,15 @@ export function registerSystemHealthCommand(program: Command): void {
           );
         }
         info(`Breaker:    ${report.breakerTripTotal} trips`);
+        if (report.skillExposure) {
+          const exposure = report.skillExposure;
+          const nonAllowlisted = exposure.registryAllowlistKnown
+            ? String(exposure.nonAllowlistedRegistry)
+            : "unknown (offline config unavailable)";
+          info(
+            `Skills:     imported=${exposure.imported} community=${exposure.community} registry=${exposure.registry} nonAllowlistedRegistry=${nonAllowlisted} pendingMcp=${exposure.pendingMcp}`,
+          );
+        }
         // The cross-run AUTONOMY-health slice. Guarded like
         // degradedByCause (above): present ONLY when the daemon ran durable
         // (unattended) runs and the durable store was wired; ABSENT under

@@ -64,6 +64,11 @@ import { readSessionIndexWindow } from "./system-session-index.js";
 import { buildFindings, pipelineAuthoringAggregateFromRows, type Finding } from "./system-findings.js";
 import { computeAutonomySlice } from "./system-autonomy.js";
 import { computeCronWakeGateSlice } from "./system-cron-wake-gate.js";
+import {
+  buildRegistryAllowlistByAgent,
+  computeSkillExposure,
+  type RegistryAllowlistByAgent,
+} from "./system-skill-exposure.js";
 
 /** Default data directory (lazy). Mirrors obs-explain.ts / system-session-index.ts. */
 function defaultDataDir(): string {
@@ -334,7 +339,13 @@ function boundFindings(findings: readonly Finding[], truncations: TruncationEntr
  *   a `-Infinity`/`NaN` window bound.
  */
 export async function assembleSystemHealthReport(
-  deps: { obsStore?: ObservabilityStore; dataDir: string; clock: ClockPort; durableRuns?: DurableRunPort },
+  deps: {
+    obsStore?: ObservabilityStore;
+    dataDir: string;
+    clock: ClockPort;
+    durableRuns?: DurableRunPort;
+    registryAllowlistByAgent?: RegistryAllowlistByAgent;
+  },
   sinceHours: number,
 ): Promise<SystemHealthReport> {
   // Defense-in-depth guard: the contract rejects a non-finite/non-positive
@@ -453,6 +464,7 @@ export async function assembleSystemHealthReport(
   // `undefined` (block omitted) when no gated fire is in the window — honest
   // degradation, mirroring the autonomy slice's honest-omit.
   const cronWakeGateSlice = computeCronWakeGateSlice(cronWakeGate);
+  const skillExposure = computeSkillExposure(deps.dataDir, deps.registryAllowlistByAgent);
 
   // The deterministic verdict (PURE, ordered first-match-wins).
   // Dominant named HARD degradation cause (highest count; lexicographic tiebreak).
@@ -534,6 +546,7 @@ export async function assembleSystemHealthReport(
     // SystemHealthReportSchema so .parse() preserves it; rides the existing
     // admin-gated obs.system.health — no new RPC surface).
     pipelineAuthoringGate: pipelineAuthoringVerdict,
+    skillExposure,
     // The autonomy block (counts + the worst rootRunId ONLY).
     // Conditionally spread so an offline/non-durability boot with no autonomy
     // signals OMITS the field entirely (honest degradation; the schema field is
@@ -582,7 +595,13 @@ export function bindSystemHealthHandlers(deps: ObsHandlerDeps): Record<string, R
         // buildRpcDispatchDeps (daemon.ts:893, `durableRuns: c.durableRunStore`) on
         // the SAME ObservabilityApiDeps object as obsStore/clock; absent ⇒ honest
         // degradation (the block is omitted).
-        { obsStore: deps.obsStore, dataDir, clock: deps.clock!, durableRuns: deps.durableRuns },
+        {
+          obsStore: deps.obsStore,
+          dataDir,
+          clock: deps.clock!,
+          durableRuns: deps.durableRuns,
+          registryAllowlistByAgent: buildRegistryAllowlistByAgent(deps.agents),
+        },
         params.sinceHours ?? DEFAULT_WINDOW_HOURS,
       );
 

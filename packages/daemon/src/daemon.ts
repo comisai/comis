@@ -2586,6 +2586,7 @@ async function bootGateway(
     obsStore,
     clock: boot.clock,
     durableRuns: boot.durableRunStore,
+    agents: container.config.agents,
     workspaceDirs,
   });
 

@@ -60,6 +60,7 @@ export interface SkillRegistryRef {
 
 /** Registry claims retained for operator inspection; never a trust grant. */
 export interface SkillRegistryEvidence {
+  readonly registryId?: string;
   readonly publisherHandle?: string;
   readonly publisherVerified?: boolean;
   readonly securityStatus?: string;

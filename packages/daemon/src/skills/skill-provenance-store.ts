@@ -47,6 +47,7 @@ export type SkillProvenanceScope = "local" | "shared";
 
 /** Registry-supplied metadata. Recorded as evidence; never a trust grant. */
 export interface SkillProvenanceEvidence {
+  readonly registryId?: string;
   readonly publisherHandle?: string;
   readonly publisherVerified?: boolean;
   readonly securityStatus?: string;

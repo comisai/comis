@@ -1,5 +1,6 @@
 import { assembleIncidentReportFromSources, assembleSystemHealthReport, makeRealReader } from "../api/obs-handlers/index.js";
 import { ObsExplainContract, ObsSystemHealthContract } from "@comis/core";
+import { buildRegistryAllowlistByAgent } from "../api/obs-handlers/system-skill-exposure.js";
 
 /**
  * The trust-flag-FREE obs.explain + obs.system.health MCP-client closures
@@ -35,6 +36,13 @@ export function buildObsMcpClientClosures(deps: {
   obsStore: SystemAssemblerDeps["obsStore"];
   clock: SystemAssemblerDeps["clock"];
   durableRuns: SystemAssemblerDeps["durableRuns"];
+  agents: Readonly<Record<string, {
+    readonly skills?: {
+      readonly import?: {
+        readonly registries?: readonly { readonly id: string; readonly kind: "wellknown" | "registry" }[];
+      };
+    };
+  }>>;
   workspaceDirs: ReadonlyMap<string, string>;
 }): {
   obsExplainForMcpClient: (params: Record<string, unknown>) => Promise<unknown>;
@@ -48,7 +56,13 @@ export function buildObsMcpClientClosures(deps: {
   const obsSystemHealthForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
     const parsed = ObsSystemHealthContract.request.parse(params);
     return assembleSystemHealthReport(
-      { obsStore: deps.obsStore, dataDir: deps.dataDir, clock: deps.clock, durableRuns: deps.durableRuns },
+      {
+        obsStore: deps.obsStore,
+        dataDir: deps.dataDir,
+        clock: deps.clock,
+        durableRuns: deps.durableRuns,
+        registryAllowlistByAgent: buildRegistryAllowlistByAgent(deps.agents),
+      },
       parsed.sinceHours ?? 24,
     );
   };

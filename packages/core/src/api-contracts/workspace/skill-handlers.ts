@@ -22,6 +22,7 @@ import { defineContract } from "../types.js";
  * former describes lookup priority, while the latter describes trust origin.
  */
 const SkillEvidenceSchema = z.object({
+  registryId: z.string().optional(),
   publisherHandle: z.string().optional(),
   publisherVerified: z.boolean().optional(),
   securityStatus: z.string().optional(),

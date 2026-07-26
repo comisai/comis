@@ -156,6 +156,18 @@ export const SystemHealthReportSchema = z.object({
   pipelineAuthoringGate: z
     .object({ buildAuthor: z.boolean(), reason: z.string() })
     .optional(),
+  /** Durable, content-free installed-skill supply-chain posture. */
+  skillExposure: z
+    .object({
+      imported: z.number(),
+      community: z.number(),
+      registry: z.number(),
+      nonAllowlistedRegistry: z.number(),
+      pendingMcp: z.number(),
+      /** False for daemon-less reads that cannot load the active registry config. */
+      registryAllowlistKnown: z.boolean(),
+    })
+    .optional(),
   /**
    * The cross-run AUTONOMY-health slice. Counts + an
    * id ONLY (the worst rootRunId to drill into via `comis explain`) — NO
