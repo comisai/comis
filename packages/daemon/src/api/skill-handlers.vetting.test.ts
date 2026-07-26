@@ -546,6 +546,47 @@ describe("skill install — provenance recording", () => {
     return join(wsDir, "data");
   }
 
+  it("surfaces and records bundled MCP entries withheld by the trust gate", async () => {
+    mockGitHubDir("skills/my-skill", { "SKILL.md": CLEAN_SKILL_MD });
+    mockRunBundleInstallHook.mockResolvedValueOnce({
+      persistence: "skipped",
+      pendingMcpServers: [
+        {
+          name: "remote-tools",
+          transport: "stdio",
+          reason: "community-tier bundled MCP requires operator opt-in",
+        },
+      ],
+      hint:
+        "Review the bundled MCP declarations, set skills.import.autoConnectBundledMcp=true for the installing agent, and re-run the install to persist and connect them.",
+    });
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    const result = await handlers["skills.import"]!({
+      url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+      scope: "local",
+      _agentId: "agent-a",
+    });
+
+    expect(result).toMatchObject({
+      pendingMcpServers: [
+        {
+          name: "remote-tools",
+          transport: "stdio",
+          reason: "community-tier bundled MCP requires operator opt-in",
+        },
+      ],
+      hint: expect.stringContaining("skills.import.autoConnectBundledMcp"),
+    });
+    expect(readSkillProvenance(dataDir())["local:my-skill"]?.pendingMcpServers).toEqual([
+      {
+        name: "remote-tools",
+        transport: "stdio",
+        reason: "community-tier bundled MCP requires operator opt-in",
+      },
+    ]);
+  });
+
   it("records source, ref, hash, trust, and verdict after a successful github import", async () => {
     mockGitHubDir("skills/my-skill", { "SKILL.md": CLEAN_SKILL_MD });
     const handlers = createSkillHandlers(makeDeps(wsDir));
