@@ -6,6 +6,7 @@ import {
   unpackSkillArchive,
   type SkillBundleFile,
   type SkillInstallSource,
+  type SkillRegistryEvidence,
 } from "@comis/skills";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import type { WorkspaceApiDeps } from "../api/types.js";
@@ -17,6 +18,7 @@ import {
   readSkillImportBytes,
 } from "./import-fetch.js";
 import { fetchWellKnownSkill } from "./wellknown-skill-fetch.js";
+import { fetchRegistrySkillBundle } from "./registry-client.js";
 
 /** Current RPC request variants. */
 export type SkillImportSourceRequest =
@@ -35,6 +37,11 @@ export type SkillImportSourceRequest =
   | {
       readonly source: "archive";
       readonly archiveUrl: string;
+    }
+  | {
+      readonly source: "registry";
+      readonly registry: string;
+      readonly ref: string;
     };
 
 /** Common output consumed by the one write/vet/install path. */
@@ -44,6 +51,7 @@ export interface ResolvedSkillImportSource {
   readonly source: SkillInstallSource;
   readonly ref: string;
   readonly registryTrust?: "community" | "operator";
+  readonly evidence?: SkillRegistryEvidence;
 }
 
 function parseGitHubDirUrl(
@@ -211,6 +219,52 @@ export async function resolveSkillImportSource(
       source: "wellknown",
       ref: fetched.value.ref,
       registryTrust: fetched.value.registryTrust,
+    });
+  }
+  if (request.source === "registry") {
+    const importConfig = deps.agents[callingAgentId]?.skills?.import;
+    const vettingLimits = readVettingLimits(deps, callingAgentId);
+    const fetched = await fetchRegistrySkillBundle({
+      registryId: request.registry,
+      ref: request.ref,
+      registries: importConfig?.registries ?? [],
+      limits: {
+        maxArchiveBytes: importConfig?.maxArchiveBytes ?? 8 * 1024 * 1024,
+        maxCompressionRatio: importConfig?.maxCompressionRatio ?? 100,
+        maxEntries: vettingLimits?.maxEntries ?? 200,
+        maxEntryBytes: vettingLimits?.maxEntryBytes ?? 4 * 1024 * 1024,
+        maxBundleBytes: vettingLimits?.maxBundleBytes ?? 32 * 1024 * 1024,
+        maxPathDepth: vettingLimits?.maxPathDepth ?? 10,
+      },
+      ...(deps.skillImportFetchDeps !== undefined && {
+        deps: { fetchDeps: deps.skillImportFetchDeps },
+      }),
+    });
+    if (!fetched.ok) {
+      deps.logger.warn(
+        {
+          method: "skills.import",
+          source: "registry",
+          registryId: request.registry,
+          step: "fetch",
+          hint: fetched.error.hint,
+          errorKind:
+            fetched.error.kind === "registry_not_configured" ||
+            fetched.error.kind === "invalid_registry_config"
+              ? ("config" as const)
+              : ("dependency" as const),
+        },
+        "Registry skill resolution failed",
+      );
+      return err(new Error(`${fetched.error.kind}: ${fetched.error.message}. ${fetched.error.hint}`));
+    }
+    return ok({
+      name: fetched.value.name,
+      files: fetched.value.files,
+      source: "registry",
+      ref: fetched.value.ref,
+      registryTrust: fetched.value.registryTrust,
+      evidence: fetched.value.evidence,
     });
   }
 

@@ -168,6 +168,14 @@ export const SkillsImportContract = defineContract({
       agentId: z.string().optional(),
       force: z.boolean().optional(),
     }),
+    z.object({
+      source: z.literal("registry"),
+      registry: z.string().min(1),
+      ref: z.string().min(1),
+      scope: SkillScopeSchema.optional(),
+      agentId: z.string().optional(),
+      force: z.boolean().optional(),
+    }),
   ]),
   response: z.object({
     ok: z.literal(true),

@@ -11,7 +11,12 @@
 import {
   mapSkillRegistryResolution,
   parseSkillRegistryRef,
+  parseSkillBundleManifest,
   resolveSkillRegistryVersion,
+  unpackSkillArchive,
+  type SkillArchiveLimits,
+  type SkillBundleFile,
+  type SkillRegistryEvidence,
   type SkillRegistryResolution,
 } from "@comis/skills";
 import { systemSleep } from "@comis/core";
@@ -19,9 +24,11 @@ import { err, ok, tryCatch, type Result } from "@comis/shared";
 import {
   defaultSkillImportFetchDeps,
   fetchSkillImportResponse,
+  readSkillImportBytes,
   readSkillImportText,
   type SkillImportFetchDeps,
   type SkillImportRequestInit,
+  type SkillImportResponse,
 } from "./import-fetch.js";
 
 const MAX_REGISTRY_METADATA_BYTES = 1024 * 1024;
@@ -51,7 +58,8 @@ export interface RegistryClientError {
     | "request_failed"
     | "rate_limited"
     | "invalid_response"
-    | "identity_mismatch";
+    | "identity_mismatch"
+    | "invalid_archive";
   readonly message: string;
   readonly hint: string;
 }
@@ -59,6 +67,15 @@ export interface RegistryClientError {
 /** Metadata resolution plus the operator's explicit tier selection. */
 export interface ResolvedRegistryMetadata {
   readonly resolution: SkillRegistryResolution;
+  readonly registryTrust: "community" | "operator";
+}
+
+/** Downloaded and unpacked registry bundle ready for the local vetting gate. */
+export interface ResolvedRegistrySkill {
+  readonly name: string;
+  readonly files: readonly SkillBundleFile[];
+  readonly ref: string;
+  readonly evidence: SkillRegistryEvidence;
   readonly registryTrust: "community" | "operator";
 }
 
@@ -80,12 +97,12 @@ function retryDelayMs(rawValue: string | null, attempt: number): number {
   return Math.min(attempt * 1000, MAX_RETRY_AFTER_MS);
 }
 
-async function requestRegistryJson(
+async function requestRegistryResponse(
   url: string,
   configId: string,
   deps: RegistryClientDeps,
   init: Omit<SkillImportRequestInit, "signal" | "redirect"> = {},
-): Promise<Result<unknown, RegistryClientError>> {
+): Promise<Result<SkillImportResponse, RegistryClientError>> {
   const fetchDeps = deps.fetchDeps ?? defaultSkillImportFetchDeps;
   const sleep = deps.sleep ?? systemSleep;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -124,31 +141,7 @@ async function requestRegistryJson(
       );
     }
 
-    const text = await readSkillImportText(
-      fetched.value,
-      MAX_REGISTRY_METADATA_BYTES,
-      "skills.import.registryMetadataBytes",
-    );
-    if (!text.ok) {
-      return err(
-        makeError(
-          "invalid_response",
-          text.error.message,
-          "The configured registry returned metadata above the 1048576-byte safety limit.",
-        ),
-      );
-    }
-    const parsed = tryCatch((): unknown => JSON.parse(text.value));
-    if (!parsed.ok) {
-      return err(
-        makeError(
-          "invalid_response",
-          `Registry ${configId} returned invalid JSON: ${parsed.error.message}`,
-          `Verify the API base in skills.import.registries entry ${configId}.`,
-        ),
-      );
-    }
-    return ok(parsed.value);
+    return ok(fetched.value);
   }
   return err(
     makeError(
@@ -157,6 +150,41 @@ async function requestRegistryJson(
       `Verify skills.import.registries entry ${configId}.`,
     ),
   );
+}
+
+async function requestRegistryJson(
+  url: string,
+  configId: string,
+  deps: RegistryClientDeps,
+  init: Omit<SkillImportRequestInit, "signal" | "redirect"> = {},
+): Promise<Result<unknown, RegistryClientError>> {
+  const fetched = await requestRegistryResponse(url, configId, deps, init);
+  if (!fetched.ok) return fetched;
+  const text = await readSkillImportText(
+    fetched.value,
+    MAX_REGISTRY_METADATA_BYTES,
+    "skills.import.registryMetadataBytes",
+  );
+  if (!text.ok) {
+    return err(
+      makeError(
+        "invalid_response",
+        text.error.message,
+        "The configured registry returned metadata above the 1048576-byte safety limit.",
+      ),
+    );
+  }
+  const parsed = tryCatch((): unknown => JSON.parse(text.value));
+  if (!parsed.ok) {
+    return err(
+      makeError(
+        "invalid_response",
+        `Registry ${configId} returned invalid JSON: ${parsed.error.message}`,
+        `Verify the API base in skills.import.registries entry ${configId}.`,
+      ),
+    );
+  }
+  return ok(parsed.value);
 }
 
 function registryUrl(base: URL, path: string): URL {
@@ -241,4 +269,83 @@ export async function resolveRegistryMetadata(args: {
     );
   }
   return ok({ resolution: resolution.value, registryTrust: config.trust });
+}
+
+/** Resolve, download, and safely unpack one configured registry skill. */
+export async function fetchRegistrySkillBundle(args: {
+  readonly registryId: string;
+  readonly ref: string;
+  readonly registries: readonly SkillRegistryConfig[];
+  readonly limits: SkillArchiveLimits;
+  readonly deps?: RegistryClientDeps;
+}): Promise<Result<ResolvedRegistrySkill, RegistryClientError>> {
+  const metadata = await resolveRegistryMetadata(args);
+  if (!metadata.ok) return metadata;
+  const { resolution } = metadata.value;
+  if (resolution.download.kind === "files") {
+    return ok({
+      name: resolution.slug,
+      files: resolution.download.files,
+      ref: `registry:${resolution.slug}@${resolution.version}`,
+      evidence: resolution.evidence,
+      registryTrust: metadata.value.registryTrust,
+    });
+  }
+
+  const fetched = await requestRegistryResponse(
+    resolution.download.url,
+    args.registryId,
+    args.deps ?? {},
+  );
+  if (!fetched.ok) return fetched;
+  const bytes = await readSkillImportBytes(
+    fetched.value,
+    args.limits.maxArchiveBytes,
+    "skills.import.maxArchiveBytes",
+  );
+  if (!bytes.ok) {
+    return err(
+      makeError(
+        "invalid_archive",
+        bytes.error.message,
+        "Increase skills.import.maxArchiveBytes only after reviewing the registry artifact size.",
+      ),
+    );
+  }
+  const unpacked = unpackSkillArchive(bytes.value, args.limits);
+  if (!unpacked.ok) {
+    return err(
+      makeError(
+        "invalid_archive",
+        `${unpacked.error.code}: ${unpacked.error.message}`,
+        "The registry archive failed safe preflight; ask the publisher for a standard bounded ZIP.",
+      ),
+    );
+  }
+  const manifest = parseSkillBundleManifest(unpacked.value);
+  if (!manifest.ok) {
+    return err(
+      makeError(
+        "invalid_archive",
+        manifest.error.message,
+        "The registry archive must contain one valid SKILL.md manifest.",
+      ),
+    );
+  }
+  if (manifest.value.manifest.name !== resolution.slug) {
+    return err(
+      makeError(
+        "identity_mismatch",
+        `Registry archive declared ${manifest.value.manifest.name} for ${resolution.slug}`,
+        "Do not import until the registry slug and archive manifest name match.",
+      ),
+    );
+  }
+  return ok({
+    name: resolution.slug,
+    files: unpacked.value,
+    ref: `registry:${resolution.slug}@${resolution.version}`,
+    evidence: resolution.evidence,
+    registryTrust: metadata.value.registryTrust,
+  });
 }

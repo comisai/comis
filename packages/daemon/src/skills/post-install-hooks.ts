@@ -29,7 +29,11 @@
  */
 
 import { systemDateFrom, systemNowMs } from "@comis/core";
-import type { SkillInstallSource, VetSkillBundleResult } from "@comis/skills";
+import type {
+  SkillInstallSource,
+  SkillRegistryEvidence,
+  VetSkillBundleResult,
+} from "@comis/skills";
 import type { WorkspaceApiDeps } from "../api/types.js";
 import { runBundleInstallHook, type ApplyBundleInstallResult } from "./bundle-install-helper.js";
 import {
@@ -55,6 +59,8 @@ export interface PostInstallProvenanceArgs {
   readonly source: SkillInstallSource;
   /** Public locator, when the source has one. Never a credential-bearing URL. */
   readonly ref?: string;
+  /** Registry claims retained for inspection; never used to derive trust. */
+  readonly evidence?: SkillRegistryEvidence;
   /** The pre-write gate's result — supplies hash, trust, verdict, and counts. */
   readonly vetted: VetSkillBundleResult;
   /** Identity that performed the install. */
@@ -71,6 +77,7 @@ function buildRecord(
   return {
     source: args.source,
     ...(args.ref !== undefined && { ref: args.ref }),
+    ...(args.evidence !== undefined && { evidence: args.evidence }),
     contentHash: args.vetted.contentHash,
     importedAt: systemDateFrom(systemNowMs()).toISOString(),
     importedBy: { agentId: args.callingAgentId, ...(userId !== undefined && { userId }) },

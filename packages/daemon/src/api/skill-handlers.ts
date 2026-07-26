@@ -355,7 +355,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       const importStartedMs = systemNowMs();
       const resolved = await resolveSkillImportSource(params, deps, callingAgentId);
       if (!resolved.ok) throw resolved.error;
-      const { name, files: fetchedFiles, source, ref, registryTrust } = resolved.value;
+      const { name, files: fetchedFiles, source, ref, registryTrust, evidence } = resolved.value;
 
       // Scope-based path resolution
       const dataDir = deps.container.config.dataDir || ".";
@@ -552,6 +552,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
           scope,
           source,
           ref,
+          evidence,
           vetted,
           callingAgentId,
         }),
