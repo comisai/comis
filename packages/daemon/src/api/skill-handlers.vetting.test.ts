@@ -34,6 +34,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mirror skill-handlers.test.ts: stub the bundle hook so these tests exercise
 // the write path + gate, not the MCP resolver chain.
+// Stub only the MCP-bundle half of the post-install lifecycle; the provenance
+// half runs for real so the end-to-end record is asserted against disk.
 const mockRunBundleInstallHook = vi.hoisted(() =>
   vi.fn(async () => ({ persistence: "skipped" as const })),
 );
@@ -50,6 +52,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
+import { readSkillProvenance, SKILL_PROVENANCE_FILE_NAME } from "../skills/skill-provenance-store.js";
 
 function createSkillHandlers(deps: SkillHandlerDeps): Record<string, import("./types.js").RpcHandler> {
   return withHeldCapabilities(createSkillHandlersRaw(deps));
@@ -530,5 +533,169 @@ describe("skills.create / skills.update — bundle-wide surface", () => {
 
     // The prior content survives a rejected update.
     expect(fs.readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toBe(CLEAN_SKILL_MD);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Provenance recording (end-to-end, against a real data dir)
+// ---------------------------------------------------------------------------
+
+describe("skill install — provenance recording", () => {
+  /** The data dir makeDeps points the container at. */
+  function dataDir(): string {
+    return join(wsDir, "data");
+  }
+
+  it("records source, ref, hash, trust, and verdict after a successful github import", async () => {
+    mockGitHubDir("skills/my-skill", { "SKILL.md": CLEAN_SKILL_MD });
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    await handlers["skills.import"]!({
+      url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+      scope: "local",
+      _agentId: "agent-a",
+    });
+
+    const stored = readSkillProvenance(dataDir())["local:my-skill"];
+    expect(stored).toMatchObject({
+      source: "github",
+      ref: "https://github.com/owner/repo/tree/main/skills/my-skill",
+      trust: "community",
+      verdict: "safe",
+      findingCounts: { critical: 0, warn: 0 },
+      importedBy: { agentId: "agent-a" },
+    });
+    expect(stored?.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(stored?.importedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("records a locally-authored skill as operator tier with no ref", async () => {
+    // create by the DEFAULT agent is operator tier, and there is no remote
+    // locator to point at, so `ref` must be absent rather than invented.
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    await handlers["skills.create"]!({
+      name: "hand-written",
+      content: CLEAN_SKILL_MD,
+      scope: "local",
+      _agentId: "agent-a",
+    });
+
+    const stored = readSkillProvenance(dataDir())["local:hand-written"];
+    expect(stored?.source).toBe("create");
+    expect(stored?.trust).toBe("operator");
+    expect(stored?.ref).toBeUndefined();
+  });
+
+  it("records agent-authored tier when a non-default agent creates the skill", async () => {
+    const handlers = createSkillHandlers(
+      makeDeps(wsDir, {
+        defaultAgentId: "agent-a",
+        workspaceDirs: new Map([["agent-b", wsDir]]),
+        skillRegistries: new Map([["agent-b", makeRegistry()]]),
+      }),
+    );
+
+    await handlers["skills.create"]!({
+      name: "agent-made",
+      content: CLEAN_SKILL_MD,
+      scope: "local",
+      _agentId: "agent-b",
+    });
+
+    expect(readSkillProvenance(dataDir())["local:agent-made"]?.trust).toBe("agent-authored");
+  });
+
+  it("records the WARN count for a caution-verdict bundle that still installs", async () => {
+    const warnBody = `---\nname: my-skill\ndescription: Mentions a broad env dump.\n---\n\nRun printenv to inspect configuration.\n`;
+    mockGitHubDir("skills/my-skill", { "SKILL.md": warnBody });
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    await handlers["skills.import"]!({
+      url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+      scope: "local",
+      _agentId: "agent-a",
+    });
+
+    const stored = readSkillProvenance(dataDir())["local:my-skill"];
+    expect(stored?.verdict).toBe("caution");
+    expect(stored?.findingCounts.critical).toBe(0);
+    expect(stored?.findingCounts.warn).toBeGreaterThan(0);
+  });
+
+  it("writes NO provenance record when the gate blocks the install", async () => {
+    // The record must only ever describe skills that actually exist on disk.
+    mockGitHubDir("skills/my-skill", { "SKILL.md": CRITICAL_BODY_SKILL_MD });
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        scope: "local",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/skill_vet_rejected/i);
+
+    expect(fs.existsSync(join(dataDir(), SKILL_PROVENANCE_FILE_NAME))).toBe(false);
+  });
+
+  it("refreshes the recorded hash and source when a skill is updated", async () => {
+    const skillDir = join(wsDir, "skills", "my-skill");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(join(skillDir, "SKILL.md"), CLEAN_SKILL_MD, { mode: 0o600 });
+    const registry = makeRegistry();
+    (registry.getPromptSkillDescriptions as unknown as ReturnType<typeof vi.fn>).mockReturnValue([
+      { name: "my-skill", location: skillDir, description: "test description" },
+    ]);
+    const handlers = createSkillHandlers(
+      makeDeps(wsDir, { skillRegistries: new Map([["agent-a", registry]]) }),
+    );
+
+    // First update establishes a baseline record...
+    await handlers["skills.update"]!({
+      name: "my-skill",
+      content: CLEAN_SKILL_MD,
+      scope: "local",
+      _agentId: "agent-a",
+    });
+    const first = readSkillProvenance(dataDir())["local:my-skill"];
+    expect(first?.source).toBe("update");
+
+    // ...and a second update with different bytes must supersede its hash.
+    // Asserting the hash CHANGED (rather than recomputing it here) keeps the
+    // test independent of the digest's canonicalization.
+    const revised = `---\nname: my-skill\ndescription: A benign skill.\n---\n\nRevised body text.\n`;
+    await handlers["skills.update"]!({
+      name: "my-skill",
+      content: revised,
+      scope: "local",
+      _agentId: "agent-a",
+    });
+
+    const second = readSkillProvenance(dataDir())["local:my-skill"];
+    expect(second?.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(second?.contentHash).not.toBe(first?.contentHash);
+  });
+
+  it("drops the provenance record when the skill is deleted", async () => {
+    mockGitHubDir("skills/my-skill", { "SKILL.md": CLEAN_SKILL_MD });
+    const registry = makeRegistry();
+    const handlers = createSkillHandlers(
+      makeDeps(wsDir, { skillRegistries: new Map([["agent-a", registry]]) }),
+    );
+
+    await handlers["skills.import"]!({
+      url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+      scope: "local",
+      _agentId: "agent-a",
+    });
+    expect(readSkillProvenance(dataDir())["local:my-skill"]).toBeDefined();
+
+    (registry.getPromptSkillDescriptions as unknown as ReturnType<typeof vi.fn>).mockReturnValue([
+      { name: "my-skill", location: join(wsDir, "skills", "my-skill"), description: "test description" },
+    ]);
+    await handlers["skills.delete"]!({ name: "my-skill", scope: "local", _agentId: "agent-a" });
+
+    expect(readSkillProvenance(dataDir())["local:my-skill"]).toBeUndefined();
   });
 });

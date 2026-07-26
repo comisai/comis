@@ -53,6 +53,7 @@ data directory.
 ├── background-tasks/        # background task state files
 ├── skills/                  # seeded skill library — bundled claude-code/codex/skill-creator skills (re-seeded on version change) + any added skills
 │   └── <name>/SKILL.md      # one dir per skill (the agent auto-discovers these by description)
+├── installed-skills.json    # skill provenance — origin, content hash, trust tier (0o600)
 ├── identity/
 │   └── device.json          # Ed25519 device identity (auto-generated)
 └── devices/                 # paired device records (if pairing is used)
@@ -64,6 +65,7 @@ Some entries only appear under specific conditions.
 - `secrets.db` — created only when `SECRETS_MASTER_KEY` is set and `security.storage: encrypted` (the default).
 - `auth-profiles.json`, `mcp-tokens/`, `secrets.json` — only present when `security.storage: file`. In `encrypted` mode, OAuth profiles and secrets live in `secrets.db` tables instead.
 - `.daemon.lock` — present only while the daemon is running. Safe to delete when the daemon is stopped (it will be recreated on the next start).
+- `installed-skills.json` — created on the first skill install; absent on a daemon that has never installed one.
 - `daemon.console.log` — present only when the daemon was launched by the CLI (the `comis init` wizard's start step or `comis daemon start`). Under systemd the process output goes to the journal instead, and under pm2 to `~/.pm2/logs/` — so this file is absent in those setups.
 - `broker.sock` — present only when the credential broker is active (`executor.broker.enabled: true` in `config.yaml`). Ephemeral — deleted and recreated on each daemon start.
 - `cap.sock` — present only when an autonomy-bearing agent is configured (the loopback capability endpoint). Ephemeral — `0600` owner-only, deleted and recreated on each daemon start. The lease **bearer** itself is never persisted — it is re-minted on each resume from the run's persisted (attenuated) capabilities and exact trust level, so there is still no `cap.db` / lease-secret table on disk. The transient [bounded-autonomy](/agents/autonomy) control-plane *counters* (the per-root spawn-ceiling counters, the call-rate windows, and the outward-quota windows) remain **in-memory** and reset on restart. The in-flight **run state** need not be ephemeral, though: when [`autonomy.durability.enabled`](/reference/config-yaml#autonomy-agentsautonomy) is on (**on by default** — full capability out of the box), the daemon persists each run's checkpoint and its outward-send ledger to `memory.db` (the [`durable_run_checkpoints` + `outward_send_ledger`](#memory-db) tables), so a cron-fired pipeline **survives a daemon restart** — on resume the lease is re-minted from those persisted attenuated caps and trust level, and the consumed budget is re-seeded from the record. With durability off (an explicit opt-out) the data-dir layout is unchanged by autonomy and those tables are never written. See [Durability & Resume](/agents/autonomy#durability-resume).
@@ -367,6 +369,37 @@ Output of [`comis trace export`](/operations/incident-bundle) and the owner `/ex
 **Safe to delete?** Yes. Exports are point-in-time diagnostic artifacts; delete them after handing off to an engineer.
 
 ---
+
+### `installed-skills.json`
+
+Provenance for every installed skill: where it came from, the content hash of the bytes that were installed, the trust tier it was assigned, and the vetting verdict at install time. Written after a skill install succeeds — never before, so the file only ever describes skills that actually exist on disk. Created with mode `0o600` (daemon-private).
+
+One entry per skill, keyed `<scope>:<name>` so a `local` and a `shared` skill of the same name stay independent:
+
+```json
+{
+  "local:my-skill": {
+    "source": "github",
+    "ref": "https://github.com/owner/repo/tree/main/skills/my-skill",
+    "contentHash": "sha256:...",
+    "importedAt": "2026-07-26T10:00:00.000Z",
+    "importedBy": { "agentId": "default", "userId": "operator" },
+    "trust": "community",
+    "verdict": "safe",
+    "findingCounts": { "critical": 0, "warn": 2 }
+  }
+}
+```
+
+`source` records which install path produced the skill (`create`, `update`, `upload`, or a remote source). `ref` is a public locator and is absent for locally-authored skills — it never carries credentials. `trust` is **derived from the install call**, never declared by the skill itself: a remote import is always `community`, local authoring by the default agent is `operator`, and only the daemon's own seeding is `first-party`. See [Security Scanning](/skills/security-scanning) for how the verdict is produced.
+
+The record is content-free by construction — a hash and counts, never scanned text — so it is safe to read, log, and paste into a review.
+
+<Note>
+Deleting a skill drops its entry. If you remove a skill directory by hand, the entry is left behind and a later re-install of that name is compared against a hash that no longer corresponds to anything on disk; delete the entry to clear it.
+</Note>
+
+A missing or malformed file reads as empty rather than failing startup — provenance is evidence, not a lock.
 
 ### `terminal-drive/`
 

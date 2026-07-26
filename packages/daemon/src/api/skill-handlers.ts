@@ -59,7 +59,7 @@ import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import { createLogger } from "@comis/infra";
 import { rmSync, existsSync } from "node:fs";
 import type { RpcHandler } from "./types.js";
-import { runBundleInstallHook } from "../skills/bundle-install-helper.js";
+import { runPostInstallHooks, forgetSkillProvenanceOnDelete } from "../skills/post-install-hooks.js";
 // Pre-write vetting gate. Runs on the WHOLE bundle between scope resolution and
 // the first file write on all four install paths, so a blocked bundle leaves
 // zero files on disk. Not operator-disableable — see the module header.
@@ -234,7 +234,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       }
 
       // Vet the whole bundle BEFORE the first write (throws on block).
-      runInstallVettingGate({
+      const vetted = runInstallVettingGate({
         deps, source: "upload", skillName: params.name, callingAgentId,
         files: params.files.map((f) => ({ path: f.path, content: f.content })),
         ctx: (rawParams as { _context?: { userId?: string } })._context,
@@ -323,7 +323,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
-      await runBundleInstallHook(deps, params.name, skillDir, rawParams);
+      await runPostInstallHooks(deps, params.name, skillDir, rawParams, { scope, source: "upload", vetted, callingAgentId });
 
       const result = { ok: true as const, path: skillDir };
       if (IS_DEV) SkillsUploadContract.response.parse(result);
@@ -406,7 +406,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       }
 
       // Vet the whole fetched bundle BEFORE the first write (throws on block).
-      runInstallVettingGate({
+      const vetted = runInstallVettingGate({
         deps, source: "github", skillName: name, callingAgentId,
         files: fetchedFiles.map((f) => ({ path: f.path, content: f.content })),
         ctx: (rawParams as { _context?: { userId?: string } })._context,
@@ -485,7 +485,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
-      await runBundleInstallHook(deps, name, skillDir, rawParams);
+      await runPostInstallHooks(deps, name, skillDir, rawParams, { scope, source: "github", ref: url, vetted, callingAgentId });
 
       const result = { ok: true as const, path: skillDir, name, fileCount: fetchedFiles.length };
       if (IS_DEV) SkillsImportContract.response.parse(result);
@@ -564,8 +564,10 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       // Use the skill's actual location (directory name may differ from skill name)
       const skillDir = skill.location;
 
-      // Remove skill directory
+      // Remove skill directory + its provenance record (a stale record would
+      // make a later re-import of this name look like tampering).
       rmSync(skillDir, { recursive: true, force: true });
+      forgetSkillProvenanceOnDelete(deps, scope, params.name);
 
       // Scope-aware re-discovery
       if (scope === "shared" && deps.skillRegistries) {
@@ -617,7 +619,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       // Vet before write (throws on block). Supersedes the former inline
       // scanSkillContent call: same rules, but manifest-aware and via the one
       // gate every install path shares.
-      runInstallVettingGate({
+      const vetted = runInstallVettingGate({
         deps, source: "create", skillName: params.name, callingAgentId,
         files: [{ path: "SKILL.md", content: params.content }],
         ctx: (rawParams as { _context?: { userId?: string } })._context,
@@ -690,7 +692,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
-      await runBundleInstallHook(deps, params.name, skillDir, rawParams);
+      await runPostInstallHooks(deps, params.name, skillDir, rawParams, { scope, source: "create", vetted, callingAgentId });
 
       const result = { ok: true as const, path: skillDir, name: params.name };
       if (IS_DEV) SkillsCreateContract.response.parse(result);
@@ -736,7 +738,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       }
 
       // Vet before write (throws on block, leaving the prior SKILL.md intact).
-      runInstallVettingGate({
+      const vetted = runInstallVettingGate({
         deps, source: "update", skillName: params.name, callingAgentId,
         files: [{ path: "SKILL.md", content: params.content }],
         ctx: (rawParams as { _context?: { userId?: string } })._context,
@@ -783,7 +785,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
-      await runBundleInstallHook(deps, params.name, skill.location, rawParams);
+      await runPostInstallHooks(deps, params.name, skill.location, rawParams, { scope, source: "update", vetted, callingAgentId });
 
       const result = { ok: true as const, name: params.name };
       if (IS_DEV) SkillsUpdateContract.response.parse(result);
