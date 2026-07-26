@@ -469,6 +469,54 @@ describe("skills.import — pre-write vetting gate", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(3);
   });
 
+  it("refuses a well-known bundle whose manifest name differs from the indexed name", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "https://example.com/.well-known/skills/index.json") {
+        return new Response(
+          JSON.stringify({ skills: [{ name: "my-skill" }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        "---\nname: another-skill\ndescription: Mismatched identity\n---\nBody\n",
+        { status: 200 },
+      );
+    });
+    const handlers = createSkillHandlers(
+      makeDeps(wsDir, {
+        agents: {
+          "agent-a": {
+            skills: {
+              import: {
+                registries: [
+                  {
+                    id: "example-index",
+                    base: "https://example.com",
+                    kind: "wellknown",
+                    trust: "community",
+                  },
+                ],
+              },
+            },
+          },
+        } as never,
+      }),
+    );
+
+    await expect(
+      handlers["skills.import"]!({
+        source: "wellknown",
+        ref: "wellknown:https://example.com#my-skill",
+        scope: "local",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/manifest name.*another-skill.*my-skill/i);
+
+    expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual([]);
+    expect(filesUnder(join(wsDir, "skills", "another-skill"))).toEqual([]);
+  });
+
   it("refuses a well-known base outside skills.import.registries before any network call", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const handlers = createSkillHandlers(makeDeps(wsDir));
@@ -709,6 +757,24 @@ describe("skills.import — pre-write vetting gate", () => {
 
     // INV-V1: a reject leaves nothing behind.
     expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual([]);
+  });
+
+  it("refuses a repository folder whose manifest declares a different skill name", async () => {
+    mockGitHubDir("skills/my-skill", {
+      "SKILL.md": "---\nname: another-skill\ndescription: Mismatched identity\n---\nBody\n",
+    });
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        scope: "local",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/manifest name.*another-skill.*my-skill/i);
+
+    expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual([]);
+    expect(filesUnder(join(wsDir, "skills", "another-skill"))).toEqual([]);
   });
 
   it("rejects when SKILL.md is clean but a reference file carries a CRITICAL pattern", async () => {

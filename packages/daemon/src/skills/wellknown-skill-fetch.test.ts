@@ -151,4 +151,21 @@ describe("fetchWellKnownSkill", () => {
       "skills.installVetting.maxEntryBytes=3",
     );
   });
+
+  it("refuses query parameters before fetching or recording a well-known reference", async () => {
+    const pinned = vi.fn();
+
+    const result = await fetchWellKnownSkill({
+      ref: `wellknown:${BASE}?token=test-key#summarize`,
+      dataDir,
+      registries: registry(),
+      cacheTtlMs: 100,
+      fetchDeps: fetchDeps(pinned),
+      logger: { debug: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok ? "" : result.error.message).toContain("query parameters");
+    expect(pinned).not.toHaveBeenCalled();
+  });
 });
