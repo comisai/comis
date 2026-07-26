@@ -1747,17 +1747,17 @@ async function runSessionLocked(
     ttlSplit,
   } = streamSetup;
 
-  session.agent.streamFn = composeStreamWrappers(
+  session.agent.streamFunction = composeStreamWrappers(
     streamSetup.wrappers,
-    session.agent.streamFn,
+    session.agent.streamFunction,
     deps.logger,
   );
 
   // Context engine: transformContext hook
   // Runs BEFORE convertToLlm in the SDK pipeline (pre-LLM-call context management).
-  // Same runtime override pattern as streamFn above.
+  // Same runtime override pattern as streamFunction above.
   // TypeScript declares transformContext as private, but it's a plain instance property
-  // accessible at runtime. Same pattern as streamFn override above.
+  // accessible at runtime. Same pattern as streamFunction override above.
   const ceSetup = setupContextEngine({
     config, deps: frozenDeps, formattedKey, sessionKey: formattedKey,
     conversationRef: executionConversationRef.value,

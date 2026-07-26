@@ -135,9 +135,9 @@ async function maybeEscalateOutput(
   });
   if (!instrumented.ok) return err(instrumented.error);
 
-  const originalStreamFn = session.agent.streamFn;
+  const originalStreamFn = session.agent.streamFunction;
   let escalationUsed = false;
-  session.agent.streamFn = (model, context, options) => {
+  session.agent.streamFunction = (model, context, options) => {
     if (!escalationUsed) {
       escalationUsed = true;
       const merged = { ...options, maxTokens: escalatedMaxTokens };
@@ -171,7 +171,7 @@ async function maybeEscalateOutput(
       "Output escalation retry failed",
     );
   } finally {
-    session.agent.streamFn = originalStreamFn;
+    session.agent.streamFunction = originalStreamFn;
   }
 
   return ok(true);

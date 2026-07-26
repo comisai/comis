@@ -54,7 +54,7 @@ function makeSession(overrides?: Record<string, unknown>) {
     setActiveToolsByName: vi.fn(),
     isStreaming: false,
     isCompacting: false,
-    agent: { setSystemPrompt: vi.fn(), streamFn: vi.fn() },
+    agent: { setSystemPrompt: vi.fn(), streamFunction: vi.fn() },
     ...overrides,
   } as any;
 }

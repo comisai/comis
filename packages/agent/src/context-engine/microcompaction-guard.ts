@@ -310,7 +310,7 @@ function createInlineReference(
  * oversized tool result messages to disk at write time.
  *
  * Wraps `sm.appendMessage` on the instance (not the prototype), using the
- * same instance-patching pattern as `session.agent.streamFn`.
+ * same instance-patching pattern as `session.agent.streamFunction`.
  *
  * Only `toolResult` messages are guarded. All other message types (user,
  * assistant, custom, bashExecution) pass through unmodified.
