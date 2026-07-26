@@ -112,6 +112,43 @@ const VALID_TIERS: ReadonlySet<string> = new Set([
 /** Verdicts accepted from disk. */
 const VALID_VERDICTS: ReadonlySet<string> = new Set(["safe", "caution", "dangerous"]);
 
+/** Install sources accepted from durable state. */
+const VALID_SOURCES: ReadonlySet<string> = new Set([
+  "seed",
+  "backfill",
+  "create",
+  "update",
+  "upload",
+  "github",
+  "archive",
+  "wellknown",
+  "registry",
+]);
+
+function hasOptionalType(
+  record: Record<string, unknown>,
+  key: string,
+  type: "string" | "boolean",
+): boolean {
+  return record[key] === undefined || typeof record[key] === type;
+}
+
+function isValidEvidence(value: unknown): value is SkillProvenanceEvidence {
+  if (value === undefined) return true;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const evidence = value as Record<string, unknown>;
+  return (
+    hasOptionalType(evidence, "registryId", "string") &&
+    hasOptionalType(evidence, "publisherHandle", "string") &&
+    hasOptionalType(evidence, "publisherVerified", "boolean") &&
+    hasOptionalType(evidence, "securityStatus", "string") &&
+    hasOptionalType(evidence, "securityPassed", "boolean") &&
+    hasOptionalType(evidence, "securityAuditUrl", "string") &&
+    hasOptionalType(evidence, "checkedAt", "string") &&
+    hasOptionalType(evidence, "registryDecision", "string")
+  );
+}
+
 /**
  * The store key for a skill.
  *
@@ -127,18 +164,21 @@ export function provenanceKey(scope: SkillProvenanceScope, name: string): string
 function isValidRecord(value: unknown): value is SkillProvenanceRecord {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const r = value as Record<string, unknown>;
-  if (typeof r["source"] !== "string") return false;
+  if (typeof r["source"] !== "string" || !VALID_SOURCES.has(r["source"])) return false;
   if (typeof r["contentHash"] !== "string") return false;
   if (typeof r["importedAt"] !== "string") return false;
+  if (!hasOptionalType(r, "ref", "string") || !hasOptionalType(r, "backfilled", "boolean")) return false;
   if (typeof r["trust"] !== "string" || !VALID_TIERS.has(r["trust"])) return false;
   if (typeof r["verdict"] !== "string" || !VALID_VERDICTS.has(r["verdict"])) return false;
   const by = r["importedBy"];
   if (by === null || typeof by !== "object" || Array.isArray(by)) return false;
-  if (typeof (by as Record<string, unknown>)["agentId"] !== "string") return false;
+  const importedBy = by as Record<string, unknown>;
+  if (typeof importedBy["agentId"] !== "string" || !hasOptionalType(importedBy, "userId", "string")) return false;
   const counts = r["findingCounts"];
   if (counts === null || typeof counts !== "object" || Array.isArray(counts)) return false;
   const c = counts as Record<string, unknown>;
   if (typeof c["critical"] !== "number" || typeof c["warn"] !== "number") return false;
+  if (!isValidEvidence(r["evidence"])) return false;
   const pending = r["pendingMcpServers"];
   if (pending === undefined) return true;
   if (!Array.isArray(pending)) return false;
