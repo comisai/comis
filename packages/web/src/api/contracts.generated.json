@@ -15273,30 +15273,69 @@
   "skills.import": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "url": {
-          "type": "string",
-          "minLength": 1
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string",
+              "const": "github"
+            },
+            "url": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "local",
+                "shared"
+              ]
+            },
+            "agentId": {
+              "type": "string"
+            },
+            "force": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "additionalProperties": false
         },
-        "scope": {
-          "type": "string",
-          "enum": [
-            "local",
-            "shared"
-          ]
-        },
-        "agentId": {
-          "type": "string"
-        },
-        "force": {
-          "type": "boolean"
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string",
+              "const": "wellknown"
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "local",
+                "shared"
+              ]
+            },
+            "agentId": {
+              "type": "string"
+            },
+            "force": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "source",
+            "ref"
+          ],
+          "additionalProperties": false
         }
-      },
-      "required": [
-        "url"
-      ],
-      "additionalProperties": false
+      ]
     },
     "response": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

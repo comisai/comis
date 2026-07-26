@@ -128,23 +128,32 @@ export const SkillsUploadContract = defineContract({
 });
 
 /**
- * `skills.import` — import a skill from a GitHub directory URL. ADMIN
- * scope. The handler fetches the directory tree from the GitHub
- * Contents API and writes each file into the resolved skill folder.
+ * `skills.import` — import a skill from a GitHub directory URL or an
+ * operator-allowlisted well-known index. ADMIN scope.
  *
- * Request: `{ url, scope?, agentId? }`.
+ * Request: GitHub `{ url, source?: "github", ... }` or well-known
+ * `{ source: "wellknown", ref, ... }`.
  *
  * Response: `{ ok: true, path, name, fileCount }`.
  */
 export const SkillsImportContract = defineContract({
   method: "skills.import",
-  request: z.object({
-    url: z.string().min(1),
-    scope: SkillScopeSchema.optional(),
-    agentId: z.string().optional(),
-    // See SkillsUploadContract.request.force comment.
-    force: z.boolean().optional(),
-  }),
+  request: z.union([
+    z.object({
+      source: z.literal("github").optional(),
+      url: z.string().min(1),
+      scope: SkillScopeSchema.optional(),
+      agentId: z.string().optional(),
+      force: z.boolean().optional(),
+    }),
+    z.object({
+      source: z.literal("wellknown"),
+      ref: z.string().min(1),
+      scope: SkillScopeSchema.optional(),
+      agentId: z.string().optional(),
+      force: z.boolean().optional(),
+    }),
+  ]),
   response: z.object({
     ok: z.literal(true),
     path: z.string(),

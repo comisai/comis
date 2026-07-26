@@ -92,6 +92,15 @@ export { deriveSkillTrustTier } from "./import/trust-tier.js";
 // SkillTrustTier is consumed by the daemon's provenance store, which persists
 // the derived tier; SkillInstallSource by both that store and the install gate.
 export type { SkillInstallSource, SkillTrustTier } from "./import/trust-tier.js";
+export {
+  parseWellKnownIndex,
+  resolveWellKnownSkill,
+} from "./import/sources/wellknown-index.js";
+export type {
+  ResolvedWellKnownSkill,
+  WellKnownIndex,
+  WellKnownIndexError,
+} from "./import/sources/wellknown-index.js";
 
 // Skill audit emitter — consumed by the daemon's install-vetting gate so it can
 // record a vet verdict without a direct event-bus wiring of its own.

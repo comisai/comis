@@ -110,14 +110,16 @@ export async function readSkillImportBytes(
   }
   if (response.body === null) return ok(new Uint8Array());
 
-  return fromPromise(
-    (async () => {
+  const read = await fromPromise(
+    (async (): Promise<Result<Uint8Array, Error>> => {
       const chunks: Uint8Array[] = [];
       let total = 0;
       for await (const chunk of response.body!) {
         total += chunk.byteLength;
         if (total > maxBytes) {
-          throw new Error(`Skill import actual bytes ${total} exceed ${configKey}=${maxBytes}`);
+          return err(
+            new Error(`Skill import actual bytes ${total} exceed ${configKey}=${maxBytes}`),
+          );
         }
         chunks.push(chunk);
       }
@@ -127,9 +129,10 @@ export async function readSkillImportBytes(
         bytes.set(chunk, offset);
         offset += chunk.byteLength;
       }
-      return bytes;
+      return ok(bytes);
     })(),
   );
+  return read.ok ? read.value : read;
 }
 
 /** Read bounded UTF-8 text through the same byte cap. */
@@ -142,4 +145,3 @@ export async function readSkillImportText(
   if (!bytes.ok) return bytes;
   return ok(new TextDecoder("utf-8", { fatal: true }).decode(bytes.value));
 }
-

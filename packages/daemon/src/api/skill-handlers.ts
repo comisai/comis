@@ -64,6 +64,7 @@ import { bundleInstallResponseFields, runPostInstallHooks, forgetSkillProvenance
 // the first file write on all four install paths, so a blocked bundle leaves
 // zero files on disk. Not operator-disableable — see the module header.
 import { runInstallVettingGate } from "../skills/vet-install-gate.js";
+import { resolveSkillImportSource } from "../skills/resolve-skill-import-source.js";
 
 const logger = createLogger({ name: "skill-handlers" });
 
@@ -80,20 +81,6 @@ const SKILL_NAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
  * the in-handler logic, not the contract parse.
  */
 const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
-
-/**
- * Parse a GitHub directory URL into API-friendly parts.
- * Accepts: https://github.com/{owner}/{repo}/tree/{branch}/{path}
- */
-function parseGitHubDirUrl(url: string): { owner: string; repo: string; branch: string; path: string } | null {
-  const m = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+)$/);
-  if (!m) return null;
-  return { owner: m[1], repo: m[2], branch: m[3], path: m[4].replace(/\/$/, "") };
-}
-
-// Bounded GitHub Contents API walk (depth, file count, timeout) lives
-// in `./github-skill-fetch.ts` so this file stays under the 800-line cap.
-import { fetchGitHubDir } from "./github-skill-fetch.js";
 
 // Single source of truth: WorkspaceApiDeps (shared with workspace, browser,
 // approval, mcp, notification handlers).
@@ -297,7 +284,8 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         }
         const writeResult = writeRegularFile({
           path: filePath,
-          content: file.content,
+          content:
+            typeof file.content === "string" ? file.content : Buffer.from(file.content),
           confinedBaseDir: skillsBaseDir,
         });
         if (!writeResult.ok) {
@@ -339,7 +327,6 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       const userParams = stripInternalFields(rawParams);
       const params = SkillsImportContract.request.parse(userParams);
 
-      const url = params.url.trim();
       const scope = params.scope === "shared" ? "shared" : "local";
 
       if (!callingAgentId) {
@@ -354,34 +341,9 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         );
       }
 
-      if (!url) {
-        throw new Error("URL is required");
-      }
-
-      // Parse GitHub URL
-      const parsed = parseGitHubDirUrl(url);
-      if (!parsed) {
-        throw new Error("Invalid GitHub URL. Expected: https://github.com/{owner}/{repo}/tree/{branch}/{path}");
-      }
-
-      // Derive skill name from the last path segment
-      const segments = parsed.path.split("/").filter(Boolean);
-      const name = segments[segments.length - 1];
-      if (!name || name.length > 64 || !SKILL_NAME_RE.test(name) || name.includes("--")) {
-        throw new Error(`Invalid skill name derived from URL: "${name}". Must be lowercase alphanumeric with hyphens.`);
-      }
-
-      // Fetch all files from the GitHub directory
-      const fetchedFiles = await fetchGitHubDir(parsed.owner, parsed.repo, parsed.path, parsed.branch, deps.skillImportFetchDeps);
-      if (fetchedFiles.length === 0) {
-        throw new Error("No files found at the given URL");
-      }
-
-      // Must include a SKILL.md
-      const hasSkillMd = fetchedFiles.some((f) => f.path === "SKILL.md" || f.path.endsWith("/SKILL.md"));
-      if (!hasSkillMd) {
-        throw new Error("Repository folder must contain a SKILL.md file");
-      }
+      const resolved = await resolveSkillImportSource(params, deps, callingAgentId);
+      if (!resolved.ok) throw resolved.error;
+      const { name, files: fetchedFiles, source, ref, registryTrust } = resolved.value;
 
       // Scope-based path resolution
       const dataDir = deps.container.config.dataDir || ".";
@@ -407,9 +369,10 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
 
       // Vet the whole fetched bundle BEFORE the first write (throws on block).
       const vetted = runInstallVettingGate({
-        deps, source: "github", skillName: name, callingAgentId,
+        deps, source, skillName: name, callingAgentId,
         files: fetchedFiles.map((f) => ({ path: f.path, content: f.content })),
         ctx: (rawParams as { _context?: { userId?: string } })._context, force: rawParams.force === true,
+        ...(registryTrust !== undefined && { registryTrust }),
       });
 
       // Route skill-folder dir creation + per-file writes
@@ -459,7 +422,8 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         }
         const writeResult = writeRegularFile({
           path: filePath,
-          content: file.content,
+          content:
+            typeof file.content === "string" ? file.content : Buffer.from(file.content),
           confinedBaseDir: skillsBaseDir,
         });
         if (!writeResult.ok) {
@@ -485,7 +449,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
-      const hooks = await runPostInstallHooks(deps, name, skillDir, rawParams, { scope, source: "github", ref: url, vetted, callingAgentId });
+      const hooks = await runPostInstallHooks(deps, name, skillDir, rawParams, { scope, source, ref, vetted, callingAgentId });
 
       const result = { ok: true as const, path: skillDir, name, fileCount: fetchedFiles.length, ...bundleInstallResponseFields(hooks) };
       if (IS_DEV) SkillsImportContract.response.parse(result);

@@ -58,6 +58,8 @@ export interface RunInstallVettingGateArgs {
   readonly files: readonly SkillBundleFile[];
   /** Identity performing the install. */
   readonly callingAgentId: string;
+  /** Explicit trust promotion from the matched operator-configured remote base. */
+  readonly registryTrust?: "community" | "operator";
   /** Optional `_context` bag from rawParams (userId for the audit record). */
   readonly ctx?: { userId?: string; traceId?: string } | undefined;
   /**
@@ -165,6 +167,7 @@ export function runInstallVettingGate(args: RunInstallVettingGateArgs): VetSkill
     source,
     callingAgentId,
     defaultAgentId: deps.defaultAgentId,
+    ...(args.registryTrust !== undefined && { registryTrust: args.registryTrust }),
   });
 
   const limits = readVettingLimits(deps, callingAgentId);

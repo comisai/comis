@@ -66,10 +66,21 @@ describe("deriveSkillTrustTier — remote sources", () => {
     ).toBe<SkillTrustTier>("operator");
   });
 
-  it("ignores a registryTrust promotion for a source that is not a registry", () => {
+  it("honors an explicit operator promotion for a configured well-known index", () => {
+    expect(
+      deriveSkillTrustTier({
+        source: "wellknown",
+        callingAgentId: DEFAULT,
+        defaultAgentId: DEFAULT,
+        registryTrust: "operator",
+      }),
+    ).toBe<SkillTrustTier>("operator");
+  });
+
+  it("ignores a registryTrust promotion for a source without configured trust", () => {
     // The promotion is a property of an operator-configured registry entry.
-    // It must not leak into an arbitrary archive URL or well-known domain.
-    for (const source of ["archive", "wellknown", "github"] as const) {
+    // It must not leak into an arbitrary archive or GitHub URL.
+    for (const source of ["archive", "github"] as const) {
       expect(
         deriveSkillTrustTier({
           source,

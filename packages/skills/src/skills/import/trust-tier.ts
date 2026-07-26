@@ -56,9 +56,8 @@ export interface DeriveSkillTrustTierInput {
   readonly defaultAgentId: string | undefined;
   /**
    * An operator's explicit per-registry trust promotion, from
-   * `skills.import.registries[].trust`. Honored ONLY for `source: "registry"`:
-   * the promotion is a property of a configured registry entry, so it must not
-   * leak onto an arbitrary archive URL or well-known domain.
+   * `skills.import.registries[].trust`. Honored for configured registry and
+   * well-known sources only; it must not leak onto an arbitrary archive URL.
    */
   readonly registryTrust?: "community" | "operator";
 }
@@ -82,8 +81,13 @@ export function deriveSkillTrustTier(input: DeriveSkillTrustTierInput): SkillTru
   if (input.source === "backfill") return "operator";
 
   if (REMOTE_SOURCES.has(input.source)) {
-    // Only a configured registry entry can carry an operator promotion.
-    if (input.source === "registry" && input.registryTrust === "operator") return "operator";
+    // Only an operator-configured registry/index entry can carry a promotion.
+    if (
+      (input.source === "registry" || input.source === "wellknown") &&
+      input.registryTrust === "operator"
+    ) {
+      return "operator";
+    }
     return "community";
   }
 
