@@ -808,6 +808,72 @@ describe("skill install — provenance recording", () => {
     expect(stored?.importedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
+  it("returns an unchanged no-op when re-imported bytes match the live recorded bundle", async () => {
+    mockGitHubDir("skills/my-skill", { "SKILL.md": CLEAN_SKILL_MD });
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+    const params = {
+      url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+      scope: "local",
+      _agentId: "agent-a",
+    };
+
+    await handlers["skills.import"]!(params);
+    const result = await handlers["skills.import"]!(params);
+
+    expect(result).toMatchObject({ ok: true, name: "my-skill", unchanged: true });
+    expect(mockRunBundleInstallHook).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a lower-trust re-import over an operator-owned skill", async () => {
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+    await handlers["skills.create"]!({
+      name: "my-skill",
+      content: CLEAN_SKILL_MD,
+      scope: "local",
+      _agentId: "agent-a",
+    });
+    mockGitHubDir("skills/my-skill", {
+      "SKILL.md": CLEAN_SKILL_MD.replace("Follow these steps", "Different remote steps"),
+    });
+
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        scope: "local",
+        force: true,
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/skill_reimport_refused.*operator.*community/i);
+
+    expect(fs.readFileSync(join(wsDir, "skills", "my-skill", "SKILL.md"), "utf-8")).toBe(
+      CLEAN_SKILL_MD,
+    );
+  });
+
+  it("requires force for a changed equal-tier re-import and then replaces it", async () => {
+    mockGitHubDir("skills/my-skill", { "SKILL.md": CLEAN_SKILL_MD });
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+    const params = {
+      url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+      scope: "local",
+      _agentId: "agent-a",
+    };
+    await handlers["skills.import"]!(params);
+
+    vi.restoreAllMocks();
+    const revised = CLEAN_SKILL_MD.replace("Follow these steps", "Use these revised steps");
+    mockGitHubDir("skills/my-skill", { "SKILL.md": revised });
+    await expect(handlers["skills.import"]!(params)).rejects.toThrow(
+      /skill_reimport_confirm.*findingCounts/i,
+    );
+
+    const result = await handlers["skills.import"]!({ ...params, force: true });
+    expect(result).toMatchObject({ ok: true, name: "my-skill", unchanged: false });
+    expect(fs.readFileSync(join(wsDir, "skills", "my-skill", "SKILL.md"), "utf-8")).toBe(
+      revised,
+    );
+  });
+
   it("records a locally-authored skill as operator tier with no ref", async () => {
     // create by the DEFAULT agent is operator tier, and there is no remote
     // locator to point at, so `ref` must be absent rather than invented.
