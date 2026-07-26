@@ -5,7 +5,6 @@ import {
   parseSkillBundleManifest,
   unpackSkillArchive,
   type SkillBundleFile,
-  type SkillInstallSource,
   type SkillRegistryEvidence,
 } from "@comis/skills";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
@@ -48,7 +47,7 @@ export type SkillImportSourceRequest =
 export interface ResolvedSkillImportSource {
   readonly name: string;
   readonly files: readonly SkillBundleFile[];
-  readonly source: SkillInstallSource;
+  readonly source: "github" | "archive" | "wellknown" | "registry";
   readonly ref: string;
   readonly registryTrust?: "community" | "operator";
   readonly evidence?: SkillRegistryEvidence;

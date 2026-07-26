@@ -33,6 +33,21 @@ export interface AgentEvents {
   /** Skill rejected during scan (security violations) */
   "skill:rejected": { skillName: string; reason: string; violations: string[]; timestamp: number };
 
+  /** A vetted skill import committed to disk; content-free provenance summary. */
+  "skill:imported": {
+    skillName: string;
+    source: "github" | "archive" | "wellknown" | "registry";
+    scope: "local" | "shared";
+    trust: "first-party" | "operator" | "community" | "agent-authored";
+    verdict: "safe" | "caution" | "dangerous";
+    contentHash: string;
+    fileCount: number;
+    findingCounts: { critical: number; warn: number };
+    pendingMcpCount: number;
+    agentId: string;
+    timestamp: number;
+  };
+
   /** Prompt skill body loaded and sanitized */
   "skill:prompt_loaded": {
     skillName: string;

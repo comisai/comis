@@ -657,6 +657,22 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       const criticalCount = vetted.findings.filter(
         (finding) => finding.severity === "CRITICAL",
       ).length;
+      deps.eventBus?.emit("skill:imported", {
+        skillName: name,
+        source,
+        scope,
+        trust: vetted.trust,
+        verdict: vetted.verdict,
+        contentHash: vetted.contentHash,
+        fileCount: fetchedFiles.length,
+        findingCounts: {
+          critical: criticalCount,
+          warn: vetted.findings.length - criticalCount,
+        },
+        pendingMcpCount: hooked.value.pendingMcpServers?.length ?? 0,
+        agentId: callingAgentId,
+        timestamp: systemNowMs(),
+      });
       logger.info(
         {
           method: "skills.import",

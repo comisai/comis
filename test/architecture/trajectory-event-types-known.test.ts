@@ -65,7 +65,6 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // -------------------------------------------------------------------
   "skill:loaded",
   "skill:executed",
-  "skill:rejected",
   "skill:registry_reset",
   "skill:failed",
 

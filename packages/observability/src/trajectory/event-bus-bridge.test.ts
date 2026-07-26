@@ -1097,6 +1097,25 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       invokedBy: "user",
       args: {},
     },
+    "skill:imported": {
+      skillName: "s",
+      source: "registry",
+      scope: "local",
+      trust: "community",
+      verdict: "safe",
+      contentHash: `sha256:${"a".repeat(64)}`,
+      fileCount: 2,
+      findingCounts: { critical: 0, warn: 0 },
+      pendingMcpCount: 1,
+      agentId: "default",
+      timestamp: 1000,
+    },
+    "skill:rejected": {
+      skillName: "unsafe",
+      reason: "Skill install blocked by pre-write vetting gate",
+      violations: ["EXEC_SUBSHELL"],
+      timestamp: 1000,
+    },
     "memory:skill_used": {
       usedSkillIds: ["skill-a", "skill-b"],
       usedCount: 2,
@@ -4066,7 +4085,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // 122 = 121 + memory:recall_degraded (the degraded/failed-recall record —
     // makes a dead recall diagnosable from `comis explain` + the system health view
     // instead of a daemon.log grep).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(132);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(134);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

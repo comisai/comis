@@ -69,6 +69,8 @@ export const TRAJECTORY_EVENT_TYPES = [
   // Skill invocation observability.
   "skill.prompt_loaded",
   "skill.prompt_invoked",
+  "skill.imported",
+  "skill.rejected",
   // Per-turn used-skill attribution (inline-surfaced reuse credit; ids + count only).
   "memory.skill_used",
   // Per-turn topic-match reuse census (surfaced-but-uncredited near-misses; names + numbers).

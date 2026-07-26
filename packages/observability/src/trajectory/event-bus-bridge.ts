@@ -76,6 +76,8 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // ---- Skill observability ----
   "skill:prompt_loaded": "skill.prompt_loaded",
   "skill:prompt_invoked": "skill.prompt_invoked",
+  "skill:imported": "skill.imported",
+  "skill:rejected": "skill.rejected",
   // The per-turn used-skill attribution — the INLINE-surfaced reuse credit.
   // Bridged so the credit shows on a one-call `comis explain`. AGENT-emitted (postExecution) → it IS
   // arch-scanned, so it is NOT in the arch allowlist (the disjoint invariant). Content-free: opaque skill

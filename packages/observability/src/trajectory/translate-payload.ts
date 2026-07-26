@@ -190,6 +190,26 @@ export function translatePayload(
         args: payload.args,
       };
 
+    case "skill:imported":
+      return {
+        skillName: payload.skillName,
+        source: payload.source,
+        scope: payload.scope,
+        trust: payload.trust,
+        verdict: payload.verdict,
+        contentHash: payload.contentHash,
+        fileCount: payload.fileCount,
+        findingCounts: payload.findingCounts,
+        pendingMcpCount: payload.pendingMcpCount,
+      };
+
+    case "skill:rejected":
+      return {
+        skillName: payload.skillName,
+        reason: payload.reason,
+        violations: payload.violations,
+      };
+
     // The per-turn used-skill attribution (inline-surfaced reuse credit). IDS + COUNT
     // ONLY — opaque skill ids (same id-class as skill.prompt_invoked.skillName), never a procedure body.
     // The fold (accumulateSkillUsedRecord) reads usedSkillIds into explain.skillsUsed.
