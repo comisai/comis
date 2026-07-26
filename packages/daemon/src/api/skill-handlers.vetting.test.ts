@@ -243,6 +243,88 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("skills.import — pre-write vetting gate", () => {
+  it("imports a well-known file map through the same gate and provenance path", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "https://example.com/.well-known/skills/index.json") {
+        return new Response(
+          JSON.stringify({
+            skills: [
+              {
+                name: "my-skill",
+                description: "Well-known fixture",
+                files: ["SKILL.md", "references/guide.md"],
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url === "https://example.com/my-skill/SKILL.md") {
+        return new Response(CLEAN_SKILL_MD, { status: 200 });
+      }
+      if (url === "https://example.com/my-skill/references/guide.md") {
+        return new Response("# Guide\n\nBenign support text.\n", { status: 200 });
+      }
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    });
+    const handlers = createSkillHandlers(
+      makeDeps(wsDir, {
+        agents: {
+          "agent-a": {
+            skills: {
+              import: {
+                registries: [
+                  {
+                    id: "example-index",
+                    base: "https://example.com",
+                    kind: "wellknown",
+                    trust: "community",
+                  },
+                ],
+              },
+            },
+          },
+        } as never,
+      }),
+    );
+
+    const result = await handlers["skills.import"]!({
+      source: "wellknown",
+      ref: "wellknown:https://example.com#my-skill",
+      scope: "local",
+      _agentId: "agent-a",
+    });
+
+    expect(result).toMatchObject({ ok: true, name: "my-skill", fileCount: 2 });
+    expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual([
+      "SKILL.md",
+      "references/guide.md",
+    ]);
+    expect(readSkillProvenance(join(wsDir, "data"))["local:my-skill"]).toMatchObject({
+      source: "wellknown",
+      ref: "wellknown:https://example.com#my-skill",
+      trust: "community",
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("refuses a well-known base outside skills.import.registries before any network call", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    await expect(
+      handlers["skills.import"]!({
+        source: "wellknown",
+        ref: "wellknown:https://unconfigured.example#my-skill",
+        scope: "local",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/skills\.import\.registries/);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects a CRITICAL SKILL.md body and writes ZERO files", async () => {
     mockGitHubDir("skills/my-skill", { "SKILL.md": CRITICAL_BODY_SKILL_MD });
     const handlers = createSkillHandlers(makeDeps(wsDir));
