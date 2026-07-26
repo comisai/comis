@@ -121,7 +121,7 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
@@ -1395,8 +1395,23 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // each deterministic degraded-reply builder. Missing locale packs fall back
   // to the injected catalog's English strings.
   const replyLanguage = params.responseLocalePolicy.locale;
+  // Wire the locale seam to operator config. `createLocaleCatalog` had exactly
+  // one production caller — the no-packs DEFAULT_LOCALE_CATALOG — so every
+  // deterministic reply resolved English no matter what `language` was pinned,
+  // and the documented "consumed by the deterministic degraded replies" claim
+  // had nothing behind it. An unknown id is reported, never silently kept.
+  const localeCatalog = catalogFromLocalePacks(config.localePacks, (locale, messageId) => {
+    deps.logger.warn(
+      {
+        step: "degraded-reply",
+        errorKind: "config" as const,
+        hint: `agents.<id>.localePacks.${locale}.${messageId} is not a platform-reply message id, so it is ignored; valid ids: ${LOCALE_MESSAGE_IDS.join(", ")}`,
+      },
+      "unknown locale pack message id ignored",
+    );
+  });
   if (effectiveFinishReason === "output_starved") {
-    result.response = (result.response ?? "") + buildOutputStarvedAnnotation(replyLanguage);
+    result.response = (result.response ?? "") + buildOutputStarvedAnnotation(replyLanguage, localeCatalog);
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "output_starved annotation appended" },
       "output_starved — annotated truncated reply",
@@ -1420,6 +1435,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       ...(incidentTraceId !== undefined ? { traceId: incidentTraceId } : {}),
       cause: exhaustionCause,
       language: replyLanguage,
+      localeCatalog,
     });
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "context_exhausted synthesized reply" },
@@ -1435,6 +1451,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     const loopReply = buildLoopDetectedReply({
       ...(loopTraceId !== undefined ? { traceId: loopTraceId } : {}),
       language: replyLanguage,
+      localeCatalog,
     });
     result.response = existing.length > 0 ? `${existing}\n\n${loopReply}` : loopReply;
     deps.logger.warn(

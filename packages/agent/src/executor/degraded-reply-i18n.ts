@@ -16,7 +16,8 @@ export type LocaleMessageId =
   | "advice_history"
   | "advice_fixed_overhead"
   | "output_starved"
-  | "loop_detected";
+  | "loop_detected"
+  | "pipeline_timeout";
 
 export type LocalePack = Readonly<Partial<Record<LocaleMessageId, string>>>;
 
@@ -44,6 +45,11 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "I stopped because I kept repeating an action that wasn't making progress "
       + "(usually a tool that failed or was blocked) and didn't want to loop. The "
       + "request may need a different approach, or that capability isn't available here.",
+  pipeline_timeout:
+    "I stopped this request because it was taking too long and hit the time limit "
+      + "for a single turn. Nothing was left half-applied. If it needs many lookups, "
+      + "ask for a narrower slice (fewer items, a shorter date range) and I can do the "
+      + "rest in follow-ups.",
 };
 
 function canonicalLocale(raw: string): string | undefined {
@@ -79,6 +85,39 @@ export function createLocaleCatalog(
 }
 
 export const DEFAULT_LOCALE_CATALOG = createLocaleCatalog();
+
+/** Every id an operator pack may define. Exported so config surfaces can list them. */
+export const LOCALE_MESSAGE_IDS: readonly LocaleMessageId[] = Object.keys(
+  ENGLISH_PACK,
+) as LocaleMessageId[];
+
+const KNOWN_MESSAGE_IDS = new Set<string>(LOCALE_MESSAGE_IDS);
+
+/**
+ * Build a catalog from the operator's raw `localePacks` config.
+ *
+ * This is the seam's ONLY production entry point. `createLocaleCatalog` takes a
+ * typed pack; operator config arrives as an open `string -> string` record
+ * because core does not own this runtime's message-id vocabulary. Unknown ids
+ * are dropped and reported rather than silently retained — a typo in a pack
+ * would otherwise look configured while the reply stayed English.
+ */
+export function catalogFromLocalePacks(
+  packs: Readonly<Record<string, Readonly<Record<string, string>>>> | undefined,
+  onUnknownId?: (locale: string, messageId: string) => void,
+): LocaleCatalog {
+  if (packs === undefined) return DEFAULT_LOCALE_CATALOG;
+  const typed: Record<string, LocalePack> = {};
+  for (const [locale, pack] of Object.entries(packs)) {
+    const known: Partial<Record<LocaleMessageId, string>> = {};
+    for (const [id, text] of Object.entries(pack)) {
+      if (KNOWN_MESSAGE_IDS.has(id)) known[id as LocaleMessageId] = text;
+      else onUnknownId?.(locale, id);
+    }
+    if (Object.keys(known).length > 0) typed[locale] = known;
+  }
+  return createLocaleCatalog(typed);
+}
 
 function incidentRef(traceId?: string): string {
   return traceId !== undefined && traceId.length > 0 ? ` (incident ${traceId})` : "";
@@ -135,4 +174,17 @@ export function selectLoopDetectedReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "loop_detected") + incidentRef(opts.traceId);
+}
+
+/**
+ * The reply for a turn killed by the execution wall-clock ceiling
+ * (`executionTimeoutMs`). The model never returned, so there is no partial text
+ * to annotate — this REPLACES the response entirely.
+ */
+export function selectPipelineTimeoutReply(
+  locale: string | undefined,
+  opts: { traceId?: string },
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "pipeline_timeout") + incidentRef(opts.traceId);
 }

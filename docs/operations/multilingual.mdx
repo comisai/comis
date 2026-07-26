@@ -142,12 +142,12 @@ in mind.
 
 ## Configuration keys
 
-Two config keys carry the multilingual surface; both are documented in the
+Three config keys carry the multilingual surface; all are documented in the
 [config reference](/reference/config-yaml).
 
-- **`agents.<id>.language`** — the explicit response locale, consumed by the deterministic
-  degraded replies (the context-exhausted and output-starved notices) and by locale-quality
-  observability. Accepts a **canonical BCP-47 tag** (`"he"`, `"pt-BR"`) — config validation
+- **`agents.<id>.language`** — the explicit response locale, governing the model's reply
+  language and locale-quality observability. It does **not** translate the deterministic
+  platform replies; `localePacks` below does that. Accepts a **canonical BCP-47 tag** (`"he"`, `"pt-BR"`) — config validation
   rejects anything else. When omitted, Comis resolves the turn's locale from the
   channel-supplied request locale (e.g. the Telegram client's `language_code`, carried on the
   inbound message metadata), then from the dominant script of the current message (non-Latin
@@ -172,6 +172,29 @@ Two config keys carry the multilingual surface; both are documented in the
   message looks like, set `agents.<id>.language`; without it, per-message language switching is
   followed naturally but never forced. See the
   [`agents` reference](/reference/config-yaml#agents).
+- **`agents.<id>.localePacks`** — the strings for the **deterministic platform replies**: the
+  canned lines the runtime itself sends when a turn degrades (wall-clock timeout, context
+  exhausted, output truncated, loop halted). These are not model output, so `language` cannot
+  reach them — they come from a string table, and the engine ships exactly one pack, English.
+  Supply your locale's strings here:
+
+  ```yaml
+  agents:
+    default:
+      language: he
+      localePacks:
+        he:
+          pipeline_timeout: "עצרתי את הבקשה — היא ארכה יותר מהזמן המוקצב לתור אחד."
+          loop_detected: "עצרתי כי חזרתי על אותה פעולה ללא התקדמות."
+  ```
+
+  A locale variant falls back to its base language (`he-IL` → `he`), and any message id you omit
+  falls back to English — so a partial pack is safe. An id the runtime does not recognize is
+  ignored and logged at WARN naming the exact config path, so a typo never becomes silently dead
+  config. Ids and full details: [`config` reference](/reference/config-yaml#locale-packs).
+
+  **Setting `language: he` alone leaves these replies in English.** That is the single most
+  common surprise here: the model answers in Hebrew while a timeout notice arrives in English.
 - **`embedding.multilingual`** — an advisory boolean for the `comis system-health` model-health line
   (see [Embedding and reranker](#embedding-and-reranker)). It does not gate search. See the
   [configuration reference](/reference/config-yaml).
@@ -264,10 +287,14 @@ resistance on the recommended local model). Translating regex patterns into N la
 maintenance treadmill with near-zero marginal coverage. This stance is documented here so it is
 not mistaken for an oversight.
 
-**No-translation principle.** Comis never translates user content. Summaries, memories, and
-deterministic replies stay in the conversation's language, and code identifiers, file paths, tool
-names, configuration knob paths, and trace ids stay **verbatim in every language** — a Hebrew
-degraded reply still names `contextEngine.budget.effectiveContextCapSmall` and the trace id exactly.
+**No-translation principle.** Comis never translates user content. Summaries and memories stay
+in the conversation's language, and code identifiers, file paths, tool names, configuration knob
+paths, and trace ids stay **verbatim in every language** — a Hebrew degraded reply still names
+`contextEngine.budget.effectiveContextCapSmall` and the trace id exactly. The same principle is
+why the runtime does not translate its **own** deterministic replies either: it ships one pack,
+English, and a deployment supplies the rest through `localePacks`. Shipping a curated set of
+languages in the engine would be the runtime choosing a preferred human language, which it must
+not do — and it would leave every unshipped language silently English.
 
 ## Local and small models (non-Latin)
 

@@ -16,6 +16,7 @@
  */
 
 import type { AgentExecutor, InboundMessageProvenancePlan } from "@comis/agent";
+import type { PlatformReplyLocale } from "./execution/execution-platform-reply-locale.js";
 // MessageRouter lives in orchestrator. Relative path used because the
 // orchestrator package cannot import its own published name.
 import type { MessageRouter } from "./routing/message-router.js";
@@ -204,6 +205,8 @@ export interface ChannelManagerDeps {
   queueConfig?: QueueConfig;
   /** Optional callback to get elevated reply config for an agent. When absent, no elevated routing. */
   getElevatedReplyConfig?: (agentId: string) => ElevatedReplyConfig | undefined;
+  /** Agent locale pin + operator strings for the deterministic platform replies. */
+  getPlatformReplyLocale?: (agentId: string) => PlatformReplyLocale | undefined;
   /** Optional tool assembler for resolving agent tools before execution. When absent, executor receives no tools (undefined).
    *  The optional `options` object carries per-call wiring -- currently used to thread the inbound session's
    *  structural SessionKey so the assembled tools resolve the session-lifetime FileStateTracker via

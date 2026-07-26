@@ -1518,11 +1518,19 @@ describe("executeAndDeliver", () => {
         makeBlockStreamCfg(), new Set(), makeSendOverrides(),
       );
 
-      // Canned error sent to channel
+      // The timeout reply goes out through the deterministic platform-reply
+      // mechanism (so an operator pack can localize it), names the real cause,
+      // and no longer promises a transient "try again in a moment" for a turn
+      // that burned the whole ceiling.
       expect(adapter.sendMessage).toHaveBeenCalledWith(
         "12345",
-        "I'm having trouble processing your request right now. Please try again in a moment.",
+        expect.stringContaining("hit the time limit"),
         expect.objectContaining({}),
+      );
+      expect(adapter.sendMessage).not.toHaveBeenCalledWith(
+        "12345",
+        expect.stringContaining("try again in a moment"),
+        expect.anything(),
       );
 
       // execution:aborted emitted with pipeline_timeout reason

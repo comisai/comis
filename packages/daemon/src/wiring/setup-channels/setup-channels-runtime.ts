@@ -305,6 +305,15 @@ export async function buildAndStartChannelManager(
         const agentConfig = agents[agentId];
         return agentConfig?.elevatedReply;
       },
+      getPlatformReplyLocale: (agentId: string) => {
+        const agentConfig = agents[agentId];
+        return {
+          ...(agentConfig?.language === undefined ? {} : { language: agentConfig.language }),
+          ...(agentConfig?.localePacks === undefined
+            ? {}
+            : { localePacks: agentConfig.localePacks }),
+        };
+      },
       getEnforceFinalTag: (agentId: string) => {
         const agentConfig = agents[agentId];
         return agentConfig?.enforceFinalTag;

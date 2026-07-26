@@ -2505,8 +2505,9 @@ describe("degraded-reply chokepoint consumes the typed locale policy", () => {
 
   it("source-grep — the resolved tag reaches all three builders (language passed in)", () => {
     const block = readDegradedBlock();
-    // output_starved: buildOutputStarvedAnnotation(<tag>) — called with an argument.
-    expect(block).toMatch(/buildOutputStarvedAnnotation\(\s*[A-Za-z_$][\w$]*\s*\)/);
+    // output_starved: buildOutputStarvedAnnotation(<tag>, <catalog>) — the tag
+    // is the first argument; the operator-config catalog rides alongside it.
+    expect(block).toMatch(/buildOutputStarvedAnnotation\(\s*[A-Za-z_$][\w$]*\s*,/);
     // context_exhausted + loop_detected: a `language:` field in the opts object.
     const languageFields = block.match(/\blanguage\s*:/g) ?? [];
     // At least the context_exhausted and loop_detected opts carry `language:`.

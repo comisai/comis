@@ -39,6 +39,7 @@ import type {
 import type { RetryEngine } from "@comis/core";
 
 import { executeLlm } from "./execution-execute.js";
+import type { PlatformReplyLocale } from "./execution-platform-reply-locale.js";
 import {
   filterExecutionResponse,
 } from "./execution-filter.js";
@@ -83,6 +84,13 @@ export interface ExecutionPipelineDeps {
   streamingConfig?: StreamingConfig;
   sendPolicyConfig?: SendPolicyConfig;
   getElevatedReplyConfig?: (agentId: string) => ElevatedReplyConfig | undefined;
+  /**
+   * The agent's locale pin + operator-supplied strings for the deterministic
+   * platform replies. Needed here because the pipeline-timeout reply is sent
+   * from this layer, after the executor (which owns every other degraded reply)
+   * has already been abandoned by `withTimeout`.
+   */
+  getPlatformReplyLocale?: (agentId: string) => PlatformReplyLocale | undefined;
   channelRegistry?: ChannelRegistry;
   retryEngine?: RetryEngine;
   commandQueue?: CommandQueue;

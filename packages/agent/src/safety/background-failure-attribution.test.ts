@@ -37,7 +37,7 @@ function fakeBus() {
 }
 
 describe("isRelayedBackgroundFailure", () => {
-  it("recognises the poller relaying someone else's failure", () => {
+  it("returns true when the poller relays someone else's failure", () => {
     expect(isRelayedBackgroundFailure(
       BACKGROUND_POLLER_TOOL,
       "[conflict] Background task failed: tool timed out",

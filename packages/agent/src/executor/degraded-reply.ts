@@ -23,8 +23,12 @@ import {
   selectOutputStarvedAnnotation,
   selectContextExhaustedReply,
   selectLoopDetectedReply,
+  selectPipelineTimeoutReply,
   type LocaleCatalog,
 } from "./degraded-reply-i18n.js";
+
+export { catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply-i18n.js";
+export type { LocaleCatalog, LocaleMessageId, LocalePack } from "./degraded-reply-i18n.js";
 
 // CAP_KNOB_BY_CLASS lives in degraded-reply-i18n.ts as an internal diagnostic
 // mapping. Re-exported here for callers that need to associate capability
@@ -101,6 +105,22 @@ export function buildDegradedReply(
  */
 export function buildLoopDetectedReply(opts?: ContextExhaustedReplyOpts): string {
   return selectLoopDetectedReply(opts?.language, {
+    traceId: opts?.traceId,
+  }, opts?.localeCatalog);
+}
+
+/**
+ * Honest reply for a turn the execution wall-clock ceiling killed
+ * (`executionTimeoutMs`). REPLACES the response — a pipeline timeout means the
+ * model never returned, so there is nothing partial to annotate.
+ *
+ * This exists so the timeout reply is a MEMBER of the localizable platform-reply
+ * set. It used to be a literal at the send site in the orchestrator, which put
+ * the one message a stuck turn is guaranteed to produce outside the only
+ * mechanism that can translate it. PURE: same opts → same string.
+ */
+export function buildPipelineTimeoutReply(opts?: ContextExhaustedReplyOpts): string {
+  return selectPipelineTimeoutReply(opts?.language, {
     traceId: opts?.traceId,
   }, opts?.localeCatalog);
 }
