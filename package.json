@@ -87,7 +87,7 @@
     "@mdx-js/mdx": "3.1.1",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@slack/web-api": "7.16.0",
-    "@types/node": "22.20.0",
+    "@types/node": "22.20.1",
     "@types/semver": "7.7.1",
     "@types/ws": "8.18.1",
     "@vitest/coverage-v8": "4.1.9",
