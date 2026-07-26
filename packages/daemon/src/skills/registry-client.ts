@@ -289,6 +289,25 @@ export async function fetchRegistrySkillBundle(args: {
   if (!metadata.ok) return metadata;
   const { resolution } = metadata.value;
   if (resolution.download.kind === "files") {
+    const manifest = parseSkillBundleManifest(resolution.download.files);
+    if (!manifest.ok) {
+      return err(
+        makeError(
+          "invalid_response",
+          `Registry ${args.registryId} returned an invalid skill manifest: ${manifest.error.message}`,
+          "Do not import until the registry returns one valid prompt-skill manifest.",
+        ),
+      );
+    }
+    if (manifest.value.manifest.name !== resolution.slug) {
+      return err(
+        makeError(
+          "identity_mismatch",
+          `Registry files declared ${manifest.value.manifest.name} for ${resolution.slug}`,
+          "Do not import until the registry slug and manifest name match.",
+        ),
+      );
+    }
     return ok({
       name: resolution.slug,
       files: resolution.download.files,

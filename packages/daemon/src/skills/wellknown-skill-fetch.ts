@@ -94,8 +94,10 @@ export function parseWellKnownRef(ref: string): Result<ParsedWellKnownRef, Error
   if (parsedUrl.value.username !== "" || parsedUrl.value.password !== "") {
     return err(new Error("Well-known skill ref must not contain URL credentials"));
   }
+  if (parsedUrl.value.search !== "") {
+    return err(new Error("Well-known skill ref must not contain query parameters"));
+  }
   parsedUrl.value.hash = "";
-  parsedUrl.value.search = "";
   const name = raw.slice(hashIndex + 1);
   if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name) || name.length > 64) {
     return err(new Error(`Invalid well-known skill name: ${name}`));

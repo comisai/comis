@@ -75,6 +75,26 @@ function validSkillName(name: string | undefined): name is string {
   );
 }
 
+function requireMatchingManifestName(
+  files: readonly SkillBundleFile[],
+  expectedName: string,
+): Result<void, Error> {
+  const parsed = parseSkillBundleManifest(files);
+  if (!parsed.ok) {
+    return parsed.error.kind === "missing"
+      ? err(new Error(parsed.error.message))
+      : ok(undefined);
+  }
+  if (parsed.value.manifest.name !== expectedName) {
+    return err(
+      new Error(
+        `Skill manifest name ${parsed.value.manifest.name} does not match source name ${expectedName}`,
+      ),
+    );
+  }
+  return ok(undefined);
+}
+
 function decodeArchiveBase64(
   encoded: string,
   maxArchiveBytes: number,
@@ -220,6 +240,8 @@ export async function resolveSkillImportSource(
       logger: deps.logger,
     });
     if (!fetched.ok) return fetched;
+    const identity = requireMatchingManifestName(fetched.value.files, fetched.value.name);
+    if (!identity.ok) return identity;
     return ok({
       name: fetched.value.name,
       files: fetched.value.files,
@@ -307,11 +329,7 @@ export async function resolveSkillImportSource(
   if (fetched.value.length === 0) {
     return err(new Error("No files found at the given URL"));
   }
-  const hasSkillMd = fetched.value.some(
-    (file) => file.path === "SKILL.md" || file.path.endsWith("/SKILL.md"),
-  );
-  if (!hasSkillMd) {
-    return err(new Error("Repository folder must contain a SKILL.md file"));
-  }
+  const identity = requireMatchingManifestName(fetched.value, name);
+  if (!identity.ok) return identity;
   return ok({ name, files: fetched.value, source: "github", ref: url });
 }
