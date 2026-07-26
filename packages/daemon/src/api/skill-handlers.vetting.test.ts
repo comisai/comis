@@ -113,6 +113,57 @@ argument-hint: "[path]"
 Summarize the file at the given path.
 `;
 
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function makeStoredArchive(files: Readonly<Record<string, string>>): Uint8Array {
+  const local: Buffer[] = [];
+  const central: Buffer[] = [];
+  let offset = 0;
+  for (const [path, content] of Object.entries(files)) {
+    const name = Buffer.from(path, "utf-8");
+    const body = Buffer.from(content, "utf-8");
+    const header = Buffer.alloc(30);
+    header.writeUInt32LE(0x04034b50, 0);
+    header.writeUInt16LE(20, 4);
+    header.writeUInt16LE(0x0800, 6);
+    header.writeUInt32LE(crc32(body), 14);
+    header.writeUInt32LE(body.byteLength, 18);
+    header.writeUInt32LE(body.byteLength, 22);
+    header.writeUInt16LE(name.byteLength, 26);
+    const member = Buffer.concat([header, name, body]);
+    local.push(member);
+
+    const record = Buffer.alloc(46);
+    record.writeUInt32LE(0x02014b50, 0);
+    record.writeUInt16LE((3 << 8) | 20, 4);
+    record.writeUInt16LE(20, 6);
+    record.writeUInt16LE(0x0800, 8);
+    record.writeUInt32LE(crc32(body), 16);
+    record.writeUInt32LE(body.byteLength, 20);
+    record.writeUInt32LE(body.byteLength, 24);
+    record.writeUInt16LE(name.byteLength, 28);
+    record.writeUInt32LE((0o100644 << 16) >>> 0, 38);
+    record.writeUInt32LE(offset, 42);
+    central.push(Buffer.concat([record, name]));
+    offset += member.byteLength;
+  }
+  const directory = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(central.length, 8);
+  end.writeUInt16LE(central.length, 10);
+  end.writeUInt32LE(directory.byteLength, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...local, directory, end]);
+}
+
 // ---------------------------------------------------------------------------
 // Harness
 // ---------------------------------------------------------------------------
@@ -243,6 +294,32 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("skills.import — pre-write vetting gate", () => {
+  it("imports uploaded archive bytes through unpacking, vetting, and provenance", async () => {
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+    const archive = makeStoredArchive({
+      "my-skill/SKILL.md": CLEAN_SKILL_MD,
+      "my-skill/references/guide.md": "# Guide\n\nBenign support text.\n",
+    });
+
+    const result = await handlers["skills.import"]!({
+      source: "archive",
+      archiveBase64: Buffer.from(archive).toString("base64"),
+      scope: "local",
+      _agentId: "agent-a",
+    });
+
+    expect(result).toMatchObject({ ok: true, name: "my-skill", fileCount: 2 });
+    expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual([
+      "SKILL.md",
+      "references/guide.md",
+    ]);
+    expect(readSkillProvenance(join(wsDir, "data"))["local:my-skill"]).toMatchObject({
+      source: "archive",
+      ref: "uploaded",
+      trust: "community",
+    });
+  });
+
   it("imports a well-known file map through the same gate and provenance path", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input.toString();
