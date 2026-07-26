@@ -41,9 +41,17 @@ export interface SkillImportFailure {
   readonly startedMs: number;
 }
 
-/** Emit one content-free rejection trajectory event and actionable WARN. */
-export function recordSkillImportFailure(input: SkillImportFailure): void {
-  const timestamp = systemNowMs();
+/** Content-free rejection facts recorded in a skill import trajectory. */
+export type SkillImportRejection = Pick<
+  SkillImportFailure,
+  "eventBus" | "skillName" | "source" | "stage" | "code" | "policyKey"
+>;
+
+/** Emit one content-free rejection trajectory event. */
+export function recordSkillImportRejection(
+  input: SkillImportRejection,
+  timestamp = systemNowMs(),
+): void {
   const skillName = input.skillName ?? "unresolved";
   input.eventBus?.emit("skill:rejected", {
     skillName,
@@ -54,6 +62,13 @@ export function recordSkillImportFailure(input: SkillImportFailure): void {
     ...(input.policyKey !== undefined && { policyKey: input.policyKey }),
     timestamp,
   });
+}
+
+/** Emit one content-free rejection trajectory event and actionable WARN. */
+export function recordSkillImportFailure(input: SkillImportFailure): void {
+  const timestamp = systemNowMs();
+  const skillName = input.skillName ?? "unresolved";
+  recordSkillImportRejection(input, timestamp);
   input.logger.warn(
     {
       method: "skills.import",

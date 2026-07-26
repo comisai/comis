@@ -81,6 +81,7 @@ import { installSkillDirectory } from "../skills/skill-directory-swap.js";
 import {
   recordSkillImportCompletion,
   recordSkillImportFailure,
+  recordSkillImportRejection,
 } from "../skills/skill-import-observability.js";
 import { collectSkillBundleFiles } from "../skills/skill-provenance-backfill.js";
 import {
@@ -475,6 +476,13 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
             },
             "Skill re-import found an untracked incumbent",
           );
+          recordSkillImportRejection({
+            eventBus: deps.eventBus,
+            skillName: name,
+            source,
+            stage: "vet",
+            code: "skill_reimport_untracked",
+          });
           throw new Error(
             `[skill_reimport_untracked] Skill directory ${name} already exists without durable provenance; ` +
             "refusing to overwrite unknown bytes",
@@ -496,6 +504,13 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
             },
             "Skill re-import could not verify incumbent bytes",
           );
+          recordSkillImportRejection({
+            eventBus: deps.eventBus,
+            skillName: name,
+            source,
+            stage: "vet",
+            code: "skill_reimport_unreadable",
+          });
           throw new Error(
             `[skill_reimport_unreadable] Could not verify live skill ${name}: ${liveFiles.error.message}`,
           );
@@ -516,6 +531,13 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
             },
             "Skill re-import detected incumbent tampering",
           );
+          recordSkillImportRejection({
+            eventBus: deps.eventBus,
+            skillName: name,
+            source,
+            stage: "vet",
+            code: "skill_reimport_tampered",
+          });
           throw new Error(
             `[skill_reimport_tampered] Live bytes for ${name} differ from installed-skills.json; ` +
             "refusing to overwrite until the incumbent is reviewed",
@@ -568,6 +590,13 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
             },
             "Skill re-import refused by trust policy",
           );
+          recordSkillImportRejection({
+            eventBus: deps.eventBus,
+            skillName: name,
+            source,
+            stage: "vet",
+            code: "skill_reimport_trust_refused",
+          });
           throw new Error(
             `[skill_reimport_refused] incumbent=${incumbent.trust} candidate=${evaluated.vetted.trust}`,
           );
@@ -592,6 +621,13 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
             },
             "Skill re-import requires confirmation",
           );
+          recordSkillImportRejection({
+            eventBus: deps.eventBus,
+            skillName: name,
+            source,
+            stage: "vet",
+            code: "skill_reimport_confirmation_required",
+          });
           throw new Error(
             `[skill_reimport_confirm] Different bytes require force: true; findingCounts ` +
             `incumbent={critical:${incumbent.findingCounts.critical},warn:${incumbent.findingCounts.warn}} ` +
