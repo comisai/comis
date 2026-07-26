@@ -405,7 +405,8 @@ export function mcpCallTimeoutHint(
     `MCP tool "${toolName}" on server "${serverName}" timed out — it exceeded the call ` +
     `deadline of ${timeoutMs}ms (\`integrations.mcp.callToolTimeoutMs\`, currently ${timeoutMs}). ` +
     "This deadline is deterministic — do not retry it unchanged, the same call re-expires it. " +
-    "Either narrow the request (a smaller page/date window/fewer entities) so it completes " +
-    `inside ${timeoutMs}ms, or raise \`integrations.mcp.callToolTimeoutMs\` for this deployment.`
+    `Narrow the request (a smaller page/date window/fewer entities) so it completes inside ${timeoutMs}ms. ` +
+    "The deadline itself cannot be changed from here — it is an immutable config path, so only an " +
+    "operator can adjust it by editing the config file and restarting the daemon."
   );
 }

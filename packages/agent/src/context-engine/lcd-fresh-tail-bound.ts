@@ -311,7 +311,7 @@ export function boundProtectedFreshTail(
   // protected tail is/isn't trimmed — not a hypothesis. Per-step factored sizes +
   // kept/dropped counts disambiguate the 4 candidate causes (giant step / wrong residual
   // / preamble / keep-last-too-much). `roleOf` mirrors the function's own grouping so the
-  // logged stepCount IS what the trim saw.
+  // logged tailSegmentCount IS what the trim saw.
   const roleAt = (m: AgentMessage): string | undefined => (m as { role?: string }).role;
   const stepStartIdx: number[] = [];
   for (let i = 0; i < freshTail.length; i++) {
@@ -345,10 +345,16 @@ export function boundProtectedFreshTail(
     systemTokens: ctx.systemTokens,
     freshTailPreambleTokens: ctx.freshTailPreambleTokens,
     effectiveWindow: ctx.effectiveWindow,
-    stepCount: stepStartIdx.length,
-    stepSizes,                         // each step's factored tokens — exposes a giant un-droppable step
-    keptSteps,
-    droppedSteps: stepStartIdx.length - keptSteps,
+    // NOT the same "step" as `freshTailSteps` on the lcd-fresh-tail line: that
+    // one counts ASSISTANT messages, this grouping counts every non-toolResult
+    // message, so a user message opens a segment too. Reading a
+    // `tailSegmentCount` of 9 as "9 assistant steps, over the 8-step bound"
+    // reverses the diagnosis — it is 8 steps plus the user message that opened
+    // them, which is the HEALTHY shape. Named apart so the two cannot be confused.
+    tailSegmentCount: stepStartIdx.length,
+    segmentSizes: stepSizes,           // each segment's factored tokens — exposes a giant un-droppable step
+    keptSegments: keptSteps,
+    droppedSegments: stepStartIdx.length - keptSteps,
     freshTailFactoredBefore: before,
     freshTailFactoredAfter: after,     // the bounded total — should be ≤ residual when trimmable
     fitsResidual,
@@ -363,7 +369,7 @@ export function boundProtectedFreshTail(
       {
         ...logPayload,
         errorKind: "resource" as const,
-        hint: "protected fresh tail could NOT be trimmed below the residual — the kept (current) step(s) exceed it; the pre-flight will exhaust. Check stepSizes for a single giant step (grouping) vs a genuinely oversized current turn (oversized_input).",
+        hint: "protected fresh tail could NOT be trimmed below the residual — the kept (current) step(s) exceed it; the pre-flight will exhaust. Check segmentSizes for a single giant step (grouping) vs a genuinely oversized current turn (oversized_input).",
       },
       "lcd protected fresh tail STILL exceeds the residual after trimming",
     );

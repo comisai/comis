@@ -219,6 +219,32 @@ describe("call timeout names its knob", () => {
     expect(result.error.message).toMatch(/narrow/i);
   });
 
+  it("does not send the agent to patch the knob — that config path is immutable at runtime", async () => {
+    // Observed live: the hint's closing clause read "or raise
+    // `integrations.mcp.callToolTimeoutMs` for this deployment", so the agent did
+    // exactly that — one `gateway` patch call, rejected by the immutable-path guard
+    // ("Cannot patch immutable config path: integrations.mcp.callToolTimeoutMs.
+    // Patchable: integrations.mcp.servers."). The rejection surfaced in the chat as a
+    // bare "[tool failure] gateway reported an error" on top of the real answer.
+    // Naming the knob is right (an operator needs it); telling the AGENT to raise it
+    // is not — the only remedy available to the caller is narrowing the request.
+    const serverName = "vendor-mcp";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new McpError(ErrorCode.RequestTimeout, "Request timed out")),
+    );
+
+    const result = await callTool(state, deps, `mcp:${serverName}/vendor_activity_report`, {});
+    if (result.ok) throw new Error("expected err");
+    const message = result.error.message;
+
+    // Still names the knob and its value — the operator-facing half is unchanged.
+    expect(message).toContain("integrations.mcp.callToolTimeoutMs");
+    // But never phrases it as an action the caller can take.
+    expect(message).not.toMatch(/\braise\b|\bincrease\b/i);
+    // …and says whose job it is, so the agent stops instead of trying a patch.
+    expect(message).toMatch(/operator/i);
+  });
+
   it("emits a WARN carrying the same hint + a dependency errorKind", async () => {
     const serverName = "vendor-mcp";
     const state = makeConnectedState(serverName, () =>
