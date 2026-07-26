@@ -3100,7 +3100,8 @@ describe("bootstrap file snapshotting", () => {
       expect(result.responseLocalePolicy).toEqual({
         locale: "fr-CA",
         source: "request",
-        enforceLocale: true,
+        // Transport tier is advisory — only an operator pin enforces.
+        enforceLocale: false,
       });
     });
 
@@ -4267,7 +4268,7 @@ describe("parent prefix reuse", () => {
     expect(result.responseLocalePolicy).toEqual({
       locale: "ar-EG",
       source: "request",
-      enforceLocale: true,
+      enforceLocale: false,
     });
   });
 

@@ -41,7 +41,19 @@ export function resolveResponseLocalePolicy(
 ): ResponseLocalePolicy {
   const candidates: ReadonlyArray<readonly [string | undefined, ResponseLocaleSource, boolean]> = [
     [input.explicitLocale, "explicit", true],
-    [input.requestLocale, "request", true],
+    // ADVISORY, never ENFORCED — for the same reason the script tier below is.
+    // This tier is a DEVICE SETTING (a client UI language_code), so making it
+    // enforcing left the strongest signal in the system belonging to the one
+    // input that is not about the conversation at all. Live: a Hebrew
+    // conversation, one English technical instruction — which does not
+    // contradict a client language_code of "en", so the transport tier engaged
+    // and, being enforcing, outranked the conversation's own (advisory) Hebrew
+    // signal. The agent switched to English mid-conversation and stayed there.
+    //
+    // Only an OPERATOR PIN (`explicitLocale`) enforces. An operator who needs a
+    // guaranteed response language sets `agents.<id>.language`; everything else
+    // is a hint, which is all a per-message or per-device signal can honestly be.
+    [input.requestLocale, "request", false],
   ];
   const translationTarget = canonicalLocale(input.translationTarget);
   for (const [raw, source, enforceLocale] of candidates) {
