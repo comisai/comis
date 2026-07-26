@@ -111,6 +111,91 @@ describe("skills_manage tool", () => {
   // -----------------------------------------------------------------------
 
   describe("scope parameter forwarding", () => {
+    it("routes every remote import source to the typed skills import request", async () => {
+      (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
+        approved: true,
+        approvedBy: "operator",
+      });
+      const tool = createSkillsManageTool(mockRpcCall, mockApprovalGate);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-source-1", {
+          action: "import",
+          source: "wellknown",
+          ref: "wellknown:https://example.com#summarize",
+        } as never),
+      );
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-source-2", {
+          action: "import",
+          source: "archive",
+          archiveUrl: "https://example.com/summarize.skill",
+        } as never),
+      );
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-source-3", {
+          action: "import",
+          source: "registry",
+          registry: "community-a",
+          ref: "summarize@1.2.3",
+          confirm: true,
+        } as never),
+      );
+
+      expect(mockRpcCall.mock.calls.map(([method, params]) => [method, params])).toEqual([
+        [
+          "skills.import",
+          {
+            source: "wellknown",
+            ref: "wellknown:https://example.com#summarize",
+            scope: "local",
+            _trustLevel: "admin",
+          },
+        ],
+        [
+          "skills.import",
+          {
+            source: "archive",
+            archiveUrl: "https://example.com/summarize.skill",
+            scope: "local",
+            _trustLevel: "admin",
+          },
+        ],
+        [
+          "skills.import",
+          {
+            source: "registry",
+            registry: "community-a",
+            ref: "summarize@1.2.3",
+            scope: "local",
+            force: true,
+            _trustLevel: "admin",
+          },
+        ],
+      ]);
+    });
+
+    it("keeps URL-only GitHub imports on the existing request shape", async () => {
+      (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
+        approved: true,
+        approvedBy: "operator",
+      });
+      const tool = createSkillsManageTool(mockRpcCall, mockApprovalGate);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-source-github", {
+          action: "import",
+          url: "https://github.com/org/repo/tree/main/skills/test",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("skills.import", {
+        url: "https://github.com/org/repo/tree/main/skills/test",
+        scope: "local",
+        _trustLevel: "admin",
+      });
+    });
+
     it("import action forwards scope: 'shared' to RPC call", async () => {
       (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
         approved: true,
