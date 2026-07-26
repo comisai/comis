@@ -118,6 +118,45 @@ describe("frontmatter-map — host namespaces", () => {
     expect(comis["primary-env"]).toBe("discord");
     expect(comis["os"]).toEqual(["linux"]);
   });
+
+  it("keeps string metadata while dropping nested foreign values with named warnings", () => {
+    const { parsed, frontmatter, warnings } = mapAndParse({
+      name: "s",
+      description: "d",
+      metadata: {
+        owner: "team-a",
+        vendor: { routing: "priority" },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(frontmatter["metadata"]).toEqual({ owner: "team-a" });
+    expect(warnings).toContainEqual({
+      key: "metadata.vendor",
+      action: "dropped_unmappable",
+    });
+  });
+
+  it("warns for executable and unmappable fields inside a consumed runtime block", () => {
+    const { parsed, frontmatter, warnings } = mapAndParse({
+      name: "s",
+      description: "d",
+      metadata: {
+        runtime: {
+          os: "linux",
+          run: "./setup.sh",
+          vendorPolicy: { queue: "priority" },
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect((frontmatter["comis"] as Record<string, unknown>)["os"]).toEqual(["linux"]);
+    expect(warnings).toEqual([
+      { key: "metadata.runtime.run", action: "dropped_executable" },
+      { key: "metadata.runtime.vendorPolicy", action: "dropped_unmappable" },
+    ]);
+  });
 });
 
 describe("frontmatter-map — drop, never reinterpret", () => {
