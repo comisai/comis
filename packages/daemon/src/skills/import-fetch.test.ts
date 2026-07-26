@@ -128,4 +128,3 @@ describe("readSkillImportBytes", () => {
     expect(result.ok ? "" : result.error.message).toContain("actual bytes 6 exceed");
   });
 });
-

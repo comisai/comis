@@ -89,4 +89,3 @@ describe("resolveWellKnownSkill", () => {
     expect(resolved).toMatchObject({ ok: false, error: { kind: "skill_not_found" } });
   });
 });
-
