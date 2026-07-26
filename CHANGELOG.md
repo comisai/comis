@@ -16,6 +16,7 @@ This file records user-visible changes to Comis. Detailed release history is ava
 
 - Skills whose frontmatter uses the community kebab-case spelling (`allowed-tools`, `argument-hint`) now install and load. They previously installed but failed validation when the agent tried to use them.
 - Importing or uploading a skill can now be refused for content that was previously written to disk unexamined. Two failure shapes are distinct: one asks you to review the named findings and re-run with `force`, the other cannot be overridden.
+- Bundled MCP servers declared by community or agent-authored skills are validated but no longer persisted or connected automatically. Operators can opt in per agent with `skills.import.autoConnectBundledMcp`; operator-authored and shipped skills retain their existing behavior.
 
 ### Fixed
 

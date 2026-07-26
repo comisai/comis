@@ -86,9 +86,8 @@ function buildRecord(
  * @param skillId The installed skill's name.
  * @param skillDir Absolute path to the installed skill directory.
  * @param rawParams The dispatcher-raw params (carries `force` + `_context`).
- * @param provenance Provenance inputs; omit to skip recording (no caller does
- *   today — the parameter is optional so a future install path can opt out
- *   explicitly rather than by forgetting).
+ * @param provenance Provenance inputs. Every install path must provide them so
+ *   trust is available to the bundled-MCP gate and the durable store.
  * @returns The bundle-install result, forwarded unchanged.
  * @throws Whatever `runBundleInstallHook` throws (Phase-A bundle reject).
  */
@@ -97,33 +96,40 @@ export async function runPostInstallHooks(
   skillId: string,
   skillDir: string,
   rawParams: Record<string, unknown>,
-  provenance?: PostInstallProvenanceArgs,
+  provenance: PostInstallProvenanceArgs,
 ): Promise<ApplyBundleInstallResult> {
   // Bundle install first: its Phase-A reject throws, and a rejected install
   // must not leave a provenance record behind.
-  const bundleResult = await runBundleInstallHook(deps, skillId, skillDir, rawParams);
+  const autoConnectBundledMcp =
+    deps.agents[provenance.callingAgentId]?.skills?.import?.autoConnectBundledMcp ?? false;
+  const bundleResult = await runBundleInstallHook(
+    deps,
+    skillId,
+    skillDir,
+    rawParams,
+    provenance.vetted.trust,
+    autoConnectBundledMcp,
+  );
 
-  if (provenance !== undefined) {
-    const dataDir = (deps.container?.config?.dataDir as string | undefined) ?? "";
-    if (dataDir.length > 0) {
-      const userId = (rawParams as { _context?: { userId?: string } })._context?.userId;
-      const record = buildRecord(provenance, userId);
-      const written = recordSkillProvenance(dataDir, provenance.scope, skillId, record);
-      if (!written.ok) {
-        deps.logger.warn(
-          {
-            method: "skills.provenance.record",
-            skillName: skillId,
-            scope: provenance.scope,
-            err: written.error.message,
-            hint:
-              "Provenance write failed; the skill IS installed. Its origin and content hash will read as " +
-              "unknown until the next install of this skill, which weakens tamper detection on re-import.",
-            errorKind: "resource" as const,
-          },
-          "Skill provenance record write failed",
-        );
-      }
+  const dataDir = (deps.container?.config?.dataDir as string | undefined) ?? "";
+  if (dataDir.length > 0) {
+    const userId = (rawParams as { _context?: { userId?: string } })._context?.userId;
+    const record = buildRecord(provenance, userId);
+    const written = recordSkillProvenance(dataDir, provenance.scope, skillId, record);
+    if (!written.ok) {
+      deps.logger.warn(
+        {
+          method: "skills.provenance.record",
+          skillName: skillId,
+          scope: provenance.scope,
+          err: written.error.message,
+          hint:
+            "Provenance write failed; the skill IS installed. Its origin and content hash will read as " +
+            "unknown until the next install of this skill, which weakens tamper detection on re-import.",
+          errorKind: "resource" as const,
+        },
+        "Skill provenance record write failed",
+      );
     }
   }
 

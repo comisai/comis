@@ -35,7 +35,7 @@
 
 import { readFileSync } from "node:fs";
 import { safePath } from "@comis/core";
-import { parseSkillManifest } from "@comis/skills";
+import { parseSkillManifest, type SkillTrustTier } from "@comis/skills";
 import type { McpServerEntry } from "@comis/core";
 import { persistMcpServers, type PersistMcpResult } from "../api/shared/persist-mcp-servers.js";
 import { resolveBundle } from "./bundle-mcp-resolver.js";
@@ -62,6 +62,17 @@ export interface ApplyBundleInstallArgs {
   readonly ctx: { userId?: string; traceId?: string } | undefined;
   /** Handler deps slice (must include persistDeps + container + mcpClientManager). */
   readonly deps: WorkspaceApiDeps;
+  /** Trust derived by the pre-write gate; bundled MCP authority never comes from the manifest. */
+  readonly trust: SkillTrustTier;
+  /** Operator policy allowing lower-trust bundled MCPs to pass Phase B. */
+  readonly autoConnectBundledMcp: boolean;
+}
+
+/** Content-free description of a bundled MCP waiting for operator opt-in. */
+export interface PendingMcpServer {
+  readonly name: string;
+  readonly transport: McpServerEntry["transport"];
+  readonly reason: string;
 }
 
 /** Result of applyBundleInstall — forwarded for log/audit purposes. */
@@ -72,6 +83,10 @@ export interface ApplyBundleInstallResult {
   readonly connectResults?: ReadonlyArray<{ name: string; ok: boolean; error?: string }>;
   /** Optional warning forwarded when persistence === "runtime_only" or manifest parse failed. */
   readonly warning?: string;
+  /** Phase-A-clean entries withheld from persistence and connection by the trust gate. */
+  readonly pendingMcpServers?: readonly PendingMcpServer[];
+  /** Operator-actionable next step when entries remain pending. */
+  readonly hint?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +220,7 @@ function buildRuntimeConfig(
 export async function applyBundleInstall(
   args: ApplyBundleInstallArgs,
 ): Promise<ApplyBundleInstallResult> {
-  const { skillId, skillDir, force, ctx, deps } = args;
+  const { skillId, skillDir, force, ctx, deps, trust, autoConnectBundledMcp } = args;
 
   // STEP 1: read freshly-written SKILL.md from disk.
   const skillMdPath = safePath(skillDir, "SKILL.md");
@@ -291,6 +306,26 @@ export async function applyBundleInstall(
   }
 
   const { nextServers, connectQueue, archivedOverrides } = resolveResult.value;
+
+  // Lower-trust skills receive the full Phase-A schema/collision/secret/OSV
+  // verdict, but they cannot mutate global MCP config or start a process until
+  // the operator opts in. The pending projection is deliberately content-free;
+  // the full server declaration remains in the installed SKILL.md.
+  const requiresOperatorOptIn =
+    (trust === "community" || trust === "agent-authored") && !autoConnectBundledMcp;
+  if (requiresOperatorOptIn) {
+    const reason = `${trust}-tier bundled MCP requires operator opt-in`;
+    return {
+      persistence: "skipped",
+      pendingMcpServers: connectQueue.map((entry) => ({
+        name: entry.name,
+        transport: entry.transport,
+        reason,
+      })),
+      hint:
+        "Review the bundled MCP declarations, set skills.import.autoConnectBundledMcp=true for the installing agent, and re-run the install to persist and connect them.",
+    };
+  }
 
   // Log archived overrides (structured; never logs secret values — only
   // names + cause). This lands BEFORE persist so operators see the archive
@@ -420,8 +455,18 @@ export async function runBundleInstallHook(
   skillId: string,
   skillDir: string,
   rawParams: Record<string, unknown>,
+  trust: SkillTrustTier,
+  autoConnectBundledMcp: boolean,
 ): Promise<ApplyBundleInstallResult> {
   const force = (rawParams as { force?: boolean }).force === true;
   const ctx = (rawParams as { _context?: { userId?: string; traceId?: string } })._context;
-  return applyBundleInstall({ skillId, skillDir, force, ctx, deps });
+  return applyBundleInstall({
+    skillId,
+    skillDir,
+    force,
+    ctx,
+    deps,
+    trust,
+    autoConnectBundledMcp,
+  });
 }

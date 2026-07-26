@@ -104,6 +104,36 @@ const InstallVettingSchema = z.strictObject({
 });
 
 /**
+ * Remote skill-import policy and archive-specific limits.
+ *
+ * Registry discovery is inert until an operator allowlists a base. Archive
+ * bounds that also apply to uncompressed bundles remain under
+ * `installVetting`; only compressed-input limits live here.
+ */
+const SkillImportSchema = z.strictObject({
+  /** Operator-allowlisted index and registry bases. Empty disables both source modes. */
+  registries: z
+    .array(
+      z.strictObject({
+        id: z.string().min(1),
+        base: z.string().url(),
+        kind: z.enum(["wellknown", "registry"]),
+        /** Explicit operator promotion; third-party evidence never grants trust by itself. */
+        trust: z.enum(["community", "operator"]).default("community"),
+      }),
+    )
+    .default([]),
+  /** Persist and connect bundled MCP servers from community or agent-authored skills. */
+  autoConnectBundledMcp: z.boolean().default(false),
+  /** Maximum compressed archive bytes accepted before preflight. */
+  maxArchiveBytes: z.number().int().positive().default(8 * 1024 * 1024),
+  /** Maximum declared uncompressed-to-compressed ratio for one archive entry. */
+  maxCompressionRatio: z.number().int().positive().default(100),
+  /** Validated well-known index cache lifetime in milliseconds. */
+  indexCacheTtlMs: z.number().int().positive().default(3_600_000),
+});
+
+/**
  * Exec tool OS-level sandbox configuration.
  *
  * Controls whether child processes spawned by the exec tool are wrapped
@@ -416,6 +446,9 @@ export const SkillsConfigSchema = z.strictObject({
 
     /** Install-time vetting gate bounds. The gate itself is not disableable. */
     installVetting: InstallVettingSchema.default(() => InstallVettingSchema.parse({})),
+
+    /** Remote import policy, registry allowlist, and archive-only bounds. */
+    import: SkillImportSchema.default(() => SkillImportSchema.parse({})),
 
     /** Exec tool OS-level sandbox configuration */
     execSandbox: ExecSandboxSchema.default(() => ExecSandboxSchema.parse({})),
