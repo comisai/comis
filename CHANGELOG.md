@@ -4,6 +4,24 @@ This file records user-visible changes to Comis. Detailed release history is ava
 
 ## [Unreleased]
 
+### Added
+
+- Skills are now vetted before installation. Every file in a skill bundle is scanned, not just `SKILL.md`, and nothing is written to disk unless the result is acceptable for where the skill came from. The gate runs on all four install paths (`create`, `update`, `upload`, and `import`) and cannot be disabled — `skills.contentScanning` continues to govern load-time scanning only.
+- Skill installs are now decided by origin as well as content. Skills you author yourself, skills imported from a remote source, and skills an agent writes at runtime are held to different bars: a warning in a remote skill asks for explicit confirmation, and a critical finding in one is refused outright and cannot be forced. The same finding in a skill you wrote asks rather than refuses. See [Security Scanning](https://docs.comis.ai/skills/security-scanning) for the full matrix.
+- Comis now records where each installed skill came from — its origin, content hash, trust tier, and vetting result — in `~/.comis/installed-skills.json`. The record is owner-only and carries no skill text.
+- Bundle structure is now checked at install: unsafe member paths, symlinks, binaries detected by content rather than by extension, and bundles that exceed size or file-count limits are all refused. New `skills.installVetting` settings tune those limits.
+- `skills.update` accepts a `force` parameter, matching the other skill-install methods.
+
+### Changed
+
+- Skills whose frontmatter uses the community kebab-case spelling (`allowed-tools`, `argument-hint`) now install and load. They previously installed but failed validation when the agent tried to use them.
+- Importing or uploading a skill can now be refused for content that was previously written to disk unexamined. Two failure shapes are distinct: one asks you to review the named findings and re-run with `force`, the other cannot be overridden.
+
+### Fixed
+
+- A skill with malformed frontmatter is now refused at install with an explanation. It previously installed successfully and then never appeared, leaving no indication of why.
+- Skill imports are now checked against the SSRF guard, so an import URL resolving to a private or metadata address is refused rather than fetched.
+
 ## [1.0.55] - 2026-07-25
 
 Aggregates the user-visible changes since 1.0.53, including those first published in the [v1.0.54 release](https://github.com/comisai/comis/releases/tag/v1.0.54).
