@@ -225,16 +225,16 @@ export function checkBundleStructure(input: CheckBundleStructureInput): SkillBun
 
     const relPath = segments.join("/");
     const match = manifestMatch(segments);
-    if (match !== "no" && manifestSeen === "no") manifestSeen = match;
+    if (match === "exact" || (match === "case" && manifestSeen === "no")) {
+      manifestSeen = match;
+    }
 
-    // The ignore file itself never counts, and neither do its matches.
-    if (relPath === BUNDLE_IGNORE_FILENAME) continue;
-    if (isIgnored?.(relPath)) continue;
-
-    countedFiles += 1;
+    const excludedFromBounds =
+      relPath === BUNDLE_IGNORE_FILENAME || isIgnored?.(relPath) === true;
 
     // Member type: a link cannot be distinguished from text by its bytes, so
-    // the source's metadata is the only signal.
+    // the source's metadata is the only signal. Ignore patterns cannot suppress
+    // this refusal.
     if (file.type === "symlink" || file.type === "hardlink") {
       memberFindings.push(
         finding(
@@ -248,6 +248,24 @@ export function checkBundleStructure(input: CheckBundleStructureInput): SkillBun
     }
 
     const size = byteLength(file.content);
+    if (looksBinary(file.content)) {
+      memberFindings.push(
+        finding(
+          relPath,
+          "BUNDLE_BINARY_MEMBER",
+          "CRITICAL",
+          "Member is binary or an executable image; a prompt skill carries text only",
+        ),
+      );
+      continue;
+    }
+
+    // The ignore file itself and matched regular text members are excluded
+    // from counts, size caps, and advisory metadata checks. Path, member-type,
+    // and binary-image refusals above remain non-ignorable.
+    if (excludedFromBounds) continue;
+
+    countedFiles += 1;
     countedBytes += size;
 
     if (size > limits.maxEntryBytes) {
@@ -259,18 +277,6 @@ export function checkBundleStructure(input: CheckBundleStructureInput): SkillBun
           `Member is ${size} bytes, over maxEntryBytes ${limits.maxEntryBytes}`,
         ),
       );
-    }
-
-    if (looksBinary(file.content)) {
-      memberFindings.push(
-        finding(
-          relPath,
-          "BUNDLE_BINARY_MEMBER",
-          "CRITICAL",
-          "Member is binary or an executable image; a prompt skill carries text only",
-        ),
-      );
-      continue;
     }
 
     if (file.mode !== undefined && (file.mode & 0o111) !== 0 && !SCRIPT_EXTENSIONS.has(extensionOf(relPath))) {
