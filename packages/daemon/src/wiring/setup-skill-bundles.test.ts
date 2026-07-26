@@ -80,6 +80,10 @@ import { setupSkillBundles } from "./setup-skill-bundles.js";
 import type { ComisLogger } from "@comis/infra";
 import type { McpServerEntry } from "@comis/core";
 import type { SkillMetadata, SkillRegistry } from "@comis/skills";
+import {
+  readSkillProvenance,
+  recordSkillProvenance,
+} from "../skills/skill-provenance-store.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -259,6 +263,76 @@ Skill with a bundled mcpServers block.
 // ---------------------------------------------------------------------------
 
 describe("setupSkillBundles — boot orchestrator", () => {
+  it("removes previously persisted bundled MCP entries when recorded trust now requires opt-in", async () => {
+    const md = writeSkill(
+      tmpRoot,
+      "community-skill",
+      manifestWithBundle("community-skill", [
+        { name: "community-mcp", transport: "stdio", command: "npx", args: ["community-pkg"] },
+      ]),
+    );
+    const currentEntry = {
+      name: "community-mcp",
+      transport: "stdio",
+      command: "npx",
+      args: ["community-pkg"],
+      enabled: true,
+      idleTtlMs: 0,
+      _bundleSource: "community-skill",
+    } as McpServerEntry;
+    recordSkillProvenance(tmpRoot, "local", "community-skill", {
+      source: "github",
+      ref: "https://example.com/community-skill",
+      contentHash: "sha256:" + "a".repeat(64),
+      importedAt: "2026-07-26T10:00:00.000Z",
+      importedBy: { agentId: "test-agent" },
+      trust: "community",
+      verdict: "safe",
+      findingCounts: { critical: 0, warn: 0 },
+    });
+    const deps = makeDeps({
+      currentServers: [currentEntry],
+      registries: new Map([["test-agent", makeRegistry([md])]]),
+    });
+    Object.assign(deps.container.config, {
+      dataDir: tmpRoot,
+      agents: { "test-agent": { skills: { import: { autoConnectBundledMcp: false } } } },
+    });
+
+    await setupSkillBundles(deps);
+
+    expect(mockPersistMcpServers).toHaveBeenCalledTimes(1);
+    expect(mockPersistMcpServers.mock.calls[0]?.[1]).toEqual([]);
+  });
+
+  it("backfills an unrecorded installed skill as operator tier before preserving its bundle", async () => {
+    const md = writeSkill(
+      tmpRoot,
+      "existing-skill",
+      manifestWithBundle("existing-skill", [
+        { name: "existing-mcp", transport: "stdio", command: "npx", args: ["existing-pkg"] },
+      ]),
+    );
+    const deps = makeDeps({
+      registries: new Map([["test-agent", makeRegistry([md])]]),
+    });
+    Object.assign(deps.container.config, {
+      dataDir: tmpRoot,
+      agents: { "test-agent": { skills: { import: { autoConnectBundledMcp: false } } } },
+    });
+
+    await setupSkillBundles(deps);
+
+    expect(mockPersistMcpServers).toHaveBeenCalledTimes(1);
+    const stored = readSkillProvenance(tmpRoot)["local:existing-skill"];
+    expect(stored).toMatchObject({
+      trust: "operator",
+      backfilled: true,
+      importedBy: { agentId: "test-agent" },
+    });
+    expect(stored?.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
   it("no installed skills → orchestrator returns without firing persistMcpServers", async () => {
     const deps = makeDeps({ registries: new Map() });
     await setupSkillBundles(deps);
