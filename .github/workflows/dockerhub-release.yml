@@ -255,10 +255,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Budget stated once. It has to exceed the whole npm-publish run, not
+          # just its publish step: for v1.0.56 the old 120x15s (30 min) expired
+          # 2m38s before npm-publish finished and failed the release, while
+          # v1.0.55 cleared the identical wait with 18 seconds to spare. The
+          # window also floats — this job starts only after the image builds, so
+          # faster builds make it expire EARLIER. Keep the margin wide.
+          ATTEMPTS=240
+          INTERVAL_SECONDS=15
           wait_for_workflow() {
             local workflow="$1"
             local label="$2"
-            for attempt in $(seq 1 120); do
+            for attempt in $(seq 1 "${ATTEMPTS}"); do
               response="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?head_sha=${GITHUB_SHA}&event=push&per_page=10")"
               run="$(jq -c --arg ref "${GITHUB_REF_NAME}" \
                 '[.workflow_runs[] | select(.head_branch == $ref)] | first // {}' \
@@ -274,10 +282,11 @@ jobs:
                 echo "${label} finished with ${conclusion}: ${url}" >&2
                 return 1
               fi
-              echo "Waiting for ${label} (${status}, attempt ${attempt}/120)"
-              sleep 15
+              echo "Waiting for ${label} (${status}, attempt ${attempt}/${ATTEMPTS})"
+              sleep "${INTERVAL_SECONDS}"
             done
-            echo "Timed out waiting for ${workflow} for ${GITHUB_REF_NAME} at ${GITHUB_SHA}" >&2
+            echo "Timed out after $((ATTEMPTS * INTERVAL_SECONDS / 60)) minutes waiting for ${workflow} for ${GITHUB_REF_NAME} at ${GITHUB_SHA}" >&2
+            echo "The run may still be in progress — compare its duration against this budget before assuming a real failure." >&2
             return 1
           }
           wait_for_workflow npm-publish.yml "npm publish workflow"

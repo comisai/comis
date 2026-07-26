@@ -232,9 +232,11 @@ Steps to ship `vX.Y.Z`:
    git push origin main
    gh release create vX.Y.Z --title vX.Y.Z --notes "<notes>"
    ```
-   The `vX.Y.Z` tag triggers three workflows in `.github/workflows/` (there is no separate release-artifacts workflow — `gh release create` itself publishes the release):
-   - `npm-publish.yml` — `pnpm publish -r --provenance` (sigstore attestation via GitHub OIDC). Runs `packages/comis/scripts/prepack.js`, which bundles `@comis/*` into `node_modules/@comis/` for inclusion in the tarball.
+   `gh release create` needs a tag that already exists, and it rejects an abbreviated SHA for `--target` — create and push the tag first (`git tag vX.Y.Z <full-sha> && git push origin vX.Y.Z`), then `gh release create vX.Y.Z --verify-tag`. The `vX.Y.Z` tag triggers three workflows in `.github/workflows/`:
+   - `npm-publish.yml` — waits for `ci.yml`'s run on the tagged commit to conclude **success**, then `pnpm build:clean` + `pnpm smoke:tarball` + `pnpm publish -r --provenance` (sigstore attestation via GitHub OIDC). Runs `packages/comis/scripts/prepack.js`, which bundles `@comis/*` into `node_modules/@comis/` for inclusion in the tarball. It deliberately does **not** re-run the gate suite: `ci.yml` already ran it for this commit, sharded and parallel. It used to call `pnpm validate:full` here, which re-ran everything serially — 48m57s of v1.0.56's 51-minute publish, proving nothing new.
    - `docker-release.yml`, `dockerhub-release.yml` — multi-arch images (`linux/amd64` + `linux/arm64`), both `default` and `slim` variants. arm64 builds on a native runner (not QEMU).
+
+   **`dockerhub-release.yml` also creates the GitHub release** (its `github-release` job, after polling `npm-publish.yml` and `docker-release.yml` for success). So a release you create by hand and that job's step are two paths to the same artifact — and that job's wait is a race worth knowing about: its budget must exceed the whole publish run, not just the publish step. A 30-minute budget expired 2m38s early on v1.0.56 and failed the workflow (images and npm were fine; only the release-creation step was skipped, and only harmlessly because the release already existed by hand). `test/architecture/release-pipeline-gate.test.ts` holds both the no-duplicate-gate and minimum-budget invariants.
 
    After the runs complete, verify the publish actually landed: `npm view comisai dist-tags` must show the new version (the npm job has silently drifted before).
 
