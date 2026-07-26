@@ -11,9 +11,9 @@ export type SkillAuditAction =
   | "skill.validation.coercion"
   | "skill.scan"
   | "skill.scan.reject"
-  /** Pre-write install vetting passed (allow or confirm). */
+  /** Pre-write install vetting allowed the bundle. */
   | "skill.vet"
-  /** Pre-write install vetting blocked the bundle — zero files written. */
+  /** Pre-write install vetting refused or required confirmation — zero files written. */
   | "skill.vet.reject";
 
 /**
@@ -133,7 +133,14 @@ export function emitSkillAudit(eventBus: TypedEventBus, opts: SkillAuditOptions)
           | "wellknown"
           | "registry",
         stage: "vet",
-        policyKey: "skills.installVetting",
+        policyKey:
+          (opts.metadata?.["policyKey"] as
+            | "skills.installVetting"
+            | "skills.installVetting.maxEntries"
+            | "skills.installVetting.maxBundleBytes"
+            | "skills.installVetting.maxEntryBytes"
+            | "skills.installVetting.maxPathDepth"
+            | undefined) ?? "skills.installVetting",
         timestamp: now,
       });
       break;

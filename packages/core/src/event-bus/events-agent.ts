@@ -37,7 +37,12 @@ export interface AgentEvents {
     violations: string[];
     source?: "seed" | "backfill" | "create" | "update" | "upload" | "github" | "archive" | "wellknown" | "registry";
     stage?: "vet";
-    policyKey?: "skills.installVetting";
+    policyKey?:
+      | "skills.installVetting"
+      | "skills.installVetting.maxEntries"
+      | "skills.installVetting.maxBundleBytes"
+      | "skills.installVetting.maxEntryBytes"
+      | "skills.installVetting.maxPathDepth";
     timestamp: number;
   };
 

@@ -46,6 +46,12 @@ import type { WorkspaceApiDeps } from "../api/types.js";
 /** Maximum findings named in a rejection message; the rest are counted. */
 const MAX_REPORTED_FINDINGS = 8;
 
+const LIMIT_POLICY_KEYS: Readonly<Record<string, string>> = {
+  BUNDLE_TOO_MANY_FILES: "skills.installVetting.maxEntries",
+  BUNDLE_TOO_LARGE: "skills.installVetting.maxBundleBytes",
+  BUNDLE_FILE_TOO_LARGE: "skills.installVetting.maxEntryBytes",
+};
+
 /** Arguments for {@link runInstallVettingGate}. */
 export interface RunInstallVettingGateArgs {
   /** Handler deps slice (logger + eventBus + container config). */
@@ -206,6 +212,58 @@ export function runInstallVettingGate(
   const criticalCount = result.findings.filter((f) => f.severity === "CRITICAL").length;
   const warnCount = result.findings.length - criticalCount;
   const ruleIds = [...new Set(result.findings.map((f) => f.ruleId))];
+  const limitFinding = result.findings.find((finding) => {
+    if (LIMIT_POLICY_KEYS[finding.ruleId] !== undefined) return true;
+    return finding.ruleId === "BUNDLE_PATH_UNSAFE" && finding.description.includes("path depth");
+  });
+  const policyKey =
+    limitFinding?.ruleId === "BUNDLE_PATH_UNSAFE"
+      ? "skills.installVetting.maxPathDepth"
+      : limitFinding === undefined
+        ? "skills.installVetting"
+        : LIMIT_POLICY_KEYS[limitFinding.ruleId]!;
+  const failureKind = limitFinding === undefined ? ("validation" as const) : ("resource" as const);
+  const failureHint =
+    limitFinding === undefined
+      ? "Remove the flagged patterns from the named members. Load-time scanning config " +
+        "(skills.contentScanning) does not relax the install gate."
+      : `${limitFinding.description}. Review the bundle, then raise ${policyKey} only when the additional ` +
+        "resource use is expected.";
+
+  deps.logger.debug(
+    {
+      method: "skills.vet",
+      skillName,
+      source,
+      step: "structure",
+      findingCount: result.findings.filter((finding) => finding.category === "structural").length,
+    },
+    "Skill install structure evaluated",
+  );
+  if (result.manifest !== undefined) {
+    deps.logger.debug(
+      { method: "skills.vet", skillName, source, step: "manifest" },
+      "Skill install manifest validated",
+    );
+    deps.logger.debug(
+      { method: "skills.vet", skillName, source, step: "map", warningCount: result.warnings.length },
+      "Skill install frontmatter mapped",
+    );
+    deps.logger.debug(
+      {
+        method: "skills.vet",
+        skillName,
+        source,
+        step: "scan",
+        findingCount: result.findings.filter((finding) => finding.category !== "structural").length,
+      },
+      "Skill install content scanned",
+    );
+  }
+  deps.logger.debug(
+    { method: "skills.vet", skillName, source, step: "decide", verdict: result.verdict, decision: effective },
+    "Skill install policy decided",
+  );
 
   // Content-free audit metadata: ids, categories, severities, counts, paths.
   const auditMetadata = {
@@ -218,6 +276,7 @@ export function runInstallVettingGate(
     fileCount: files.length,
     contentHash: result.contentHash,
     findingCounts: { critical: criticalCount, warn: warnCount },
+    policyKey,
     ruleIds,
     findings: result.findings.map((f) => ({
       file: f.file,
@@ -235,8 +294,8 @@ export function runInstallVettingGate(
       tenantId: deps.tenantId,
       userId: ctx?.userId ?? "system",
       skillName,
-      action: result.decision === "block" ? "skill.vet.reject" : "skill.vet",
-      outcome: result.decision === "block" ? "denied" : "success",
+      action: result.decision === "allow" ? "skill.vet" : "skill.vet.reject",
+      outcome: result.decision === "allow" ? "success" : "denied",
       metadata: auditMetadata,
       duration: durationMs,
     });
@@ -265,11 +324,8 @@ export function runInstallVettingGate(
         findingCounts: { critical: criticalCount, warn: warnCount },
         ruleIds,
         durationMs,
-        hint:
-          "Skill install refused before any file was written. Remove the flagged patterns from the named members, " +
-          "or adjust the bounds under skills.installVetting when a cap fired. Load-time scanning config " +
-          "(skills.contentScanning) does NOT relax the install gate.",
-        errorKind: "validation" as const,
+        hint: failureHint,
+        errorKind: failureKind,
       },
       "Skill install blocked by pre-write vetting gate",
     );
@@ -277,8 +333,8 @@ export function runInstallVettingGate(
   }
 
   if (result.decision === "confirm") {
-    // D8: a `confirm` is realized as a refusal that names the findings and the
-    // exact re-run, NOT as a second approval prompt. The tool layer's
+    // A `confirm` is realized as a refusal that names the findings and the
+    // exact re-run, not as a second approval prompt. The tool layer's
     // ApprovalGate already fires BEFORE the RPC (admin-manage-factory.ts), so it
     // has not seen the bundle and cannot carry a verdict; raising a second
     // prompt here would ask the operator twice for one action. Costing one extra
@@ -308,7 +364,7 @@ export function runInstallVettingGate(
         hint:
           "Skill install needs explicit confirmation at this trust tier. Review the findings, then re-run the " +
           "same call with force: true to acknowledge them. force does NOT override a block.",
-        errorKind: "validation" as const,
+        errorKind: failureKind,
       },
       "Skill install requires confirmation",
     );
