@@ -114,6 +114,17 @@ export type {
   ArchiveErrorCode,
   SkillArchiveLimits,
 } from "./import/archive-unpack.js";
+export {
+  mapSkillRegistryResolution,
+  parseSkillRegistryRef,
+} from "./import/sources/registry-source.js";
+export type {
+  RegistryError,
+  SkillRegistryAdapter,
+  SkillRegistryEvidence,
+  SkillRegistryRef,
+  SkillRegistryResolution,
+} from "./import/sources/registry-source.js";
 
 // Skill audit emitter — consumed by the daemon's install-vetting gate so it can
 // record a vet verdict without a direct event-bus wiring of its own.
