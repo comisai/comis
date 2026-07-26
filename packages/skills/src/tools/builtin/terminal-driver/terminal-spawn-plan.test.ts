@@ -270,3 +270,39 @@ describe("buildSpawnPlan — unsafeDisableSandbox (the operator opt-out of the j
     );
   });
 });
+
+describe("unsandboxed drive env — interpreter-control vars must not reach the pane", () => {
+  it("strips NODE_OPTIONS/NODE_ENV-class interpreter vars from the unsandboxed plan env", async () => {
+    // With `unsafeDisableSandbox` there is NO bwrap, so the `--unsetenv` half of the scrub does
+    // not exist — the plan env is the ONLY thing standing between the daemon's own Node
+    // permission flags and the driven CLI. Those flags are written FOR THE WORKER
+    // (`--permission --allow-fs-write=<terminal-worker>`), and a driven pnpm/vitest/git
+    // inheriting them fails in confusing ways: a live drive had to rediscover
+    // `env -u NODE_OPTIONS -u NODE_ENV` six times in one run, including on `git commit`.
+    // With one tmux server per session the pane inherits exactly this env via the server's
+    // process environment, so this is the authoritative chokepoint.
+    const plan = await buildSpawnPlan(
+      {
+        bin: "/usr/local/bin/claude",
+        argv: [],
+        cwd: "/w",
+        dataDir: "/data",
+        env: {
+          PATH: "/usr/bin",
+          NODE_OPTIONS: "--permission --allow-fs-write=/home/comis/.comis/terminal-worker",
+          BASH_ENV: "/tmp/evil.sh",
+          LD_PRELOAD: "/tmp/evil.so",
+          AZURE_DEVOPS_EXT_PAT: "keep-me",
+        } as NodeJS.ProcessEnv,
+        scope: { filesystem: "workspace", network: "none" } as never,
+      } as never,
+      { unsafeDisableSandbox: true } as never,
+    );
+    expect(plan.env.NODE_OPTIONS).toBeUndefined();
+    expect(plan.env.BASH_ENV).toBeUndefined();
+    expect(plan.env.LD_PRELOAD).toBeUndefined();
+    // An operator secret the drive NEEDS must survive — this is a blocklist, not an allowlist.
+    expect(plan.env.AZURE_DEVOPS_EXT_PAT).toBe("keep-me");
+    expect(plan.env.PATH).toBe("/usr/bin");
+  });
+});
