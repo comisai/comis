@@ -57,11 +57,7 @@ import {
 } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import { createLogger } from "@comis/infra";
-import {
-  decideSkillReimport,
-  vetSkillBundle,
-  type PromptSkillDescription,
-} from "@comis/skills";
+import { type PromptSkillDescription } from "@comis/skills";
 import { fromPromise } from "@comis/shared";
 import { rmSync, existsSync } from "node:fs";
 import type { RpcHandler } from "./types.js";
@@ -81,9 +77,8 @@ import { installSkillDirectory } from "../skills/skill-directory-swap.js";
 import {
   recordSkillImportCompletion,
   recordSkillImportFailure,
-  recordSkillImportRejection,
 } from "../skills/skill-import-observability.js";
-import { collectSkillBundleFiles } from "../skills/skill-provenance-backfill.js";
+import { checkSkillReimport } from "../skills/skill-reimport-policy.js";
 import {
   provenanceKey,
   readSkillProvenance,
@@ -463,177 +458,44 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } as const;
       const evaluated = evaluateInstallVettingGate(gateArgs);
 
-      if (existsSync(skillDir)) {
-        const incumbent = readSkillProvenance(dataDir)[provenanceKey(scope, name)];
-        if (incumbent === undefined) {
-          logger.warn(
-            {
-              method: "skills.import",
-              skillName: name,
-              hint:
-                "The destination is untracked. Review and explicitly delete it before importing the same name.",
-              errorKind: "precondition" as const,
-            },
-            "Skill re-import found an untracked incumbent",
-          );
-          recordSkillImportRejection({
-            eventBus: deps.eventBus,
+      const reimport = checkSkillReimport({
+        dataDir,
+        skillDir,
+        scope,
+        skillName: name,
+        source,
+        candidate: evaluated.vetted,
+        confirmed: rawParams.force === true,
+        eventBus: deps.eventBus,
+        logger: deps.logger,
+      });
+      if (!reimport.ok) throw reimport.error;
+      if (reimport.value.kind === "unchanged") {
+        logger.info(
+          {
+            method: "skills.import",
             skillName: name,
             source,
-            stage: "vet",
-            code: "skill_reimport_untracked",
-          });
-          throw new Error(
-            `[skill_reimport_untracked] Skill directory ${name} already exists without durable provenance; ` +
-            "refusing to overwrite unknown bytes",
-          );
-        }
-        const liveFiles = collectSkillBundleFiles(
-          skillDir,
-          safePath(skillDir, "SKILL.md"),
-        );
-        if (!liveFiles.ok) {
-          logger.warn(
-            {
-              method: "skills.import",
-              skillName: name,
-              err: liveFiles.error.message,
-              hint:
-                "The incumbent could not be hashed. Check skill-directory permissions and member types before retrying.",
-              errorKind: "resource" as const,
-            },
-            "Skill re-import could not verify incumbent bytes",
-          );
-          recordSkillImportRejection({
-            eventBus: deps.eventBus,
-            skillName: name,
-            source,
-            stage: "vet",
-            code: "skill_reimport_unreadable",
-          });
-          throw new Error(
-            `[skill_reimport_unreadable] Could not verify live skill ${name}: ${liveFiles.error.message}`,
-          );
-        }
-        const liveHash = vetSkillBundle({
-          files: liveFiles.value,
-          trust: incumbent.trust,
-        }).contentHash;
-        if (liveHash !== incumbent.contentHash) {
-          logger.warn(
-            {
-              method: "skills.import",
-              skillName: name,
-              incumbentTrust: incumbent.trust,
-              hint:
-                "The live directory changed after provenance was recorded. Review the local changes and remove or restore the incumbent before retrying.",
-              errorKind: "precondition" as const,
-            },
-            "Skill re-import detected incumbent tampering",
-          );
-          recordSkillImportRejection({
-            eventBus: deps.eventBus,
-            skillName: name,
-            source,
-            stage: "vet",
-            code: "skill_reimport_tampered",
-          });
-          throw new Error(
-            `[skill_reimport_tampered] Live bytes for ${name} differ from installed-skills.json; ` +
-            "refusing to overwrite until the incumbent is reviewed",
-          );
-        }
-        const reimportDecision = decideSkillReimport({
-          incumbentHash: incumbent.contentHash,
-          incumbentTrust: incumbent.trust,
-          candidateHash: evaluated.vetted.contentHash,
-          candidateTrust: evaluated.vetted.trust,
-          confirmed: rawParams.force === true,
-        });
-        if (reimportDecision === "no_op") {
-          logger.info(
-            {
-              method: "skills.import",
-              skillName: name,
-              source,
-              trust: evaluated.vetted.trust,
-              fileCount: fetchedFiles.length,
-              unchanged: true,
-              durationMs: systemNowMs() - importStartedMs,
-            },
-            "Skill re-import matched installed bytes",
-          );
-          const result = {
-            ok: true as const,
-            path: skillDir,
-            name,
+            trust: evaluated.vetted.trust,
             fileCount: fetchedFiles.length,
             unchanged: true,
-            trust: incumbent.trust,
-            verdict: incumbent.verdict,
-            contentHash: incumbent.contentHash,
-            warnings: evaluated.vetted.warnings,
-          };
-          if (IS_DEV) SkillsImportContract.response.parse(result);
-          return result;
-        }
-        if (reimportDecision === "refuse") {
-          logger.warn(
-            {
-              method: "skills.import",
-              skillName: name,
-              incumbentTrust: incumbent.trust,
-              candidateTrust: evaluated.vetted.trust,
-              hint:
-                "A lower-trust source cannot replace this skill. Remove the incumbent explicitly only after reviewing its provenance.",
-              errorKind: "precondition" as const,
-            },
-            "Skill re-import refused by trust policy",
-          );
-          recordSkillImportRejection({
-            eventBus: deps.eventBus,
-            skillName: name,
-            source,
-            stage: "vet",
-            code: "skill_reimport_trust_refused",
-          });
-          throw new Error(
-            `[skill_reimport_refused] incumbent=${incumbent.trust} candidate=${evaluated.vetted.trust}`,
-          );
-        }
-        if (reimportDecision === "confirm") {
-          const candidateCritical = evaluated.vetted.findings.filter(
-            (finding) => finding.severity === "CRITICAL",
-          ).length;
-          logger.warn(
-            {
-              method: "skills.import",
-              skillName: name,
-              incumbentTrust: incumbent.trust,
-              candidateTrust: evaluated.vetted.trust,
-              findingCounts: {
-                critical: candidateCritical,
-                warn: evaluated.vetted.findings.length - candidateCritical,
-              },
-              hint:
-                "Review the counts-only re-import difference, then repeat the same call with force: true to replace the incumbent.",
-              errorKind: "precondition" as const,
-            },
-            "Skill re-import requires confirmation",
-          );
-          recordSkillImportRejection({
-            eventBus: deps.eventBus,
-            skillName: name,
-            source,
-            stage: "vet",
-            code: "skill_reimport_confirmation_required",
-          });
-          throw new Error(
-            `[skill_reimport_confirm] Different bytes require force: true; findingCounts ` +
-            `incumbent={critical:${incumbent.findingCounts.critical},warn:${incumbent.findingCounts.warn}} ` +
-            `candidate={critical:${candidateCritical},warn:${evaluated.vetted.findings.length - candidateCritical}}`,
-          );
-        }
+            durationMs: systemNowMs() - importStartedMs,
+          },
+          "Skill re-import matched installed bytes",
+        );
+        const result = {
+          ok: true as const,
+          path: skillDir,
+          name,
+          fileCount: fetchedFiles.length,
+          unchanged: true,
+          trust: reimport.value.incumbent.trust,
+          verdict: reimport.value.incumbent.verdict,
+          contentHash: reimport.value.incumbent.contentHash,
+          warnings: evaluated.vetted.warnings,
+        };
+        if (IS_DEV) SkillsImportContract.response.parse(result);
+        return result;
       }
 
       // Enforce the content policy only after collision policy has established
