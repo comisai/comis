@@ -47,6 +47,7 @@ import {
   createResponsesRoute,
 } from "@comis/gateway";
 import {
+  BackgroundTaskOriginSchema,
   createConversationLocator,
   createConversationRef,
   formatSessionKey,
@@ -306,6 +307,73 @@ describe("mountGatewayRoutes", () => {
     expect(second).toBeDefined();
     if (first === undefined || second === undefined) return;
     expect(first.endpoint.conversationId).not.toBe(second.endpoint.conversationId);
+  });
+
+  it("binds the webhook delivery origin to the SAME endpoint its turn scope resolved", async () => {
+    // The runtime treats the delivery origin and the turn scope as one authority
+    // and rejects the pair wherever they disagree: BackgroundTaskOriginSchema
+    // ("delivery origin must agree with the resolved turn authority") gates
+    // background-task promotion and task extraction, the capability lease
+    // principal gates a jailed session.spawn, and the autonomy wiring drops the
+    // durable principal. A webhook turn whose origin says one channel while its
+    // scope says another therefore starts, then fail-closes at every one of those
+    // seams. Cron and durable resume derive the origin FROM the resolved endpoint
+    // for exactly this reason; so must the webhook path.
+    const observedContexts: Array<ReturnType<typeof tryGetContext>> = [];
+    const execute = vi.fn(async () => {
+      observedContexts.push(tryGetContext());
+      return { finishReason: "stop" };
+    });
+    const deps = createMockDeps({
+      webhooksConfig: {
+        enabled: true,
+        mappings: [{ id: "m1", name: "test", agentId: "agent-b" }],
+      } as any,
+      getExecutor: vi.fn(() => ({ execute })) as any,
+    });
+    mountGatewayRoutes(deps);
+    const config = vi.mocked(createMappedWebhookEndpoint).mock.calls.at(-1)![0] as any;
+
+    await config.onAgentAction(
+      { id: "m1", name: "test", agentId: "agent-b" },
+      "perform task",
+      "azdo:12816",
+    );
+
+    const context = observedContexts[0];
+    const turnScope = context?.turnScope;
+    const deliveryOrigin = context?.deliveryOrigin;
+    expect(turnScope).toBeDefined();
+    expect(deliveryOrigin).toBeDefined();
+    if (turnScope === undefined || deliveryOrigin === undefined) return;
+    expect(deliveryOrigin.channelType).toBe(turnScope.endpoint.channelType);
+    expect(deliveryOrigin.channelId).toBe(turnScope.endpoint.conversationId);
+    expect(deliveryOrigin.userId).toBe(turnScope.principal.principalId);
+    expect(deliveryOrigin.threadId).toBe(turnScope.endpoint.threadId);
+    // The pair must satisfy the schema the background-task manager parses with,
+    // not merely look consistent field by field.
+    const conversationRef = createConversationRef(turnScope.conversation);
+    expect(conversationRef.ok).toBe(true);
+    if (!conversationRef.ok) return;
+    const origin = BackgroundTaskOriginSchema.safeParse({
+      turnScope,
+      conversationRef: conversationRef.value,
+      deliveryOrigin,
+      traceId: context?.traceId ?? null,
+      responseLocalePolicy: { source: "unset", enforceLocale: false },
+      backgroundHopCount: 0,
+    });
+    expect(
+      origin.success,
+      `a webhook turn must be able to promote a background task: ${JSON.stringify(
+        origin.success ? [] : origin.error.issues.map((issue) => issue.message),
+      )}`,
+    ).toBe(true);
+    // The webhook surface stays the channel of record end to end — an operator
+    // reading the scope, the origin or the session key sees "webhook", not an
+    // internal origin kind standing in for it.
+    expect(turnScope.endpoint.channelType).toBe("webhook");
+    expect(turnScope.endpoint.conversationId).toBe("azdo:12816");
   });
 
   it("frames rendered webhook content with the resolved session delimiter before execution", async () => {
