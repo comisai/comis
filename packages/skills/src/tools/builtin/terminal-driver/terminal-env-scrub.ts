@@ -63,6 +63,21 @@ const INTERPRETER_CONTROL_BLOCKLIST: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Daemon RUNTIME-MODE vars stripped from the child env unconditionally. NOT a security
+ * blocklist — these load no code, so they deliberately stay OUT of
+ * {@link INTERPRETER_CONTROL_BLOCKLIST} (which mirrors the MCP client's list and means
+ * "startup code-injection vector"; widening it would blur that meaning and the mirror).
+ * They are stripped for CORRECTNESS: the drive inherits the daemon's process env, and a
+ * driven build/test tool silently changes behavior under them.
+ *   - `NODE_ENV` — the daemon runs `production`, under which `pnpm`/`npm install` prunes
+ *     devDependencies and test/build tooling picks production config, inside a workspace
+ *     the user is actively developing in. A live drive had to rediscover
+ *     `env -u NODE_OPTIONS -u NODE_ENV` six times in one run, including on `git commit`.
+ * A drive must start from the TOOL defaults, not the daemon's runtime mode.
+ */
+const DAEMON_RUNTIME_MODE_BLOCKLIST: ReadonlySet<string> = new Set(["NODE_ENV"]);
+
+/**
  * Interpreter-control PREFIX families stripped from the child env unconditionally
  * (both env sources — dangerous regardless of origin). Unlike the exact-name
  * {@link INTERPRETER_CONTROL_BLOCKLIST}, these are open-ended families with many
@@ -181,6 +196,7 @@ export function secretEnvKeysIn(env: NodeJS.ProcessEnv): string[] {
  */
 export const JAIL_UNSET_ENV_VARS: readonly string[] = [
   ...INTERPRETER_CONTROL_BLOCKLIST,
+  ...DAEMON_RUNTIME_MODE_BLOCKLIST,
   ...NESTED_CLI_EXACT,
 ];
 
@@ -236,6 +252,7 @@ export function scrubChildEnv(
   for (const [key, value] of Object.entries(env)) {
     if (typeof value !== "string") continue; // non-string (undefined) → skip
     if (INTERPRETER_CONTROL_BLOCKLIST.has(key)) continue; // exact-name startup code-injection vector
+    if (DAEMON_RUNTIME_MODE_BLOCKLIST.has(key)) continue; // NODE_ENV — daemon runtime mode, not a security vector
     if (INTERPRETER_CONTROL_PREFIXES.some((p) => key.startsWith(p))) continue; // LD_/DYLD_/PIP_/UV_ family (both sources)
     if (isDaemonSecretEnvKey(key)) continue; // gateway-token family / master key — never into a jailed CLI, BOTH sources (TERM-ENV-GATEWAY-TOKEN-LEAK)
     if (blockComis && key.startsWith(COMIS_OPERATIONAL_PREFIX)) continue; // COMIS_* from an untrusted workspace .env ONLY

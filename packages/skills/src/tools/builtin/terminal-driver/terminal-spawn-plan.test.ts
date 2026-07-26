@@ -271,8 +271,8 @@ describe("buildSpawnPlan — unsafeDisableSandbox (the operator opt-out of the j
   });
 });
 
-describe("unsandboxed drive env — interpreter-control vars must not reach the pane", () => {
-  it("strips NODE_OPTIONS/NODE_ENV-class interpreter vars from the unsandboxed plan env", async () => {
+describe("unsandboxed drive env — the daemon's own Node env must not reach the pane", () => {
+  it("strips NODE_OPTIONS (interpreter vector) AND NODE_ENV (daemon runtime mode) from the unsandboxed plan env", async () => {
     // With `unsafeDisableSandbox` there is NO bwrap, so the `--unsetenv` half of the scrub does
     // not exist — the plan env is the ONLY thing standing between the daemon's own Node
     // permission flags and the driven CLI. Those flags are written FOR THE WORKER
@@ -290,6 +290,7 @@ describe("unsandboxed drive env — interpreter-control vars must not reach the 
         env: {
           PATH: "/usr/bin",
           NODE_OPTIONS: "--permission --allow-fs-write=/home/comis/.comis/terminal-worker",
+          NODE_ENV: "production",
           BASH_ENV: "/tmp/evil.sh",
           LD_PRELOAD: "/tmp/evil.so",
           AZURE_DEVOPS_EXT_PAT: "keep-me",
@@ -299,6 +300,7 @@ describe("unsandboxed drive env — interpreter-control vars must not reach the 
       { unsafeDisableSandbox: true } as never,
     );
     expect(plan.env.NODE_OPTIONS).toBeUndefined();
+    expect(plan.env.NODE_ENV).toBeUndefined(); // the OTHER half of that `env -u` incantation
     expect(plan.env.BASH_ENV).toBeUndefined();
     expect(plan.env.LD_PRELOAD).toBeUndefined();
     // An operator secret the drive NEEDS must survive — this is a blocklist, not an allowlist.

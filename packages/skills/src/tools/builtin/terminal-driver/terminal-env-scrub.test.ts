@@ -165,6 +165,38 @@ describe("scrubChildEnv — interpreter-vector prefix families (LD_/DYLD_/PIP_/U
 });
 
 // ---------------------------------------------------------------------------
+// The daemon's own Node RUNTIME-MODE var. Not a security vector (it loads no
+// code) — a correctness one: the drive inherits the daemon's process env, and a
+// driven pnpm/npm/vitest silently changes behavior under it.
+// ---------------------------------------------------------------------------
+describe("scrubChildEnv — the daemon's NODE_ENV must not reach the drive", () => {
+  it("strips NODE_ENV on both sources while keeping the rest of the env rich", () => {
+    // A live drive had to rediscover `env -u NODE_OPTIONS -u NODE_ENV` six times in one run.
+    // NODE_OPTIONS was fixed as an interpreter vector; NODE_ENV is the other half and is a
+    // BEHAVIOR leak: the daemon runs `NODE_ENV=production`, so a driven `pnpm install` prunes
+    // devDependencies, and test/build tooling picks production config — in a workspace the user
+    // is actively developing in. The drive must start from the tool defaults, not the daemon's
+    // runtime mode.
+    for (const source of ["inherited", "workspace"] as const) {
+      const out = scrubChildEnv(
+        { NODE_ENV: "production", PATH: "/usr/bin", TERM: "xterm-256color" },
+        { source },
+      );
+      expect(out, `NODE_ENV must be stripped from the ${source} source`).not.toHaveProperty("NODE_ENV");
+      expect(out.PATH).toBe("/usr/bin");
+      expect(out.TERM).toBe("xterm-256color");
+    }
+  });
+
+  it("is cleared on the JAILED backend too (bwrap --unsetenv takes the exact name)", () => {
+    // The tmux/durable backend inherits the tmux SERVER env, bypassing the scrubbed object —
+    // the same gap that let NODE_OPTIONS through on a real VPS. NODE_ENV needs the same
+    // backend-independent half.
+    expect(JAIL_UNSET_ENV_VARS).toContain("NODE_ENV");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The source-distinction correctness point. The
 // COMIS_ fail-closed block applies to an UNTRUSTED workspace .env source ONLY,
 // NEVER to the daemon's own COMIS_CAP_LEASE/COMIS_ORCH_SOCKET injection (which
