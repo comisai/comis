@@ -144,6 +144,7 @@ describe("resolveRegistryMetadata", () => {
           slug: "summarize",
           version: "1.2.3",
           evidence: {
+            registryId: "community-a",
             publisherHandle: "publisher_a",
             securityStatus: "clean",
             securityPassed: true,

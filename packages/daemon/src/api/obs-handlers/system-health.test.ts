@@ -47,6 +47,7 @@ import type { ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { assembleSystemHealthReport, bindSystemHealthHandlers, pickWorstDegradedSessionKey } from "./system-health.js";
 import type { ObsHandlerDeps } from "./obs-helpers.js";
+import { recordSkillProvenance, type SkillProvenanceRecord } from "../../skills/skill-provenance-store.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -218,6 +219,55 @@ function makeDeps(overrides?: Partial<ObsHandlerDeps>): ObsHandlerDeps {
 }
 
 describe("assembleSystemHealthReport (4-source read fan-in)", () => {
+  it("summarizes imported skill trust, registry posture, and pending MCP exposure", async () => {
+    const dataDir = makeDataDirWithActivity();
+    const baseRecord: SkillProvenanceRecord = {
+      source: "github",
+      ref: "https://github.com/example/skills/tree/main/example",
+      contentHash: `sha256:${"a".repeat(64)}`,
+      importedAt: "2026-07-26T12:00:00.000Z",
+      importedBy: { agentId: "default" },
+      trust: "community",
+      verdict: "safe",
+      findingCounts: { critical: 0, warn: 0 },
+    };
+    const allowedEvidence = { registryId: "configured", securityPassed: true };
+    const retiredEvidence = { registryId: "retired", securityPassed: true };
+    expect(recordSkillProvenance(dataDir, "local", "remote-one", baseRecord).ok).toBe(true);
+    expect(recordSkillProvenance(dataDir, "local", "registry-one", {
+      ...baseRecord,
+      source: "registry",
+      ref: "registry:registry-one@1.0.0",
+      evidence: allowedEvidence,
+      pendingMcpServers: [{ name: "docs", transport: "http", reason: "operator approval required" }],
+    }).ok).toBe(true);
+    expect(recordSkillProvenance(dataDir, "local", "registry-two", {
+      ...baseRecord,
+      source: "registry",
+      ref: "registry:registry-two@1.0.0",
+      evidence: retiredEvidence,
+    }).ok).toBe(true);
+
+    const report = await assembleSystemHealthReport(
+      {
+        obsStore: makeStore(),
+        dataDir,
+        clock: createFakeClock(systemNowMs()),
+        registryAllowlistByAgent: new Map([["default", new Set(["configured"])]]),
+      },
+      24,
+    );
+
+    expect(report.skillExposure).toEqual({
+      imported: 3,
+      community: 3,
+      registry: 2,
+      nonAllowlistedRegistry: 1,
+      pendingMcp: 1,
+      registryAllowlistKnown: true,
+    });
+  });
+
   // WIRING GUARD: assembleSystemHealthReport must QUERY each learning
   // diagnostic category AND thread it into buildFindings. The buildFindings unit tests prove the finding
   // is BUILT from rows; these prove system-health actually QUERIES the category + passes it (the wiring

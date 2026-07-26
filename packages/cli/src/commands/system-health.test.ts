@@ -95,6 +95,14 @@ const FAKE_REPORT = {
   },
   suggestedNextSteps: ["raise the breaker threshold"],
   truncations: [],
+  skillExposure: {
+    imported: 6,
+    community: 4,
+    registry: 2,
+    nonAllowlistedRegistry: 1,
+    pendingMcp: 2,
+    registryAllowlistKnown: true,
+  },
 };
 
 /**
@@ -191,6 +199,9 @@ describe("comis system-health (defaults) uses --since 24 --format table", () => 
     expect(output).toContain("Sessions");
     expect(output).toContain("Breaker");
     expect(output).toContain("Cost");
+    expect(output).toContain("Skills");
+    expect(output).toContain("imported=6");
+    expect(output).toContain("nonAllowlistedRegistry=1");
     // The token figure names its basis (session-index input+output, no cache) so
     // it doesn't read as the same "tok" as explain's cache-inclusive ledger.
     expect(output).toContain("735800 tok (input+output, excl cache)");

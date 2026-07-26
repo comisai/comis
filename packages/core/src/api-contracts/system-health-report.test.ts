@@ -69,6 +69,14 @@ function validReport(): SystemHealthReport {
       buildAuthor: false,
       reason: "defer: insufficient telemetry (0 small-tier invocations < 20)",
     },
+    skillExposure: {
+      imported: 6,
+      community: 4,
+      registry: 2,
+      nonAllowlistedRegistry: 1,
+      pendingMcp: 2,
+      registryAllowlistKnown: true,
+    },
   };
 }
 
@@ -118,6 +126,19 @@ describe("SystemHealthReportSchema (bounded/deterministic system wire shape)", (
     const noVerdict = { ...validReport(), likelyRootCause: null };
     const parsed = SystemHealthReportSchema.parse(noVerdict);
     expect(parsed.likelyRootCause).toBeNull();
+  });
+
+  it("preserves the content-free installed skill exposure summary", () => {
+    const parsed = SystemHealthReportSchema.parse(validReport());
+
+    expect(parsed.skillExposure).toEqual({
+      imported: 6,
+      community: 4,
+      registry: 2,
+      nonAllowlistedRegistry: 1,
+      pendingMcp: 2,
+      registryAllowlistKnown: true,
+    });
   });
 
   it("the pipelineAuthoringGate verdict SURVIVES .parse() (the round-trip proof)", () => {
