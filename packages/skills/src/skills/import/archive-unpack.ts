@@ -84,6 +84,7 @@ interface ArchiveMember {
   readonly dataOffset: number;
   readonly dataEnd: number;
   readonly isDirectory: boolean;
+  readonly mode?: number;
 }
 
 function failure(code: ArchiveErrorCode, message: string, path?: string): ArchiveError {
@@ -198,7 +199,7 @@ function memberType(
   versionMadeBy: number,
   externalAttributes: number,
   trailingSlash: boolean,
-): Result<{ isDirectory: boolean }, ArchiveError> {
+): Result<{ isDirectory: boolean; mode?: number }, ArchiveError> {
   const creatorSystem = versionMadeBy >>> 8;
   const unixMode = externalAttributes >>> 16;
   const unixType = unixMode & UNIX_FILE_TYPE_MASK;
@@ -217,11 +218,14 @@ function memberType(
   if (isDirectory && creatorSystem === 3 && unixType === UNIX_REGULAR) {
     return err(failure("archive_unsafe_entry", "Archive member type conflicts with its path"));
   }
-  return ok({ isDirectory });
+  return ok({
+    isDirectory,
+    ...(creatorSystem === 3 && unixMode !== 0 && { mode: unixMode }),
+  });
 }
 
 function resolveRoot(paths: readonly string[]): Result<string, ArchiveError> {
-  if (paths.includes("SKILL.md")) return ok("");
+  if (paths.some((path) => path.toLowerCase() === "skill.md")) return ok("");
   const roots = new Set(paths.map((path) => path.split("/")[0]!));
   if (roots.size !== 1) {
     return err(
@@ -229,7 +233,7 @@ function resolveRoot(paths: readonly string[]): Result<string, ArchiveError> {
     );
   }
   const root = [...roots][0]!;
-  if (!paths.includes(`${root}/SKILL.md`)) {
+  if (!paths.some((path) => path.toLowerCase() === `${root.toLowerCase()}/skill.md`)) {
     return err(
       failure("archive_ambiguous_root", "Archive root does not contain SKILL.md"),
     );
@@ -400,6 +404,7 @@ function parseMembers(
       dataOffset,
       dataEnd,
       isDirectory: type.value.isDirectory,
+      ...(type.value.mode !== undefined && { mode: type.value.mode }),
     });
     centralCursor = centralEnd;
   }
@@ -529,7 +534,12 @@ export function unpackSkillArchive(
         ),
       );
     }
-    files.push({ path: member.outputPath, content: inflated.value });
+    files.push({
+      path: member.outputPath,
+      content: inflated.value,
+      type: "file",
+      ...(member.mode !== undefined && { mode: member.mode }),
+    });
   }
   return ok(files);
 }

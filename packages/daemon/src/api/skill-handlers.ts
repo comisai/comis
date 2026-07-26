@@ -423,7 +423,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       const skillDir = safePath(skillsBaseDir, name);
       const gateArgs = {
         deps, source, skillName: name, callingAgentId,
-        files: fetchedFiles.map((f) => ({ path: f.path, content: f.content })),
+        files: fetchedFiles,
         ctx: (rawParams as { _context?: { userId?: string } })._context, force: rawParams.force === true,
         ...(registryTrust !== undefined && { registryTrust }),
       } as const;
