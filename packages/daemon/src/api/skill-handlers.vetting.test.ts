@@ -122,11 +122,15 @@ function crc32(bytes: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function makeStoredArchive(files: Readonly<Record<string, string>>): Uint8Array {
+type StoredArchiveFixture = string | { readonly content: string; readonly mode: number };
+
+function makeStoredArchive(files: Readonly<Record<string, StoredArchiveFixture>>): Uint8Array {
   const local: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
-  for (const [path, content] of Object.entries(files)) {
+  for (const [path, fixture] of Object.entries(files)) {
+    const content = typeof fixture === "string" ? fixture : fixture.content;
+    const mode = typeof fixture === "string" ? 0o100644 : fixture.mode;
     const name = Buffer.from(path, "utf-8");
     const body = Buffer.from(content, "utf-8");
     const header = Buffer.alloc(30);
@@ -149,7 +153,7 @@ function makeStoredArchive(files: Readonly<Record<string, string>>): Uint8Array 
     record.writeUInt32LE(body.byteLength, 20);
     record.writeUInt32LE(body.byteLength, 24);
     record.writeUInt16LE(name.byteLength, 28);
-    record.writeUInt32LE((0o100644 << 16) >>> 0, 38);
+    record.writeUInt32LE((mode << 16) >>> 0, 38);
     record.writeUInt32LE(offset, 42);
     central.push(Buffer.concat([record, name]));
     offset += member.byteLength;
@@ -359,6 +363,28 @@ describe("skills.import — pre-write vetting gate", () => {
       "https://example.com/my-skill.skill",
       expect.objectContaining({ redirect: "manual" }),
     );
+  });
+
+  it("requires confirmation when archive metadata marks a non-script member executable", async () => {
+    const archive = makeStoredArchive({
+      "my-skill/SKILL.md": CLEAN_SKILL_MD,
+      "my-skill/references/guide.md": {
+        content: "Guide",
+        mode: 0o100755,
+      },
+    });
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    await expect(
+      handlers["skills.import"]!({
+        source: "archive",
+        archiveBase64: Buffer.from(archive).toString("base64"),
+        scope: "local",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/skill_vet_confirm:caution.*BUNDLE_EXEC_BIT/s);
+
+    expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual([]);
   });
 
   it("refuses archive URL credentials before any network call", async () => {

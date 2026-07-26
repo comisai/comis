@@ -176,6 +176,52 @@ describe("unpackSkillArchive", () => {
     );
   });
 
+  it("preserves regular-file mode and type metadata for the vetting gate", () => {
+    const result = unpackSkillArchive(
+      makeZip([
+        { path: "SKILL.md", content: "---\nname: safe\ndescription: safe\n---\n" },
+        {
+          path: "references/guide.md",
+          content: "Guide",
+          externalAttributes: 0o100755 << 16,
+        },
+      ]),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.find((file) => file.path === "references/guide.md")).toMatchObject({
+      mode: 0o100755,
+      type: "file",
+    });
+  });
+
+  it("accepts a case-variant manifest at the archive root", () => {
+    const result = unpackSkillArchive(
+      makeZip([{ path: "skill.md", content: "---\nname: safe\ndescription: safe\n---\n" }]),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.map((file) => file.path)).toEqual(["skill.md"]);
+  });
+
+  it("accepts a case-variant manifest inside one top-level directory", () => {
+    const result = unpackSkillArchive(
+      makeZip([
+        { path: "safe/SKILL.MD", content: "---\nname: safe\ndescription: safe\n---\n" },
+        { path: "safe/references/guide.md", content: "Guide" },
+      ]),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.map((file) => file.path)).toEqual([
+      "SKILL.MD",
+      "references/guide.md",
+    ]);
+  });
+
   it("rejects archives with multiple possible skill roots", () => {
     const result = unpackSkillArchive(
       makeZip([
