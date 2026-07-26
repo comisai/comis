@@ -657,6 +657,12 @@ export interface InfraEvents {
     timestamp: number;
     /** {@link BACKGROUND_TASK_DISPATCH_REDELIVERY} — see the failed variant. */
     dispatchRedelivery?: boolean;
+    /** Correlation to the ORIGINATING tool call — see the failed variant. */
+    toolCallId?: string;
+    /** Formatted session key captured at promote time — see the failed variant. */
+    sessionKey?: string;
+    /** Trace id captured at promote time — see the failed variant. */
+    traceId?: string;
   };
 
   /** Background task failed (timeout, error, or daemon restart).
@@ -682,6 +688,20 @@ export interface InfraEvents {
      * `background_task:notified.trajectoryRecorded`.
      */
     dispatchRedelivery?: boolean;
+    /**
+     * The ORIGINATING tool call's id, captured at promote time.
+     *
+     * The activity card keys a tool's lifecycle on `tool:<toolCallId>`; without
+     * this field the terminal event could not close the activity it belongs to,
+     * so a backgrounded tool's card either froze on "running" or (worse) had
+     * already been closed "completed" at hand-off. Optional: tasks recovered
+     * from a pre-upgrade on-disk record have none.
+     */
+    toolCallId?: string;
+    /** Formatted session key captured at promote time (activity dispatch requires it). */
+    sessionKey?: string;
+    /** Trace id captured at promote time (activity dispatch requires it). */
+    traceId?: string;
   };
 
   /**
@@ -772,6 +792,15 @@ export interface InfraEvents {
     agentId: string;
     outcome: "success" | "denied" | "not_found";
     timestamp: number;
+    /**
+     * Correlation to the turn that caused the access, when one exists. The
+     * audit sink prefers these over AsyncLocalStorage (which is empty for
+     * boot-time reads — the reason every live `secret_access` row carried
+     * `traceId: null` and could not be joined to a session). Emitters running
+     * inside a request context should pass them; boot-time emitters omit both.
+     */
+    sessionKey?: string;
+    traceId?: string;
   };
 
   /**

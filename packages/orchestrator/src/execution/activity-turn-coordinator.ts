@@ -575,6 +575,25 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
       }
     }
 
+    // (1a2) A failure whose answer WAS fully delivered, with the failure
+    // attributable to observed events, is a SUCCESS WITH RECOVERED FAILURES:
+    // the user's chat shows the answer (no failure pill), while the failed
+    // events ride the outcome + `activity:turn_finalized` as evidence. This is
+    // NOT "delivery succeeded ⇒ success" — with no observed failed events the
+    // failure evidence would be erased, so that case keeps the truthful
+    // failure (and gets the named reason below).
+    if (effective.kind === "failure" && effective.delivery !== undefined) {
+      const failedEvents = events.filter((e) => e.status === "failed");
+      if (isNonEmptyEvents(failedEvents)) {
+        effective = {
+          kind: "success_with_recovered_failures",
+          trivial: false,
+          delivery: effective.delivery,
+          recoveredFailures: failedEvents,
+        };
+      }
+    }
+
     // (1b) An unattributed FAILURE must still read truthfully. A `failure` with
     // zero failed events cannot name a tool, so `failureLabel()` renders the bare
     // "❌ {errorKind}" — which reached a real user as a chat bubble whose entire

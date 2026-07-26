@@ -152,6 +152,13 @@ export interface BackgroundTask {
   /** Live notification policy. Optional; recovery defaults to "deferred" when
    *  absent. */
   notificationPolicy?: BackgroundTaskNotificationPolicy;
+  /** Correlation to the originating tool call + turn, captured at promote time
+   *  and PERSISTED (ids only — no content), so the terminal
+   *  `background_task:{completed,failed}` event can close the right activity
+   *  card even across a daemon restart. Absent on pre-upgrade records. */
+  toolCallId?: string;
+  sessionKey?: string;
+  traceId?: string;
   /** Durable completion lifecycle. */
   dispatchState?: BackgroundSessionState;
   continuationExecutionId: string;

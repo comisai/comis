@@ -1376,11 +1376,22 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ? extractWebResultMetadata(endEvent.toolName, endEvent.result)
             : undefined;
 
+          // A background HAND-OFF is not an outcome: the middleware returns a
+          // non-error placeholder carrying details.status:"backgrounded", so
+          // toolSuccess is true while the tool is still running. Mark it so
+          // outcome consumers (the activity card above all) do not close a
+          // still-running tool as "completed".
+          const resultBackgrounded =
+            endEvent.result != null
+            && typeof endEvent.result === "object"
+            && ((endEvent.result as Record<string, unknown>).details as Record<string, unknown> | undefined)
+              ?.status === "backgrounded";
           deps.eventBus.emit("tool:executed", {
             toolName: endEvent.toolName,
             toolCallId: endEvent.toolCallId,
             durationMs,
             success: toolSuccess,
+            ...(resultBackgrounded ? { backgrounded: true } : {}),
             timestamp: systemNowMs(),
             agentId: deps.agentId,
             sessionKey: formatSessionKey(deps.sessionKey),

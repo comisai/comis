@@ -417,6 +417,10 @@ describe("wrapToolForAutoBackground", () => {
         expect.any(Promise),
         expect.any(AbortController),
         expectedOrigin,
+        undefined,
+        // Ids-only correlation captured at promote time so the TERMINAL event
+        // can close the activity card this tool call opened.
+        expect.objectContaining({ toolCallId: "call-1" }),
       );
     });
 

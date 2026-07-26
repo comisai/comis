@@ -193,9 +193,30 @@ const matchVenvMissing: Matcher = ({ stderr, exitCode, cwd }) => {
 // Registry + entry point
 // ---------------------------------------------------------------------------
 
+
+/**
+ * PEP 668: a system Python refuses `pip install` with
+ * `error: externally-managed-environment`. Observed live: an agent burned three
+ * exec round-trips (bare pip → read the wall of text → retry with
+ * `--break-system-packages`) before its xlsx task could start. The stderr wall
+ * does mention the flag, but buried after a distro lecture — surface the two
+ * viable next steps at the HEAD so the first retry is the right one.
+ */
+const matchExternallyManagedEnv: Matcher = ({ stderr, exitCode }) => {
+  if (exitCode === 0) return null;
+  if (!stderr || !stderr.includes("externally-managed-environment")) return null;
+  return (
+    "RECOVERY HINT: This system Python is PEP 668 externally-managed — bare `pip install` " +
+    "will always refuse. Either install into a workspace virtualenv " +
+    "(python3 -m venv venv && venv/bin/pip install <pkgs>) or, for a throwaway box, " +
+    "re-run with `pip install --break-system-packages <pkgs>`. Do not retry the identical command."
+  );
+};
+
 const matchers: ReadonlyArray<Matcher> = [
   matchPythonModuleNotFound,
   matchVenvMissing,
+  matchExternallyManagedEnv,
   // Future: matchNodeModuleNotFound, matchCommandNotFound, matchEnvVarMissing, ...
 ];
 

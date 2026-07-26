@@ -78,6 +78,7 @@ export type {
   ProjectionConfig,
   CoalesceResult,
   ActivityVerbosity,
+  FinalDeliveryReceipt,
 } from "../activity/index.js";
 
 // ExecutionPlanPort — read-only SEP accessor (rides on the activity surface).

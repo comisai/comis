@@ -361,6 +361,18 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
     persistAuditRow(auditEventToRow(payload, tenant, agent, ctx?.traceId));
   });
 
+/**
+ * Process-environment names that are configuration, not credentials. A
+ * `secret:accessed` for one of these is a routine env read and never belongs
+ * in the security access trail. Exact names only — a miss here merely leaves a
+ * noisy row, while an over-match would HIDE a real access.
+ */
+const NON_CREDENTIAL_ENV_NAMES: ReadonlySet<string> = new Set([
+  "PATH", "HOME", "LANG", "LC_ALL", "PWD", "SHELL", "TERM", "USER",
+  "HOSTNAME", "TZ", "TMPDIR", "NODE_ENV",
+]);
+
+
   // secret:accessed — already content-free (NAME + outcome, no value).
   eventBus.on("secret:accessed", (payload) => {
     // A `not_found` READ accessed NOTHING — a routine per-turn probe for an
@@ -371,17 +383,32 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
     // (a secret WAS read) and the security signal keeps `denied` (unauthorized
     // probing is a denial, not a not_found). Mutations audit via `audit:event`.
     if (payload.outcome === "not_found") return;
+    // Routine process-environment names are not credentials; recording them as
+    // secret_access diluted the trail (a live box audited `PATH` as a secret
+    // access) and buried the env.set/mcp.connect signal the trail exists for.
+    if (NON_CREDENTIAL_ENV_NAMES.has(payload.secretName)) return;
     const ctx = tryGetContext();
+    // Prefer the payload's promote-time correlation over AsyncLocalStorage —
+    // boot-time reads have no ALS context, which is why every live row carried
+    // traceId:null. `origin` makes "no context BY DESIGN" (a boot read)
+    // distinguishable from "context lost" (a request read that failed to
+    // correlate) — previously both looked identically blank.
+    const traceId = payload.traceId ?? ctx?.traceId;
     persistAuditRow(buildAuditRow({
       kind: "secret_access",
       ts: payload.timestamp,
       tenant: ctx?.tenantId ?? "",
       agent: payload.agentId,
-      traceId: ctx?.traceId,
+      traceId,
       action: payload.secretName,
       actor: payload.agentId,
       outcome: payload.outcome,
-      refs: { secretName: payload.secretName, outcome: payload.outcome },
+      refs: {
+        secretName: payload.secretName,
+        outcome: payload.outcome,
+        origin: traceId !== undefined || payload.sessionKey !== undefined ? "request" : "boot",
+        ...(payload.sessionKey !== undefined ? { sessionKey: payload.sessionKey } : {}),
+      },
     }));
   });
 

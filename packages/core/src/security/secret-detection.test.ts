@@ -163,41 +163,58 @@ describe("isSecretFieldName — superset", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // PINNED KNOWN GAP — the end-anchor hole.
-  //
-  // SECRET_FIELD_PATTERN is END-ANCHORED (`/^(.*token|.*secret|…)$/i`), so a
-  // credential name with ANY suffix after the keyword is not flagged BY NAME:
-  //
-  //   AWS_BEARER_TOKEN_BEDROCK  → false   (a live provider credential)
-  //   SECRETS_MASTER_KEY        → false   (the master encryption key)
-  //   SECRET_KEY_OLD            → false
-  //   MY_TOKEN_V2               → false
-  //
-  // These are NOT necessarily leaks: `looksLikeSecretValue` is the other half of
-  // the defense and catches a real high-entropy credential by VALUE. But the
-  // field-name half has a real hole, and widening the pattern to `.*token.*` is
-  // exactly the "obvious security fix is often wrong" trap — it would sweep in
-  // `max_tokens_to_sample`, `token_count_by_model`, `tokenizer_config`, … so the
-  // over-match exception set would have to grow unboundedly.
-  //
-  // This test pins the CURRENT behaviour deliberately so the gap is visible and a
-  // half-fix fails loudly. Closing it properly needs a keyword-BOUNDARY matcher
-  // (split on separators/camel-case, then test each segment) rather than a suffix
-  // matcher — widening the pattern to `.*token.*` would sweep in
-  // `max_tokens_to_sample`, `token_count_by_model`, `tokenizer_config`, ….
   // ---------------------------------------------------------------------------
-  it("PINS the end-anchor gap: a credential name with a suffix is not flagged BY NAME", () => {
+  // The end-anchor hole — CLOSED by the keyword-boundary matcher.
+  //
+  // The suffix-anchored pattern missed any credential keyword with a suffix
+  // after it. The boundary matcher splits the name into word segments
+  // (separators + camelCase) and matches on credential segments, with the two
+  // AMBIGUOUS words (`token`, `key`) counting only when adjacent to a
+  // qualifying word — which is what closes the hole WITHOUT the `.*token.*`
+  // widening that would false-redact counting vocabulary (the `range_token`
+  // incident class).
+  // ---------------------------------------------------------------------------
+  it("flags credential keywords MID-NAME (the closed end-anchor hole)", () => {
     for (const name of [
-      "AWS_BEARER_TOKEN_BEDROCK",
-      "SECRETS_MASTER_KEY",
-      "SECRET_KEY_OLD",
-      "MY_TOKEN_V2",
+      "AWS_BEARER_TOKEN_BEDROCK", // bearer+token, mid-name
+      "SECRETS_MASTER_KEY",       // "secrets" + master+key
+      "SECRET_KEY_OLD",           // "secret", suffix after it
+      "OAUTH_TOKEN_V2",           // oauth+token with a version suffix
+      "apiKeyRotationSchedule",   // camelCase api+key mid-name
+      "DB_PASSWORD_OLD",          // db+password with a suffix
+      "clientSecretBackup",       // client+secret mid-name
     ]) {
-      expect(
-        isSecretFieldName(name),
-        `${name}: if this now returns true, the end-anchor gap was addressed — move it into the positive matrix above`,
-      ).toBe(false);
+      expect(isSecretFieldName(name), `${name} MUST be flagged`).toBe(true);
     }
+  });
+
+  it("still does NOT flag counting/selector vocabulary (the false-redaction fence)", () => {
+    for (const name of [
+      "max_tokens_to_sample",
+      "token_count_by_model",
+      "tokenizer_config",
+      "range_token",
+      "primary_key",   // database vocabulary — `key` needs a credential qualifier
+      "foreign_key",
+      "keyboard_layout",
+      "monkey_patch",
+      // META names — flags/components ABOUT credentials, never credentials.
+      // Redacting these corrupts config booleans and audit fields.
+      "writeSecretGuard",       // the stock security.writeSecretGuard flag (bit live)
+      "secretName",
+      "passwordResetRequired",
+      "secretsStoreAvailable",
+    ]) {
+      expect(isSecretFieldName(name), `${name} must NOT be flagged`).toBe(false);
+    }
+  });
+
+  it("residual known miss, pinned: a bare unqualified `token` segment is not flagged", () => {
+    // MY_TOKEN_V2 → [my, token, v2]: "my" is not a credential qualifier. Flagging
+    // every bare `token` segment is exactly the over-match that false-redacted
+    // `range_token`. Accepted residual — the value-entropy half still covers a
+    // real credential stored under such a name.
+    expect(isSecretFieldName("MY_TOKEN_V2")).toBe(false);
   });
 
   it("flags pattern-matched secret field names (botToken, appSecret, …)", () => {

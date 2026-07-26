@@ -15,7 +15,7 @@
  * carry no raw provider/internal text — only the closed-union errorKind +
  * fixed copy reach the render path (information-disclosure guard, T-hbe-02).
  */
-import type { TurnOutcome } from "@comis/core";
+import type { TurnOutcome, FinalDeliveryReceipt } from "@comis/core";
 
 /** One-line human reason for a step-limit (max_steps) abort. */
 const STEP_LIMIT_REASON = "stopped — hit step limit" as const;
@@ -69,4 +69,31 @@ export function mapAbortToTurnOutcome(input: AbortSignalInput): TurnOutcome | un
     failedEvents: [],
     reason,
   };
+}
+
+/**
+ * Attach delivered-answer evidence to an UNATTRIBUTED execution failure.
+ *
+ * Pure. Returns the outcome unchanged unless ALL hold:
+ *  - it is a `failure`,
+ *  - with NO `reason` (a resource abort — step limit / loop / spend — must render
+ *    as stopped even when partial text delivered; its reason is the honest label),
+ *  - with NO deliveryReceipt (a delivery failure is a real failure), and
+ *  - the delivery genuinely succeeded (`receipt` present).
+ *
+ * The coordinator uses the attached receipt to reclassify the turn to
+ * `success_with_recovered_failures` when it also observed failed activity
+ * events — the user sees their answer without a failure pill while the failure
+ * stays on the outcome and the `activity:turn_finalized` event. Without this,
+ * a delivered answer rendered with "❌ dependency" above it (proven live).
+ */
+export function withDeliveredEvidence(
+  outcome: TurnOutcome,
+  receipt: FinalDeliveryReceipt | undefined,
+): TurnOutcome {
+  if (receipt === undefined) return outcome;
+  if (outcome.kind !== "failure") return outcome;
+  if (outcome.reason !== undefined && outcome.reason.length > 0) return outcome;
+  if (outcome.deliveryReceipt !== undefined) return outcome;
+  return { ...outcome, delivery: receipt };
 }

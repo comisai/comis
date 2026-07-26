@@ -354,6 +354,53 @@ describe("BackgroundTaskManager", () => {
     });
   });
 
+  describe("terminal-event correlation (F-ACT-1 layer 2)", () => {
+    // The activity card keys a tool's lifecycle on tool:<toolCallId>. Without
+    // this correlation the terminal event could not close the card it belongs
+    // to, so a backgrounded tool was closed "completed" at hand-off — the card
+    // told a live user four failed reports had succeeded.
+    const CORR = {
+      toolCallId: "call-9",
+      sessionKey: "default:agent:default:u:telegram:peer:u",
+      traceId: "trace-9",
+    };
+
+    it("promote stores the correlation and fail() emits it on the terminal event", () => {
+      const origin = buildOrigin({ agentId: "agent-1" });
+      const r = manager.promote("report", new Promise(() => {}), new AbortController(), origin, undefined, CORR);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      manager.fail(r.value, new Error("timed out"));
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "background_task:failed",
+        expect.objectContaining(CORR),
+      );
+    });
+
+    it("complete() emits the same correlation", () => {
+      const origin = buildOrigin({ agentId: "agent-1" });
+      const r = manager.promote("report", new Promise(() => {}), new AbortController(), origin, undefined, CORR);
+      if (!r.ok) throw new Error("promote failed");
+      manager.complete(r.value, "done");
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "background_task:completed",
+        expect.objectContaining(CORR),
+      );
+    });
+
+    it("a promote WITHOUT correlation emits terminals without the fields (pre-upgrade shape)", () => {
+      const origin = buildOrigin({ agentId: "agent-1" });
+      const r = manager.promote("report", new Promise(() => {}), new AbortController(), origin);
+      if (!r.ok) throw new Error("promote failed");
+      manager.fail(r.value, new Error("boom"));
+      const call = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c) => c[0] === "background_task:failed",
+      );
+      expect(call).toBeDefined();
+      expect((call![1] as Record<string, unknown>).toolCallId).toBeUndefined();
+    });
+  });
+
   describe("complete", () => {
     it("sets status completed with truncated result and decrements counters", () => {
       const result = manager.promote("tool", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));

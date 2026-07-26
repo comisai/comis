@@ -80,7 +80,19 @@ export type TurnOutcome =
        * rendered status reads truthfully instead of the bare errorKind. A
        * closed-vocabulary named-constant string — never raw provider/internal text.
        */
-      reason?: string }
+      reason?: string;
+      /**
+       * Present when the final answer WAS fully delivered despite the execution
+       * error — the evidence the coordinator needs to reclassify this turn to
+       * `success_with_recovered_failures` (answer shown without a failure pill;
+       * the failure preserved on the outcome and `activity:turn_finalized`).
+       * Live shape: a backgrounded report timed out (execution lifecycle
+       * "error") while a later retry delivered the artifact — the user got
+       * their file with a "❌ dependency" pill above it. NEVER set for a
+       * resource abort (`reason` present): a stopped run must render as
+       * stopped even when partial text delivered.
+       */
+      delivery?: FinalDeliveryReceipt }
   | { kind: "silent"; reason: "SILENT" | "HEARTBEAT_OK" | "NO_REPLY" }
   | { kind: "aborted"; reason: "user_cancel" | "timeout" | "fatal" };
 

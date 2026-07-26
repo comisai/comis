@@ -1266,3 +1266,76 @@ describe("a failure with no failed activity events never renders a naked errorKi
     coord.dispose();
   });
 });
+
+describe("a delivered answer never renders a failure pill (F-ACT-1 layer 4)", () => {
+  // Proven live on the fixed-hint build: the Excel turn DELIVERED its artifact
+  // and the card still showed "❌ dependency — a step failed outside the tool
+  // timeline" above it; the agent then explained the pill away unprompted.
+  it("failure + delivered evidence + observed failed events → success_with_recovered_failures", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    // The backgrounded tool's REAL terminal, observed during the turn.
+    stream.emit(makeEvent({ status: "failed", errorKind: "dependency", phase: "end" }));
+    timer.advance(800);
+
+    await coord.finalize({
+      kind: "failure",
+      errorKind: "dependency",
+      failedEvents: [],
+      delivery: { deliveredAtMs: clock.now() } as never,
+    });
+
+    const outcome = renderer.finalizeCalls[0]!.outcome;
+    expect(outcome.kind).toBe("success_with_recovered_failures");
+    // The failure evidence is PRESERVED, not erased.
+    const recovered = (outcome as { recoveredFailures: readonly unknown[] }).recoveredFailures;
+    expect(recovered.length).toBeGreaterThan(0);
+    coord.dispose();
+  });
+
+  it("failure + delivered evidence but NO observed failed events keeps the truthful failure", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    await coord.finalize({
+      kind: "failure",
+      errorKind: "dependency",
+      failedEvents: [],
+      delivery: { deliveredAtMs: clock.now() } as never,
+    });
+
+    // No events to attribute — reclassifying would ERASE the failure (the
+    // false-success trap). It stays a failure, with the named reason.
+    const outcome = renderer.finalizeCalls[0]!.outcome;
+    expect(outcome.kind).toBe("failure");
+    expect((outcome as { reason?: string }).reason).toBeDefined();
+    coord.dispose();
+  });
+
+  it("a resource abort with delivery evidence NEVER reclassifies (stopped renders as stopped)", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+    stream.emit(makeEvent({ status: "failed", errorKind: "resource", phase: "end" }));
+    timer.advance(800);
+
+    // withDeliveredEvidence never attaches delivery to a reasoned abort, so the
+    // coordinator sees a plain failure — but pin the coordinator side too:
+    await coord.finalize({
+      kind: "failure",
+      errorKind: "resource",
+      failedEvents: [],
+      reason: "stopped — spend limit reached",
+    });
+    const outcome = renderer.finalizeCalls[0]!.outcome;
+    expect(outcome.kind).toBe("failure");
+    expect((outcome as { reason?: string }).reason).toBe("stopped — spend limit reached");
+    coord.dispose();
+  });
+});

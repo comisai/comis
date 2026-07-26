@@ -71,6 +71,9 @@ export interface BackgroundTaskManager {
     ac: AbortController,
     origin: BackgroundTaskOrigin,
     notificationPolicy?: BackgroundTaskNotificationPolicy,
+    /** Ids-only correlation to the originating tool call + turn — lets the
+     *  terminal event close the right activity card (see BackgroundTask). */
+    correlation?: { toolCallId?: string; sessionKey?: string; traceId?: string },
   ): Result<string, Error>;
   complete(taskId: string, result: unknown): Result<void, Error>;
   fail(taskId: string, error: unknown): Result<void, Error>;
@@ -296,7 +299,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
   }
 
   const manager: BackgroundTaskManager = {
-    promote(toolName, promise, ac, origin, notificationPolicy) {
+    promote(toolName, promise, ac, origin, notificationPolicy, correlation) {
       const parsedOrigin = BackgroundTaskOriginSchema.safeParse(origin);
       if (!parsedOrigin.success) {
         return err(new Error("BackgroundTaskOrigin requires valid structured turn authority"));
@@ -320,6 +323,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         startedAt: clock.now(),
         origin: acceptedOrigin,
         notificationPolicy: notificationPolicy ?? "deferred",
+        ...(correlation?.toolCallId !== undefined ? { toolCallId: correlation.toolCallId } : {}),
+        ...(correlation?.sessionKey !== undefined ? { sessionKey: correlation.sessionKey } : {}),
+        ...(correlation?.traceId !== undefined ? { traceId: correlation.traceId } : {}),
         dispatchState: "pending",
         continuationExecutionId: taskId,
         dispatchAttempts: 0,
@@ -407,6 +413,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         durationMs,
         origin: task.origin,
         timestamp: clock.now(),
+        ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
+        ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
+        ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
       });
       return ok(undefined);
     },
@@ -435,6 +444,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         durationMs,
         origin: task.origin,
         timestamp: clock.now(),
+        ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
+        ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
+        ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
       });
       return ok(undefined);
     },
@@ -587,6 +599,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             durationMs: (persisted.completedAt ?? clock.now()) - persisted.startedAt,
             origin: task.origin,
             timestamp: clock.now(),
+        ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
+        ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
+        ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
           });
         } else if (persisted.status === "failed") {
           count++;
@@ -598,6 +613,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             durationMs: (persisted.completedAt ?? clock.now()) - persisted.startedAt,
             origin: task.origin,
             timestamp: clock.now(),
+        ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
+        ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
+        ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
           });
         }
       }
@@ -778,6 +796,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           durationMs: (current.completedAt ?? clock.now()) - current.startedAt,
           origin: current.origin,
           timestamp: clock.now(),
+          ...(current.toolCallId !== undefined ? { toolCallId: current.toolCallId } : {}),
+          ...(current.sessionKey !== undefined ? { sessionKey: current.sessionKey } : {}),
+          ...(current.traceId !== undefined ? { traceId: current.traceId } : {}),
           // This is a DISPATCH redrive of an already-terminal task, not a new
           // terminal transition. Marked so occurrence-counting consumers (the
           // trajectory bridge) record the failure ONCE — the unmarked re-emit

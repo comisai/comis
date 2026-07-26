@@ -848,3 +848,128 @@ describe("activity-stream — markers.running prefix on phase:start", () => {
     sub.unsubscribe();
   });
 });
+
+describe("backgrounded tools close on their REAL terminal, not the hand-off (F-ACT-1)", () => {
+  // Proven live: four backgrounded reports each closed "completed" at hand-off;
+  // every one subsequently failed with a 120s MCP timeout. The card told the
+  // user four reports succeeded, and the turn then finalized failure with
+  // failedEventCount:0 — nothing to name — rendering a failure pill above the
+  // eventually-delivered answer.
+  const CTX = {
+    sessionKey: "default:agent:default:u1:telegram:peer:u1",
+    agentId: "default",
+    traceId: "trace-1",
+  };
+
+  function harness() {
+    const bus = new TypedEventBus();
+    const stream = createActivityStream({ eventBus: bus });
+    const events: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(
+      { sessionKey: CTX.sessionKey, agentId: CTX.agentId, traceId: CTX.traceId },
+      (e) => events.push(e),
+    );
+    return { bus, stream, events, sub };
+  }
+
+  function toolExecuted(over: Record<string, unknown> = {}) {
+    return {
+      toolName: "mcp__vendor-mcp--vendor_activity_report",
+      toolCallId: "call-1",
+      durationMs: 10_000,
+      success: true,
+      timestamp: 1,
+      ...CTX,
+      ...over,
+    };
+  }
+
+  it("a hand-off (backgrounded:true) does NOT close the activity", () => {
+    const { bus, events } = harness();
+    bus.emit("tool:executed", toolExecuted({ backgrounded: true }) as never);
+    const ends = events.filter((e) => e.phase === "end");
+    expect(ends).toHaveLength(0);
+  });
+
+  it("the background_task:failed terminal closes it FAILED with the correlated id", () => {
+    const { bus, events } = harness();
+    bus.emit("tool:executed", toolExecuted({ backgrounded: true }) as never);
+    bus.emit("background_task:failed", {
+      agentId: CTX.agentId,
+      taskId: "task-1",
+      toolName: "mcp__vendor-mcp--vendor_activity_report",
+      error: "MCP error -32001: Request timed out",
+      durationMs: 120_000,
+      origin: {} as never,
+      timestamp: 2,
+      toolCallId: "call-1",
+      sessionKey: CTX.sessionKey,
+      traceId: CTX.traceId,
+    } as never);
+    const ends = events.filter((e) => e.phase === "end");
+    expect(ends).toHaveLength(1);
+    expect(ends[0]!.status).toBe("failed");
+    expect(ends[0]!.toolCallId).toBe("call-1");
+    expect(ends[0]!.errorKind).toBe("dependency");
+  });
+
+  it("the background_task:completed terminal closes it COMPLETED", () => {
+    const { bus, events } = harness();
+    bus.emit("tool:executed", toolExecuted({ backgrounded: true }) as never);
+    bus.emit("background_task:completed", {
+      agentId: CTX.agentId,
+      taskId: "task-1",
+      toolName: "mcp__vendor-mcp--vendor_activity_report",
+      durationMs: 60_000,
+      origin: {} as never,
+      timestamp: 2,
+      toolCallId: "call-1",
+      sessionKey: CTX.sessionKey,
+      traceId: CTX.traceId,
+    } as never);
+    const ends = events.filter((e) => e.phase === "end");
+    expect(ends).toHaveLength(1);
+    expect(ends[0]!.status).toBe("completed");
+  });
+
+  it("a dispatchRedelivery re-emit does NOT re-close (one outcome per task)", () => {
+    const { bus, events } = harness();
+    const failed = {
+      agentId: CTX.agentId,
+      taskId: "task-1",
+      toolName: "report",
+      error: "boom",
+      durationMs: 5,
+      origin: {} as never,
+      timestamp: 2,
+      toolCallId: "call-1",
+      sessionKey: CTX.sessionKey,
+      traceId: CTX.traceId,
+    };
+    bus.emit("background_task:failed", failed as never);
+    bus.emit("background_task:failed", { ...failed, dispatchRedelivery: true } as never);
+    expect(events.filter((e) => e.phase === "end")).toHaveLength(1);
+  });
+
+  it("a pre-upgrade terminal with NO toolCallId is a no-op (the old close already happened)", () => {
+    const { bus, events } = harness();
+    bus.emit("background_task:failed", {
+      agentId: CTX.agentId,
+      taskId: "task-1",
+      toolName: "report",
+      error: "boom",
+      durationMs: 5,
+      origin: {} as never,
+      timestamp: 2,
+    } as never);
+    expect(events.filter((e) => e.phase === "end")).toHaveLength(0);
+  });
+
+  it("a NON-backgrounded tool:executed still closes exactly as before (regression fence)", () => {
+    const { bus, events } = harness();
+    bus.emit("tool:executed", toolExecuted() as never);
+    const ends = events.filter((e) => e.phase === "end");
+    expect(ends).toHaveLength(1);
+    expect(ends[0]!.status).toBe("completed");
+  });
+});

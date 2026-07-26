@@ -49,7 +49,7 @@ import {
 import { emitObservationalEvent } from "./execution-event-emitter.js";
 import { createMediaDeliveryFailureReceipt } from "./execution-media-receipt.js";
 import { runExecutionPolicy } from "./execution-policy.js";
-import { mapAbortToTurnOutcome } from "./turn-outcome-mapper.js";
+import { mapAbortToTurnOutcome, withDeliveredEvidence } from "./turn-outcome-mapper.js";
 import {
   classifyExecutionAbortReason,
   classifyExecutionFinishReason,
@@ -703,9 +703,17 @@ export async function executeAndDeliver(
     // renderer/coordinator failure is contained by finalizeCoordinator so it
     // cannot reclassify an already-delivered turn or trigger inbound fallback.
     if (coordinatorExecutionOutcome) {
-      // Partial text may have delivered, but the run was stopped — render the
-      // truthful failure, not a success.
-      await finalizeCoordinator(coordinatorExecutionOutcome);
+      // A resource abort (reason set) renders as the truthful stop even when
+      // partial text delivered. An UNATTRIBUTED lifecycle failure whose final
+      // answer WAS fully delivered gets the receipt attached, so the
+      // coordinator can reclassify to success_with_recovered_failures instead
+      // of pinning a failure marker above a delivered answer (proven live).
+      await finalizeCoordinator(
+        withDeliveredEvidence(
+          coordinatorExecutionOutcome,
+          deliveryReceipt.ok ? deliveryReceipt.value : undefined,
+        ),
+      );
     } else if (mediaFailureReceipt !== undefined) {
       await finalizeCoordinator({
         kind: "failure",
