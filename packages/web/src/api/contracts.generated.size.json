@@ -1,8 +1,8 @@
 {
-  "totalMinified": 188228,
-  "totalGzipped": 18773,
+  "totalMinified": 190550,
+  "totalGzipped": 19208,
   "budget": {
-    "minified": 189000,
+    "minified": 191000,
     "gzipped": 38912
   },
   "overBudget": false,
@@ -162,7 +162,7 @@
     "obs.reset": 571,
     "obs.reset.table": 483,
     "obs.spend.snapshot": 350,
-    "obs.system.health": 5183,
+    "obs.system.health": 5577,
     "obs.systemPromptReport.latest": 520,
     "obs.systemPromptReport.list": 503,
     "obs.trace.export": 362,
@@ -196,8 +196,8 @@
     "session.status": 605,
     "skills.create": 858,
     "skills.delete": 430,
-    "skills.import": 1809,
-    "skills.list": 623,
+    "skills.import": 2618,
+    "skills.list": 2021,
     "skills.update": 826,
     "skills.upload": 960,
     "slack.action": 268,

@@ -12913,6 +12913,38 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "skillExposure": {
+          "type": "object",
+          "properties": {
+            "imported": {
+              "type": "number"
+            },
+            "community": {
+              "type": "number"
+            },
+            "registry": {
+              "type": "number"
+            },
+            "nonAllowlistedRegistry": {
+              "type": "number"
+            },
+            "pendingMcp": {
+              "type": "number"
+            },
+            "registryAllowlistKnown": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "imported",
+            "community",
+            "registry",
+            "nonAllowlistedRegistry",
+            "pendingMcp",
+            "registryAllowlistKnown"
+          ],
+          "additionalProperties": false
+        },
         "autonomy": {
           "type": "object",
           "properties": {
@@ -15572,6 +15604,42 @@ export const CONTRACTS = {
             "archiveUrl"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string",
+              "const": "registry"
+            },
+            "registry": {
+              "type": "string",
+              "minLength": 1
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "local",
+                "shared"
+              ]
+            },
+            "agentId": {
+              "type": "string"
+            },
+            "force": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "source",
+            "registry",
+            "ref"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -15594,6 +15662,50 @@ export const CONTRACTS = {
         },
         "unchanged": {
           "type": "boolean"
+        },
+        "trust": {
+          "type": "string",
+          "enum": [
+            "first-party",
+            "operator",
+            "community",
+            "agent-authored"
+          ]
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "safe",
+            "caution",
+            "dangerous"
+          ]
+        },
+        "contentHash": {
+          "type": "string"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "duplicate_key",
+                  "dropped_executable",
+                  "dropped_unmappable"
+                ]
+              }
+            },
+            "required": [
+              "key",
+              "action"
+            ],
+            "additionalProperties": false
+          }
         },
         "pendingMcpServers": {
           "type": "array",
@@ -15631,7 +15743,11 @@ export const CONTRACTS = {
         "ok",
         "path",
         "name",
-        "fileCount"
+        "fileCount",
+        "trust",
+        "verdict",
+        "contentHash",
+        "warnings"
       ],
       "additionalProperties": false
     },
@@ -15671,13 +15787,153 @@ export const CONTRACTS = {
               "disableModelInvocation": {
                 "type": "boolean"
               },
-              "source": {
+              "discoverySource": {
                 "type": "string",
                 "enum": [
                   "bundled",
                   "workspace",
-                  "local"
+                  "local",
+                  "learned"
                 ]
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "shared"
+                ]
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "seed",
+                  "backfill",
+                  "create",
+                  "update",
+                  "upload",
+                  "github",
+                  "archive",
+                  "wellknown",
+                  "registry"
+                ]
+              },
+              "ref": {
+                "type": "string"
+              },
+              "contentHash": {
+                "type": "string"
+              },
+              "importedAt": {
+                "type": "string"
+              },
+              "importedBy": {
+                "type": "object",
+                "properties": {
+                  "agentId": {
+                    "type": "string"
+                  },
+                  "userId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "agentId"
+                ],
+                "additionalProperties": false
+              },
+              "trust": {
+                "type": "string",
+                "enum": [
+                  "first-party",
+                  "operator",
+                  "community",
+                  "agent-authored"
+                ]
+              },
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "safe",
+                  "caution",
+                  "dangerous"
+                ]
+              },
+              "findingCounts": {
+                "type": "object",
+                "properties": {
+                  "critical": {
+                    "type": "number"
+                  },
+                  "warn": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "critical",
+                  "warn"
+                ],
+                "additionalProperties": false
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "registryId": {
+                    "type": "string"
+                  },
+                  "publisherHandle": {
+                    "type": "string"
+                  },
+                  "publisherVerified": {
+                    "type": "boolean"
+                  },
+                  "securityStatus": {
+                    "type": "string"
+                  },
+                  "securityPassed": {
+                    "type": "boolean"
+                  },
+                  "securityAuditUrl": {
+                    "type": "string"
+                  },
+                  "checkedAt": {
+                    "type": "string"
+                  },
+                  "registryDecision": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "pendingMcpServers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "transport": {
+                      "type": "string",
+                      "enum": [
+                        "stdio",
+                        "sse",
+                        "http"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "transport",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "backfilled": {
+                "type": "boolean"
               }
             },
             "required": [
