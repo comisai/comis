@@ -29,6 +29,7 @@ interface ImportOptions extends CommonOptions {
   readonly source?: ImportSource;
   readonly registry?: string;
   readonly confirm?: boolean;
+  readonly force?: boolean;
 }
 
 function hashPrefix(contentHash: string | undefined): string {
@@ -68,7 +69,7 @@ function buildImportRequest(reference: string, options: ImportOptions) {
   const common = {
     scope: options.scope ?? "local",
     ...(options.agent !== undefined && { agentId: options.agent }),
-    ...(options.confirm === true && { force: true }),
+    ...((options.confirm === true || options.force === true) && { force: true }),
   };
   switch (source) {
     case "github":
@@ -168,7 +169,8 @@ export function registerSkillsCommand(program: Command): void {
     .option("--scope <scope>", "Install scope (local|shared)", "local")
     .option("--agent <agentId>", "Calling agent id")
     .option("--confirm", "Confirm a caution verdict or replacement")
-    .option("--format <format>", "Output format (text|json)", "text")
+    .option("--force", "Acknowledge a confirm decision or force an MCP-name replacement")
+    .option("--format <format>", "Output format (table|json)", "table")
     .option("--token <token>", "Gateway token")
     .action(async (reference: string, options: ImportOptions) => {
       try {
@@ -177,8 +179,19 @@ export function registerSkillsCommand(program: Command): void {
         const result = await withSpinner("Importing skill...", () =>
           withClient((client) => callTyped(client, SkillsImportContract, request)),
         );
-        if (options.format === "json") json(result);
-        else success(`${result.unchanged === true ? "Already installed" : "Imported"}: ${result.name}`);
+        if (options.format === "json") {
+          json(result);
+        } else {
+          renderKeyValue([
+            ["Status", result.unchanged === true ? "Already installed" : "Imported"],
+            ["Name", result.name],
+            ["Path", result.path],
+            ["Files", String(result.fileCount)],
+            ["Trust", result.trust],
+            ["Verdict", result.verdict],
+            ["Content Hash", result.contentHash],
+          ]);
+        }
       } catch (caught) {
         error(`Failed to import skill: ${caught instanceof Error ? caught.message : String(caught)}`);
         process.exit(1);
