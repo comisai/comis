@@ -441,6 +441,15 @@ describe("skills.import — pre-write vetting gate", () => {
 
   it("imports a configured registry archive and persists its evidence without trust promotion", async () => {
     const archive = makeStoredArchive({ "my-skill/SKILL.md": CLEAN_SKILL_MD });
+    const skillRegistry = makeRegistry();
+    (skillRegistry.getPromptSkillDescriptions as unknown as ReturnType<typeof vi.fn>).mockReturnValue([
+      {
+        name: "my-skill",
+        description: "A benign skill used as the control fixture.",
+        location: join(wsDir, "skills", "my-skill"),
+        source: "bundled",
+      },
+    ]);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url === "https://registry.example/api/v1/skills/my-skill") {
@@ -485,6 +494,7 @@ describe("skills.import — pre-write vetting gate", () => {
     });
     const handlers = createSkillHandlers(
       makeDeps(wsDir, {
+        skillRegistries: new Map([["agent-a", skillRegistry]]),
         agents: {
           "agent-a": {
             skills: {
@@ -527,6 +537,24 @@ describe("skills.import — pre-write vetting gate", () => {
         checkedAt: "2026-07-26T12:00:00.000Z",
         registryDecision: "pass",
       },
+    });
+    const listed = await handlers["skills.list"]!({ _agentId: "agent-a" });
+    expect(listed).toMatchObject({
+      skills: [
+        {
+          name: "my-skill",
+          source: "registry",
+          discoverySource: "bundled",
+          scope: "local",
+          trust: "community",
+          verdict: "safe",
+          contentHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+          evidence: {
+            publisherHandle: "publisher_a",
+            securityPassed: true,
+          },
+        },
+      ],
     });
     expect(fetchSpy).toHaveBeenCalledTimes(3);
   });
