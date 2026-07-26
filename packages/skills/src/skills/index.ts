@@ -101,6 +101,15 @@ export type {
   WellKnownIndex,
   WellKnownIndexError,
 } from "./import/sources/wellknown-index.js";
+export {
+  DEFAULT_SKILL_ARCHIVE_LIMITS,
+  unpackSkillArchive,
+} from "./import/archive-unpack.js";
+export type {
+  ArchiveError,
+  ArchiveErrorCode,
+  SkillArchiveLimits,
+} from "./import/archive-unpack.js";
 
 // Skill audit emitter — consumed by the daemon's install-vetting gate so it can
 // record a vet verdict without a direct event-bus wiring of its own.
