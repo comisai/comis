@@ -105,6 +105,23 @@ describe("readSkillProvenance — absent and malformed files", () => {
     );
     expect(readSkillProvenance(dataDir)).toEqual({});
   });
+
+  it("drops entries with unknown sources or malformed registry evidence", () => {
+    fs.writeFileSync(
+      statePath(),
+      JSON.stringify({
+        "local:good": record(),
+        "local:unknown-source": { ...record(), source: "unreviewed" },
+        "local:bad-evidence": {
+          ...record({ source: "registry" }),
+          evidence: { registryId: 42, securityPassed: "yes" },
+        },
+      }),
+      { mode: 0o600 },
+    );
+
+    expect(Object.keys(readSkillProvenance(dataDir))).toEqual(["local:good"]);
+  });
 });
 
 describe("recordSkillProvenance", () => {
