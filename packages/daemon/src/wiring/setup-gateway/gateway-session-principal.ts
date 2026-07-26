@@ -13,12 +13,18 @@ import type { Result } from "@comis/shared";
  * orchestrator inbound pipeline that resolves identity for real channels), so it must
  * resolve its own canonical turn scope — the executor fail-closes without one.
  *
- * The principal is the MAPPING (operator config), hashed for delimiter safety, so a
- * request body can never widen or forge the conversation's authority. The rendered
- * session key becomes the conversation id via `JSON.stringify` (delimiter-safe by
- * construction), preserving per-mapping/per-subject conversation isolation: two
- * subjects never share one partition, and repeat events for one subject continue
- * the same conversation.
+ * The principal is the MAPPING (operator config), hashed so one mapping is never a
+ * prefix of another, so a request body can never widen or forge the conversation's
+ * authority. The rendered session key becomes the endpoint's conversation id, which
+ * preserves per-mapping/per-subject isolation — two subjects never share one
+ * partition, repeat events for one subject continue the same conversation — and
+ * carries no delimiter risk: the conversation reference digests every field
+ * length-delimited, so payload data cannot forge a field boundary.
+ *
+ * The endpoint keeps the webhook's own channel type, so the delivery origin the
+ * caller derives from it agrees with this scope. Consumers that pair the two —
+ * background-task promotion, the capability lease principal, the durable principal —
+ * reject a turn whose origin and scope name different channels.
  */
 export function resolveWebhookTurnIdentity(input: {
   tenantId: string;
@@ -32,9 +38,9 @@ export function resolveWebhookTurnIdentity(input: {
   return resolveInternalTurnIdentity({
     tenantId: input.tenantId,
     agentId: input.agentId,
-    originKind: "control-plane",
+    originKind: "webhook",
     instanceId: "webhook",
-    conversationId: JSON.stringify([input.renderedSessionKey]),
+    conversationId: input.renderedSessionKey,
     principalId,
   });
 }

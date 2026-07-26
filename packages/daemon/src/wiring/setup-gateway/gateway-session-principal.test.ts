@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
+import { createConversationRef } from "@comis/core";
 import {
   resolveGatewayTurnIdentity,
   resolveWebhookTurnIdentity,
@@ -34,23 +35,37 @@ describe("webhook session principal binding", () => {
     expect(first.value.displaySessionKey.agentId).toBe("agent-a");
   });
 
-  it("keeps a delimiter-bearing rendered key intact inside the conversation identity", () => {
-    // A sessionKey template renders PAYLOAD data, which can contain the ":" session-key
-    // delimiter. JSON-encoding it means a crafted payload cannot split the identity and
-    // impersonate another conversation.
-    const resolved = resolveWebhookTurnIdentity({
+  it("cannot be made to address another conversation by a delimiter-bearing rendered key", () => {
+    // A sessionKey template renders PAYLOAD data, which can carry the ":" and ":peer:"
+    // separators the human-readable session key uses. The AUTHORITY is the conversation
+    // reference, which digests every field length-delimited, so a crafted key lands in
+    // the endpoint verbatim and still cannot forge a field boundary: the forged variant
+    // resolves to its own conversation, never to the one it imitates.
+    const forged = resolveWebhookTurnIdentity({
       tenantId: "tenant-a",
       agentId: "agent-a",
       mappingId: "m1",
       renderedSessionKey: 'azdo:1:peer:forged"]',
     });
+    const plain = resolveWebhookTurnIdentity({
+      tenantId: "tenant-a",
+      agentId: "agent-a",
+      mappingId: "m1",
+      renderedSessionKey: "azdo:1",
+    });
 
-    expect(resolved.ok).toBe(true);
-    if (!resolved.ok) return;
-    expect(resolved.value.turnScope.endpoint.conversationId).toBe(
-      JSON.stringify(['azdo:1:peer:forged"]']),
-    );
-    expect(resolved.value.displaySessionKey.userId).toMatch(/^webhook-[a-f0-9]{64}$/);
+    expect(forged.ok).toBe(true);
+    expect(plain.ok).toBe(true);
+    if (!forged.ok || !plain.ok) return;
+    expect(forged.value.turnScope.endpoint.conversationId).toBe('azdo:1:peer:forged"]');
+    const forgedRef = createConversationRef(forged.value.turnScope.conversation);
+    const plainRef = createConversationRef(plain.value.turnScope.conversation);
+    expect(forgedRef.ok && plainRef.ok).toBe(true);
+    if (!forgedRef.ok || !plainRef.ok) return;
+    expect(forgedRef.value).not.toBe(plainRef.value);
+    // The principal stays the hashed mapping, so the payload never widens authority.
+    expect(forged.value.displaySessionKey.userId).toMatch(/^webhook-[a-f0-9]{64}$/);
+    expect(forged.value.displaySessionKey.userId).toBe(plain.value.displaySessionKey.userId);
   });
 
   it("separates mappings from each other and from the gateway principal namespace", () => {

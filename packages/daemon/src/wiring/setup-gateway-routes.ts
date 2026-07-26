@@ -353,11 +353,18 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
             throw identity.error;
           }
           const sk: SessionKey = identity.value.displaySessionKey;
+          // Derive the delivery origin FROM the resolved endpoint, as the cron and
+          // durable-resume initiators do. The two are one authority downstream:
+          // background-task promotion, the capability lease principal and the
+          // durable principal all reject a turn whose origin names a different
+          // channel or conversation than its scope, so a hand-built origin would
+          // let the turn start and then fail-close at each of those seams.
+          const endpoint = identity.value.turnScope.endpoint;
           const deliveryOrigin = createDeliveryOrigin({
             tenantId: sk.tenantId,
-            userId: sk.userId,
-            channelType: "webhook",
-            channelId: routeChannelId,
+            userId: identity.value.turnScope.principal.principalId,
+            channelType: endpoint.channelType,
+            channelId: endpoint.conversationId,
           });
           return runWithContext({
             traceId: randomUUID(),
