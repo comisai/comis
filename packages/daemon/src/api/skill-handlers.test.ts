@@ -489,7 +489,7 @@ describe("skills.import handler", () => {
         url: "https://github.com/owner/repo/tree/main/skills/my-skill",
         _agentId: "agent-a",
       }),
-    ).rejects.toThrow(/must contain a SKILL.md/i);
+    ).rejects.toThrow(/no SKILL.md at its root/i);
   });
 
   it("rejects local-scope import when calling agent has no workspace directory registered", async () => {
@@ -601,7 +601,7 @@ describe("skills.import handler", () => {
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      return new Response("---\nname: my-skill\ndescription: test skill\n---\nBody", { status: 200 });
+      return new Response("---\nname: mode-skill\ndescription: test skill\n---\nBody", { status: 200 });
     });
     const handlers = createSkillHandlers(
       makeDeps({
