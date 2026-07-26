@@ -1515,12 +1515,15 @@ run_npm_global_install() {
     local spec="$1"
     local log="$2"
 
+    # No --silent: every path below redirects npm to "$log", so silencing buys
+    # nothing on success and empties the log on failure. An empty log takes the
+    # whole diagnostics block down with it — the error code, the syscall, the
+    # path to npm's own debug log, and the "showing last log lines" tail all
+    # read from it, so the operator is left with a bare "install failed".
+    # --loglevel keeps a successful run's log short.
     local -a cmd
-    cmd=(env "SHARP_IGNORE_GLOBAL_LIBVIPS=$SHARP_IGNORE_GLOBAL_LIBVIPS" npm --loglevel "$NPM_LOGLEVEL")
-    if [[ -n "$NPM_SILENT_FLAG" ]]; then
-        cmd+=("$NPM_SILENT_FLAG")
-    fi
-    cmd+=(--no-fund --no-audit install -g "$spec")
+    cmd=(env "SHARP_IGNORE_GLOBAL_LIBVIPS=$SHARP_IGNORE_GLOBAL_LIBVIPS"
+         npm --loglevel "$NPM_LOGLEVEL" --no-fund --no-audit install -g "$spec")
     local cmd_display=""
     printf -v cmd_display '%q ' "${cmd[@]}"
     LAST_NPM_INSTALL_CMD="${cmd_display% }"
@@ -1540,8 +1543,7 @@ run_npm_global_install() {
     fi
 
     start_spinner "Installing Comis package"
-    env "SHARP_IGNORE_GLOBAL_LIBVIPS=$SHARP_IGNORE_GLOBAL_LIBVIPS" \
-        npm --silent --no-fund --no-audit install -g "$spec" >"$log" 2>&1
+    "${cmd[@]}" >"$log" 2>&1
     local rc=$?
     if [[ "$rc" -eq 0 ]]; then
         stop_spinner "Comis package installed" true
@@ -1627,6 +1629,22 @@ print_npm_failure_diagnostics() {
     first_error="$(extract_first_npm_error_line "$log")"
     if [[ -n "$first_error" ]]; then
         echo "  First npm error: ${first_error}"
+    fi
+
+    # Last resort: every field above is parsed out of "$log", so an npm that
+    # wrote nothing leaves the operator with no evidence at all and the
+    # installer log is a temp file that disappears at exit. Name the directory
+    # npm always writes its own debug log to, so there is somewhere to look.
+    if [[ ! -s "$log" ]]; then
+        local npm_cache=""
+        npm_cache="$(npm config get cache 2>/dev/null || true)"
+        ui_warn "npm produced no output; its own debug log is the only record"
+        if [[ -n "$npm_cache" && "$npm_cache" != "undefined" ]]; then
+            echo "  Look in: ${npm_cache}/_logs/ (newest *-debug-0.log)"
+        else
+            echo "  Look in: \$(npm config get cache)/_logs/ (newest *-debug-0.log)"
+        fi
+        echo "  Re-run with --verbose to stream npm's output instead."
     fi
 }
 
@@ -1881,7 +1899,6 @@ GIT_DIR=${COMIS_GIT_DIR:-$GIT_DIR_DEFAULT}
 GIT_UPDATE=${COMIS_GIT_UPDATE:-1}
 SHARP_IGNORE_GLOBAL_LIBVIPS="${SHARP_IGNORE_GLOBAL_LIBVIPS:-1}"
 NPM_LOGLEVEL="${COMIS_NPM_LOGLEVEL:-error}"
-NPM_SILENT_FLAG="--silent"
 VERBOSE="${COMIS_VERBOSE:-0}"
 COMIS_BIN=""
 SELECTED_NODE_BIN=""
@@ -2251,7 +2268,6 @@ configure_verbose() {
     if [[ "$NPM_LOGLEVEL" == "error" ]]; then
         NPM_LOGLEVEL="notice"
     fi
-    NPM_SILENT_FLAG=""
     set -x
 }
 
