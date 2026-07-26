@@ -640,6 +640,18 @@ describe("bindObsExplainHandlers", () => {
     ).toBe(true);
     // The empty session report is still well-formed (no leak, no crash).
     expect(r.failures).toEqual([]);
+    // The verdict must name the PRE-EXECUTION ABORT possibility, not only "typo /
+    // expired". A turn that fail-closes before recording a session (an unresolved
+    // conversation authority, a rejected identity, tool assembly) never reaches the
+    // session index, so a dead trigger presents IDENTICALLY to a bad reference. A
+    // verdict that only offers "typo or expired" sends the operator to re-check the
+    // reference while a real failure goes unexamined — the live cost when an entire
+    // webhook-driven pipeline was down yet `explain` reported only a missing ref.
+    expect(r.likelyRootCause?.detail).toMatch(/abort|before .*record|pre-execution/i);
+    expect(
+      r.likelyRootCause?.suggestedNextSteps.some((s) => /daemon log|errorKind|step/i.test(s)),
+      "a next step must route to the log evidence a pre-execution abort DOES leave",
+    ).toBe(true);
   });
 
   it("a lossy ref that misroutes to a traceId-miss STILL seeds the 'did you mean' scan with the ORIGINAL ref (not the resolved empty key)", async () => {

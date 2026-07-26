@@ -416,10 +416,11 @@ export async function assembleIncidentReportFromSources(
           }
         : {
             code: "session_not_found",
-            detail: `${missedRefField} did not resolve to any session in the index (today/yesterday); it may be a typo, expired, or older than the 2-day resolution horizon`,
+            detail: `${missedRefField} did not resolve to any session in the index (today/yesterday). Either the reference is wrong or older than the 2-day resolution horizon, OR the turn aborted BEFORE it recorded a session — a pre-execution fail-closed (e.g. unresolved conversation authority, a rejected identity, or tool assembly) never reaches the index, so a real failure can look like a missing reference`,
             suggestedNextSteps: [
               `verify the ${missedRefField}, or query by sessionKey directly`,
               "confirm the session ended within the last two days (the session-index lookup window)",
+              `if the trigger is known to have fired, treat this as a possible pre-execution abort: grep the daemon log for this ${missedRefField} — a turn that failed before recording emits an ERROR carrying its step and errorKind but no session`,
             ],
           };
     report.truncations.push({
