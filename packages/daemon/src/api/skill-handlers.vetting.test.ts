@@ -408,6 +408,41 @@ describe("skills.import — pre-write vetting gate", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("records an archive preflight failure with its source stage and stable code", async () => {
+    const eventBus = createMockEventBus();
+    const logger = createMockLogger();
+    const handlers = createSkillHandlers(makeDeps(wsDir, { eventBus, logger }));
+
+    await expect(
+      handlers["skills.import"]!({
+        source: "archive",
+        archiveBase64: Buffer.from("not a zip archive").toString("base64"),
+        scope: "local",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/archive_unsupported_feature/);
+
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "skill:rejected",
+      expect.objectContaining({
+        source: "archive",
+        stage: "preflight",
+        violations: ["archive_unsupported_feature"],
+      }),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "skills.import",
+        source: "archive",
+        step: "preflight",
+        failureCode: "archive_unsupported_feature",
+        errorKind: "validation",
+        hint: expect.any(String),
+      }),
+      "Skill import failed",
+    );
+  });
+
   it("imports a well-known file map through the same gate and provenance path", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input.toString();
@@ -524,7 +559,9 @@ describe("skills.import — pre-write vetting gate", () => {
 
   it("refuses a well-known base outside skills.import.registries before any network call", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const handlers = createSkillHandlers(makeDeps(wsDir));
+    const eventBus = createMockEventBus();
+    const logger = createMockLogger();
+    const handlers = createSkillHandlers(makeDeps(wsDir, { eventBus, logger }));
 
     await expect(
       handlers["skills.import"]!({
@@ -536,6 +573,52 @@ describe("skills.import — pre-write vetting gate", () => {
     ).rejects.toThrow(/skills\.import\.registries/);
 
     expect(fetchSpy).not.toHaveBeenCalled();
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "skill:rejected",
+      expect.objectContaining({
+        source: "wellknown",
+        stage: "fetch",
+        violations: ["source_not_allowlisted"],
+        policyKey: "skills.import.registries",
+      }),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "wellknown",
+        step: "fetch",
+        failureCode: "source_not_allowlisted",
+        policyKey: "skills.import.registries",
+        errorKind: "config",
+        hint: expect.stringContaining("skills.import.registries"),
+      }),
+      "Skill import failed",
+    );
+  });
+
+  it("records a post-install bundle failure before rolling the import back", async () => {
+    mockGitHubDir("skills/my-skill", { "SKILL.md": CLEAN_SKILL_MD });
+    mockRunBundleInstallHook.mockRejectedValueOnce(new Error("fixture bundle failure"));
+    const eventBus = createMockEventBus();
+    const handlers = createSkillHandlers(makeDeps(wsDir, { eventBus }));
+
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        scope: "local",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow("fixture bundle failure");
+
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "skill:rejected",
+      expect.objectContaining({
+        skillName: "my-skill",
+        source: "github",
+        stage: "bundle",
+        violations: ["bundle_hook_failed"],
+      }),
+    );
+    expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual([]);
   });
 
   it("imports a configured registry archive and persists its evidence without trust promotion", async () => {
