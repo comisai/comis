@@ -7,7 +7,15 @@ import {
 import { err, ok, type Result } from "@comis/shared";
 import { resolveRoutingPolicy } from "./routing-policy-resolver.js";
 
-export type InternalOriginKind = "scheduler" | "control-plane" | "durable-resume";
+/**
+ * The surface a turn that no channel adapter produced arrives on. It becomes the
+ * resolved endpoint's `channelType`, so every consumer that pairs a delivery
+ * origin with a turn scope — background-task promotion, capability leases, the
+ * durable principal — sees the same channel on both sides. Name the real surface
+ * here rather than folding one into another: `"webhook"` turns are triggered from
+ * outside and must not be indistinguishable from control-plane ones.
+ */
+export type InternalOriginKind = "scheduler" | "control-plane" | "durable-resume" | "webhook";
 
 export interface InternalTurnIdentity {
   turnScope: ResolvedTurnScope;

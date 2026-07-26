@@ -174,6 +174,20 @@ hold the caller's connection open for the whole turn and, at the caller's reques
 timeout, trigger a re-delivery storm. Turn failures are logged and emitted as
 diagnostics by the daemon, not returned as this request's status.
 
+The rendered `sessionKey` identifies the **conversation**, so repeat deliveries for
+one subject continue the same conversation while different subjects stay isolated.
+The turn's authority, however, is bound to the **mapping**, not to the payload: the
+conversation's principal is derived from the mapping id, and the conversation
+reference digests every identity field separately. A crafted payload therefore
+cannot forge or widen a conversation's authority even when the template
+interpolates request data — a rendered key carrying the `:` session-key separator
+resolves to its own conversation, never to the one it imitates.
+
+The session key you see in logs and `comis sessions` is the fully-qualified
+resolved one; the rendered key appears inside it, so filtering by subject still
+works. Sessions opened by a webhook carry a `webhook-`-prefixed principal, keeping
+them distinguishable from gateway-opened ones.
+
 **`"wake"`:** Triggers a daemon heartbeat. The `wakeMode` controls timing:
 - `"now"` (default): Fire the heartbeat immediately
 - `"next-heartbeat"`: Wait for the next scheduled heartbeat cycle

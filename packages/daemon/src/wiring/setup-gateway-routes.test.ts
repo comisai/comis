@@ -47,7 +47,9 @@ import {
   createResponsesRoute,
 } from "@comis/gateway";
 import {
+  BackgroundTaskOriginSchema,
   createConversationLocator,
+  createConversationRef,
   formatSessionKey,
   generateStrongToken,
   runWithContext,
@@ -203,35 +205,175 @@ describe("mountGatewayRoutes", () => {
     expect(observedContexts[0]).not.toBe(ambientContext);
     expect(observedContexts[1]).toBe(observedContexts[0]);
     expect(observedContexts[2]).toBe(observedContexts[0]);
+    // The turn's identity is the RESOLVED webhook identity, not a hand-built key: the
+    // principal is the hashed mapping (payload data can never forge it) and the
+    // rendered session key stays embedded in the conversation, so per-subject
+    // isolation and log greppability both hold.
     expect(observedContexts[0]).toMatchObject({
       tenantId: "test",
-      userId: "webhook",
-      sessionKey: formatSessionKey({
-        tenantId: "test",
-        agentId: "agent-b",
-        userId: "webhook",
-        channelId: "hook-session",
-      }),
       agentId: "agent-b",
       channelType: "webhook",
       trustLevel: "guest",
       deliveryOrigin: {
         tenantId: "test",
-        userId: "webhook",
         channelType: "webhook",
         channelId: "hook-session",
       },
     });
+    expect(observedContexts[0]?.userId).toMatch(/^webhook-[a-f0-9]{64}$/);
+    const resolvedSessionKey = observedContexts[0]?.sessionKey as string;
+    expect(resolvedSessionKey).toContain("hook-session");
+    expect(resolvedSessionKey.startsWith("test:agent:agent-b:")).toBe(true);
     expect(observedContexts[0]?.traceId).not.toBe(ambientContext.traceId);
+    // The reap probe must address the SAME conversation the turn ran in — a
+    // divergence here would reap the wrong (or no) drive.
     expect(reapNeverTaskedDrives).toHaveBeenCalledWith("agent-b", {
       agentId: "agent-b",
-      sessionKey: formatSessionKey({
-        tenantId: "test",
-        agentId: "agent-b",
-        userId: "webhook",
-        channelId: "hook-session",
-      }),
+      sessionKey: resolvedSessionKey,
     });
+  });
+
+  it("resolves a canonical turn scope for the webhook turn (the executor's context-authority precondition)", async () => {
+    // The executor fail-closes when the ambient context carries no canonical turn
+    // scope: pi-executor requires BOTH `turnScope !== undefined` AND a constructible
+    // conversation ref, else it aborts with step:"context-authority" /
+    // errorKind:"precondition" and never runs the turn. The webhook action builds its
+    // own context and dispatches straight to the executor (it bypasses the orchestrator
+    // inbound pipeline that resolves identity for real channels), so it must resolve the
+    // turn scope itself — exactly as the gateway/cron/heartbeat turn initiators do.
+    // Pre-patch this context had no turnScope at all, so EVERY webhook-triggered agent
+    // action aborted before reaching the drive.
+    const observedContexts: Array<ReturnType<typeof tryGetContext>> = [];
+    const execute = vi.fn(async () => {
+      observedContexts.push(tryGetContext());
+      return { finishReason: "stop" };
+    });
+    const deps = createMockDeps({
+      webhooksConfig: {
+        enabled: true,
+        mappings: [{ id: "m1", name: "test", agentId: "agent-b" }],
+      } as any,
+      getExecutor: vi.fn(() => ({ execute })) as any,
+    });
+    mountGatewayRoutes(deps);
+    const config = vi.mocked(createMappedWebhookEndpoint).mock.calls.at(-1)![0] as any;
+
+    await config.onAgentAction(
+      { id: "m1", name: "test", agentId: "agent-b" },
+      "perform task",
+      "azdo:12816",
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    const turnScope = observedContexts[0]?.turnScope;
+    expect(turnScope, "the webhook turn must carry a canonical turn scope").toBeDefined();
+    if (turnScope === undefined) return;
+    // The precondition is the ref being CONSTRUCTIBLE, not merely the scope being present.
+    const ref = createConversationRef(turnScope.conversation);
+    expect(ref.ok, "the turn scope must yield a constructible conversation ref").toBe(true);
+    // Per-mapping conversation isolation: the rendered session key identifies the
+    // conversation, so two work items never share one partition.
+    expect(turnScope.endpoint.conversationId).toContain("azdo:12816");
+    expect(turnScope.conversation.agentId).toBe("agent-b");
+  });
+
+  it("isolates webhook conversations per rendered session key", async () => {
+    // Two different rendered session keys (two work items) must resolve to two
+    // DISTINCT conversations — otherwise concurrent drives would collide in one
+    // partition and read each other's history.
+    const observedContexts: Array<ReturnType<typeof tryGetContext>> = [];
+    const execute = vi.fn(async () => {
+      observedContexts.push(tryGetContext());
+      return { finishReason: "stop" };
+    });
+    const deps = createMockDeps({
+      webhooksConfig: {
+        enabled: true,
+        mappings: [{ id: "m1", name: "test", agentId: "agent-b" }],
+      } as any,
+      getExecutor: vi.fn(() => ({ execute })) as any,
+    });
+    mountGatewayRoutes(deps);
+    const config = vi.mocked(createMappedWebhookEndpoint).mock.calls.at(-1)![0] as any;
+    const mapping = { id: "m1", name: "test", agentId: "agent-b" };
+
+    await config.onAgentAction(mapping, "task a", "azdo:12816");
+    await config.onAgentAction(mapping, "task b", "azdo:12817");
+
+    expect(observedContexts).toHaveLength(2);
+    const first = observedContexts[0]?.turnScope;
+    const second = observedContexts[1]?.turnScope;
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    if (first === undefined || second === undefined) return;
+    expect(first.endpoint.conversationId).not.toBe(second.endpoint.conversationId);
+  });
+
+  it("binds the webhook delivery origin to the SAME endpoint its turn scope resolved", async () => {
+    // The runtime treats the delivery origin and the turn scope as one authority
+    // and rejects the pair wherever they disagree: BackgroundTaskOriginSchema
+    // ("delivery origin must agree with the resolved turn authority") gates
+    // background-task promotion and task extraction, the capability lease
+    // principal gates a jailed session.spawn, and the autonomy wiring drops the
+    // durable principal. A webhook turn whose origin says one channel while its
+    // scope says another therefore starts, then fail-closes at every one of those
+    // seams. Cron and durable resume derive the origin FROM the resolved endpoint
+    // for exactly this reason; so must the webhook path.
+    const observedContexts: Array<ReturnType<typeof tryGetContext>> = [];
+    const execute = vi.fn(async () => {
+      observedContexts.push(tryGetContext());
+      return { finishReason: "stop" };
+    });
+    const deps = createMockDeps({
+      webhooksConfig: {
+        enabled: true,
+        mappings: [{ id: "m1", name: "test", agentId: "agent-b" }],
+      } as any,
+      getExecutor: vi.fn(() => ({ execute })) as any,
+    });
+    mountGatewayRoutes(deps);
+    const config = vi.mocked(createMappedWebhookEndpoint).mock.calls.at(-1)![0] as any;
+
+    await config.onAgentAction(
+      { id: "m1", name: "test", agentId: "agent-b" },
+      "perform task",
+      "azdo:12816",
+    );
+
+    const context = observedContexts[0];
+    const turnScope = context?.turnScope;
+    const deliveryOrigin = context?.deliveryOrigin;
+    expect(turnScope).toBeDefined();
+    expect(deliveryOrigin).toBeDefined();
+    if (turnScope === undefined || deliveryOrigin === undefined) return;
+    expect(deliveryOrigin.channelType).toBe(turnScope.endpoint.channelType);
+    expect(deliveryOrigin.channelId).toBe(turnScope.endpoint.conversationId);
+    expect(deliveryOrigin.userId).toBe(turnScope.principal.principalId);
+    expect(deliveryOrigin.threadId).toBe(turnScope.endpoint.threadId);
+    // The pair must satisfy the schema the background-task manager parses with,
+    // not merely look consistent field by field.
+    const conversationRef = createConversationRef(turnScope.conversation);
+    expect(conversationRef.ok).toBe(true);
+    if (!conversationRef.ok) return;
+    const origin = BackgroundTaskOriginSchema.safeParse({
+      turnScope,
+      conversationRef: conversationRef.value,
+      deliveryOrigin,
+      traceId: context?.traceId ?? null,
+      responseLocalePolicy: { source: "unset", enforceLocale: false },
+      backgroundHopCount: 0,
+    });
+    expect(
+      origin.success,
+      `a webhook turn must be able to promote a background task: ${JSON.stringify(
+        origin.success ? [] : origin.error.issues.map((issue) => issue.message),
+      )}`,
+    ).toBe(true);
+    // The webhook surface stays the channel of record end to end — an operator
+    // reading the scope, the origin or the session key sees "webhook", not an
+    // internal origin kind standing in for it.
+    expect(turnScope.endpoint.channelType).toBe("webhook");
+    expect(turnScope.endpoint.conversationId).toBe("azdo:12816");
   });
 
   it("frames rendered webhook content with the resolved session delimiter before execution", async () => {
@@ -286,24 +428,19 @@ describe("mountGatewayRoutes", () => {
     expect(replay?.delimiter).toBe(first?.delimiter);
     expect(observed[0]!.context).toMatchObject({
       tenantId: "test",
-      userId: "webhook",
-      sessionKey: formatSessionKey({
-        tenantId: "test",
-        agentId: "agent-b",
-        userId: "webhook",
-        channelId: "hook-session",
-      }),
       agentId: "agent-b",
       channelType: "webhook",
       trustLevel: "guest",
     });
+    expect(observed[0]!.context?.userId).toMatch(/^webhook-[a-f0-9]{64}$/);
+    expect(observed[0]!.context?.sessionKey as string).toContain("hook-session");
     expect(observed[0]!.message).toMatchObject({
       channelId: "hook-session",
       channelType: "webhook",
-      senderId: "webhook",
       attachments: [],
       metadata: { webhookMappingId: "m1" },
     });
+    expect(observed[0]!.message.senderId).toMatch(/^webhook-[a-f0-9]{64}$/);
   });
 
   it("records a terminal webhook executor error as a failed action", async () => {
@@ -453,12 +590,10 @@ describe("mountGatewayRoutes", () => {
     await cfg.onAgentAction({ id: "m1", name: "devtask" }, "build is_prime", "hook:devtask:x");
     expect(reapNeverTaskedDrives).toHaveBeenCalledWith("default", {
       agentId: "default",
-      sessionKey: formatSessionKey({
-        tenantId: "test",
-        agentId: "default",
-        userId: "webhook",
-        channelId: "hook:devtask:x",
-      }),
+      // The reap targets the resolved conversation; a template-rendered key
+      // containing delimiters stays intact inside it (JSON-encoded, so ":" in
+      // "hook:devtask:x" can never split the conversation identity).
+      sessionKey: expect.stringContaining("hook:devtask:x"),
     });
     const delivered = (deps.container.eventBus.emit as any).mock.calls.find((c: unknown[]) => c[0] === "diagnostic:webhook_delivered");
     expect(delivered).toBeDefined();
