@@ -394,7 +394,9 @@ describe("skills.import — pre-write vetting gate", () => {
 
   it("refuses archive URL credentials before any network call", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const handlers = createSkillHandlers(makeDeps(wsDir));
+    const eventBus = createMockEventBus();
+    const logger = createMockLogger();
+    const handlers = createSkillHandlers(makeDeps(wsDir, { eventBus, logger }));
 
     await expect(
       handlers["skills.import"]!({
@@ -406,6 +408,22 @@ describe("skills.import — pre-write vetting gate", () => {
     ).rejects.toThrow(/must not contain credentials/);
 
     expect(fetchSpy).not.toHaveBeenCalled();
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "skill:rejected",
+      expect.objectContaining({
+        source: "archive",
+        stage: "fetch",
+        violations: ["source_ref_invalid"],
+      }),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "archive",
+        failureCode: "source_ref_invalid",
+        errorKind: "validation",
+      }),
+      "Skill import failed",
+    );
   });
 
   it("records an archive preflight failure with its source stage and stable code", async () => {
