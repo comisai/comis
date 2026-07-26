@@ -372,7 +372,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       }
 
       // Fetch all files from the GitHub directory
-      const fetchedFiles = await fetchGitHubDir(parsed.owner, parsed.repo, parsed.path, parsed.branch);
+      const fetchedFiles = await fetchGitHubDir(parsed.owner, parsed.repo, parsed.path, parsed.branch, deps.skillImportFetchDeps);
       if (fetchedFiles.length === 0) {
         throw new Error("No files found at the given URL");
       }

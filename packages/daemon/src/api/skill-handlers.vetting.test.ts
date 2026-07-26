@@ -52,6 +52,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
+import { createGlobalFetchSkillImportDeps } from "../../../../test/support/skill-import-fetch.js";
 import { readSkillProvenance, SKILL_PROVENANCE_FILE_NAME } from "../skills/skill-provenance-store.js";
 
 function createSkillHandlers(deps: SkillHandlerDeps): Record<string, import("./types.js").RpcHandler> {
@@ -137,6 +138,7 @@ function makeDeps(
     approvalGate: undefined,
     mcpClientManager: {} as never,
     skillRegistries: new Map([["agent-a", makeRegistry()]]),
+    skillImportFetchDeps: createGlobalFetchSkillImportDeps(),
     notificationService: undefined,
     execGit: vi.fn(),
     agents: {},

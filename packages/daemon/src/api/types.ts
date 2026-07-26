@@ -393,6 +393,8 @@ export interface WorkspaceApiDeps {
   mcpClientManager: McpClientManager;
   // Skill management deps
   skillRegistries?: Map<string, import("@comis/skills").SkillRegistry>;
+  /** Test injection for remote skill fetches. Production omits it and uses validateUrl + DNS pinning. */
+  skillImportFetchDeps?: import("../skills/import-fetch.js").SkillImportFetchDeps;
   // Notification deps (Proactive v1)
   notificationService?: import("../notification/notification-service.js").NotificationService;
   // Workspace file management deps

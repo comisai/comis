@@ -10,11 +10,10 @@
  * fetch-timeout invariants on a focused module.
  *
  * Guarantees:
+ *   - Every request passes through validateUrl and DNS-pinned fetch.
  *   - Recursion depth bounded at GITHUB_FETCH_MAX_DEPTH (10 levels).
  *   - Total file count bounded at GITHUB_FETCH_MAX_FILES (200 files).
- *   - Each fetch attempt bounded at GITHUB_FETCH_TIMEOUT_MS (10s) via
- *     `AbortSignal.timeout()`. Beyond the timeout the underlying fetch
- *     rejects with `TimeoutError` which propagates to the caller.
+ *   - Every file and the total fetched bundle are byte-bounded.
  *
  * Beyond any cap the function throws a validation-class Error which the
  * `skills.import` handler converts to an RPC error response.
@@ -22,14 +21,61 @@
  * @module
  */
 
+import { z } from "zod";
+import { tryCatch } from "@comis/shared";
+import {
+  defaultSkillImportFetchDeps,
+  fetchSkillImportResponse,
+  readSkillImportText,
+  type SkillImportFetchDeps,
+} from "../skills/import-fetch.js";
+
 const GITHUB_FETCH_MAX_DEPTH = 10;
 const GITHUB_FETCH_MAX_FILES = 200;
-const GITHUB_FETCH_TIMEOUT_MS = 10_000;
+const GITHUB_FETCH_MAX_LISTING_BYTES = 1024 * 1024;
+const GITHUB_FETCH_MAX_ENTRY_BYTES = 4 * 1024 * 1024;
+const GITHUB_FETCH_MAX_BUNDLE_BYTES = 32 * 1024 * 1024;
 
-/** Fetch with AbortSignal-based timeout (10s default). */
-async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
-  const signal = AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS);
-  return fetch(url, { ...init, signal });
+const GitHubEntrySchema = z.strictObject({
+  name: z.string(),
+  type: z.enum(["file", "dir"]),
+  download_url: z.string().url().nullable(),
+  path: z.string(),
+});
+
+const GitHubListingSchema = z.array(GitHubEntrySchema);
+
+interface GitHubFetchState {
+  count: number;
+  bytes: number;
+}
+
+/** Fetch bounded text through the shared SSRF-safe import substrate. */
+async function fetchText(
+  url: string,
+  fetchDeps: SkillImportFetchDeps,
+  maxBytes: number,
+  configKey: string,
+  headers?: Record<string, string>,
+): Promise<string> {
+  const fetched = await fetchSkillImportResponse(url, fetchDeps, headers === undefined ? {} : { headers });
+  if (!fetched.ok) throw fetched.error;
+  if (!fetched.value.ok) {
+    throw new Error(`GitHub API error: ${fetched.value.status} ${fetched.value.statusText}`);
+  }
+  const body = await readSkillImportText(fetched.value, maxBytes, configKey);
+  if (!body.ok) throw body.error;
+  return body.value;
+}
+
+/** Build the GitHub Contents endpoint without allowing path/query injection. */
+function contentsApiUrl(owner: string, repo: string, path: string, branch: string): string {
+  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+  const url = new URL(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}`,
+  );
+  url.searchParams.set("ref", branch);
+  return url.toString();
 }
 
 /**
@@ -39,14 +85,8 @@ async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Respon
  * @param repo Repo segment (e.g. "comis").
  * @param path Path inside the repo (e.g. "skills/my-skill").
  * @param branch Git branch (e.g. "main").
- * @param rootPath The top-level fetch path; used to compute paths relative
- *   to the skill folder root. Caller passes `undefined` at the entry point;
- *   the function threads it through the recursive calls.
- * @param depth Internal recursion depth (caller passes `0` — not part of the
- *   public surface). Bounded at GITHUB_FETCH_MAX_DEPTH.
- * @param totalFiles Internal mutable file-count accumulator shared across the
- *   recursive call chain. Caller passes `{ count: 0 }`. Bounded at
- *   GITHUB_FETCH_MAX_FILES.
+ * @param fetchDeps Injectable fetch security seams; production uses the
+ *   shared validateUrl + DNS-pinned implementation.
  * @returns Array of `{ path, content }` where `path` is relative to the
  *   skill folder root.
  * @throws On depth/file-count overflow OR underlying fetch error.
@@ -56,56 +96,75 @@ export async function fetchGitHubDir(
   repo: string,
   path: string,
   branch: string,
-  rootPath?: string,
-  depth = 0,
-  totalFiles: { count: number } = { count: 0 },
+  fetchDeps: SkillImportFetchDeps = defaultSkillImportFetchDeps,
+): Promise<Array<{ path: string; content: string }>> {
+  return fetchGitHubDirRecursive(owner, repo, path, branch, path, 0, { count: 0, bytes: 0 }, fetchDeps);
+}
+
+async function fetchGitHubDirRecursive(
+  owner: string,
+  repo: string,
+  path: string,
+  branch: string,
+  rootPath: string,
+  depth: number,
+  state: GitHubFetchState,
+  fetchDeps: SkillImportFetchDeps,
 ): Promise<Array<{ path: string; content: string }>> {
   if (depth > GITHUB_FETCH_MAX_DEPTH) {
     throw new Error(
       `Skill import: directory recursion depth exceeds ${GITHUB_FETCH_MAX_DEPTH} levels`,
     );
   }
-  const effectiveRoot = rootPath ?? path;
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
-  const resp = await fetchWithTimeout(apiUrl, {
-    headers: { Accept: "application/vnd.github.v3+json", "User-Agent": "Comis-Skill-Import" },
-  });
-  if (!resp.ok) {
-    throw new Error(`GitHub API error: ${resp.status} ${resp.statusText}`);
-  }
-  const entries = (await resp.json()) as Array<{
-    name: string;
-    type: "file" | "dir";
-    download_url: string | null;
-    path: string;
-  }>;
+  const listingText = await fetchText(
+    contentsApiUrl(owner, repo, path, branch),
+    fetchDeps,
+    GITHUB_FETCH_MAX_LISTING_BYTES,
+    "skills.import.githubListingBytes",
+    { Accept: "application/vnd.github.v3+json", "User-Agent": "Comis-Skill-Import" },
+  );
+  const decoded = tryCatch(() => JSON.parse(listingText) as unknown);
+  if (!decoded.ok) throw new Error(`GitHub API response was not valid JSON: ${decoded.error.message}`);
+  const parsed = GitHubListingSchema.safeParse(decoded.value);
+  if (!parsed.success) throw new Error(`GitHub API response shape invalid: ${parsed.error.message}`);
+  const entries = parsed.data;
 
   const files: Array<{ path: string; content: string }> = [];
   for (const entry of entries) {
     if (entry.type === "file" && entry.download_url) {
-      if (totalFiles.count >= GITHUB_FETCH_MAX_FILES) {
+      if (state.count >= GITHUB_FETCH_MAX_FILES) {
         throw new Error(
           `Skill import: file count exceeds ${GITHUB_FETCH_MAX_FILES} (too many files in repository directory)`,
         );
       }
-      totalFiles.count++;
-      const fileResp = await fetchWithTimeout(entry.download_url);
-      if (!fileResp.ok) continue;
-      const content = await fileResp.text();
+      state.count++;
+      const content = await fetchText(
+        entry.download_url,
+        fetchDeps,
+        GITHUB_FETCH_MAX_ENTRY_BYTES,
+        "skills.installVetting.maxEntryBytes",
+      );
+      state.bytes += new TextEncoder().encode(content).byteLength;
+      if (state.bytes > GITHUB_FETCH_MAX_BUNDLE_BYTES) {
+        throw new Error(
+          `Skill import fetched bytes ${state.bytes} exceed skills.installVetting.maxBundleBytes=${GITHUB_FETCH_MAX_BUNDLE_BYTES}`,
+        );
+      }
       // Relative path within the skill folder: strip the ROOT directory prefix
-      const relativePath = entry.path.startsWith(effectiveRoot + "/")
-        ? entry.path.slice(effectiveRoot.length + 1)
+      const relativePath = entry.path.startsWith(rootPath + "/")
+        ? entry.path.slice(rootPath.length + 1)
         : entry.name;
       files.push({ path: relativePath, content });
     } else if (entry.type === "dir") {
-      const subFiles = await fetchGitHubDir(
+      const subFiles = await fetchGitHubDirRecursive(
         owner,
         repo,
         entry.path,
         branch,
-        effectiveRoot,
+        rootPath,
         depth + 1,
-        totalFiles,
+        state,
+        fetchDeps,
       );
       files.push(...subFiles);
     }

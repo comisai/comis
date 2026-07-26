@@ -50,7 +50,7 @@ describe("fetchGitHubDir remote fetch policy", () => {
       "repo",
       "skills/demo",
       "main",
-      fetchDeps as unknown as string,
+      fetchDeps,
     );
 
     expect(files).toEqual([
@@ -64,4 +64,3 @@ describe("fetchGitHubDir remote fetch policy", () => {
     expect(bareFetch).not.toHaveBeenCalled();
   });
 });
-

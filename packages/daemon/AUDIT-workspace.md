@@ -4,7 +4,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:253–307`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 19 (13 required + 6 optional + 0 stale-fallback)
+**Field count:** 20 (13 required + 7 optional + 0 stale-fallback)
 **Packaging:** Co-located with the `@comis/daemon` package; `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes this audit doc from the npm tarball.
 
 ## Field Classification
@@ -17,6 +17,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | approvalGate | optional | approval.list / approval.respond / approval.requestApproval RPCs fail with "approval gate unavailable"; agent runs that need approval block indefinitely | packages/daemon/src/api/types.ts:259 |
 | mcpClientManager | required | — | packages/daemon/src/api/types.ts:263 |
 | skillRegistries | optional | skill.list returns an empty array for the affected agent(s); user-invocable skill commands fall through to the agent as plain text | packages/daemon/src/api/types.ts:265 |
+| skillImportFetchDeps | optional | production uses the built-in validateUrl plus DNS-pinned fetch path; tests may inject a deterministic no-network implementation | packages/daemon/src/api/types.ts:267 |
 | notificationService | optional | notification.send and proactive-notification triggers are not delivered; notify-related RPCs return "notification service disabled" | packages/daemon/src/api/types.ts:267 |
 | execGit | required | — | packages/daemon/src/api/types.ts:269 |
 | agents | required | — | packages/daemon/src/api/types.ts:271 |
@@ -41,7 +42,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 ## Summary
 
 - **Pre-audit count:** 18
-- **Final count:** 19 (13 required + 6 optional)
+- **Final count:** 20 (13 required + 7 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 
