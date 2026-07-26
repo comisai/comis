@@ -1561,7 +1561,15 @@ async function bootFoundation(
   {
     // Relative path resolves to packages/daemon/bundled-skills from this file in packages/daemon/src/.
     const bundledSkillsRoot = pathResolve(fileURLToPath(import.meta.url), "../../bundled-skills");
-    seedBundledSkills(defaultSeedBundledSkillsDeps(bundledSkillsRoot, safePath(dataDir, "skills"), agentLogger));
+    seedBundledSkills(
+      defaultSeedBundledSkillsDeps(
+        bundledSkillsRoot,
+        safePath(dataDir, "skills"),
+        dataDir,
+        container.config.routing.defaultAgentId,
+        agentLogger,
+      ),
+    );
   }
 
   // Mutate boot with all Group A foundation fields. The 2 forward-ref slots

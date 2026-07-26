@@ -23,6 +23,7 @@ import {
   cpSync as nodeCpSync,
 } from "node:fs";
 import { safePath } from "@comis/core";
+import { recordSeededSkillProvenance } from "../skills/skill-provenance-backfill.js";
 
 /** Injected seams for {@link seedBundledSkills} (defaulted to real fs by {@link defaultSeedBundledSkillsDeps}). */
 export interface SeedBundledSkillsDeps {
@@ -37,8 +38,13 @@ export interface SeedBundledSkillsDeps {
   /** The `version:` in `<skillsTarget>/<name>/SKILL.md`, or undefined when NOT installed. */
   installedVersion: (skillsTarget: string, name: string) => string | undefined;
   /** Copy `<bundledRoot>/<name>` → `<skillsTarget>/<name>` (recursive). */
-  seed: (name: string) => void;
-  readonly logger?: { info: (obj: Record<string, unknown>, msg: string) => void };
+  seed: (name: string) => boolean;
+  /** Record the exact copied bytes as first-party provenance. */
+  recordSeedProvenance: (name: string) => void;
+  readonly logger?: {
+    info: (obj: Record<string, unknown>, msg: string) => void;
+    warn: (obj: Record<string, unknown>, msg: string) => void;
+  };
 }
 
 /**
@@ -56,7 +62,8 @@ export function seedBundledSkills(deps: SeedBundledSkillsDeps): { seeded: string
     // skill-creator semantics). A missing bundled version with an install present ⇒ skip (no churn).
     const shouldSeed = installed === undefined || (bundled !== undefined && bundled !== installed);
     if (shouldSeed) {
-      deps.seed(name);
+      if (!deps.seed(name)) continue;
+      deps.recordSeedProvenance(name);
       seeded.push(name);
       deps.logger?.info(
         { skill: name, installedVersion: installed ?? "none", bundledVersion: bundled ?? "unknown" },
@@ -87,7 +94,12 @@ function extractVersion(path: string, readFile: (p: string) => string): string |
 export function defaultSeedBundledSkillsDeps(
   bundledRoot: string,
   skillsTarget: string,
-  logger?: { info: (obj: Record<string, unknown>, msg: string) => void },
+  dataDir: string,
+  agentId: string,
+  logger?: {
+    info: (obj: Record<string, unknown>, msg: string) => void;
+    warn: (obj: Record<string, unknown>, msg: string) => void;
+  },
 ): SeedBundledSkillsDeps {
   return {
     bundledRoot,
@@ -130,8 +142,39 @@ export function defaultSeedBundledSkillsDeps(
         nodeMkdirSync(skillsTarget, { recursive: true });
         // fs-safe-allowed: bundled-skill seeding into `<dataDir>/skills/` (recursive copy, outside the substrate — same posture as the former skill-creator IIFE).
         nodeCpSync(safePath(bundledRoot, name), safePath(skillsTarget, name), { recursive: true });
-      } catch {
-        /* best-effort: a failed seed of one skill must never abort boot */
+        return true;
+      } catch (error: unknown) {
+        logger?.warn(
+          {
+            skill: name,
+            err: error instanceof Error ? error.message : String(error),
+            hint:
+              "The bundled skill was not seeded; check data-directory ownership and restart the daemon.",
+            errorKind: "resource" as const,
+          },
+          "Bundled skill seed failed",
+        );
+        return false;
+      }
+    },
+    recordSeedProvenance: (name) => {
+      const recorded = recordSeededSkillProvenance({
+        dataDir,
+        name,
+        agentId,
+        skillDir: safePath(skillsTarget, name),
+      });
+      if (!recorded.ok) {
+        logger?.warn(
+          {
+            skill: name,
+            err: recorded.error.message,
+            hint:
+              "The bundled skill may be present without first-party provenance; check data-directory ownership and restart the daemon.",
+            errorKind: "resource" as const,
+          },
+          "Bundled skill provenance write failed",
+        );
       }
     },
   };

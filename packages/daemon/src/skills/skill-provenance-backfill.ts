@@ -36,6 +36,14 @@ export interface BackfillSkillProvenanceArgs {
   readonly manifestPath: string;
 }
 
+/** Inputs for provenance recorded immediately after a bundled skill is seeded. */
+export interface RecordSeededSkillProvenanceArgs {
+  readonly dataDir: string;
+  readonly name: string;
+  readonly agentId: string;
+  readonly skillDir: string;
+}
+
 /** Recursively materialize the real skill directory into the vetting file-map shape. */
 function collectDirectoryFiles(root: string): Result<SkillBundleFile[], Error> {
   return tryCatch(() => {
@@ -103,6 +111,31 @@ export function backfillSkillProvenance(
     backfilled: true,
   };
   const written = recordSkillProvenance(args.dataDir, args.scope, args.name, record);
+  if (!written.ok) return written;
+  return ok(record);
+}
+
+/** Record a freshly seeded bundle as first-party from its exact installed bytes. */
+export function recordSeededSkillProvenance(
+  args: RecordSeededSkillProvenanceArgs,
+): Result<SkillProvenanceRecord, Error> {
+  const manifestPath = safePath(args.skillDir, "SKILL.md");
+  const files = collectSkillBundleFiles(args.skillDir, manifestPath);
+  if (!files.ok) return files;
+
+  const vetted = vetSkillBundle({ files: files.value, trust: "first-party" });
+  const critical = vetted.findings.filter((finding) => finding.severity === "CRITICAL").length;
+  const record: SkillProvenanceRecord = {
+    source: "seed",
+    contentHash: vetted.contentHash,
+    importedAt: systemDateFrom(systemNowMs()).toISOString(),
+    importedBy: { agentId: args.agentId },
+    trust: "first-party",
+    verdict: vetted.verdict,
+    findingCounts: { critical, warn: vetted.findings.length - critical },
+    backfilled: false,
+  };
+  const written = recordSkillProvenance(args.dataDir, "shared", args.name, record);
   if (!written.ok) return written;
   return ok(record);
 }
