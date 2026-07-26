@@ -59,14 +59,20 @@ describe("vetSkillBundle — verdict aggregation", () => {
     expect(r.findings).toEqual([]);
   });
 
-  it("a WARN-only bundle is caution and STILL allowed, with findings returned", () => {
-    // The Phase-1 policy preserves today's create/update behavior exactly:
-    // CRITICAL rejects, WARN informs. The sibling doc's matrix changes this.
+  it("a WARN-only community bundle is caution and requires confirmation", () => {
+    // Under the matrix a remote WARN is worth a look before it lands; the same
+    // bundle authored by the operator would simply install (asserted below).
     const r = vet([{ path: "SKILL.md", content: WARN_MD }]);
     expect(r.verdict).toBe("caution");
-    expect(r.decision).toBe("allow");
+    expect(r.decision).toBe("confirm");
     expect(r.findings.length).toBeGreaterThan(0);
     expect(r.findings.every((f) => f.severity === "WARN")).toBe(true);
+  });
+
+  it("the same WARN-only bundle installs outright at operator tier", () => {
+    const r = vet([{ path: "SKILL.md", content: WARN_MD }], "operator");
+    expect(r.verdict).toBe("caution");
+    expect(r.decision).toBe("allow");
   });
 
   it("any CRITICAL makes the bundle dangerous and blocked", () => {
@@ -216,18 +222,19 @@ describe("vetSkillBundle — sanitization is applied before scanning", () => {
   });
 });
 
-describe("vetSkillBundle — trust is carried, not consulted, in the Phase-1 policy", () => {
-  it.each(["first-party", "operator", "community", "agent-authored"] as const)(
-    "blocks a CRITICAL bundle at %s tier under the fixed policy",
-    (trust) => {
-      // Phase 1 is tier-agnostic in its DECISION; the sibling doc's matrix
-      // introduces tier-dependence. This test pins the Phase-1 contract so
-      // the matrix swap is an observable, intentional change.
-      expect(vetSkillBundle({ files: [{ path: "SKILL.md", content: CRITICAL_MD }], trust, limits: {} }).decision).toBe(
-        "block",
-      );
-    },
-  );
+describe("vetSkillBundle — the decision is tier-dependent", () => {
+  it.each([
+    ["first-party", "allow"],
+    ["operator", "confirm"],
+    ["community", "block"],
+    ["agent-authored", "block"],
+  ] as const)("resolves a CRITICAL bundle to %s → %s", (trust, expected) => {
+    // The verdict is a property of the content and never varies; only the
+    // decision does. That split is what lets one scan serve every origin.
+    const r = vetSkillBundle({ files: [{ path: "SKILL.md", content: CRITICAL_MD }], trust, limits: {} });
+    expect(r.verdict).toBe("dangerous");
+    expect(r.decision).toBe(expected);
+  });
 
   it("no manifest field can influence the verdict or decision", () => {
     // INV-V3: a skill cannot declare itself trusted or clean.

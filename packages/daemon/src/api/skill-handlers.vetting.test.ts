@@ -606,7 +606,7 @@ describe("skill install — provenance recording", () => {
     expect(readSkillProvenance(dataDir())["local:agent-made"]?.trust).toBe("agent-authored");
   });
 
-  it("records the WARN count for a caution-verdict bundle that still installs", async () => {
+  it("records the WARN count once a caution-verdict import is confirmed with force", async () => {
     const warnBody = `---\nname: my-skill\ndescription: Mentions a broad env dump.\n---\n\nRun printenv to inspect configuration.\n`;
     mockGitHubDir("skills/my-skill", { "SKILL.md": warnBody });
     const handlers = createSkillHandlers(makeDeps(wsDir));
@@ -614,6 +614,7 @@ describe("skill install — provenance recording", () => {
     await handlers["skills.import"]!({
       url: "https://github.com/owner/repo/tree/main/skills/my-skill",
       scope: "local",
+      force: true,
       _agentId: "agent-a",
     });
 
@@ -697,5 +698,105 @@ describe("skill install — provenance recording", () => {
     await handlers["skills.delete"]!({ name: "my-skill", scope: "local", _agentId: "agent-a" });
 
     expect(readSkillProvenance(dataDir())["local:my-skill"]).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The confirm mechanism (trust x verdict matrix)
+// ---------------------------------------------------------------------------
+
+describe("skill install — confirm and force", () => {
+  const WARN_BODY = `---\nname: my-skill\ndescription: Mentions a broad env dump.\n---\n\nRun printenv to inspect configuration.\n`;
+
+  it("refuses a WARN-only community import until it is confirmed, writing zero files", async () => {
+    mockGitHubDir("skills/my-skill", { "SKILL.md": WARN_BODY });
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        scope: "local",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/skill_vet_confirm:caution/);
+
+    expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual([]);
+  });
+
+  it("names the findings and the exact re-run in the confirmation message", async () => {
+    // The operator is being asked to make a judgement — they need to see what
+    // they are judging, and what to type next, without a doc lookup.
+    mockGitHubDir("skills/my-skill", { "SKILL.md": WARN_BODY });
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        scope: "local",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/ENV_PRINTENV[\s\S]*force: true/);
+  });
+
+  it("installs the same bundle when the caller acknowledges with force", async () => {
+    mockGitHubDir("skills/my-skill", { "SKILL.md": WARN_BODY });
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    const result = await handlers["skills.import"]!({
+      url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+      scope: "local",
+      force: true,
+      _agentId: "agent-a",
+    });
+
+    expect(result).toMatchObject({ ok: true, name: "my-skill" });
+    expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual(["SKILL.md"]);
+  });
+
+  it("installs a WARN-only skill authored by the operator with no confirmation at all", async () => {
+    // Same findings, different origin: the operator wrote it, so operator+caution
+    // is an outright allow rather than a prompt.
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    const result = await handlers["skills.create"]!({
+      name: "my-skill",
+      content: WARN_BODY,
+      scope: "local",
+      _agentId: "agent-a",
+    });
+
+    expect(result).toMatchObject({ ok: true, name: "my-skill" });
+  });
+
+  it("force NEVER installs a CRITICAL community bundle — the block is unforceable", async () => {
+    // The single most important property of the policy layer.
+    mockGitHubDir("skills/my-skill", { "SKILL.md": CRITICAL_BODY_SKILL_MD });
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        scope: "local",
+        force: true,
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/skill_vet_rejected:dangerous/);
+
+    expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual([]);
+  });
+
+  it("asks for confirmation rather than refusing when the OPERATOR authors a CRITICAL skill", async () => {
+    // operator + dangerous is a confirmable mistake: they wrote it, and can
+    // read the findings and decide. A stranger's CRITICAL stays a hard block.
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    await expect(
+      handlers["skills.create"]!({
+        name: "my-skill",
+        content: CRITICAL_BODY_SKILL_MD,
+        scope: "local",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/skill_vet_confirm:dangerous/);
   });
 });

@@ -15554,6 +15554,9 @@ export const CONTRACTS = {
         },
         "agentId": {
           "type": "string"
+        },
+        "force": {
+          "type": "boolean"
         }
       },
       "required": [

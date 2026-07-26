@@ -217,6 +217,10 @@ export const SkillsUpdateContract = defineContract({
     content: z.string().min(1),
     scope: SkillScopeSchema.optional(),
     agentId: z.string().optional(),
+    // See SkillsUploadContract.request.force comment. Also acknowledges a
+    // `confirm` verdict from the install-vetting policy matrix — it never
+    // overrides a `block`.
+    force: z.boolean().optional(),
   }),
   response: z.object({
     ok: z.literal(true),

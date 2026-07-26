@@ -19,12 +19,11 @@
  *      (whole bundle, not just the body); the rules do not change, so the two
  *      sites cannot drift.
  *
- * Decision policy here is fixed and fail-closed — any CRITICAL blocks, WARN
- * informs — which preserves the shipped `skills.create` / `skills.update`
- * behavior exactly while extending it to `import` / `upload` and to the whole
- * bundle. A trust × verdict matrix replaces this one function later; `decision`
- * is already on the result and already consumed by the call sites, so nothing
- * else moves when it does.
+ * The decision comes from the trust × verdict matrix in `./install-policy.ts`,
+ * so the same finding set resolves differently by origin: an operator's own
+ * CRITICAL is a confirmable mistake, a stranger's is a refusal. `force` is NOT
+ * applied here — it is a request-level override the gate applies, not a property
+ * of the content.
  *
  * Pure: no fs, no net, no clock, no mutation of the caller's input.
  *
@@ -37,6 +36,7 @@ import { scanSkillContent } from "../prompt/content-scanner.js";
 import { sanitizeSkillBody } from "../prompt/sanitizer.js";
 import { hashSkillBundle } from "./bundle-hash.js";
 import { checkBundleStructure, MANIFEST_FILENAME } from "./bundle-structure.js";
+import { decideSkillInstall } from "./install-policy.js";
 import { mapForeignFrontmatter } from "./frontmatter-map.js";
 import type { SkillTrustTier } from "./trust-tier.js";
 import type {
@@ -68,9 +68,8 @@ export interface VetSkillBundleInput {
   /** Bundle members. Relative paths; `SKILL.md` required at the root. */
   readonly files: readonly SkillBundleFile[];
   /**
-   * The tier from `deriveSkillTrustTier`. Carried onto the result and into the
-   * audit record; the current decision policy is deliberately tier-agnostic, so
-   * a later matrix swap is an observable, intentional change.
+   * The tier from `deriveSkillTrustTier`. Drives the policy matrix and is echoed
+   * onto the result for the caller's log + audit record.
    */
   readonly trust: SkillTrustTier;
   /** Partial bound overrides merged over `DEFAULT_BUNDLE_LIMITS`. */
@@ -104,13 +103,16 @@ function verdictFor(findings: readonly SkillBundleFinding[]): SkillBundleVerdict
 }
 
 /**
- * Fixed fail-closed policy: CRITICAL blocks, everything else allows.
+ * Trust × verdict policy (`./install-policy.ts`).
  *
- * Deliberately ignores `trust`. The tier is threaded through so the matrix that
- * replaces this function has everything it needs without touching a call site.
+ * This is the pre-`force` decision — a property of the bundle and its origin.
+ * The caller's `force` flag is a request-level override applied at the gate
+ * (`applyForceOverride`), deliberately NOT here: keeping it out preserves this
+ * function's purity and stops a request flag from being mistaken for a property
+ * of the content.
  */
-function decisionFor(verdict: SkillBundleVerdict, _trust: SkillTrustTier): SkillBundleDecision {
-  return verdict === "dangerous" ? "block" : "allow";
+function decisionFor(verdict: SkillBundleVerdict, trust: SkillTrustTier): SkillBundleDecision {
+  return decideSkillInstall({ trust, verdict });
 }
 
 /** Decode a member for scanning. Binary members never reach here. */

@@ -31,6 +31,7 @@
  */
 
 import {
+  applyForceOverride,
   deriveSkillTrustTier,
   emitSkillAudit,
   vetSkillBundle,
@@ -59,6 +60,11 @@ export interface RunInstallVettingGateArgs {
   readonly callingAgentId: string;
   /** Optional `_context` bag from rawParams (userId for the audit record). */
   readonly ctx?: { userId?: string; traceId?: string } | undefined;
+  /**
+   * The caller's `force` flag. Acknowledges a `confirm` decision — "I read the
+   * findings and accept them" — and NEVER overrides a `block`.
+   */
+  readonly force?: boolean;
   /**
    * When set, a block also emits `skill:failed` with this `phase` before
    * throwing. `skills.create` / `skills.update` pass `"scan"` to preserve the
@@ -119,12 +125,38 @@ export function formatVetRejection(skillName: string, findings: readonly SkillBu
 }
 
 /**
+ * Format the needs-confirmation message. Unlike a rejection this names the WARN
+ * findings too — they are the whole reason the operator is being asked — and
+ * states the exact re-run so the next step needs no doc lookup.
+ */
+export function formatVetConfirm(
+  skillName: string,
+  trust: string,
+  findings: readonly SkillBundleFinding[],
+): string {
+  const shown = findings.slice(0, MAX_REPORTED_FINDINGS);
+  const lines = shown.map((f) => {
+    const where = f.file === "" ? "(bundle)" : f.lineNumber !== undefined ? `${f.file}:${f.lineNumber}` : f.file;
+    return `  ${where} ${f.ruleId} (${f.severity}) — ${f.description}`;
+  });
+  const omitted = findings.length - shown.length;
+  if (omitted > 0) lines.push(`  …and ${omitted} more finding${omitted === 1 ? "" : "s"}`);
+  return (
+    `skill "${skillName}" needs confirmation at ${trust} tier — ${findings.length} finding` +
+    `${findings.length === 1 ? "" : "s"}:\n${lines.join("\n")}\n` +
+    `Re-run with force: true to acknowledge these findings and install.`
+  );
+}
+
+/**
  * Vet a bundle and throw when it must not be written.
  *
  * @returns The gate result on allow/confirm, so the caller can surface
  *   `verdict` / `warnings` / `contentHash` on its RPC response.
- * @throws `Error[skill_vet_rejected:<verdict>]` when the decision is `block`.
- *   The caller's outer try/catch (rpc-dispatch.ts) converts it to an RPC error.
+ * @throws `Error[skill_vet_rejected:<verdict>]` when the decision is `block`
+ *   (unforceable), or `Error[skill_vet_confirm:<verdict>]` when it is `confirm`
+ *   and the caller did not pass `force`. The caller's outer try/catch
+ *   (rpc-dispatch.ts) converts either to an RPC error.
  */
 export function runInstallVettingGate(args: RunInstallVettingGateArgs): VetSkillBundleResult {
   const { deps, source, skillName, files, callingAgentId, ctx } = args;
@@ -137,12 +169,19 @@ export function runInstallVettingGate(args: RunInstallVettingGateArgs): VetSkill
 
   const limits = readVettingLimits(deps, callingAgentId);
   const started = systemNowMs();
-  const result = vetSkillBundle({
+  const vetted = vetSkillBundle({
     files,
     trust,
     ...(limits !== undefined && { limits }),
   });
   const durationMs = systemNowMs() - started;
+
+  // `force` is a REQUEST-level acknowledgement, applied here rather than inside
+  // the pure gate: it upgrades a `confirm` to an `allow` and can never override
+  // a `block`. The un-forced decision stays on the audit record so "installed
+  // despite a confirm" is reconstructable after the fact.
+  const effective = applyForceOverride(vetted.decision, args.force === true);
+  const result: VetSkillBundleResult = { ...vetted, decision: effective };
 
   const criticalCount = result.findings.filter((f) => f.severity === "CRITICAL").length;
   const warnCount = result.findings.length - criticalCount;
@@ -153,7 +192,9 @@ export function runInstallVettingGate(args: RunInstallVettingGateArgs): VetSkill
     source,
     trust,
     verdict: result.verdict,
-    decision: result.decision,
+    decision: effective,
+    policyDecision: vetted.decision,
+    forced: args.force === true && vetted.decision === "confirm",
     fileCount: files.length,
     contentHash: result.contentHash,
     findingCounts: { critical: criticalCount, warn: warnCount },
@@ -213,6 +254,47 @@ export function runInstallVettingGate(args: RunInstallVettingGateArgs): VetSkill
       "Skill install blocked by pre-write vetting gate",
     );
     throw new Error(`[skill_vet_rejected:${result.verdict}] ${detail}`);
+  }
+
+  if (result.decision === "confirm") {
+    // D8: a `confirm` is realized as a refusal that names the findings and the
+    // exact re-run, NOT as a second approval prompt. The tool layer's
+    // ApprovalGate already fires BEFORE the RPC (admin-manage-factory.ts), so it
+    // has not seen the bundle and cannot carry a verdict; raising a second
+    // prompt here would ask the operator twice for one action. Costing one extra
+    // round trip buys the operator the findings before they decide, and reuses
+    // the `force` field already on all four contracts.
+    if (args.failurePhase !== undefined) {
+      deps.eventBus?.emit("skill:failed", {
+        skillName,
+        error: `Install vetting needs confirmation: ${result.verdict} (${warnCount} WARN, ${criticalCount} CRITICAL)`,
+        phase: args.failurePhase,
+        agentId: callingAgentId,
+        timestamp: systemNowMs(),
+      });
+    }
+    deps.logger.warn(
+      {
+        method: "skills.vet",
+        skillName,
+        agentId: callingAgentId,
+        source,
+        trust,
+        verdict: result.verdict,
+        fileCount: files.length,
+        findingCounts: { critical: criticalCount, warn: warnCount },
+        ruleIds,
+        durationMs,
+        hint:
+          "Skill install needs explicit confirmation at this trust tier. Review the findings, then re-run the " +
+          "same call with force: true to acknowledge them. force does NOT override a block.",
+        errorKind: "validation" as const,
+      },
+      "Skill install requires confirmation",
+    );
+    throw new Error(
+      `[skill_vet_confirm:${result.verdict}] ${formatVetConfirm(skillName, trust, result.findings)}`,
+    );
   }
 
   deps.logger.info(

@@ -153,13 +153,31 @@ Fields with no Comis equivalent are **dropped with a logged warning that names t
 
 ## What Happens When a Threat is Found
 
-The scanner classifies each finding by severity:
+At **install time** the outcome depends on both the findings and where the skill came from. Comis assigns every install a trust tier from the call itself -- never from anything the skill declares:
 
-- **CRITICAL findings at install time:** the install is **refused** and no files are written. The error names each finding's file, line, rule, and category so you can fix the skill and retry.
+| Tier | Assigned to |
+|---|---|
+| `first-party` | skills the daemon seeds itself |
+| `operator` | skills you author (`create`/`update`/`upload` as the default agent) |
+| `community` | any remote import |
+| `agent-authored` | skills an agent writes at runtime |
 
-- **CRITICAL findings at load time:** the skill is **blocked from loading entirely** when `contentScanning.blockOnCritical` is enabled (which it is by default). The agent never sees the skill content. A log entry records what was found and why it was blocked.
+The tier and the verdict together decide what happens:
 
-- **WARN findings:** the skill **installs and loads normally**, but a warning is logged. Review the warning and decide whether the skill is safe. Obfuscated encoding, for example, may be legitimate -- some skills include base64 data for valid reasons.
+|  | no findings | WARN only | any CRITICAL |
+|---|---|---|---|
+| `first-party` | install | install | install |
+| `operator` | install | install | **confirm** |
+| `community` | install | **confirm** | **refuse** |
+| `agent-authored` | install | **confirm** | **refuse** |
+
+**Confirm** means the install is refused with a message naming every finding and its location, and you re-run the same call with `force: true` to acknowledge them. **Refuse** cannot be overridden: `force` upgrades a confirmation, never a refusal. A CRITICAL finding in a skill you did not write is not installable, by any flag.
+
+The asymmetry is deliberate. A CRITICAL pattern in a skill you authored is a mistake worth stopping for, but it is your content and your judgement. The same pattern arriving from a stranger is not.
+
+At **load time** the rule is simpler: a CRITICAL finding blocks the skill from loading when `contentScanning.blockOnCritical` is enabled (the default). The agent never sees the content, and a log entry records what was found.
+
+**WARN findings** never block a load, and never refuse an install -- at most they ask for a confirmation. Review them and decide: obfuscated encoding, for example, may be legitimate, since some skills include base64 data for valid reasons.
 
 <Info>
   Even if a prompt skill passes content scanning, it still goes through the sanitization pipeline. These controls reduce specific prompt-content risks, but they do not establish a process sandbox or prove that the skill's instructions are trustworthy.

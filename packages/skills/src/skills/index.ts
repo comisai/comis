@@ -84,6 +84,10 @@ export type {
   SkillBundleFile,
   SkillBundleFinding,
 } from "./import/vet-bundle.js";
+// The force override the daemon gate applies at the request edge. The matrix
+// itself (`decideSkillInstall`) is consumed inside this package by
+// `vet-bundle.ts` and is deliberately not re-exported.
+export { applyForceOverride } from "./import/install-policy.js";
 export { deriveSkillTrustTier } from "./import/trust-tier.js";
 // SkillTrustTier is consumed by the daemon's provenance store, which persists
 // the derived tier; SkillInstallSource by both that store and the install gate.

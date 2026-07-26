@@ -237,7 +237,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       const vetted = runInstallVettingGate({
         deps, source: "upload", skillName: params.name, callingAgentId,
         files: params.files.map((f) => ({ path: f.path, content: f.content })),
-        ctx: (rawParams as { _context?: { userId?: string } })._context,
+        ctx: (rawParams as { _context?: { userId?: string } })._context, force: rawParams.force === true,
       });
 
       // Route skill-folder dir creation + per-file writes
@@ -409,7 +409,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       const vetted = runInstallVettingGate({
         deps, source: "github", skillName: name, callingAgentId,
         files: fetchedFiles.map((f) => ({ path: f.path, content: f.content })),
-        ctx: (rawParams as { _context?: { userId?: string } })._context,
+        ctx: (rawParams as { _context?: { userId?: string } })._context, force: rawParams.force === true,
       });
 
       // Route skill-folder dir creation + per-file writes
@@ -622,7 +622,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       const vetted = runInstallVettingGate({
         deps, source: "create", skillName: params.name, callingAgentId,
         files: [{ path: "SKILL.md", content: params.content }],
-        ctx: (rawParams as { _context?: { userId?: string } })._context,
+        ctx: (rawParams as { _context?: { userId?: string } })._context, force: rawParams.force === true,
         failurePhase: "scan",
       });
 
@@ -741,7 +741,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       const vetted = runInstallVettingGate({
         deps, source: "update", skillName: params.name, callingAgentId,
         files: [{ path: "SKILL.md", content: params.content }],
-        ctx: (rawParams as { _context?: { userId?: string } })._context,
+        ctx: (rawParams as { _context?: { userId?: string } })._context, force: rawParams.force === true,
         failurePhase: "scan",
       });
 
