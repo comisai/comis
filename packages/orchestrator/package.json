@@ -35,10 +35,10 @@
     "@comis/channels": "workspace:*",
     "@comis/core": "workspace:*",
     "@comis/shared": "workspace:*",
-    "p-queue": "9.3.0"
+    "p-queue": "9.3.3"
   },
   "devDependencies": {
     "typescript": "5.9.3",
-    "vitest": "4.1.9"
+    "vitest": "4.1.10"
   }
 }
