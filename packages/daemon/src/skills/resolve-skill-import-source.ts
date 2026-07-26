@@ -164,6 +164,10 @@ async function resolveArchive(
     parsedUrl.value.hash = "";
     ref = parsedUrl.value.toString();
   }
+  deps.logger.debug(
+    { method: "skills.import", source: "archive", step: "preflight", archiveBytes: bytes.byteLength },
+    "Skill archive preflight started",
+  );
   const unpacked = unpackSkillArchive(bytes, {
     maxArchiveBytes,
     maxCompressionRatio: importConfig?.maxCompressionRatio ?? 100,
@@ -175,6 +179,10 @@ async function resolveArchive(
   if (!unpacked.ok) {
     return err(new Error(`${unpacked.error.code}: ${unpacked.error.message}`));
   }
+  deps.logger.debug(
+    { method: "skills.import", source: "archive", step: "unpack", fileCount: unpacked.value.length },
+    "Skill archive unpacked",
+  );
   const parsedManifest = parseSkillBundleManifest(unpacked.value);
   if (!parsedManifest.ok) return err(new Error(parsedManifest.error.message));
   return ok({

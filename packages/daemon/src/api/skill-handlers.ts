@@ -75,6 +75,7 @@ import {
 } from "../skills/vet-install-gate.js";
 import { resolveSkillImportSource } from "../skills/resolve-skill-import-source.js";
 import { installSkillDirectory } from "../skills/skill-directory-swap.js";
+import { recordSkillImportCompletion } from "../skills/skill-import-observability.js";
 import { collectSkillBundleFiles } from "../skills/skill-provenance-backfill.js";
 import {
   provenanceKey,
@@ -402,6 +403,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       const resolved = await resolveSkillImportSource(params, deps, callingAgentId);
       if (!resolved.ok) throw resolved.error;
       const { name, files: fetchedFiles, source, ref, registryTrust, evidence } = resolved.value;
+      deps.logger.debug({ method: "skills.import", source, step: "fetch", fileCount: fetchedFiles.length }, "Skill import source resolved");
 
       // Scope-based path resolution
       const dataDir = deps.container.config.dataDir || ".";
@@ -569,6 +571,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       // that this call may write. Reuse the evaluation so each candidate is
       // scanned exactly once.
       const vetted = runInstallVettingGate(gateArgs, evaluated);
+      deps.logger.debug({ method: "skills.import", source, step: "vet", verdict: vetted.verdict }, "Skill import vetted");
       const installed = installSkillDirectory({
         skillsBaseDir,
         skillDir,
@@ -588,6 +591,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         );
         throw installed.error;
       }
+      deps.logger.debug({ method: "skills.import", source, step: "write", fileCount: fetchedFiles.length }, "Skill import files committed");
 
       // Scope-aware re-discovery
       if (scope === "shared" && deps.skillRegistries) {
@@ -628,6 +632,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         }
         throw hooked.error;
       }
+      deps.logger.debug({ method: "skills.import", source, step: "bundle" }, "Skill import post-install hooks complete");
       const finalized = installed.value.finalize();
       if (!finalized.ok) {
         logger.warn(
@@ -654,42 +659,18 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         warnings: vetted.warnings,
         ...bundleInstallResponseFields(hooked.value),
       };
-      const criticalCount = vetted.findings.filter(
-        (finding) => finding.severity === "CRITICAL",
-      ).length;
-      deps.eventBus?.emit("skill:imported", {
+      recordSkillImportCompletion({
+        eventBus: deps.eventBus,
+        logger: deps.logger,
         skillName: name,
         source,
         scope,
-        trust: vetted.trust,
-        verdict: vetted.verdict,
-        contentHash: vetted.contentHash,
+        vetted,
         fileCount: fetchedFiles.length,
-        findingCounts: {
-          critical: criticalCount,
-          warn: vetted.findings.length - criticalCount,
-        },
         pendingMcpCount: hooked.value.pendingMcpServers?.length ?? 0,
         agentId: callingAgentId,
-        timestamp: systemNowMs(),
+        startedMs: importStartedMs,
       });
-      logger.info(
-        {
-          method: "skills.import",
-          skillName: name,
-          source,
-          trust: vetted.trust,
-          verdict: vetted.verdict,
-          fileCount: fetchedFiles.length,
-          findingCounts: {
-            critical: criticalCount,
-            warn: vetted.findings.length - criticalCount,
-          },
-          unchanged: false,
-          durationMs: systemNowMs() - importStartedMs,
-        },
-        "Skill import complete",
-      );
       if (IS_DEV) SkillsImportContract.response.parse(result);
       return result;
     },
