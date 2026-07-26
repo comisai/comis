@@ -45,6 +45,7 @@ import { registerSystemHealthCommand } from "./commands/system-health.js";
 import { registerMessagesCommand } from "./commands/messages.js";
 import { registerSupportBundleCommand } from "./commands/support-bundle.js";
 import { registerUninstallCommand } from "./commands/uninstall.js";
+import { registerSkillsCommand } from "./commands/skills.js";
 
 export const program = new Command();
 
@@ -86,6 +87,7 @@ registerSystemHealthCommand(program);
 registerMessagesCommand(program);
 registerSupportBundleCommand(program);
 registerUninstallCommand(program);
+registerSkillsCommand(program);
 
 // Parse and execute
 program.parseAsync(process.argv).catch((err: unknown) => {
