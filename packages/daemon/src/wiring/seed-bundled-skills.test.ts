@@ -31,6 +31,21 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     expect(recordSeedProvenance).toHaveBeenCalledWith("new-skill");
   });
 
+  it("does not record first-party provenance when the bundled copy fails", () => {
+    const recordSeedProvenance = vi.fn();
+    seedBundledSkills({
+      bundledRoot: "/b",
+      skillsTarget: "/t",
+      listSkillNames: () => ["failed-skill"],
+      bundledVersion: () => "1.0.0",
+      installedVersion: () => undefined,
+      seed: () => false,
+      recordSeedProvenance,
+    });
+
+    expect(recordSeedProvenance).not.toHaveBeenCalled();
+  });
+
   it("seeds missing skills, RE-seeds version-changed skills, and SKIPS up-to-date ones", () => {
     const bundled: Record<string, string> = { "skill-creator": "1.1.1", "claude-code": "1.0.0", codex: "1.0.0" };
     const installed: Record<string, string | undefined> = {
@@ -39,7 +54,7 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
       // claude-code: not installed → seed
     };
     const seededCalls: string[] = [];
-    const logger = { info: vi.fn() };
+    const logger = { info: vi.fn(), warn: vi.fn() };
     const r = seedBundledSkills({
       bundledRoot: "/b",
       skillsTarget: "/t",
@@ -47,6 +62,7 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
       bundledVersion: (_root, name) => bundled[name],
       installedVersion: (_t, name) => installed[name],
       seed: (name) => seededCalls.push(name),
+      recordSeedProvenance: vi.fn(),
       logger,
     });
     expect(r.seeded.sort()).toEqual(["claude-code", "codex"]);
@@ -63,6 +79,7 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
       bundledVersion: () => "1.0.0",
       installedVersion: () => undefined, // not installed
       seed: (n) => seeded.push(n),
+      recordSeedProvenance: vi.fn(),
     });
     expect(r.seeded).toEqual(["claude-code"]);
     expect(seeded).toEqual(["claude-code"]);
@@ -77,6 +94,7 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
       bundledVersion: (_r, n) => ({ "skill-creator": "1.1.1", "claude-code": "1.0.0", codex: "1.0.0" })[n],
       installedVersion: (_t, n) => ({ "skill-creator": "1.1.1", "claude-code": "1.0.0", codex: "1.0.0" })[n],
       seed: (n) => seeded.push(n),
+      recordSeedProvenance: vi.fn(),
     });
     expect(seeded).toEqual([]);
     expect(r.seeded).toEqual([]);
@@ -93,6 +111,7 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
       seed: () => {
         throw new Error("must not seed");
       },
+      recordSeedProvenance: vi.fn(),
     });
     expect(r.seeded).toEqual([]);
     expect(r.skipped).toEqual([]);
