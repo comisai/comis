@@ -439,6 +439,166 @@ describe("skills.import — pre-write vetting gate", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("imports a configured registry archive and persists its evidence without trust promotion", async () => {
+    const archive = makeStoredArchive({ "my-skill/SKILL.md": CLEAN_SKILL_MD });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "https://registry.example/api/v1/skills/my-skill") {
+        return new Response(
+          JSON.stringify({
+            skill: { slug: "my-skill" },
+            latestVersion: { version: "1.2.3" },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url === "https://registry.example/api/v1/skills/-/security-verdicts") {
+        return new Response(
+          JSON.stringify({
+            schema: "registry.skill.security-verdicts.v1",
+            items: [
+              {
+                decision: "pass",
+                requestedSlug: "my-skill",
+                slug: "my-skill",
+                requestedVersion: "1.2.3",
+                version: "1.2.3",
+                publisherHandle: "publisher_a",
+                publisherVerified: true,
+                checkedAt: "2026-07-26T12:00:00.000Z",
+                securityAuditUrl:
+                  "https://registry.example/publisher_a/my-skill/security-audit",
+                security: { status: "clean", passed: true },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (
+        url ===
+        "https://registry.example/api/v1/download?slug=my-skill&version=1.2.3"
+      ) {
+        return new Response(Buffer.from(archive), { status: 200 });
+      }
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    });
+    const handlers = createSkillHandlers(
+      makeDeps(wsDir, {
+        agents: {
+          "agent-a": {
+            skills: {
+              import: {
+                registries: [
+                  {
+                    id: "example-registry",
+                    base: "https://registry.example/api/v1",
+                    kind: "registry",
+                    trust: "community",
+                  },
+                ],
+              },
+            },
+          },
+        } as never,
+      }),
+    );
+
+    const result = await handlers["skills.import"]!({
+      source: "registry",
+      registry: "example-registry",
+      ref: "my-skill",
+      scope: "local",
+      _agentId: "agent-a",
+    });
+
+    expect(result).toMatchObject({ ok: true, name: "my-skill", fileCount: 1 });
+    expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual(["SKILL.md"]);
+    expect(readSkillProvenance(join(wsDir, "data"))["local:my-skill"]).toMatchObject({
+      source: "registry",
+      ref: "registry:my-skill@1.2.3",
+      trust: "community",
+      evidence: {
+        publisherHandle: "publisher_a",
+        publisherVerified: true,
+        securityStatus: "clean",
+        securityPassed: true,
+        securityAuditUrl: "https://registry.example/publisher_a/my-skill/security-audit",
+        checkedAt: "2026-07-26T12:00:00.000Z",
+        registryDecision: "pass",
+      },
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not let a passing registry verdict bypass the local critical-content gate", async () => {
+    const archive = makeStoredArchive({ "my-skill/SKILL.md": CRITICAL_BODY_SKILL_MD });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/skills/my-skill")) {
+        return new Response(
+          JSON.stringify({
+            skill: { slug: "my-skill" },
+            latestVersion: { version: "1.2.3" },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/skills/-/security-verdicts")) {
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                decision: "pass",
+                requestedSlug: "my-skill",
+                slug: "my-skill",
+                requestedVersion: "1.2.3",
+                version: "1.2.3",
+                security: { status: "clean", passed: true },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(Buffer.from(archive), { status: 200 });
+    });
+    const handlers = createSkillHandlers(
+      makeDeps(wsDir, {
+        agents: {
+          "agent-a": {
+            skills: {
+              import: {
+                registries: [
+                  {
+                    id: "example-registry",
+                    base: "https://registry.example/api/v1",
+                    kind: "registry",
+                    trust: "community",
+                  },
+                ],
+              },
+            },
+          },
+        } as never,
+      }),
+    );
+
+    await expect(
+      handlers["skills.import"]!({
+        source: "registry",
+        registry: "example-registry",
+        ref: "my-skill",
+        scope: "local",
+        force: true,
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/skill_vet_rejected:dangerous/);
+
+    expect(filesUnder(join(wsDir, "skills", "my-skill"))).toEqual([]);
+    expect(readSkillProvenance(join(wsDir, "data"))["local:my-skill"]).toBeUndefined();
+  });
+
   it("rejects a CRITICAL SKILL.md body and writes ZERO files", async () => {
     mockGitHubDir("skills/my-skill", { "SKILL.md": CRITICAL_BODY_SKILL_MD });
     const handlers = createSkillHandlers(makeDeps(wsDir));
