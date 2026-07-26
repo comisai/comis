@@ -15,7 +15,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { ApprovalGate } from "@comis/core";
 import { registerActivityLabelSpec } from "@comis/core";
-import { readStringParam } from "../tool-helpers.js";
+import { readBooleanParam, readStringParam, throwToolError } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
 
@@ -50,7 +50,32 @@ const SkillsManageToolParams = Type.Object({
   ),
   url: Type.Optional(
     Type.String({
-      description: "GitHub directory URL to import skills from. Required for import action.",
+      description: "GitHub directory URL. Required when import source is github or omitted.",
+    }),
+  ),
+  source: Type.Optional(
+    Type.Union(
+      [
+        Type.Literal("github"),
+        Type.Literal("archive"),
+        Type.Literal("wellknown"),
+        Type.Literal("registry"),
+      ],
+      { description: "Import source. Omit only for a URL-based GitHub import." },
+    ),
+  ),
+  ref: Type.Optional(
+    Type.String({ description: "Well-known or registry skill reference." }),
+  ),
+  archiveUrl: Type.Optional(
+    Type.String({ description: "Remote .skill or ZIP URL for an archive import." }),
+  ),
+  registry: Type.Optional(
+    Type.String({ description: "Operator-configured registry id for a registry import." }),
+  ),
+  confirm: Type.Optional(
+    Type.Boolean({
+      description: "Confirm a caution verdict or replacement after reviewing the findings.",
     }),
   ),
   name: Type.Optional(
@@ -120,9 +145,50 @@ export function createSkillsManageTool(
           return rpcCall("skills.list", { _trustLevel: ctx.trustLevel });
         },
         async import(p, rpcCall, ctx) {
-          const url = readStringParam(p, "url");
           const scope = readStringParam(p, "scope", false) ?? "local";
-          return rpcCall("skills.import", { url, scope, _trustLevel: ctx.trustLevel });
+          const source = readStringParam(p, "source", false);
+          const confirmed = readBooleanParam(p, "confirm", false) === true;
+          const common = {
+            scope,
+            ...(confirmed && { force: true }),
+            _trustLevel: ctx.trustLevel,
+          };
+          switch (source) {
+            case undefined:
+              return rpcCall("skills.import", {
+                url: readStringParam(p, "url"),
+                ...common,
+              });
+            case "github":
+              return rpcCall("skills.import", {
+                source,
+                url: readStringParam(p, "url"),
+                ...common,
+              });
+            case "wellknown":
+              return rpcCall("skills.import", {
+                source,
+                ref: readStringParam(p, "ref"),
+                ...common,
+              });
+            case "archive":
+              return rpcCall("skills.import", {
+                source,
+                archiveUrl: readStringParam(p, "archiveUrl"),
+                ...common,
+              });
+            case "registry":
+              return rpcCall("skills.import", {
+                source,
+                registry: readStringParam(p, "registry"),
+                ref: readStringParam(p, "ref"),
+                ...common,
+              });
+            default:
+              throwToolError("invalid_value", `Invalid skill import source: ${source}`, {
+                validValues: ["github", "archive", "wellknown", "registry"],
+              });
+          }
         },
         async delete(p, rpcCall, ctx) {
           const name = readStringParam(p, "name");
