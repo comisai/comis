@@ -17,17 +17,48 @@ import { defineContract } from "../types.js";
 // ===========================================================================
 
 /**
- * PromptSkillDescription wire shape. Tight model — the source type at
- * `packages/skills/src/skills/prompt/processor.ts:19-28` is fully
- * allowlist-shaped (5 primitive fields, no nested records). The
- * `source` enum mirrors the source-tag emitted by the registry.
+ * Prompt-skill description enriched with daemon-owned install provenance.
+ * Discovery-path source and install source are intentionally separate: the
+ * former describes lookup priority, while the latter describes trust origin.
  */
+const SkillEvidenceSchema = z.object({
+  publisherHandle: z.string().optional(),
+  publisherVerified: z.boolean().optional(),
+  securityStatus: z.string().optional(),
+  securityPassed: z.boolean().optional(),
+  securityAuditUrl: z.string().optional(),
+  checkedAt: z.string().optional(),
+  registryDecision: z.string().optional(),
+});
+
 const SkillDescriptionSchema = z.object({
   name: z.string(),
   description: z.string(),
   location: z.string(),
   disableModelInvocation: z.boolean().optional(),
-  source: z.enum(["bundled", "workspace", "local"]).optional(),
+  discoverySource: z.enum(["bundled", "workspace", "local", "learned"]).optional(),
+  scope: z.enum(["local", "shared"]).optional(),
+  source: z
+    .enum(["seed", "backfill", "create", "update", "upload", "github", "archive", "wellknown", "registry"])
+    .optional(),
+  ref: z.string().optional(),
+  contentHash: z.string().optional(),
+  importedAt: z.string().optional(),
+  importedBy: z.object({ agentId: z.string(), userId: z.string().optional() }).optional(),
+  trust: z.enum(["first-party", "operator", "community", "agent-authored"]).optional(),
+  verdict: z.enum(["safe", "caution", "dangerous"]).optional(),
+  findingCounts: z.object({ critical: z.number(), warn: z.number() }).optional(),
+  evidence: SkillEvidenceSchema.optional(),
+  pendingMcpServers: z
+    .array(
+      z.object({
+        name: z.string(),
+        transport: z.enum(["stdio", "sse", "http"]),
+        reason: z.string(),
+      }),
+    )
+    .optional(),
+  backfilled: z.boolean().optional(),
 });
 
 /**

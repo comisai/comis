@@ -57,7 +57,11 @@ import {
 } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import { createLogger } from "@comis/infra";
-import { decideSkillReimport, vetSkillBundle } from "@comis/skills";
+import {
+  decideSkillReimport,
+  vetSkillBundle,
+  type PromptSkillDescription,
+} from "@comis/skills";
 import { fromPromise } from "@comis/shared";
 import { rmSync, existsSync } from "node:fs";
 import type { RpcHandler } from "./types.js";
@@ -111,6 +115,37 @@ function resolveCallingAgentId(rawParams: Record<string, unknown>): string | und
   return undefined;
 }
 
+/** Join registry discovery metadata to daemon-private provenance by exact path. */
+function enrichSkillDescriptions(
+  deps: SkillHandlerDeps,
+  agentId: string,
+  skills: readonly PromptSkillDescription[],
+): Array<Record<string, unknown>> {
+  const dataDir = deps.container.config.dataDir || ".";
+  const state = readSkillProvenance(dataDir);
+  const workspaceDir = deps.workspaceDirs.get(agentId);
+  return skills.map((skill) => {
+    const { source: discoverySource, ...description } = skill;
+    const localLocation =
+      workspaceDir === undefined ? undefined : safePath(safePath(workspaceDir, "skills"), skill.name);
+    const sharedLocation = safePath(safePath(dataDir, "skills"), skill.name);
+    const scope =
+      localLocation !== undefined && skill.location === localLocation
+        ? ("local" as const)
+        : skill.location === sharedLocation
+          ? ("shared" as const)
+          : undefined;
+    const provenance =
+      scope === undefined ? undefined : state[provenanceKey(scope, skill.name)];
+    return {
+      ...description,
+      ...(discoverySource !== undefined && { discoverySource }),
+      ...(scope !== undefined && { scope }),
+      ...(provenance !== undefined && provenance),
+    };
+  });
+}
+
 /**
  * Create skill management RPC handlers.
  * @param deps - Injected dependencies
@@ -139,21 +174,32 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
           if (IS_DEV) SkillsListContract.response.parse(empty);
           return empty;
         }
-        const result = { skills: registry.getPromptSkillDescriptions() };
+        const result = {
+          skills: enrichSkillDescriptions(deps, agentId, registry.getPromptSkillDescriptions()),
+        };
         if (IS_DEV) SkillsListContract.response.parse(result);
         return result;
       }
 
       // Default: return skills from the default agent's registry (deterministic fallback)
-      const fallbackRegistry = deps.defaultAgentId
-        ? deps.skillRegistries.get(deps.defaultAgentId) ?? deps.skillRegistries.values().next().value
-        : deps.skillRegistries.values().next().value;
-      if (!fallbackRegistry) {
+      const fallbackAgentId =
+        deps.defaultAgentId && deps.skillRegistries.has(deps.defaultAgentId)
+          ? deps.defaultAgentId
+          : deps.skillRegistries.keys().next().value;
+      const fallbackRegistry =
+        fallbackAgentId === undefined ? undefined : deps.skillRegistries.get(fallbackAgentId);
+      if (!fallbackRegistry || fallbackAgentId === undefined) {
         const empty = { skills: [] };
         if (IS_DEV) SkillsListContract.response.parse(empty);
         return empty;
       }
-      const result = { skills: fallbackRegistry.getPromptSkillDescriptions() };
+      const result = {
+        skills: enrichSkillDescriptions(
+          deps,
+          fallbackAgentId,
+          fallbackRegistry.getPromptSkillDescriptions(),
+        ),
+      };
       if (IS_DEV) SkillsListContract.response.parse(result);
       return result;
     },
