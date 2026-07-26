@@ -48,6 +48,18 @@ describe("bundle structure — manifest presence", () => {
     expect(findings.find((f) => f.ruleId === "BUNDLE_MANIFEST_CASE")?.severity).toBe("WARN");
   });
 
+  it("prefers the canonical manifest when a case variant appears first", () => {
+    const findings = checkBundleStructure({
+      files: [
+        { path: "skill.md", content: "case variant" },
+        SKILL_MD,
+      ],
+      limits: {},
+    });
+
+    expect(findings.map((finding) => finding.ruleId)).not.toContain("BUNDLE_MANIFEST_CASE");
+  });
+
   it("does NOT accept a nested SKILL.md as the bundle root", () => {
     // Root resolution / stripComponents is the archive reader's job; by the
     // time the gate runs, SKILL.md must be at the root.
@@ -218,6 +230,33 @@ describe("bundle structure — .skillignore", () => {
     // can ship .skillignore must not be able to ship a traversal with it.
     const files = [SKILL_MD, { path: ".skillignore", content: "*\n" }, { path: "../escape.md", content: "x" }];
     expect(checkBundleStructure({ files, limits: {} }).map((f) => f.ruleId)).toContain("BUNDLE_PATH_UNSAFE");
+  });
+
+  it("still rejects a link member matched by the ignore file", () => {
+    const files = [
+      SKILL_MD,
+      { path: ".skillignore", content: "ignored/**\n" },
+      { path: "ignored/link.md", content: "target", type: "symlink" as const },
+    ];
+
+    expect(checkBundleStructure({ files, limits: {} }).map((finding) => finding.ruleId)).toContain(
+      "BUNDLE_SYMLINK_MEMBER",
+    );
+  });
+
+  it("still rejects binary bytes matched by the ignore file", () => {
+    const files = [
+      SKILL_MD,
+      { path: ".skillignore", content: "ignored/**\n" },
+      {
+        path: "ignored/payload.md",
+        content: new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0x00]),
+      },
+    ];
+
+    expect(checkBundleStructure({ files, limits: {} }).map((finding) => finding.ruleId)).toContain(
+      "BUNDLE_BINARY_MEMBER",
+    );
   });
 });
 
