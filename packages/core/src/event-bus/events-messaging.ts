@@ -442,6 +442,24 @@ export interface MessagingEvents {
     outputHeadroom: number;
     /** Fit-check outcome (closed union — never an open string). */
     verdict: "fits" | "downshifted" | "exhausted";
+    /**
+     * The EFFECTIVE number of trailing conversation STEPS kept verbatim this
+     * turn (post-clamp), and the operator-CONFIGURED value it was clamped from.
+     *
+     * The fresh tail is bounded by STEP COUNT, not tokens — so on a long tool
+     * loop the user's originating request slides out of verbatim context while
+     * `verdict` still reads "fits" and the window sits nearly empty. That is
+     * exactly what happened live (comis-moshe 2026-07-26): the agent apologized
+     * for work the user HAD requested, with 87,740 of 1,000,000 tokens in use
+     * and `droppedCount:0`. Without these two numbers the report shows a clean
+     * "fits" and the slide is invisible.
+     *
+     * Optional (additive) — emitters that cannot resolve the step bound omit
+     * both rather than reporting a wrong number.
+     */
+    freshTailSteps?: number;
+    /** The configured `contextEngine.freshTailTurns`. See {@link freshTailSteps}. */
+    freshTailStepsConfigured?: number;
   };
 
   /** A non-Latin search returned zero hits on a CLEANLY-executed lane.

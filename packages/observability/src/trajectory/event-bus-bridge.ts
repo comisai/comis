@@ -599,6 +599,16 @@ export function attachTrajectoryToEventBus(
       ) {
         return;
       }
+      // A `scheduleDispatchRetry` backoff tick re-emits the TERMINAL event to
+      // re-drive dispatch; it is not a second failure/completion. Recording it
+      // turned one failure into up to seventeen trajectory lines and buried the
+      // real signal in `explain` (comis-moshe 2026-07-26: 55 records / 4 tasks).
+      if (
+        (eventName === "background_task:failed" || eventName === "background_task:completed")
+        && (payload as { dispatchRedelivery?: boolean }).dispatchRedelivery === true
+      ) {
+        return;
+      }
       const data = translatePayload(eventName, payload);
       const trajectoryType = TRAJECTORY_BRIDGE_MAPPING[eventName];
       recorder.recordEvent(trajectoryType, data);

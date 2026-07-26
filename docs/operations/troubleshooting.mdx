@@ -213,6 +213,38 @@ This page covers the most common issues you might encounter with Comis. Each ent
   </Accordion>
 </AccordionGroup>
 
+### Cron jobs and the heartbeat never fire (daemon otherwise healthy)
+
+**Symptom.** The daemon boots, channels serve, and the gateway is up — but no cron
+job or heartbeat ever runs. The startup log carries:
+
+```
+Proactive schedulers not armed: autonomy is disabled for every agent
+```
+
+**Cause.** The proactive scheduler surface (cron + heartbeat) is built only when at
+least one agent has autonomy enabled. If every agent resolves to autonomy-disabled,
+the surface is intentionally left un-armed rather than half-wired.
+
+**The trap.** Omitting the `autonomy` block entirely resolves to **enabled**, but
+adding a sub-key without also setting `enabled: true` can resolve to **disabled** via
+the profile default — so adding one documented knob (for example
+`agents.<id>.autonomy.durability`) can silently switch the whole surface off.
+
+**Fix.** Set the flag explicitly alongside whatever sub-key you wanted:
+
+```yaml
+agents:
+  default:
+    autonomy:
+      enabled: true        # required — a sub-key alone is not enough
+      durability:
+        enabled: true
+```
+
+Then restart. Verify with `comis cron list` (jobs present) and the absence of the
+ERROR above in the startup log.
+
 ## Channel Issues
 
 <AccordionGroup>
@@ -442,6 +474,33 @@ This page covers the most common issues you might encounter with Comis. Each ent
     5. **Check logs** — set `daemon.logLevels.agent: "debug"` to see detailed agent processing logs
   </Accordion>
 </AccordionGroup>
+
+### `Missing COMIS_GATEWAY_TOKEN` from a CLI command while the daemon is healthy
+
+**Symptom.** A gateway-backed CLI command (`comis mcp list`, and other commands that
+open the gateway socket) fails with `Missing COMIS_GATEWAY_TOKEN in the environment` —
+yet the daemon is running and serving fine.
+
+**Cause.** Under `security.storage: encrypted` (the recommended posture) the gateway
+token lives in the **encrypted `secrets.db`**, not in `~/.comis/.env` — that file holds
+only `SECRETS_MASTER_KEY`. The daemon resolves the token from the store at boot; the
+CLI's pre-connect check reads only the environment, so it misses.
+
+**Fix — read it from the store and pass it through:**
+
+```bash
+comis --token "$(comis secrets get COMIS_GATEWAY_TOKEN)" mcp list
+```
+
+<Warning>
+Do **not** run `comis init` to "regenerate" the token on a box that is already
+serving. It mints a **new** token, which invalidates the one the running daemon and
+your other clients are using.
+</Warning>
+
+Offline observability commands (`comis system-health`, `comis explain`,
+`comis messages`, `comis security audit-log`) read the data directory directly and
+need no token.
 
 ## Resilience Issues
 

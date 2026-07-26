@@ -323,6 +323,7 @@ export async function callTool(
         logger.debug?.({ serverName, toolName }, "Tool call timed out, connection status preserved");
       }
 
+
       // Increment breaker on non-session-expired failures (includes timeouts +
       // post-call generation mismatches). isSessionExpired is EXEMPT above --
       // it routes through handleDisconnection and the reconnect-success block
@@ -350,7 +351,61 @@ export async function callTool(
         state.circuitBreakers.set(serverName, { status: cur.status, failureCount: newCount });
       }
 
+      // A deadline expiry is DETERMINISTIC for the same call: the bare SDK string
+      // ("MCP error -32001: Request timed out") names neither the knob nor the
+      // value, so an agent reads it as transient and retries unchanged. Live
+      // (comis-moshe 2026-07-26): a month-wide 165-vehicle report re-expired the
+      // same 120s deadline FOUR times — 8 minutes of the user's time and a tripped
+      // breaker — because the surfaced hint said "retry the underlying operation
+      // when appropriate". Name the knob + the value that expired, and say plainly
+      // that an unchanged retry re-expires it. (AGENTS.md §2.7: a hint names the
+      // exact config key and the numbers that conflicted.)
+      //
+      // Placed AFTER the breaker accounting above so a timeout still counts toward
+      // the threshold exactly as before — only the surfaced message changes.
+      if (isTimeout) {
+        const timeoutMs = state.options.callToolTimeoutMs;
+        const timeoutHint = mcpCallTimeoutHint(serverName, toolName, timeoutMs);
+        logger.warn(
+          {
+            serverName,
+            toolName,
+            timeoutMs,
+            hint: timeoutHint,
+            errorKind: "dependency" as const,
+          },
+          "MCP tool call timed out at the configured call deadline",
+        );
+        return err(new Error(timeoutHint));
+      }
+
       return err(error instanceof Error ? error : new Error(message));
     }
   }) as Promise<Result<McpToolCallResult, Error>>;
+}
+
+/**
+ * The operator/agent-facing message for an MCP call that hit its configured
+ * deadline.
+ *
+ * Exported so the log site, the returned `Error`, and the test all read the SAME
+ * text — a duplicated literal is how "No action needed."-class hints drift.
+ *
+ * @param serverName - the MCP server whose call expired.
+ * @param toolName - the qualified tool name that expired.
+ * @param timeoutMs - the ACTUAL resolved `integrations.mcp.callToolTimeoutMs`.
+ * @returns the hint text (also used verbatim as the Error message).
+ */
+export function mcpCallTimeoutHint(
+  serverName: string,
+  toolName: string,
+  timeoutMs: number,
+): string {
+  return (
+    `MCP tool "${toolName}" on server "${serverName}" timed out — it exceeded the call ` +
+    `deadline of ${timeoutMs}ms (\`integrations.mcp.callToolTimeoutMs\`, currently ${timeoutMs}). ` +
+    "This deadline is deterministic — do not retry it unchanged, the same call re-expires it. " +
+    "Either narrow the request (a smaller page/date window/fewer entities) so it completes " +
+    `inside ${timeoutMs}ms, or raise \`integrations.mcp.callToolTimeoutMs\` for this deployment.`
+  );
 }

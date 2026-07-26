@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import * as fs from "node:fs";
 import type { ClockPort } from "@comis/core";
 
 // Test-only clock stub.
@@ -1634,3 +1635,46 @@ describe("cache break detector LRU eviction warning", () => {
 const _crossCheck = extractAnthropicPromptState(fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _ensureUsed: unknown = _crossCheck;
+
+describe("cache-break logging is single-source", () => {
+  // Observed live: `Cache break detected` appeared TWICE per break — once from the
+  // detector and once from an observability subscriber that re-logged the same
+  // event under the same `msg`. A 9-break session therefore produced 18 log lines,
+  // and the `cache_prefix_churn` system finding counted them all.
+  it("the single cache-break line carries the fields the observability projection used to duplicate", () => {
+    // The field bag lives in cache-break-hints.ts (cacheBreakLogFields) so the
+    // detector fits its subdirectory line cap while still emitting ONE line.
+    const src = fs.readFileSync(
+      new URL("./cache-break-hints.ts", import.meta.url),
+      "utf8",
+    );
+    const match = /export function cacheBreakLogFields\([\s\S]*?\n\}/.exec(src);
+    expect(match, "cacheBreakLogFields must exist").not.toBeNull();
+    const body = match![0];
+    for (const field of [
+      "sessionKey",
+      "tokenDropRelative",
+      "ttlCategory",
+      "systemChanged",
+      "modelChanged",
+    ]) {
+      expect(body, `the single cache-break line must carry ${field}`).toContain(field);
+    }
+  });
+
+  it("the detector logs the break exactly once, via that field bag", () => {
+    const src = fs.readFileSync(new URL("./cache-state.ts", import.meta.url), "utf8");
+    const logCalls = src.match(/"Cache break detected"/g) ?? [];
+    // One in the log call itself (the comment above it must not repeat the literal).
+    expect(logCalls).toHaveLength(1);
+    expect(src).toContain("logger.info(cacheBreakLogFields(event)");
+  });
+
+  it("no other module logs the same message (single source of the count)", () => {
+    const wiring = fs.readFileSync(
+      new URL("../../../../daemon/src/wiring/setup-observability.ts", import.meta.url),
+      "utf8",
+    );
+    expect(wiring).not.toContain('"Cache break detected"');
+  });
+});

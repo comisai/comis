@@ -10990,6 +10990,10 @@
             "totalTokens": {
               "type": "number"
             },
+            "tokenBasis": {
+              "type": "string",
+              "const": "input+output+cache"
+            },
             "cacheReadRatio": {
               "type": "number"
             }
@@ -11391,6 +11395,12 @@
                 "downshifted",
                 "exhausted"
               ]
+            },
+            "freshTailSteps": {
+              "type": "number"
+            },
+            "freshTailStepsConfigured": {
+              "type": "number"
             }
           },
           "required": [
@@ -12460,6 +12470,12 @@
             },
             "deliveredWithToolErrors": {
               "type": "number"
+            },
+            "hardDegraded": {
+              "type": "number"
+            },
+            "hardDegradedRate": {
+              "type": "number"
             }
           },
           "required": [
@@ -12530,6 +12546,10 @@
             },
             "totalTokens": {
               "type": "number"
+            },
+            "tokenBasis": {
+              "type": "string",
+              "const": "input+output"
             },
             "offSessionUsd": {
               "type": "number"

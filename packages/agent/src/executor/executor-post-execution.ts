@@ -550,7 +550,21 @@ export async function storePairedConversationMemory(
         // Pattern-source tags only (e.g. "secret-egress-guard") — NEVER the
         // matched secret text. The verdict carries sources, not the content.
         patterns: verdict.patterns,
-        hint: "Paired conversation memory matched a secret/dangerous/suspicious pattern — skipped (the learned-trust conversation memory has no reduced-weight tier); the secret value is never logged or persisted",
+        // WHICH DETECTOR fired, as a closed enum. The two cases warrant OPPOSITE
+        // responses and the pattern-source tags alone did not make that legible:
+        // a `secret` verdict is the firewall working as designed (a credential
+        // really was in the turn), while a `heuristic` verdict is a suspicious-
+        // PATTERN match that may be a false positive on ordinary prose — and a
+        // false positive silently drops a legitimate memory. Live, three drops in
+        // one session were a mix of both and the WARN read identically for each.
+        // Still content-free: a closed label derived from the verdict's own
+        // source tags, never the matched text.
+        detector: verdict.patterns.includes("secret-egress-guard")
+          ? ("secret" as const)
+          : ("heuristic" as const),
+        hint: verdict.patterns.includes("secret-egress-guard")
+          ? "A credential was detected in the paired conversation memory — the write was skipped and the value was never logged or persisted. This is the firewall working as intended; no action needed unless a credential is reaching conversation content that should not carry one."
+          : "A suspicious-PATTERN heuristic (not the secret detector) matched the paired conversation memory, so the write was skipped and this turn is NOT recallable later. If the listed patterns look like a false positive on ordinary prose, that is a lost memory, not a blocked leak — review the named pattern sources before assuming the drop was correct.",
         errorKind: "validation" as ErrorKind,
       },
       "Paired memory skipped: failed the memory-write security scan",

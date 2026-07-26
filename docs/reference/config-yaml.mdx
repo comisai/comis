@@ -295,7 +295,7 @@ behavior.
 |-----|------|---------|-------------|
 | `profile` | `enum` | `"standard"` | `assistant`, `standard`, `unattended`, or `max`. `standard` is the zero-config default. `unattended`'s never-hang mode behaviors (deny+escalate, the denial breaker, operator evict) are **active**; its capability set stays `standard`-equivalent (no over-grant). `max` still resolves to `standard`-equivalent in this release plus an "available later" notice. |
 | `role` | `enum` | `"worker"` | `worker` (default) or `coordinator`. `worker` does its work inline -- no change to existing agents. `coordinator` strips a long-running lead to the orchestration surface (`sessions_spawn`/`pipeline`/`cron`/`message` + the read-only drill-in tools `read`/`grep`/`find`/`ls` + the `obs_query` observability tool) under a delegate-then-synthesize doctrine -- heavy work always routes to a fresh-window child (`exec`/`edit`/`write`/`browser` are not on the coordinator surface). **Narrows the tool surface only; never widens a capability** -- the resolved `orch:*` set is byte-identical with and without the role. An explicit `tool_groups`/`full` overrides it. See [Long-Running Coordinator](/agents/efficiency). |
-| `enabled` | `boolean` | _(from profile)_ | Whether autonomy surfaces are on. Defaults from the profile (`standard` -> true, `assistant` -> false); an explicit value overrides it. |
+| `enabled` | `boolean` | _(from profile)_ | Whether autonomy surfaces are on. Defaults from the profile (`standard` -> true, `assistant` -> false); an explicit value overrides it. ⚠ **Omitting the whole `autonomy` block resolves to enabled, but adding any sub-key without also setting `enabled: true` can resolve to DISABLED** (via the profile default) — so writing e.g. only `autonomy.durability` may turn the autonomy surfaces off. With autonomy disabled for **every** agent, cron jobs and the heartbeat are **not armed**; the daemon boots and logs an ERROR naming this key. |
 | `capabilities` | `string[]` | _(from profile)_ | Explicit `orch:*` capability list. Overrides the profile's base set (still bounded by the structural floor). |
 | `mode` | `enum` | _(from profile)_ | Autonomy mode: `default`, `accept-reversible`, `unattended`, `max`. Operator-set; the agent cannot self-raise it. |
 | `denialBreakerN` | `number` | `5` | Consecutive floor blocks (capability/outward-quota denials) on a single run that trip the denial breaker -> the run aborts (`execution:aborted` reason `denial_breaker`) and escalates, rather than retry-looping and burning the budget. An allowed step in between resets the count. Positive integer. The never-hang dial for the [`unattended`](/agents/autonomy#the-unattended-profile) profile (applies to every profile). |
@@ -643,7 +643,7 @@ Context engine configuration. Controls the system that manages what your agent s
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `freshTailTurns` | `number` | `8` | Recent **steps** (assistant + tool round-trips, not user-turns) always kept verbatim and never evicted (1-50) |
+| `freshTailTurns` | `number` | `8` | Recent **steps** (assistant + tool round-trips, not user-turns) always kept verbatim and never evicted (1-50). A coarse guard additionally reduces this on a genuinely small context window (below roughly 11K tokens), so a tiny window cannot let the verbatim tail crowd out the system prompt; on frontier-sized windows the configured value is used as-is. The precise per-turn bound is enforced separately as a total-token cap. |
 | `contextThreshold` | `number` | `0.75` | Budget utilization ratio that triggers the end-of-turn leaf-summarization pass and the condense pass's hard-fanout pressure gate (0.1-0.95). The ratio is computed against the turn's effective budget window (min of the reconciled context window and the capability-class cap) — not the model's configured contextWindow — so capped or served-bound small models compact at the real window. |
 | `leafMinFanout` | `number` | `8` | Minimum raw messages before creating a leaf summary (2-20) |
 | `condensedMinFanout` | `number` | `4` | Minimum leaf summaries before creating a condensed summary (2-20) |
@@ -1879,7 +1879,7 @@ External service integrations for search, MCP servers, media processing, and aut
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `callToolTimeoutMs` | `number` | `120000` | Default timeout for MCP tool calls in ms |
+| `callToolTimeoutMs` | `number` | `120000` | Default timeout for MCP tool calls in ms. On expiry the tool error **names this key and its current value** and states that an identical retry re-expires the same deadline — narrow the request (smaller page / date window / fewer entities) or raise this value. Slow report and media tools may need well over two minutes. |
 | `servers` | `McpServerEntry[]` | `[]` | List of MCP servers |
 
 **MCP Server Entry (integrations.mcp.servers[])**

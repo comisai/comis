@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import * as fs from "node:fs";
 
 // `isDocker` is consumed at gateway-tool module scope inside the restart
 // branch. Mock `@comis/core` with `importOriginal` so we only override
@@ -1264,5 +1265,45 @@ describe("confirmationRequiredHint (approval foot-gun fix)", () => {
     expect(hint).toContain('setting secret "SERVICE_PASSWORD"');
     // an inline chat "yes" is explicitly not the confirmation
     expect(hint.toLowerCase()).toContain("does not perform it");
+  });
+});
+
+describe("the env_set placeholder hint must not cause credential re-transmission", () => {
+  // Observed live: a user was asked to paste their password into the chat a SECOND
+  // time. An approval-gated `env_set` needs a follow-up call carrying
+  // `_confirmed: true`, but the redaction pass rewrites the secret in the
+  // originating message between the two calls, and `scrubRedactedToolCalls`
+  // removes the earlier tool-call pair — so the value is genuinely gone from the
+  // agent's context by the time consent arrives. The old hint told the agent to
+  // "re-read the user's most recent message and call env_set again with the
+  // literal value", which can only be satisfied by asking for re-transmission.
+  function hint(): string {
+    const src = fs.readFileSync(
+      new URL("./gateway-tool.ts", import.meta.url),
+      "utf8",
+    );
+    const m = /error: "env_value_is_placeholder",[\s\S]*?hint:\s*([\s\S]*?),\n\s*\};/.exec(src);
+    expect(m, "the placeholder branch must exist").not.toBeNull();
+    return m![1]!;
+  }
+
+  it("does NOT tell the caller to re-read the user's message for the value", () => {
+    expect(hint()).not.toMatch(/re-read the user's most recent message/i);
+  });
+
+  it("explicitly forbids asking the user to send the credential again", () => {
+    expect(hint()).toMatch(/DO NOT ask the user to send the credential again/i);
+  });
+
+  it("names the approval/redaction deadlock as the cause", () => {
+    const h = hint();
+    expect(h).toMatch(/_confirmed: true/);
+    expect(h).toMatch(/redaction pass/i);
+  });
+
+  it("gives an out-of-band recovery that never routes the secret through a session", () => {
+    const h = hint();
+    expect(h).toMatch(/comis secrets set/);
+    expect(h).toMatch(/never enters the session|encrypted store/i);
   });
 });

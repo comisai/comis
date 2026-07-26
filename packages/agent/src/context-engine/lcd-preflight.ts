@@ -61,6 +61,9 @@ const VALID_LEVELS: readonly TLevel[] = ["off", "minimal", "low", "medium", "hig
  *                            The NEWEST keptCount items from evictable were kept.
  * @param freshTail         - The unconditional fresh-tail messages.
  * @param reasoningStyle    - profile.reasoningStyle ("none" | "native").
+ * @param freshTailStepBound - The effective (post-clamp) vs configured trailing-STEP
+ *                            count kept verbatim. Threaded onto context:budget_computed
+ *                            so a fresh-tail slide is visible in `explain`.
  * @param capInfo           - Window-cap provenance (budget.rawContextWindowTokens +
  *                            budget.windowCapSource). When the effective window was
  *                            clamped by a capability-class cap, the exhaustion throw
@@ -79,6 +82,7 @@ export function runPreflightFitCheck(
   freshTail: AgentMessage[],
   reasoningStyle: "none" | "native",
   capInfo?: ContextWindowCapInfo,
+  freshTailStepBound?: { effective: number; configured: number },
 ): number {
   // Emit effectiveWindow callback so the caller can clamp max_tokens dynamically.
   deps.onEffectiveWindow?.(effectiveWindow);
@@ -151,6 +155,15 @@ export function runPreflightFitCheck(
       assembledInputTokens: assembled,
       outputHeadroom: headroom,
       verdict,
+      // The STEP bound on the verbatim tail. Threaded so `explain` can say
+      // "the originating request slid out of the protected tail" instead of a
+      // clean-looking "fits" (comis-moshe 2026-07-26).
+      ...(freshTailStepBound !== undefined
+        ? {
+            freshTailSteps: freshTailStepBound.effective,
+            freshTailStepsConfigured: freshTailStepBound.configured,
+          }
+        : {}),
     });
   };
 

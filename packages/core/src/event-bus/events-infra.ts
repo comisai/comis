@@ -655,6 +655,8 @@ export interface InfraEvents {
     durationMs: number;
     origin: BackgroundTaskOrigin;
     timestamp: number;
+    /** {@link BACKGROUND_TASK_DISPATCH_REDELIVERY} — see the failed variant. */
+    dispatchRedelivery?: boolean;
   };
 
   /** Background task failed (timeout, error, or daemon restart).
@@ -668,6 +670,18 @@ export interface InfraEvents {
     durationMs: number;
     origin: BackgroundTaskOrigin;
     timestamp: number;
+    /**
+     * TRUE when this emission is a `scheduleDispatchRetry` backoff tick
+     * re-driving DISPATCH for an already-terminal task — not a new failure.
+     *
+     * The retry re-emits the terminal event because that is how the dispatch
+     * listeners are woken; without this marker the trajectory recorded one line
+     * per tick, so ONE failure read as many (live: 55 records for 4 tasks,
+     * 17/15/13/10). Consumers that count occurrences — the trajectory bridge
+     * above all — must skip a redelivery. Same posture as
+     * `background_task:notified.trajectoryRecorded`.
+     */
+    dispatchRedelivery?: boolean;
   };
 
   /**

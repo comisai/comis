@@ -75,6 +75,7 @@ import {
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
 import { subagentStuckKilledVerdict } from "./obs-explain-subagent-killed-verdict.js"; // health-monitor-killed sub-agent (sibling — subdir cap)
+import { freshTailClampedVerdict } from "./obs-explain-fresh-tail-verdict.js"; // verbatim-tail clamp advisory (sibling — subdir cap)
 import {
   backgroundPendingVerdict,
   backgroundRecoveryVerdict,
@@ -569,6 +570,13 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       ],
     };
   },
+
+  //  N) fresh_tail_clamped — DEAD LAST. A context-SHAPING advisory, not a
+  //     terminal cause: every acute verdict above out-ranks it. It fires on the
+  //     session that previously produced NO verdict at all — a "clean" turn whose
+  //     originating request quietly slid out of the verbatim tail because the
+  //     step bound (not the token budget) evicted it. Sibling module (subdir cap).
+  freshTailClampedVerdict,
 ];
 
 /** Run the ordered registry; first non-null `RootCause` wins, else `null` (clean session). */

@@ -4,6 +4,7 @@ import { TypedEventBus, type ResponseLocalePolicy } from "@comis/core";
 import {
   applyResponseLocaleEnforcement,
   enforceResponseLocale,
+  unrepairedMismatchHint,
 } from "./response-locale-enforcement.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
 import { allowProviderDispatch } from "../provider-dispatch.js";
@@ -412,5 +413,28 @@ describe("applyResponseLocaleEnforcement", () => {
     }));
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("item-alpha-7");
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("3600000");
+  });
+});
+
+describe("the unrepaired-mismatch WARN names the resolver tier, not the model", () => {
+  // Observed live: a single English instruction inside an otherwise-Hebrew
+  // conversation set `locale=en source=request enforce=true`. All THREE repair
+  // passes correctly came back Hebrew (the model was honouring the conversation's
+  // established language), yet every WARN said "Inspect the selected model's
+  // locale fidelity" — pointing the operator at the wrong knob. Each pass also
+  // cost a full extra model call and broke the prompt cache.
+  it("an INFERRED (request-tier) target says so and does not blame the model", () => {
+    const hint = unrepairedMismatchHint("request");
+    expect(hint).toMatch(/inferred/i);
+    expect(hint).toContain("localeSource=request");
+    expect(hint).not.toMatch(/model's locale fidelity/i);
+    // …and it states the cost, so a recurring mismatch is not read as harmless.
+    expect(hint).toMatch(/extra model call|prompt cache/i);
+  });
+
+  it("an OPERATOR PIN (explicit tier) still points at the model, because the pin is authoritative", () => {
+    const hint = unrepairedMismatchHint("explicit");
+    expect(hint).toMatch(/operator pin/i);
+    expect(hint).toMatch(/locale fidelity/i);
   });
 });

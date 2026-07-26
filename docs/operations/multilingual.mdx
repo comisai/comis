@@ -92,7 +92,7 @@ Every non-Latin capability has a working, visible, lower-fidelity floor — noth
 | Summarizer model weak in the source language | dag mode: the extractive/deterministic floor preserves source spans verbatim; pipeline mode: the weak-class path skips summarization (passthrough — nothing mistranslated); distillation is already gated (see [Local and small models](#local-and-small-models-non-latin)) |
 | Small or local summarizer silently ignores the language instruction (Hebrew in → English out) | The recall hole would reopen invisibly → the `summary_language_mismatch` system signal makes it a count; the remedy is `strongerSummarizerModel` (language-capable), no gating |
 | No phrase-table entry for the resolved reply language | English degraded-reply strings (never throws) |
-| Ambiguous or mixed-script inbound for reply-language resolution | Config → channel-supplied request locale → current-message script → unset; the script fallback fires only when non-Latin codepoints dominate the current message, and yields a script-only locale (`und-Hebr`, `und-Cyrl`, …) — never a guessed language |
+| Ambiguous or mixed-script inbound for reply-language resolution | Config → channel-supplied request locale → current-message script → unset; the script fallback fires only when non-Latin codepoints dominate the current message, and yields a script-only locale (`und-Hebr`, `und-Cyrl`, …) — never a guessed language. Only the **config** tier enforces the reply language; both inferred tiers are advisory |
 | Conversation history not yet indexed by the trigram twins | Reachable via the word lane exactly as before; the `comis doctor` twin-backfill (normalized) makes it trigram-searchable, operator-run |
 | Conversation rows with stored token under-counts | The pre-flight is corrected immediately via the assembler's read-time `max(stored, factored-live)`; trigger sums self-heal as new rows dominate (a late condense is non-destructive) |
 | Trigram-lane snippets | Show the *normalized* stored text (niqqud-stripped, finals-folded) — cosmetic only, behavioral parity with the existing message-lane snippet SQL |
@@ -154,11 +154,23 @@ Two config keys carry the multilingual surface; both are documented in the
   scripts only, as a script-only locale such as `und-Hebr`), and otherwise leaves it unset.
   A channel-supplied locale is transport metadata, not conversation truth: when the current
   message is written in a script that contradicts it, the conversation's script wins and the
-  transport locale is ignored for that turn. When a locale **is** resolved, it also governs the
-  live reply: a final response whose script contradicts the resolved locale triggers **at most
-  one** bounded, tools-disabled repair turn that rewrites the reply into the expected script
-  (facts, identifiers, code, and URLs preserved); streaming consumers receive only the finalized
-  response while enforcement is active. See the
+  transport locale is ignored for that turn.
+
+  **Only the explicit `agents.<id>.language` pin ENFORCES the reply language.** When that key is
+  set, a final response whose script contradicts it triggers **at most one** bounded,
+  tools-disabled repair turn that rewrites the reply into the expected script (facts,
+  identifiers, code, and URLs preserved); streaming consumers receive only the finalized response
+  while enforcement is active. The two inferred tiers — the channel-supplied request locale and
+  the current-message script fallback — are **advisory**: they inform the prompt but never
+  trigger a repair.
+
+  This is deliberate. The script fallback reads the **current message only**, so enforcing it let
+  a single message switch an entire conversation's language and then spend a repair round-trip
+  trying to make the model comply. A model already mirrors its interlocutor's language without
+  being policed into it, so the inferred tiers do not need enforcement — while a genuine operator
+  pin does. **Consequence:** if you want a fixed reply language regardless of what any individual
+  message looks like, set `agents.<id>.language`; without it, per-message language switching is
+  followed naturally but never forced. See the
   [`agents` reference](/reference/config-yaml#agents).
 - **`embedding.multilingual`** — an advisory boolean for the `comis system-health` model-health line
   (see [Embedding and reranker](#embedding-and-reranker)). It does not gate search. See the
@@ -169,7 +181,8 @@ script-only locale (`und-Cyrl`, `und-Hebr`, `und-Hani`, …), not a language: Cy
 Ukrainian as well as Russian, and Han codepoints are shared by Chinese and Japanese, so guessing
 a language tag from script alone would misname real users. Pin a precise language with the
 explicit `agents.<id>.language` key, or let the channel-supplied request locale (the user's own
-client setting) carry it.
+client setting) carry it. Remember that only the explicit key enforces — the inferred tiers guide
+the reply without policing it.
 
 ## Summarizer language capability
 

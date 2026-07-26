@@ -198,6 +198,17 @@ export const McpServerEntrySchema = z.preprocess(
 );
 
 /**
+ * Default MCP tool-call deadline, in milliseconds.
+ *
+ * Named + exported so the client manager's construction-time fallback cannot
+ * drift from the schema (it did: the client fell back to 60_000 while the
+ * schema defaulted to 120_000, so an un-threaded wiring silently halved every
+ * deployment's deadline). `test/architecture/mcp-timeout-default-parity.test.ts`
+ * pins the two together.
+ */
+export const MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT = 120_000;
+
+/**
  * MCP integration configuration.
  */
 export const McpConfigSchema = z.strictObject({
@@ -205,7 +216,7 @@ export const McpConfigSchema = z.strictObject({
     servers: z.array(McpServerEntrySchema).default([]),
     /** Default timeout for MCP tool calls in milliseconds (default: 120000).
      * Image generation and other slow tools may need 2+ minutes. */
-    callToolTimeoutMs: z.number().int().positive().default(120_000),
+    callToolTimeoutMs: z.number().int().positive().default(MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT),
     /** Default max concurrent tool calls for stdio servers (default: 1). */
     stdioDefaultConcurrency: z.number().int().positive().default(1),
     /** Default max concurrent tool calls for HTTP/SSE servers (default: 4). */

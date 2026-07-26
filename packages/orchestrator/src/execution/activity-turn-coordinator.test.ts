@@ -1216,3 +1216,53 @@ describe("createActivityTurnCoordinator — planStream subscription", () => {
     coord.dispose();
   });
 });
+
+describe("a failure with no failed activity events never renders a naked errorKind", () => {
+  // LIVE INCIDENT (comis-moshe 2026-07-26): the user's chat received a bubble whose
+  // ENTIRE text was "❌ dependency". The turn finalized
+  // `{outcome:"failure", errorKind:"dependency", failedEventCount:0}` — the four
+  // MCP tools that actually failed had each been closed `status:"completed"` at
+  // background hand-off, so the card had no failed event to name and
+  // `failureLabel()` fell through to the bare errorKind token. This module's own
+  // comment says a kept "❌ {errorKind}" pill above a delivered answer must never
+  // happen; the guard only covered `outcome.kind === "success"`.
+  it("populates a truthful `reason` so the pill is not a bare token", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    await coord.finalize({ kind: "failure", errorKind: "dependency", failedEvents: [] });
+
+    expect(renderer.finalizeCalls.length).toBe(1);
+    const outcome = renderer.finalizeCalls[0].outcome as Extract<
+      typeof renderer.finalizeCalls[0]["outcome"],
+      { kind: "failure" }
+    >;
+    expect(outcome.kind).toBe("failure");
+    expect(outcome.reason, "an unattributed failure must carry a reason").toBeDefined();
+    expect(outcome.reason!.length).toBeGreaterThan(0);
+    coord.dispose();
+  });
+
+  it("does NOT overwrite an explicit reason (a resource abort keeps its own wording)", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    await coord.finalize({
+      kind: "failure",
+      errorKind: "resource",
+      failedEvents: [],
+      reason: "stopped — spend limit reached",
+    });
+
+    const outcome = renderer.finalizeCalls[0].outcome as Extract<
+      typeof renderer.finalizeCalls[0]["outcome"],
+      { kind: "failure" }
+    >;
+    expect(outcome.reason).toBe("stopped — spend limit reached");
+    coord.dispose();
+  });
+});

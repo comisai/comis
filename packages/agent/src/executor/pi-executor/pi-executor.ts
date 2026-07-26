@@ -88,6 +88,7 @@ import type { ComisSessionManager } from "../../session/comis-session-manager.js
 import type { RunHandle } from "../active-run-registry.js";
 import { repairOrphanedMessages, scrubPoisonedThinkingBlocks } from "../../session/orphaned-message-repair.js";
 import { projectPendingDeliveredAssistantHistory } from "../../session/pending-delivered-assistant-history.js";
+import { lookbackWindowExceededHint } from "../cache-detection/cache-break-hints.js";
 import { scrubRedactedToolCalls } from "../../session/scrub-redacted-tool-calls.js";
 import { scrubForgedContextMarkers } from "../../session/forged-context-markers.js";
 import {
@@ -2268,7 +2269,7 @@ async function runSessionLocked(
                 reason: event.reason,
                 tokenDrop: event.tokenDrop,
                 conversationBlockCount: event.conversationBlockCount,
-                hint: "Long conversation exceeded lookback window. Multi-zone breakpoints mitigate this. No action needed.",
+                hint: lookbackWindowExceededHint(event.conversationBlockCount),
                 errorKind: "internal" as const,
               },
               "Cache miss from lookback window exceeded (not server eviction)",

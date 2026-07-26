@@ -53,6 +53,20 @@ export interface DeliveryFailureReceipt {
  */
 export type DeliveryStageResult = Result<FinalDeliveryReceipt, DeliveryFailureReceipt>;
 
+/**
+ * The fixed `reason` for a `failure` outcome that carries NO failed activity
+ * event — the turn failed, but nothing on the user-visible tool timeline can be
+ * named as the cause.
+ *
+ * Without it, `failureLabel()` renders the bare `"<marker> {errorKind}"`, which
+ * reached a real user as a chat bubble whose entire text was "❌ dependency"
+ * (comis-moshe 2026-07-26). That happened because every tool that actually failed
+ * had been closed `status:"completed"` at background hand-off, leaving
+ * `failedEvents: []` on a genuine failure. A closed-vocabulary named constant —
+ * never raw provider/internal text.
+ */
+export const UNATTRIBUTED_FAILURE_REASON = "a step failed outside the tool timeline";
+
 export type TurnOutcome =
   | { kind: "success"; trivial: boolean; delivery: FinalDeliveryReceipt }
   | { kind: "success_with_recovered_failures"; trivial: false;

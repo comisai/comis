@@ -348,10 +348,36 @@ export function createGatewayTool(
             if (envValue === "[REDACTED]" || /^\[REDACTED[^\]]*\]$/.test(envValue)) {
               return {
                 error: "env_value_is_placeholder",
+                // The old hint said "re-read the user's most recent message and
+                // call env_set again with the literal value". That instruction is
+                // IMPOSSIBLE to follow after the redaction pass has run, and the
+                // only way an agent can comply is to ask the user to re-send the
+                // credential — which is exactly what happened live: a user was
+                // asked to paste their password into the chat a second time.
+                //
+                // Why it is impossible: an approval-gated env_set needs a SECOND
+                // call carrying `_confirmed: true`, but between the two calls the
+                // LCD/session redaction rewrites the secret-bearing fields of the
+                // user's own inbound message. `scrubRedactedToolCalls` removes the
+                // prior tool-call pair, so the agent has neither its own earlier
+                // argument nor the user's original text — the value is genuinely
+                // gone from context by the time consent arrives.
+                //
+                // So the hint must (a) name the deadlock, (b) forbid asking for
+                // re-transmission, and (c) give the path that never routes a
+                // credential through chat history at all.
                 hint:
-                  `env_value "${envValue}" is a session-redaction placeholder, ` +
-                  `not a real secret. Re-read the user's most recent message ` +
-                  `and call env_set again with the literal value they provided.`,
+                  "env_value is a session-redaction placeholder, not a real secret. This is the "
+                  + "approval/redaction deadlock, NOT a value the caller can recover: an "
+                  + "approval-gated env_set requires a second call with `_confirmed: true`, and the "
+                  + "redaction pass rewrites the secret in the originating message before that "
+                  + "second call happens. "
+                  + "DO NOT ask the user to send the credential again — re-transmission writes it "
+                  + "into the conversation a second time and does not fix the gate. "
+                  + "Tell the operator to set it outside the conversation instead: "
+                  + "`comis secrets set <KEY>` on the host (it is written straight to the "
+                  + "encrypted store and never enters the session), then retry the action that "
+                  + "needed it.",
               };
             }
 

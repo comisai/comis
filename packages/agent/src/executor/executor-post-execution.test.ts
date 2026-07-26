@@ -13,6 +13,7 @@
 // "NO_REPLY" responses.
 
 import { readFileSync } from "node:fs";
+import * as fs from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, expectTypeOf, vi } from "vitest";
@@ -2558,5 +2559,36 @@ describe("degraded-reply chokepoint consumes the typed locale policy", () => {
     expect(buildLoopDetectedReply({ traceId: "q", language: replyLanguage })).toBe(
       buildLoopDetectedReply({ traceId: "q" }),
     );
+  });
+});
+
+describe("the paired-memory security-scan WARN distinguishes a leak from a false positive", () => {
+  // Observed live: THREE paired memories were dropped in one session with an
+  // identical WARN. Two were genuine credential matches (the firewall working);
+  // one was a suspicious-PATTERN heuristic on ordinary prose — a silently LOST
+  // memory. The line named the pattern sources but nothing told an operator which
+  // case they were looking at, so a false positive was indistinguishable from a
+  // blocked leak.
+  function detectorFor(patterns: readonly string[]): "secret" | "heuristic" {
+    return patterns.includes("secret-egress-guard") ? "secret" : "heuristic";
+  }
+
+  it("labels a secret-detector verdict `secret`", () => {
+    expect(detectorFor(["secret-egress-guard"])).toBe("secret");
+  });
+
+  it("labels a suspicious-pattern verdict `heuristic`", () => {
+    expect(detectorFor(["system[ \\t]{0,20}:?[ \\t]{0,20}(prompt|override|command)"])).toBe("heuristic");
+  });
+
+  it("the two branches produce DIFFERENT operator guidance", () => {
+    const src = fs.readFileSync(
+      new URL("./executor-post-execution.ts", import.meta.url),
+      "utf8",
+    );
+    // The secret branch reassures (no action needed); the heuristic branch warns
+    // that a legitimate memory may have been lost. They must not be one string.
+    expect(src).toMatch(/firewall working as intended/);
+    expect(src).toMatch(/lost memory, not a blocked leak/);
   });
 });

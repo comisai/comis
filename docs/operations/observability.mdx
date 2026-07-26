@@ -20,6 +20,24 @@ This page documents the observability foundations. It covers the trajectory laye
 
 ---
 
+### Token counts differ between lenses — by design
+
+`obs.explain` and `obs.system.health` both report `cost.totalTokens`, and they count
+**different things**. Each now declares which via a `tokenBasis` discriminator:
+
+| lens | `tokenBasis` | counts |
+|---|---|---|
+| `obs.explain` (one session) | `input+output+cache` | every token the session moved, **including** cache reads and writes |
+| `obs.system.health` (window) | `input+output` | billable input + output only, cache **excluded** |
+
+One 27-minute session legitimately reported 6,043,245 on the first and 18,637 on the
+second. Neither is wrong — read `tokenBasis` before comparing them, and never treat a
+mismatch between the two as a bug on its own.
+
+A third number exists: the per-session `_session-metadata.json` rollup is written per
+**execution** (last write wins), so on a multi-turn session it reflects the most recent
+execution rather than the whole session. Prefer `obs.explain` for a session total.
+
 ## 1. Trace Propagation
 
 Every inbound message receives a `traceId` at channel ingress — before the queue, before the agent, before delivery. The trace ID flows through the entire pipeline via AsyncLocalStorage (the trace-logger mixin in `packages/daemon/src/observability/trace-logger.ts`), so every Pino log line emitted during that turn carries the same `traceId` automatically.

@@ -231,11 +231,73 @@ const SECRET_FIELD_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Exact (lowercased) field names the `.*token` WILDCARD in
+ * {@link SECRET_FIELD_PATTERN} over-matches but which are NOT credentials.
+ *
+ * ⚠ EXACT names only — never a pattern. A pattern exception here would be a leak
+ * class (`.*_token` would admit `api_token`, `bot_token`, `refresh_token`). Each
+ * entry is a name whose semantics are a COUNT, a LIMIT, or a SELECTOR, and every
+ * one is pinned by the negative matrix in `secret-detection.test.ts` alongside the
+ * credential names that must keep matching.
+ *
+ * Why this exists: an MCP tool argument named `range_token`, holding a plain enum
+ * value, matched `.*token`, so LCD + session persistence rewrote it to the
+ * redaction placeholder. The model then read that placeholder back out of its own
+ * replay context and sent the literal string "[REDACTED]" to the server, which
+ * rejected it (`invalid_enum_value received:"[REDACTED]"`). Redacting a
+ * non-secret is not a safe default — it silently corrupts both the tool contract
+ * and the model's own history.
+ *
+ * Adding an entry is a security review: it must be a name that CANNOT carry a
+ * credential in any integration, not merely one that does not today.
+ */
+const NON_SECRET_TOKEN_FIELD_NAMES: ReadonlySet<string> = new Set([
+  // Range/window SELECTORS (an enum or date-range shorthand, never a credential).
+  "range_token",
+  "rangetoken",
+  // Token COUNTS + LIMITS (provider accounting + request knobs).
+  "tokens",
+  "max_tokens",
+  "maxtokens",
+  "min_tokens",
+  "mintokens",
+  "num_tokens",
+  "numtokens",
+  "token_count",
+  "tokencount",
+  "token_limit",
+  "tokenlimit",
+  "input_tokens",
+  "inputtokens",
+  "output_tokens",
+  "outputtokens",
+  "total_tokens",
+  "totaltokens",
+  "prompt_tokens",
+  "prompttokens",
+  "completion_tokens",
+  "completiontokens",
+  "cache_read_input_tokens",
+  "cache_creation_input_tokens",
+  "cached_tokens",
+  "cachedtokens",
+  // The tokenizer itself is a component name, never a credential.
+  "tokenizer",
+]);
+
+/**
  * True if a FIELD NAME implies a secret:
- * `SECRET_FIELD_PATTERN` ∪ the header set above, case-insensitive.
+ * `SECRET_FIELD_PATTERN` ∪ the header set above, case-insensitive, MINUS the
+ * audited {@link NON_SECRET_TOKEN_FIELD_NAMES} over-match exceptions.
+ *
+ * Order matters: the exception set is consulted FIRST and only ever REMOVES a
+ * `.*token` wildcard match — an exact header name (`x-auth-token`) is not in the
+ * exception set, so the header superset is unaffected.
  */
 export function isSecretFieldName(name: string): boolean {
-  return SECRET_FIELD_PATTERN.test(name) || SECRET_FIELD_NAMES.has(name.toLowerCase());
+  const lower = name.toLowerCase();
+  if (NON_SECRET_TOKEN_FIELD_NAMES.has(lower)) return false;
+  return SECRET_FIELD_PATTERN.test(name) || SECRET_FIELD_NAMES.has(lower);
 }
 
 // ── Env-ref exemption (reuses the EXPORTED env-substitution patterns) ──

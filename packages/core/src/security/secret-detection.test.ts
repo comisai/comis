@@ -96,6 +96,110 @@ describe("isSecretFieldName — superset", () => {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // The `.*token` WILDCARD over-match.
+  //
+  // `range_token` — an MCP tool argument holding a plain enum value — matched
+  // `/^.*token$/i`, so LCD/session persistence rewrote it to "[REDACTED]". The
+  // model then read the placeholder back out of its own replay context and sent
+  // the literal string "[REDACTED]" to the server, which rejected it
+  // (`invalid_enum_value received:"[REDACTED]"`). The agent reported that its own
+  // argument was "exposed to me redacted" and abandoned the cheap query path for a
+  // far more expensive one that then timed out repeatedly.
+  //
+  // The fix is an EXACT-NAME exception set, never a loosening of the pattern —
+  // every entry below is a non-credential whose name merely ends in "token(s)".
+  // The negative matrix that follows is the load-bearing half.
+  // ---------------------------------------------------------------------------
+
+  it("does NOT flag non-credential names the .*token wildcard over-matches", () => {
+    for (const name of [
+      "range_token",   // the live case: an enum selector ("last_week")
+      "rangeToken",
+      "max_tokens",    // provider request knob
+      "maxTokens",
+      "num_tokens",
+      "tokens",
+      "token_count",
+      "tokenCount",
+      "input_tokens",
+      "output_tokens",
+      "total_tokens",
+      "cache_read_input_tokens",
+      "prompt_tokens",
+      "completion_tokens",
+      "token_limit",
+      "tokenizer",
+    ]) {
+      expect(isSecretFieldName(name), `${name} must NOT be treated as a secret`).toBe(false);
+    }
+  });
+
+  it("STILL flags every credential-bearing token name (the exception set must not leak)", () => {
+    for (const name of [
+      "token",
+      "botToken",
+      "bot_token",
+      "accessToken",
+      "access_token",
+      "refresh_token",
+      "refreshToken",
+      "id_token",
+      "auth_token",
+      "authToken",
+      "api_token",
+      "apiToken",
+      "bearer_token",
+      "session_token",
+      "gateway_token",
+      "COMIS_GATEWAY_TOKEN",
+      "TELEGRAM_BOT_TOKEN",
+      "x-auth-token",
+      "vendor_password",
+      "VENDOR_PASSWORD",
+    ]) {
+      expect(isSecretFieldName(name), `${name} MUST stay redacted`).toBe(true);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // PINNED KNOWN GAP — the end-anchor hole.
+  //
+  // SECRET_FIELD_PATTERN is END-ANCHORED (`/^(.*token|.*secret|…)$/i`), so a
+  // credential name with ANY suffix after the keyword is not flagged BY NAME:
+  //
+  //   AWS_BEARER_TOKEN_BEDROCK  → false   (a live provider credential)
+  //   SECRETS_MASTER_KEY        → false   (the master encryption key)
+  //   SECRET_KEY_OLD            → false
+  //   MY_TOKEN_V2               → false
+  //
+  // These are NOT necessarily leaks: `looksLikeSecretValue` is the other half of
+  // the defense and catches a real high-entropy credential by VALUE. But the
+  // field-name half has a real hole, and widening the pattern to `.*token.*` is
+  // exactly the "obvious security fix is often wrong" trap — it would sweep in
+  // `max_tokens_to_sample`, `token_count_by_model`, `tokenizer_config`, … so the
+  // over-match exception set would have to grow unboundedly.
+  //
+  // This test pins the CURRENT behaviour deliberately so the gap is visible and a
+  // half-fix fails loudly. Closing it properly needs a keyword-BOUNDARY matcher
+  // (split on separators/camel-case, then test each segment) rather than a suffix
+  // matcher — widening the pattern to `.*token.*` would sweep in
+  // `max_tokens_to_sample`, `token_count_by_model`, `tokenizer_config`, ….
+  // ---------------------------------------------------------------------------
+  it("PINS the end-anchor gap: a credential name with a suffix is not flagged BY NAME", () => {
+    for (const name of [
+      "AWS_BEARER_TOKEN_BEDROCK",
+      "SECRETS_MASTER_KEY",
+      "SECRET_KEY_OLD",
+      "MY_TOKEN_V2",
+    ]) {
+      expect(
+        isSecretFieldName(name),
+        `${name}: if this now returns true, the end-anchor gap was addressed — move it into the positive matrix above`,
+      ).toBe(false);
+    }
+  });
+
   it("flags pattern-matched secret field names (botToken, appSecret, …)", () => {
     for (const name of [
       "botToken",

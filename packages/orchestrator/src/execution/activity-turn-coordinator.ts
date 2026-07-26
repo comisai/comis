@@ -51,7 +51,7 @@ import type {
   ComisLogger,
   ErrorKind,
 } from "@comis/core";
-import { isNonEmptyEvents, redactValue, toSafeErrorLogString } from "@comis/core";
+import { isNonEmptyEvents, redactValue, toSafeErrorLogString, UNATTRIBUTED_FAILURE_REASON } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { fromPromise, suppressError, tryCatch } from "@comis/shared";
 import { randomUUID } from "node:crypto";
@@ -573,6 +573,22 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
           recoveredFailures: failedEvents,
         };
       }
+    }
+
+    // (1b) An unattributed FAILURE must still read truthfully. A `failure` with
+    // zero failed events cannot name a tool, so `failureLabel()` renders the bare
+    // "❌ {errorKind}" — which reached a real user as a chat bubble whose entire
+    // text was "❌ dependency" (comis-moshe 2026-07-26: the four MCP tools that
+    // failed had each been closed status:"completed" at background hand-off, so
+    // failedEventCount was 0 on a genuine failure). Fill the closed-vocabulary
+    // reason the union already carries for exactly this purpose. An explicit
+    // reason (a resource abort's own wording) is never overwritten.
+    if (
+      effective.kind === "failure"
+      && effective.failedEvents.length === 0
+      && (effective.reason === undefined || effective.reason.length === 0)
+    ) {
+      effective = { ...effective, reason: UNATTRIBUTED_FAILURE_REASON };
     }
 
     // Announce the EFFECTIVE terminal surface state (the user-visible pill's

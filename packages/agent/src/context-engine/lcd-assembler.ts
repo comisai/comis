@@ -553,6 +553,10 @@ export function createLcdContextEngine(
           windowCapSource: budget.windowCapSource,
           servedWindowTokens: budget.servedWindowTokens,
         },
+        // The verbatim tail's STEP bound (effective vs the operator's configured
+        // value) — the number that decides whether the user's own request is
+        // still in context, and which was previously DEBUG-log-only.
+        { effective: clampedFreshTailTurns, configured: config.freshTailTurns },
       );
 
       deps.logger.info(

@@ -51,6 +51,19 @@ export const IncidentContextBudgetSchema = z.object({
   outputHeadroom: z.number(),
   /** Fit-check outcome. */
   verdict: z.enum(["fits", "downshifted", "exhausted"]),
+  /**
+   * Trailing conversation STEPS kept verbatim this turn, EFFECTIVE (post-clamp).
+   *
+   * The verbatim tail is bounded by step count, not tokens: a turn with more
+   * tool round-trips than this slides the user's ORIGINATING request out of
+   * verbatim context — while `verdict` still reads "fits". Live, that produced
+   * an agent that apologized for work the user had explicitly requested, with
+   * 91% of the window unused (comis-moshe 2026-07-26). Optional (additive).
+   */
+  freshTailSteps: z.number().optional(),
+  /** The configured `contextEngine.freshTailTurns`. A value BELOW this means the
+   *  operator's knob was clamped — see {@link freshTailSteps}. */
+  freshTailStepsConfigured: z.number().optional(),
 });
 
 /** The per-call context budget equation (see {@link IncidentContextBudgetSchema}). */

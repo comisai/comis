@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import PQueue from "p-queue";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { runWithContext, type RequestContext } from "@comis/core";
 import type {
   McpClientManagerDeps,
@@ -168,6 +169,72 @@ describe("R8 needs_reauth", () => {
     expect(result2.value.content[0]?.text).toMatch(/^\[needs_reauth\]/);
     expect(result2.value.content[0]?.text).not.toMatch(/^\[server_unavailable\]/);
     expect(result2.value.isError).toBe(true);
+  });
+});
+
+describe("call timeout names its knob", () => {
+  // Observed live: a heavy report tool hit the 120s
+  // `integrations.mcp.callToolTimeoutMs` FOUR times. The surfaced error was the bare
+  // SDK string "MCP error -32001: Request timed out", with a wrapper hint saying
+  // "retry the underlying operation when appropriate" — so the agent retried 4x,
+  // burned 8 minutes of the user's time, and tripped the circuit breaker. The error
+  // must name the knob + the value that expired, and must NOT invite a blind retry.
+  let logger: ReturnType<typeof makeLogger>;
+  let deps: McpClientManagerDeps;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    logger = makeLogger();
+    deps = { logger } as unknown as McpClientManagerDeps;
+  });
+
+  it("names integrations.mcp.callToolTimeoutMs and the configured value in the error", async () => {
+    const serverName = "vendor-mcp";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new McpError(ErrorCode.RequestTimeout, "Request timed out")),
+    );
+
+    const result = await callTool(state, deps, `mcp:${serverName}/vendor_activity_report`, {});
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    const message = result.error.message;
+    expect(message).toContain("integrations.mcp.callToolTimeoutMs");
+    // the ACTUAL configured value, so the operator does not have to go look it up
+    expect(message).toContain(String(state.options.callToolTimeoutMs));
+    expect(message).toContain(serverName);
+  });
+
+  it("tells the caller NOT to retry unchanged (the retry storm is the failure mode)", async () => {
+    const serverName = "vendor-mcp";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new McpError(ErrorCode.RequestTimeout, "Request timed out")),
+    );
+
+    const result = await callTool(state, deps, `mcp:${serverName}/vendor_activity_report`, {});
+    if (result.ok) throw new Error("expected err");
+    // An identical retry deterministically re-expires the same deadline.
+    expect(result.error.message).toMatch(/do not retry (it |the call )?unchanged/i);
+    // …and it names the two things that DO change the outcome.
+    expect(result.error.message).toMatch(/narrow/i);
+  });
+
+  it("emits a WARN carrying the same hint + a dependency errorKind", async () => {
+    const serverName = "vendor-mcp";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new McpError(ErrorCode.RequestTimeout, "Request timed out")),
+    );
+
+    await callTool(state, deps, `mcp:${serverName}/vendor_activity_report`, {});
+
+    const timeoutWarn = logger.warn.mock.calls.find(
+      (c) => typeof c[1] === "string" && /timed out/i.test(c[1] as string),
+    );
+    expect(timeoutWarn).toBeDefined();
+    const fields = timeoutWarn![0] as Record<string, unknown>;
+    expect(fields.errorKind).toBe("dependency");
+    expect(String(fields.hint)).toContain("integrations.mcp.callToolTimeoutMs");
+    expect(fields.timeoutMs).toBe(state.options.callToolTimeoutMs);
   });
 });
 

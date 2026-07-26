@@ -4555,3 +4555,83 @@ describe("attachTrajectoryToEventBus direct recovery admission", () => {
     expect(recorder.calls).toHaveLength(0);
   });
 });
+
+describe("background-task dispatch redelivery is not a second failure", () => {
+  // Observed live: FOUR background tasks failed, but the trajectory carried
+  // FIFTY-FIVE `background_task.failed` records (17/15/13/10).
+  // `scheduleDispatchRetry` re-emits the terminal event on every backoff tick to
+  // re-drive dispatch — a legitimate mechanism — but each re-emit also wrote a new
+  // trajectory line, so one failure looked like seventeen and drowned the real
+  // signal in `explain`. The redelivery must re-drive dispatch WITHOUT duplicating
+  // the record (same posture as `background_task:notified`'s `trajectoryRecorded`).
+  const origin = {
+    turnScope: {
+      conversation: {
+        agentId: "agent-a",
+        sessionKey: "default:agent-a:echo:conversation-a:user_a",
+      },
+    },
+  } as never;
+
+  function failedPayload(extra: Record<string, unknown>) {
+    return {
+      agentId: "agent-a",
+      taskId: "task-a",
+      toolName: "mcp__vendor-mcp--vendor_activity_report",
+      error: "MCP error -32001: Request timed out",
+      durationMs: 120_000,
+      origin,
+      timestamp: 10,
+      ...extra,
+    };
+  }
+
+  it("records the FIRST terminal failure", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({
+      eventBus: bus,
+      recorder,
+      ownerSessionKey: "default:agent-a:echo:conversation-a:user_a",
+    });
+    bus.emit("background_task:failed", failedPayload({}) as never);
+    expect(recorder.calls).toHaveLength(1);
+  });
+
+  it("does NOT record a dispatch-retry redelivery of the same failure", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({
+      eventBus: bus,
+      recorder,
+      ownerSessionKey: "default:agent-a:echo:conversation-a:user_a",
+    });
+    bus.emit("background_task:failed", failedPayload({}) as never);
+    // …the backoff ticks that re-drive dispatch (live: up to 16 of them per task)
+    for (let i = 0; i < 16; i += 1) {
+      bus.emit("background_task:failed", failedPayload({ dispatchRedelivery: true }) as never);
+    }
+    expect(recorder.calls).toHaveLength(1);
+  });
+
+  it("does NOT record a dispatch-retry redelivery of a completion either", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({
+      eventBus: bus,
+      recorder,
+      ownerSessionKey: "default:agent-a:echo:conversation-a:user_a",
+    });
+    const completed = {
+      agentId: "agent-a",
+      taskId: "task-b",
+      toolName: "report",
+      durationMs: 5,
+      origin,
+      timestamp: 10,
+    };
+    bus.emit("background_task:completed", completed as never);
+    bus.emit("background_task:completed", { ...completed, dispatchRedelivery: true } as never);
+    expect(recorder.calls).toHaveLength(1);
+  });
+});

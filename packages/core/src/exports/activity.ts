@@ -17,6 +17,7 @@ export {
   ApprovalCorrelationSchema,
   // turn-outcome
   isNonEmptyEvents,
+  UNATTRIBUTED_FAILURE_REASON,
   // template-engine / semantic-classifier / label-spec
   applyTemplate,
   classifySemanticPhase,

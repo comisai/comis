@@ -8,7 +8,8 @@
  * reusable wiring lives under `./wiring/`.
  *
  * @module
- */
+ */import { assertProactiveFailureIsSupported, proactiveNotArmedLogFields, PROACTIVE_NOT_ARMED_MSG, EMPTY_PROACTIVE_HANDLES } from "./wiring/proactive-degrade.js";
+
 import {
   bootstrap,
   loadEnvFile,
@@ -2445,18 +2446,16 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // Seed the four canonical small-model DAG templates into the named-graph store. Idempotent (INSERT-OR-IGNORE in the seeder), so operator-customized templates survive restarts and re-running on every boot is safe.
   seedDefaultDagTemplates(namedGraphStore);
 
-  // 6.7. Bind every proactive dependency, then arm heartbeat and cron together.
+  // 6.7. Bind proactive deps, then arm heartbeat + cron. Autonomy-disabled is
+  // SUPPORTED and must not crash-loop the daemon (wiring/proactive-degrade.ts).
   const proactive = await setupProactiveSchedulers({
-    runtime: handle,
-    adaptersByType,
-    deliveryService,
+    runtime: handle, adaptersByType, deliveryService,
     schedulerCorePortBindings: handle.schedulerCorePortBindings,
   });
-  if (!proactive.ok) {
-    throw new Error(`Proactive scheduler activation failed: ${proactive.error.message}`);
-  }
-  handle.bindTaskMaintenanceRuntime(proactive.value);
-  const { heartbeatRunner, duplicateDetector, coordinator: heartbeatCoordinator } = proactive.value;
+  assertProactiveFailureIsSupported(proactive);
+  if (proactive.ok) handle.bindTaskMaintenanceRuntime(proactive.value);
+  else daemonLogger.error(proactiveNotArmedLogFields(), PROACTIVE_NOT_ARMED_MSG);
+  const { heartbeatRunner, duplicateDetector, coordinator: heartbeatCoordinator } = proactive.ok ? proactive.value : EMPTY_PROACTIVE_HANDLES;
   // 6.7.0.2. Agent management runtime state
   const suspendedAgents = new Set<string>();
   const modelCatalog = createModelCatalog();
@@ -2479,7 +2478,9 @@ async function bootChannels(boot: BootContext): Promise<void> {
     videoGenProvider, videoGenRateLimiter, videoGenConfig, persistVideo, videoGenCostLimiter, videoJobStore, videoPoller,
     preprocessMessageText, getCapabilityPortForAgent,
     heartbeatRunner, duplicateDetector, heartbeatCoordinator,
-    proactiveSchedulers: proactive.value,
+    // Absent when autonomy is disabled for every agent (the honest-degrade boot
+    // above) — consumers must treat the proactive surface as optional.
+    ...(proactive.ok ? { proactiveSchedulers: proactive.value } : {}),
     nodeTypeRegistry, graphCoordinator, namedGraphStore,
     suspendedAgents, modelCatalog, channelConfig, promptTimeoutTimestamps,
     // Teardown handles surfaced for ShutdownDeps wiring.

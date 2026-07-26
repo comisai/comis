@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { TypedEventBus } from "@comis/core";
+import { MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Mock MCP SDK modules before importing the module under test
@@ -604,10 +605,13 @@ describe("McpClientManager", () => {
       expect(result.value.content[0].text).toBe("result text");
       expect(result.value.isError).toBe(false);
 
+      // The construction-time fallback is the SCHEMA default — asserting a local
+      // literal here is what let the client (60_000) drift from the schema
+      // (120_000), silently halving the deadline on any un-threaded wiring path.
       expect(mockCallTool).toHaveBeenCalledWith(
         { name: "search", arguments: { query: "test" } },
         undefined,
-        { timeout: 60_000 },
+        { timeout: MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT },
       );
     });
 

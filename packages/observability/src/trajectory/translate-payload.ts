@@ -767,6 +767,15 @@ export function translatePayload(
         windowCapSource: payload.windowCapSource,
         systemTokens: payload.systemTokens,
         freshTailTokens: payload.freshTailTokens,
+        // The verbatim-tail STEP bound: counts only. Effective-vs-configured is
+        // what makes a fresh-tail SLIDE visible in `explain` (a clean "fits"
+        // verdict hid it live — comis-moshe 2026-07-26).
+        ...(payload.freshTailSteps !== undefined
+          ? { freshTailSteps: payload.freshTailSteps }
+          : {}),
+        ...(payload.freshTailStepsConfigured !== undefined
+          ? { freshTailStepsConfigured: payload.freshTailStepsConfigured }
+          : {}),
         budgetedHistoryTokens: payload.budgetedHistoryTokens,
         keptCount: payload.keptCount,
         assembledInputTokens: payload.assembledInputTokens,

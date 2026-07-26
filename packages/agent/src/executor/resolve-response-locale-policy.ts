@@ -72,7 +72,20 @@ export function resolveResponseLocalePolicy(
       locale: requestScriptLocale,
       source: "request",
       ...(translationTarget === undefined ? {} : { translationTarget }),
-      enforceLocale: true,
+      // ADVISORY, never ENFORCED. This tier infers a locale from the script of the
+      // CURRENT message alone, so enforcing it made a single message switch the
+      // whole conversation's language — and then spend a repair round-trip trying
+      // to make the model comply. Live: one English instruction inside an
+      // otherwise-Hebrew conversation set `locale=en enforce=true`; all three
+      // repair passes correctly came back Hebrew (the model was honouring the
+      // established language), each costing a full extra model call and a
+      // prompt-cache break.
+      //
+      // Only an OPERATOR PIN (`explicitLocale` → source "explicit") enforces. The
+      // inferred locale still rides the prompt as a hint, which is all it was ever
+      // reliable enough to be: a model already mirrors its interlocutor's language
+      // without being policed into it.
+      enforceLocale: false,
     };
   }
   return {

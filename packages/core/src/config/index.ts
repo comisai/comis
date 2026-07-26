@@ -180,6 +180,7 @@ export {
   MediaPersistenceConfigSchema,
   ImageGenerationConfigSchema,
   VideoGenerationConfigSchema,
+  MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT,
 } from "./schema-integrations.js";
 export { MonitoringConfigSchema } from "./schema-observability.js";
 export { ObservabilityConfigSchema, SpendConfigSchema } from "./schema-observability.js";

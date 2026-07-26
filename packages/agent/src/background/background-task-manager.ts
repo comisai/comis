@@ -778,6 +778,11 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           durationMs: (current.completedAt ?? clock.now()) - current.startedAt,
           origin: current.origin,
           timestamp: clock.now(),
+          // This is a DISPATCH redrive of an already-terminal task, not a new
+          // terminal transition. Marked so occurrence-counting consumers (the
+          // trajectory bridge) record the failure ONCE — the unmarked re-emit
+          // wrote one line per backoff tick (live: 55 records for 4 tasks).
+          dispatchRedelivery: true,
         };
         if (event === "background_task:completed") {
           emitObservationalEventSafely({ eventBus, logger }, event, common);
