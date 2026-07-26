@@ -36,6 +36,8 @@ describe("classifyAction", () => {
       "memory.update",
       "config.update",
       "message.send",
+      "skill.vet",
+      "skill.vet.reject",
     ];
 
     for (const action of mutateActions) {
