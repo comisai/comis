@@ -60,6 +60,7 @@ import {
   classifyExecutionFinishReason,
 } from "@comis/orchestrator";
 import { bindApiExecutionCancellation } from "./api-execution-cancellation.js";
+import { resolveWebhookTurnIdentity } from "./setup-gateway/gateway-session-principal.js";
 
 interface OpenaiApiEnv extends Env {
   Variables: { clientScopes: readonly string[] };
@@ -316,12 +317,42 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
         onAgentAction: async (_mapping, renderedMessage, renderedSessionKey) => {
           const execAgentId = _mapping.agentId ?? defaultAgentId;
           const routeChannelId = renderedSessionKey || "webhook";
-          const sk: SessionKey = {
+          // Resolve the canonical turn scope BEFORE building the context. A webhook
+          // action dispatches straight to the executor, so nothing upstream resolves
+          // identity for it — and the executor fail-closes on a turn with no
+          // conversation authority. The resolved identity is the SINGLE authority for
+          // this turn: its display session key and its turn scope describe the same
+          // conversation, so the session view and the memory/context authority can
+          // never diverge.
+          const identity = resolveWebhookTurnIdentity({
             tenantId: container.config.tenantId,
             agentId: execAgentId,
-            userId: "webhook",
-            channelId: routeChannelId,
-          };
+            ...(_mapping.id === undefined ? {} : { mappingId: _mapping.id }),
+            renderedSessionKey: routeChannelId,
+          });
+          if (!identity.ok) {
+            gatewayLogger.error(
+              {
+                webhookId: _mapping.id ?? "unknown",
+                agentId: execAgentId,
+                hint: "Verify the webhook mapping's agentId and sessionKey template resolve to a valid conversation before re-firing",
+                errorKind: "validation" as const,
+              },
+              "Webhook agent action rejected because its turn identity could not be resolved",
+            );
+            emitObservationalEventSafely({ eventBus: container.eventBus, logger: gatewayLogger }, "diagnostic:webhook_delivered", {
+              webhookId: _mapping.id ?? "unknown",
+              source: _mapping.name ?? "webhook",
+              event: "agent_action",
+              statusCode: 500,
+              success: false,
+              failureReason: "handler_error",
+              durationMs: 0,
+              timestamp: systemNowMs(),
+            });
+            throw identity.error;
+          }
+          const sk: SessionKey = identity.value.displaySessionKey;
           const deliveryOrigin = createDeliveryOrigin({
             tenantId: sk.tenantId,
             userId: sk.userId,
@@ -346,6 +377,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
                 agentId: execAgentId,
                 trustLevel: "guest",
                 deliveryOrigin,
+                turnScope: identity.value.turnScope,
               });
               if (!resolvedContext.ok) throw resolvedContext.error;
               const msg: NormalizedMessage = {
