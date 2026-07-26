@@ -178,6 +178,111 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("applyBundleInstall — atomic two-phase install hook", () => {
+  it("community-tier bundle stays pending after Phase A with zero persistence and zero connects", async () => {
+    writeSkillManifest(
+      [
+        "---",
+        "name: community-bundle",
+        "description: remote skill with one bundled server",
+        "mcpServers:",
+        "  - name: remote-tools",
+        "    transport: stdio",
+        "    command: npx",
+        "    args: [remote-tools]",
+        "---",
+        "Body",
+      ].join("\n"),
+    );
+    const { deps, connectSpy } = makeDeps();
+
+    const result = await applyBundleInstall({
+      skillId: "community-bundle",
+      skillDir,
+      force: false,
+      ctx: undefined,
+      deps,
+      trust: "community",
+      autoConnectBundledMcp: false,
+    } as unknown as Parameters<typeof applyBundleInstall>[0]);
+
+    expect(result.persistence).toBe("skipped");
+    expect(result.pendingMcpServers).toEqual([
+      {
+        name: "remote-tools",
+        transport: "stdio",
+        reason: "community-tier bundled MCP requires operator opt-in",
+      },
+    ]);
+    expect(result.hint).toContain("skills.import.autoConnectBundledMcp");
+    expect(mockPersistMcpServers).not.toHaveBeenCalled();
+    expect(connectSpy).not.toHaveBeenCalled();
+  });
+
+  it("operator-tier bundle keeps the existing persist and connect behavior", async () => {
+    writeSkillManifest(
+      [
+        "---",
+        "name: operator-bundle",
+        "description: operator-authored skill with one bundled server",
+        "mcpServers:",
+        "  - name: operator-tools",
+        "    transport: stdio",
+        "    command: npx",
+        "    args: [operator-tools]",
+        "---",
+        "Body",
+      ].join("\n"),
+    );
+    const { deps, connectSpy } = makeDeps();
+
+    const result = await applyBundleInstall({
+      skillId: "operator-bundle",
+      skillDir,
+      force: false,
+      ctx: undefined,
+      deps,
+      trust: "operator",
+      autoConnectBundledMcp: false,
+    } as unknown as Parameters<typeof applyBundleInstall>[0]);
+
+    expect(result.persistence).toBe("persisted");
+    expect(result.pendingMcpServers).toBeUndefined();
+    expect(mockPersistMcpServers).toHaveBeenCalledTimes(1);
+    expect(connectSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("auto-connect override permits a community-tier bundle to persist and connect", async () => {
+    writeSkillManifest(
+      [
+        "---",
+        "name: opted-in-community-bundle",
+        "description: explicitly armed remote skill",
+        "mcpServers:",
+        "  - name: opted-in-tools",
+        "    transport: http",
+        "    url: https://example.com/mcp",
+        "---",
+        "Body",
+      ].join("\n"),
+    );
+    const { deps, connectSpy } = makeDeps();
+
+    const result = await applyBundleInstall({
+      skillId: "opted-in-community-bundle",
+      skillDir,
+      force: false,
+      ctx: undefined,
+      deps,
+      trust: "community",
+      autoConnectBundledMcp: true,
+    } as unknown as Parameters<typeof applyBundleInstall>[0]);
+
+    expect(result.persistence).toBe("persisted");
+    expect(result.pendingMcpServers).toBeUndefined();
+    expect(mockPersistMcpServers).toHaveBeenCalledTimes(1);
+    expect(connectSpy).toHaveBeenCalledTimes(1);
+  });
+
   // -------------------------------------------------------------------------
   // 1. No mcpServers block in SKILL.md ⇒ silent no-op.
   //    Asserts: persistMcpServers called 0 times, manager.connect called 0 times,

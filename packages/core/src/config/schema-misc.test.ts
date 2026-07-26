@@ -22,6 +22,26 @@ import { EnvelopeConfigSchema } from "./schema-envelope.js";
 // ---------------------------------------------------------------------------
 
 describe("SkillsConfigSchema", () => {
+  it("defaults remote skill imports to no registries and no bundled MCP auto-connect", () => {
+    const result = SkillsConfigSchema.parse({});
+
+    expect(result.import).toEqual({
+      registries: [],
+      autoConnectBundledMcp: false,
+      maxArchiveBytes: 8 * 1024 * 1024,
+      maxCompressionRatio: 100,
+      indexCacheTtlMs: 3_600_000,
+    });
+  });
+
+  it("rejects unknown remote skill import configuration keys", () => {
+    const result = SkillsConfigSchema.safeParse({
+      import: { autoConnectBundledMcp: false, allowUnvetted: true },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it("produces valid defaults from empty object", () => {
     const result = SkillsConfigSchema.safeParse({});
     expect(result.success).toBe(true);
