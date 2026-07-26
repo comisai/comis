@@ -320,6 +320,43 @@ describe("skills.import — pre-write vetting gate", () => {
     });
   });
 
+  it("fetches a remote archive through the bounded import substrate", async () => {
+    const archive = makeStoredArchive({ "my-skill/SKILL.md": CLEAN_SKILL_MD });
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(Buffer.from(archive), { status: 200 }));
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    const result = await handlers["skills.import"]!({
+      source: "archive",
+      archiveUrl: "https://example.com/my-skill.skill",
+      scope: "local",
+      _agentId: "agent-a",
+    });
+
+    expect(result).toMatchObject({ ok: true, name: "my-skill", fileCount: 1 });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "https://example.com/my-skill.skill",
+      expect.objectContaining({ redirect: "manual" }),
+    );
+  });
+
+  it("refuses archive URL credentials before any network call", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const handlers = createSkillHandlers(makeDeps(wsDir));
+
+    await expect(
+      handlers["skills.import"]!({
+        source: "archive",
+        archiveUrl: "https://user:test-key@example.com/my-skill.skill",
+        scope: "local",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/must not contain credentials/);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("imports a well-known file map through the same gate and provenance path", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input.toString();

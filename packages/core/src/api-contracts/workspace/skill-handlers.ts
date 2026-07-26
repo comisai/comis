@@ -128,11 +128,12 @@ export const SkillsUploadContract = defineContract({
 });
 
 /**
- * `skills.import` — import a skill from a GitHub directory URL or an
- * operator-allowlisted well-known index. ADMIN scope.
+ * `skills.import` — import a skill from a GitHub directory URL, an
+ * operator-allowlisted well-known index, or uploaded/remote archive bytes.
  *
  * Request: GitHub `{ url, source?: "github", ... }` or well-known
- * `{ source: "wellknown", ref, ... }`.
+ * `{ source: "wellknown", ref, ... }`, or archive
+ * `{ source: "archive", archiveBase64 | archiveUrl, ... }`.
  *
  * Response: `{ ok: true, path, name, fileCount }`.
  */
@@ -149,6 +150,20 @@ export const SkillsImportContract = defineContract({
     z.object({
       source: z.literal("wellknown"),
       ref: z.string().min(1),
+      scope: SkillScopeSchema.optional(),
+      agentId: z.string().optional(),
+      force: z.boolean().optional(),
+    }),
+    z.object({
+      source: z.literal("archive"),
+      archiveBase64: z.string().min(1),
+      scope: SkillScopeSchema.optional(),
+      agentId: z.string().optional(),
+      force: z.boolean().optional(),
+    }),
+    z.object({
+      source: z.literal("archive"),
+      archiveUrl: z.string().min(1),
       scope: SkillScopeSchema.optional(),
       agentId: z.string().optional(),
       force: z.boolean().optional(),

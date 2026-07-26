@@ -78,8 +78,10 @@ export type { PromptSkillDescription } from "./prompt/processor.js";
 // DEFAULT_BUNDLE_LIMITS, …) are internals of the gate and are imported by path
 // inside this package. `scanSkillContent` likewise lost its barrel consumer when
 // skill-handlers.ts moved to the gate; the load-time scanner imports it directly.
-export { vetSkillBundle } from "./import/vet-bundle.js";
+export { parseSkillBundleManifest, vetSkillBundle } from "./import/vet-bundle.js";
 export type {
+  ParsedSkillBundleManifest,
+  SkillBundleManifestError,
   VetSkillBundleResult,
   SkillBundleFile,
   SkillBundleFinding,

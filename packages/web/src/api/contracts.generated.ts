@@ -15510,6 +15510,68 @@ export const CONTRACTS = {
             "ref"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string",
+              "const": "archive"
+            },
+            "archiveBase64": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "local",
+                "shared"
+              ]
+            },
+            "agentId": {
+              "type": "string"
+            },
+            "force": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "source",
+            "archiveBase64"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string",
+              "const": "archive"
+            },
+            "archiveUrl": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "local",
+                "shared"
+              ]
+            },
+            "agentId": {
+              "type": "string"
+            },
+            "force": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "source",
+            "archiveUrl"
+          ],
+          "additionalProperties": false
         }
       ]
     },

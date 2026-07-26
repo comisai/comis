@@ -30,6 +30,7 @@
  * @module
  */
 
+import { err, ok, type Result } from "@comis/shared";
 import { parseFrontmatter } from "../manifest/parser.js";
 import { SkillManifestSchema, type SkillManifestParsed } from "../manifest/schema.js";
 import { scanSkillContent } from "../prompt/content-scanner.js";
@@ -91,6 +92,21 @@ export interface VetSkillBundleResult {
   readonly trust: SkillTrustTier;
 }
 
+/** Normalized manifest facts shared by source resolvers and the vetting gate. */
+export interface ParsedSkillBundleManifest {
+  readonly manifest: SkillManifestParsed;
+  readonly manifestPath: string;
+  readonly warnings: readonly MappingWarning[];
+}
+
+/** Closed manifest parse failures used to classify structural findings. */
+export type SkillBundleManifestError = {
+  readonly kind: "missing" | "unparseable" | "not_prompt";
+  readonly message: string;
+  readonly manifestPath: string;
+  readonly warnings: readonly MappingWarning[];
+};
+
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
@@ -126,6 +142,51 @@ function findManifest(files: readonly SkillBundleFile[]): SkillBundleFile | unde
     files.find((f) => f.path === MANIFEST_FILENAME) ??
     files.find((f) => f.path.toLowerCase() === MANIFEST_FILENAME.toLowerCase())
   );
+}
+
+/** Parse and normalize the root manifest without scanning or writing the bundle. */
+export function parseSkillBundleManifest(
+  files: readonly SkillBundleFile[],
+): Result<ParsedSkillBundleManifest, SkillBundleManifestError> {
+  const manifestFile = findManifest(files);
+  if (manifestFile === undefined) {
+    return err({
+      kind: "missing",
+      message: `Bundle has no ${MANIFEST_FILENAME} at its root`,
+      manifestPath: "",
+      warnings: [],
+    });
+  }
+  const parsedFrontmatter = parseFrontmatter<Record<string, unknown>>(asText(manifestFile.content));
+  if (!parsedFrontmatter.ok) {
+    return err({
+      kind: "unparseable",
+      message: `Frontmatter could not be parsed: ${parsedFrontmatter.error.message}`,
+      manifestPath: manifestFile.path,
+      warnings: [],
+    });
+  }
+  const mapped = mapForeignFrontmatter(parsedFrontmatter.value.frontmatter);
+  const validated = SkillManifestSchema.safeParse(mapped.frontmatter);
+  if (!validated.success) {
+    const issues = validated.error.issues
+      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+      .join("; ");
+    const isTypeViolation = validated.error.issues.some((issue) => issue.path[0] === "type");
+    return err({
+      kind: isTypeViolation ? "not_prompt" : "unparseable",
+      message: isTypeViolation
+        ? `Skill declares a non-prompt type; Comis skills are prompt-only (${issues})`
+        : `Manifest validation failed: ${issues}`,
+      manifestPath: manifestFile.path,
+      warnings: mapped.warnings,
+    });
+  }
+  return ok({
+    manifest: validated.data,
+    manifestPath: manifestFile.path,
+    warnings: mapped.warnings,
+  });
 }
 
 /**
@@ -174,67 +235,26 @@ export function vetSkillBundle(input: VetSkillBundleInput): VetSkillBundleResult
   }
 
   // PASS 2 — manifest. Structure already guaranteed a manifest member exists.
-  const manifestFile = findManifest(input.files);
-  if (manifestFile === undefined) {
-    // Defensive: unreachable while BUNDLE_MANIFEST_MISSING is CRITICAL.
+  const parsedManifest = parseSkillBundleManifest(input.files);
+  if (!parsedManifest.ok) {
     return result({
       ...base,
       findings: [
         ...structural,
         {
-          file: "",
-          ruleId: "BUNDLE_MANIFEST_MISSING",
+          file: parsedManifest.error.manifestPath,
+          ruleId:
+            parsedManifest.error.kind === "missing"
+              ? "BUNDLE_MANIFEST_MISSING"
+              : parsedManifest.error.kind === "not_prompt"
+                ? "BUNDLE_MANIFEST_NOT_PROMPT"
+                : "BUNDLE_MANIFEST_UNPARSEABLE",
           category: "structural" as const,
           severity: "CRITICAL" as const,
-          description: `Bundle has no ${MANIFEST_FILENAME} at its root`,
+          description: parsedManifest.error.message,
         },
       ],
-      warnings: [],
-    });
-  }
-
-  const manifestText = asText(manifestFile.content);
-  const parsedFrontmatter = parseFrontmatter<Record<string, unknown>>(manifestText);
-  if (!parsedFrontmatter.ok) {
-    return result({
-      ...base,
-      findings: [
-        ...structural,
-        {
-          file: manifestFile.path,
-          ruleId: "BUNDLE_MANIFEST_UNPARSEABLE",
-          category: "structural" as const,
-          severity: "CRITICAL" as const,
-          description: `Frontmatter could not be parsed: ${parsedFrontmatter.error.message}`,
-        },
-      ],
-      warnings: [],
-    });
-  }
-
-  const mapped = mapForeignFrontmatter(parsedFrontmatter.value.frontmatter);
-  const validated = SkillManifestSchema.safeParse(mapped.frontmatter);
-  if (!validated.success) {
-    const issues = validated.error.issues
-      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-      .join("; ");
-    // A `type` mismatch gets its own rule id so INV-V4 is greppable in an audit.
-    const isTypeViolation = validated.error.issues.some((issue) => issue.path[0] === "type");
-    return result({
-      ...base,
-      findings: [
-        ...structural,
-        {
-          file: manifestFile.path,
-          ruleId: isTypeViolation ? "BUNDLE_MANIFEST_NOT_PROMPT" : "BUNDLE_MANIFEST_UNPARSEABLE",
-          category: "structural" as const,
-          severity: "CRITICAL" as const,
-          description: isTypeViolation
-            ? `Skill declares a non-prompt type; Comis skills are prompt-only (${issues})`
-            : `Manifest validation failed: ${issues}`,
-        },
-      ],
-      warnings: mapped.warnings,
+      warnings: parsedManifest.error.warnings,
     });
   }
 
@@ -260,5 +280,10 @@ export function vetSkillBundle(input: VetSkillBundleInput): VetSkillBundleResult
     }
   }
 
-  return result({ ...base, findings, manifest: validated.data, warnings: mapped.warnings });
+  return result({
+    ...base,
+    findings,
+    manifest: parsedManifest.value.manifest,
+    warnings: parsedManifest.value.warnings,
+  });
 }
