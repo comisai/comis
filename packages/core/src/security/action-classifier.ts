@@ -42,8 +42,8 @@ const ACTION_REGISTRY = new Map<string, ActionClassification>([
   // Pre-write install vetting. Registered explicitly because classifyAction
   // defaults an unknown action to "destructive" — omitting these would
   // misclassify every skill install.
-  ["skill.vet", "read"],
-  ["skill.vet.reject", "read"],
+  ["skill.vet", "mutate"],
+  ["skill.vet.reject", "mutate"],
   ["session.get", "read"],
   ["log.read", "read"],
 
