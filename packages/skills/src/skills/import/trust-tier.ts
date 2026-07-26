@@ -32,6 +32,7 @@ export type SkillTrustTier = "first-party" | "operator" | "community" | "agent-a
 /** Where a bundle came from. Mirrors the `source` field on the provenance record. */
 export type SkillInstallSource =
   | "seed"
+  | "backfill"
   | "create"
   | "update"
   | "upload"
@@ -78,6 +79,7 @@ const REMOTE_SOURCES: ReadonlySet<SkillInstallSource> = new Set([
  */
 export function deriveSkillTrustTier(input: DeriveSkillTrustTierInput): SkillTrustTier {
   if (input.source === "seed") return "first-party";
+  if (input.source === "backfill") return "operator";
 
   if (REMOTE_SOURCES.has(input.source)) {
     // Only a configured registry entry can carry an operator promotion.

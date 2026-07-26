@@ -41,6 +41,13 @@ import {
   readBundleInstallState,
   recordBundleEntries,
 } from "../skills/bundle-install-state.js";
+import {
+  provenanceKey,
+  readSkillProvenance,
+  type SkillProvenanceRecord,
+  type SkillProvenanceScope,
+} from "../skills/skill-provenance-store.js";
+import { backfillSkillProvenance } from "../skills/skill-provenance-backfill.js";
 import type { WorkspaceApiDeps } from "../api/types.js";
 
 // ---------------------------------------------------------------------------
@@ -154,6 +161,7 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
   const installedBundleState = dataDir.length > 0
     ? readBundleInstallState(dataDir)
     : {};
+  const skillProvenance = dataDir.length > 0 ? readSkillProvenance(dataDir) : {};
 
   // Track which skills' bundles successfully resolved on this boot — at the
   // tail we re-record them into the state file so a SKILL.md change between
@@ -168,18 +176,22 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
   // skillId>). Same shared skill discoverable from multiple per-agent
   // registries only resolves once; insertion order preserves discovery
   // order, which feeds into the resolver as a stable boot ordering.
-  const manifestPaths = new Map<string, string>();
-  for (const registry of deps.skillRegistries.values()) {
+  const manifestPaths = new Map<
+    string,
+    { skillId: string; agentId: string; skillDir: string }
+  >();
+  for (const [agentId, registry] of deps.skillRegistries) {
     for (const meta of registry.getAllMetadata()) {
       if (!manifestPaths.has(meta.filePath)) {
-        manifestPaths.set(meta.filePath, meta.name);
+        manifestPaths.set(meta.filePath, { skillId: meta.name, agentId, skillDir: meta.path });
       }
     }
   }
 
   // Step 3 — per-skill resolve. Failures isolated (WARN + skip); successes
   // advance `currentServers` so the NEXT skill sees the merged state.
-  for (const [filePath, skillId] of manifestPaths) {
+  for (const [filePath, discovered] of manifestPaths) {
+    const { skillId, agentId, skillDir } = discovered;
     let content: string;
     try {
       content = readFileSync(filePath, "utf-8");
@@ -215,6 +227,73 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
     const bundleServers = parseResult.value.mcpServers;
     if (bundleServers === undefined || bundleServers.length === 0) {
       // No bundle block ⇒ a legacy skill predating bundle support (silent no-op).
+      continue;
+    }
+
+    const sharedSkillsRoot = dataDir.length > 0 ? safePath(dataDir, "skills") : "";
+    const scope: SkillProvenanceScope =
+      sharedSkillsRoot.length > 0 &&
+      (skillDir === sharedSkillsRoot || skillDir.startsWith(`${sharedSkillsRoot}/`))
+        ? "shared"
+        : "local";
+    const key = provenanceKey(scope, skillId);
+    let provenance: SkillProvenanceRecord | undefined = skillProvenance[key];
+    if (provenance === undefined && dataDir.length > 0) {
+      const backfilled = backfillSkillProvenance({
+        dataDir,
+        scope,
+        name: skillId,
+        agentId,
+        skillDir,
+        manifestPath: filePath,
+      });
+      if (backfilled.ok) {
+        provenance = backfilled.value;
+        skillProvenance[key] = backfilled.value;
+        deps.logger.info(
+          { skillId, scope, trust: "operator", backfilled: true },
+          "Skill provenance backfilled",
+        );
+      } else {
+        deps.logger.warn(
+          {
+            skillId,
+            scope,
+            err: backfilled.error.message,
+            hint:
+              "The existing skill remains operator-tier for this boot, but installed-skills.json was not updated; check data-directory ownership and retry startup.",
+            errorKind: "resource" as const,
+          },
+          "Skill provenance backfill failed",
+        );
+      }
+    }
+
+    // A failed backfill must preserve the pre-existing deployment on this
+    // boot. Successfully recorded lower-trust skills are fail-closed unless
+    // their installing agent explicitly enabled auto-connect.
+    const trust = provenance?.trust ?? "operator";
+    const configAgentId = provenance?.importedBy.agentId ?? agentId;
+    const agents = deps.container.config.agents as
+      | Record<string, { skills?: { import?: { autoConnectBundledMcp?: boolean } } }>
+      | undefined;
+    const autoConnectBundledMcp =
+      agents?.[configAgentId]?.skills?.import?.autoConnectBundledMcp ?? false;
+    if (
+      (trust === "community" || trust === "agent-authored") &&
+      !autoConnectBundledMcp
+    ) {
+      currentServers = currentServers.filter((entry) => entry._bundleSource !== skillId);
+      deps.logger.info(
+        {
+          skillId,
+          scope,
+          trust,
+          pendingMcpCount: bundleServers.length,
+          autoConnectBundledMcp,
+        },
+        "Bundled MCP activation withheld at boot",
+      );
       continue;
     }
 
