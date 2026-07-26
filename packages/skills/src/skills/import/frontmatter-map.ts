@@ -188,7 +188,8 @@ export function mapForeignFrontmatter(raw: Record<string, unknown>): MapForeignF
               continue;
             }
             if (runtimeKey === "requires") {
-              const requires = normalizeRequires(block[runtimeKey]);
+              const rawRequires = block[runtimeKey];
+              const requires = normalizeRequires(rawRequires);
               if (requires === undefined) {
                 warnings.push({ key: qualifiedKey, action: "dropped_unmappable" });
               } else if (comisBlock["requires"] === undefined) {
@@ -196,6 +197,17 @@ export function mapForeignFrontmatter(raw: Record<string, unknown>): MapForeignF
                 comisTouched = true;
               } else {
                 warnings.push({ key: qualifiedKey, action: "duplicate_key" });
+              }
+              if (isPlainObject(rawRequires)) {
+                for (const requirementKey of Object.keys(rawRequires).sort()) {
+                  if (requirementKey === "bins" || requirementKey === "env") continue;
+                  warnings.push({
+                    key: `${qualifiedKey}.${requirementKey}`,
+                    action: EXECUTABLE_KEYS.has(requirementKey)
+                      ? "dropped_executable"
+                      : "dropped_unmappable",
+                  });
+                }
               }
               continue;
             }
