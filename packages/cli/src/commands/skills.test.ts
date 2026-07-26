@@ -123,6 +123,66 @@ describe("registerSkillsCommand", () => {
     );
   });
 
+  it("maps the explicit force flag to the typed import contract", async () => {
+    vi.mocked(callTyped).mockResolvedValue({
+      ok: true,
+      path: "/workspace/skills/summarize",
+      name: "summarize",
+      fileCount: 1,
+      unchanged: false,
+      trust: "community",
+      verdict: "safe",
+      contentHash: `sha256:${"a".repeat(64)}`,
+      warnings: [],
+    } as never);
+
+    await program().parseAsync([
+      "node",
+      "comis",
+      "skills",
+      "import",
+      "https://github.com/example/skills/tree/main/summarize",
+      "--force",
+    ]);
+
+    expect(callTyped).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ method: "skills.import" }),
+      expect.objectContaining({ force: true }),
+    );
+  });
+
+  it("renders the default import result as a table-style key-value view", async () => {
+    vi.mocked(callTyped).mockResolvedValue({
+      ok: true,
+      path: "/workspace/skills/summarize",
+      name: "summarize",
+      fileCount: 1,
+      unchanged: false,
+      trust: "community",
+      verdict: "safe",
+      contentHash: `sha256:${"a".repeat(64)}`,
+      warnings: [],
+    } as never);
+
+    await program().parseAsync([
+      "node",
+      "comis",
+      "skills",
+      "import",
+      "https://github.com/example/skills/tree/main/summarize",
+    ]);
+
+    expect(renderKeyValue).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        ["Status", "Imported"],
+        ["Name", "summarize"],
+        ["Trust", "community"],
+        ["Verdict", "safe"],
+      ]),
+    );
+  });
+
   it("reads a local skill archive and sends canonical base64 bytes", async () => {
     const archivePath = join(tempDir, "summarize.skill");
     writeFileSync(archivePath, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
