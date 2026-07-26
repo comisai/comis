@@ -53,6 +53,8 @@ export interface FetchWellKnownSkillArgs {
   readonly dataDir: string;
   readonly registries: readonly WellKnownRegistryConfig[];
   readonly cacheTtlMs: number;
+  readonly maxEntryBytes?: number;
+  readonly maxBundleBytes?: number;
   readonly fetchDeps?: SkillImportFetchDeps;
   readonly nowMs?: () => number;
   readonly logger: WellKnownFetchLogger;
@@ -189,6 +191,8 @@ export async function fetchWellKnownSkill(
   }
 
   const fetchDeps = args.fetchDeps ?? defaultSkillImportFetchDeps;
+  const maxEntryBytes = args.maxEntryBytes ?? MAX_ENTRY_BYTES;
+  const maxBundleBytes = args.maxBundleBytes ?? MAX_BUNDLE_BYTES;
   const nowMs = (args.nowMs ?? systemNowMs)();
   const url = indexUrl(parsedRef.value.base);
   const cached = readCachedIndex(args.dataDir, url);
@@ -249,15 +253,15 @@ export async function fetchWellKnownSkill(
     }
     const content = await readSkillImportText(
       fetched.value,
-      MAX_ENTRY_BYTES,
+      maxEntryBytes,
       "skills.installVetting.maxEntryBytes",
     );
     if (!content.ok) return content;
     totalBytes += new TextEncoder().encode(content.value).byteLength;
-    if (totalBytes > MAX_BUNDLE_BYTES) {
+    if (totalBytes > maxBundleBytes) {
       return err(
         new Error(
-          `Well-known skill bytes ${totalBytes} exceed skills.installVetting.maxBundleBytes=${MAX_BUNDLE_BYTES}`,
+          `Well-known skill bytes ${totalBytes} exceed skills.installVetting.maxBundleBytes=${maxBundleBytes}`,
         ),
       );
     }
@@ -275,4 +279,3 @@ export async function fetchWellKnownSkill(
     cache,
   });
 }
-

@@ -77,7 +77,7 @@ export interface RunInstallVettingGateArgs {
 }
 
 /** Bounds block under `agents.<id>.skills.installVetting`, when present. */
-interface InstallVettingConfig {
+export interface InstallVettingConfig {
   readonly maxEntries?: number;
   readonly maxEntryBytes?: number;
   readonly maxBundleBytes?: number;
@@ -94,7 +94,7 @@ interface InstallVettingConfig {
  * Falls back to the default agent's block the way `setup-tools.ts` does for
  * `skills.toolPolicy` / `skills.terminal`, then to the schema defaults.
  */
-function readVettingLimits(
+export function readVettingLimits(
   deps: WorkspaceApiDeps,
   callingAgentId: string,
 ): InstallVettingConfig | undefined {

@@ -5,6 +5,7 @@ import type { SkillBundleFile, SkillInstallSource } from "@comis/skills";
 import { err, fromPromise, ok, type Result } from "@comis/shared";
 import type { WorkspaceApiDeps } from "../api/types.js";
 import { fetchGitHubDir } from "../api/github-skill-fetch.js";
+import { readVettingLimits } from "./vet-install-gate.js";
 import { fetchWellKnownSkill } from "./wellknown-skill-fetch.js";
 
 /** Current RPC request variants. */
@@ -57,11 +58,18 @@ export async function resolveSkillImportSource(
 ): Promise<Result<ResolvedSkillImportSource, Error>> {
   if (request.source === "wellknown") {
     const importConfig = deps.agents[callingAgentId]?.skills?.import;
+    const vettingLimits = readVettingLimits(deps, callingAgentId);
     const fetched = await fetchWellKnownSkill({
       ref: request.ref,
       dataDir: deps.container.config.dataDir || ".",
       registries: importConfig?.registries ?? [],
       cacheTtlMs: importConfig?.indexCacheTtlMs ?? 3_600_000,
+      ...(vettingLimits?.maxEntryBytes !== undefined && {
+        maxEntryBytes: vettingLimits.maxEntryBytes,
+      }),
+      ...(vettingLimits?.maxBundleBytes !== undefined && {
+        maxBundleBytes: vettingLimits.maxBundleBytes,
+      }),
       ...(deps.skillImportFetchDeps !== undefined && { fetchDeps: deps.skillImportFetchDeps }),
       logger: deps.logger,
     });
