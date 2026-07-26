@@ -214,6 +214,15 @@ export const SkillsImportContract = defineContract({
     name: z.string(),
     fileCount: z.number(),
     unchanged: z.boolean().optional(),
+    trust: z.enum(["first-party", "operator", "community", "agent-authored"]),
+    verdict: z.enum(["safe", "caution", "dangerous"]),
+    contentHash: z.string(),
+    warnings: z.array(
+      z.object({
+        key: z.string(),
+        action: z.enum(["duplicate_key", "dropped_executable", "dropped_unmappable"]),
+      }),
+    ),
     ...BundleInstallResponseShape,
   }),
   // orch:skill surface, rpc-scoped (see skills.upload rationale).

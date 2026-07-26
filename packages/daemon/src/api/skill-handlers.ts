@@ -512,6 +512,10 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
             name,
             fileCount: fetchedFiles.length,
             unchanged: true,
+            trust: incumbent.trust,
+            verdict: incumbent.verdict,
+            contentHash: incumbent.contentHash,
+            warnings: evaluated.vetted.warnings,
           };
           if (IS_DEV) SkillsImportContract.response.parse(result);
           return result;
@@ -638,7 +642,18 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         );
       }
 
-      const result = { ok: true as const, path: skillDir, name, fileCount: fetchedFiles.length, unchanged: false, ...bundleInstallResponseFields(hooked.value) };
+      const result = {
+        ok: true as const,
+        path: skillDir,
+        name,
+        fileCount: fetchedFiles.length,
+        unchanged: false,
+        trust: vetted.trust,
+        verdict: vetted.verdict,
+        contentHash: vetted.contentHash,
+        warnings: vetted.warnings,
+        ...bundleInstallResponseFields(hooked.value),
+      };
       const criticalCount = vetted.findings.filter(
         (finding) => finding.severity === "CRITICAL",
       ).length;
