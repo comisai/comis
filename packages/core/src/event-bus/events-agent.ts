@@ -31,7 +31,15 @@ export interface AgentEvents {
   "skill:executed": { skillName: string; durationMs: number; success: boolean; timestamp: number };
 
   /** Skill rejected during scan (security violations) */
-  "skill:rejected": { skillName: string; reason: string; violations: string[]; timestamp: number };
+  "skill:rejected": {
+    skillName: string;
+    reason: string;
+    violations: string[];
+    source?: "seed" | "backfill" | "create" | "update" | "upload" | "github" | "archive" | "wellknown" | "registry";
+    stage?: "vet";
+    policyKey?: "skills.installVetting";
+    timestamp: number;
+  };
 
   /** A vetted skill import committed to disk; content-free provenance summary. */
   "skill:imported": {

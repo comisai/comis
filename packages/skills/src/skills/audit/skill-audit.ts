@@ -122,6 +122,18 @@ export function emitSkillAudit(eventBus: TypedEventBus, opts: SkillAuditOptions)
         skillName: opts.skillName,
         reason: "Skill install blocked by pre-write vetting gate",
         violations: (opts.metadata?.["ruleIds"] as string[] | undefined) ?? [],
+        source: opts.metadata?.["source"] as
+          | "seed"
+          | "backfill"
+          | "create"
+          | "update"
+          | "upload"
+          | "github"
+          | "archive"
+          | "wellknown"
+          | "registry",
+        stage: "vet",
+        policyKey: "skills.installVetting",
         timestamp: now,
       });
       break;

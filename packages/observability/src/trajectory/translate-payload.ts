@@ -208,6 +208,9 @@ export function translatePayload(
         skillName: payload.skillName,
         reason: payload.reason,
         violations: payload.violations,
+        ...(payload.source !== undefined && { source: payload.source }),
+        ...(payload.stage !== undefined && { stage: payload.stage }),
+        ...(payload.policyKey !== undefined && { policyKey: payload.policyKey }),
       };
 
     // The per-turn used-skill attribution (inline-surfaced reuse credit). IDS + COUNT
