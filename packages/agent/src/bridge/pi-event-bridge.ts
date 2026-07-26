@@ -11,6 +11,7 @@
  */
 
 import { shouldCompact } from "@earendil-works/pi-coding-agent";
+import { isRelayedBackgroundFailure } from "../safety/background-failure-attribution.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
@@ -1248,7 +1249,19 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // Runtime guards do not describe tool health. Feeding them into the
           // per-tool retry breaker would blame a healthy tool for a local
           // execution budget and manufacture a provider-outage diagnosis.
-          if (deps.toolRetryBreaker && classifiedFailureBy !== "runtime_guard") {
+          // The poller relaying SOMEONE ELSE's failure is the poller working
+          // correctly. Counting it blames the one tool the agent needs in order to
+          // observe outcomes, while the tool that actually failed reports success
+          // on every launch (auto-backgrounding) and never trips. The failing tool
+          // is counted instead, via background_task:failed — see
+          // background-failure-attribution.ts.
+          const relayedBackgroundFailure =
+            !toolSuccess && isRelayedBackgroundFailure(endEvent.toolName, errorText);
+          if (
+            deps.toolRetryBreaker
+            && classifiedFailureBy !== "runtime_guard"
+            && !relayedBackgroundFailure
+          ) {
             const transition = deps.toolRetryBreaker.recordResult(
               endEvent.toolName,
               (sanitizedArgs ?? {}) as Record<string, unknown>,

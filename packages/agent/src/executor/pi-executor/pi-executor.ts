@@ -83,6 +83,7 @@ import type {
 import type { CommandDirectives } from "../command-directive-types.js";
 import type { StepCounter } from "../step-counter.js";
 import { createToolRetryBreaker } from "../../safety/tool-retry-breaker.js";
+import { attributeBackgroundFailuresToOriginatingTool } from "../../safety/background-failure-attribution.js";
 import { createMessageSendLimiter } from "../../safety/message-send-limiter.js";
 import type { ComisSessionManager } from "../../session/comis-session-manager.js";
 import type { RunHandle } from "../active-run-registry.js";
@@ -1370,6 +1371,7 @@ async function runSessionLocked(
   // the finally block at end of execute().
   let cacheTrace: CacheTrace | null = null;
   let unsubscribeCacheTrace: (() => void) | undefined;
+  let unsubscribeBackgroundFailures: (() => void) | undefined;
   try {
     // Confine trajectory writes to the operator's resolved data root (so an
     // ancestor-symlink escape is rejected at open()) UNLESS they explicitly set
@@ -1582,6 +1584,20 @@ async function runSessionLocked(
         suggestAlternatives: toolRetryBreakerConfig?.suggestAlternatives ?? true,
       })
     : undefined;
+  // Count a BACKGROUND task's failure against the tool that launched it.
+  // Auto-backgrounding makes that tool report success on every launch, so
+  // without this its breaker never trips and a failing tool can be relaunched
+  // until the turn's wall-clock budget expires (see
+  // background-failure-attribution.ts). Same per-execution lifetime as the
+  // breaker it feeds — torn down in the finally below.
+  if (toolRetryBreaker) {
+    unsubscribeBackgroundFailures = attributeBackgroundFailuresToOriginatingTool({
+      eventBus: deps.eventBus,
+      breaker: toolRetryBreaker,
+      ...(deps.logger === undefined ? {} : { logger: deps.logger }),
+      ...(deps.agentId === undefined ? {} : { agentId: deps.agentId }),
+    });
+  }
   const failedToolRedirects = new Map<string, string>();
 
   // Per-execution message send limiter
@@ -2583,6 +2599,7 @@ async function runSessionLocked(
     // failures must never throw out of finally.
     try {
       unsubscribeCacheTrace?.();
+      unsubscribeBackgroundFailures?.();
     } catch {
       // Unsubscribe failure is unreachable in practice (EventEmitter.off
       // is sync); swallow defensively so this never aborts cleanup.
