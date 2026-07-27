@@ -2445,9 +2445,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const namedGraphStore = createNamedGraphStore(db);
   // Seed the four canonical small-model DAG templates into the named-graph store. Idempotent (INSERT-OR-IGNORE in the seeder), so operator-customized templates survive restarts and re-running on every boot is safe.
   seedDefaultDagTemplates(namedGraphStore);
-
-  // 6.7. Bind proactive deps, then arm heartbeat + cron. Autonomy-disabled is
-  // SUPPORTED and must not crash-loop the daemon (wiring/proactive-degrade.ts).
+  // Bind proactive deps, then arm heartbeat + cron; disabled autonomy degrades without a crash loop.
   const proactive = await setupProactiveSchedulers({
     runtime: handle, adaptersByType, deliveryService,
     schedulerCorePortBindings: handle.schedulerCorePortBindings,
@@ -2481,8 +2479,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     videoGenProvider, videoGenRateLimiter, videoGenConfig, persistVideo, videoGenCostLimiter, videoJobStore, videoPoller,
     preprocessMessageText, getCapabilityPortForAgent,
     heartbeatRunner, duplicateDetector, heartbeatCoordinator,
-    // Absent when autonomy is disabled for every agent (the honest-degrade boot
-    // above) — consumers must treat the proactive surface as optional.
+    // Absent when autonomy is disabled; consumers treat the proactive surface as optional.
     ...(proactive.ok ? { proactiveSchedulers: proactive.value } : {}),
     nodeTypeRegistry, graphCoordinator, namedGraphStore,
     suspendedAgents, modelCatalog, channelConfig, promptTimeoutTimestamps,

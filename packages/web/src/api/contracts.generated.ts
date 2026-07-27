@@ -11577,6 +11577,14 @@ export const CONTRACTS = {
             },
             "freshTailStepsConfigured": {
               "type": "number"
+            },
+            "originatingRequestRetained": {
+              "type": "boolean"
+            },
+            "freshTailTrimmedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
             }
           },
           "required": [
