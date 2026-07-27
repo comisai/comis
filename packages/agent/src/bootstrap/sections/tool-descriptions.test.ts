@@ -649,3 +649,32 @@ describe("Task Delegation policy covers the child tool profile", () => {
     expect(guide).toMatch(/message/);
   });
 });
+
+/**
+ * The turn's final assistant text is delivered to the channel automatically. When
+ * the agent ALSO delivers user-facing content with the `message` tool, both go
+ * out and the user sees the same thing twice.
+ *
+ * Observed live on real Telegram: a file arrived with its caption, immediately
+ * followed by a second message restating it ("הקובץ נשלח ✅ …"). The trajectory
+ * showed message ×2 but THREE dispatched deliveries.
+ *
+ * The runtime already honours a silent sentinel (isSilentResponse) — the model
+ * was simply never told to use it after sending.
+ */
+describe("message tool states the no-double-post contract", () => {
+  const ctx: ToolDescriptionContext = { modelTier: "large", channelType: "telegram" };
+  const desc = resolveDescription({ name: "message" }, LEAN_TOOL_DESCRIPTIONS, ctx);
+
+  it("tells the model to return the silent sentinel after delivering", () => {
+    expect(desc).toContain("NO_REPLY");
+  });
+
+  it("says why — the final text is sent as well", () => {
+    expect(desc).toMatch(/also|too|double|twice/i);
+  });
+
+  it("stays within the lean description budget", () => {
+    expect(desc.length).toBeLessThanOrEqual(300);
+  });
+});

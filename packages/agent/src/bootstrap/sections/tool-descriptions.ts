@@ -141,7 +141,10 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   // ----- Channel (confusable pair: message / sessions_send) -----
   message: (ctx: ToolDescriptionContext): string => {
     const ch = ctx.channelType ?? "chat";
-    return `Send, reply, react, edit, delete, fetch messages on ${ch}. For inter-session messaging, use sessions_send.`;
+    // The turn's final text is delivered automatically; an agent that also sends
+    // here double-posts. The runtime honours the silent sentinel — say so.
+    return `Send, reply, react, edit, delete, fetch messages on ${ch}. For inter-session messaging, use sessions_send.`
+      + ` After delivering user-facing content here, reply NO_REPLY: the turn's final text is sent too, so restating it double-posts.`;
   },
 
   // ----- Sessions -----
