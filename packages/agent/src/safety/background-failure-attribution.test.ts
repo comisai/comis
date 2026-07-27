@@ -106,6 +106,22 @@ describe("attributeBackgroundFailuresToOriginatingTool", () => {
     expect(breaker.recordResult).toHaveBeenCalledTimes(1);
   });
 
+  it("ignores failures from another session and dispatch redeliveries", () => {
+    const bus = fakeBus();
+    const breaker = { recordResult: vi.fn() };
+    attributeBackgroundFailuresToOriginatingTool({
+      eventBus: bus as never,
+      breaker,
+      agentId: "a",
+      sessionKey: "session-a",
+    });
+    bus.emit("background_task:failed", { toolName: "t", error: "x", agentId: "a", sessionKey: "session-b" });
+    bus.emit("background_task:failed", { toolName: "t", error: "x", agentId: "a", sessionKey: "session-a", dispatchRedelivery: true });
+    expect(breaker.recordResult).not.toHaveBeenCalled();
+    bus.emit("background_task:failed", { toolName: "t", error: "x", agentId: "a", sessionKey: "session-a" });
+    expect(breaker.recordResult).toHaveBeenCalledTimes(1);
+  });
+
   it("unsubscribes — the listener must not outlive the execution that owns the breaker", () => {
     const bus = fakeBus();
     const breaker = { recordResult: vi.fn() };

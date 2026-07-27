@@ -673,6 +673,7 @@ export interface InfraEvents {
     taskId: string;
     toolName: string;
     error: string;
+    errorKind: ErrorKind;
     /**
      * The TASK's whole lifespan — promote-time to terminal commit. NOT the
      * duration of the underlying tool call.
@@ -705,10 +706,8 @@ export interface InfraEvents {
      * The ORIGINATING tool call's id, captured at promote time.
      *
      * The activity card keys a tool's lifecycle on `tool:<toolCallId>`; without
-     * this field the terminal event could not close the activity it belongs to,
-     * so a backgrounded tool's card either froze on "running" or (worse) had
-     * already been closed "completed" at hand-off. Optional: tasks recovered
-     * from a pre-upgrade on-disk record have none.
+     * this field the terminal event could not close the activity it belongs to.
+     * It is omitted when the promotion source has no tool-call correlation.
      */
     toolCallId?: string;
     /** Formatted session key captured at promote time (activity dispatch requires it). */

@@ -193,13 +193,14 @@ export function stashPendingEnvSet(envKey: string, envValue: string, nowMs: numb
   return id;
 }
 
-/** Take (and consume) a stashed env_set. One-shot: a second confirm replays nothing. */
-export function takePendingEnvSet(id: string, nowMs: number): PendingEnvSet | undefined {
+export function getPendingEnvSet(id: string, nowMs: number): PendingEnvSet | undefined {
   sweepPendingEnvSets(nowMs);
-  const entry = pendingEnvSets.get(id);
-  if (entry === undefined) return undefined;
+  return pendingEnvSets.get(id);
+}
+
+export function consumePendingEnvSet(id: string, entry: PendingEnvSet): void {
+  if (pendingEnvSets.get(id) !== entry) return;
   pendingEnvSets.delete(id);
-  return entry;
 }
 
 export function confirmationRequiredHint(action: string): string {
@@ -411,8 +412,9 @@ export function createGatewayTool(
             // model still holds. One-shot + TTL'd; an expired/unknown id gets
             // an honest error rather than silently writing the mangled value.
             const pendingActionId = readStringParam(p, "pending_action_id", false);
+            let pendingEnvSet: PendingEnvSet | undefined;
             if (p._confirmed === true && pendingActionId !== undefined && pendingActionId.length > 0) {
-              const pending = takePendingEnvSet(pendingActionId, systemNowMs());
+              const pending = getPendingEnvSet(pendingActionId, systemNowMs());
               if (pending === undefined) {
                 return {
                   error: "pending_action_expired",
@@ -432,6 +434,7 @@ export function createGatewayTool(
                 };
               }
               envValue = pending.envValue;
+              pendingEnvSet = pending;
             }
             if (envValue === undefined || envValue.length === 0) {
               return {
@@ -537,6 +540,9 @@ export function createGatewayTool(
               };
             }
             const result = await rpcCall("env.set", { key: envKey, value: envValue, _trustLevel });
+            if (pendingActionId !== undefined && pendingEnvSet !== undefined) {
+              consumePendingEnvSet(pendingActionId, pendingEnvSet);
+            }
             // Return result but strip any value that might have leaked through
             return typeof result === "object" && result !== null
               ? { ...(result as Record<string, unknown>), value: undefined }

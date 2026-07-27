@@ -82,7 +82,12 @@ export function runPreflightFitCheck(
   freshTail: AgentMessage[],
   reasoningStyle: "none" | "native",
   capInfo?: ContextWindowCapInfo,
-  freshTailStepBound?: { effective: number; configured: number },
+  freshTailStepBound?: {
+    effective: number;
+    configured: number;
+    originatingRequestRetained?: boolean;
+    freshTailTrimmedCount?: number;
+  },
 ): number {
   // Emit effectiveWindow callback so the caller can clamp max_tokens dynamically.
   deps.onEffectiveWindow?.(effectiveWindow);
@@ -155,13 +160,17 @@ export function runPreflightFitCheck(
       assembledInputTokens: assembled,
       outputHeadroom: headroom,
       verdict,
-      // The STEP bound on the verbatim tail. Threaded so `explain` can say
-      // "the originating request slid out of the protected tail" instead of a
-      // clean-looking "fits" (comis-moshe 2026-07-26).
+      // The verbatim-tail bound and direct coverage evidence used by `explain`.
       ...(freshTailStepBound !== undefined
         ? {
             freshTailSteps: freshTailStepBound.effective,
             freshTailStepsConfigured: freshTailStepBound.configured,
+            ...(freshTailStepBound.originatingRequestRetained === undefined
+              ? {}
+              : { originatingRequestRetained: freshTailStepBound.originatingRequestRetained }),
+            ...(freshTailStepBound.freshTailTrimmedCount === undefined
+              ? {}
+              : { freshTailTrimmedCount: freshTailStepBound.freshTailTrimmedCount }),
           }
         : {}),
     });

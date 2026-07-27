@@ -322,7 +322,8 @@ describe("createActivityTurnCoordinator — delete gate", () => {
     coord.start(makeCtx());
 
     // Observe a failed event during the turn (a recovered tool retry).
-    stream.emit(makeEvent({ status: "failed", errorKind: "dependency", phase: "end" }));
+    stream.emit(makeEvent({ status: "failed", errorKind: "dependency", phase: "end", toolName: "report" }));
+    stream.emit(makeEvent({ status: "completed", phase: "end", toolName: "report" }));
     timer.advance(800);
 
     // Delivery SUCCEEDED — the turn recovered. The renderer must get the
@@ -1278,7 +1279,8 @@ describe("a delivered answer never renders a failure pill (F-ACT-1 layer 4)", ()
     coord.start(makeCtx());
 
     // The backgrounded tool's REAL terminal, observed during the turn.
-    stream.emit(makeEvent({ status: "failed", errorKind: "dependency", phase: "end" }));
+    stream.emit(makeEvent({ status: "failed", errorKind: "dependency", phase: "end", toolName: "report" }));
+    stream.emit(makeEvent({ status: "completed", phase: "end", toolName: "report" }));
     timer.advance(800);
 
     await coord.finalize({
@@ -1293,6 +1295,25 @@ describe("a delivered answer never renders a failure pill (F-ACT-1 layer 4)", ()
     // The failure evidence is PRESERVED, not erased.
     const recovered = (outcome as { recoveredFailures: readonly unknown[] }).recoveredFailures;
     expect(recovered.length).toBeGreaterThan(0);
+    coord.dispose();
+  });
+
+  it("delivery alone does not recover a terminal execution failure", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+    stream.emit(makeEvent({ status: "failed", errorKind: "dependency", phase: "end", toolName: "report" }));
+    timer.advance(800);
+
+    await coord.finalize({
+      kind: "failure",
+      errorKind: "dependency",
+      failedEvents: [],
+      delivery: { deliveredAtMs: clock.now() } as never,
+    });
+
+    expect(renderer.finalizeCalls[0]!.outcome.kind).toBe("failure");
     coord.dispose();
   });
 

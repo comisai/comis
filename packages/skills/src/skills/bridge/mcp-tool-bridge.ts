@@ -77,14 +77,28 @@ export function jsonSchemaToTypeBox(schema: Record<string, unknown>): TSchema {
   // validation accepted any value, and a wrong type only surfaced as an opaque
   // MCP -32602 from the server. Live: an object-typed parameter sent as a
   // string, waved through locally, rejected twice upstream.
-  const anyOf = schema.anyOf ?? schema.oneOf;
-  if (Array.isArray(anyOf) && anyOf.length > 0) {
-    const variants = (anyOf as Array<Record<string, unknown>>).map(jsonSchemaToTypeBox);
+  if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
+    const variants = (schema.oneOf as Array<Record<string, unknown>>).map(jsonSchemaToTypeBox);
+    return Type.Unsafe({ ...annotations, oneOf: variants });
+  }
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
+    const variants = (schema.anyOf as Array<Record<string, unknown>>).map(jsonSchemaToTypeBox);
     return Type.Union(variants, annotations);
   }
   if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
     const parts = (schema.allOf as Array<Record<string, unknown>>).map(jsonSchemaToTypeBox);
     return Type.Intersect(parts, annotations);
+  }
+
+  if (Array.isArray(type) && type.length > 0) {
+    return Type.Union(
+      type.map((variant) => jsonSchemaToTypeBox({ ...schema, type: variant })),
+      annotations,
+    );
+  }
+
+  if (type === "null") {
+    return Type.Null(annotations);
   }
 
   if (type === "string") {

@@ -899,6 +899,7 @@ describe("backgrounded tools close on their REAL terminal, not the hand-off (F-A
       taskId: "task-1",
       toolName: "mcp__vendor-mcp--vendor_activity_report",
       error: "MCP error -32001: Request timed out",
+      errorKind: "timeout",
       durationMs: 120_000,
       origin: {} as never,
       timestamp: 2,
@@ -910,7 +911,7 @@ describe("backgrounded tools close on their REAL terminal, not the hand-off (F-A
     expect(ends).toHaveLength(1);
     expect(ends[0]!.status).toBe("failed");
     expect(ends[0]!.toolCallId).toBe("call-1");
-    expect(ends[0]!.errorKind).toBe("dependency");
+    expect(ends[0]!.errorKind).toBe("timeout");
   });
 
   it("the background_task:completed terminal closes it COMPLETED", () => {
@@ -939,6 +940,7 @@ describe("backgrounded tools close on their REAL terminal, not the hand-off (F-A
       taskId: "task-1",
       toolName: "report",
       error: "boom",
+      errorKind: "dependency",
       durationMs: 5,
       origin: {} as never,
       timestamp: 2,
@@ -951,13 +953,14 @@ describe("backgrounded tools close on their REAL terminal, not the hand-off (F-A
     expect(events.filter((e) => e.phase === "end")).toHaveLength(1);
   });
 
-  it("a pre-upgrade terminal with NO toolCallId is a no-op (the old close already happened)", () => {
+  it("a terminal without toolCallId does not close unrelated activity", () => {
     const { bus, events } = harness();
     bus.emit("background_task:failed", {
       agentId: CTX.agentId,
       taskId: "task-1",
       toolName: "report",
       error: "boom",
+      errorKind: "dependency",
       durationMs: 5,
       origin: {} as never,
       timestamp: 2,

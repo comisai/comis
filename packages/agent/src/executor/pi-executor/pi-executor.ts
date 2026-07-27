@@ -1596,6 +1596,7 @@ async function runSessionLocked(
       breaker: toolRetryBreaker,
       ...(deps.logger === undefined ? {} : { logger: deps.logger }),
       ...(deps.agentId === undefined ? {} : { agentId: deps.agentId }),
+      sessionKey: formattedKey,
     });
   }
   const failedToolRedirects = new Map<string, string>();

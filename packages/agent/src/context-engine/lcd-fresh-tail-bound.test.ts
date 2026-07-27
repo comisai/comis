@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { computeFreshTailCapChars, boundFreshTailMessages, boundProtectedFreshTail } from "./lcd-fresh-tail-bound.js";
+import { computeFreshTailCapChars, boundFreshTailMessages, boundProtectedFreshTail, boundFreshTailTotalToResidual } from "./lcd-fresh-tail-bound.js";
 import { factoredMessageTokens } from "./factored-message-tokens.js";
 import { LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS } from "./constants.js";
 
@@ -236,5 +236,24 @@ describe("boundProtectedFreshTail — instrumentation + the live OpenAI growth r
     expect(warn, "the could-not-trim WARN must fire").toBeDefined();
     expect((warn![0] as { fitsResidual: boolean }).fitsResidual).toBe(false);
     expect((warn![0] as { errorKind: string }).errorKind).toBe("resource");
+  });
+});
+
+describe("boundFreshTailTotalToResidual protected request", () => {
+  it("keeps the originating user request while dropping completed tool segments", () => {
+    const request = { role: "user", content: "produce the report" } as AgentMessage;
+    const tail = [
+      request,
+      { role: "assistant", content: [{ type: "toolCall", id: "old", name: "report", arguments: {} }] },
+      { role: "toolResult", toolCallId: "old", content: [{ type: "text", text: "x".repeat(8_000) }] },
+      { role: "assistant", content: [{ type: "toolCall", id: "new", name: "report", arguments: {} }] },
+      { role: "toolResult", toolCallId: "new", content: [{ type: "text", text: "done" }] },
+    ] as unknown as AgentMessage[];
+
+    const bounded = boundFreshTailTotalToResidual(tail, 100, 0);
+
+    expect(bounded).toContain(request);
+    expect(JSON.stringify(bounded)).not.toContain('"id":"old"');
+    expect(JSON.stringify(bounded)).toContain('"id":"new"');
   });
 });

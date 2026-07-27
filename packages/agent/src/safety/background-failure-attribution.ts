@@ -69,6 +69,7 @@ export interface BackgroundFailureAttributionDeps {
   readonly logger?: ComisLogger;
   /** Scope to one agent; undefined attributes every agent's failures. */
   readonly agentId?: string;
+  readonly sessionKey?: string;
 }
 
 /**
@@ -89,12 +90,14 @@ export function attributeBackgroundFailuresToOriginatingTool(
     error?: string;
     agentId?: string;
     taskId?: string;
+    sessionKey?: string;
+    dispatchRedelivery?: boolean;
   }): void => {
+    if (p.dispatchRedelivery === true) return;
     const toolName = p.toolName;
     if (toolName === undefined || toolName.length === 0) return;
-    if (deps.agentId !== undefined && p.agentId !== undefined && p.agentId !== deps.agentId) {
-      return;
-    }
+    if (deps.agentId !== undefined && p.agentId !== deps.agentId) return;
+    if (deps.sessionKey !== undefined && p.sessionKey !== deps.sessionKey) return;
     // A poller task failing is not the poller's fault either — and it is never
     // the originating tool, so it would be meaningless to count.
     if (toolName === BACKGROUND_POLLER_TOOL) return;
@@ -105,6 +108,7 @@ export function attributeBackgroundFailuresToOriginatingTool(
         toolName,
         taskId: p.taskId,
         agentId: p.agentId,
+        sessionKey: p.sessionKey,
         hint:
           "counted a background task failure against the tool that launched it — without this the tool reports success on every launch (auto-backgrounding) and its breaker never trips",
       },

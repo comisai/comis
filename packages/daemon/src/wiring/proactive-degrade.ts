@@ -3,12 +3,11 @@
 /**
  * Honest degradation when proactive schedulers cannot be armed.
  *
- * `constructCapabilityLayer` returns `capEndpointHandle: undefined` BY DESIGN
- * when no agent has autonomy enabled, and `setupProactiveSchedulers` treats that
- * handle as mandatory. The daemon used to throw on the failed Result — so a fully
- * supported config completed its entire boot (channels registered, adapter
- * polling) and then exited 1, forever. `systemctl is-active` read `active`
- * throughout while the box served nothing.
+ * `constructCapabilityLayer` returns `capEndpointHandle: undefined` when no
+ * agent has autonomy enabled or when endpoint activation fails, while
+ * `setupProactiveSchedulers` treats that handle as mandatory. Both supported
+ * degradation paths keep channels available and report why proactive work is
+ * unavailable.
  *
  * Reachability is the severity: an omitted `autonomy` block defaults to ENABLED,
  * but writing any sub-key without `enabled: true` — e.g. the documented
@@ -17,6 +16,8 @@
  * @module
  */
 
+import type { CapabilityEndpointUnavailableReason } from "./setup-capability-endpoint-boot.js";
+
 /** The failure shape a failed `setupProactiveSchedulers` returns. */
 interface ProactiveSetupError {
   readonly code: string;
@@ -24,16 +25,30 @@ interface ProactiveSetupError {
 }
 
 /**
- * True when the ONLY unmet proactive-scheduler dependency is the capability
- * endpoint — i.e. the supported autonomy-disabled configuration, not a
- * composition-root regression.
+ * True when the only unmet proactive-scheduler dependency is a capability
+ * endpoint omitted because autonomy is disabled.
  *
  * @param error - the failed setup Result's error.
  * @returns whether the daemon may boot without the proactive surface.
  */
-export function isAutonomyDisabledProactiveMiss(error: ProactiveSetupError): boolean {
+export function isAutonomyDisabledProactiveMiss(
+  error: ProactiveSetupError,
+  capEndpointUnavailableReason?: CapabilityEndpointUnavailableReason,
+): boolean {
   return (
-    error.code === "dependency_unavailable"
+    capEndpointUnavailableReason === "autonomy_disabled"
+    && error.code === "dependency_unavailable"
+    && /capEndpointHandle \(1 of 11/.test(error.message)
+  );
+}
+
+function isCapabilityActivationProactiveMiss(
+  error: ProactiveSetupError,
+  capEndpointUnavailableReason?: CapabilityEndpointUnavailableReason,
+): boolean {
+  return (
+    capEndpointUnavailableReason === "activation_failed"
+    && error.code === "dependency_unavailable"
     && /capEndpointHandle \(1 of 11/.test(error.message)
   );
 }
@@ -44,9 +59,20 @@ export function isAutonomyDisabledProactiveMiss(error: ProactiveSetupError): boo
  *
  * @returns content-free log fields.
  */
-export function proactiveNotArmedLogFields(): Record<string, unknown> {
+export function proactiveNotArmedLogFields(
+  reason?: CapabilityEndpointUnavailableReason,
+): Record<string, unknown> {
+  if (reason === "activation_failed") {
+    return {
+      submodule: "setup-proactive-schedulers",
+      errorKind: "config" as const,
+      hint:
+        "Cron jobs and the heartbeat are NOT armed for this boot because the capability "
+        + "endpoint could not activate. Check that config.dataDir is absolute and writable "
+        + "and that its cap.sock path can be created, then restart the daemon.",
+    };
+  }
   return {
-    module: "daemon",
     submodule: "setup-proactive-schedulers",
     errorKind: "config" as const,
     hint:
@@ -63,18 +89,30 @@ export function proactiveNotArmedLogFields(): Record<string, unknown> {
 export const PROACTIVE_NOT_ARMED_MSG =
   "Proactive schedulers not armed: autonomy is disabled for every agent";
 
+export function proactiveNotArmedMessage(
+  reason?: CapabilityEndpointUnavailableReason,
+): string {
+  return reason === "activation_failed"
+    ? "Proactive schedulers not armed: capability endpoint activation failed"
+    : PROACTIVE_NOT_ARMED_MSG;
+}
+
 /**
- * Abort boot unless a failed proactive-scheduler setup is the SUPPORTED
- * autonomy-disabled case.
+ * Abort boot unless a failed proactive-scheduler setup has a known capability
+ * endpoint degradation reason.
  *
  * @param proactive - the `setupProactiveSchedulers` Result.
  * @throws when the failure is a genuine composition-root regression.
  */
 export function assertProactiveFailureIsSupported(
   proactive: { ok: true } | { ok: false; error: ProactiveSetupError },
+  capEndpointUnavailableReason?: CapabilityEndpointUnavailableReason,
 ): void {
   if (proactive.ok) return;
-  if (isAutonomyDisabledProactiveMiss(proactive.error)) return;
+  if (
+    isAutonomyDisabledProactiveMiss(proactive.error, capEndpointUnavailableReason)
+    || isCapabilityActivationProactiveMiss(proactive.error, capEndpointUnavailableReason)
+  ) return;
   throw new Error(`Proactive scheduler activation failed: ${proactive.error.message}`);
 }
 

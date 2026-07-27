@@ -370,11 +370,13 @@ describe("BackgroundTaskManager", () => {
       const r = manager.promote("report", new Promise(() => {}), new AbortController(), origin, undefined, CORR);
       expect(r.ok).toBe(true);
       if (!r.ok) return;
-      manager.fail(r.value, new Error("timed out"));
+      expect(loadTask(dataDir, "agent-1", r.value)).toMatchObject(CORR);
+      manager.fail(r.value, new Error("timed out"), "timeout");
       expect(eventBus.emit).toHaveBeenCalledWith(
         "background_task:failed",
-        expect.objectContaining(CORR),
+        expect.objectContaining({ ...CORR, errorKind: "timeout" }),
       );
+      expect(loadTask(dataDir, "agent-1", r.value)?.errorKind).toBe("timeout");
     });
 
     it("complete() emits the same correlation", () => {
@@ -701,6 +703,7 @@ describe("BackgroundTaskManager", () => {
         const task = manager.getTask(result.value);
         expect(task!.status).toBe("failed");
         expect(task!.error).toContain("Hard timeout exceeded");
+        expect(task!.errorKind).toBe("timeout");
         expect(ac.signal.aborted).toBe(true);
       } finally {
         vi.useRealTimers();
@@ -760,6 +763,9 @@ describe("BackgroundTaskManager", () => {
         origin: buildOrigin({ agentId: "a1" }),
         continuationExecutionId: "recovered-1",
         dispatchAttempts: 0,
+        toolCallId: "call-recovered-1",
+        sessionKey: "session-recovered-1",
+        traceId: "trace-recovered-1",
       };
       persistTaskSync(dataDir, task);
 
@@ -779,12 +785,28 @@ describe("BackgroundTaskManager", () => {
       expect(recovered).toBeDefined();
       expect(recovered!.status).toBe("failed");
       expect(recovered!.error).toBe("Daemon restarted while task was running");
+      expect(recovered).toMatchObject({
+        toolCallId: "call-recovered-1",
+        sessionKey: "session-recovered-1",
+        traceId: "trace-recovered-1",
+        errorKind: "internal",
+      });
+      expect(loadTask(dataDir, "a1", "recovered-1")).toMatchObject({
+        toolCallId: "call-recovered-1",
+        sessionKey: "session-recovered-1",
+        traceId: "trace-recovered-1",
+        errorKind: "internal",
+      });
 
       expect((eventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
         "background_task:failed",
         expect.objectContaining({
           taskId: "recovered-1",
           error: "Daemon restarted while task was running",
+          toolCallId: "call-recovered-1",
+          sessionKey: "session-recovered-1",
+          traceId: "trace-recovered-1",
+          errorKind: "internal",
         }),
       );
 

@@ -1215,6 +1215,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       taskId: "t-1",
       toolName: "exec",
       error: "boom",
+      errorKind: "dependency",
       durationMs: 9,
       origin: { agentId: "default", sessionKey: "k" },
       timestamp: 1000,
@@ -1602,6 +1603,8 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       assembledInputTokens: 31_572,
       outputHeadroom: 768,
       verdict: "exhausted",
+      originatingRequestRetained: false,
+      freshTailTrimmedCount: 3,
     },
     "context:evicted": {
       agentId: "agent-1",
@@ -3568,6 +3571,8 @@ describe("security + compaction + context + approval bridge", () => {
       assembledInputTokens: 31_572,
       outputHeadroom: 768,
       verdict: "exhausted",
+      originatingRequestRetained: false,
+      freshTailTrimmedCount: 3,
     });
 
     expect(recorder.calls).toHaveLength(1);
@@ -3584,6 +3589,8 @@ describe("security + compaction + context + approval bridge", () => {
     expect(data.assembledInputTokens).toBe(31_572);
     expect(data.outputHeadroom).toBe(768);
     expect(data.verdict).toBe("exhausted");
+    expect(data.originatingRequestRetained).toBe(false);
+    expect(data.freshTailTrimmedCount).toBe(3);
     expect(data.agentId).toBeUndefined();
     expect(data.sessionKey).toBeUndefined();
   });
@@ -4579,6 +4586,7 @@ describe("background-task dispatch redelivery is not a second failure", () => {
       taskId: "task-a",
       toolName: "mcp__vendor-mcp--vendor_activity_report",
       error: "MCP error -32001: Request timed out",
+      errorKind: "timeout",
       durationMs: 120_000,
       origin,
       timestamp: 10,

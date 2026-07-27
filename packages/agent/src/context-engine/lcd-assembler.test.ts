@@ -473,6 +473,38 @@ describe("createLcdContextEngine", () => {
     expect(callIds).toEqual(["tu_1", "tu_2", "tu_3"]);
   });
 
+  it("residual trimming retains the in-flight request across a long tool loop", async () => {
+    const request = userMsg("THE-IN-FLIGHT-REQUEST") as AgentMessage;
+    const live = [
+      request,
+      assistantToolCall("old-1", "read", {}) as AgentMessage,
+      toolResult("old-1", "read", "x".repeat(5_000)) as AgentMessage,
+      assistantToolCall("old-2", "read", {}) as AgentMessage,
+      toolResult("old-2", "read", "y".repeat(5_000)) as AgentMessage,
+      assistantToolCall("latest", "read", {}) as AgentMessage,
+      toolResult("latest", "read", "done") as AgentMessage,
+    ];
+    const { deps } = makeDeps(store);
+    const windowTokens = 8_192;
+    deps.getModel = () => ({ reasoning: false, contextWindow: windowTokens, maxTokens: 4_096 });
+    deps.getSystemTokensEstimate = () => 5_210;
+    deps.getThinkingLevel = () => "off";
+    deps.modelProfile = {
+      ...FAIL_CLOSED_PROFILE,
+      capabilityClass: "nano",
+      contextWindow: windowTokens,
+      maxOutputTokens: 4_096,
+      reasoningStyle: "none",
+    };
+
+    const out = await createLcdContextEngine(dagConfig(8), deps).transformContext(live);
+    const serialized = JSON.stringify(out);
+
+    expect(out).toContain(request);
+    expect(serialized).not.toContain('"id":"old-1"');
+    expect(serialized).toContain('"id":"latest"');
+  });
+
   it("live array SHRINKS below the store count — assembler over-includes nothing, doubles nothing", async () => {
     // A future heal/compaction could reassign state.messages SMALLER than the
     // append-only store. The assembler seam must stay robust to live.length <=

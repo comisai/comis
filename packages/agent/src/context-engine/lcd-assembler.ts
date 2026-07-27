@@ -431,6 +431,17 @@ export function createLcdContextEngine(
       const freshTailCapChars = computeFreshTailCapChars(budget.availableHistoryTokens);
       const bounded = boundFreshTailMessages(rawFreshTail, freshTailCapChars);
       let freshTail = bounded.freshTail;
+      const firstInFlightIndex = Math.max(0, persistedMsgCount - tailStart);
+      const originatingRequestIndex = freshTail.findIndex((message, index) =>
+        index >= firstInFlightIndex
+        && (message as unknown as { role?: string }).role === "user",
+      );
+      const protectedOriginIndex = originatingRequestIndex >= 0
+        ? originatingRequestIndex
+        : undefined;
+      const originatingRequest = protectedOriginIndex === undefined
+        ? undefined
+        : freshTail[protectedOriginIndex];
       const { boundedResults, boundedMessages, charsRemoved } = bounded;
       if (boundedResults > 0 || boundedMessages > 0) {
         // Content-free DEBUG (AGENTS.md §2.2 / the lossless-store content-free rule):
@@ -480,7 +491,12 @@ export function createLcdContextEngine(
         logger: deps.logger,
         agentId: deps.agentId,
         sessionKey: deps.sessionKey,
+        protectedMessageIndex: protectedOriginIndex,
       });
+      const originatingRequestRetained = originatingRequest === undefined
+        ? undefined
+        : freshTail.includes(originatingRequest);
+      const freshTailTrimmedCount = rawFreshTail.length - freshTail.length;
 
       // Eviction seam (step 4 above). Frontier/mid (relevanceFirst falsy) take
       // the recency eviction call — the arbiter does NOT run for them, so their
@@ -596,10 +612,13 @@ export function createLcdContextEngine(
           windowCapSource: budget.windowCapSource,
           servedWindowTokens: budget.servedWindowTokens,
         },
-        // The verbatim tail's STEP bound (effective vs the operator's configured
-        // value) — the number that decides whether the user's own request is
-        // still in context, and which was previously DEBUG-log-only.
-        { effective: clampedFreshTailTurns, configured: config.freshTailTurns },
+        // The verbatim-tail step bound and direct origin-retention evidence.
+        {
+          effective: clampedFreshTailTurns,
+          configured: config.freshTailTurns,
+          originatingRequestRetained,
+          freshTailTrimmedCount,
+        },
       );
 
       deps.logger.info(

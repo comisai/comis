@@ -96,26 +96,8 @@ describe("isSecretFieldName — superset", () => {
     }
   });
 
-  // ---------------------------------------------------------------------------
-  // The `.*token` WILDCARD over-match.
-  //
-  // `range_token` — an MCP tool argument holding a plain enum value — matched
-  // `/^.*token$/i`, so LCD/session persistence rewrote it to "[REDACTED]". The
-  // model then read the placeholder back out of its own replay context and sent
-  // the literal string "[REDACTED]" to the server, which rejected it
-  // (`invalid_enum_value received:"[REDACTED]"`). The agent reported that its own
-  // argument was "exposed to me redacted" and abandoned the cheap query path for a
-  // far more expensive one that then timed out repeatedly.
-  //
-  // The fix is an EXACT-NAME exception set, never a loosening of the pattern —
-  // every entry below is a non-credential whose name merely ends in "token(s)".
-  // The negative matrix that follows is the load-bearing half.
-  // ---------------------------------------------------------------------------
-
-  it("does NOT flag non-credential names the .*token wildcard over-matches", () => {
+  it("does not flag token-count names that do not end in singular token", () => {
     for (const name of [
-      "range_token",   // the live case: an enum selector ("last_week")
-      "rangeToken",
       "max_tokens",    // provider request knob
       "maxTokens",
       "num_tokens",
@@ -135,7 +117,20 @@ describe("isSecretFieldName — superset", () => {
     }
   });
 
-  it("STILL flags every credential-bearing token name (the exception set must not leak)", () => {
+  it("keeps the global detector conservative for ambiguous token fields", () => {
+    expect(isSecretFieldName("range_token")).toBe(true);
+    expect(isSecretFieldName("rangeToken")).toBe(true);
+    expect(scanForSecrets({
+      plugins: { vendor: { config: { range_token: "shortsecret" } } },
+    })).toEqual([
+      expect.objectContaining({
+        path: "plugins.vendor.config.range_token",
+        reason: "secret-field",
+      }),
+    ]);
+  });
+
+  it("flags credential-bearing token names", () => {
     for (const name of [
       "token",
       "botToken",
@@ -193,7 +188,6 @@ describe("isSecretFieldName — superset", () => {
       "max_tokens_to_sample",
       "token_count_by_model",
       "tokenizer_config",
-      "range_token",
       "primary_key",   // database vocabulary — `key` needs a credential qualifier
       "foreign_key",
       "keyboard_layout",

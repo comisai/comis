@@ -496,9 +496,8 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
    * Close a BACKGROUNDED tool's activity on its real terminal event.
    *
    * The hand-off left the card `running` (see onToolExecuted); this is the
-   * matching close. Correlation is the promote-time capture on the event —
-   * a pre-upgrade task record has none, in which case there is no card to
-   * close (the old hand-off path already closed it) and we do nothing.
+   * matching close. Correlation is the promote-time capture on the event;
+   * without it there is no activity card that can be closed safely.
    * A `dispatchRedelivery` re-emit is a dispatch mechanism, not a second
    * outcome — never re-close on it.
    */
@@ -524,7 +523,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       semanticPhase: failed ? "error" : semanticPhase,
       toolName: p.toolName,
       durationMs: p.durationMs,
-      ...(failed ? { errorKind: "dependency" as const } : {}),
+      ...(failed ? { errorKind: (p as EventMap["background_task:failed"]).errorKind } : {}),
       defaultLabel,
     });
   }

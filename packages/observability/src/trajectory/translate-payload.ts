@@ -357,7 +357,12 @@ export function translatePayload(
     case "background_task:completed":
       return { taskId: payload.taskId, toolName: payload.toolName, durationMs: payload.durationMs };
     case "background_task:failed":
-      return { taskId: payload.taskId, toolName: payload.toolName, durationMs: payload.durationMs };
+      return {
+        taskId: payload.taskId,
+        toolName: payload.toolName,
+        durationMs: payload.durationMs,
+        errorKind: payload.errorKind,
+      };
     case "background_task:notified":
       // The fallback-notice decision — taskId + tool NAME + the notified bool +
       // closed-union reason ONLY. agentId/sessionKey/traceId/timestamp are
@@ -775,6 +780,12 @@ export function translatePayload(
           : {}),
         ...(payload.freshTailStepsConfigured !== undefined
           ? { freshTailStepsConfigured: payload.freshTailStepsConfigured }
+          : {}),
+        ...(payload.originatingRequestRetained !== undefined
+          ? { originatingRequestRetained: payload.originatingRequestRetained }
+          : {}),
+        ...(payload.freshTailTrimmedCount !== undefined
+          ? { freshTailTrimmedCount: payload.freshTailTrimmedCount }
           : {}),
         budgetedHistoryTokens: payload.budgetedHistoryTokens,
         keptCount: payload.keptCount,

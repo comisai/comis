@@ -683,6 +683,7 @@ describe("createBackgroundCompletionRunner", () => {
       taskId: task.id,
       toolName: task.toolName,
       error: task.error!,
+      errorKind: "dependency",
       durationMs: 1,
       origin: task.origin,
       timestamp: 3,
@@ -716,7 +717,7 @@ describe("createBackgroundCompletionRunner", () => {
     const runner = build();
     eventBus.emit("background_task:failed", {
       agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
-      error: "boom", durationMs: 1, origin: task.origin, timestamp: 3,
+      error: "boom", errorKind: "dependency", durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
@@ -826,7 +827,7 @@ describe("createBackgroundCompletionRunner", () => {
     const runner = build();
     eventBus.emit("background_task:failed", {
       agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
-      error: task.error!, durationMs: 1, origin: task.origin, timestamp: 3,
+      error: task.error!, errorKind: "internal", durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));

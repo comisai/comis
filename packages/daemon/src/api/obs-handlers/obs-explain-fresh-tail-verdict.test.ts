@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import type { IncidentSignals } from "@comis/core";
-import { freshTailClampedVerdict } from "./obs-explain-fresh-tail-verdict.js";
+import { freshTailOriginLostVerdict } from "./obs-explain-fresh-tail-verdict.js";
 
-/** The live budget shape from comis-moshe 2026-07-26, seq 293 (the false apology). */
 function signals(over: Record<string, unknown> = {}): IncidentSignals {
   return {
     contextBudget: {
@@ -19,46 +18,55 @@ function signals(over: Record<string, unknown> = {}): IncidentSignals {
       verdict: "fits",
       freshTailSteps: 6,
       freshTailStepsConfigured: 8,
+      originatingRequestRetained: false,
+      freshTailTrimmedCount: 3,
       ...over,
     },
   } as unknown as IncidentSignals;
 }
 
-describe("freshTailClampedVerdict", () => {
-  it("fires when the effective step bound is below the configured freshTailTurns", () => {
-    const v = freshTailClampedVerdict(signals());
+describe("freshTailOriginLostVerdict", () => {
+  it("fires when the budget record proves the originating request was lost", () => {
+    const v = freshTailOriginLostVerdict(signals());
     expect(v).not.toBeNull();
-    expect(v!.code).toBe("fresh_tail_clamped");
+    expect(v!.code).toBe("fresh_tail_origin_lost");
   });
 
   it("names BOTH numbers and the knob (so the operator does not have to grep DEBUG)", () => {
-    const v = freshTailClampedVerdict(signals())!;
+    const v = freshTailOriginLostVerdict(signals())!;
     expect(v.detail).toContain("contextEngine.freshTailTurns");
     expect(v.detail).toContain("6");
     expect(v.detail).toContain("8");
   });
 
-  it("states that the token budget was NOT the constraint (the 'fits' trap)", () => {
-    const v = freshTailClampedVerdict(signals())!;
+  it("reports actual trim evidence and window use", () => {
+    const v = freshTailOriginLostVerdict(signals())!;
     // 87,740 / 1,000,000 = 9% — the window was nearly empty while the request slid out.
     expect(v.detail).toMatch(/9% of the window/);
-    expect(v.detail).toMatch(/NOT the constraint/i);
+    expect(v.detail).toMatch(/3 messages were trimmed/i);
   });
 
-  it("stays silent when the configured value is honored", () => {
-    expect(freshTailClampedVerdict(signals({ freshTailSteps: 8 }))).toBeNull();
-    expect(freshTailClampedVerdict(signals({ freshTailSteps: 12 }))).toBeNull();
+  it("stays silent when a clamp occurred but the request was retained", () => {
+    expect(freshTailOriginLostVerdict(signals({ originatingRequestRetained: true }))).toBeNull();
   });
 
-  it("stays silent on a trajectory that predates the signal (both fields absent)", () => {
+  it("fires on actual loss even when no clamp occurred", () => {
+    expect(freshTailOriginLostVerdict(signals({ freshTailSteps: 8 }))).not.toBeNull();
+  });
+
+  it("stays silent when direct origin-retention evidence is absent", () => {
     expect(
-      freshTailClampedVerdict(
-        signals({ freshTailSteps: undefined, freshTailStepsConfigured: undefined }),
+      freshTailOriginLostVerdict(
+        signals({
+          freshTailSteps: undefined,
+          freshTailStepsConfigured: undefined,
+          originatingRequestRetained: undefined,
+        }),
       ),
     ).toBeNull();
   });
 
   it("stays silent when there is no budget evidence at all", () => {
-    expect(freshTailClampedVerdict({} as unknown as IncidentSignals)).toBeNull();
+    expect(freshTailOriginLostVerdict({} as unknown as IncidentSignals)).toBeNull();
   });
 });

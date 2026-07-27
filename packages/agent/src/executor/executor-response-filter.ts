@@ -341,12 +341,24 @@ function extractVisibleText(content: any[]): string | undefined {
  */
 function deliveredUserFacingText(messages: readonly any[], lowerBound: number): boolean {
   const DELIVERING_ACTIONS = new Set(["send", "reply"]);
+  const successfulToolCallIds = new Set<string>();
+  for (let i = lowerBound; i < messages.length; i++) {
+    const msg = messages[i]; // eslint-disable-line security/detect-object-injection
+    if (
+      msg?.role === "toolResult"
+      && typeof msg.toolCallId === "string"
+      && msg.isError === false
+    ) {
+      successfulToolCallIds.add(msg.toolCallId);
+    }
+  }
   for (let i = lowerBound; i < messages.length; i++) {
     const msg = messages[i]; // eslint-disable-line security/detect-object-injection
     if (msg?.role !== "assistant" || !Array.isArray(msg.content)) continue;
     for (const block of msg.content) {
       if (block?.type !== "toolCall" && block?.type !== "tool_use") continue;
       if (block?.name !== "message") continue;
+      if (typeof block.id !== "string" || !successfulToolCallIds.has(block.id)) continue;
       const args: Record<string, unknown> | undefined =
         (block?.input && typeof block.input === "object" ? block.input : undefined)
         ?? (block?.arguments && typeof block.arguments === "object" ? block.arguments : undefined);

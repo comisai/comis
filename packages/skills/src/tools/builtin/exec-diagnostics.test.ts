@@ -421,13 +421,12 @@ describe("matchExternallyManagedEnv (PEP 668)", () => {
     note: If you believe this is a mistake, please contact your Python installation provider.
     hint: See PEP 668 for the detailed specification.`;
 
-  it("surfaces the venv + --break-system-packages options at the head of stderr", () => {
+  it("surfaces a workspace virtualenv without host-package bypass guidance", () => {
     const hint = matchExecRecoveryHint({ stderr: PEP668, exitCode: 1, cwd: "/w" });
     expect(hint).not.toBeNull();
     expect(hint).toContain("PEP 668");
-    expect(hint).toContain("--break-system-packages");
+    expect(hint).not.toContain("--break-system-packages");
     expect(hint).toContain("venv");
-    // …and forbids the blind identical retry that wasted live round-trips.
     expect(hint).toMatch(/Do not retry the identical command/);
   });
 

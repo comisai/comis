@@ -1411,5 +1411,35 @@ describe("gated env_set survives its own confirmation (the approval/redaction de
       action: "env_set" as "read", env_key: "WRONG_KEY", _confirmed: true, pending_action_id: pendingId,
     } as any);
     expect((wrong.details as Record<string, unknown>).error).toBe("pending_action_key_mismatch");
+
+    const correct = await tool.execute("call-p10", {
+      action: "env_set" as "read", env_key: "RIGHT_KEY", _confirmed: true, pending_action_id: pendingId,
+    } as any);
+    expect((correct.details as Record<string, unknown>).set).toBe(true);
+  });
+
+  it("retains the pending action when env.set fails transiently", async () => {
+    let attempts = 0;
+    const rpcCall = vi.fn(async (method: string) => {
+      if (method === "gateway.status") return statusOk();
+      if (method === "env.set") {
+        attempts++;
+        if (attempts === 1) throw new Error("temporary store failure");
+        return { set: true };
+      }
+      return {};
+    });
+    const tool = createGatewayTool(rpcCall, mockLogger);
+    const gated = await tool.execute("call-p11", {
+      action: "env_set" as "read", env_key: "RETRY_KEY", env_value: "secret-value",
+    } as any);
+    const pendingId = (gated.details as Record<string, unknown>).pending_action_id as string;
+    const confirm = {
+      action: "env_set" as "read", env_key: "RETRY_KEY", _confirmed: true, pending_action_id: pendingId,
+    } as any;
+
+    await expect(tool.execute("call-p12", confirm)).rejects.toThrow("temporary store failure");
+    const retry = await tool.execute("call-p13", confirm);
+    expect((retry.details as Record<string, unknown>).set).toBe(true);
   });
 });

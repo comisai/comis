@@ -59,7 +59,7 @@ describe("the daemon boots when proactive schedulers cannot be armed", () => {
     // Any other missing dependency must still abort — a composition-root
     // regression is NOT something to boot through.
     const degrade = fs.readFileSync(path.join(repoRoot, "packages/daemon/src/wiring/proactive-degrade.ts"), "utf8");
-    expect(degrade).toMatch(/isAutonomyDisabledProactiveMiss\(proactive\.error\)[\s\S]{0,120}throw new Error/);
+    expect(degrade).toMatch(/isAutonomyDisabledProactiveMiss\(proactive\.error, capEndpointUnavailableReason\)[\s\S]{0,300}throw new Error/);
   });
 
   it("logs an ERROR naming what is off and the knob that turns it back on", () => {
@@ -72,7 +72,7 @@ describe("the daemon boots when proactive schedulers cannot be armed", () => {
     // …and warns about the sub-key trap that makes this reachable by accident.
     expect(degradeSrc).toMatch(/autonomy\.durability/);
     // the daemon must actually EMIT it
-    expect(daemonSrc).toContain("proactiveNotArmedLogFields()");
+    expect(daemonSrc).toContain("proactiveNotArmedLogFields(capEndpointUnavailableReason)");
   });
 
   it("treats the proactive surface as optional downstream (no undefined deref)", () => {

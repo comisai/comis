@@ -712,10 +712,9 @@ export async function executeAndDeliver(
     // cannot reclassify an already-delivered turn or trigger inbound fallback.
     if (coordinatorExecutionOutcome) {
       // A resource abort (reason set) renders as the truthful stop even when
-      // partial text delivered. An UNATTRIBUTED lifecycle failure whose final
-      // answer WAS fully delivered gets the receipt attached, so the
-      // coordinator can reclassify to success_with_recovered_failures instead
-      // of pinning a failure marker above a delivered answer (proven live).
+      // partial text delivered. An unattributed lifecycle failure whose final
+      // answer was fully delivered gets the receipt attached; the coordinator
+      // reclassifies only when the activity timeline also proves recovery.
       await finalizeCoordinator(
         withDeliveredEvidence(
           coordinatorExecutionOutcome,

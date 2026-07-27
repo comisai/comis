@@ -6,6 +6,7 @@
 
 import { ok, err } from "@comis/shared";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { describe, it, expect, vi } from "vitest";
 import { runWithContext } from "@comis/core";
 import type { McpToolDefinition, McpClientManager } from "../integrations/mcp-client/index.js";
@@ -173,10 +174,15 @@ describe("jsonSchemaToTypeBox", () => {
     expect((result as any).type).toBe("object");
   });
 
-  it("falls back to Any for unknown types", () => {
+  it("converts null without widening it to Any", () => {
     const result = jsonSchemaToTypeBox({ type: "null" });
-    // typebox 1.x Any produces an empty schema {}
-    expect((result as any).type).toBeUndefined();
+    expect((result as any).type).toBe("null");
+  });
+
+  it("converts JSON Schema type arrays into typed unions", () => {
+    const result = jsonSchemaToTypeBox({ type: ["string", "null"] }) as Record<string, unknown>;
+    expect(JSON.stringify(result)).toContain('"type":"string"');
+    expect(JSON.stringify(result)).toContain('"type":"null"');
   });
 
   it("falls back to Any for missing type", () => {
@@ -913,16 +919,6 @@ describe("mcpToolsToAgentTools - wrapExternalContent integration", () => {
 // Composed schemas
 // ---------------------------------------------------------------------------
 
-/**
- * anyOf / oneOf / allOf collapsed to Type.Any(), which erases the type entirely:
- * the model is told nothing about the shape, and local validation accepts any
- * value — so a wrong type travels all the way to the MCP server and comes back
- * as an opaque -32602. That is the same silent-information-loss class as the
- * stripped numeric bounds and enums above.
- *
- * Observed live: a model passed an object-typed parameter as a string, local
- * validation waved it through, and the server rejected it twice.
- */
 describe("jsonSchemaToTypeBox preserves composed schemas", () => {
   it("converts anyOf into a union that still rejects a wrong type", () => {
     const schema = jsonSchemaToTypeBox({
@@ -930,13 +926,25 @@ describe("jsonSchemaToTypeBox preserves composed schemas", () => {
     });
     // A union, not an untyped Any — Any has no discriminating keywords at all.
     expect(JSON.stringify(schema)).toMatch(/anyOf|oneOf/);
+    expect(JSON.stringify(schema)).toContain('"type":"null"');
+    expect(Value.Check(schema, null)).toBe(true);
+    expect(Value.Check(schema, { a: "ok" })).toBe(true);
+    expect(Value.Check(schema, 42)).toBe(false);
   });
 
-  it("converts oneOf into a union", () => {
+  it("preserves oneOf exactly and rejects overlapping matches", () => {
     const schema = jsonSchemaToTypeBox({
-      oneOf: [{ type: "string" }, { type: "number" }],
+      oneOf: [
+        { type: "number", minimum: 0 },
+        { type: "number", maximum: 10 },
+      ],
     });
-    expect(JSON.stringify(schema)).toMatch(/anyOf|oneOf/);
+    const schemaRecord = schema as Record<string, unknown>;
+    expect(schemaRecord.oneOf).toBeDefined();
+    expect(schemaRecord.anyOf).toBeUndefined();
+    expect(Value.Check(schema, -1)).toBe(true);
+    expect(Value.Check(schema, 20)).toBe(true);
+    expect(Value.Check(schema, 5)).toBe(false);
   });
 
   it("keeps the object branch typed inside anyOf", () => {

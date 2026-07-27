@@ -216,9 +216,10 @@ function roleOf(m: AgentMessage): string | undefined {
  *
  * Operates on the ALREADY per-message-bounded fresh tail (call AFTER
  * boundFreshTailMessages) so a single oversized message the per-message guard shrank
- * to fit is counted at its bounded size, NOT dropped. ALWAYS keeps the LAST step (the current
- * live turn ships even when it alone exceeds the residual — the pre-flight then degrades
- * it honestly as oversized_input, never silently). A STEP is a leading non-`toolResult`
+ * to fit is counted at its bounded size, not dropped. It always keeps the protected
+ * originating-request segment and the newest segment; when those alone exceed the
+ * residual, the pre-flight reports exhaustion rather than dispatching without the request.
+ * A STEP is a leading non-`toolResult`
  * message plus its immediately-following `toolResult`s (mirrors
  * lcd-budget-eviction.groupIntoSteps / freshTailBoundaryIndex) so a tool_use/tool_result
  * pair is never split. Pure: reads the input, returns a NEW array (or the same ref when
@@ -226,11 +227,13 @@ function roleOf(m: AgentMessage): string | undefined {
  *
  * @param freshTail - the per-message-bounded fresh-tail messages ({@link boundFreshTailMessages} output).
  * @param residualTokens - the room the protected tail may occupy (≈ window − S − floorHeadroom − preamble).
- * @returns the newest contiguous fresh-tail steps that fit (≥ the last step).
+ * @param protectedMessageIndex - message whose segment must remain in the bounded tail.
+ * @returns the protected segment plus the newest suffix that fits.
  */
 export function boundFreshTailTotalToResidual(
   freshTail: AgentMessage[],
   residualTokens: number,
+  protectedMessageIndex?: number,
 ): AgentMessage[] {
   if (freshTail.length === 0) return freshTail;
   // Step START indices within the fresh tail (a step begins at a non-toolResult msg).
@@ -253,6 +256,33 @@ export function boundFreshTailTotalToResidual(
     }
     return sum;
   };
+  const protectedStep = protectedMessageIndex === undefined
+    ? -1
+    : stepStarts.findIndex((start, index) => {
+        const end = stepStarts[index + 1] ?? freshTail.length;
+        return protectedMessageIndex >= start && protectedMessageIndex < end;
+      });
+  if (protectedStep >= 0 && tokensFrom(0) > residualTokens) {
+    const protectedStart = stepStarts[protectedStep]!;
+    const protectedEnd = stepStarts[protectedStep + 1] ?? freshTail.length;
+    const protectedSlice = freshTail.slice(protectedStart, protectedEnd);
+    const protectedTokens = protectedSlice.reduce(
+      (sum, message) => sum + factoredMessageTokens(message),
+      0,
+    );
+    if (protectedStep === stepStarts.length - 1) return protectedSlice;
+    let suffixStep = protectedStep + 1;
+    while (
+      suffixStep < stepStarts.length - 1
+      && protectedTokens + tokensFrom(stepStarts[suffixStep]!) > residualTokens
+    ) {
+      suffixStep++;
+    }
+    return [
+      ...protectedSlice,
+      ...freshTail.slice(stepStarts[suffixStep]!),
+    ];
+  }
   // Advance past the oldest steps while the remaining tail exceeds the residual; NEVER
   // drop the last step (stepStarts.at(-1) is the current turn — always kept).
   let s = 0;
@@ -294,6 +324,7 @@ export function boundProtectedFreshTail(
     logger: ComisLogger;
     agentId: string | undefined;
     sessionKey: string | undefined;
+    protectedMessageIndex?: number;
   },
 ): AgentMessage[] {
   if (!isFinite(ctx.effectiveWindow) || freshTail.length <= 1) return freshTail;
@@ -303,7 +334,11 @@ export function boundProtectedFreshTail(
     ctx.effectiveWindow - ctx.systemTokens - floorHeadroom - ctx.freshTailPreambleTokens,
   );
   const before = freshTail.reduce((s, m) => s + factoredMessageTokens(m), 0);
-  const bounded = boundFreshTailTotalToResidual(freshTail, residual);
+  const bounded = boundFreshTailTotalToResidual(
+    freshTail,
+    residual,
+    ctx.protectedMessageIndex,
+  );
   const after = bounded.reduce((s, m) => s + factoredMessageTokens(m), 0);
 
   // INSTRUMENTATION: log the EXACT trim mechanics on EVERY call so a live
@@ -358,6 +393,10 @@ export function boundProtectedFreshTail(
     freshTailFactoredBefore: before,
     freshTailFactoredAfter: after,     // the bounded total — should be ≤ residual when trimmable
     fitsResidual,
+    protectedMessageRetained:
+      ctx.protectedMessageIndex === undefined
+        ? undefined
+        : bounded.includes(freshTail[ctx.protectedMessageIndex]!),
     agentId: ctx.agentId,
     sessionKey: ctx.sessionKey,
   };

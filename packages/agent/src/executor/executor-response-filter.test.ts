@@ -301,7 +301,7 @@ describe("recoverEmptyFinalResponse — tool-call synthesis", () => {
           stopReason: "toolUse",
           timestamp: 2,
         },
-        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], timestamp: 3 },
+        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], isError: false, timestamp: 3 },
         { role: "toolResult", toolCallId: "tc2", content: [{ type: "text", text: "OK" }], timestamp: 4 },
         { role: "toolResult", toolCallId: "tc3", content: [{ type: "text", text: "OK" }], timestamp: 5 },
         { role: "assistant", content: [], stopReason: "stop", timestamp: 6 },
@@ -331,7 +331,7 @@ describe("recoverEmptyFinalResponse — tool-call synthesis", () => {
           stopReason: "toolUse",
           timestamp: 2,
         },
-        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], timestamp: 3 },
+        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], isError: false, timestamp: 3 },
         { role: "toolResult", toolCallId: "tc2", content: [{ type: "text", text: "OK" }], timestamp: 4 },
         { role: "toolResult", toolCallId: "tc3", content: [{ type: "text", text: "OK" }], timestamp: 5 },
         { role: "assistant", content: [], stopReason: "stop", timestamp: 6 },
@@ -391,7 +391,7 @@ describe("recoverEmptyFinalResponse — tool-call synthesis", () => {
           stopReason: "toolUse",
           timestamp: 2,
         },
-        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], timestamp: 3 },
+        { role: "toolResult", toolCallId: "tc1", isError: false, content: [{ type: "text", text: "OK" }], timestamp: 3 },
         { role: "toolResult", toolCallId: "tc2", content: [{ type: "text", text: "OK" }], timestamp: 4 },
         { role: "toolResult", toolCallId: "tc3", content: [{ type: "text", text: "OK" }], timestamp: 5 },
         { role: "assistant", content: [], stopReason: "stop", timestamp: 6 },
@@ -490,7 +490,7 @@ describe("recoverEmptyFinalResponse — tool-call synthesis", () => {
           stopReason: "toolUse",
           timestamp: 2,
         },
-        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], timestamp: 3 },
+        { role: "toolResult", toolCallId: "tc1", isError: false, content: [{ type: "text", text: "OK" }], timestamp: 3 },
         { role: "toolResult", toolCallId: "tc2", content: [{ type: "text", text: "OK" }], timestamp: 4 },
         { role: "assistant", content: [], stopReason: "stop", timestamp: 5 },
       ],
@@ -907,7 +907,13 @@ describe("empty-turn recovery does not narrate an already-delivered reply", () =
           stopReason: "toolUse",
           timestamp: 2,
         },
-        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], timestamp: 3 },
+        {
+          role: "toolResult",
+          toolCallId: "tc1",
+          isError: false,
+          content: [{ type: "text", text: "OK" }],
+          timestamp: 3,
+        },
         { role: "assistant", content: [], stopReason: "stop", timestamp: 4 },
       ] as never,
       logger: mockLogger(),
@@ -923,6 +929,24 @@ describe("empty-turn recovery does not narrate an already-delivered reply", () =
 
   it("suppresses on a reply action too", () => {
     expect(recover({ action: "reply", channel_type: "telegram", channel_id: "1", text: "answer", message_id: "9" })).toBe("");
+  });
+
+  it("still recovers when the message delivery tool failed", () => {
+    const out = recoverEmptyFinalResponse({
+      extractedResponse: "",
+      textEmitted: true,
+      messages: [
+        { role: "user", content: "send it" },
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "tc-failed", name: "message", arguments: { action: "send", text: "answer" } }],
+        },
+        { role: "toolResult", toolCallId: "tc-failed", isError: true, content: [{ type: "text", text: "delivery failed" }] },
+      ],
+      logger: mockLogger(),
+      userMessageIndex: 0,
+    });
+    expect(out).toContain("tool-call summary recovered");
   });
 
   it("STILL synthesizes when the batch delivered NO words (a react is not a reply)", () => {

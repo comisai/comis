@@ -12,8 +12,8 @@
  *      injected `TimerPort` (`handle.cancel()` for cancellation — never a raw
  *      timer global),
  *   3. on `finalize(outcome)` enforces the delete gate:
- *      • any observed `ActivityEvent{status:"failed"}` on a DELIVERED success
- *        reclassifies the outcome to `success_with_recovered_failures` — the
+ *      • a delivered success with observed failures reclassifies the outcome
+ *        to `success_with_recovered_failures` — the
  *        renderer's success-shaped cleanup runs (a recovered turn never keeps
  *        a "❌ {errorKind}" pill above its delivered answer) and the failed
  *        events ride the outcome + the `activity:turn_finalized` event as
@@ -575,16 +575,24 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
       }
     }
 
-    // (1a2) A failure whose answer WAS fully delivered, with the failure
-    // attributable to observed events, is a SUCCESS WITH RECOVERED FAILURES:
+    // (1a2) A failure whose answer was fully delivered, with every observed
+    // failure followed by a successful completion of the same tool, is a
+    // SUCCESS WITH RECOVERED FAILURES:
     // the user's chat shows the answer (no failure pill), while the failed
     // events ride the outcome + `activity:turn_finalized` as evidence. This is
-    // NOT "delivery succeeded ⇒ success" — with no observed failed events the
-    // failure evidence would be erased, so that case keeps the truthful
-    // failure (and gets the named reason below).
+    // Delivery without matching recovery evidence keeps the failure.
     if (effective.kind === "failure" && effective.delivery !== undefined) {
       const failedEvents = events.filter((e) => e.status === "failed");
-      if (isNonEmptyEvents(failedEvents)) {
+      const everyFailureRecovered = failedEvents.length > 0 && failedEvents.every((failed) => {
+        const failureIndex = events.indexOf(failed);
+        return events.slice(failureIndex + 1).some((later) =>
+          later.status === "completed"
+          && later.kind === failed.kind
+          && later.toolName !== undefined
+          && later.toolName === failed.toolName,
+        );
+      });
+      if (everyFailureRecovered && isNonEmptyEvents(failedEvents)) {
         effective = {
           kind: "success_with_recovered_failures",
           trivial: false,
