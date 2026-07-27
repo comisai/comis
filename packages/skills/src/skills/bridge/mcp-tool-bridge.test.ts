@@ -45,6 +45,76 @@ function makeCallTool(): McpClientManager["callTool"] {
 // jsonSchemaToTypeBox
 // ---------------------------------------------------------------------------
 
+// The converted schema IS the model-facing `parameters` for every MCP tool
+// (mcp-tool-bridge.ts: `parameters: typeboxSchema`), so a keyword dropped here
+// is a constraint the model never sees. Live: four of eight tool failures in
+// one turn were MCP `-32602` rejections — `page_size` below a minimum of 10,
+// `top_n` above a maximum of 100, an out-of-range enum — each a constraint the
+// server declared and the conversion discarded. The model was guessing at
+// bounds that were published all along, and each guess cost a turn step and
+// painted a failure at the user.
+describe("jsonSchemaToTypeBox preserves the constraints the model needs", () => {
+  it("keeps numeric bounds", () => {
+    const s = jsonSchemaToTypeBox({ type: "number", minimum: 10, maximum: 100 }) as Record<string, unknown>;
+    expect(s.minimum).toBe(10);
+    expect(s.maximum).toBe(100);
+  });
+
+  it("keeps integer bounds and exclusive variants", () => {
+    const s = jsonSchemaToTypeBox({
+      type: "integer", minimum: 1, exclusiveMaximum: 50, multipleOf: 5,
+    }) as Record<string, unknown>;
+    expect(s.minimum).toBe(1);
+    expect(s.exclusiveMaximum).toBe(50);
+    expect(s.multipleOf).toBe(5);
+  });
+
+  it("keeps string enum, pattern, format and length bounds", () => {
+    const s = jsonSchemaToTypeBox({
+      type: "string", enum: ["pto", "scan"], pattern: "^[a-z]+$", format: "date", minLength: 2, maxLength: 8,
+    }) as Record<string, unknown>;
+    expect(s.enum).toEqual(["pto", "scan"]);
+    expect(s.pattern).toBe("^[a-z]+$");
+    expect(s.format).toBe("date");
+    expect(s.minLength).toBe(2);
+    expect(s.maxLength).toBe(8);
+  });
+
+  it("keeps description and default so the model reads the tool's own guidance", () => {
+    const s = jsonSchemaToTypeBox({
+      type: "number", description: "rows per page", default: 25,
+    }) as Record<string, unknown>;
+    expect(s.description).toBe("rows per page");
+    expect(s.default).toBe(25);
+  });
+
+  it("keeps array bounds and item constraints", () => {
+    const s = jsonSchemaToTypeBox({
+      type: "array", minItems: 1, maxItems: 5, items: { type: "string", enum: ["a", "b"] },
+    }) as Record<string, unknown>;
+    expect(s.minItems).toBe(1);
+    expect(s.maxItems).toBe(5);
+    expect((s.items as Record<string, unknown>).enum).toEqual(["a", "b"]);
+  });
+
+  it("keeps nested property constraints through an object", () => {
+    const s = jsonSchemaToTypeBox({
+      type: "object",
+      properties: { page_size: { type: "number", minimum: 10 } },
+      required: ["page_size"],
+    }) as Record<string, unknown>;
+    const props = s.properties as Record<string, Record<string, unknown>>;
+    expect(props.page_size.minimum).toBe(10);
+  });
+
+  it("keeps an enum that declares no type at all", () => {
+    // A bare `{enum:[...]}` has no `type`, so it fell to the Type.Any()
+    // fallback and the allowed values vanished.
+    const s = jsonSchemaToTypeBox({ enum: ["DrivePermissionGroup", "VehicleGroup"] }) as Record<string, unknown>;
+    expect(s.enum).toEqual(["DrivePermissionGroup", "VehicleGroup"]);
+  });
+});
+
 describe("jsonSchemaToTypeBox", () => {
   it("converts string type", () => {
     const result = jsonSchemaToTypeBox({ type: "string" });

@@ -209,10 +209,20 @@ export async function callTool(
         undefined,
         {
           timeout: state.options.callToolTimeoutMs,
+          // `maxTotalTimeout` rides along with the progress reset, ALWAYS.
+          // `resetTimeoutOnProgress` restarts `timeout` on every progress
+          // notification, and the SDK applies no ceiling of its own ("If not
+          // specified, there is no maximum total timeout") — so without this the
+          // configured deadline silently degrades into a per-progress-GAP
+          // timeout, and a chatty server can hold one call open for the whole
+          // turn. That contradicts the key's documented meaning and the expiry
+          // hint's promise that an identical retry "re-expires the same
+          // deadline". Live: a 120000ms cap with 139478ms and 110004ms calls.
           ...(requestTraceId
             ? {
                 onprogress: () => {},
                 resetTimeoutOnProgress: true,
+                maxTotalTimeout: state.options.callToolTimeoutMs,
               }
             : {}),
         },

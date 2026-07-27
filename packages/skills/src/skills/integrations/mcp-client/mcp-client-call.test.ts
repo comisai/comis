@@ -290,7 +290,32 @@ describe("request correlation", () => {
         timeout: 5000,
         onprogress: expect.any(Function),
         resetTimeoutOnProgress: true,
+        maxTotalTimeout: 5000,
       },
     );
+  });
+
+  // `resetTimeoutOnProgress` restarts the timeout on EVERY progress
+  // notification, and the SDK applies no total ceiling unless `maxTotalTimeout`
+  // is passed ("If not specified, there is no maximum total timeout"). So a
+  // server that emits progress held a call open indefinitely while the config
+  // key, the docs, and the expiry hint all called it the call deadline. Live:
+  // a 120000ms cap with observed call durations of 139478ms and 110004ms, and
+  // single calls free to consume the whole turn budget.
+  it("bounds a progress-emitting call with an absolute ceiling, not just a per-gap timeout", async () => {
+    const serverName = "inventory";
+    const state = makeConnectedState(serverName, () =>
+      Promise.resolve({ content: [{ type: "text", text: "{}" }] }),
+    );
+    const deps = { logger: makeLogger() } as unknown as McpClientManagerDeps;
+
+    await runWithContext(makeContext(), () =>
+      callTool(state, deps, `mcp:${serverName}/inventory_items_list`, {}),
+    );
+
+    const opts = (state.connections.get(serverName)?.client.callTool as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![2] as Record<string, unknown>;
+    expect(opts.resetTimeoutOnProgress).toBe(true);
+    expect(opts.maxTotalTimeout).toBe(state.options.callToolTimeoutMs);
   });
 });

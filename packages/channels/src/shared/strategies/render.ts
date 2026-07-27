@@ -137,6 +137,18 @@ export function eventLabel(event: ActivityEvent, markers?: ActivityStatusMarkers
  * here. LinePerEvent and DigestOnly do NOT call this function — they use
  * `eventLabel(event)` per-event and own their own elapsed display.
  */
+/**
+ * True while this event still represents work in progress.
+ *
+ * Both fields are checked because they answer slightly different questions and
+ * either one alone leaves a hole: `phase === "end"` marks the event that closes
+ * a call, while `status` names the outcome. A terminal status on a
+ * non-"end" phase (a skipped step) is finished too.
+ */
+function isInFlight(event: ActivityEvent): boolean {
+  return event.phase !== "end" && event.status === "running";
+}
+
 export function renderFrameText(
   frame: ActivityRenderFrame,
   markers?: ActivityStatusMarkers,
@@ -204,7 +216,19 @@ export function renderFrameText(
   // so `elapsedMs === 0` legitimately produces `(running 0 s)` on the first
   // apply()) AND `frame.planSnapshot === undefined` (the plan header above
   // already conveys progress — no double-display).
-  if (frame.planSnapshot === undefined && elapsedMs !== undefined) {
+  //
+  // Gated on something ACTUALLY being in flight. `elapsedMs !== undefined`
+  // alone made the suffix a wall-clock readout that contradicted the very
+  // lines above it: a frame whose only event was a FAILED tool rendered
+  // "❌ … (running 0 s)" — an outcome and a running claim together — and a
+  // finished turn left "(running 475 s)" ticking after the work was over. An
+  // event whose phase is "end" (or whose status is terminal) is done; when
+  // every visible event is done, nothing is running and the suffix is a lie.
+  // An EMPTY frame stays in-flight: the strategies paint an opening
+  // placeholder before the first event lands.
+  const somethingInFlight = frame.visibleEvents.length === 0
+    || frame.visibleEvents.some(isInFlight);
+  if (frame.planSnapshot === undefined && elapsedMs !== undefined && somethingInFlight) {
     const seconds = Math.floor(elapsedMs / 1000);
     lines.push(`(running ${seconds} s)`);
   }
