@@ -290,9 +290,20 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
         "provider timeout: " +
         failure.toolName +
         " exceeded its deadline (errorKind=timeout)",
+      // Narrowing FIRST. "Raise the per-call timeout" led this list, which is
+      // the one action that makes a deadline-bound turn worse: the turn budget
+      // is fixed, so a longer per-call deadline just buys a longer burn before
+      // the same wall-clock abort. Narrowing is what actually completes. The
+      // deadline is still worth naming — but by its exact key, and with the
+      // fact that an agent cannot patch it (immutable config path), so the
+      // reader knows the step needs an operator and a daemon restart.
       suggestedNextSteps: [
-        "raise the per-call timeout or reduce the request size for " + failure.toolName,
+        "narrow the request for " + failure.toolName
+          + " (a smaller page / date window / fewer entities) so it completes inside the deadline",
         "check provider latency / rate-limit headroom",
+        "if it genuinely needs longer, an operator can raise"
+          + " `integrations.mcp.callToolTimeoutMs` (MCP tools) in the config file"
+          + " and restart the daemon — it is an immutable path an agent cannot patch",
         "obs.explain depth=full",
       ],
     };

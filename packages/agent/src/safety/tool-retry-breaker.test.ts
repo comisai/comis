@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import { wrapExternalContent } from "@comis/core";
-import { createToolRetryBreaker, extractErrorTag, buildBlockReason } from "./tool-retry-breaker.js";
+import { createToolRetryBreaker, extractErrorTag, buildBlockReason,
+  isBreakerBlockMessage,
+} from "./tool-retry-breaker.js";
 import type { ToolRetryBreaker } from "./tool-retry-breaker.js";
 
 describe("tool retry breaker", () => {
@@ -1237,5 +1239,41 @@ describe("tool retry breaker", () => {
       const tsc = JSON.stringify({ content: [{ type: "text", text: "tsc error" }], details: { exitCode: 2 } });
       expect(breaker.recordResult(tool, { command: "tsc" }, false, tsc)).toBeUndefined();
     });
+  });
+});
+
+// A breaker BLOCK is a Comis runtime message, not a transport response. It
+// quotes the original failure verbatim ("...with the same error: \"...timed
+// out...\""), so downstream classifiers that sniff error text re-read the
+// quotation as a fresh failure of that kind. Live: a blocked MCP call was
+// classified errorKind:"timeout" and emitted `tool.timeout {timeoutMs: 3}` —
+// 3ms being how long the breaker took to say no, presented as an expired
+// deadline. The producer owns the recognizer so consumers can tell the two
+// apart before classifying.
+describe("isBreakerBlockMessage", () => {
+  it("recognizes a tool-level block that quotes a timeout", () => {
+    const reason = buildBlockReason(
+      "mcp__vendor--report", 13,
+      'MCP tool error: MCP tool "report" on server "vendor" timed out — it exceeded the call deadline of 120000ms',
+      [], "timeout", true,
+    );
+    expect(isBreakerBlockMessage(reason)).toBe(true);
+  });
+
+  it("recognizes a parameter-validation block", () => {
+    const reason = buildBlockReason("some_tool", 3, "bad args", [], "invalid_params", false);
+    expect(isBreakerBlockMessage(reason)).toBe(true);
+  });
+
+  it("does NOT match the underlying error the block quotes", () => {
+    expect(isBreakerBlockMessage(
+      'MCP tool error: MCP tool "report" on server "vendor" timed out — it exceeded the call deadline of 120000ms',
+    )).toBe(false);
+  });
+
+  it("does NOT match arbitrary tool output or an empty string", () => {
+    expect(isBreakerBlockMessage("DO NOT retry this tool.")).toBe(false);
+    expect(isBreakerBlockMessage("")).toBe(false);
+    expect(isBreakerBlockMessage(undefined)).toBe(false);
   });
 });

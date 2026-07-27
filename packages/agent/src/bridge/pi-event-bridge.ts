@@ -12,6 +12,7 @@
 
 import { shouldCompact } from "@earendil-works/pi-coding-agent";
 import { isRelayedBackgroundFailure } from "../safety/background-failure-attribution.js";
+import { isBreakerBlockMessage } from "../safety/tool-retry-breaker.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
@@ -1134,6 +1135,19 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 matchedRule = runtimeToolGuard;
                 // The runtime blocked the call before the tool or MCP transport
                 // boundary, so no external dependency was contacted.
+                transportOk = false;
+              } else if (isBreakerBlockMessage(errorText)) {
+                // The retry breaker REFUSED this call — it never ran, so there
+                // is no transport outcome to classify. The block text quotes the
+                // original failure verbatim, so letting it fall through to the
+                // MCP classifier below re-read that quotation as a fresh
+                // failure of the quoted kind: a blocked call came back
+                // errorKind:"timeout" and emitted `tool.timeout {timeoutMs: 3}`,
+                // publishing the breaker's 3ms refusal latency as an expired
+                // 120000ms deadline. "precondition" is the honest kind — a
+                // guard the call did not satisfy.
+                toolErrorKind = "precondition";
+                classifiedFailureBy = "runtime_guard";
                 transportOk = false;
               } else if (mcpServer !== undefined) {
                 const mcpKind = classifyMcpErrorType(errorText);
