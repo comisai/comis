@@ -59,8 +59,9 @@ export function classifyMcpErrorType(errorText: string | undefined): string {
 /**
  * Convert a basic JSON Schema definition to a TypeBox TSchema.
  *
- * Handles primitive types, arrays, and objects. Complex schema features
- * (oneOf, allOf, $ref, etc.) fall back to Type.Any().
+ * Handles primitive types, arrays, objects, and the composition keywords
+ * anyOf / oneOf / allOf. `$ref` still falls back to Type.Any() — resolving it
+ * needs the document root, which this function does not receive.
  *
  * This is intentionally simple -- MCP tool schemas are typically flat
  * objects with primitive properties. Complex schemas still work but
@@ -69,6 +70,22 @@ export function classifyMcpErrorType(errorText: string | undefined): string {
 export function jsonSchemaToTypeBox(schema: Record<string, unknown>): TSchema {
   const type = schema.type;
   const annotations = carriedKeywords(schema);
+
+  // Composition keywords, BEFORE the `type` checks — a composed schema often
+  // carries no top-level `type` at all, so it used to reach the Type.Any()
+  // fallback and erase the shape completely: the model was told nothing, local
+  // validation accepted any value, and a wrong type only surfaced as an opaque
+  // MCP -32602 from the server. Live: an object-typed parameter sent as a
+  // string, waved through locally, rejected twice upstream.
+  const anyOf = schema.anyOf ?? schema.oneOf;
+  if (Array.isArray(anyOf) && anyOf.length > 0) {
+    const variants = (anyOf as Array<Record<string, unknown>>).map(jsonSchemaToTypeBox);
+    return Type.Union(variants, annotations);
+  }
+  if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
+    const parts = (schema.allOf as Array<Record<string, unknown>>).map(jsonSchemaToTypeBox);
+    return Type.Intersect(parts, annotations);
+  }
 
   if (type === "string") {
     return Type.String(annotations);

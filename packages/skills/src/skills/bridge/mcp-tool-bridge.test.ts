@@ -908,3 +908,61 @@ describe("mcpToolsToAgentTools - wrapExternalContent integration", () => {
     expect(text).toMatch(/<<<END_UNTRUSTED_[a-f0-9]+>>>/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Composed schemas
+// ---------------------------------------------------------------------------
+
+/**
+ * anyOf / oneOf / allOf collapsed to Type.Any(), which erases the type entirely:
+ * the model is told nothing about the shape, and local validation accepts any
+ * value — so a wrong type travels all the way to the MCP server and comes back
+ * as an opaque -32602. That is the same silent-information-loss class as the
+ * stripped numeric bounds and enums above.
+ *
+ * Observed live: a model passed an object-typed parameter as a string, local
+ * validation waved it through, and the server rejected it twice.
+ */
+describe("jsonSchemaToTypeBox preserves composed schemas", () => {
+  it("converts anyOf into a union that still rejects a wrong type", () => {
+    const schema = jsonSchemaToTypeBox({
+      anyOf: [{ type: "object", properties: { a: { type: "string" } } }, { type: "null" }],
+    });
+    // A union, not an untyped Any — Any has no discriminating keywords at all.
+    expect(JSON.stringify(schema)).toMatch(/anyOf|oneOf/);
+  });
+
+  it("converts oneOf into a union", () => {
+    const schema = jsonSchemaToTypeBox({
+      oneOf: [{ type: "string" }, { type: "number" }],
+    });
+    expect(JSON.stringify(schema)).toMatch(/anyOf|oneOf/);
+  });
+
+  it("keeps the object branch typed inside anyOf", () => {
+    const schema = jsonSchemaToTypeBox({
+      anyOf: [{ type: "object", properties: { from_date: { type: "string" } } }],
+    });
+    expect(JSON.stringify(schema)).toContain("from_date");
+  });
+
+  it("carries a description through a composed schema", () => {
+    const schema = jsonSchemaToTypeBox({
+      description: "the second window",
+      anyOf: [{ type: "string" }, { type: "number" }],
+    });
+    expect(JSON.stringify(schema)).toContain("the second window");
+  });
+
+  it("converts allOf into an intersection", () => {
+    const schema = jsonSchemaToTypeBox({
+      allOf: [
+        { type: "object", properties: { a: { type: "string" } } },
+        { type: "object", properties: { b: { type: "number" } } },
+      ],
+    });
+    const s = JSON.stringify(schema);
+    expect(s).toContain("a");
+    expect(s).toContain("b");
+  });
+});
