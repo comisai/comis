@@ -237,12 +237,25 @@ export function buildCacheTraceWrapper(trace: CacheTrace): StreamFnWrapper {
         return typeof role === "string" ? role : "unknown";
       });
 
+      // The tool array is the SECOND component of an Anthropic cached prefix
+      // (system -> tools -> messages), so a tool added, removed, or re-described
+      // mid-session invalidates every cached block after the system prompt —
+      // exactly like a changed system prompt, and just as invisible without a
+      // fingerprint. Digesting the full definition (not just names) is what
+      // catches a schema or description edit that leaves the name list intact.
+      const tools = Array.isArray((context as { tools?: unknown }).tools)
+        ? ((context as { tools?: unknown[] }).tools as unknown[])
+        : [];
+      const toolsDigest = sha256(tools.map((t) => sha256(stableStringify(t))).join("|"));
+
       const preCallPayload: Record<string, unknown> = {
         messageCount: messages.length,
         messageRoles,
         messageFingerprints,
         messagesDigest,
         systemDigest,
+        toolCount: tools.length,
+        toolsDigest,
       };
       // The SMALL assembled-array shape descriptor (counts/flags + tool
       // id pairing). Emitted OUTSIDE the includeMessages guard so it is

@@ -382,3 +382,75 @@ describe("buildCacheTraceWrapper emits model:before stage", () => {
     expect(modelBefore!.systemDigest).toBe(streamContext!.systemDigest);
   });
 });
+
+// ---------------------------------------------------------------------------
+// toolsDigest
+// ---------------------------------------------------------------------------
+
+/**
+ * An Anthropic cached prefix is system -> tools -> messages, so a change to the
+ * tool array invalidates everything after the system block just as surely as a
+ * changed system prompt does. The trace fingerprinted system and messages but
+ * not tools, leaving one of the three prefix components invisible to the very
+ * record built to diagnose prefix collapse.
+ *
+ * Observed live: 37 calls with a single stable systemDigest, 10.8M cache-creation
+ * tokens against 4.0M reads, and no way to tell from the trace whether the tool
+ * array was moving underneath.
+ */
+describe("buildCacheTraceWrapper toolsDigest", () => {
+  function contextWithTools(tools: unknown[]): unknown {
+    return {
+      messages: [{ role: "user", content: "hello" }],
+      systemPrompt: "you are an assistant",
+      tools,
+    };
+  }
+
+  let digestSeq = 0;
+  async function digestFor(tools: unknown[]): Promise<Record<string, unknown>> {
+    // Unique per call — two variants can serialize to the same length, and a
+    // shared path would make both runs append to one file so `find` returns
+    // the first record for both.
+    const filePath = join(tmpDir, `tools-${digestSeq++}.jsonl`);
+    const trace = makeTrace({ includeMessages: false, filePath });
+    const wrap = buildCacheTraceWrapper(trace);
+    const next: StreamFn = ((..._args: unknown[]) =>
+      ({ usage: { cacheRead: 0, cacheWrite: 0 } }) as unknown as ReturnType<StreamFn>) as StreamFn;
+    wrap(next)(
+      fakeModel() as Parameters<StreamFn>[0],
+      contextWithTools(tools) as Parameters<StreamFn>[1],
+    );
+    await trace.flush();
+    return readLines(filePath).find((l) => l.stage === "stream:context")!;
+  }
+
+  it("emits a toolsDigest and a toolCount on stream:context", async () => {
+    const rec = await digestFor([{ name: "read" }, { name: "write" }]);
+    expect(rec.toolsDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(rec.toolCount).toBe(2);
+  });
+
+  it("keeps the digest stable for an unchanged tool array", async () => {
+    const a = await digestFor([{ name: "read" }, { name: "write" }]);
+    const b = await digestFor([{ name: "read" }, { name: "write" }]);
+    expect(a.toolsDigest).toBe(b.toolsDigest);
+  });
+
+  it("changes the digest when a tool is added", async () => {
+    const a = await digestFor([{ name: "read" }]);
+    const b = await digestFor([{ name: "read" }, { name: "grep" }]);
+    expect(a.toolsDigest).not.toBe(b.toolsDigest);
+  });
+
+  it("changes the digest when only a tool schema changes", async () => {
+    const a = await digestFor([{ name: "read", parameters: { a: 1 } }]);
+    const b = await digestFor([{ name: "read", parameters: { a: 2 } }]);
+    expect(a.toolsDigest).not.toBe(b.toolsDigest);
+  });
+
+  it("reports a zero toolCount when the context carries no tools", async () => {
+    const rec = await digestFor([]);
+    expect(rec.toolCount).toBe(0);
+  });
+});

@@ -152,6 +152,10 @@ export const CacheTraceEventSchema = z.object({
   messagesDigest: z.string().optional(),
   system: z.unknown().optional(),
   systemDigest: z.string().optional(),
+  // The tool array — the prefix component between system and messages. A
+  // change here invalidates every cached block after the system prompt.
+  toolCount: z.number().int().nonnegative().optional(),
+  toolsDigest: z.string().optional(),
   // Token attribution. `session:after` aggregates across the session via
   // the EventBus bridge stash; `model:after` carries the per-call snapshot
   // from the StreamFn return value's usage block.
