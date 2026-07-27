@@ -18,7 +18,8 @@ export type LocaleMessageId =
   | "output_starved"
   | "loop_detected"
   | "pipeline_timeout"
-  | "tool_failure_notice";
+  | "tool_failure_notice"
+  | "tool_failure_notice_unnamed";
 
 export type LocalePack = Readonly<Partial<Record<LocaleMessageId, string>>>;
 
@@ -49,6 +50,9 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
   tool_failure_notice:
     "\n\nNote: one of the tools I used reported an error, so part of this may be"
       + " incomplete — ",
+  tool_failure_notice_unnamed:
+    "\n\nNote: one of the tools I used reported an error, so part of this may be"
+      + " incomplete.",
   pipeline_timeout:
     "I stopped this request because it was taking too long and hit the time limit "
       + "for a single turn. Nothing was left half-applied. If it needs many lookups, "
@@ -196,6 +200,19 @@ export function selectToolFailureNotice(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "tool_failure_notice");
+}
+
+/**
+ * The tool-failure notice for the case with NO nameable culprit — the only
+ * unrecovered failure was the background poller, which relays other tools'
+ * failures and must never be blamed. The named variant ends in an em-dash
+ * awaiting a tool name; using it here left the reply ending "incomplete — ".
+ */
+export function selectToolFailureNoticeUnnamed(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "tool_failure_notice_unnamed");
 }
 
 export function selectPipelineTimeoutReply(

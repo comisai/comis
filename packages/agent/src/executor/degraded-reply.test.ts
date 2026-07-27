@@ -15,6 +15,8 @@
 import { describe, it, expect } from "vitest";
 import {
   buildOutputStarvedAnnotation,
+  buildToolFailureNotice,
+  buildToolFailureNoticeUnnamed,
   buildContextExhaustedReply,
   buildLoopDetectedReply,
   buildDegradedReply,
@@ -295,5 +297,34 @@ describe("builders consume the resolved language tag (delegate to i18n)", () => 
     expect(buildDegradedReply("loop_detected", { language: "ru", traceId: "z" })).toBe(
       selectLoopDetectedReply("ru", { traceId: "z" }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Nameless tool-failure notice
+// ---------------------------------------------------------------------------
+
+/**
+ * The named notice ends with an em-dash because the caller appends the failing
+ * tool's name verbatim. When the only unrecovered failure is the background
+ * poller — which must never be named as the culprit, since it merely relays
+ * another tool's failure — there is no name to append, and the reply ended in a
+ * dangling "incomplete — " with nothing after it.
+ *
+ * Seen live at the end of a Hebrew answer about a timed-out report tool.
+ */
+describe("buildToolFailureNoticeUnnamed", () => {
+  it("ends as a complete sentence with no dangling dash", () => {
+    const text = buildToolFailureNoticeUnnamed();
+    expect(text.trimEnd()).not.toMatch(/[—-]$/);
+    expect(text.trimEnd()).toMatch(/\.$/);
+  });
+
+  it("still separates itself from the preceding reply", () => {
+    expect(buildToolFailureNoticeUnnamed().startsWith("\n\n")).toBe(true);
+  });
+
+  it("differs from the named variant", () => {
+    expect(buildToolFailureNoticeUnnamed()).not.toBe(buildToolFailureNotice());
   });
 });

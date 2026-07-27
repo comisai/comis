@@ -121,7 +121,7 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import { BACKGROUND_POLLER_TOOL } from "../safety/background-failure-attribution.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
@@ -1410,9 +1410,14 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // No "(see session log)" pointer: the recipient is the CHAT user, who has
     // no session log to see — the operator's lens is `comis explain` (the
     // failure rides the trajectory + IncidentReport.failures already).
+    // Two variants: the named notice ends in an em-dash awaiting the tool name;
+    // the unnamed one is a complete sentence. Using the named form with no name
+    // left replies ending in a dangling "incomplete — " whenever the poller was
+    // the only unrecovered failure.
     result.response = (result.response ?? "")
-      + buildToolFailureNotice(replyLanguage, localeCatalog)
-      + (failedToolName ?? "");
+      + (failedToolName === undefined
+        ? buildToolFailureNoticeUnnamed(replyLanguage, localeCatalog)
+        : buildToolFailureNotice(replyLanguage, localeCatalog) + failedToolName);
   }
 
   // Degrade loudly — deliver an honest user-facing reply for named degraded causes.

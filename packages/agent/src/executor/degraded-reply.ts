@@ -25,6 +25,7 @@ import {
   selectLoopDetectedReply,
   selectPipelineTimeoutReply,
   selectToolFailureNotice,
+  selectToolFailureNoticeUnnamed,
   type LocaleCatalog,
 } from "./degraded-reply-i18n.js";
 
@@ -135,4 +136,16 @@ export function buildToolFailureNotice(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectToolFailureNotice(language, localeCatalog);
+}
+
+/**
+ * Localized tool-failure notice for the case with no nameable culprit. Reads as
+ * a complete sentence — the named variant deliberately ends in an em-dash so the
+ * caller can append the tool name.
+ */
+export function buildToolFailureNoticeUnnamed(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectToolFailureNoticeUnnamed(language, localeCatalog);
 }
