@@ -673,6 +673,19 @@ export interface InfraEvents {
     taskId: string;
     toolName: string;
     error: string;
+    /**
+     * The TASK's whole lifespan — promote-time to terminal commit. NOT the
+     * duration of the underlying tool call.
+     *
+     * The gap is real and routinely tens of seconds: the terminal state is
+     * committed on a POLL, so this span carries launch and polling latency on
+     * top of the call. Reading it as a call duration and comparing it against
+     * `integrations.mcp.callToolTimeoutMs` therefore manufactures a phantom
+     * deadline breach — live, a correctly-capped 120000ms call surfaced here as
+     * 138841ms and was twice mistaken for an unenforced deadline. For the call's
+     * own elapsed time use the `tool.result` record's `durationMs`, which is
+     * scoped to the call itself.
+     */
     durationMs: number;
     origin: BackgroundTaskOrigin;
     timestamp: number;
