@@ -152,10 +152,9 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   sessions_history: "Fetch conversation history for another session or sub-agent.",
   // Confusable pair: sessions_send / message
   sessions_send: "Send message to another session. For chat channel messages, use message.",
-  // The full "## Task Delegation" policy lives in SYSTEM_PROMPT_GUIDES and is
-  // injected only AFTER a successful sessions_spawn call — so the trigger has to
-  // be stated here, in the always-present description, or the model never learns
-  // delegation applies before it has already delegated.
+  // The concise trigger is always present so it can shape the first decision.
+  // SYSTEM_PROMPT_GUIDES supplies the detailed procedure after the first
+  // successful tool result.
   sessions_spawn:
     "Start a background sub-agent and return its run ID immediately. Delegate instead of"
     + " working inline when a task needs >30s of tool time, media generation, 3+ file writes,"
@@ -617,7 +616,7 @@ export function getToolGuideWithSchema(toolName: string): string | undefined {
  * circular dependency. All content is inlined as static strings.
  */
 export const SYSTEM_PROMPT_GUIDES: Record<string, string> = {
-  // Task Delegation -- triggered by sessions_spawn
+  // Task Delegation -- delivered once after the first successful tool result
   sessions_spawn: `## Task Delegation
 
 You MUST delegate tasks to a sub-agent when the work matches ANY of these criteria:

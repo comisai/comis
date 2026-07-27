@@ -837,7 +837,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
     "schemaVersion": 1,
     "sessionKey": "default:agent:default:user_a:telegram:peer:user_a",
     "outcome": { "endReason": "completed_with_tool_errors", "degraded": true, "severity": "degraded" },
-    "cost": { "costUsd": 1.320669, "totalTokens": 735800, "cacheReadRatio": 0 },
+    "cost": { "costUsd": 1.320669, "totalTokens": 735800, "tokenBasis": "input+output+cache", "cacheReadRatio": 0 },
     "timing": { "durationMs": 247740, "turnCount": 25 },
     "toolStats": { "web_fetch": { "ok": 2, "failed": 8, "topErrorKind": "dependency" } },
     "failures": [
@@ -892,6 +892,12 @@ When cron jobs ran a [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model
 
 This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.explain` post-mortems ONE session; `obs.system.health` rolls up a WINDOW of sessions.
 
+`sessions.degraded` is the raw count and includes
+`completed_with_tool_errors`, where a tool failed but a final answer was still
+delivered. `sessions.deliveredWithToolErrors` names that subset;
+`sessions.hardDegraded` and `hardDegradedRate` subtract it and drive the acute
+and high-degradation findings.
+
 `sinceHours` is optional; the **24h** default is applied in the handler. The report is digest-only: `findings[]` is capped top-N and `topErrorKinds` is merged + capped (counts only), with an honest `truncations[]` ledger recording anything the bounding pass dropped. An optional `coverage` block reports READ-coverage of the system sources -- the session-summary store (`{ found, rows }`), the multi-day session index (`{ daysRead, daysMissing }`), and the billing source (`{ present }`) -- so a silently-empty window (e.g. `rows: 0` or `daysMissing > 0`) is self-evident rather than masquerading as a clean zero-activity system.
 
 | Property | Value |
@@ -920,7 +926,7 @@ This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.exp
     "topErrorKinds": [ { "kind": "dependency", "count": 18 } ],
     "breakerTripTotal": 3,
     "toolStats": { "web_fetch": { "ok": 2, "failed": 8 } },
-    "cost": { "costUsd": 1.320669, "totalTokens": 735800 },
+    "cost": { "costUsd": 1.320669, "totalTokens": 735800, "tokenBasis": "input+output", "offSessionUsd": 0.042 },
     "activity": {
       "activeAgents": ["default"],
       "activeChannels": ["telegram"],

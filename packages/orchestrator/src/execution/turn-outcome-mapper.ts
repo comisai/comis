@@ -60,7 +60,6 @@ export interface AbortSignalInput {
  */
 export function mapAbortToTurnOutcome(input: AbortSignalInput): TurnOutcome | undefined {
   if (!input.resourceAborted) return undefined;
-  // eslint-disable-next-line security/detect-object-injection -- key is the closed executor finishReason union, looked up in a fixed const map (no external input)
   const reason = RESOURCE_ABORT_REASONS[input.finishReason];
   if (reason === undefined) return undefined;
   return {

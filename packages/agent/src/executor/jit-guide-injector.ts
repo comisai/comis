@@ -72,11 +72,9 @@ export interface GuideInjectionOptions {
   /**
    * True when `sessions_spawn` is on this session's tool surface.
    *
-   * The "## Task Delegation" policy is keyed on `sessions_spawn`, so it used to
-   * arrive only AFTER a successful spawn — circular, because the policy exists to
-   * make the model reach for the tool. Delivering it on the first tool result of
-   * ANY kind breaks that loop. Live: sessions_spawn is present and works, yet
-   * across 119 prompts on two model families the agent never delegated once.
+   * The concise trigger is already in the system prompt. This flag makes the
+   * detailed procedure ride the first successful tool result, then the delivered
+   * guide set suppresses repeats.
    */
   delegationAvailable?: boolean;
 }

@@ -39,14 +39,9 @@ export interface PromptCompilerInput {
   /**
    * True when `sessions_spawn` is on the agent's surface.
    *
-   * The delegation policy used to ride a TOOL RESULT, which lands AFTER the model
-   * has already read the request, chosen an approach and issued its first call —
-   * measured live: the policy arrived on the first MCP result while the model was
-   * already working inline, and it simply carried on. A directive that must shape
-   * the FIRST decision has to be in the system prompt, before any of it happens.
-   *
-   * Gated because telling an agent without the tool to delegate is worse than
-   * silence. Universal orchestration mechanism, no domain assumptions.
+   * The directive belongs in the initial system prompt because it must shape the
+   * model's first execution decision. It is gated so agents without the tool are
+   * never told to delegate through an unavailable capability.
    */
   readonly delegationAvailable?: boolean;
 }
