@@ -67,11 +67,26 @@ const PRIVILEGED_SECTION_KEY = "section:privileged";
  * the agent-loop on the message level), but some tools (MCP, discovery)
  * include it at runtime. We check for it defensively.
  */
+/** Options for the one-time guide injection. */
+export interface GuideInjectionOptions {
+  /**
+   * True when `sessions_spawn` is on this session's tool surface.
+   *
+   * The "## Task Delegation" policy is keyed on `sessions_spawn`, so it used to
+   * arrive only AFTER a successful spawn — circular, because the policy exists to
+   * make the model reach for the tool. Delivering it on the first tool result of
+   * ANY kind breaks that loop. Live: sessions_spawn is present and works, yet
+   * across 119 prompts on two model families the agent never delegated once.
+   */
+  delegationAvailable?: boolean;
+}
+
 export function wrapToolResultWithGuide(
   toolName: string,
   result: AgentToolResult<unknown>,
   deliveredGuides: Set<string>,
   logger: ComisLogger,
+  options?: GuideInjectionOptions,
 ): AgentToolResult<unknown> {
   // Two-phase design: first decide what WOULD fire without mutating state,
   // then commit (mark delivered + append) only if the result is non-error.
@@ -86,8 +101,20 @@ export function wrapToolResultWithGuide(
   const toolGuide = getToolGuideWithSchema(toolName);
   const wantsTool = !!toolGuide && !deliveredGuides.has(toolName);
 
-  const sectionGuide = SYSTEM_PROMPT_GUIDES[toolName];
-  const sectionKey = `section:${toolName}`;
+  // The delegation policy rides the FIRST tool result when spawning is available,
+  // not just a sessions_spawn result. Same delivery key, so a later spawn does
+  // not repeat it.
+  const delegationGuide =
+    options?.delegationAvailable === true && toolName !== "sessions_spawn"
+      ? SYSTEM_PROMPT_GUIDES["sessions_spawn"]
+      : undefined;
+  const sectionGuide = SYSTEM_PROMPT_GUIDES[toolName] ?? delegationGuide;
+  // Key the delegation policy to the POLICY, not the tool that happened to carry
+  // it — otherwise delivering it via `read` would not stop a later
+  // `sessions_spawn` call from repeating the whole section.
+  const sectionKey = delegationGuide !== undefined && SYSTEM_PROMPT_GUIDES[toolName] === undefined
+    ? "section:sessions_spawn"
+    : `section:${toolName}`;
   const wantsSection = !!sectionGuide && !deliveredGuides.has(sectionKey);
 
   const wantsPrivileged =

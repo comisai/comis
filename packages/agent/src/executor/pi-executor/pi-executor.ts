@@ -1713,7 +1713,14 @@ async function runSessionLocked(
             onUpdate as Parameters<typeof original.execute>[3],
             undefined as unknown as Parameters<typeof original.execute>[4],
           );
-          return wrapToolResultWithGuide(original.name, res, deliveredGuides, deps.logger);
+          return wrapToolResultWithGuide(original.name, res, deliveredGuides, deps.logger, {
+            // Any first tool result carries the delegation policy when spawning is
+            // reachable, so the model does not have to spawn in order to learn
+            // that it can.
+            delegationAvailable: contextTools.some(
+              (t) => (t as { name?: string }).name === "sessions_spawn",
+            ),
+          });
         },
       } as unknown as (typeof contextTools)[0]);
       injectedCount++;
