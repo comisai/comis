@@ -812,10 +812,23 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/function\s+modelAcknowledgedFailure\s*\(/);
   });
 
-  it("source-grep — failure notice '[tool failure]' appended to result.response at call site", () => {
+  it("source-grep — the failure notice is built through the locale seam, not a literal", () => {
     const stripped = readPostExecStripped();
-    // The notice text must appear in non-comment source.
-    expect(stripped).toMatch(/\[tool failure\]/);
+    // It used to be a bare English `[tool failure] <tool> reported an error`
+    // appended raw to a reply in any language — a bracket-tagged internal
+    // string sitting outside the only mechanism that can translate it.
+    expect(stripped).toMatch(/buildToolFailureNotice\(/);
+    expect(stripped).not.toMatch(/\[tool failure\]/);
+    // The tool NAME still rides along verbatim (identifiers are never translated).
+    expect(stripped).toMatch(/failedToolName/);
+  });
+
+  it("source-grep — the notice never names the background poller as the culprit", () => {
+    const stripped = readPostExecStripped();
+    // The poller relays OTHER tools' failures, so naming it points the reader at
+    // the one tool that was working — the same mis-attribution the retry
+    // breaker had.
+    expect(stripped).toMatch(/BACKGROUND_POLLER_TOOL/);
   });
 
   it("source-grep — isSilentResponse guards the failure notice append (not the endReason override)", () => {
@@ -858,7 +871,7 @@ describe("tool-failure endReason and notice", () => {
     // The notice call site must consult the recovery-aware helper, not raw failedTools.
     expect(stripped).toMatch(/unrecoveredFailedToolNames/);
     // The notice append must be guarded by a non-empty unrecovered set.
-    const noticeBlock = stripped.match(/unrecovered[A-Za-z]*\s*\.length\s*>\s*0[\s\S]{0,400}?\[tool failure\]/);
+    const noticeBlock = stripped.match(/unrecovered[A-Za-z]*\s*\.length\s*>\s*0[\s\S]{0,600}?buildToolFailureNotice/);
     expect(noticeBlock).not.toBeNull();
   });
 });

@@ -121,7 +121,8 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { BACKGROUND_POLLER_TOOL } from "../safety/background-failure-attribution.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
@@ -1370,30 +1371,6 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // acknowledged the failure or the response is a silent sentinel. The
   // observability label (effectiveFinishReason) is unchanged — operators still
   // see the recovered failure in logs/system.
-  const unrecoveredFailed = unrecoveredFailedToolNames(
-    bridgeResult.failedTools ?? [],
-    bridgeResult.toolExecResults,
-  );
-  if (
-    unrecoveredFailed.length > 0 &&
-    isStopTurn &&
-    !modelAcknowledgedFailure(result.response ?? "", unrecoveredFailed) &&
-    !isSilentResponse(result.response ?? "")
-  ) {
-    const failedToolName = unrecoveredFailed[0];
-    // No "(see session log)" pointer: the recipient is the CHAT user, who has
-    // no session log to see — the operator's lens is `comis explain` (the
-    // failure rides the trajectory + IncidentReport.failures already).
-    result.response = (result.response ?? "") +
-      `\n[tool failure] ${failedToolName} reported an error`;
-  }
-
-  // Degrade loudly — deliver an honest user-facing reply for named degraded causes.
-  // APPEND for output_starved (partial text exists); REPLACE for context_exhausted (no usable text).
-  // Gate on effectiveFinishReason (NOT result.finishReason — output_starved is only set here).
-  // Resolve the open response-locale policy once and pass the canonical tag to
-  // each deterministic degraded-reply builder. Missing locale packs fall back
-  // to the injected catalog's English strings.
   const replyLanguage = params.responseLocalePolicy.locale;
   // Wire the locale seam to operator config. `createLocaleCatalog` had exactly
   // one production caller — the no-packs DEFAULT_LOCALE_CATALOG — so every
@@ -1410,6 +1387,40 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       "unknown locale pack message id ignored",
     );
   });
+  const unrecoveredFailed = unrecoveredFailedToolNames(
+    bridgeResult.failedTools ?? [],
+    bridgeResult.toolExecResults,
+  );
+  if (
+    unrecoveredFailed.length > 0 &&
+    isStopTurn &&
+    !modelAcknowledgedFailure(result.response ?? "", unrecoveredFailed) &&
+    !isSilentResponse(result.response ?? "")
+  ) {
+    // Never NAME the background poller as the culprit. It relays other tools'
+    // failures, so blaming it points the reader at the one tool that was
+    // working — the same mis-attribution the retry breaker had. Prefer any
+    // real tool in the list; fall back to a nameless notice.
+    const failedToolName = unrecoveredFailed.find((t) => t !== BACKGROUND_POLLER_TOOL);
+    // Localized prose + the tool name VERBATIM. This was a bare English
+    // `[tool failure] <tool> reported an error`, appended raw to replies in
+    // any language — a bracket-tagged internal string, outside the only
+    // mechanism that can translate it. Identifiers stay untranslated by
+    // design; only the sentence around them is localized.
+    // No "(see session log)" pointer: the recipient is the CHAT user, who has
+    // no session log to see — the operator's lens is `comis explain` (the
+    // failure rides the trajectory + IncidentReport.failures already).
+    result.response = (result.response ?? "")
+      + buildToolFailureNotice(replyLanguage, localeCatalog)
+      + (failedToolName ?? "");
+  }
+
+  // Degrade loudly — deliver an honest user-facing reply for named degraded causes.
+  // APPEND for output_starved (partial text exists); REPLACE for context_exhausted (no usable text).
+  // Gate on effectiveFinishReason (NOT result.finishReason — output_starved is only set here).
+  // Resolve the open response-locale policy once and pass the canonical tag to
+  // each deterministic degraded-reply builder. Missing locale packs fall back
+  // to the injected catalog's English strings.
   if (effectiveFinishReason === "output_starved") {
     result.response = (result.response ?? "") + buildOutputStarvedAnnotation(replyLanguage, localeCatalog);
     deps.logger.warn(

@@ -24,6 +24,7 @@ import {
   selectContextExhaustedReply,
   selectLoopDetectedReply,
   selectPipelineTimeoutReply,
+  selectToolFailureNotice,
   type LocaleCatalog,
 } from "./degraded-reply-i18n.js";
 
@@ -123,4 +124,15 @@ export function buildPipelineTimeoutReply(opts?: ContextExhaustedReplyOpts): str
   return selectPipelineTimeoutReply(opts?.language, {
     traceId: opts?.traceId,
   }, opts?.localeCatalog);
+}
+
+/**
+ * Localized notice that a tool failed, for appending to a reply that did not
+ * itself mention the failure. The caller appends the tool name verbatim.
+ */
+export function buildToolFailureNotice(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectToolFailureNotice(language, localeCatalog);
 }

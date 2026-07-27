@@ -17,7 +17,8 @@ export type LocaleMessageId =
   | "advice_fixed_overhead"
   | "output_starved"
   | "loop_detected"
-  | "pipeline_timeout";
+  | "pipeline_timeout"
+  | "tool_failure_notice";
 
 export type LocalePack = Readonly<Partial<Record<LocaleMessageId, string>>>;
 
@@ -45,6 +46,9 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "I stopped because I kept repeating an action that wasn't making progress "
       + "(usually a tool that failed or was blocked) and didn't want to loop. The "
       + "request may need a different approach, or that capability isn't available here.",
+  tool_failure_notice:
+    "\n\nNote: one of the tools I used reported an error, so part of this may be"
+      + " incomplete — ",
   pipeline_timeout:
     "I stopped this request because it was taking too long and hit the time limit "
       + "for a single turn. Nothing was left half-applied. If it needs many lookups, "
@@ -181,6 +185,19 @@ export function selectLoopDetectedReply(
  * (`executionTimeoutMs`). The model never returned, so there is no partial text
  * to annotate — this REPLACES the response entirely.
  */
+/**
+ * The trailing notice appended when a tool failed and the model's own reply did
+ * not mention it. The failing tool's NAME is appended verbatim by the caller —
+ * identifiers stay untranslated in every language (see the no-translation
+ * principle in docs/operations/multilingual.mdx), only the prose is localized.
+ */
+export function selectToolFailureNotice(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "tool_failure_notice");
+}
+
 export function selectPipelineTimeoutReply(
   locale: string | undefined,
   opts: { traceId?: string },
