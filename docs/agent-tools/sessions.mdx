@@ -160,6 +160,8 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
     | `max_steps` | integer | No | Maximum execution steps (floor of 30, default 50, capped at config default) |
     `sessions_spawn` never blocks for the child result. It returns the run ID and a background-running marker immediately; a queued spawn additionally returns `queued: true`. The result is delivered to the immutable originating conversation, so the model-facing tool cannot select an announcement channel. Use `subagents` with `action: wait` to await owned children without polling.
 
+    **When the agent reaches for it.** The tool description carries the delegation trigger, so an agent that has `sessions_spawn` on its surface is told up front to delegate rather than work inline whenever a task needs more than ~30 seconds of tool time, generates media, writes three or more files, requires deep research, or runs four or more dependent steps. Independent subtasks are spawned as multiple calls in one response and run in parallel. The fuller delegation guide (goal-oriented task phrasing, what not to delegate) is injected after the first successful spawn.
+
     Sub-agent results are automatically condensed (if over the token threshold) and formatted with metadata tags before being returned to the parent. See [Subagent Context Lifecycle](/agents/subagent-lifecycle) for the full pipeline.
 
     **Example -- Spawn a coding agent:**

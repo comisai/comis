@@ -149,7 +149,15 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   sessions_history: "Fetch conversation history for another session or sub-agent.",
   // Confusable pair: sessions_send / message
   sessions_send: "Send message to another session. For chat channel messages, use message.",
-  sessions_spawn: "Start a background sub-agent and return its run ID immediately.",
+  // The full "## Task Delegation" policy lives in SYSTEM_PROMPT_GUIDES and is
+  // injected only AFTER a successful sessions_spawn call — so the trigger has to
+  // be stated here, in the always-present description, or the model never learns
+  // delegation applies before it has already delegated.
+  sessions_spawn:
+    "Start a background sub-agent and return its run ID immediately. Delegate instead of"
+    + " working inline when a task needs >30s of tool time, media generation, 3+ file writes,"
+    + " deep research, or 4+ dependent steps; call it multiple times in one response for"
+    + " parallel subtasks.",
   subagents: "List, wait for, steer, or kill sub-agent runs for this session.",
   pipeline: "Define, execute, monitor, and cancel multi-node DAG execution graphs.",
   session_status: "Show agent status card: usage, model, steps. Optional per-session model override.",

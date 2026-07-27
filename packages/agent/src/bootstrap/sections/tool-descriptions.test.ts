@@ -596,3 +596,34 @@ describe("providers_manage TOOL_GUIDE catalog interpolation", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Deferred-section reachability
+// ---------------------------------------------------------------------------
+
+/**
+ * A SYSTEM_PROMPT_GUIDES entry keyed on a tool name is injected by
+ * jit-guide-injector ONLY after that tool has been called successfully. When the
+ * guide's whole purpose is to tell the model WHEN to reach for the tool, that
+ * ordering is circular: the policy is unreachable until the model has already
+ * done the thing the policy exists to cause.
+ *
+ * The always-present lean description is the only text the model sees before
+ * its first call, so it must carry the trigger itself. Observed live: an agent
+ * with sessions_spawn on its surface ground a multi-minute report inline across
+ * ten consecutive turns and never spawned once, because nothing in the prompt
+ * said delegation applied.
+ */
+describe("SYSTEM_PROMPT_GUIDES trigger reachability", () => {
+  it("states the delegation trigger in the always-present sessions_spawn description", () => {
+    const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
+    expect(typeof lean).toBe("string");
+    // The >30s rule is the criterion that fires for heavy report work.
+    expect(lean as string).toMatch(/30\s*(?:s\b|sec)/i);
+  });
+
+  it("names parallel fan-out in the always-present sessions_spawn description", () => {
+    const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
+    expect(lean as string).toMatch(/parallel|multiple/i);
+  });
+});
