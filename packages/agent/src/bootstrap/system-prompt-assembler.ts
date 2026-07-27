@@ -34,6 +34,8 @@ export interface AssemblerParams {
   promptSkillsXml?: string;
   activePromptSkillContent?: string;
   reasoningTagHint?: boolean;
+  /** True when sessions_spawn is on the surface — see PromptCompilerInput. */
+  delegationAvailable?: boolean;
 }
 
 function sha256Hex(value: string): string {
@@ -92,6 +94,7 @@ function runtimeSections(params: AssemblerParams): readonly RuntimePromptSection
 export function compileRichSystemPrompt(params: AssemblerParams): CompiledExecutionPrompt {
   return compileExecutionPrompt({
     mode: params.promptMode ?? "full",
+    ...(params.delegationAvailable === undefined ? {} : { delegationAvailable: params.delegationAvailable }),
     operatorPolicy: params.instructionSections
       ?? legacyBootstrapSections(params.bootstrapFiles ?? []),
     runtimeSections: runtimeSections(params),
