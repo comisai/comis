@@ -31,6 +31,32 @@ import { formatValidationError } from "../../safety/validation-error-formatter.j
  * @param logger - Logger for debug output when a validation error is reformatted
  * @returns A named StreamFnWrapper ("validationErrorFormatter")
  */
+/**
+ * Build the enum-value resolver for one failing tool call by reading the tool's
+ * own parameter schema. Returns undefined when the tool or the parameter is not
+ * an enum, which keeps the formatter on its generic wording.
+ *
+ * Only top-level parameters are resolved — the nested case would need to walk
+ * the dot/bracket path, and every enum observed in practice sits at the top.
+ */
+function makeAllowedValuesResolver(
+  tools: unknown,
+  toolName: string | undefined,
+): ((parameterPath: string) => string[] | undefined) | undefined {
+  if (!Array.isArray(tools) || toolName === undefined) return undefined;
+  const tool = (tools as Array<{ name?: string; parameters?: unknown }>)
+    .find((t) => t?.name === toolName);
+  const properties = (tool?.parameters as { properties?: Record<string, unknown> } | undefined)
+    ?.properties;
+  if (properties === undefined) return undefined;
+  return (parameterPath) => {
+    const schema = properties[parameterPath] as { enum?: unknown } | undefined;
+    const values = schema?.enum;
+    if (!Array.isArray(values) || values.length === 0) return undefined;
+    return values.map((v) => String(v));
+  };
+}
+
 export function createValidationErrorFormatter(
   logger: ComisLogger,
 ): StreamFnWrapper {
@@ -49,7 +75,10 @@ export function createValidationErrorFormatter(
           return msg;
         }
 
-        const formatted = formatValidationError(textBlock.text);
+        const formatted = formatValidationError(
+          textBlock.text,
+          makeAllowedValuesResolver(context.tools, msg.toolName),
+        );
         if (formatted === null) {
           return msg;
         }

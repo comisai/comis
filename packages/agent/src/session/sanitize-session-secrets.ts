@@ -43,7 +43,52 @@ const API_KEY_PATTERNS: RegExp[] = [
 
 /** Argument names that are always sensitive regardless of value pattern. */
 const SENSITIVE_ARG_NAMES =
-  /(?:^|[_-])(?:api[_-]?key|apikey|token|secret|password|credential|auth[_-]?key|access[_-]?key|private[_-]?key|username|env[_-]?value)(?:$|[_-])/i;
+  /(?:^|[_-])(?:api[_-]?key|apikey|secret|password|credential|auth[_-]?key|access[_-]?key|private[_-]?key|username|env[_-]?value|(?:access|auth|refresh|bearer|id|api|session|oauth|csrf|xsrf)[_-]?token)(?:$|[_-])/i;
+
+/**
+ * A parameter named exactly `token` — no qualifier to disambiguate it. Treated
+ * as always-sensitive: on its own the word most often names a credential.
+ */
+const BARE_TOKEN_ARG_NAME = /^token$/i;
+
+/**
+ * Names carrying `token` as a component without a credential qualifier —
+ * `range_token`, `page_token`, `continuation_token`. These are usually opaque
+ * cursors or plain enums, so they are redacted only when the VALUE could
+ * plausibly be a credential.
+ *
+ * Redacting one of these unconditionally is corrupting rather than merely
+ * cautious: the placeholder is persisted, replayed into the model's context on
+ * the next turn, and copied forward as a literal argument — the replay hazard
+ * scrub-redacted-tool-calls.ts documents for `env_value`. Observed live against
+ * an MCP tool whose `range_token` is a fixed date-range enum: three consecutive
+ * schema-validation failures while paginating, each re-sending "[REDACTED]".
+ */
+const QUALIFIED_TOKEN_ARG_NAMES = /(?:^|[_-])token(?:$|[_-])/i;
+
+/**
+ * True when a value cannot plausibly be a credential: a short, all-lowercase
+ * identifier such as an enum member or a cursor keyword. Anything longer,
+ * mixed-case, or shaped like an encoded digest fails this test and stays
+ * redacted. `looksLikeApiKey` still runs afterwards as a second line of defence.
+ */
+function isImplausibleSecretValue(value: string): boolean {
+  if (value.length === 0 || value.length > 24) return false;
+  if (!/^[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*$/.test(value)) return false;
+  if (/^[a-f0-9]{16,}$/.test(value)) return false; // lowercase hex digest
+  return true;
+}
+
+/**
+ * Whether an argument must be redacted on the strength of its NAME.
+ * Value-blind for unambiguous credential names; value-gated for the ambiguous
+ * `*_token` family so a public enum is not destroyed.
+ */
+function isSensitiveArgName(name: string, value: string): boolean {
+  if (SENSITIVE_ARG_NAMES.test(name) || BARE_TOKEN_ARG_NAME.test(name)) return true;
+  if (QUALIFIED_TOKEN_ARG_NAMES.test(name)) return !isImplausibleSecretValue(value);
+  return false;
+}
 
 // eslint-disable-next-line no-restricted-syntax -- durable-session redaction sentinel (not the Pino censor literal)
 const REDACTION_PLACEHOLDER = "[REDACTED]";
@@ -108,8 +153,8 @@ function projectPersistenceValue(
   if (typeof value === "string") {
     if (
       fieldName !== undefined
-      && SENSITIVE_ARG_NAMES.test(fieldName)
       && value.length > 0
+      && isSensitiveArgName(fieldName, value)
       && !isSafePersistencePlaceholder(value)
     ) {
       return { value: REDACTION_PLACEHOLDER, redactions: 1 };
@@ -224,10 +269,11 @@ const SANITIZATION_RULES: SanitizationRule[] = [
     match(_toolName, args) {
       let changed = false;
       for (const key of Object.keys(args)) {
-        if (SENSITIVE_ARG_NAMES.test(key)) {
+        {
           const val = args[key];
           // eslint-disable-next-line no-restricted-syntax -- session sensitive-arg already-redacted sentinel (not the Pino censor literal)
-          if (typeof val === "string" && val !== "[REDACTED]" && val.length > 0) {
+          if (typeof val === "string" && val !== "[REDACTED]" && val.length > 0
+            && isSensitiveArgName(key, val)) {
             // eslint-disable-next-line no-restricted-syntax -- session sensitive-arg redaction (not the Pino censor literal)
             args[key] = "[REDACTED]";
             changed = true;
