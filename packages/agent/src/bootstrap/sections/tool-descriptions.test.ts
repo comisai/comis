@@ -627,3 +627,25 @@ describe("SYSTEM_PROMPT_GUIDES trigger reachability", () => {
     expect(lean as string).toMatch(/parallel|multiple/i);
   });
 });
+
+/**
+ * A spawned sub-agent gets a RESTRICTED default profile: the parent's MCP tools
+ * and `message` are outside it. The delegation policy told the model to spawn but
+ * never mentioned tool_groups, so the first spawn of any real task fails with
+ * "Required tools unreachable … Re-spawn with tool_groups:['full']" and the turn
+ * degrades before recovering.
+ *
+ * Observed live on the first delegation the runtime ever performed.
+ */
+describe("Task Delegation policy covers the child tool profile", () => {
+  const guide = SYSTEM_PROMPT_GUIDES.sessions_spawn!;
+
+  it("tells the model to pass tool_groups when the child needs them", () => {
+    expect(guide).toContain("tool_groups");
+  });
+
+  it("names the two surfaces that are outside the default child profile", () => {
+    expect(guide).toMatch(/MCP/);
+    expect(guide).toMatch(/message/);
+  });
+});

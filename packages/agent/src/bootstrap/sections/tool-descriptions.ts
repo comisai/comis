@@ -631,12 +631,15 @@ You MUST delegate tasks to a sub-agent when the work matches ANY of these criter
 
 ### How to Delegate
 1. Use \`sessions_spawn\` with a **goal-oriented** task description; every spawn runs in the background
-2. Describe WHAT to accomplish, not HOW -- the sub-agent has its own skills and will read SKILL.md itself
-3. Do NOT copy-paste skill instructions, shell commands, or step-by-step procedures into the task
-4. Include user context the sub-agent needs (e.g., desired style, dimensions, topic) but not tool instructions
-5. Result delivery is bound automatically to the authenticated request route; do not supply route identifiers
-6. Tell the user the task is delegated and give them the runId
-7. Continue the conversation -- the result will be announced automatically when done
+2. A sub-agent gets a RESTRICTED default profile: MCP tools and \`message\` are OUTSIDE it. When the child
+   must call an MCP tool or deliver the result itself, pass \`tool_groups: ['full']\` on the spawn --
+   otherwise it fails with "Required tools unreachable" before doing any work
+3. Describe WHAT to accomplish, not HOW -- the sub-agent has its own skills and will read SKILL.md itself
+4. Do NOT copy-paste skill instructions, shell commands, or step-by-step procedures into the task
+5. Include user context the sub-agent needs (e.g., desired style, dimensions, topic) but not tool instructions
+6. Result delivery is bound automatically to the authenticated request route; do not supply route identifiers
+7. Tell the user the task is delegated and give them the runId
+8. Continue the conversation -- the result will be announced automatically when done
 
 ### Parallel Sub-Agents
 When a task has independent subtasks, spawn multiple sub-agents in parallel:
