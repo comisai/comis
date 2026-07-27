@@ -318,4 +318,23 @@ describe("request correlation", () => {
     expect(opts.resetTimeoutOnProgress).toBe(true);
     expect(opts.maxTotalTimeout).toBe(state.options.callToolTimeoutMs);
   });
+
+  // The ceiling must not be scoped to the tracing branch. Tying it to
+  // `requestTraceId` left every untraced path — which is where long-running
+  // background calls run — with no ceiling at all. Live: after a first cut that
+  // gated it, a background task still recorded 140233ms against a 120000ms cap.
+  it("applies the absolute ceiling even with no request trace context", async () => {
+    const serverName = "inventory";
+    const state = makeConnectedState(serverName, () =>
+      Promise.resolve({ content: [{ type: "text", text: "{}" }] }),
+    );
+    const deps = { logger: makeLogger() } as unknown as McpClientManagerDeps;
+
+    // No runWithContext → no requestTraceId.
+    await callTool(state, deps, `mcp:${serverName}/inventory_items_list`, {});
+
+    const opts = (state.connections.get(serverName)?.client.callTool as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![2] as Record<string, unknown>;
+    expect(opts.maxTotalTimeout).toBe(state.options.callToolTimeoutMs);
+  });
 });

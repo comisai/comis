@@ -1128,26 +1128,30 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // dedicated MCP classifier into the closed ErrorKind union
             // (timeout → timeout, connection/transport → dependency,
             // everything else → classifyToolError fallback).
-            if (toolErrorKind === undefined) {
+            // A breaker REFUSAL is authoritative and OVERRIDES any earlier
+            // classification. It cannot be a fallback branch: the block text
+            // quotes the original failure verbatim (`…with the same error:
+            // "…timed out…"`), so every text-sniffing classifier upstream —
+            // the failure detector as well as the MCP classifier — reads that
+            // QUOTATION and classifies the refusal as a fresh failure of the
+            // quoted kind. Gating on `toolErrorKind === undefined` therefore
+            // never fired: the detector had already set "timeout", and the
+            // refusal was published as `tool.timeout {timeoutMs: 3}` — the
+            // breaker's 3ms refusal latency dressed up as an expired 120000ms
+            // deadline. A blocked call never reached the server, so nothing
+            // about the text is evidence of a transport outcome.
+            if (!toolSuccess && isBreakerBlockMessage(errorText)) {
+              // "precondition" — a guard the call did not satisfy.
+              toolErrorKind = "precondition";
+              classifiedFailureBy = "runtime_guard";
+              transportOk = false;
+            } else if (toolErrorKind === undefined) {
               if (runtimeToolGuard !== undefined) {
                 toolErrorKind = "resource";
                 classifiedFailureBy = "runtime_guard";
                 matchedRule = runtimeToolGuard;
                 // The runtime blocked the call before the tool or MCP transport
                 // boundary, so no external dependency was contacted.
-                transportOk = false;
-              } else if (isBreakerBlockMessage(errorText)) {
-                // The retry breaker REFUSED this call — it never ran, so there
-                // is no transport outcome to classify. The block text quotes the
-                // original failure verbatim, so letting it fall through to the
-                // MCP classifier below re-read that quotation as a fresh
-                // failure of the quoted kind: a blocked call came back
-                // errorKind:"timeout" and emitted `tool.timeout {timeoutMs: 3}`,
-                // publishing the breaker's 3ms refusal latency as an expired
-                // 120000ms deadline. "precondition" is the honest kind — a
-                // guard the call did not satisfy.
-                toolErrorKind = "precondition";
-                classifiedFailureBy = "runtime_guard";
                 transportOk = false;
               } else if (mcpServer !== undefined) {
                 const mcpKind = classifyMcpErrorType(errorText);

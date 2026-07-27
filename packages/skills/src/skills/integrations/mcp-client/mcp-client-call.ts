@@ -209,20 +209,24 @@ export async function callTool(
         undefined,
         {
           timeout: state.options.callToolTimeoutMs,
-          // `maxTotalTimeout` rides along with the progress reset, ALWAYS.
-          // `resetTimeoutOnProgress` restarts `timeout` on every progress
-          // notification, and the SDK applies no ceiling of its own ("If not
-          // specified, there is no maximum total timeout") — so without this the
-          // configured deadline silently degrades into a per-progress-GAP
-          // timeout, and a chatty server can hold one call open for the whole
-          // turn. That contradicts the key's documented meaning and the expiry
-          // hint's promise that an identical retry "re-expires the same
-          // deadline". Live: a 120000ms cap with 139478ms and 110004ms calls.
+          // The absolute ceiling is UNCONDITIONAL — it is not part of the
+          // tracing branch. `resetTimeoutOnProgress` restarts `timeout` on every
+          // progress notification and the SDK applies no ceiling of its own
+          // ("If not specified, there is no maximum total timeout"), so without
+          // this the configured deadline degrades into a per-progress-GAP
+          // timeout and a chatty server holds one call open for a whole turn.
+          // Live: a 120000ms cap with observed 200877ms and 296481ms calls.
+          //
+          // Scoping it to `requestTraceId` (as the first cut did) tied the
+          // deadline's enforcement to whether a trace context happened to
+          // exist — so the paths WITHOUT one, which is exactly where a
+          // long-running background call runs, kept no ceiling at all. A
+          // deadline that applies only when tracing is on is not a deadline.
+          maxTotalTimeout: state.options.callToolTimeoutMs,
           ...(requestTraceId
             ? {
                 onprogress: () => {},
                 resetTimeoutOnProgress: true,
-                maxTotalTimeout: state.options.callToolTimeoutMs,
               }
             : {}),
         },

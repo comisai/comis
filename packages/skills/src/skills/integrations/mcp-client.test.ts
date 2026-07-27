@@ -611,7 +611,10 @@ describe("McpClientManager", () => {
       expect(mockCallTool).toHaveBeenCalledWith(
         { name: "search", arguments: { query: "test" } },
         undefined,
-        { timeout: MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT },
+        {
+          timeout: MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT,
+          maxTotalTimeout: MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT,
+        },
       );
     });
 
@@ -748,11 +751,13 @@ describe("McpClientManager", () => {
 
       await mgr.callTool("mcp:test-server/search", { query: "test" });
 
-      // SDK callTool should receive timeout in third arg (options)
+      // SDK callTool receives the timeout in the third arg (options), plus the
+      // absolute ceiling — `maxTotalTimeout` is unconditional, because a
+      // deadline that applies only on some code paths is not a deadline.
       expect(mockCallTool).toHaveBeenCalledWith(
         { name: "search", arguments: { query: "test" } },
         undefined,
-        { timeout: 120_000 },
+        { timeout: 120_000, maxTotalTimeout: 120_000 },
       );
     });
 
