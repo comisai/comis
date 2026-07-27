@@ -190,6 +190,11 @@ export function createJitGuideWrapper(
   deliveredGuides: Set<string>,
   logger: ComisLogger,
 ): ToolDefinition[] {
+  // Computed ONCE from the full session tool list — the array this wrapper is
+  // handed IS the active surface, unlike the discovery-injection array at the
+  // other call site, which holds only newly discovered tools and made an earlier
+  // version of this gate always false.
+  const delegationAvailable = tools.some((t) => t.name === "sessions_spawn");
   return tools.map((tool) => ({
     ...tool,
     async execute(
@@ -200,7 +205,9 @@ export function createJitGuideWrapper(
       _ctx: ExtensionContext,
     ): Promise<AgentToolResult<unknown>> {
       const result = await tool.execute(toolCallId, params, signal, onUpdate, _ctx);
-      return wrapToolResultWithGuide(tool.name, result, deliveredGuides, logger);
+      return wrapToolResultWithGuide(tool.name, result, deliveredGuides, logger, {
+        delegationAvailable,
+      });
     },
   }));
 }

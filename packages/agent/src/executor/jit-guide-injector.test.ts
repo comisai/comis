@@ -759,3 +759,36 @@ describe("wrapToolResultWithGuide delivers the delegation policy early", () => {
     expect(JSON.stringify(out.content)).not.toContain("Task Delegation");
   });
 });
+
+/**
+ * The gate must read the SESSION tool list. An earlier version read the
+ * discovery-injection array at the other call site, which holds only newly
+ * discovered tools, so it was always false and the policy never shipped —
+ * verified live by a guide log showing only "tool:read".
+ */
+describe("createJitGuideWrapper gates delegation on the session tool list", () => {
+  function tool(name: string): ToolDefinition {
+    return {
+      name,
+      description: "",
+      parameters: {},
+      execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+    } as unknown as ToolDefinition;
+  }
+
+  it("ships the delegation policy when sessions_spawn is in the session tools", async () => {
+    const delivered = new Set<string>();
+    const [wrapped] = createJitGuideWrapper(
+      [tool("read"), tool("sessions_spawn")], delivered, createMockLogger(),
+    );
+    const out = await wrapped!.execute("c1", {}, undefined, undefined, {} as never);
+    expect(JSON.stringify(out.content)).toContain("Task Delegation");
+  });
+
+  it("stays silent when sessions_spawn is absent", async () => {
+    const delivered = new Set<string>();
+    const [wrapped] = createJitGuideWrapper([tool("read")], delivered, createMockLogger());
+    const out = await wrapped!.execute("c1", {}, undefined, undefined, {} as never);
+    expect(JSON.stringify(out.content)).not.toContain("Task Delegation");
+  });
+});
