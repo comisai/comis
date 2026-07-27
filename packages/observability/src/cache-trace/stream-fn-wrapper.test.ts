@@ -454,3 +454,78 @@ describe("buildCacheTraceWrapper toolsDigest", () => {
     expect(rec.toolCount).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Prefix-hash ladder
+// ---------------------------------------------------------------------------
+
+/**
+ * messageFingerprints is replaced wholesale by a bounded-payload sentinel once
+ * the array grows past the persistence limit — which is exactly when cache
+ * economics matter. Locating WHERE two calls' cached prefixes diverge then
+ * becomes impossible from the trace.
+ *
+ * The ladder is a handful of cumulative hashes over the leading fingerprints at
+ * exponentially spaced depths. Comparing two calls localizes the first
+ * divergence to a range in ~log(n) values, and the payload stays fixed-size so
+ * the bound never strips it.
+ *
+ * Observed live: a session whose cross-turn cache hit ratio fell from 98% at a
+ * ~120k-token prefix to 0% at ~170k, with messageFingerprints unavailable at
+ * 247 messages.
+ */
+describe("buildCacheTraceWrapper prefix-hash ladder", () => {
+  function ctxWithMessages(n: number, mutateAt?: number): unknown {
+    const messages = Array.from({ length: n }, (_, i) => ({
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: mutateAt === i ? "CHANGED" : `m${i}`,
+    }));
+    return { messages, systemPrompt: "sys", tools: [] };
+  }
+
+  async function ladderFor(n: number, mutateAt?: number): Promise<Record<string, unknown>> {
+    const filePath = join(tmpDir, `ladder-${n}-${mutateAt ?? "none"}.jsonl`);
+    const trace = makeTrace({ includeMessages: false, filePath });
+    const next: StreamFn = ((..._args: unknown[]) =>
+      ({ usage: { cacheRead: 0, cacheWrite: 0 } }) as unknown as ReturnType<StreamFn>) as StreamFn;
+    buildCacheTraceWrapper(trace)(next)(
+      fakeModel() as Parameters<StreamFn>[0],
+      ctxWithMessages(n, mutateAt) as Parameters<StreamFn>[1],
+    );
+    await trace.flush();
+    return readLines(filePath).find((l) => l.stage === "stream:context")!;
+  }
+
+  it("emits a bounded ladder of cumulative prefix hashes", async () => {
+    const rec = await ladderFor(100);
+    const ladder = rec.messagePrefixHashes as Array<{ depth: number; hash: string }>;
+    expect(Array.isArray(ladder)).toBe(true);
+    expect(ladder.length).toBeGreaterThan(2);
+    expect(ladder.length).toBeLessThanOrEqual(12);
+    expect(ladder[0]!.hash).toMatch(/^[0-9a-f]+$/);
+  });
+
+  it("keeps the ladder identical for identical message arrays", async () => {
+    const a = await ladderFor(100);
+    const b = await ladderFor(100);
+    expect(a.messagePrefixHashes).toEqual(b.messagePrefixHashes);
+  });
+
+  it("localizes a late divergence to the deeper rungs only", async () => {
+    const clean = (await ladderFor(100)) as never;
+    const dirty = (await ladderFor(100, 90)) as never;
+    const A = (clean as { messagePrefixHashes: Array<{ depth: number; hash: string }> }).messagePrefixHashes;
+    const B = (dirty as { messagePrefixHashes: Array<{ depth: number; hash: string }> }).messagePrefixHashes;
+    // Rungs at depth <= 90 cover only unchanged messages and must match.
+    for (let i = 0; i < A.length; i++) {
+      if (A[i]!.depth <= 90) expect(B[i]!.hash, `depth ${A[i]!.depth}`).toBe(A[i]!.hash);
+    }
+    // At least one deeper rung must differ, or the ladder localizes nothing.
+    expect(A.some((r, i) => r.depth > 90 && B[i]!.hash !== r.hash)).toBe(true);
+  });
+
+  it("survives the array bound that strips messageFingerprints", async () => {
+    const rec = await ladderFor(400);
+    expect(Array.isArray(rec.messagePrefixHashes)).toBe(true);
+  });
+});

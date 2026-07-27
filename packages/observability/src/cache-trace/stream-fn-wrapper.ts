@@ -214,6 +214,30 @@ function computeAssembledShape(
  *                should not call this when `createCacheTrace` returned
  *                null).
  */
+/**
+ * Cumulative hashes over the leading message fingerprints at exponentially
+ * spaced depths, plus the full length.
+ *
+ * `messageFingerprints` is replaced by a bounded-payload sentinel once the array
+ * grows past the persistence limit — precisely in the long sessions where cache
+ * economics matter — which makes "where did the cached prefix diverge?"
+ * unanswerable from the trace. Comparing two calls' ladders localizes the first
+ * divergence to a range in ~log(n) values, and the payload is fixed-size so the
+ * bound never strips it.
+ */
+function buildPrefixHashLadder(
+  fingerprints: readonly string[],
+): Array<{ depth: number; hash: string }> {
+  const ladder: Array<{ depth: number; hash: string }> = [];
+  const depths: number[] = [];
+  for (let d = 8; d < fingerprints.length; d *= 2) depths.push(d);
+  if (fingerprints.length > 0) depths.push(fingerprints.length);
+  for (const depth of depths) {
+    ladder.push({ depth, hash: sha256(fingerprints.slice(0, depth).join("|")).slice(0, 16) });
+  }
+  return ladder;
+}
+
 export function buildCacheTraceWrapper(trace: CacheTrace): StreamFnWrapper {
   return function cacheTraceWrapper(next: StreamFn): StreamFn {
     return ((
@@ -256,6 +280,7 @@ export function buildCacheTraceWrapper(trace: CacheTrace): StreamFnWrapper {
         systemDigest,
         toolCount: tools.length,
         toolsDigest,
+        messagePrefixHashes: buildPrefixHashLadder(messageFingerprints),
       };
       // The SMALL assembled-array shape descriptor (counts/flags + tool
       // id pairing). Emitted OUTSIDE the includeMessages guard so it is
