@@ -124,8 +124,39 @@ function collectMarkers(result: Record<string, unknown>): MarkerRef[] {
 export function enforceMonotonicTtlOrdering(
   result: Record<string, unknown>,
   logger: ComisLogger,
+  allowExtendedTtl = true,
 ): void {
   const markers = collectMarkers(result);
+  if (markers.length === 0) return;
+
+  // On a provider that cannot honor the 1h beta (Bedrock/Vertex), normalize
+  // DOWNWARD instead: strip every ttl so all markers are the plain 5m default.
+  // That satisfies monotonicity trivially AND keeps every marker honorable —
+  // upgrading here would silently undo the provider retention cap, because
+  // sites that emit 1h directly (the UNTRUSTED_ anchor, adaptive zone
+  // promotion) do not read the resolved retention. No WARN: this is the
+  // expected steady state for those providers, not an upstream placement bug.
+  if (!allowExtendedTtl) {
+    let downgraded = 0;
+    for (const m of markers) {
+      if (m.ttl !== "1h") continue;
+      m.block.cache_control = { type: "ephemeral" };
+      downgraded++;
+    }
+    if (downgraded > 0) {
+      logger.debug(
+        {
+          downgradedCount: downgraded,
+          totalMarkers: markers.length,
+          hint: "provider does not support the extended cache TTL beta; markers normalized to the 5m default",
+          step: "cache-retention",
+        },
+        "MONOTONIC-TTL: normalized 1h markers to 5m for provider",
+      );
+    }
+    return;
+  }
+
   if (markers.length <= 1) return;
 
   // Walk backward; once we see a 1h marker, every earlier 5m marker must

@@ -430,7 +430,7 @@ export function runCacheBreakpointPhase(
   // anchor-aware retention above correctly coordinates the source placement.
   // Logs WARN with errorKind:"internal" if any upgrade fires — that
   // indicates an upstream placement bug.
-  enforceMonotonicTtlOrdering(result, logger);
+  enforceMonotonicTtlOrdering(result, logger, supportsExtendedCacheTtl(model.provider));
 
   return resolvedRetention;
 }
