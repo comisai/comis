@@ -223,12 +223,15 @@ export async function callTool(
           // long-running background call runs, kept no ceiling at all. A
           // deadline that applies only when tracing is on is not a deadline.
           maxTotalTimeout: state.options.callToolTimeoutMs,
-          ...(requestTraceId
-            ? {
-                onprogress: () => {},
-                resetTimeoutOnProgress: true,
-              }
-            : {}),
+          // UNCONDITIONAL, for the same reason as the ceiling above. The SDK only
+          // accepts a progress notification when the request registered a handler
+          // for it; gating this on a trace context meant that on any UNTRACED
+          // path — which is exactly where a backgrounded call runs — a server
+          // that reports progress produced "Received a progress notification for
+          // an unknown token" and the client CLOSED THE CONNECTION, failing the
+          // tool with -32000 and forcing a reconnect. Live: a progress-reporting MCP tool on a background path.
+          onprogress: () => {},
+          resetTimeoutOnProgress: true,
         },
       );
 
