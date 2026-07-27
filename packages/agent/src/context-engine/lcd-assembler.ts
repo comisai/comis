@@ -58,6 +58,21 @@
 
 import { partsToMessage } from "@comis/core";
 import { neutralizeForgedMarkersInMessage } from "../session/forged-context-markers.js";
+
+/**
+ * Message for the lcd-evict DEBUG.
+ *
+ * The line used to read "lcd history evicted under budget" unconditionally,
+ * including when droppedCount was 0. During a live cache investigation that
+ * reads as "the message array was rewritten" — the first thing to rule out when
+ * a cached prefix stops matching — and cost a full diagnostic detour before
+ * droppedCount showed 0 on every call. State what actually happened.
+ */
+export function evictionLogMessage(droppedCount: number): string {
+  return droppedCount > 0
+    ? "lcd history evicted under budget"
+    : "lcd history fit under budget (no eviction)";
+}
 import type {
   ContextStorePort,
   ContextStoreScope,
@@ -523,7 +538,7 @@ export function createLcdContextEngine(
           agentId: deps.agentId,
           sessionKey: deps.sessionKey,
         },
-        "lcd history evicted under budget",
+        evictionLogMessage(droppedCount),
       );
 
       // Emit the content-free `context:evicted` event (parity with the pipeline engine)
