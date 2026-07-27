@@ -19,7 +19,8 @@ export type LocaleMessageId =
   | "loop_detected"
   | "pipeline_timeout"
   | "tool_failure_notice"
-  | "tool_failure_notice_unnamed";
+  | "tool_failure_notice_unnamed"
+  | "prompt_timeout";
 
 export type LocalePack = Readonly<Partial<Record<LocaleMessageId, string>>>;
 
@@ -53,6 +54,8 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
   tool_failure_notice_unnamed:
     "\n\nNote: one of the tools I used reported an error, so part of this may be"
       + " incomplete.",
+  prompt_timeout:
+    "The request took too long to process. Please try again with a simpler message.",
   pipeline_timeout:
     "I stopped this request because it was taking too long and hit the time limit "
       + "for a single turn. Nothing was left half-applied. If it needs many lookups, "
@@ -213,6 +216,18 @@ export function selectToolFailureNoticeUnnamed(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "tool_failure_notice_unnamed");
+}
+
+/**
+ * The reply for a turn killed by the stall budget or whole-turn retry timeout.
+ * Was a hard-coded English literal in error-classifier.ts, shipped verbatim into
+ * conversations in any language.
+ */
+export function selectPromptTimeoutReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "prompt_timeout");
 }
 
 export function selectPipelineTimeoutReply(

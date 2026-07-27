@@ -26,6 +26,7 @@ import {
   selectPipelineTimeoutReply,
   selectToolFailureNotice,
   selectToolFailureNoticeUnnamed,
+  selectPromptTimeoutReply,
   type LocaleCatalog,
 } from "./degraded-reply-i18n.js";
 
@@ -148,4 +149,15 @@ export function buildToolFailureNoticeUnnamed(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectToolFailureNoticeUnnamed(language, localeCatalog);
+}
+
+/**
+ * Localized reply for a turn killed by the stall budget or the whole-turn retry
+ * timeout. PURE: same input -> same string.
+ */
+export function buildPromptTimeoutReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectPromptTimeoutReply(language, localeCatalog);
 }

@@ -16,10 +16,13 @@ import { describe, it, expect } from "vitest";
 import {
   buildOutputStarvedAnnotation,
   buildToolFailureNotice,
+  buildPromptTimeoutReply,
   buildToolFailureNoticeUnnamed,
   buildContextExhaustedReply,
   buildLoopDetectedReply,
   buildDegradedReply,
+  catalogFromLocalePacks,
+  LOCALE_MESSAGE_IDS,
 } from "./degraded-reply.js";
 import {
   selectOutputStarvedAnnotation,
@@ -326,5 +329,39 @@ describe("buildToolFailureNoticeUnnamed", () => {
 
   it("differs from the named variant", () => {
     expect(buildToolFailureNoticeUnnamed()).not.toBe(buildToolFailureNotice());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prompt-timeout reply
+// ---------------------------------------------------------------------------
+
+/**
+ * The whole-turn / stall-budget timeout reply was a hard-coded English literal
+ * in error-classifier.ts, delivered verbatim regardless of the conversation's
+ * language — the same gap already closed for pipeline_timeout. A stalled turn is
+ * one of the few messages a user is guaranteed to see, so it is exactly the one
+ * that must live inside the localizable platform-reply set.
+ *
+ * Observed live: a Hebrew conversation whose 404s stall produced
+ * "The request took too long to process. Please try again with a simpler message."
+ */
+describe("buildPromptTimeoutReply", () => {
+  it("returns the canonical English text with no locale configured", () => {
+    expect(buildPromptTimeoutReply()).toContain("took too long");
+  });
+
+  it("is a member of the locale message set", () => {
+    expect(LOCALE_MESSAGE_IDS).toContain("prompt_timeout");
+  });
+
+  it("uses an operator-supplied pack for the resolved locale", () => {
+    const catalog = catalogFromLocalePacks({ he: { prompt_timeout: "לקח יותר מדי זמן" } });
+    expect(buildPromptTimeoutReply("he", catalog)).toBe("לקח יותר מדי זמן");
+  });
+
+  it("falls back to English for a locale with no pack", () => {
+    const catalog = catalogFromLocalePacks({ he: { prompt_timeout: "x" } });
+    expect(buildPromptTimeoutReply("fr", catalog)).toContain("took too long");
   });
 });
