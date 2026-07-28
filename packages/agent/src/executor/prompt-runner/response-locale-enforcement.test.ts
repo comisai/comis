@@ -352,6 +352,54 @@ describe("applyResponseLocaleEnforcement", () => {
     expect(JSON.stringify(recoveryEvent.mock.calls)).not.toContain("إجابة مصححة");
   });
 
+  it("does not let locale repair rewrite an unrecovered tool failure into success", async () => {
+    const eventBus = new TypedEventBus();
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    };
+    const originalResponse = "The file was not sent because the delivery tool failed.";
+    const session = {
+      agent: { state: { tools: [{ name: "message" }] } },
+      messages: [{ role: "assistant", content: [{ type: "text", text: originalResponse }] }],
+      prompt: vi.fn(async () => {
+        session.messages.push({
+          role: "assistant",
+          content: [{ type: "text", text: "تم إرسال الملف بنجاح." }],
+        });
+      }),
+    };
+    const result = { response: originalResponse };
+    const params = {
+      responseLocalePolicy: ARABIC_POLICY,
+      result,
+      session,
+      bridge: {
+        getResult: () => ({
+          failedToolCalls: 1,
+          failedTools: ["message"],
+          toolExecResults: [
+            { toolName: "message", success: false, durationMs: 5 },
+          ],
+        }),
+        hasOutboundDelivery: () => false,
+      },
+      agentId: "agent-a",
+      sessionKey: {
+        tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
+      },
+      deps: {
+        eventBus,
+        logger,
+        clock: { now: () => 10, nowDate: () => new Date(10) },
+      },
+    } as unknown as RunPromptParams;
+
+    await applyResponseLocaleEnforcement(params);
+
+    expect(result.response).toBe(originalResponse);
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
   it("warns without content and reports failed recovery when repair drops literals", async () => {
     let now = 10;
     const eventBus = new TypedEventBus();
