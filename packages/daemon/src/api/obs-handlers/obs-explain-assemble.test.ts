@@ -113,6 +113,68 @@ function makeMetadata(overrides: Record<string, unknown> = {}): Record<string, u
   };
 }
 
+describe("assembleIncidentReport — channel health outcome", () => {
+  const cleanSignals = (recovered: boolean): IncidentSignals => makeSignals({
+    toolStats: {},
+    failures: [],
+    repeatedFailureCount: {},
+    hasMisclassificationSignal: false,
+    misclassifiedTool: undefined,
+    misclassifiedToken: undefined,
+    channelHealth: {
+      channelType: "telegram",
+      connectionMode: "polling",
+      degradedTransitions: 1,
+      currentState: recovered ? "healthy" : "disconnected",
+      latestProblemState: "disconnected",
+      recovered,
+    },
+  });
+
+  const cleanMetadata = (): Record<string, unknown> => makeMetadata({
+    sessionEnd: {
+      endReason: "success",
+      degraded: false,
+      durationMs: 10,
+      totalTokens: 20,
+      costUsd: 0,
+      toolStats: {},
+    },
+  });
+
+  it("marks a clean agent turn degraded while its channel remains disconnected", () => {
+    const report = assembleIncidentReport(
+      cleanSignals(false),
+      cleanMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.outcome).toEqual({
+      endReason: "success",
+      degraded: true,
+      severity: "degraded",
+    });
+  });
+
+  it("keeps a clean agent turn healthy after the channel recovery transition", () => {
+    const report = assembleIncidentReport(
+      cleanSignals(true),
+      cleanMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.outcome).toEqual({
+      endReason: "success",
+      degraded: false,
+      severity: "ok",
+    });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The per-node budget-breach section is surfaced when the signals carry
 // breaches (capSource names WHICH knob bound the node) and OMITTED when there
