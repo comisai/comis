@@ -441,6 +441,60 @@ describe("createSubagentHandlers", () => {
     expect(r.newRunId).toBe("new-run-id");
   });
 
+  it("subagent.steer preserves the authenticated completion route on respawn", async () => {
+    const requesterOrigin = {
+      channelType: "telegram",
+      channelId: "678314278",
+      userId: "principal-owner",
+      tenantId: "default",
+      threadId: "7",
+    };
+    const callerEndpoint = {
+      channelType: "telegram",
+      channelInstanceId: "telegram-12345",
+      conversationId: "678314278",
+      threadId: "7",
+      conversationKind: "direct" as const,
+    };
+    vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
+      runId: "run-route",
+      status: "running",
+      agentId: "researcher",
+      trustLevel: "admin",
+      task: "old task",
+      sessionKey: "default:sub-agent-run-route:sub-agent:run-route",
+      conversationScope: CALLER_SCOPE,
+      conversationRef: makeCallerConversation().conversationRef,
+      requesterOrigin,
+      depth: 1,
+      rootRunId: "root-route",
+      caps: ["orch:spawn"],
+      startedAt: Date.now() - 1_000,
+      callerSessionKey: "default:user1:channel1",
+      callerAgentId: "parent-agent",
+      callerConversation: makeCallerConversation(),
+      callerEndpoint,
+      announceChannelType: "telegram",
+      announceChannelId: "678314278",
+    } as ReturnType<typeof deps.subAgentRunner.getRunStatus>);
+
+    await handlers["subagent.steer"]!({
+      target: "run-route",
+      message: "unit tests only",
+      _callerSessionKey: "default:user1:channel1",
+      _agentId: "parent-agent",
+      _callerConversationScope: CALLER_SCOPE,
+    });
+
+    expect(deps.subAgentRunner.spawn).toHaveBeenCalledWith(expect.objectContaining({
+      requesterOrigin,
+      announceChannelType: "telegram",
+      announceChannelId: "678314278",
+      callerEndpoint,
+      depth: 1,
+    }));
+  });
+
   it("subagent.steer rate limits at 2s per target", async () => {
     // First steer should succeed
     await handlers["subagent.steer"]!({
