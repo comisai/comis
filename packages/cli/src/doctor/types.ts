@@ -104,6 +104,10 @@ export interface DoctorContext {
   readonly configPaths: string[];
   readonly dataDir: string;
   readonly daemonPidFile: string;
+  /** Presence-only lookup through the same environment/store chain as daemon boot. */
+  readonly secretPresent?: (name: string) => boolean;
+  /** Host platform used by checks whose runtime preconditions are platform-specific. */
+  readonly platform?: NodeJS.Platform;
   /** Exact SQLite path after applying dataDir and memory.dbPath precedence. */
   readonly memoryDbPath?: string;
   readonly gatewayUrl?: string;

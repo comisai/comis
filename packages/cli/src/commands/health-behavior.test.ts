@@ -30,7 +30,7 @@ vi.mock("../output/spinner.js", () => ({
 }));
 
 const { diagnosticChecks } = vi.hoisted(() => ({
-  diagnosticChecks: Array.from({ length: 10 }, (_, index) => ({
+  diagnosticChecks: Array.from({ length: 11 }, (_, index) => ({
     id: `check-${index}`,
     name: `Check ${index}`,
     run: vi.fn(),
@@ -118,7 +118,7 @@ describe("health shows only failures/warnings by default", () => {
     // Pass findings NOT visible
     expect(output).not.toContain("Config file exists");
     expect(output).not.toContain("Discord connected");
-    expect(vi.mocked(runDoctorChecks).mock.calls[0]?.[0]).toHaveLength(10);
+    expect(vi.mocked(runDoctorChecks).mock.calls[0]?.[0]).toHaveLength(11);
   });
 
   it("shows category header and suggestion text for fail finding", async () => {

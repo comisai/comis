@@ -100,6 +100,17 @@ function buildSecretChain(
   return (key) => getStoreSecret(key) ?? getEnv(key) ?? loadDotEnv()[key];
 }
 
+/** Presence-only lookup through the same selected secret backend as config resolution. */
+export function resolveDoctorSecretPresence(
+  configPaths: readonly string[],
+  name: string,
+  deps: ResolveDoctorConfigDeps = {},
+): boolean {
+  const readFile = deps.readFile ?? ((path: string) => readFileSync(path, "utf-8"));
+  const storageMode = preReadStorageMode(configPaths, { readFile });
+  return buildSecretChain(deps, storageMode)(name) !== undefined;
+}
+
 /**
  * Resolve the doctor's view of the config: locate every readable layer,
  * substitute each layer exactly as bootstrap does, merge left-to-right above

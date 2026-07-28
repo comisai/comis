@@ -17,11 +17,13 @@ import { gatewayHealthCheck } from "./checks/gateway-health.js";
 import { lcdHealthCheck } from "./checks/lcd-health.js";
 import { msteamsHealthCheck } from "./checks/msteams-health.js";
 import { oauthHealthCheck } from "./checks/oauth-health.js";
+import { runtimePostureHealthCheck } from "./checks/runtime-posture-health.js";
 import { secretsAuditHealthCheck } from "./checks/secrets-audit-health.js";
 import { versionSkewHealthCheck } from "./checks/version-skew-health.js";
 import { workspaceHealthCheck } from "./checks/workspace-health.js";
 import {
   resolveDoctorConfig,
+  resolveDoctorSecretPresence,
   type ResolveDoctorConfigDeps,
 } from "./config-resolve.js";
 import type { DoctorCheck, DoctorContext } from "./types.js";
@@ -32,6 +34,7 @@ export const DIAGNOSTIC_CHECKS: readonly DoctorCheck[] = [
   daemonHealthCheck,
   gatewayHealthCheck,
   versionSkewHealthCheck,
+  runtimePostureHealthCheck,
   channelHealthCheck,
   msteamsHealthCheck,
   workspaceHealthCheck,
@@ -113,6 +116,9 @@ export function buildDiagnosticContext(
     configPaths,
     dataDir,
     daemonPidFile: safePath(dataDir, "daemon.pid"),
+    secretPresent: (name) =>
+      resolveDoctorSecretPresence(configPaths, name, resolutionDeps),
+    platform: process.platform,
     memoryDbPath,
     gatewayUrl,
     cliVersion: deps.cliVersion ?? readCliVersion(),
