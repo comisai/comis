@@ -151,6 +151,10 @@ import {
   WIRE_DIFF_HINT_NOT_FOUND,
   type ThinkingBlockHash,
 } from "./thinking-block-hash-invariant.js";
+import {
+  buildToolRecoveryIdentity,
+  type ToolExecutionResultRecord,
+} from "./tool-failure-recovery.js";
 import { isContextExhaustionErrorMessage } from "../context-engine/errors.js";
 
 // ---------------------------------------------------------------------------
@@ -546,7 +550,7 @@ export interface PiEventBridgeResult {
   /** Event listener to subscribe to AgentSession events. */
   listener: (event: AgentSessionEvent) => void;
   /** Returns accumulated execution stats (includes last known context usage and duration breakdown). */
-  getResult: () => Partial<ExecutionResult> & { contextUsage?: ContextUsageData; textEmitted?: boolean; cumulativeLlmDurationMs?: number; cumulativeToolDurationMs?: number; cumulativeToolWallclockMs?: number; toolCallHistory?: string[]; lastActiveToolName?: string; lastLlmErrorMessage?: string; failedToolCalls?: number; failedTools?: string[]; toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>; breakerTripCount?: number; turnCount?: number; lastStopReason?: string; cacheWrite5mTokens?: number; cacheWrite1hTokens?: number; executionCostUsd?: number; executionCacheSavedUsd?: number; thinkingTokens?: number; budgetWarningEmitted?: boolean };
+  getResult: () => Partial<ExecutionResult> & { contextUsage?: ContextUsageData; textEmitted?: boolean; cumulativeLlmDurationMs?: number; cumulativeToolDurationMs?: number; cumulativeToolWallclockMs?: number; toolCallHistory?: string[]; lastActiveToolName?: string; lastLlmErrorMessage?: string; failedToolCalls?: number; failedTools?: string[]; toolExecResults?: ToolExecutionResultRecord[]; breakerTripCount?: number; turnCount?: number; lastStopReason?: string; cacheWrite5mTokens?: number; cacheWrite1hTokens?: number; executionCostUsd?: number; executionCacheSavedUsd?: number; thinkingTokens?: number; budgetWarningEmitted?: boolean };
   /** Accumulate estimated cost from a timed-out API request. */
   addGhostCost: (estimated: GhostCostEstimate) => void;
   /** ReadonlyMap views of the per-responseId hash store and canonical-snapshot
@@ -689,6 +693,7 @@ function parseEmbeddedJsonObject(text: string): Record<string, unknown> | undefi
 export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResult {
   // Internal accumulation state (managed by bridge-metrics module)
   const m = createBridgeMetrics();
+  const recoveryIdentitySalt = randomUUID();
   const pendingBackgroundTaskConsumptions = new Set<string>();
 
   // One-shot SDK-breakdown notice. Fires exactly once per
@@ -839,6 +844,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             toolEvent.args,
           );
           m.toolStartTimes.set(toolEvent.toolCallId, systemNowMs());
+          m.toolInvocationSequences.set(toolEvent.toolCallId, m.toolCallHistory.length);
           m.toolCallHistory.push(toolEvent.toolName);
           m.lastActiveToolName = toolEvent.toolName;
 
@@ -1084,6 +1090,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // them into the tool:executed `params` field below.
           const rawArgsForParams = m.toolRawArgs.get(endEvent.toolCallId);
           m.toolRawArgs.delete(endEvent.toolCallId);
+          const invocationSequence = m.toolInvocationSequences.get(endEvent.toolCallId);
+          m.toolInvocationSequences.delete(endEvent.toolCallId);
 
           if (
             toolSuccess
@@ -1316,11 +1324,18 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }
           }
 
+          const recoveryIdentity = buildToolRecoveryIdentity(
+            endEvent.toolName,
+            rawArgsForParams,
+            recoveryIdentitySalt,
+          );
           // Track all tool execution results
           m.toolExecResults.push({
             toolName: endEvent.toolName,
             success: toolSuccess,
             durationMs,
+            ...(invocationSequence === undefined ? {} : { invocationSequence }),
+            ...(recoveryIdentity === undefined ? {} : { recoveryIdentity }),
             ...(errorText && { errorText }),
             // Carry the closed-union errorKind (set on the failure path only)
             // for the rollup's bounded topErrorKinds.

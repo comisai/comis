@@ -886,8 +886,8 @@ describe("unrecoveredFailedToolNames", () => {
       unrecoveredFailedToolNames(
         ["pipeline"],
         [
-          { toolName: "pipeline", success: false, durationMs: 21 },
-          { toolName: "pipeline", success: true, durationMs: 27 },
+          { toolName: "pipeline", success: false, durationMs: 21, invocationSequence: 0 },
+          { toolName: "pipeline", success: true, durationMs: 27, invocationSequence: 1 },
         ],
       ),
     ).toEqual([]);
@@ -907,18 +907,53 @@ describe("unrecoveredFailedToolNames", () => {
       unrecoveredFailedToolNames(
         ["write"],
         [
-          { toolName: "write", success: false, durationMs: 5 },
-          { toolName: "read", success: true, durationMs: 3 },
+          { toolName: "write", success: false, durationMs: 5, invocationSequence: 0 },
+          { toolName: "read", success: true, durationMs: 3, invocationSequence: 1 },
         ],
       ),
     ).toEqual(["write"]);
+  });
+
+  it("keeps a message attachment failure after a send succeeds", () => {
+    expect(
+      unrecoveredFailedToolNames(
+        ["message"],
+        [
+          {
+            toolName: "message",
+            success: false,
+            durationMs: 5,
+            invocationSequence: 0,
+            recoveryIdentity: {
+              kind: "message_route",
+              action: "attach",
+              routeTargetDigest: "route-a",
+            },
+          },
+          {
+            toolName: "message",
+            success: true,
+            durationMs: 3,
+            invocationSequence: 1,
+            recoveryIdentity: {
+              kind: "message_route",
+              action: "send",
+              routeTargetDigest: "route-a",
+            },
+          },
+        ],
+      ),
+    ).toEqual(["message"]);
   });
 
   it("dedups repeated failed tool names", () => {
     expect(
       unrecoveredFailedToolNames(
         ["pipeline", "pipeline"],
-        [{ toolName: "pipeline", success: true, durationMs: 27 }],
+        [
+          { toolName: "pipeline", success: false, durationMs: 21, invocationSequence: 0 },
+          { toolName: "pipeline", success: true, durationMs: 27, invocationSequence: 1 },
+        ],
       ),
     ).toEqual([]);
   });
@@ -937,9 +972,9 @@ describe("unrecoveredFailedToolNames", () => {
       unrecoveredFailedToolNames(
         ["pipeline", "search"],
         [
-          { toolName: "pipeline", success: false, durationMs: 21 },
-          { toolName: "pipeline", success: true, durationMs: 27 },
-          { toolName: "search", success: false, durationMs: 9 },
+          { toolName: "pipeline", success: false, durationMs: 21, invocationSequence: 0 },
+          { toolName: "pipeline", success: true, durationMs: 27, invocationSequence: 1 },
+          { toolName: "search", success: false, durationMs: 9, invocationSequence: 2 },
         ],
       ),
     ).toEqual(["search"]);
@@ -955,9 +990,9 @@ describe("recoveredFailedToolNames", () => {
       recoveredFailedToolNames(
         ["write", "search"],
         [
-          { toolName: "write", success: false, durationMs: 8 },
-          { toolName: "write", success: true, durationMs: 15 },
-          { toolName: "search", success: false, durationMs: 9 },
+          { toolName: "write", success: false, durationMs: 8, invocationSequence: 0 },
+          { toolName: "write", success: true, durationMs: 15, invocationSequence: 1 },
+          { toolName: "search", success: false, durationMs: 9, invocationSequence: 2 },
         ],
       ),
     ).toEqual(["write"]);
@@ -968,18 +1003,18 @@ describe("recoveredFailedToolNames", () => {
     expect(recoveredFailedToolNames(["write"], [])).toEqual([]);
     expect(recoveredFailedToolNames([], undefined)).toEqual([]);
     expect(
-      recoveredFailedToolNames(["search"], [{ toolName: "search", success: false, durationMs: 9 }]),
+      recoveredFailedToolNames(["search"], [{ toolName: "search", success: false, durationMs: 9, invocationSequence: 0 }]),
     ).toEqual([]);
   });
 
   it("is the exact complement of unrecoveredFailedToolNames over failedTools", () => {
     const failed = ["write", "search", "pipeline"];
     const results = [
-      { toolName: "write", success: false, durationMs: 8 },
-      { toolName: "write", success: true, durationMs: 15 },
-      { toolName: "pipeline", success: false, durationMs: 21 },
-      { toolName: "pipeline", success: true, durationMs: 27 },
-      { toolName: "search", success: false, durationMs: 9 },
+      { toolName: "write", success: false, durationMs: 8, invocationSequence: 0 },
+      { toolName: "write", success: true, durationMs: 15, invocationSequence: 1 },
+      { toolName: "pipeline", success: false, durationMs: 21, invocationSequence: 2 },
+      { toolName: "pipeline", success: true, durationMs: 27, invocationSequence: 3 },
+      { toolName: "search", success: false, durationMs: 9, invocationSequence: 4 },
     ];
     const recovered = recoveredFailedToolNames(failed, results);
     const unrecovered = unrecoveredFailedToolNames(failed, results);

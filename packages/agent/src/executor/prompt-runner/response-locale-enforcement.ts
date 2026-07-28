@@ -20,6 +20,7 @@ import {
   type ResponseLocaleQualityFinding,
 } from "../resolve-response-locale-policy.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
+import { classifyToolFailureRecovery } from "../../bridge/tool-failure-recovery.js";
 
 type LocaleEnforcementSession = Pick<AgentSession, "agent" | "prompt">;
 
@@ -230,19 +231,27 @@ function emitLocaleRecovery(params: RunPromptParams, succeeded: boolean): void {
 /** Apply locale enforcement at the success-path egress boundary. */
 export async function applyResponseLocaleEnforcement(params: RunPromptParams): Promise<void> {
   if (params.responseLocalePolicy === undefined) return;
-  const bridgeResult = params.bridge.getResult();
-  const successfulTools = new Set(
-    (bridgeResult.toolExecResults ?? [])
-      .filter((toolResult) => toolResult.success)
-      .map((toolResult) => toolResult.toolName),
+  const initialFinding = evaluateResponseLocale(
+    params.responseLocalePolicy,
+    params.result.response,
   );
-  const unrecoveredToolCount = (bridgeResult.failedTools ?? [])
-    .filter((toolName) => !successfulTools.has(toolName)).length;
-  if (unrecoveredToolCount > 0) {
+  if (initialFinding === undefined) return;
+  params.result.localeQualityFinding = initialFinding;
+  const bridgeResult = params.bridge.getResult();
+  const recovery = classifyToolFailureRecovery(
+    bridgeResult.failedTools ?? [],
+    bridgeResult.toolExecResults,
+  );
+  if (recovery.unrecoveredFailureCount > 0) {
     params.deps.logger.debug(
       {
         step: "response-locale-repair-skipped",
-        unrecoveredToolCount,
+        locale: initialFinding.locale,
+        expectedScript: initialFinding.expectedScript,
+        actualScript: initialFinding.actualScript,
+        unrecoveredToolCount: recovery.unrecoveredToolNames.length,
+        unrecoveredToolFailureCount: recovery.unrecoveredFailureCount,
+        unrecoveredTools: recovery.unrecoveredToolNames,
       },
       "Response locale repair skipped after an unrecovered tool failure",
     );

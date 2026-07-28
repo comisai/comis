@@ -2685,6 +2685,42 @@ describe("createPiEventBridge", () => {
       expect(result.toolExecResults![1]).toMatchObject({ toolName: "bash", success: false, errorText: "command failed" });
     });
 
+    it("carries only content-free message route identity in tool results", () => {
+      const { listener, getResult } = createPiEventBridge(deps);
+      const privateChannel = "private-channel-a";
+      const privateAttachment = "/workspace/private-report.pdf";
+
+      listener({
+        type: "tool_execution_start",
+        toolName: "message",
+        toolCallId: "tc-message-route",
+        args: {
+          action: "attach",
+          channel_type: "telegram",
+          channel_id: privateChannel,
+          attachment_url: privateAttachment,
+          caption: "private message body",
+        },
+      } as any);
+      listener(makeToolExecutionEndEvent(
+        "message",
+        "tc-message-route",
+        true,
+        "delivery failed",
+      ) as any);
+
+      const identity = getResult().toolExecResults?.[0]?.recoveryIdentity;
+      expect(identity).toMatchObject({
+        kind: "message_route",
+        action: "attach",
+        routeTargetDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(getResult().toolExecResults?.[0]?.invocationSequence).toBe(0);
+      expect(JSON.stringify(identity)).not.toContain(privateChannel);
+      expect(JSON.stringify(identity)).not.toContain(privateAttachment);
+      expect(JSON.stringify(identity)).not.toContain("private message body");
+    });
+
     it("logs only the argument count when failed arguments include large values", () => {
       const { listener } = createPiEventBridge(deps);
 
