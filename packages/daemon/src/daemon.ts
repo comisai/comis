@@ -878,9 +878,11 @@ function buildRpcDispatchDeps(deps: {
     videoStatusHandlerDeps,
     oauthCredentialStore: c.oauthCredentialStore,
     // Wire observability DI seams.
-    // ObservabilityApiDeps.dataDir: used by obs.trace.* handlers for session-index + bundle export.
+    // ObservabilityApiDeps.dataDir must match the configured root used by the
+    // session-index and trajectory writers. The pre-bootstrap dataDir is only
+    // the fallback when config does not select a root.
     // ObservabilityApiDeps.exportTrajectoryBundle: DI seam for obs.trace.export RPC (comis trace export <sessionId>).
-    dataDir: c.dataDir,
+    dataDir: c.container.config.dataDir || c.dataDir,
     exportTrajectoryBundle,
   };
 }
