@@ -533,6 +533,28 @@ describe("setupTools", () => {
     expect(mockCreateSleepTool).toHaveBeenCalled();
   });
 
+  it("makes SDK-discovered skill roots readable by surfaced skills", async () => {
+    const deps = createMinimalDeps();
+    Object.assign(deps, {
+      sdkSkillReadOnlyPaths: [
+        "/home/operator/.agents/skills",
+        "/sdk/agent/skills",
+      ],
+    });
+    const setupTools = await getSetupTools();
+    const { assembleToolsForAgent } = setupTools(deps);
+
+    await assembleToolsForAgent("agent-1");
+
+    expect(mockAssembleToolPipeline.mock.calls[0][0].readOnlyPaths).toEqual([
+      "/workspace/agent-1/skills",
+      "/test/data/skills",
+      "/home/operator/.agents/skills",
+      "/sdk/agent/skills",
+      "/test/data/logs",
+    ]);
+  });
+
   // -------------------------------------------------------------------------
   // 2b. FileStateTracker auto-creation and threading
   // -------------------------------------------------------------------------
