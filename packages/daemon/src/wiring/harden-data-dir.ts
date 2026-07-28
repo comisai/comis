@@ -4,7 +4,7 @@
  *
  * `hardenDataDirPermissions` scans `~/.comis/` and fixes permissions on the data
  * directory, known sensitive files (config.yaml, .env, secrets.db, …), and
- * every regular file and directory in the production session tree. It returns
+ * every regular file and directory in the production session and log trees. It returns
  * corrections for deferred logging after the structured logger is available.
  *
  * It was moved out of `main-helpers.ts` (a behavior-neutral function extraction,
@@ -22,7 +22,7 @@ import { safePath } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import type { PermissionCorrection } from "../daemon-types.js";
 
-function hardenSessionTree(
+function hardenPrivateTree(
   currentPath: string,
   corrections: PermissionCorrection[],
 ): Result<void, Error> {
@@ -49,7 +49,7 @@ function hardenSessionTree(
   for (const entry of entriesResult.value) {
     const pathResult = tryCatch(() => safePath(currentPath, entry.name));
     if (!pathResult.ok) continue;
-    const childResult = hardenSessionTree(pathResult.value, corrections);
+    const childResult = hardenPrivateTree(pathResult.value, corrections);
     if (!childResult.ok) continue;
   }
   return ok(undefined);
@@ -94,7 +94,12 @@ export function hardenDataDirPermissions(dataDir: string): PermissionCorrection[
 
   const sessionRootResult = tryCatch(() => safePath(dataDir, "workspace", "sessions"));
   if (sessionRootResult.ok) {
-    hardenSessionTree(sessionRootResult.value, corrections);
+    hardenPrivateTree(sessionRootResult.value, corrections);
+  }
+
+  const logsRootResult = tryCatch(() => safePath(dataDir, "logs"));
+  if (logsRootResult.ok) {
+    hardenPrivateTree(logsRootResult.value, corrections);
   }
 
   return corrections;
