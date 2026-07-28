@@ -58,7 +58,21 @@ export function findAssistantReplyAfterInbound(source, inboundId) {
 }
 
 function normalizeWireText(value) {
-  return value.replace(/\s+/g, " ").trim();
+  return value
+    .replace(/<a\b[^>]*>(.*?)<\/a>/gis, "$1")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\*\*(.*?)\*\*/gs, "$1")
+    .replace(/__(.*?)__/gs, "$1")
+    .replace(/~~(.*?)~~/gs, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&amp;", "&")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** Whether the recorded Telegram wire contains this session-correlated answer. */
