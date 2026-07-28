@@ -692,6 +692,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // One typed compiler input feeds the monolithic and cache-block views.
   const assemblerParams: import("../bootstrap/index.js").AssemblerParams = {
     promptMode,
+    // From the CACHE-STABLE tool snapshot, not the live list: the directive is
+    // part of the cached system prefix, so it must not flip between turns when
+    // MCP servers connect or disconnect.
+    delegationAvailable: stableToolNames.includes("sessions_spawn"),
     instructionSections: deps.workspacePolicySnapshot.sections,
     bootstrapFiles: bootstrapContextFiles,
     promptSkillsXml, // skills XML in semiStableBody for 1h cache

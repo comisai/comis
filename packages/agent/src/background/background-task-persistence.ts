@@ -61,6 +61,10 @@ export function toPersistedState(task: BackgroundTask | PersistedTaskState): Per
     ...(task.finalizedResult !== undefined && { finalizedResult: task.finalizedResult }),
     ...(task.notificationPolicy !== undefined && { notificationPolicy: task.notificationPolicy }),
     ...(task.dispatchState !== undefined && { dispatchState: task.dispatchState }),
+    ...(task.toolCallId !== undefined && { toolCallId: task.toolCallId }),
+    ...(task.sessionKey !== undefined && { sessionKey: task.sessionKey }),
+    ...(task.traceId !== undefined && { traceId: task.traceId }),
+    ...(task.errorKind !== undefined && { errorKind: task.errorKind }),
   };
 }
 

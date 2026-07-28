@@ -596,3 +596,85 @@ describe("providers_manage TOOL_GUIDE catalog interpolation", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Deferred-section reachability
+// ---------------------------------------------------------------------------
+
+/**
+ * A SYSTEM_PROMPT_GUIDES entry keyed on a tool name is injected by
+ * jit-guide-injector ONLY after that tool has been called successfully. When the
+ * guide's whole purpose is to tell the model WHEN to reach for the tool, that
+ * ordering is circular: the policy is unreachable until the model has already
+ * done the thing the policy exists to cause.
+ *
+ * The always-present lean description is the only text the model sees before
+ * its first call, so it must carry the trigger itself. Observed live: an agent
+ * with sessions_spawn on its surface ground a multi-minute report inline across
+ * ten consecutive turns and never spawned once, because nothing in the prompt
+ * said delegation applied.
+ */
+describe("SYSTEM_PROMPT_GUIDES trigger reachability", () => {
+  it("states the delegation trigger in the always-present sessions_spawn description", () => {
+    const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
+    expect(typeof lean).toBe("string");
+    // The >30s rule is the criterion that fires for heavy report work.
+    expect(lean as string).toMatch(/30\s*(?:s\b|sec)/i);
+  });
+
+  it("names parallel fan-out in the always-present sessions_spawn description", () => {
+    const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
+    expect(lean as string).toMatch(/parallel|multiple/i);
+  });
+});
+
+/**
+ * A spawned sub-agent gets a RESTRICTED default profile: the parent's MCP tools
+ * and `message` are outside it. The delegation policy told the model to spawn but
+ * never mentioned tool_groups, so the first spawn of any real task fails with
+ * "Required tools unreachable … Re-spawn with tool_groups:['full']" and the turn
+ * degrades before recovering.
+ *
+ * Observed live on the first delegation the runtime ever performed.
+ */
+describe("Task Delegation policy covers the child tool profile", () => {
+  const guide = SYSTEM_PROMPT_GUIDES.sessions_spawn!;
+
+  it("tells the model to pass tool_groups when the child needs them", () => {
+    expect(guide).toContain("tool_groups");
+  });
+
+  it("names the two surfaces that are outside the default child profile", () => {
+    expect(guide).toMatch(/MCP/);
+    expect(guide).toMatch(/message/);
+  });
+});
+
+/**
+ * The turn's final assistant text is delivered to the channel automatically. When
+ * the agent ALSO delivers user-facing content with the `message` tool, both go
+ * out and the user sees the same thing twice.
+ *
+ * Observed live on real Telegram: a file arrived with its caption, immediately
+ * followed by a second message restating it ("הקובץ נשלח ✅ …"). The trajectory
+ * showed message ×2 but THREE dispatched deliveries.
+ *
+ * The runtime already honours a silent sentinel (isSilentResponse) — the model
+ * was simply never told to use it after sending.
+ */
+describe("message tool states the no-double-post contract", () => {
+  const ctx: ToolDescriptionContext = { modelTier: "large", channelType: "telegram" };
+  const desc = resolveDescription({ name: "message" }, LEAN_TOOL_DESCRIPTIONS, ctx);
+
+  it("tells the model to return the silent sentinel after delivering", () => {
+    expect(desc).toContain("NO_REPLY");
+  });
+
+  it("says why — the final text is sent as well", () => {
+    expect(desc).toMatch(/also|too|double|twice/i);
+  });
+
+  it("stays within the lean description budget", () => {
+    expect(desc.length).toBeLessThanOrEqual(300);
+  });
+});

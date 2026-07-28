@@ -193,9 +193,22 @@ const matchVenvMissing: Matcher = ({ stderr, exitCode, cwd }) => {
 // Registry + entry point
 // ---------------------------------------------------------------------------
 
+
+/** PEP 668 requires dependency installation in an isolated environment. */
+const matchExternallyManagedEnv: Matcher = ({ stderr, exitCode }) => {
+  if (exitCode === 0) return null;
+  if (!stderr || !stderr.includes("externally-managed-environment")) return null;
+  return (
+    "RECOVERY HINT: This system Python is PEP 668 externally-managed — bare `pip install` " +
+    "will always refuse. Install into a workspace virtualenv " +
+    "(python3 -m venv venv && venv/bin/pip install <pkgs>). Do not retry the identical command."
+  );
+};
+
 const matchers: ReadonlyArray<Matcher> = [
   matchPythonModuleNotFound,
   matchVenvMissing,
+  matchExternallyManagedEnv,
   // Future: matchNodeModuleNotFound, matchCommandNotFound, matchEnvVarMissing, ...
 ];
 

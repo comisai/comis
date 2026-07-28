@@ -258,10 +258,20 @@ describe("setupObservability", () => {
   // -------------------------------------------------------------------------
 
   // -------------------------------------------------------------------------
-  // 7. Subscribes to observability:cache_break event
+  // 7-8. Cache-break logging is SINGLE-SOURCE (the detector owns it).
+  //
+  // These two tests used to assert that setupObservability subscribed to
+  // `observability:cache_break` and logged it at INFO. That subscription was a
+  // pure PROJECTION of an event `cache-state.ts` already logs under the SAME
+  // `msg`, so every break produced TWO identical INFO lines and every lens that
+  // counts by message double-counted (a 9-break session read as 18, inflating the
+  // `cache_prefix_churn` system finding). The wiring no longer re-logs; the
+  // detector's single line carries all the fields this one used to add. The
+  // single-source invariant is pinned in
+  // packages/agent/src/executor/cache-detection/cache-state.test.ts.
   // -------------------------------------------------------------------------
 
-  it("subscribes to observability:cache_break event", async () => {
+  it("does NOT re-log cache_break (the detector is the single source of the count)", async () => {
     const eventBus = createMockEventBus();
     const setupObservability = await getSetupObservability();
     const mockLogger = { info: vi.fn() };
@@ -272,68 +282,22 @@ describe("setupObservability", () => {
       logger: mockLogger,
     });
 
-    const handlers = eventBus._handlers.get("observability:cache_break");
-    expect(handlers).toBeDefined();
-    expect(handlers!.length).toBeGreaterThan(0);
-  });
-
-  // -------------------------------------------------------------------------
-  // 8. Emitting cache_break logs at INFO with structured fields
-  // -------------------------------------------------------------------------
-
-  it("logs cache_break event with structured fields at INFO level", async () => {
-    const eventBus = createMockEventBus();
-    const setupObservability = await getSetupObservability();
-    const mockLogger = { info: vi.fn() };
-
-    await setupObservability({
-      eventBus: eventBus as any,
-      _createTokenTracker: mockCreateTokenTracker,
-      logger: mockLogger,
-    });
-
-    const payload = {
+    eventBus.emit("observability:cache_break", {
       provider: "anthropic",
       reason: "system_prompt_changed",
       tokenDrop: 5000,
       tokenDropRelative: 0.42,
-      previousCacheRead: 12000,
-      currentCacheRead: 7000,
-      callCount: 15,
-      changes: {
-        systemChanged: true,
-        toolsChanged: false,
-        metadataChanged: false,
-        modelChanged: false,
-        retentionChanged: false,
-        addedTools: [],
-        removedTools: [],
-        changedSchemaTools: [],
-      },
-      toolsChanged: ["tool-a", "tool-b"],
-      ttlCategory: "medium",
-      agentId: "agent-test",
-      sessionKey: "session-test",
-      timestamp: Date.now(),
-    };
+      agentId: "default",
+      sessionKey: "s",
+      ttlCategory: "long",
+      toolsChanged: [],
+      changes: { systemChanged: true, modelChanged: false },
+    } as never);
 
-    eventBus.emit("observability:cache_break", payload);
-
-    expect(mockLogger.info).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: "anthropic",
-        reason: "system_prompt_changed",
-        tokenDrop: 5000,
-        tokenDropRelative: 0.42,
-        agentId: "agent-test",
-        sessionKey: "session-test",
-        ttlCategory: "medium",
-        toolsChanged: 2,
-        systemChanged: true,
-        modelChanged: false,
-      }),
-      "Cache break detected",
+    const cacheBreakLogs = mockLogger.info.mock.calls.filter(
+      (c: unknown[]) => c[1] === "Cache break detected",
     );
+    expect(cacheBreakLogs).toHaveLength(0);
   });
 
   // -------------------------------------------------------------------------

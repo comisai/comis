@@ -691,6 +691,69 @@ describe("bindObsExplainHandlers", () => {
     expect(r.likelyRootCause?.detail).toMatch(/lossy|candidate|partial/i);
   });
 
+  it("an unresolvable sessionKey whose ranker surfaces DIFFERENT real keys yields session_not_found (not a clean-looking empty report)", async () => {
+    // The live friction (comis-moshe 2026-07-26): `explain
+    // "telegram:<user>~peer~<peer>"` CONTAINS a ':' so the CLI routes it as a
+    // {sessionKey} — never a traceId — so `refResolutionMissed` (traceId/rootRunId
+    // only) stayed false and the report came back ALL-ZERO with
+    // likelyRootCause:null, truncations:[] … while coverage.candidateSessionKeys
+    // held the correct full key. A silent wrong answer: indistinguishable from a
+    // healthy zero-activity session.
+    //
+    // The evidence that the ref did not resolve is the ranker surfacing OTHER
+    // real keys: a genuinely-real-but-empty session ranks itself (or ranks
+    // nothing), never a set that excludes it.
+    const realKey =
+      "default:agent:default:platform_o9UpY:telegram:peer:platform_o9UpY";
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => [],
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => null,
+      readDiagnosticsRollup: async () => null,
+      listCandidateSessionKeys: async () => [realKey],
+    };
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-lossy-sk-"));
+    const handlers = bindObsExplainHandlers(makeDeps({ dataDir, incidentReader: reader }));
+    const r = (await handlers["obs.explain"]!({
+      sessionKey: "telegram:platform_o9UpY~peer~platform_o9UpY",
+      _trustLevel: "admin",
+    })) as IncidentReport;
+
+    expect(r.likelyRootCause).not.toBeNull();
+    expect(r.likelyRootCause?.code).toBe("session_not_found");
+    expect(r.likelyRootCause?.detail).toMatch(/lossy|candidate|partial/i);
+    // …and it names the field that missed, so the ledger reads honestly.
+    expect(
+      r.truncations.some(
+        (t) => t.field === "sessionKey" && /not\s*found|unresolv/i.test(t.reason),
+      ),
+    ).toBe(true);
+    // The operator still gets the key to copy.
+    expect(r.coverage?.candidateSessionKeys).toContain(realKey);
+  });
+
+  it("a REAL sessionKey the ranker ALSO returns stays a clean empty report (zero-telemetry, not not-found)", async () => {
+    // The precision guard for the rule above: when the ranker returns the very
+    // key that was requested, the session exists and simply has no telemetry —
+    // it must keep the null rootCause (no false not-found).
+    const realKey = "default:clean:clean:peer:clean";
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => [],
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => null,
+      readDiagnosticsRollup: async () => null,
+      listCandidateSessionKeys: async () => [realKey],
+    };
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-real-empty-"));
+    const handlers = bindObsExplainHandlers(makeDeps({ dataDir, incidentReader: reader }));
+    const r = (await handlers["obs.explain"]!({
+      sessionKey: realKey,
+      _trustLevel: "admin",
+    })) as IncidentReport;
+    expect(r.likelyRootCause).toBeNull();
+    expect(r.truncations.some((t) => t.field === "sessionKey")).toBe(false);
+  });
+
   it("an EMPTY but RESOLVED session keeps the no-throw, null-rootCause behavior (only the UNRESOLVED case is marked)", async () => {
     // A real sessionKey that simply has no telemetry on disk must NOT be tagged
     // session_not_found — it resolved fine; it is just empty. Only the

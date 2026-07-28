@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
 /**
  * Model retry orchestration — wraps `runWithModelRetry` and layers on
  * stuck-session detection plus the silent-failure detection cascade
@@ -75,9 +76,19 @@ export async function runRetryLoop(
     promptError: undefined,
   };
 
-  // Redact LLM input -- log only character count, never user
-  // message text, canary tokens, or system prompt content.
-  deps.logger.debug({ inputChars: messageText.length }, "LLM input");
+  // Redact LLM input -- log only character count + a correlation digest, never
+  // user message text, canary tokens, or system prompt content. The digest
+  // joins this line to the trajectory's prompt.submitted record (which carries
+  // the same identity), and the VALUES live in the raw session .jsonl -- this
+  // line deliberately cannot reconstruct the prompt, only point at what can.
+  deps.logger.debug(
+    {
+      inputChars: messageText.length,
+      inputDigest: createHash("sha256").update(messageText).digest("hex").slice(0, 16),
+      executionId: params.executionId,
+    },
+    "LLM input",
+  );
 
   // Bind the model-retry invocation so the silent-failure branches share
   // the deps wiring without re-threading every dependency.

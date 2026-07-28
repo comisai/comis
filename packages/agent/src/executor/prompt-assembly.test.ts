@@ -3100,7 +3100,8 @@ describe("bootstrap file snapshotting", () => {
       expect(result.responseLocalePolicy).toEqual({
         locale: "fr-CA",
         source: "request",
-        enforceLocale: true,
+        // Transport tier is advisory — only an operator pin enforces.
+        enforceLocale: false,
       });
     });
 
@@ -3128,7 +3129,7 @@ describe("bootstrap file snapshotting", () => {
       expect(result.responseLocalePolicy.source).toBe("unset");
     });
 
-    it("enforces the current request script when locale metadata is absent", async () => {
+    it("derives the current request script (ADVISORY) when locale metadata is absent", async () => {
       const result = await assembleExecutionPrompt(makeParams({
         msg: makeMsg({ text: "أجب عن هذا الطلب بإيجاز" }),
       }));
@@ -3136,7 +3137,7 @@ describe("bootstrap file snapshotting", () => {
       expect(result.responseLocalePolicy).toEqual({
         locale: "und-Arab",
         source: "request",
-        enforceLocale: true,
+        enforceLocale: false,
       });
       expect(result.dynamicPreamble).toContain('locale="und-Arab"');
       expect(result.dynamicPreamble).toContain("same human language as the current user request");
@@ -4267,7 +4268,7 @@ describe("parent prefix reuse", () => {
     expect(result.responseLocalePolicy).toEqual({
       locale: "ar-EG",
       source: "request",
-      enforceLocale: true,
+      enforceLocale: false,
     });
   });
 

@@ -442,6 +442,14 @@ export interface MessagingEvents {
     outputHeadroom: number;
     /** Fit-check outcome (closed union — never an open string). */
     verdict: "fits" | "downshifted" | "exhausted";
+    /** The effective number of trailing conversation steps kept verbatim. */
+    freshTailSteps?: number;
+    /** The configured `contextEngine.freshTailTurns`. See {@link freshTailSteps}. */
+    freshTailStepsConfigured?: number;
+    /** Whether the originating request survived the residual trim. */
+    originatingRequestRetained?: boolean;
+    /** Number of fresh-tail messages removed by the residual trim. */
+    freshTailTrimmedCount?: number;
   };
 
   /** A non-Latin search returned zero hits on a CLEANLY-executed lane.

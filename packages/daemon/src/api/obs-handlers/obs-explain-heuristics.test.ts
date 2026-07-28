@@ -201,6 +201,35 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.length).toBeGreaterThan(0);
   });
 
+  // The first suggested step was "raise the per-call timeout", which names no
+  // knob and leads with the one action that makes a deadline-bound turn worse:
+  // a longer deadline buys a longer burn against the same fixed turn budget.
+  // Narrowing the request is the move that actually completes, and the MCP
+  // deadline lives at a config path an agent cannot patch — so the advice has
+  // to name it and say who can change it.
+  it("insurance: provider_timeout leads with narrowing and names the MCP deadline knob", () => {
+    const r = rootCause(
+      makeSignals({
+        failures: [
+          {
+            seq: 0,
+            toolName: "mcp__vendor--report",
+            classifiedFailureBy: "mcp_classifier",
+            transportOk: true,
+            errorKind: "timeout",
+            resultDigest: "abc",
+            resultBytes: 10,
+            errorPreview: "timed out — it exceeded the call deadline of 120000ms",
+          },
+        ],
+      }),
+    );
+    expect(r!.code).toBe("provider_timeout");
+    expect(r!.suggestedNextSteps[0]).toMatch(/narrow|smaller|fewer/i);
+    expect(r!.suggestedNextSteps.join(" ")).toContain("integrations.mcp.callToolTimeoutMs");
+    expect(r!.suggestedNextSteps.join(" ")).toMatch(/operator/i);
+  });
+
   it("insurance: context_bloat (offloads ≥ N + token spike)", () => {
     const r = rootCause(
       makeSignals({

@@ -18,9 +18,15 @@ import type {
   InboundMessageProvenancePlan,
 } from "@comis/agent";
 import type { CommandDirectives } from "../commands/index.js";
-import { sanitizeAssistantResponse, createThinkingTagFilter } from "@comis/agent";
+import {
+  sanitizeAssistantResponse,
+  createThinkingTagFilter,
+  buildPipelineTimeoutReply,
+  catalogFromLocalePacks,
+} from "@comis/agent";
 
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";
+export type { PlatformReplyLocale } from "./execution-platform-reply-locale.js";
 import { emitObservationalEvent } from "./execution-event-emitter.js";
 import { buildThreadSendOpts } from "./execution-routing-config.js";
 import type { TypingLifecycleController } from "@comis/channels";
@@ -33,6 +39,7 @@ import type { TypingLifecycleController } from "@comis/channels";
 export type ExecuteDeps = Pick<
   ExecutionPipelineDeps,
   "eventBus" | "logger" | "assembleToolsForAgent" | "executionTimeoutMs" | "enforceFinalTag"
+  | "getPlatformReplyLocale"
 >;
 
 // ---------------------------------------------------------------------------
@@ -227,9 +234,20 @@ export async function executeLlm(
         timestamp: systemNowMs(),
       });
 
+      // Route the reply through the deterministic platform-reply mechanism
+      // instead of a literal. This is the ONE message a wall-clock-killed turn
+      // is guaranteed to produce, and it was the only degraded reply outside
+      // that mechanism — so it could not be localized at all, and it claimed a
+      // transient "try again in a moment" for a turn that had burned the full
+      // ceiling and would do so again unless the ask were narrowed.
+      const replyLocale = deps.getPlatformReplyLocale?.(agentId);
       await adapter.sendMessage(
         effectiveMsg.channelId,
-        "I'm having trouble processing your request right now. Please try again in a moment.",
+        buildPipelineTimeoutReply({
+          ...(replyLocale?.language === undefined ? {} : { language: replyLocale.language }),
+          localeCatalog: catalogFromLocalePacks(replyLocale?.localePacks),
+          traceId: executionTraceId,
+        }),
         { replyTo, ...buildThreadSendOpts(effectiveMsg.metadata) },
       // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
       ).catch(() => { /* adapter logs internally */ });

@@ -10,6 +10,7 @@
  * @module
  */
 
+import { cacheBreakLogFields } from "./cache-break-hints.js";
 import {
   CACHE_BREAK_RELATIVE_THRESHOLD,
   CACHE_BREAK_ABSOLUTE_THRESHOLD,
@@ -278,10 +279,11 @@ export function createCacheBreakDetector(
         breakpointBudget: state.currentSnapshot.breakpointBudget,
       };
 
-      logger.info(
-        { agentId: event.agentId, provider: event.provider, reason: event.reason, tokenDrop: event.tokenDrop, toolsChanged: event.toolsChanged },
-        "Cache break detected",
-      );
+      // THE single cache-break log line. Its fields live in
+      // cache-break-hints.ts (see cacheBreakLogFields) — they carry everything the
+      // observability subscriber used to re-log, because two INFO lines with the
+      // same `msg` for one event made every counting lens double-count.
+      logger.info(cacheBreakLogFields(event), "Cache break detected");
 
       return event;
     },

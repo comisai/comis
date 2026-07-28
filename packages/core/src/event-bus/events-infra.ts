@@ -655,6 +655,14 @@ export interface InfraEvents {
     durationMs: number;
     origin: BackgroundTaskOrigin;
     timestamp: number;
+    /** {@link BACKGROUND_TASK_DISPATCH_REDELIVERY} — see the failed variant. */
+    dispatchRedelivery?: boolean;
+    /** Correlation to the ORIGINATING tool call — see the failed variant. */
+    toolCallId?: string;
+    /** Formatted session key captured at promote time — see the failed variant. */
+    sessionKey?: string;
+    /** Trace id captured at promote time — see the failed variant. */
+    traceId?: string;
   };
 
   /** Background task failed (timeout, error, or daemon restart).
@@ -665,9 +673,47 @@ export interface InfraEvents {
     taskId: string;
     toolName: string;
     error: string;
+    errorKind: ErrorKind;
+    /**
+     * The TASK's whole lifespan — promote-time to terminal commit. NOT the
+     * duration of the underlying tool call.
+     *
+     * The gap is real and routinely tens of seconds: the terminal state is
+     * committed on a POLL, so this span carries launch and polling latency on
+     * top of the call. Reading it as a call duration and comparing it against
+     * `integrations.mcp.callToolTimeoutMs` therefore manufactures a phantom
+     * deadline breach — live, a correctly-capped 120000ms call surfaced here as
+     * 138841ms and was twice mistaken for an unenforced deadline. For the call's
+     * own elapsed time use the `tool.result` record's `durationMs`, which is
+     * scoped to the call itself.
+     */
     durationMs: number;
     origin: BackgroundTaskOrigin;
     timestamp: number;
+    /**
+     * TRUE when this emission is a `scheduleDispatchRetry` backoff tick
+     * re-driving DISPATCH for an already-terminal task — not a new failure.
+     *
+     * The retry re-emits the terminal event because that is how the dispatch
+     * listeners are woken; without this marker the trajectory recorded one line
+     * per tick, so ONE failure read as many (live: 55 records for 4 tasks,
+     * 17/15/13/10). Consumers that count occurrences — the trajectory bridge
+     * above all — must skip a redelivery. Same posture as
+     * `background_task:notified.trajectoryRecorded`.
+     */
+    dispatchRedelivery?: boolean;
+    /**
+     * The ORIGINATING tool call's id, captured at promote time.
+     *
+     * The activity card keys a tool's lifecycle on `tool:<toolCallId>`; without
+     * this field the terminal event could not close the activity it belongs to.
+     * It is omitted when the promotion source has no tool-call correlation.
+     */
+    toolCallId?: string;
+    /** Formatted session key captured at promote time (activity dispatch requires it). */
+    sessionKey?: string;
+    /** Trace id captured at promote time (activity dispatch requires it). */
+    traceId?: string;
   };
 
   /**
@@ -758,6 +804,15 @@ export interface InfraEvents {
     agentId: string;
     outcome: "success" | "denied" | "not_found";
     timestamp: number;
+    /**
+     * Correlation to the turn that caused the access, when one exists. The
+     * audit sink prefers these over AsyncLocalStorage (which is empty for
+     * boot-time reads — the reason every live `secret_access` row carried
+     * `traceId: null` and could not be joined to a session). Emitters running
+     * inside a request context should pass them; boot-time emitters omit both.
+     */
+    sessionKey?: string;
+    traceId?: string;
   };
 
   /**

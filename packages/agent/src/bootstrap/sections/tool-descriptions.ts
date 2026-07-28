@@ -141,7 +141,10 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   // ----- Channel (confusable pair: message / sessions_send) -----
   message: (ctx: ToolDescriptionContext): string => {
     const ch = ctx.channelType ?? "chat";
-    return `Send, reply, react, edit, delete, fetch messages on ${ch}. For inter-session messaging, use sessions_send.`;
+    // The turn's final text is delivered automatically; an agent that also sends
+    // here double-posts. The runtime honours the silent sentinel — say so.
+    return `Send, reply, react, edit, delete, fetch messages on ${ch}. For inter-session messaging, use sessions_send.`
+      + ` After delivering user-facing content here, reply NO_REPLY: the turn's final text is sent too, so restating it double-posts.`;
   },
 
   // ----- Sessions -----
@@ -149,7 +152,14 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   sessions_history: "Fetch conversation history for another session or sub-agent.",
   // Confusable pair: sessions_send / message
   sessions_send: "Send message to another session. For chat channel messages, use message.",
-  sessions_spawn: "Start a background sub-agent and return its run ID immediately.",
+  // The concise trigger is always present so it can shape the first decision.
+  // SYSTEM_PROMPT_GUIDES supplies the detailed procedure after the first
+  // successful tool result.
+  sessions_spawn:
+    "Start a background sub-agent and return its run ID immediately. Delegate instead of"
+    + " working inline when a task needs >30s of tool time, media generation, 3+ file writes,"
+    + " deep research, or 4+ dependent steps; call it multiple times in one response for"
+    + " parallel subtasks.",
   subagents: "List, wait for, steer, or kill sub-agent runs for this session.",
   pipeline: "Define, execute, monitor, and cancel multi-node DAG execution graphs.",
   session_status: "Show agent status card: usage, model, steps. Optional per-session model override.",
@@ -606,7 +616,7 @@ export function getToolGuideWithSchema(toolName: string): string | undefined {
  * circular dependency. All content is inlined as static strings.
  */
 export const SYSTEM_PROMPT_GUIDES: Record<string, string> = {
-  // Task Delegation -- triggered by sessions_spawn
+  // Task Delegation -- delivered once after the first successful tool result
   sessions_spawn: `## Task Delegation
 
 You MUST delegate tasks to a sub-agent when the work matches ANY of these criteria:
@@ -623,12 +633,15 @@ You MUST delegate tasks to a sub-agent when the work matches ANY of these criter
 
 ### How to Delegate
 1. Use \`sessions_spawn\` with a **goal-oriented** task description; every spawn runs in the background
-2. Describe WHAT to accomplish, not HOW -- the sub-agent has its own skills and will read SKILL.md itself
-3. Do NOT copy-paste skill instructions, shell commands, or step-by-step procedures into the task
-4. Include user context the sub-agent needs (e.g., desired style, dimensions, topic) but not tool instructions
-5. Result delivery is bound automatically to the authenticated request route; do not supply route identifiers
-6. Tell the user the task is delegated and give them the runId
-7. Continue the conversation -- the result will be announced automatically when done
+2. A sub-agent gets a RESTRICTED default profile: MCP tools and \`message\` are OUTSIDE it. When the child
+   must call an MCP tool or deliver the result itself, pass \`tool_groups: ['full']\` on the spawn --
+   otherwise it fails with "Required tools unreachable" before doing any work
+3. Describe WHAT to accomplish, not HOW -- the sub-agent has its own skills and will read SKILL.md itself
+4. Do NOT copy-paste skill instructions, shell commands, or step-by-step procedures into the task
+5. Include user context the sub-agent needs (e.g., desired style, dimensions, topic) but not tool instructions
+6. Result delivery is bound automatically to the authenticated request route; do not supply route identifiers
+7. Tell the user the task is delegated and give them the runId
+8. Continue the conversation -- the result will be announced automatically when done
 
 ### Parallel Sub-Agents
 When a task has independent subtasks, spawn multiple sub-agents in parallel:

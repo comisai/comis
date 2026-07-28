@@ -409,6 +409,102 @@ describe("createLcdContextEngine", () => {
     expect(out[11]).toBe(live[11]);
   });
 
+  it("a LONG tool loop never opens a hole between the store horizon and the fresh tail", async () => {
+    // The coverage invariant: `history ∪ freshTail == the live array`. History can
+    // only ever reach the store's persisted horizon, and the store is written at
+    // afterTurn — so mid-turn the horizon is FROZEN while the fresh tail's
+    // step-count boundary marches FORWARD one step per LLM call. Once a turn runs
+    // more steps than `freshTailTurns`, the boundary passes the horizon and the
+    // messages in between belong to NEITHER segment: not yet in the store, and
+    // older than the verbatim tail. The first casualty is always the user message
+    // that STARTED the turn (it sits at the horizon, unpersisted until the turn
+    // ends), so the model loses the request it is mid-way through serving and
+    // contradicts the user about what they asked for.
+    //
+    // Persisted horizon = 9 completed messages; the live array then carries the
+    // turn's own request + a 3-step tool loop that outruns freshTailTurns=2.
+    const persistedPrefix: Message[] = [
+      userMsg("u0"),
+      assistantText("a0"),
+      userMsg("u1"),
+      assistantText("a1"),
+      userMsg("u2"),
+      assistantText("a2"),
+      userMsg("u3"),
+      assistantText("a3"),
+      userMsg("u4"),
+    ];
+    for (let i = 0; i < persistedPrefix.length; i++) append(store, persistedPrefix[i] as Message, i);
+
+    const live: AgentMessage[] = [
+      ...(persistedPrefix as AgentMessage[]),
+      // index 9 — the request that started this turn. Unpersisted (the turn is
+      // still running) and, once the loop is 3 steps deep, older than the tail.
+      userMsg("THE-REQUEST") as AgentMessage,
+      assistantToolCall("tu_1", "read", {}) as AgentMessage, // 10
+      toolResult("tu_1", "read", "r1") as AgentMessage, //      11
+      assistantToolCall("tu_2", "read", {}) as AgentMessage, // 12
+      toolResult("tu_2", "read", "r2") as AgentMessage, //      13
+      assistantToolCall("tu_3", "read", {}) as AgentMessage, // 14
+      toolResult("tu_3", "read", "r3") as AgentMessage, //      15
+    ];
+
+    const { deps } = makeDeps(store);
+    // freshTailTurns=2 → the step boundary lands on tu_2 (index 12), which is
+    // PAST the 9-message store horizon. Live[9..11] — the request and the first
+    // tool step — are covered by neither segment.
+    const engine = createLcdContextEngine(dagConfig(2), deps);
+    const out = await engine.transformContext(live);
+
+    const texts = out.map((m) => {
+      const c = (m as unknown as { content: unknown }).content;
+      if (typeof c === "string") return c;
+      const arr = c as { type: string; text?: string }[];
+      return arr.find((b) => b.type === "text")?.text ?? "";
+    });
+    // The turn's own request must survive — exactly once.
+    expect(texts.filter((t) => t === "THE-REQUEST")).toEqual(["THE-REQUEST"]);
+    // And nothing else in the gap is silently dropped: every tool step is present.
+    const callIds = out.flatMap((m) =>
+      roleOf(m) === "assistant"
+        ? ((m as unknown as { content: unknown[] }).content.filter(isToolCallBlock).map((b) => b.id))
+        : [],
+    );
+    expect(callIds).toEqual(["tu_1", "tu_2", "tu_3"]);
+  });
+
+  it("residual trimming retains the in-flight request across a long tool loop", async () => {
+    const request = userMsg("THE-IN-FLIGHT-REQUEST") as AgentMessage;
+    const live = [
+      request,
+      assistantToolCall("old-1", "read", {}) as AgentMessage,
+      toolResult("old-1", "read", "x".repeat(5_000)) as AgentMessage,
+      assistantToolCall("old-2", "read", {}) as AgentMessage,
+      toolResult("old-2", "read", "y".repeat(5_000)) as AgentMessage,
+      assistantToolCall("latest", "read", {}) as AgentMessage,
+      toolResult("latest", "read", "done") as AgentMessage,
+    ];
+    const { deps } = makeDeps(store);
+    const windowTokens = 8_192;
+    deps.getModel = () => ({ reasoning: false, contextWindow: windowTokens, maxTokens: 4_096 });
+    deps.getSystemTokensEstimate = () => 5_210;
+    deps.getThinkingLevel = () => "off";
+    deps.modelProfile = {
+      ...FAIL_CLOSED_PROFILE,
+      capabilityClass: "nano",
+      contextWindow: windowTokens,
+      maxOutputTokens: 4_096,
+      reasoningStyle: "none",
+    };
+
+    const out = await createLcdContextEngine(dagConfig(8), deps).transformContext(live);
+    const serialized = JSON.stringify(out);
+
+    expect(out).toContain(request);
+    expect(serialized).not.toContain('"id":"old-1"');
+    expect(serialized).toContain('"id":"latest"');
+  });
+
   it("live array SHRINKS below the store count — assembler over-includes nothing, doubles nothing", async () => {
     // A future heal/compaction could reassign state.messages SMALLER than the
     // append-only store. The assembler seam must stay robust to live.length <=

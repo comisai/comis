@@ -51,6 +51,17 @@ export const IncidentContextBudgetSchema = z.object({
   outputHeadroom: z.number(),
   /** Fit-check outcome. */
   verdict: z.enum(["fits", "downshifted", "exhausted"]),
+  /**
+   * Trailing conversation STEPS kept verbatim this turn, EFFECTIVE (post-clamp).
+   */
+  freshTailSteps: z.number().optional(),
+  /** The configured `contextEngine.freshTailTurns`. A value BELOW this means the
+   *  operator's knob was clamped — see {@link freshTailSteps}. */
+  freshTailStepsConfigured: z.number().optional(),
+  /** Whether the originating request survived the residual trim. */
+  originatingRequestRetained: z.boolean().optional(),
+  /** Number of fresh-tail messages removed by the residual trim. */
+  freshTailTrimmedCount: z.number().int().nonnegative().optional(),
 });
 
 /** The per-call context budget equation (see {@link IncidentContextBudgetSchema}). */

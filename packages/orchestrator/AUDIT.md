@@ -1,9 +1,9 @@
 # ChannelManagerDeps Audit
 
 **Generated:** 2026-05-11
-**Interface source:** `packages/orchestrator/src/channel-manager.ts` (50-field interface)
+**Interface source:** `packages/orchestrator/src/channel-manager.ts` (51-field interface)
 **Construction site:** `packages/daemon/src/wiring/setup-channels/setup-channels-runtime.ts` (single site — `createChannelManager({`)
-**Field count:** 50 (13 required + 37 optional + 0 stale-fallback)
+**Field count:** 51 (13 required + 38 optional + 0 stale-fallback)
 
 This file is co-located with the orchestrator package. `files: ["dist"]` in `packages/orchestrator/package.json` excludes it from the npm tarball.
 
@@ -43,6 +43,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | deliveryService | required | — | packages/orchestrator/src/channel-manager.ts:111 |
 | queueConfig | optional | default queue behavior used | packages/orchestrator/src/channel-manager.ts:121 |
 | getElevatedReplyConfig | optional | no elevated routing | packages/orchestrator/src/channel-manager.ts:123 |
+| getPlatformReplyLocale | optional | deterministic platform replies fall back to English | packages/orchestrator/src/channel-manager.ts:207 |
 | assembleToolsForAgent | optional | executor receives no tools (undefined) | packages/orchestrator/src/channel-manager.ts:138 |
 | audioPreflight | optional | voice messages are forwarded to the agent as-is (no pre-mention transcription) | packages/orchestrator/src/channel-manager.ts:142 |
 | voiceResponsePipeline | optional | voice response is disabled | packages/orchestrator/src/channel-manager.ts:144 |

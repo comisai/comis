@@ -23,7 +23,8 @@ describe("resolveResponseLocalePolicy", () => {
       locale: "fr-CA",
       source: "request",
       translationTarget: "ja-JP",
-      enforceLocale: true,
+      // Transport tier: resolved and offered as a hint, but never enforced.
+      enforceLocale: false,
     });
   });
 
@@ -34,11 +35,15 @@ describe("resolveResponseLocalePolicy", () => {
     });
   });
 
-  it("derives an open undetermined-language script tag from the current request text", () => {
+  // The script-derived tier still INFERS the locale (it rides the prompt as a hint),
+  // but it no longer ENFORCES it: inferring from the current message alone let a
+  // single message switch a whole conversation's language and then burn a repair
+  // round-trip fighting the model. Only an operator pin enforces.
+  it("derives an open undetermined-language script tag from the current request text, ADVISORY only", () => {
     expect(resolveResponseLocalePolicy({ requestText: "اكتب ملخصًا قصيرًا" })).toEqual({
       locale: "und-Arab",
       source: "request",
-      enforceLocale: true,
+      enforceLocale: false,
     });
     expect(resolveResponseLocalePolicy({ requestText: "10978704" })).toEqual({
       source: "unset",
@@ -52,7 +57,7 @@ describe("resolveResponseLocalePolicy", () => {
       confidence: "high",
     });
     expect(resolveLocale({ requestLocale: "fr-CA" })).toEqual({
-      policy: { locale: "fr-CA", source: "request", enforceLocale: true },
+      policy: { locale: "fr-CA", source: "request", enforceLocale: false },
       confidence: "medium",
     });
     expect(resolveLocale({})).toEqual({
@@ -150,7 +155,8 @@ describe("request-locale vs conversation-script precedence", () => {
     });
     expect(policy.locale).toBe("und-Hebr");
     expect(policy.source).toBe("request");
-    expect(policy.enforceLocale).toBe(true);
+    // Advisory — the script-derived tier informs but never enforces.
+    expect(policy.enforceLocale).toBe(false);
   });
 
   it("keeps the request locale when it agrees with the message script", () => {
@@ -160,17 +166,19 @@ describe("request-locale vs conversation-script precedence", () => {
     });
     expect(policy.locale).toBe("he");
     expect(policy.source).toBe("request");
-    expect(policy.enforceLocale).toBe(true);
+    // Agreeing with the message script makes the hint more likely RIGHT, not
+    // more authoritative — it is still a device setting.
+    expect(policy.enforceLocale).toBe(false);
   });
 
-  it("enforces the current Latin prose script when it contradicts a non-Latin transport locale", () => {
+  it("prefers the current Latin prose script over a contradicting non-Latin transport locale (advisory)", () => {
     const policy = resolveResponseLocalePolicy({
       requestLocale: "he",
       requestText: "What is the weather tomorrow in Tel Aviv?",
     });
     expect(policy.locale).toBe("und-Latn");
     expect(policy.source).toBe("request");
-    expect(policy.enforceLocale).toBe(true);
+    expect(policy.enforceLocale).toBe(false);
   });
 
   it("does not treat a short Latin identifier as a conversation-language override", () => {
@@ -180,7 +188,7 @@ describe("request-locale vs conversation-script precedence", () => {
     })).toEqual({
       locale: "he",
       source: "request",
-      enforceLocale: true,
+      enforceLocale: false,
     });
   });
 
@@ -190,7 +198,7 @@ describe("request-locale vs conversation-script precedence", () => {
       requestText: "",
     });
     expect(policy.locale).toBe("he");
-    expect(policy.enforceLocale).toBe(true);
+    expect(policy.enforceLocale).toBe(false);
   });
 
   it("never overrides the explicit operator locale with the message script", () => {
@@ -201,5 +209,76 @@ describe("request-locale vs conversation-script precedence", () => {
     expect(policy.locale).toBe("he");
     expect(policy.source).toBe("explicit");
     expect(policy.enforceLocale).toBe(true);
+  });
+});
+
+describe("an operator pin is the ONLY enforcer of response locale", () => {
+  // Decision (owner, 2026-07-26): pin the operator's language; remove per-message
+  // locale switching. Live, one English instruction inside an otherwise-Hebrew
+  // conversation set `locale=en enforce=true`, and three repair passes each cost a
+  // model call plus a prompt-cache break ($1.72) while the model correctly kept
+  // answering in Hebrew.
+  it("an English message in a Hebrew conversation does NOT enforce English", () => {
+    const policy = resolveResponseLocalePolicy({
+      requestText: "Install this skill: https://example.invalid/skills/xlsx",
+    });
+    expect(policy.enforceLocale).toBe(false);
+  });
+
+  it("an explicit operator pin DOES enforce, and outranks the message script", () => {
+    const policy = resolveResponseLocalePolicy({
+      explicitLocale: "he-IL",
+      requestText: "Install this skill: https://example.invalid/skills/xlsx",
+    });
+    expect(policy.locale).toBe("he-IL");
+    expect(policy.source).toBe("explicit");
+    expect(policy.enforceLocale).toBe(true);
+  });
+
+  it("no pin and no script signal stays unset (nothing to enforce)", () => {
+    expect(resolveResponseLocalePolicy({ requestText: "10978704" })).toEqual({
+      source: "unset",
+      enforceLocale: false,
+    });
+  });
+});
+
+describe("transport-tier locale is advisory, never enforced", () => {
+  // Observed live: a Hebrew conversation ("שלום" → Hebrew reply, correctly, from
+  // the ADVISORY und-Hebr script tier). The user's next message was an English
+  // technical instruction, which does not contradict their Telegram client's
+  // language_code of "en" — so the transport tier took over and, because it was
+  // marked enforceLocale:true, outranked the conversation's own signal. The agent
+  // switched to English mid-conversation.
+  //
+  // The asymmetry was the bug: a DEVICE SETTING enforced, while the conversation's
+  // actual language was only ever advisory. This module already documents the
+  // request tier as "TRANSPORT metadata … a device setting, not the conversation's
+  // language" — so it must not be the strongest signal in the system. Only an
+  // operator pin (`explicitLocale`, source "explicit") enforces.
+  it("does not enforce a client UI language over the conversation", () => {
+    const policy = resolveResponseLocalePolicy({
+      requestLocale: "en",
+      requestText: "Install this MCP:\nnpx -y some-mcp",
+    });
+    expect(policy.source).toBe("request");
+    expect(policy.enforceLocale).toBe(false);
+  });
+
+  it("an operator pin still enforces and still outranks the device locale", () => {
+    expect(resolveResponseLocalePolicy({
+      explicitLocale: "he",
+      requestLocale: "en",
+      requestText: "Install this MCP",
+    })).toEqual({ locale: "he", source: "explicit", enforceLocale: true });
+  });
+
+  it("a script-contradicting message still drops the device locale entirely", () => {
+    // Unchanged behaviour: Hebrew text under an "en" device locale falls through
+    // to the advisory script tier rather than being repaired toward English.
+    expect(resolveResponseLocalePolicy({
+      requestLocale: "en",
+      requestText: "שלום, מה שלומך היום?",
+    })).toEqual({ locale: "und-Hebr", source: "request", enforceLocale: false });
   });
 });

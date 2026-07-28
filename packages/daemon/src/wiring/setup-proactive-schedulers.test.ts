@@ -65,14 +65,28 @@ describe("proactive scheduler composition", () => {
   });
 
   it("rejects active startup before side effects when runtime dependencies are absent", async () => {
-    await expect(setupProactiveSchedulers(deps(runtime({ cronEnabled: true })))).resolves.toEqual({
-      ok: false,
-      error: {
-        code: "dependency_unavailable",
-        errorKind: "precondition",
-        message: "Proactive scheduler dependency is unavailable",
-      },
-    });
+    const result = await setupProactiveSchedulers(deps(runtime({ cronEnabled: true })));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error.code).toBe("dependency_unavailable");
+    expect(result.error.errorKind).toBe("precondition");
+  });
+
+  // This guard collapses ELEVEN distinct runtime dependencies into one Result.
+  // When any is missing the daemon throws
+  // `FATAL: Proactive scheduler activation failed: <message>` and systemd
+  // restart-loops — so the message is the ONLY diagnostic an operator gets, and
+  // "Proactive scheduler dependency is unavailable" named none of the eleven.
+  // Observed live on a fresh install: a boot crash-loop with nothing to act on.
+  it("NAMES the missing dependencies so a boot crash-loop is diagnosable", async () => {
+    const result = await setupProactiveSchedulers(deps(runtime({ cronEnabled: true })));
+    if (result.ok) throw new Error("expected err");
+    // At least one concrete dependency identifier must appear in the message.
+    expect(result.error.message).toMatch(
+      /workspaceDirs|getExecutor|piSessionAdapters|assembleToolsForAgent|sharedLeaseManager|boundedAutonomyBudgetHolder|capEndpointHandle|cronRuntimeBinding|activateCronSchedulers|deactivateCronSchedulers|getAgentSchedulerSeed/,
+    );
+    // …and it must still say what failed, for the FATAL prefix to read sensibly.
+    expect(result.error.message).toMatch(/proactive scheduler/i);
   });
 
   it("binds and activates the complete task runtime instead of leaving an enabled capture-only path", () => {

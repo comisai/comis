@@ -132,7 +132,7 @@ When an agent uses a tool, it may need another thinking step to process the tool
 
 ## Fresh Tail
 
-The most recent **steps** in a DAG-mode conversation that are always kept verbatim (an assistant message plus the tool results it triggered counts as one step — not user-turns), configured via `contextEngine.freshTailTurns` (default 8). The fresh tail is sliced as the original structured blocks (never reconstructed-from-text) and is never evicted. This is a DAG context engine concept; DAG is the default engine (`contextEngine.version` defaults to `"dag"`; set `"pipeline"` to opt into the simpler engine). See [Context Management](/agents/context-management#dag-mode-the-default-engine).
+The verbatim portion of a DAG-mode conversation. Its starting coverage includes a configured floor of recent tool/assistant steps and everything newer than the store's persisted horizon. If token bounding is needed, completed tool segments may be trimmed while the current turn's originating request remains pinned. Older records remain recoverable from canonical storage. See the [`freshTailTurns` config contract](/reference/config-yaml#context-engine-agents-contextengine) and [Context Management](/agents/context-management#dag-mode-the-default-engine).
 
 ## Gateway
 

@@ -36,6 +36,14 @@ export interface PromptCompilerInput {
   readonly operatorPolicy: readonly InstructionSection[];
   readonly runtimeSections: readonly RuntimePromptSection[];
   readonly requireFinalTags?: boolean;
+  /**
+   * True when `sessions_spawn` is on the agent's surface.
+   *
+   * The directive belongs in the initial system prompt because it must shape the
+   * model's first execution decision. It is gated so agents without the tool are
+   * never told to delegate through an unavailable capability.
+   */
+  readonly delegationAvailable?: boolean;
 }
 
 export interface PromptCompileSectionReport {
@@ -110,9 +118,15 @@ function joinSections(sections: readonly string[]): string {
 }
 
 export function compileExecutionPrompt(input: PromptCompilerInput): CompiledExecutionPrompt {
-  const engineContent = input.requireFinalTags
+  const delegationDirective = input.delegationAvailable === true
+    ? "\n- Work that needs more than ~30 seconds of tool time, generates media, writes 3+ files,"
+      + " or runs 4+ dependent steps: call `sessions_spawn` FIRST, tell the user it is running and"
+      + " that you will send the result when ready, then end the turn. Do not grind it out inline."
+      + " Independent parts spawn in parallel in one response."
+    : "";
+  const engineContent = (input.requireFinalTags
     ? `${ENGINE_KERNEL}\n- Put user-visible output inside the provider's required final-output tags.`
-    : ENGINE_KERNEL;
+    : ENGINE_KERNEL) + delegationDirective;
   const engineHash = sha256Hex(engineContent);
   const reports: PromptCompileSectionReport[] = [{
     id: "engine:kernel",

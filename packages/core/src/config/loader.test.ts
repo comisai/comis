@@ -92,6 +92,31 @@ agents:
       }
     });
 
+    // The parser's own reason (with its line/column) landed only in `details`,
+    // while `message` — the single string the boot FATAL prints — named just
+    // the file. An operator whose edit broke the YAML got
+    // "FATAL: Bootstrap failed: Failed to parse config file: <path>", no
+    // location, and a systemd restart loop repeating it. Live: 40 restarts on
+    // one stray newline inside a quoted scalar.
+    it("names the parser's reason and location in the message, not only in details", () => {
+      const dir = makeTmpDir();
+      // A real-world break: an unescaped newline inside a double-quoted scalar.
+      const filePath = writeFile(dir, "broken.yaml", 'agents:\n  default:\n    name: "un\nterminated\n');
+
+      const result = loadConfigFile(filePath);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("PARSE_ERROR");
+        // The file still has to be named — that part was never wrong.
+        expect(result.error.message).toContain("broken.yaml");
+        // ...and now the reason rides along, so the message alone is actionable.
+        expect(result.error.message.length).toBeGreaterThan(
+          `Failed to parse config file: ${filePath}`.length,
+        );
+        expect(result.error.message).toMatch(/line \d+/i);
+      }
+    });
+
     it("returns empty object for empty file", () => {
       const dir = makeTmpDir();
       const filePath = writeFile(dir, "empty.yaml", "");

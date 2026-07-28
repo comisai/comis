@@ -222,48 +222,5 @@ describe.skipIf(!isLinux() || !tmuxAvailable())(
         }
       }
     });
-
-    it.skip("SUPERSEDED: `-e TOKEN_VAL=NEW` per-session injection (removed — env on argv is world-readable)", async () => {
-      // 1) Start the server via a FIRST session whose PROCESS env carries TOKEN_VAL=OLD — the
-      //    server's global environment captures OLD for its whole life.
-      const first = spawnSync(
-        TMUX,
-        ["-S", SOCK, "new-session", "-d", "-s", S1, "--", "sh", "-c", "sleep 30"],
-        { env: { ...process.env, TOKEN_VAL: "OLD" }, timeout: 5_000, encoding: "utf8" },
-      );
-      if (first.status !== 0) {
-        expect(first.status ?? 0).toBeGreaterThanOrEqual(0); // flaky-tolerant (soak tier), never hard-fail
-        return;
-      }
-
-      // 2) Create a 2nd session via the PRODUCTION builder, injecting the CURRENT value with `-e`.
-      //    The pane writes its OWN process env for TOKEN_VAL to a file.
-      const argv = buildTmuxSpawnArgv({
-        tmuxPath: TMUX,
-        socketPath: SOCK,
-        name: S2,
-        bin: "sh",
-        binArgv: ["-c", `printenv TOKEN_VAL > ${OUT}; sleep 5`],
-        cols: 80,
-        rows: 24,
-        env: { TOKEN_VAL: "NEW" } as NodeJS.ProcessEnv,
-      });
-      expect(argv).toContain("-e");
-      expect(argv).toContain("TOKEN_VAL=NEW"); // the builder emitted the per-session override
-      const second = spawnSync(argv[0]!, argv.slice(1), { timeout: 5_000, encoding: "utf8" });
-      if (second.status !== 0) {
-        expect(second.status ?? 0).toBeGreaterThanOrEqual(0);
-        return;
-      }
-
-      // 3) The pane's ACTUAL process env must show NEW (the `-e` override), NOT the server's OLD.
-      let paneSaw: string | undefined;
-      for (let i = 0; i < 20 && paneSaw === undefined; i++) {
-        await new Promise((r) => setTimeout(r, 100));
-        if (existsSync(OUT)) paneSaw = readFileSync(OUT, "utf8").trim();
-      }
-      if (paneSaw === undefined) return; // pane never wrote (transient) — soak-tier tolerant
-      expect(paneSaw).toBe("NEW"); // fresh value reached the pane; the stale server-global OLD did not
-    });
   },
 );

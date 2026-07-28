@@ -101,8 +101,8 @@ export interface SpawnPlanComposers {
    * jail), so it is a genuine security downgrade — operator-only, immutable, surfaced in
    * config_posture. The env-scrub is STILL applied, so daemon secrets never reach the child. A
    * durable `backend:"tmux"` drive is PRESERVED (session persistence is a hard requirement): the
-   * tmux server env stays clean without the jail's `--unsetenv` because the server is started with
-   * the scrubbed env and each `new-session -e` re-injects it per pane (see terminal-tmux-backend).
+   * tmux server env stays clean without the jail's `--unsetenv` because each drive starts its OWN
+   * server with this drive's scrubbed env (see terminal-tmux-backend).
    * Takes precedence over `bwrapPath` (unsandboxed even when bwrap is available — the
    * `browser.noSandbox` precedent). Default/absent ⇒ the fail-closed jail.
    */
@@ -153,8 +153,8 @@ export interface SpawnPlan {
   /**
    * `true` when the jail was bypassed via `unsafeDisableSandbox` — the child runs DIRECTLY with
    * no bwrap (its `cwd` is set below). A durable `backend:"tmux"` request is NOT downgraded: the
-   * worker keeps the tmux server env clean by starting it with the scrubbed env + injecting the
-   * current scrubbed env per `new-session -e`, so no jail `--unsetenv` is needed. Surfaced in
+   * worker keeps the tmux server env clean by starting a session-private server with this drive's
+   * scrubbed env, so no jail `--unsetenv` is needed. Surfaced in
    * `config_posture`. Absent/false ⇒ the fail-closed jail (the default).
    */
   unsandboxed?: boolean;
@@ -271,8 +271,8 @@ export async function buildSpawnPlan(
   // scope is unenforceable without the jail) — a genuine security downgrade, surfaced in
   // config_posture. But the env-scrub STILL runs, so daemon secrets (gateway token / master key)
   // never reach the child. A durable `backend:"tmux"` drive is preserved under `unsandboxed:true`
-  // (session persistence is required): the worker starts the tmux server with this scrubbed env and
-  // re-injects it per `new-session -e`, so the server env is clean without the jail's `--unsetenv`.
+  // (session persistence is required): the worker starts a session-private tmux server with this
+  // scrubbed env, so the server env is clean without the jail's `--unsetenv`.
   // Takes precedence over `bwrapPath` (unsandboxed even when bwrap is available — the
   // `browser.noSandbox` precedent). Do NOT inject CLAUDE_CODE_BUBBLEWRAP: we are NOT bubblewrapped,
   // so a sandbox-aware CLI must stay free to nest its own sandbox.

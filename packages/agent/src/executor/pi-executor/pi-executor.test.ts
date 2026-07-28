@@ -26,6 +26,7 @@ import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearS
 import { clearSessionToolSchemaSnapshot } from "../executor-session-state.js";
 import { resetPairedMemoryDedupForTests } from "../executor-post-execution.js";
 import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "../cache-detection/index.js";
+import { lookbackWindowExceededHint } from "../cache-detection/index.js";
 import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 import { planInboundMessageProvenance } from "../../session/inbound-message-provenance.js";
 
@@ -7306,7 +7307,10 @@ describe("skip guard for lookback_window_exceeded cache breaks", () => {
             reason: event.reason,
             tokenDrop: event.tokenDrop,
             conversationBlockCount: event.conversationBlockCount,
-            hint: "Long conversation exceeded lookback window. Multi-zone breakpoints mitigate this. No action needed.",
+            // Imported from the SAME module the production log site uses, so the
+            // stand-in handler cannot drift from the real hint (it did: the literal
+            // was duplicated here and both said "No action needed." on a priced break).
+            hint: lookbackWindowExceededHint(event.conversationBlockCount),
             errorKind: "internal" as const,
           },
           "Cache miss from lookback window exceeded (not server eviction)",
@@ -7350,7 +7354,13 @@ describe("skip guard for lookback_window_exceeded cache breaks", () => {
     expect(logWarn).toHaveBeenCalledOnce();
     expect(logWarn.mock.calls[0][1]).toContain("lookback window exceeded");
     expect(logWarn.mock.calls[0][0].errorKind).toBe("internal");
-    expect(logWarn.mock.calls[0][0].hint).toContain("lookback window");
+    // The hint must name the cause + the knobs, and must NOT reassure — a
+    // lookback break re-pays the prefix at the cache-write rate (live: $1.17–$1.33
+    // each, ×4 in one session, all logged "No action needed.").
+    expect(logWarn.mock.calls[0][0].hint).toMatch(/lookback/i);
+    expect(logWarn.mock.calls[0][0].hint).not.toMatch(/no action needed/i);
+    expect(logWarn.mock.calls[0][0].hint).toContain("contextEngine.freshTailTurns");
+    expect(logWarn.mock.calls[0][0].hint).toContain("25 blocks");
 
     // INFO log (coordinated reset) should NOT be emitted
     expect(logInfo).not.toHaveBeenCalled();

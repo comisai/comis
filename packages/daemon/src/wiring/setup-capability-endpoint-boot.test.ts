@@ -88,6 +88,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     const result = await constructCapabilityLayer(createDeps({}));
     expect(result.capEndpointHandle).toBeUndefined();
     expect(result.capEndpointStop).toBeUndefined();
+    expect(result.capEndpointUnavailableReason).toBe("autonomy_disabled");
     expect(typeof result.namespacePreflightOk).toBe("boolean");
   });
 
@@ -100,6 +101,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     const deps = createDeps(agents);
     const result = await constructCapabilityLayer(deps);
     expect(result.capEndpointHandle).toBeUndefined();
+    expect(result.capEndpointUnavailableReason).toBe("autonomy_disabled");
     // Activation did NOT happen → the active:true INFO is never logged.
     expect(deps.daemonLogger.info).not.toHaveBeenCalled();
   });
@@ -339,6 +341,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     const result = await constructCapabilityLayer(deps);
     expect(result.capEndpointHandle).toBeUndefined();
     expect(result.capEndpointStop).toBeUndefined();
+    expect(result.capEndpointUnavailableReason).toBe("activation_failed");
     // The host preflight still ran (it is a host check, independent of the socket).
     expect(typeof result.namespacePreflightOk).toBe("boolean");
     const warnMock = deps.daemonLogger.warn as unknown as ReturnType<typeof vi.fn>;

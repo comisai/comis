@@ -23,8 +23,15 @@ import {
   selectOutputStarvedAnnotation,
   selectContextExhaustedReply,
   selectLoopDetectedReply,
+  selectPipelineTimeoutReply,
+  selectToolFailureNotice,
+  selectToolFailureNoticeUnnamed,
+  selectPromptTimeoutReply,
   type LocaleCatalog,
 } from "./degraded-reply-i18n.js";
+
+export { catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply-i18n.js";
+export type { LocaleCatalog, LocaleMessageId, LocalePack } from "./degraded-reply-i18n.js";
 
 // CAP_KNOB_BY_CLASS lives in degraded-reply-i18n.ts as an internal diagnostic
 // mapping. Re-exported here for callers that need to associate capability
@@ -103,4 +110,54 @@ export function buildLoopDetectedReply(opts?: ContextExhaustedReplyOpts): string
   return selectLoopDetectedReply(opts?.language, {
     traceId: opts?.traceId,
   }, opts?.localeCatalog);
+}
+
+/**
+ * Honest reply for a turn the execution wall-clock ceiling killed
+ * (`executionTimeoutMs`). REPLACES the response — a pipeline timeout means the
+ * model never returned, so there is nothing partial to annotate.
+ *
+ * This exists so the timeout reply is a MEMBER of the localizable platform-reply
+ * set. It used to be a literal at the send site in the orchestrator, which put
+ * the one message a stuck turn is guaranteed to produce outside the only
+ * mechanism that can translate it. PURE: same opts → same string.
+ */
+export function buildPipelineTimeoutReply(opts?: ContextExhaustedReplyOpts): string {
+  return selectPipelineTimeoutReply(opts?.language, {
+    traceId: opts?.traceId,
+  }, opts?.localeCatalog);
+}
+
+/**
+ * Localized notice that a tool failed, for appending to a reply that did not
+ * itself mention the failure. The caller appends the tool name verbatim.
+ */
+export function buildToolFailureNotice(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectToolFailureNotice(language, localeCatalog);
+}
+
+/**
+ * Localized tool-failure notice for the case with no nameable culprit. Reads as
+ * a complete sentence — the named variant deliberately ends in an em-dash so the
+ * caller can append the tool name.
+ */
+export function buildToolFailureNoticeUnnamed(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectToolFailureNoticeUnnamed(language, localeCatalog);
+}
+
+/**
+ * Localized reply for a turn killed by the stall budget or the whole-turn retry
+ * timeout. PURE: same input -> same string.
+ */
+export function buildPromptTimeoutReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectPromptTimeoutReply(language, localeCatalog);
 }

@@ -211,6 +211,32 @@ export function recoverEmptyFinalResponse(params: {
       // Returning here is the ONE place that prevents the `standalone` walk-backward
       // (below) from ever firing alongside synthesis. Do not add code paths
       // that fall through to standalone after toolCallSummaries are non-empty.
+      // ALREADY-DELIVERED GUARD. When the batch itself put text on the user's
+      // channel (a `message` send/reply), the user has ALREADY read the
+      // assistant's words — the "empty" final message is not a silent turn, it
+      // is a turn whose reply took the tool path. Synthesizing here appends a
+      // SECOND, internal-looking bubble on top of the real answer: live, a user
+      // received the agent's onboarding question and then a
+      // "[comis: tool-call summary recovered …] • message({action: "send"}) …
+      // Please ask "what did you do?"" block plus a raw `User actions:` id.
+      // Recovery exists to stop a SILENT turn, not to narrate a delivered one.
+      if (deliveredUserFacingText(messages, lowerBound)) {
+        logger.info(
+          {
+            submodule: "executor.empty-turn-recovery",
+            recoveryPass: "suppressed-already-delivered",
+            toolCallCount: toolCallSummaries.length,
+            toolNames: [...toolNamesSet],
+            hint:
+              "Final assistant message was empty, but the tool batch already delivered text to "
+              + "the user's channel — suppressed the synthesized summary rather than posting "
+              + "internal recovery scaffolding on top of the real reply.",
+          },
+          "Empty-turn recovery: suppressed (batch already delivered a reply)",
+        );
+        return "";
+      }
+
       if (toolCallSummaries.length > 0) {
         const bullets = toolCallSummaries.map(s => `  • ${s}`).join("\n");
         const synthesis =
@@ -300,6 +326,53 @@ function extractVisibleText(content: any[]): string | undefined {
  *  (internal mapped convention) for args. Returns bare tool name on malformed
  *  input — never throws. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
+/**
+ * True when the assistant's tool batch ALREADY delivered user-facing text to the
+ * conversation's channel — i.e. the turn's reply took the `message` tool path
+ * rather than the final-assistant-text path.
+ *
+ * Only send/reply actions carrying non-empty `text` count. A `react`, `delete`,
+ * `fetch` or an attach-without-text delivers no words, so a turn that ends empty
+ * after one of those IS silent and still needs the synthesized summary.
+ *
+ * @param messages - the turn's message history.
+ * @param lowerBound - index of the first message in this turn's batch.
+ * @returns whether the user has already read the assistant's reply.
+ */
+function deliveredUserFacingText(messages: readonly any[], lowerBound: number): boolean {
+  const DELIVERING_ACTIONS = new Set(["send", "reply"]);
+  const successfulToolCallIds = new Set<string>();
+  for (let i = lowerBound; i < messages.length; i++) {
+    const msg = messages[i]; // eslint-disable-line security/detect-object-injection
+    if (
+      msg?.role === "toolResult"
+      && typeof msg.toolCallId === "string"
+      && msg.isError === false
+    ) {
+      successfulToolCallIds.add(msg.toolCallId);
+    }
+  }
+  for (let i = lowerBound; i < messages.length; i++) {
+    const msg = messages[i]; // eslint-disable-line security/detect-object-injection
+    if (msg?.role !== "assistant" || !Array.isArray(msg.content)) continue;
+    for (const block of msg.content) {
+      if (block?.type !== "toolCall" && block?.type !== "tool_use") continue;
+      if (block?.name !== "message") continue;
+      if (typeof block.id !== "string" || !successfulToolCallIds.has(block.id)) continue;
+      const args: Record<string, unknown> | undefined =
+        (block?.input && typeof block.input === "object" ? block.input : undefined)
+        ?? (block?.arguments && typeof block.arguments === "object" ? block.arguments : undefined);
+      if (!args) continue;
+      const action = typeof args.action === "string" ? args.action : undefined;
+      const text = typeof args.text === "string" ? args.text : "";
+      if (action !== undefined && DELIVERING_ACTIONS.has(action) && text.trim().length > 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function summarizeToolCall(call: any): string {
   const name = typeof call?.name === "string" ? call.name : "unknown_tool";
   // Both Anthropic native (`input`) and internal mapped (`arguments`) shapes.

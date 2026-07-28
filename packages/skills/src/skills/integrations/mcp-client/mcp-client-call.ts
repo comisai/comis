@@ -209,12 +209,29 @@ export async function callTool(
         undefined,
         {
           timeout: state.options.callToolTimeoutMs,
-          ...(requestTraceId
-            ? {
-                onprogress: () => {},
-                resetTimeoutOnProgress: true,
-              }
-            : {}),
+          // The absolute ceiling is UNCONDITIONAL — it is not part of the
+          // tracing branch. `resetTimeoutOnProgress` restarts `timeout` on every
+          // progress notification and the SDK applies no ceiling of its own
+          // ("If not specified, there is no maximum total timeout"), so without
+          // this the configured deadline degrades into a per-progress-GAP
+          // timeout and a chatty server holds one call open for a whole turn.
+          // Live: a 120000ms cap with observed 200877ms and 296481ms calls.
+          //
+          // Scoping it to `requestTraceId` (as the first cut did) tied the
+          // deadline's enforcement to whether a trace context happened to
+          // exist — so the paths WITHOUT one, which is exactly where a
+          // long-running background call runs, kept no ceiling at all. A
+          // deadline that applies only when tracing is on is not a deadline.
+          maxTotalTimeout: state.options.callToolTimeoutMs,
+          // UNCONDITIONAL, for the same reason as the ceiling above. The SDK only
+          // accepts a progress notification when the request registered a handler
+          // for it; gating this on a trace context meant that on any UNTRACED
+          // path — which is exactly where a backgrounded call runs — a server
+          // that reports progress produced "Received a progress notification for
+          // an unknown token" and the client CLOSED THE CONNECTION, failing the
+          // tool with -32000 and forcing a reconnect. Live: a progress-reporting MCP tool on a background path.
+          onprogress: () => {},
+          resetTimeoutOnProgress: true,
         },
       );
 
@@ -323,6 +340,7 @@ export async function callTool(
         logger.debug?.({ serverName, toolName }, "Tool call timed out, connection status preserved");
       }
 
+
       // Increment breaker on non-session-expired failures (includes timeouts +
       // post-call generation mismatches). isSessionExpired is EXEMPT above --
       // it routes through handleDisconnection and the reconnect-success block
@@ -350,7 +368,62 @@ export async function callTool(
         state.circuitBreakers.set(serverName, { status: cur.status, failureCount: newCount });
       }
 
+      // A deadline expiry is DETERMINISTIC for the same call: the bare SDK string
+      // ("MCP error -32001: Request timed out") names neither the knob nor the
+      // value, so an agent reads it as transient and retries unchanged. Live
+      // (comis-moshe 2026-07-26): a month-wide 165-vehicle report re-expired the
+      // same 120s deadline FOUR times — 8 minutes of the user's time and a tripped
+      // breaker — because the surfaced hint said "retry the underlying operation
+      // when appropriate". Name the knob + the value that expired, and say plainly
+      // that an unchanged retry re-expires it. (AGENTS.md §2.7: a hint names the
+      // exact config key and the numbers that conflicted.)
+      //
+      // Placed AFTER the breaker accounting above so a timeout still counts toward
+      // the threshold exactly as before — only the surfaced message changes.
+      if (isTimeout) {
+        const timeoutMs = state.options.callToolTimeoutMs;
+        const timeoutHint = mcpCallTimeoutHint(serverName, toolName, timeoutMs);
+        logger.warn(
+          {
+            serverName,
+            toolName,
+            timeoutMs,
+            hint: timeoutHint,
+            errorKind: "dependency" as const,
+          },
+          "MCP tool call timed out at the configured call deadline",
+        );
+        return err(new Error(timeoutHint));
+      }
+
       return err(error instanceof Error ? error : new Error(message));
     }
   }) as Promise<Result<McpToolCallResult, Error>>;
+}
+
+/**
+ * The operator/agent-facing message for an MCP call that hit its configured
+ * deadline.
+ *
+ * Exported so the log site, the returned `Error`, and the test all read the SAME
+ * text — a duplicated literal is how "No action needed."-class hints drift.
+ *
+ * @param serverName - the MCP server whose call expired.
+ * @param toolName - the qualified tool name that expired.
+ * @param timeoutMs - the ACTUAL resolved `integrations.mcp.callToolTimeoutMs`.
+ * @returns the hint text (also used verbatim as the Error message).
+ */
+export function mcpCallTimeoutHint(
+  serverName: string,
+  toolName: string,
+  timeoutMs: number,
+): string {
+  return (
+    `MCP tool "${toolName}" on server "${serverName}" timed out — it exceeded the call ` +
+    `deadline of ${timeoutMs}ms (\`integrations.mcp.callToolTimeoutMs\`, currently ${timeoutMs}). ` +
+    "This deadline is deterministic — do not retry it unchanged, the same call re-expires it. " +
+    `Narrow the request (a smaller page/date window/fewer entities) so it completes inside ${timeoutMs}ms. ` +
+    "The deadline itself cannot be changed from here — it is an immutable config path, so only an " +
+    "operator can adjust it by editing the config file and restarting the daemon."
+  );
 }

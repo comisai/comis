@@ -48,6 +48,20 @@ export const SystemHealthReportSchema = z.object({
      * a JSON consumer / the CLI. Optional (additive; pre-existing readers ignore it).
      */
     deliveredWithToolErrors: z.number().optional(),
+    /**
+     * `degraded − deliveredWithToolErrors` — the sessions where the user did NOT
+     * get a good reply. This is the count the degradation FINDINGS fire on, so it
+     * is the number that decides whether the system is healthy.
+     *
+     * It lives in the report (rather than being re-derived per renderer) because
+     * it was not: the CLI computed it locally and printed "0 hard-degraded, 0%"
+     * while the JSON of the SAME report carried `degraded:1, degradedRate:1`
+     * (comis-moshe 2026-07-26). Two renderings of one report must not disagree.
+     * Optional (additive; pre-existing readers ignore it).
+     */
+    hardDegraded: z.number().optional(),
+    /** `hardDegraded / total` (0 when `total` is 0). See {@link hardDegraded}. */
+    hardDegradedRate: z.number().optional(),
   }),
   /** Merged across the window + capped top-N (counts only — no raw bodies). */
   topErrorKinds: z.array(z.object({ kind: z.string(), count: z.number() })),
@@ -65,7 +79,22 @@ export const SystemHealthReportSchema = z.object({
   toolStats: z.record(z.string(), z.object({ ok: z.number(), failed: z.number() })),
   cost: z.object({
     costUsd: z.number(),
+    /**
+     * Billable tokens in the window: input + output ONLY — cache reads and cache
+     * writes are EXCLUDED.
+     *
+     * ⚠ This is NOT the same quantity as `IncidentReport.cost.totalTokens`, which
+     * INCLUDES cache. One 27-minute session legitimately reported 18,637 here and
+     * 6,043,245 there; with both fields named `totalTokens` and neither stating
+     * its convention, a reader comparing the two lenses concludes one is broken.
+     * The `tokenBasis` discriminator states which convention this number follows.
+     */
     totalTokens: z.number(),
+    /**
+     * The counting convention `totalTokens` follows. Closed union so a consumer
+     * can reconcile lenses programmatically. Optional (additive).
+     */
+    tokenBasis: z.literal("input+output").optional(),
     /**
      * Off-session (background-job) LLM spend in the window — reflection cron
      * runs et al. that key their token usage to a synthetic `__PREFIX__`

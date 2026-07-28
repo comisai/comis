@@ -32,6 +32,7 @@
 
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import { REDACTED_TOOL_RESULT_USER_MESSAGE } from "./synthetic-user-messages.js";
+import { tryCatch } from "@comis/shared";
 import { getSessionFileEntries } from "./session-manager-internals.js";
 
 /** Literal placeholder written by sanitizeSessionSecrets. */
@@ -76,6 +77,28 @@ export function scrubRedactedToolCalls(
   // Assistant entry indices marked for full content replacement.
   const fullyPoisonedAssistants = new Map<number, string>(); // idx -> summary
 
+  // Pass 0: index the APPROVAL-GATED results by toolCallId.
+  //
+  // A gated call returns `requiresConfirmation: true` plus an opaque
+  // `pending_action_id`; the secret value stays server-side and the model is told
+  // to re-call with that id and `_confirmed: true`, OMITTING the value — precisely
+  // because the value is about to be redacted out of its context. Scrubbing that
+  // RESULT away destroys the only handle that can complete the action, and the
+  // model's sole remaining move is to ask the user to re-paste the secret in
+  // cleartext. The tool_use ARGS carry the secret and must still be scrubbed; the
+  // result carries no secret, so the handle survives (nothing else does — the id
+  // is extracted, never the surrounding payload).
+  const pendingActionIdByToolCallId = new Map<string, string>();
+  for (const entry of fileEntries) {
+    if (!entry || entry.type !== "message") continue;
+    const m = entry.message;
+    if (!m || (m.role !== "toolResult" && m.role !== "tool")) continue;
+    const id = typeof m.toolCallId === "string" ? m.toolCallId : undefined;
+    if (id === undefined) continue;
+    const pendingId = extractPendingActionId(m.content);
+    if (pendingId !== undefined) pendingActionIdByToolCallId.set(id, pendingId);
+  }
+
   for (let idx = 0; idx < fileEntries.length; idx++) {
     const entry = fileEntries[idx];
     if (!entry || entry.type !== "message") continue;
@@ -103,7 +126,13 @@ export function scrubRedactedToolCalls(
       const toolCallId =
         typeof block.id === "string" ? block.id : undefined;
       const toolName = typeof block.name === "string" ? block.name : "tool";
-      const summary = buildSummaryText(toolName, args);
+      const summary = buildSummaryText(
+        toolName,
+        args,
+        toolCallId === undefined
+          ? undefined
+          : pendingActionIdByToolCallId.get(toolCallId),
+      );
 
       if (toolCallId) candidateIds.push(toolCallId);
       poisonedInThisMessage++;
@@ -153,9 +182,15 @@ export function scrubRedactedToolCalls(
     if (!toolCallId || !poisoned.has(toolCallId)) continue;
     if (msg.role !== "toolResult" && msg.role !== "tool") continue;
 
+    const pendingId = pendingActionIdByToolCallId.get(toolCallId);
     msg.role = "user";
     msg.content = [
-      { type: "text", text: REDACTED_TOOL_RESULT_USER_MESSAGE },
+      {
+        type: "text",
+        text: pendingId === undefined
+          ? REDACTED_TOOL_RESULT_USER_MESSAGE
+          : pendingApprovalReplayText(pendingId),
+      },
     ];
     delete msg.toolCallId;
     delete msg.toolName;
@@ -198,7 +233,24 @@ function argsContainPlaceholder(args: Record<string, unknown>): boolean {
 function buildSummaryText(
   toolName: string,
   args: Record<string, unknown>,
+  pendingActionId?: string,
 ): string {
+  // A gated call did NOT run. Telling the model it "completed" while its result
+  // is scrubbed away is how the live deadlock started: the model believed the
+  // secrets were stored, listed them, found nothing, and asked the user to paste
+  // the password again. State the truth and name the handle that finishes it.
+  if (pendingActionId !== undefined) {
+    const key =
+      typeof args.env_key === "string" ? args.env_key : "the secret";
+    return (
+      `(Awaiting your confirmation to set secret ${key} — the call was gated ` +
+      `and has NOT run. Its arguments are elided from replay. Once the user ` +
+      `approves, re-call the SAME action with pending_action_id: ` +
+      `"${pendingActionId}" and _confirmed: true, OMITTING the value — it is ` +
+      `replayed server-side. Never ask the user to resend the secret, and ` +
+      `never pass a placeholder like [REDACTED].)`
+    );
+  }
   if (toolName === "gateway" && args.action === "env_set") {
     const key =
       typeof args.env_key === "string" ? args.env_key : "the secret";
@@ -215,4 +267,56 @@ function buildSummaryText(
     `Use the user's actual values when making new calls — never ` +
     `reuse a [REDACTED] placeholder.)`
   );
+}
+
+/**
+ * The user-role replacement for a scrubbed APPROVAL-GATED tool result.
+ *
+ * Carries ONLY the opaque `pending_action_id` — never the surrounding payload —
+ * so the confirm remains issuable while the secret stays out of replay. Without
+ * it the model loses its only route to completing the action and falls back to
+ * asking the user to resend the credential in cleartext.
+ */
+function pendingApprovalReplayText(pendingActionId: string): string {
+  return (
+    `(prior secret operation — output withheld. It is still PENDING your ` +
+    `confirmation. To complete it, re-call the same action with ` +
+    `pending_action_id: "${pendingActionId}" and _confirmed: true, omitting ` +
+    `the value — it is replayed server-side. Do not ask for the secret again.)`
+  );
+}
+
+/**
+ * Pull an approval gate's `pending_action_id` out of a tool result's content.
+ *
+ * Gated results are JSON text blocks. Parse when possible; fall back to a
+ * bounded regex so a wrapper (offload notice, security banner) around the JSON
+ * still yields the handle. Returns undefined for every non-gated result, which
+ * keeps the ungated scrub path byte-identical.
+ */
+function extractPendingActionId(content: unknown): string | undefined {
+  const text = collectText(content);
+  if (text === undefined || !text.includes("pending_action_id")) return undefined;
+  const parsed = tryCatch(() => JSON.parse(text) as unknown);
+  if (parsed.ok) {
+    const value = (parsed.value as { pending_action_id?: unknown } | null)
+      ?.pending_action_id;
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  const match = /"pending_action_id"\s*:\s*"([^"]{1,200})"/.exec(text);
+  return match?.[1];
+}
+
+/** Flatten a tool result's content blocks (or string shorthand) to text. */
+function collectText(content: unknown): string | undefined {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return undefined;
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block && typeof block === "object") {
+      const t = (block as { text?: unknown }).text;
+      if (typeof t === "string") parts.push(t);
+    }
+  }
+  return parts.length > 0 ? parts.join("\n") : undefined;
 }

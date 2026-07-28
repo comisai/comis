@@ -382,3 +382,150 @@ describe("buildCacheTraceWrapper emits model:before stage", () => {
     expect(modelBefore!.systemDigest).toBe(streamContext!.systemDigest);
   });
 });
+
+// ---------------------------------------------------------------------------
+// toolsDigest
+// ---------------------------------------------------------------------------
+
+/**
+ * An Anthropic cached prefix is system -> tools -> messages, so a change to the
+ * tool array invalidates everything after the system block just as surely as a
+ * changed system prompt does. The trace fingerprinted system and messages but
+ * not tools, leaving one of the three prefix components invisible to the very
+ * record built to diagnose prefix collapse.
+ *
+ * Observed live: 37 calls with a single stable systemDigest, 10.8M cache-creation
+ * tokens against 4.0M reads, and no way to tell from the trace whether the tool
+ * array was moving underneath.
+ */
+describe("buildCacheTraceWrapper toolsDigest", () => {
+  function contextWithTools(tools: unknown[]): unknown {
+    return {
+      messages: [{ role: "user", content: "hello" }],
+      systemPrompt: "you are an assistant",
+      tools,
+    };
+  }
+
+  let digestSeq = 0;
+  async function digestFor(tools: unknown[]): Promise<Record<string, unknown>> {
+    // Unique per call — two variants can serialize to the same length, and a
+    // shared path would make both runs append to one file so `find` returns
+    // the first record for both.
+    const filePath = join(tmpDir, `tools-${digestSeq++}.jsonl`);
+    const trace = makeTrace({ includeMessages: false, filePath });
+    const wrap = buildCacheTraceWrapper(trace);
+    const next: StreamFn = ((..._args: unknown[]) =>
+      ({ usage: { cacheRead: 0, cacheWrite: 0 } }) as unknown as ReturnType<StreamFn>) as StreamFn;
+    wrap(next)(
+      fakeModel() as Parameters<StreamFn>[0],
+      contextWithTools(tools) as Parameters<StreamFn>[1],
+    );
+    await trace.flush();
+    return readLines(filePath).find((l) => l.stage === "stream:context")!;
+  }
+
+  it("emits a toolsDigest and a toolCount on stream:context", async () => {
+    const rec = await digestFor([{ name: "read" }, { name: "write" }]);
+    expect(rec.toolsDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(rec.toolCount).toBe(2);
+  });
+
+  it("keeps the digest stable for an unchanged tool array", async () => {
+    const a = await digestFor([{ name: "read" }, { name: "write" }]);
+    const b = await digestFor([{ name: "read" }, { name: "write" }]);
+    expect(a.toolsDigest).toBe(b.toolsDigest);
+  });
+
+  it("changes the digest when a tool is added", async () => {
+    const a = await digestFor([{ name: "read" }]);
+    const b = await digestFor([{ name: "read" }, { name: "grep" }]);
+    expect(a.toolsDigest).not.toBe(b.toolsDigest);
+  });
+
+  it("changes the digest when only a tool schema changes", async () => {
+    const a = await digestFor([{ name: "read", parameters: { a: 1 } }]);
+    const b = await digestFor([{ name: "read", parameters: { a: 2 } }]);
+    expect(a.toolsDigest).not.toBe(b.toolsDigest);
+  });
+
+  it("reports a zero toolCount when the context carries no tools", async () => {
+    const rec = await digestFor([]);
+    expect(rec.toolCount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prefix-hash ladder
+// ---------------------------------------------------------------------------
+
+/**
+ * messageFingerprints is replaced wholesale by a bounded-payload sentinel once
+ * the array grows past the persistence limit — which is exactly when cache
+ * economics matter. Locating WHERE two calls' cached prefixes diverge then
+ * becomes impossible from the trace.
+ *
+ * The ladder is a handful of cumulative hashes over the leading fingerprints at
+ * exponentially spaced depths. Comparing two calls localizes the first
+ * divergence to a range in ~log(n) values, and the payload stays fixed-size so
+ * the bound never strips it.
+ *
+ * Observed live: a session whose cross-turn cache hit ratio fell from 98% at a
+ * ~120k-token prefix to 0% at ~170k, with messageFingerprints unavailable at
+ * 247 messages.
+ */
+describe("buildCacheTraceWrapper prefix-hash ladder", () => {
+  function ctxWithMessages(n: number, mutateAt?: number): unknown {
+    const messages = Array.from({ length: n }, (_, i) => ({
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: mutateAt === i ? "CHANGED" : `m${i}`,
+    }));
+    return { messages, systemPrompt: "sys", tools: [] };
+  }
+
+  async function ladderFor(n: number, mutateAt?: number): Promise<Record<string, unknown>> {
+    const filePath = join(tmpDir, `ladder-${n}-${mutateAt ?? "none"}.jsonl`);
+    const trace = makeTrace({ includeMessages: false, filePath });
+    const next: StreamFn = ((..._args: unknown[]) =>
+      ({ usage: { cacheRead: 0, cacheWrite: 0 } }) as unknown as ReturnType<StreamFn>) as StreamFn;
+    buildCacheTraceWrapper(trace)(next)(
+      fakeModel() as Parameters<StreamFn>[0],
+      ctxWithMessages(n, mutateAt) as Parameters<StreamFn>[1],
+    );
+    await trace.flush();
+    return readLines(filePath).find((l) => l.stage === "stream:context")!;
+  }
+
+  it("emits a bounded ladder of cumulative prefix hashes", async () => {
+    const rec = await ladderFor(100);
+    const ladder = rec.messagePrefixHashes as Array<{ depth: number; hash: string }>;
+    expect(Array.isArray(ladder)).toBe(true);
+    expect(ladder.length).toBeGreaterThan(2);
+    expect(ladder.length).toBeLessThanOrEqual(12);
+    expect(ladder[0]!.hash).toMatch(/^[0-9a-f]+$/);
+  });
+
+  it("keeps the ladder identical for identical message arrays", async () => {
+    const a = await ladderFor(100);
+    const b = await ladderFor(100);
+    expect(a.messagePrefixHashes).toEqual(b.messagePrefixHashes);
+  });
+
+  it("localizes a late divergence to the deeper rungs only", async () => {
+    const clean = (await ladderFor(100)) as never;
+    const dirty = (await ladderFor(100, 90)) as never;
+    const A = (clean as { messagePrefixHashes: Array<{ depth: number; hash: string }> }).messagePrefixHashes;
+    const B = (dirty as { messagePrefixHashes: Array<{ depth: number; hash: string }> }).messagePrefixHashes;
+    // Rungs at depth <= 90 cover only unchanged messages and must match.
+    for (let i = 0; i < A.length; i++) {
+      if (A[i]!.depth <= 90) expect(B[i]!.hash, `depth ${A[i]!.depth}`).toBe(A[i]!.hash);
+    }
+    // At least one deeper rung must differ, or the ladder localizes nothing.
+    expect(A.some((r, i) => r.depth > 90 && B[i]!.hash !== r.hash)).toBe(true);
+  });
+
+  it("survives the array bound that strips messageFingerprints", async () => {
+    const rec = await ladderFor(400);
+    expect(Array.isArray(rec.messagePrefixHashes)).toBe(true);
+  });
+});

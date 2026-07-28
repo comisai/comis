@@ -391,6 +391,28 @@ export function buildBlockReason(
   return full.slice(0, 500);
 }
 
+/**
+ * True when this text is a breaker BLOCK message rather than a tool's own error.
+ *
+ * Load-bearing for classification. A block quotes the original failure verbatim
+ * (`…with the same error: "…timed out…"`), so any consumer that classifies by
+ * sniffing error text reads the QUOTATION as a fresh failure of that kind. Live:
+ * a blocked MCP call was classified `errorKind:"timeout"` and emitted
+ * `tool.timeout {timeoutMs: 3}` — 3ms being how long the breaker took to refuse,
+ * published as an expired deadline. A blocked call never reached the server; it
+ * has no transport outcome to classify at all.
+ *
+ * Matched on the two structural invariants {@link buildBlockReason} guarantees:
+ * one of its two header forms, plus its refusal block. Both are required, so a
+ * tool that merely echoes one phrase is not mistaken for a block.
+ */
+export function isBreakerBlockMessage(text: string | undefined): boolean {
+  if (text === undefined || text.length === 0) return false;
+  if (!text.includes("DO NOT retry this tool. Instead:")) return false;
+  return /Tool "[^"]+" (?:has failed \d+ (?:total|consecutive) times|failed parameter validation \d+ times)/
+    .test(text);
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------

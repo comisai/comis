@@ -121,7 +121,8 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { BACKGROUND_POLLER_TOOL } from "../safety/background-failure-attribution.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
@@ -550,7 +551,21 @@ export async function storePairedConversationMemory(
         // Pattern-source tags only (e.g. "secret-egress-guard") — NEVER the
         // matched secret text. The verdict carries sources, not the content.
         patterns: verdict.patterns,
-        hint: "Paired conversation memory matched a secret/dangerous/suspicious pattern — skipped (the learned-trust conversation memory has no reduced-weight tier); the secret value is never logged or persisted",
+        // WHICH DETECTOR fired, as a closed enum. The two cases warrant OPPOSITE
+        // responses and the pattern-source tags alone did not make that legible:
+        // a `secret` verdict is the firewall working as designed (a credential
+        // really was in the turn), while a `heuristic` verdict is a suspicious-
+        // PATTERN match that may be a false positive on ordinary prose — and a
+        // false positive silently drops a legitimate memory. Live, three drops in
+        // one session were a mix of both and the WARN read identically for each.
+        // Still content-free: a closed label derived from the verdict's own
+        // source tags, never the matched text.
+        detector: verdict.patterns.includes("secret-egress-guard")
+          ? ("secret" as const)
+          : ("heuristic" as const),
+        hint: verdict.patterns.includes("secret-egress-guard")
+          ? "A credential was detected in the paired conversation memory — the write was skipped and the value was never logged or persisted. This is the firewall working as intended; no action needed unless a credential is reaching conversation content that should not carry one."
+          : "A suspicious-PATTERN heuristic (not the secret detector) matched the paired conversation memory, so the write was skipped and this turn is NOT recallable later. If the listed patterns look like a false positive on ordinary prose, that is a lost memory, not a blocked leak — review the named pattern sources before assuming the drop was correct.",
         errorKind: "validation" as ErrorKind,
       },
       "Paired memory skipped: failed the memory-write security scan",
@@ -1356,6 +1371,22 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // acknowledged the failure or the response is a silent sentinel. The
   // observability label (effectiveFinishReason) is unchanged — operators still
   // see the recovered failure in logs/system.
+  const replyLanguage = params.responseLocalePolicy.locale;
+  // Wire the locale seam to operator config. `createLocaleCatalog` had exactly
+  // one production caller — the no-packs DEFAULT_LOCALE_CATALOG — so every
+  // deterministic reply resolved English no matter what `language` was pinned,
+  // and the documented "consumed by the deterministic degraded replies" claim
+  // had nothing behind it. An unknown id is reported, never silently kept.
+  const localeCatalog = catalogFromLocalePacks(config.localePacks, (locale, messageId) => {
+    deps.logger.warn(
+      {
+        step: "degraded-reply",
+        errorKind: "config" as const,
+        hint: `agents.<id>.localePacks.${locale}.${messageId} is not a platform-reply message id, so it is ignored; valid ids: ${LOCALE_MESSAGE_IDS.join(", ")}`,
+      },
+      "unknown locale pack message id ignored",
+    );
+  });
   const unrecoveredFailed = unrecoveredFailedToolNames(
     bridgeResult.failedTools ?? [],
     bridgeResult.toolExecResults,
@@ -1366,12 +1397,27 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     !modelAcknowledgedFailure(result.response ?? "", unrecoveredFailed) &&
     !isSilentResponse(result.response ?? "")
   ) {
-    const failedToolName = unrecoveredFailed[0];
+    // Never NAME the background poller as the culprit. It relays other tools'
+    // failures, so blaming it points the reader at the one tool that was
+    // working — the same mis-attribution the retry breaker had. Prefer any
+    // real tool in the list; fall back to a nameless notice.
+    const failedToolName = unrecoveredFailed.find((t) => t !== BACKGROUND_POLLER_TOOL);
+    // Localized prose + the tool name VERBATIM. This was a bare English
+    // `[tool failure] <tool> reported an error`, appended raw to replies in
+    // any language — a bracket-tagged internal string, outside the only
+    // mechanism that can translate it. Identifiers stay untranslated by
+    // design; only the sentence around them is localized.
     // No "(see session log)" pointer: the recipient is the CHAT user, who has
     // no session log to see — the operator's lens is `comis explain` (the
     // failure rides the trajectory + IncidentReport.failures already).
-    result.response = (result.response ?? "") +
-      `\n[tool failure] ${failedToolName} reported an error`;
+    // Two variants: the named notice ends in an em-dash awaiting the tool name;
+    // the unnamed one is a complete sentence. Using the named form with no name
+    // left replies ending in a dangling "incomplete — " whenever the poller was
+    // the only unrecovered failure.
+    result.response = (result.response ?? "")
+      + (failedToolName === undefined
+        ? buildToolFailureNoticeUnnamed(replyLanguage, localeCatalog)
+        : buildToolFailureNotice(replyLanguage, localeCatalog) + failedToolName);
   }
 
   // Degrade loudly — deliver an honest user-facing reply for named degraded causes.
@@ -1380,9 +1426,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // Resolve the open response-locale policy once and pass the canonical tag to
   // each deterministic degraded-reply builder. Missing locale packs fall back
   // to the injected catalog's English strings.
-  const replyLanguage = params.responseLocalePolicy.locale;
   if (effectiveFinishReason === "output_starved") {
-    result.response = (result.response ?? "") + buildOutputStarvedAnnotation(replyLanguage);
+    result.response = (result.response ?? "") + buildOutputStarvedAnnotation(replyLanguage, localeCatalog);
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "output_starved annotation appended" },
       "output_starved — annotated truncated reply",
@@ -1406,6 +1451,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       ...(incidentTraceId !== undefined ? { traceId: incidentTraceId } : {}),
       cause: exhaustionCause,
       language: replyLanguage,
+      localeCatalog,
     });
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "context_exhausted synthesized reply" },
@@ -1421,6 +1467,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     const loopReply = buildLoopDetectedReply({
       ...(loopTraceId !== undefined ? { traceId: loopTraceId } : {}),
       language: replyLanguage,
+      localeCatalog,
     });
     result.response = existing.length > 0 ? `${existing}\n\n${loopReply}` : loopReply;
     deps.logger.warn(

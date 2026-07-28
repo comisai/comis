@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import * as fs from "node:fs";
 
 // `isDocker` is consumed at gateway-tool module scope inside the restart
 // branch. Mock `@comis/core` with `importOriginal` so we only override
@@ -636,17 +637,20 @@ describe("gateway tool", () => {
       ).rejects.toThrow(/Missing required parameter: env_key/);
     });
 
-    it("throws when env_value parameter missing", async () => {
-      const rpcCall = createMockRpcCall();
+    it("returns a structured error when env_value is missing (names the confirm-by-id path)", async () => {
+      const rpcCall = vi.fn(async (method: string) =>
+        method === "gateway.status"
+          ? { pid: 1, uptime: 1, memoryUsage: 1, nodeVersion: "v22", configPaths: [], sections: [], secretsStoreAvailable: true }
+          : {});
       const tool = createGatewayTool(rpcCall, mockLogger);
-
-      await expect(
-        tool.execute("call-e5", {
-          action: "env_set" as "read",
-          env_key: "MY_KEY",
-          _confirmed: true,
-        } as any),
-      ).rejects.toThrow(/Missing required parameter: env_value/);
+      const result = await tool.execute("call-mv", {
+        action: "env_set" as "read",
+        env_key: "SOME_KEY",
+      } as any);
+      const details = result.details as Record<string, unknown>;
+      expect(details.error).toBe("missing_env_value");
+      // …and teaches the confirm-by-id path instead of demanding a re-send.
+      expect(String(details.hint)).toContain("pending_action_id");
     });
 
     it("rejects literal [REDACTED] placeholder without calling env.set", async () => {
@@ -1264,5 +1268,178 @@ describe("confirmationRequiredHint (approval foot-gun fix)", () => {
     expect(hint).toContain('setting secret "SERVICE_PASSWORD"');
     // an inline chat "yes" is explicitly not the confirmation
     expect(hint.toLowerCase()).toContain("does not perform it");
+  });
+});
+
+describe("the env_set placeholder hint must not cause credential re-transmission", () => {
+  // Observed live: a user was asked to paste their password into the chat a SECOND
+  // time. An approval-gated `env_set` needs a follow-up call carrying
+  // `_confirmed: true`, but the redaction pass rewrites the secret in the
+  // originating message between the two calls, and `scrubRedactedToolCalls`
+  // removes the earlier tool-call pair — so the value is genuinely gone from the
+  // agent's context by the time consent arrives. The old hint told the agent to
+  // "re-read the user's most recent message and call env_set again with the
+  // literal value", which can only be satisfied by asking for re-transmission.
+  function hint(): string {
+    const src = fs.readFileSync(
+      new URL("./gateway-tool.ts", import.meta.url),
+      "utf8",
+    );
+    const m = /error: "env_value_is_placeholder",[\s\S]*?hint:\s*([\s\S]*?),\n\s*\};/.exec(src);
+    expect(m, "the placeholder branch must exist").not.toBeNull();
+    return m![1]!;
+  }
+
+  it("does NOT tell the caller to re-read the user's message for the value", () => {
+    expect(hint()).not.toMatch(/re-read the user's most recent message/i);
+  });
+
+  it("explicitly forbids asking the user to send the credential again", () => {
+    expect(hint()).toMatch(/DO NOT ask the user to send the credential again/i);
+  });
+
+  it("names the approval/redaction deadlock as the cause", () => {
+    const h = hint();
+    expect(h).toMatch(/_confirmed: true/);
+    expect(h).toMatch(/redaction pass/i);
+  });
+
+  it("gives an out-of-band recovery that never routes the secret through a session", () => {
+    const h = hint();
+    expect(h).toMatch(/comis secrets set/);
+    expect(h).toMatch(/never enters the session|encrypted store/i);
+  });
+});
+
+describe("gated env_set survives its own confirmation (the approval/redaction deadlock)", () => {
+  // Live shape: request → gate → user approves → the redaction pass has
+  // rewritten the secret in context → the confirm re-sent "[REDACTED]" → dead
+  // end, and the user was asked to re-paste their password into the chat.
+  // With the pending stash, the confirm replays the ORIGINAL value by id.
+  function statusOk() {
+    return {
+      pid: 1, uptime: 1, memoryUsage: 1, nodeVersion: "v22", configPaths: [], sections: [],
+      secretsStoreAvailable: true,
+    };
+  }
+
+  it("the gate returns a pending_action_id and the confirm-by-id replays the ORIGINAL value", async () => {
+    const envSetCalls: Array<Record<string, unknown>> = [];
+    const rpcCall = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === "gateway.status") return statusOk();
+      if (method === "env.set") { envSetCalls.push(params!); return { set: true, key: params!.key, storage: "encrypted" }; }
+      return {};
+    });
+    const tool = createGatewayTool(rpcCall, mockLogger);
+
+    // 1) the gated request — carries the real secret ONCE
+    const gated = await tool.execute("call-p1", {
+      action: "env_set" as "read",
+      env_key: "VENDOR_PASSWORD",
+      env_value: "the-real-secret-value",
+    } as any);
+    const gatedDetails = gated.details as Record<string, unknown>;
+    expect(gatedDetails.requiresConfirmation).toBe(true);
+    const pendingId = gatedDetails.pending_action_id as string;
+    expect(typeof pendingId).toBe("string");
+    expect(String(gatedDetails.hint)).toContain("OMIT env_value");
+
+    // 2) the confirm — NO env_value at all (context may have been redacted)
+    const confirmed = await tool.execute("call-p2", {
+      action: "env_set" as "read",
+      env_key: "VENDOR_PASSWORD",
+      _confirmed: true,
+      pending_action_id: pendingId,
+    } as any);
+    const confirmedDetails = confirmed.details as Record<string, unknown>;
+    expect(confirmedDetails.set).toBe(true);
+    // the daemon received the ORIGINAL value, not a placeholder
+    expect(envSetCalls).toHaveLength(1);
+    expect(envSetCalls[0]!.value).toBe("the-real-secret-value");
+  });
+
+  it("a confirm whose context re-sent the PLACEHOLDER still succeeds via the stash", async () => {
+    const envSetCalls: Array<Record<string, unknown>> = [];
+    const rpcCall = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === "gateway.status") return statusOk();
+      if (method === "env.set") { envSetCalls.push(params!); return { set: true }; }
+      return {};
+    });
+    const tool = createGatewayTool(rpcCall, mockLogger);
+    const gated = await tool.execute("call-p3", {
+      action: "env_set" as "read", env_key: "K", env_value: "real-value",
+    } as any);
+    const pendingId = (gated.details as Record<string, unknown>).pending_action_id as string;
+
+    const confirmed = await tool.execute("call-p4", {
+      action: "env_set" as "read",
+      env_key: "K",
+      env_value: "[REDACTED]", // what a redacted replay context would supply
+      _confirmed: true,
+      pending_action_id: pendingId,
+    } as any);
+    expect((confirmed.details as Record<string, unknown>).set).toBe(true);
+    expect(envSetCalls[0]!.value).toBe("real-value");
+  });
+
+  it("the pending id is ONE-SHOT — a second confirm replays nothing", async () => {
+    const rpcCall = vi.fn(async (method: string) =>
+      method === "gateway.status" ? statusOk() : { set: true });
+    const tool = createGatewayTool(rpcCall, mockLogger);
+    const gated = await tool.execute("call-p5", {
+      action: "env_set" as "read", env_key: "K2", env_value: "v",
+    } as any);
+    const pendingId = (gated.details as Record<string, unknown>).pending_action_id as string;
+    await tool.execute("call-p6", {
+      action: "env_set" as "read", env_key: "K2", _confirmed: true, pending_action_id: pendingId,
+    } as any);
+    const second = await tool.execute("call-p7", {
+      action: "env_set" as "read", env_key: "K2", _confirmed: true, pending_action_id: pendingId,
+    } as any);
+    expect((second.details as Record<string, unknown>).error).toBe("pending_action_expired");
+  });
+
+  it("a key mismatch between stash and confirm is rejected", async () => {
+    const rpcCall = vi.fn(async (method: string) =>
+      method === "gateway.status" ? statusOk() : { set: true });
+    const tool = createGatewayTool(rpcCall, mockLogger);
+    const gated = await tool.execute("call-p8", {
+      action: "env_set" as "read", env_key: "RIGHT_KEY", env_value: "v",
+    } as any);
+    const pendingId = (gated.details as Record<string, unknown>).pending_action_id as string;
+    const wrong = await tool.execute("call-p9", {
+      action: "env_set" as "read", env_key: "WRONG_KEY", _confirmed: true, pending_action_id: pendingId,
+    } as any);
+    expect((wrong.details as Record<string, unknown>).error).toBe("pending_action_key_mismatch");
+
+    const correct = await tool.execute("call-p10", {
+      action: "env_set" as "read", env_key: "RIGHT_KEY", _confirmed: true, pending_action_id: pendingId,
+    } as any);
+    expect((correct.details as Record<string, unknown>).set).toBe(true);
+  });
+
+  it("retains the pending action when env.set fails transiently", async () => {
+    let attempts = 0;
+    const rpcCall = vi.fn(async (method: string) => {
+      if (method === "gateway.status") return statusOk();
+      if (method === "env.set") {
+        attempts++;
+        if (attempts === 1) throw new Error("temporary store failure");
+        return { set: true };
+      }
+      return {};
+    });
+    const tool = createGatewayTool(rpcCall, mockLogger);
+    const gated = await tool.execute("call-p11", {
+      action: "env_set" as "read", env_key: "RETRY_KEY", env_value: "secret-value",
+    } as any);
+    const pendingId = (gated.details as Record<string, unknown>).pending_action_id as string;
+    const confirm = {
+      action: "env_set" as "read", env_key: "RETRY_KEY", _confirmed: true, pending_action_id: pendingId,
+    } as any;
+
+    await expect(tool.execute("call-p12", confirm)).rejects.toThrow("temporary store failure");
+    const retry = await tool.execute("call-p13", confirm);
+    expect((retry.details as Record<string, unknown>).set).toBe(true);
   });
 });

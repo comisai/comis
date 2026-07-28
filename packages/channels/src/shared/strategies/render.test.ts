@@ -313,6 +313,60 @@ describe("renderFrameText", () => {
   // events (so the running flow stays calm and the closing ✓ done is the only
   // success marker); the running-marker presence is the companion contract.
   // The ✓-absence assertion is preserved below.
+  // The "(running N s)" suffix was appended whenever the caller supplied
+  // `elapsedMs`, with no reference to whether anything was actually in flight.
+  // So a frame whose every event had TERMINATED still claimed to be running.
+  // Live: a failed tool rendered "❌ using <server> · <tool> (running 0 s)" —
+  // an outcome and a running claim on one line — and a finished turn left a
+  // pill reading "(running 475 s)" that outlived the turn it described.
+  describe("the running suffix tracks in-flight work, not wall-clock", () => {
+    it("omits the suffix when every visible event has terminated", () => {
+      const out = renderFrameText(
+        frame({
+          visibleEvents: [
+            event({ kind: "tool", phase: "end", status: "failed", toolName: "events_stats" }),
+          ],
+        }),
+        DEFAULT_THEME_MARKERS,
+        0,
+      );
+      expect(out).not.toContain("(running");
+    });
+
+    it("omits the suffix for a completed event even after a long elapsed time", () => {
+      const out = renderFrameText(
+        frame({
+          visibleEvents: [
+            event({ kind: "tool", phase: "end", status: "completed", toolName: "vehicles_list" }),
+          ],
+        }),
+        DEFAULT_THEME_MARKERS,
+        475_000,
+      );
+      expect(out).not.toContain("(running");
+    });
+
+    it("keeps the suffix while at least one event is still in flight", () => {
+      const out = renderFrameText(
+        frame({
+          visibleEvents: [
+            event({ kind: "tool", phase: "end", status: "completed", toolName: "vehicles_list" }),
+            event({ kind: "tool", phase: "start", status: "running", toolName: "trips_stats" }),
+          ],
+        }),
+        DEFAULT_THEME_MARKERS,
+        12_000,
+      );
+      expect(out).toContain("(running 12 s)");
+    });
+
+    it("keeps the opening (running 0 s) on a frame with no events yet", () => {
+      // The strategies send an opening placeholder BEFORE the first event
+      // lands; an empty frame is in-flight by construction, not finished.
+      expect(renderFrameText(frame(), DEFAULT_THEME_MARKERS, 0)).toContain("(running 0 s)");
+    });
+  });
+
   it("does NOT prefix the success ✓ on a kept completed end event (no per-step ✓ during running phase)", () => {
     const completedFrame = frame({
       visibleEvents: [

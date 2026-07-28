@@ -14,6 +14,7 @@
  * @module
  */
 
+import { buildPromptTimeoutReply, catalogFromLocalePacks } from "../degraded-reply.js";
 import { formatSessionKey, resolveModelPricing, scriptTokenFactor } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 
@@ -174,7 +175,19 @@ function emitFailureDiagnostics(
   if (classified.category === "auth_invalid") {
     result.response = `The AI service could not authenticate with the "${config.provider}" provider. Please check the API key or notify the system administrator.`;
   } else {
-    result.response = classified.userMessage;
+    // Route the stall/whole-turn timeout through the locale seam. It was a
+    // hard-coded English literal in error-classifier.ts, delivered verbatim into
+    // conversations in any language — and a stalled turn is one of the few
+    // messages a user is guaranteed to see. Other categories keep their
+    // classifier text until they are given locale ids too.
+    result.response = classified.category === "prompt_timeout"
+      ? buildPromptTimeoutReply(
+        (config as { language?: string }).language,
+        catalogFromLocalePacks(
+          (config as { localePacks?: Record<string, Record<string, string>> }).localePacks,
+        ),
+      )
+      : classified.userMessage;
   }
   result.errorContext = {
     errorType: isPromptTimeout ? "PromptTimeout" : "PromptFailure",

@@ -212,6 +212,26 @@ describe("capped-window provenance in the exhaustion throw and WARN", () => {
     expect(p.sessionKey).toBe("t1:u1:c1");
   });
 
+  it("emits originating-request retention and trim evidence", () => {
+    const emit = vi.fn();
+    const deps = makeDeps({
+      eventBus: { emit } as unknown as ContextEngineDeps["eventBus"],
+    });
+    runPreflightFitCheck(deps, 32_000, [], 0, [], "none", undefined, {
+      effective: 6,
+      configured: 8,
+      originatingRequestRetained: true,
+      freshTailTrimmedCount: 4,
+    });
+    expect(emit).toHaveBeenCalledWith(
+      "context:budget_computed",
+      expect.objectContaining({
+        originatingRequestRetained: true,
+        freshTailTrimmedCount: 4,
+      }),
+    );
+  });
+
   it("emits a downshifted-verdict budget event when the thinking governor fires", () => {
     const emit = vi.fn();
     const deps = makeDeps({

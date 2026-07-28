@@ -32,3 +32,4 @@ export {
   sanitizeMcpToolName,
   sanitizeMcpToolNameForAnalytics,
 } from "./prompt-state-utils.js";
+export { lookbackWindowExceededHint, cacheBreakLogFields } from "./cache-break-hints.js";

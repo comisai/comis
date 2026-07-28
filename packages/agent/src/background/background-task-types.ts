@@ -134,6 +134,13 @@ export const PersistedTaskStateSchema = z.strictObject({
   dispatchAttempts: z.number().int().nonnegative(),
   continuationOutbox: BackgroundContinuationOutboxSchema.optional(),
   finalizedResult: BackgroundFinalizedResultSchema.optional(),
+  toolCallId: z.string().min(1).max(512).optional(),
+  sessionKey: z.string().min(1).max(2048).optional(),
+  traceId: z.string().min(1).max(512).optional(),
+  errorKind: z.enum([
+    "config", "network", "auth", "validation", "precondition", "timeout",
+    "resource", "dependency", "internal", "platform", "sandbox_unavailable",
+  ]).optional(),
 });
 
 // @optional-field-count: Lifecycle fields are conditional by task state; underscored fields exist only while execution or terminal persistence is in flight.
@@ -152,6 +159,14 @@ export interface BackgroundTask {
   /** Live notification policy. Optional; recovery defaults to "deferred" when
    *  absent. */
   notificationPolicy?: BackgroundTaskNotificationPolicy;
+  /** Correlation to the originating tool call + turn, captured at promote time
+   *  and PERSISTED (ids only — no content), so the terminal
+   *  `background_task:{completed,failed}` event can close the right activity
+   *  card even across a daemon restart. */
+  toolCallId?: string;
+  sessionKey?: string;
+  traceId?: string;
+  errorKind?: ErrorKind;
   /** Durable completion lifecycle. */
   dispatchState?: BackgroundSessionState;
   continuationExecutionId: string;
@@ -169,6 +184,7 @@ export interface BackgroundTask {
     completedAt: number;
     result?: string;
     error?: string;
+    errorKind?: ErrorKind;
   };
   _ownsCounterSlot?: boolean;
 }
@@ -198,6 +214,10 @@ export interface PersistedTaskState {
   dispatchAttempts: number;
   continuationOutbox?: BackgroundContinuationOutbox;
   finalizedResult?: BackgroundFinalizedResult;
+  toolCallId?: string;
+  sessionKey?: string;
+  traceId?: string;
+  errorKind?: ErrorKind;
 }
 
 export function isClosedBackgroundTask(task: Pick<BackgroundTask, "status" | "dispatchState">): boolean {

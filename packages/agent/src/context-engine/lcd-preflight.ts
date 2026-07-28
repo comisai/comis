@@ -61,6 +61,9 @@ const VALID_LEVELS: readonly TLevel[] = ["off", "minimal", "low", "medium", "hig
  *                            The NEWEST keptCount items from evictable were kept.
  * @param freshTail         - The unconditional fresh-tail messages.
  * @param reasoningStyle    - profile.reasoningStyle ("none" | "native").
+ * @param freshTailStepBound - The effective (post-clamp) vs configured trailing-STEP
+ *                            count kept verbatim. Threaded onto context:budget_computed
+ *                            so a fresh-tail slide is visible in `explain`.
  * @param capInfo           - Window-cap provenance (budget.rawContextWindowTokens +
  *                            budget.windowCapSource). When the effective window was
  *                            clamped by a capability-class cap, the exhaustion throw
@@ -79,6 +82,12 @@ export function runPreflightFitCheck(
   freshTail: AgentMessage[],
   reasoningStyle: "none" | "native",
   capInfo?: ContextWindowCapInfo,
+  freshTailStepBound?: {
+    effective: number;
+    configured: number;
+    originatingRequestRetained?: boolean;
+    freshTailTrimmedCount?: number;
+  },
 ): number {
   // Emit effectiveWindow callback so the caller can clamp max_tokens dynamically.
   deps.onEffectiveWindow?.(effectiveWindow);
@@ -151,6 +160,19 @@ export function runPreflightFitCheck(
       assembledInputTokens: assembled,
       outputHeadroom: headroom,
       verdict,
+      // The verbatim-tail bound and direct coverage evidence used by `explain`.
+      ...(freshTailStepBound !== undefined
+        ? {
+            freshTailSteps: freshTailStepBound.effective,
+            freshTailStepsConfigured: freshTailStepBound.configured,
+            ...(freshTailStepBound.originatingRequestRetained === undefined
+              ? {}
+              : { originatingRequestRetained: freshTailStepBound.originatingRequestRetained }),
+            ...(freshTailStepBound.freshTailTrimmedCount === undefined
+              ? {}
+              : { freshTailTrimmedCount: freshTailStepBound.freshTailTrimmedCount }),
+          }
+        : {}),
     });
   };
 

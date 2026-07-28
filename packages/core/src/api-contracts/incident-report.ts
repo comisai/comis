@@ -76,7 +76,23 @@ export const IncidentReportSchema = z.object({
   }),
   cost: z.object({
     costUsd: z.number(),
+    /**
+     * ALL tokens the session moved, INCLUDING cache reads and cache writes.
+     *
+     * ⚠ This is NOT the same quantity as `SystemHealthReport.cost.totalTokens`,
+     * which counts input+output only and EXCLUDES cache. One 27-minute session
+     * legitimately reported 6,043,245 here and 18,637 there, and nothing in
+     * either JSON said so — a reader comparing the two lenses concludes one is
+     * broken. The `tokenBasis` discriminator below states which convention this
+     * number follows so the lenses reconcile without reading the source.
+     */
     totalTokens: z.number(),
+    /**
+     * The counting convention `totalTokens` follows. Closed union so a consumer
+     * can reconcile lenses programmatically rather than by convention.
+     * Optional (additive; an older producer omits it).
+     */
+    tokenBasis: z.literal("input+output+cache").optional(),
     cacheReadRatio: z.number(),
   }),
   timing: z.object({
