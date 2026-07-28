@@ -74,27 +74,44 @@ describe("buildTraceMetadata", () => {
 
     expect(payload.toolInventory).toEqual({
       count: 2,
-      names: ["cron", "web_search"],
+      chunks: [["cron", "web_search"]],
       truncated: false,
     });
 
     const oversized = buildTraceMetadata({
       ...baseParams,
       toolInventory: {
-        names: Array.from({ length: 300 }, (_, index) => `tool_${String(index).padStart(3, "0")}`),
+        names: Array.from({ length: 5_000 }, (_, index) => `tool_${String(index).padStart(4, "0")}`),
       },
     } as TraceMetadataParams);
-    expect(oversized.toolInventory).toMatchObject({ count: 300, truncated: true });
-    expect((oversized.toolInventory as { names: string[] }).names).toHaveLength(
+    expect(oversized.toolInventory).toMatchObject({ count: 5_000, truncated: true });
+    expect(oversized.toolInventory?.chunks).toHaveLength(
       PAYLOAD_BOUNDS.maxArrayLength,
     );
+    expect(oversized.toolInventory?.chunks.every(
+      (chunk) => chunk.length <= PAYLOAD_BOUNDS.maxArrayLength,
+    )).toBe(true);
 
     const persisted = limitTrajectoryPayloadValue(
       sanitizeForPersistence(oversized),
     ) as TraceMetadataParams;
-    expect(persisted.toolInventory?.names).toEqual(
-      (oversized.toolInventory as { names: string[] }).names,
-    );
+    expect(persisted.toolInventory).toEqual(oversized.toolInventory);
+  });
+
+  it("keeps every live-sized skill descriptor through trajectory persistence", () => {
+    const skills = Array.from({ length: 73 }, (_, index) => ({
+      id: `skill_${String(index).padStart(2, "0")}`,
+      version: "1.0.0",
+    }));
+    const payload = buildTraceMetadata({ ...baseParams, skills });
+
+    expect(payload.skills).toMatchObject({ count: 73, truncated: false });
+    expect(payload.skills.chunks.map((chunk) => chunk.length)).toEqual([64, 9]);
+
+    const persisted = limitTrajectoryPayloadValue(
+      sanitizeForPersistence(payload),
+    ) as typeof payload;
+    expect(persisted.skills).toEqual(payload.skills);
   });
 
   it("return value satisfies Record<string, unknown> (assignable to recordEvent data param)", () => {
