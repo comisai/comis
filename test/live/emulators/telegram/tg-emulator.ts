@@ -1645,11 +1645,13 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         firstName: from.firstName,
         ...(from.username !== undefined ? { username: from.username } : {}),
       });
+      const groupChat = groupChats.get(chat.chatId)?.chat;
       const update = makeMediaUpdate({
         updateId: nextUpdateId(),
         messageId,
         chatId: chat.chatId,
         from: user,
+        ...(groupChat === undefined ? {} : { chat: groupChat }),
         kind,
         fileId: handle.fileId,
         fileUniqueId: handle.fileUniqueId,

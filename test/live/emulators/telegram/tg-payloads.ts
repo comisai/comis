@@ -366,10 +366,12 @@ export interface MakeMediaUpdateOptions {
   readonly updateId: number;
   /** The message's id inside the chat (a freshly-minted inbound id; `injectMedia` mints it). */
   readonly messageId: number;
-  /** The private-chat id this media DM belongs to. */
+  /** The chat id this media message belongs to. */
   readonly chatId: number;
   /** The (human) sender — built via {@link makeUser}. */
   readonly from: User;
+  /** Override the default private chat with the recorded group or forum chat. */
+  readonly chat?: Chat.PrivateChat | Chat.GroupChat | Chat.SupergroupChat;
   /** Which single media kind to populate (a closed union — an off-union kind is a compile error). */
   readonly kind: MediaKind;
   /** The file id `buildAttachments` reads (`msg.<kind>.file_id`) and the emulator stores. */
@@ -482,13 +484,14 @@ function buildMediaFields(
  * ×1000 → ms; the same timestamp discipline as every other builder).
  */
 export function makeMediaUpdate(opts: MakeMediaUpdateOptions): Update {
+  const chat: Chat.PrivateChat | Chat.GroupChat | Chat.SupergroupChat =
+    opts.chat ?? { id: opts.chatId, type: "private", first_name: opts.from.first_name };
   return {
     update_id: opts.updateId,
     message: {
       message_id: opts.messageId,
       from: opts.from,
-      // PrivateChat requires first_name; in a DM the chat IS the sender.
-      chat: { id: opts.chatId, type: "private", first_name: opts.from.first_name },
+      chat,
       // Telegram unix SECONDS (NOT ms) — the mapper multiplies ×1000.
       date: Math.floor(Date.now() / 1000),
       ...buildMediaFields(opts),
