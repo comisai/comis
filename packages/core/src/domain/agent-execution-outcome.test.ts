@@ -37,9 +37,6 @@ describe("closed agent execution outcome contracts", () => {
     expect(AgentTurnExecutionOutcomeSchema.safeParse({ status: "failed", finishReason: "error" }).success).toBe(false);
     expect(AgentTurnExecutionOutcomeSchema.safeParse({
       status: "failed", finishReason: "completed_with_tool_errors", errorKind: "dependency",
-    }).success).toBe(false);
-    expect(AgentTurnExecutionOutcomeSchema.safeParse({
-      status: "completed", finishReason: "completed_with_tool_errors", errorKind: "dependency",
     }).success).toBe(true);
     expect(AgentTurnExecutionOutcomeSchema.safeParse({ status: "aborted", abortReason: "user_stop" }).success).toBe(true);
     expect(AgentTurnExecutionOutcomeSchema.safeParse({ status: "aborted", abortReason: "max_steps" }).success).toBe(false);
@@ -71,14 +68,6 @@ describe("closed agent execution outcome contracts", () => {
       finishReason: "error",
       errorKind: "auth",
     })).toEqual({ status: "failed", finishReason: "error", errorKind: "auth" });
-    expect(classifyAgentTurnExecutionOutcome({
-      finishReason: "completed_with_tool_errors",
-      errorKind: "dependency",
-    })).toEqual({
-      status: "completed",
-      finishReason: "completed_with_tool_errors",
-      errorKind: "dependency",
-    });
     expect(classifyAgentTurnExecutionOutcome({
       finishReason: "stop",
       abortReason: "pipeline_timeout",

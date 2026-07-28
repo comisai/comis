@@ -313,12 +313,21 @@ export function createCronAgentTurnExecutor(deps: CronAgentTurnExecutorDeps) {
         toolCalls: executed.value.stepsExecuted,
         llmCalls: executed.value.llmCalls,
       };
-      const visible = execution.status === "completed"
+      // A reconciled tool failure remains a failed execution in the immutable
+      // scheduler ledger, but the model still produced a final response. That
+      // text is deliverable and observability reports it separately from hard
+      // degradation. Other failed/aborted outcomes have no delivery authority.
+      const hasDeliverableFinal = execution.status === "completed"
+        || (
+          execution.status === "failed"
+          && execution.finishReason === "completed_with_tool_errors"
+        );
+      const visible = hasDeliverableFinal
         ? filterResponse(sanitizeAssistantResponse(executed.value.response))
         : { shouldDeliver: false, cleanedText: "" };
       const fence = createCronExecutionFence(signal);
       let delivery: CronDeliveryOutcome = { status: "not_requested" };
-      if (input.job.deliveryTarget !== undefined && execution.status === "completed") {
+      if (input.job.deliveryTarget !== undefined && hasDeliverableFinal) {
         if (!visible.shouldDeliver) {
           delivery = { status: "suppressed", reason: "response_filter" };
         } else if (!fence.enter("platform_delivery")) {
@@ -338,7 +347,7 @@ export function createCronAgentTurnExecutor(deps: CronAgentTurnExecutorDeps) {
       let continuation = skippedContinuation(input.job.continuationMode, "execution_not_completed");
       if (input.job.continuationMode === "none") {
         continuation = { mode: "none", status: "not_requested" };
-      } else if (execution.status === "completed" && visible.shouldDeliver) {
+      } else if (hasDeliverableFinal && visible.shouldDeliver) {
         const originEligible = input.job.continuationMode !== "origin_history"
           || delivery.status === "accepted";
         if (!originEligible) {
@@ -358,7 +367,7 @@ export function createCronAgentTurnExecutor(deps: CronAgentTurnExecutorDeps) {
             ? continued.value
             : { mode: input.job.continuationMode, status: "failed", errorKind: "internal" };
         }
-      } else if (execution.status === "completed") {
+      } else if (hasDeliverableFinal) {
         continuation = skippedContinuation(input.job.continuationMode, "visible_text_unavailable");
       }
       fence.dispose();

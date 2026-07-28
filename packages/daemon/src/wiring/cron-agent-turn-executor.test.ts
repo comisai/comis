@@ -252,7 +252,7 @@ describe("cron governed agent-turn executor", () => {
     expect(result.ok).toBe(true);
     if (!result.ok || result.value.kind !== "agent_turn") return;
     expect(result.value.outcome.execution).toEqual({
-      status: "completed",
+      status: "failed",
       finishReason: "completed_with_tool_errors",
       errorKind: "dependency",
     });
