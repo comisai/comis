@@ -902,17 +902,22 @@ describe("log redaction — multi-target transport and err serializer", () => {
               { target: "pino/file", options: { destination: logFile } },
             ],
           },
-          // Stdout target for visual verification (no assertion on stdout content)
-          { target: "pino/file", options: { destination: 1 } },
+          // Stdout follows the daemon's same redact-before-write pipeline.
+          {
+            pipeline: [
+              { target: "@comis/infra/dist/logging/pipeline-redact-stage.js" },
+              { target: "pino/file", options: { destination: 1 } },
+            ],
+          },
         ],
       },
     });
 
     logger.error({ errorText: `auth failed: Bearer ${HF_TOKEN}` }, "redact errorText test");
-    logger.info({ msg: `token is ${HF_TOKEN}` }, "redact msg test");
+    logger.info(`token is ${HF_TOKEN}`);
     // argsPreview is a must-mask field (exec/tool arg previews).
     logger.info({ argsPreview: `run --auth Bearer ${HF_TOKEN}` }, "redact argsPreview test");
-    logger.info({ msg: `ref is ${ENV_REF}` }, "env-ref pass-through test");
+    logger.info(`ref is ${ENV_REF}`);
 
     // Allow transport worker thread(s) to flush.
     // Pipeline transports spawn a chain of worker threads; they need more time
