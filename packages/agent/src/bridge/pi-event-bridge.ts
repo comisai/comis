@@ -44,7 +44,7 @@ import { randomUUID } from "node:crypto";
 import { resolveModelPricing } from "@comis/core";
 import { getCacheProviderInfo } from "../executor/cache-usage-helpers.js";
 import { sanitizeMcpToolNameForAnalytics } from "../executor/cache-detection/index.js";
-import { classifyError } from "../executor/error-classifier.js";
+import { classifyError, errorKindForCategory } from "../executor/error-classifier.js";
 import { getSessionPromptSkillLocations, getSessionPromptTopicMatchedSkills } from "../executor/prompt-assembly.js";
 import { suggestClosestTool } from "./tool-name-suggest.js";
 import { toolFailureHint } from "./tool-failure-hint.js";
@@ -2736,7 +2736,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 delayMs,
                 errorMessage,
                 hint: "Rate-limit windows are per-minute; SDK retry budget cannot bridge the window -- aborting retry to surface terminal failure",
-                errorKind: "rate_limited" as const,
+                errorKind: errorKindForCategory(classification.category),
+                providerErrorCategory: classification.category,
               },
               "Aborting SDK auto-retry on rate-limited error",
             );
