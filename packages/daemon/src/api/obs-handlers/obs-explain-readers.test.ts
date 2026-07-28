@@ -189,6 +189,35 @@ describe("makeRealReader REAL production layout (workspace/sessions + pointer)",
     expect(records.some((r) => r.type === "tool.result_offloaded")).toBe(true);
   });
 
+  it("readSessionRecords recovers a co-located trajectory when workspace recreation omitted its pointer", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = makeRealSessionDir(dataDir);
+    fs.unlinkSync(`${sessionFile}.trajectory-path.json`);
+
+    const failureEvent = JSON.stringify({
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "tool.result",
+      seq: 1,
+      sessionId: SESSION_KEY,
+      sessionKey: SESSION_KEY,
+      data: {
+        toolName: "read",
+        success: false,
+        errorKind: "dependency",
+        classifiedFailureBy: "sdk_iserror",
+      },
+    });
+    fs.writeFileSync(`${sessionFile}.trajectory.jsonl`, `${failureEvent}\n`, "utf-8");
+
+    const reader = makeRealReader(dataDir);
+    const records = await reader.readSessionRecords(SESSION_KEY);
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.sessionKey).toBe(SESSION_KEY);
+    expect((records[0]?.data as Record<string, unknown>)?.errorKind).toBe("dependency");
+  });
+
   it("readSessionMetadata reads the <file>_session-metadata.json companion next to the session JSONL (sessionEnd rollup)", async () => {
     const dataDir = tmpDataDir();
     const sessionFile = makeRealSessionDir(dataDir);
