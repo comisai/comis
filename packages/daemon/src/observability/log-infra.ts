@@ -154,6 +154,7 @@ export function createFileTransport(
           file: expandedPath,
           size: sizeStr,
           mkdir: true,
+          mode: 0o600,
           limit: {
             count: countLimit,
             removeOtherLogFiles: true,
