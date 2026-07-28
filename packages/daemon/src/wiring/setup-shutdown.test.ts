@@ -7,6 +7,7 @@ import type { ShutdownDeps } from "./setup-shutdown.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
+import { err, ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -452,17 +453,19 @@ describe("setupShutdown", () => {
     expect(deps.exitFn).toHaveBeenCalledWith(0);
   }, 15_000);
 
-  it("logger flush failure cannot prevent the explicit shutdown exit", async () => {
-    const logger = createMockLogger() as any;
-    logger.flush = vi.fn(() => {
-      throw new Error("transport flush failed");
-    });
-    const deps = createMinimalDeps({ logger });
+  it("synchronous logger flush failure cannot prevent the explicit shutdown exit", async () => {
+    const logger = createMockLogger();
+    const flushLogger = vi.fn(() => err(new Error("transport flush failed")));
+    const deps = createMinimalDeps({
+      logger,
+      flushLogger,
+    } as unknown as Partial<ShutdownDeps>);
     const setupShutdown = await getSetupShutdown();
     const result = setupShutdown(deps);
 
     await expect(result.shutdownHandle.trigger("SIGTERM")).resolves.toBeUndefined();
 
+    expect(flushLogger).toHaveBeenCalledWith(logger);
     expect(deps.exitFn).toHaveBeenCalledWith(0);
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -473,37 +476,44 @@ describe("setupShutdown", () => {
     );
   });
 
-  it("pending logger flush keeps its safety deadline referenced until exit", async () => {
-    let releaseFlush: (() => void) | undefined;
-    let markFlushStarted: (() => void) | undefined;
-    const flushStarted = new Promise<void>((resolve) => {
-      markFlushStarted = resolve;
-    });
+  it("shutdown never enters the transport asynchronous flush wait", async () => {
     const logger = createMockLogger() as any;
-    logger.flush = vi.fn((callback: () => void) => {
-      releaseFlush = callback;
-      markFlushStarted?.();
+    logger.flush = vi.fn(() => {
+      throw new Error("asynchronous flush must not run");
     });
-    const deps = createMinimalDeps({ logger });
+    const flushLogger = vi.fn(() => ok(undefined));
+    const deps = createMinimalDeps({
+      logger,
+      flushLogger,
+    } as unknown as Partial<ShutdownDeps>);
     const setupShutdown = await getSetupShutdown();
-    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
     const result = setupShutdown(deps);
-    const shutdown = result.shutdownHandle.trigger("SIGTERM");
 
-    await flushStarted;
-    try {
-      const safetyTimerResult = timeoutSpy.mock.results.find(
-        (_entry, index) => timeoutSpy.mock.calls[index]?.[1] === 2_000,
-      );
-      const safetyTimer = safetyTimerResult?.value as NodeJS.Timeout | undefined;
-      expect(safetyTimer?.hasRef()).toBe(true);
-    } finally {
-      releaseFlush?.();
-      await shutdown;
-      timeoutSpy.mockRestore();
-    }
+    await expect(result.shutdownHandle.trigger("SIGTERM")).resolves.toBeUndefined();
 
+    expect(logger.flush).not.toHaveBeenCalled();
+    expect(flushLogger).toHaveBeenCalledWith(logger);
     expect(deps.exitFn).toHaveBeenCalledWith(0);
+  });
+
+  it("synchronous logger flush completes before the explicit shutdown exit", async () => {
+    const callOrder: string[] = [];
+    const flushLogger = vi.fn(() => {
+      callOrder.push("flushLogger");
+      return ok(undefined);
+    });
+    const deps = createMinimalDeps({
+      flushLogger,
+      exitFn: vi.fn(() => {
+        callOrder.push("exitFn");
+      }),
+    } as unknown as Partial<ShutdownDeps>);
+    const setupShutdown = await getSetupShutdown();
+    const result = setupShutdown(deps);
+
+    await result.shutdownHandle.trigger("SIGTERM");
+
+    expect(callOrder).toEqual(["flushLogger", "exitFn"]);
   });
 
   // -------------------------------------------------------------------------
