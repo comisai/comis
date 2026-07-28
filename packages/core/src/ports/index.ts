@@ -91,6 +91,8 @@ export type {
   ContextBrowseScope,
   LcdConversationSummary,
   LcdConversationPage,
+  LcdToolOutcome,
+  LcdToolOutcomeEvidence,
   AppendMessageInput,
   LcdSummary,
   LcdSummaryKind,

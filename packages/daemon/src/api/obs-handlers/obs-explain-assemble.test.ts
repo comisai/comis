@@ -800,6 +800,28 @@ describe("assembleIncidentReport — identity & invariants", () => {
     expect(report.summary).toContain("completed_with_tool_errors");
   });
 
+  it("counts failed tool invocations from the reported tool statistics", () => {
+    const report = assembleIncidentReport(
+      makeSignals({
+        toolStats: { read: { ok: 0, failed: 1, topErrorKind: "validation" } },
+        failures: [],
+      }),
+      makeMetadata({
+        sessionEnd: {
+          endReason: "completed_with_tool_errors",
+          toolStats: { read: { ok: 0, failed: 1 } },
+        },
+      }),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.summary).toBe(
+      "1 tool failures across 1 turns; endReason=completed_with_tool_errors",
+    );
+  });
+
   it("falls back to the signals.sessionKey for traceId-less metadata and echoes the arg sessionKey", () => {
     const report = assembleIncidentReport(
       makeSignals({ sessionKey: "sig-session" }),

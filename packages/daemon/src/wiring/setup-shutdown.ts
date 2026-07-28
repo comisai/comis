@@ -37,8 +37,15 @@ import { createSchedulerShutdown, type SchedulerShutdownParticipant } from "./sc
 /**
  * Handle for the daemon shutdown orchestrator. `isShuttingDown` exposes
  * the closure-scoped re-entrancy flag. `trigger(signal)` runs the shutdown
- * body programmatically (used by integration tests). `dispose()`
- * removes the SIGTERM/SIGINT listeners (test cleanup).
+ * body programmatically (used by integration tests). `dispose()` removes
+ * EVERY process listener this call registered.
+ *
+ * Releasing all of them is load-bearing, not tidiness: the SIGUSR2 handler
+ * closes over `shutdownHandle.trigger`, which closes over the whole shutdown
+ * body and therefore every dep passed in (container, db handles, executors,
+ * embedding caches). A single surviving listener pins that entire object
+ * graph, so a process that boots more than one daemon instance -- an
+ * in-process restart, or a test suite -- retains every previous instance.
  */
 export interface ShutdownHandle {
   readonly isShuttingDown: boolean;
@@ -787,41 +794,50 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
   process.on("SIGINT", sigint);
   process.on("exit", onExit);
 
-  // dispose() removes SIGTERM/SIGINT only — preserves the original
-  // graceful-shutdown.ts contract (the `exit` listener stays because the
-  // process is exiting anyway and tests depend on it).
+  // Named so dispose() can remove them. Every handler below closes over
+  // `daemonLogger` or `shutdownHandle`, and closures declared in one scope
+  // share a single context object -- so leaving ANY of them registered keeps
+  // this whole activation, and the deps it captured, reachable forever.
+  const onSigusr2 = (): void => {
+    daemonLogger.info("SIGUSR2 received, initiating restart");
+    void shutdownHandle.trigger("SIGUSR2");
+  };
+  const onUnhandledRejection = (reason: unknown): void => {
+    daemonLogger.error(
+      { err: reason instanceof Error ? reason : String(reason), hint: "Check stack trace for origin of unhandled promise", errorKind: "internal" as const },
+      "Unhandled promise rejection (non-fatal)",
+    );
+  };
+  // Note: node-llama-cpp native module warnings write directly to stderr and cannot be
+  // captured by this handler. Those are a known limitation of native module stderr output.
+  const onUncaughtException = (err: Error): void => {
+    daemonLogger.error(
+      { err, hint: "Check stack trace for origin of uncaught exception", errorKind: "internal" as const },
+      "Uncaught exception (non-fatal)",
+    );
+  };
+
   const shutdownHandle: ShutdownHandle = {
     get isShuttingDown(): boolean { return shuttingDown; },
     trigger: shutdown,
     dispose(): void {
       process.off("SIGTERM", sigterm);
       process.off("SIGINT", sigint);
+      process.off("exit", onExit);
+      process.off("SIGUSR2", onSigusr2);
+      process.off("unhandledRejection", onUnhandledRejection);
+      process.off("uncaughtException", onUncaughtException);
     },
   };
 
   // 8.5. Register SIGUSR2 handler for graceful restart
-  process.on("SIGUSR2", () => {
-    daemonLogger.info("SIGUSR2 received, initiating restart");
-    void shutdownHandle.trigger("SIGUSR2");
-  });
+  process.on("SIGUSR2", onSigusr2);
 
   // 8.6. Safety net: catch unhandled promise rejections (non-fatal)
-  process.on("unhandledRejection", (reason) => {
-    daemonLogger.error(
-      { err: reason instanceof Error ? reason : String(reason), hint: "Check stack trace for origin of unhandled promise", errorKind: "internal" as const },
-      "Unhandled promise rejection (non-fatal)",
-    );
-  });
+  process.on("unhandledRejection", onUnhandledRejection);
 
   // 8.7. Safety net for uncaught exceptions -- route through Pino instead of raw stderr.
-  // Note: node-llama-cpp native module warnings write directly to stderr and cannot be
-  // captured by this handler. Those are a known limitation of native module stderr output.
-  process.on("uncaughtException", (err) => {
-    daemonLogger.error(
-      { err, hint: "Check stack trace for origin of uncaught exception", errorKind: "internal" as const },
-      "Uncaught exception (non-fatal)",
-    );
-  });
+  process.on("uncaughtException", onUncaughtException);
 
   return { shutdownHandle };
 }

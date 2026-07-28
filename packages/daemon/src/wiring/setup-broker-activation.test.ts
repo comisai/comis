@@ -255,6 +255,7 @@ function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
     workspaceDirs: new Map([["agent-1", "/workspace/agent-1"]]),
     defaultWorkspaceDir: "/workspace/default",
     dataDir: "/test/data",
+    sdkSkillReadOnlyPaths: [],
     secretManager: { get: vi.fn(), has: vi.fn() } as any,
     platformSecretNames: new Set<string>(),
     eventBus: createMockEventBus() as any,

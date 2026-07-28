@@ -265,6 +265,11 @@ export function assembleIncidentReport(
    * Stays PURE here — the caller does the I/O. Undefined ⇒ the field is omitted.
    */
   sessionSourcePath?: string,
+  /**
+   * Coverage for the bounded lossless-context fallback. The fallback supplies
+   * content-free tool outcomes only; trajectory coverage remains unchanged.
+   */
+  losslessContext?: NonNullable<IncidentReport["coverage"]>["losslessContext"],
 ): IncidentReport {
   const sessionEnd = sessionEndOf(metadata);
   const rollupPayload = rollupPayloadOf(rollup);
@@ -398,7 +403,14 @@ export function assembleIncidentReport(
   };
 
   // --- deterministic summary one-liner (NO LLM) ----------------------------
-  const summary = `${failures.length} tool failures across ${turnCount} turns; endReason=${endReason}`;
+  // Count the same reconciled toolStats presented in the report. failures[]
+  // contains only trajectory records that carried a normalized preview and can
+  // therefore be shorter than the authoritative invocation counts.
+  let failedToolInvocations = 0;
+  for (const stat of Object.values(toolStats)) {
+    failedToolInvocations += stat.failed;
+  }
+  const summary = `${failedToolInvocations} tool failures across ${turnCount} turns; endReason=${endReason}`;
 
   // --- READ-coverage (meta-observability, NOT cost) ------------------------
   // Did the assembler actually locate + read each source? `recordCount` is the
@@ -428,6 +440,7 @@ export function assembleIncidentReport(
     ...(sessionSourcePath !== undefined
       ? { sources: { session: sessionSourcePath, trajectory: `${sessionSourcePath}${TRAJECTORY_JSONL_SUFFIX}` } }
       : {}),
+    ...(losslessContext === undefined ? {} : { losslessContext }),
   };
 
   return {

@@ -1076,3 +1076,62 @@ describe("brokerStop runs after shutdownBackgroundProcesses (shutdown ordering)"
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Process-listener ownership
+//
+// This block deliberately does NOT stub `process.on` (unlike the suite above),
+// because the defect it guards is invisible to a stub: every listener
+// setupShutdown registers must be removable, and the only way to prove that is
+// against the real emitter.
+// ---------------------------------------------------------------------------
+
+describe("setupShutdown process-listener ownership", () => {
+  const OWNED_EVENTS = [
+    "SIGTERM",
+    "SIGINT",
+    "SIGUSR2",
+    "exit",
+    "unhandledRejection",
+    "uncaughtException",
+  ] as const;
+
+  function snapshot(): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const event of OWNED_EVENTS) counts[event] = process.listenerCount(event);
+    return counts;
+  }
+
+  it("dispose() removes every process listener it registered", async () => {
+    // Import FIRST, then snapshot: loading the daemon module graph registers
+    // its own module-scope handlers, which setupShutdown does not own.
+    const mod = await import("./setup-shutdown.js");
+    const before = snapshot();
+
+    const result = mod.setupShutdown(createMinimalDeps());
+
+    const during = snapshot();
+    for (const event of OWNED_EVENTS) {
+      expect(during[event], `${event} must be registered by setupShutdown`)
+        .toBeGreaterThan(before[event]!);
+    }
+
+    result.shutdownHandle.dispose();
+
+    // Every listener is released. A leaked SIGUSR2/uncaughtException handler
+    // closes over `shutdown`, which closes over the whole daemon dependency
+    // graph -- so one surviving listener pins an entire container in memory.
+    expect(snapshot()).toEqual(before);
+  });
+
+  it("does not accumulate listeners across repeated boot/dispose cycles", async () => {
+    const before = snapshot();
+    const mod = await import("./setup-shutdown.js");
+
+    for (let i = 0; i < 5; i++) {
+      mod.setupShutdown(createMinimalDeps()).shutdownHandle.dispose();
+    }
+
+    expect(snapshot()).toEqual(before);
+  });
+});

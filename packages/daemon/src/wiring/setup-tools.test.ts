@@ -441,6 +441,7 @@ function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
     workspaceDirs: new Map([["agent-1", "/workspace/agent-1"]]),
     defaultWorkspaceDir: "/workspace/default",
     dataDir: "/test/data",
+    sdkSkillReadOnlyPaths: [],
     secretManager: { get: vi.fn(), has: vi.fn() } as any,
     platformSecretNames: new Set<string>(),
     eventBus: createMockEventBus() as any,
@@ -531,6 +532,28 @@ describe("setupTools", () => {
     // The sleep pacing primitive is an always-on builtin.
     expect(toolNames).toContain("sleep");
     expect(mockCreateSleepTool).toHaveBeenCalled();
+  });
+
+  it("makes SDK-discovered skill roots readable by surfaced skills", async () => {
+    const deps = createMinimalDeps();
+    Object.assign(deps, {
+      sdkSkillReadOnlyPaths: [
+        "/home/operator/.agents/skills",
+        "/sdk/agent/skills",
+      ],
+    });
+    const setupTools = await getSetupTools();
+    const { assembleToolsForAgent } = setupTools(deps);
+
+    await assembleToolsForAgent("agent-1");
+
+    expect(mockAssembleToolPipeline.mock.calls[0][0].readOnlyPaths).toEqual([
+      "/workspace/agent-1/skills",
+      "/test/data/skills",
+      "/home/operator/.agents/skills",
+      "/sdk/agent/skills",
+      "/test/data/logs",
+    ]);
   });
 
   // -------------------------------------------------------------------------

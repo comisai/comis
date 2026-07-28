@@ -302,11 +302,21 @@ export async function assembleIncidentReportFromSources(
   const taskSessionCache = taskCheck === null || taskExecutionSessionKey.length === 0
     ? []
     : await reader.readCacheTraceRecords(taskExecutionSessionKey);
-  const records = taskCheck !== null
+  const selectedRecords = taskCheck !== null
     ? taskSessionRecords
     : cronExecutionTraceId === undefined
       ? sessionRecords
       : sessionRecords.filter((record) => recordHasTraceId(record, cronExecutionTraceId));
+  const losslessEvidence =
+    taskCheck === null &&
+      cronExecutionTraceId === undefined &&
+      selectedRecords.length === 0 &&
+      reader.readLosslessToolEvidence !== undefined
+      ? await reader.readLosslessToolEvidence(sessionKey)
+      : null;
+  const records = selectedRecords.length > 0
+    ? selectedRecords
+    : losslessEvidence?.records ?? [];
   const cache = taskCheck !== null
     ? taskSessionCache
     : cronExecutionTraceId === undefined
@@ -377,7 +387,7 @@ export async function assembleIncidentReportFromSources(
     !candidateSessionKeys.includes(params.sessionKey);
   const anyRefMissed = refResolutionMissed || sessionKeyRefMissed;
   const missedField = sessionKeyRefMissed ? "sessionKey" : missedRefField;
-  // Pass the trajectory READ count (records.length) so coverage.trajectory
+  // Pass the trajectory READ count (selectedRecords.length) so coverage.trajectory
   // reflects what the reader actually READ — the meta-observability point: a
   // "reader read nothing" bug surfaces as coverage.trajectory.records:0
   // on a report that otherwise looks like a clean zero-activity session.
@@ -403,9 +413,18 @@ export async function assembleIncidentReportFromSources(
     metadata,
     rollup,
     sessionKey,
-    records.length,
+    selectedRecords.length,
     candidateSessionKeys,
     sessionSourcePath,
+    losslessEvidence === null
+      ? undefined
+      : {
+          found: losslessEvidence.messageCount > 0,
+          messages: losslessEvidence.messageCount,
+          toolResults: losslessEvidence.toolResultCount,
+          toolResultsReturned: losslessEvidence.records.length,
+          truncated: losslessEvidence.truncated,
+        },
   );
   if (taskCheck !== null) report.taskCheck = taskCheckReportSection(taskCheck);
   // The report is genuinely empty only when NO source surfaced any activity.
@@ -522,7 +541,8 @@ export function bindObsExplainHandlers(
   },
 ): Record<string, RpcHandler> {
   const dataDir = deps.dataDir ?? defaultDataDir();
-  const reader = deps.incidentReader ?? makeRealReader(dataDir, deps.obsStore, deps.workspaceDirs);
+  const reader = deps.incidentReader ??
+    makeRealReader(dataDir, deps.obsStore, deps.workspaceDirs, deps.contextBrowse);
 
   return {
     [ObsExplainContract.method]: async (rawParams) => {

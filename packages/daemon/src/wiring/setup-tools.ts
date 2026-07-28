@@ -136,6 +136,14 @@ export interface ToolsDeps {
   defaultWorkspaceDir: string;
   /** Base directory for resolving relative skill discovery paths (typically ~/.comis). */
   dataDir: string;
+  /**
+   * Read-only roots discovered independently by the agent SDK.
+   *
+   * The SDK surfaces prompt skills from these directories, so Comis file
+   * tools must be able to read the surfaced SKILL.md files. They remain
+   * outside workspace and sharedPaths, which keeps every write tool denied.
+   */
+  sdkSkillReadOnlyPaths: readonly string[];
   /** Secret manager from container. */
   secretManager: AppContainer["secretManager"];
   /**
@@ -453,6 +461,11 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       dataDir,
       agentWorkspaceSkillsDir,
     );
+    for (const sdkSkillPath of deps.sdkSkillReadOnlyPaths) {
+      if (!readOnlyPaths.includes(sdkSkillPath)) {
+        readOnlyPaths.push(sdkSkillPath);
+      }
+    }
 
     // Default read-only access to daemon logs directory for troubleshooting
     const logsDir = resolve(dataDir, "logs");

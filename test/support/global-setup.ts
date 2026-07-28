@@ -9,21 +9,18 @@
  *   the JSON report that the orchestrator consumes
  *
  * Cleanup targets:
- * 1. ~/.comis/*.db files with "test" in the name (+ WAL/SHM companions)
- * 2. ~/.comis/workspace-{alpha,beta,helper}/ (named agent workspaces)
- * 3. ~/.comis/workspace/.scheduler/ (cron-jobs, execution logs)
- * 4. ~/.comis/workspace/ test artifacts (preserves .git/ and identity .md files)
- * 5. test/.test-results.json (orchestrate.ts output)
+ * 1. test/.test-results.json (orchestrate.ts output)
+ * 2. test/config/.git and test/config/.gitignore
  *
- * Safety: NEVER deletes identity/, models/, .env, or workspace/ identity files.
- * Uses allowlist (WORKSPACE_PRESERVED) so only known system files are kept.
+ * Safety: never reads or writes the operator's ~/.comis data directory.
+ * Tests own their temporary data directories and clean them at their creation
+ * sites, where the exact disposable path is known.
  *
  * @module
  */
 
-import { rmSync, readdirSync, existsSync, unlinkSync } from "node:fs";
+import { rmSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { ensureSharedModelCache } from "./model-cache.js";
@@ -34,15 +31,6 @@ import { ensureSharedModelCache } from "./model-cache.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
-const COMIS_DIR = join(homedir(), ".comis");
-
-/** Named agent workspace directories created by test configs. */
-const TEST_AGENT_WORKSPACES = [
-  "workspace-alpha",
-  "workspace-beta",
-  "workspace-helper",
-];
 
 /** Vitest JSON results file produced by orchestrate.ts. */
 const TEST_RESULTS_FILE = resolve(__dirname, "../.test-results.json");
@@ -62,90 +50,13 @@ const TEST_CONFIG_DIR = resolve(__dirname, "../config");
 // ---------------------------------------------------------------------------
 
 /**
- * Remove all test-generated artifacts from ~/.comis/ and test/.
+ * Remove repository-owned test artifacts.
  *
  * Best-effort: never throws. All file operations are wrapped in try/catch
  * so cleanup cannot break the test run.
  */
 function cleanTestArtifacts(removeResultsFile: boolean): void {
-  // If ~/.comis does not exist, nothing to clean
-  if (!existsSync(COMIS_DIR)) {
-    return;
-  }
-
-  // 1. Remove test database files (test-*.db + WAL/SHM companions)
-  try {
-    const entries = readdirSync(COMIS_DIR);
-    for (const entry of entries) {
-      const isTestDb =
-        (entry.startsWith("test-") && entry.endsWith(".db")) ||
-        (entry.endsWith(".db") && entry.includes("test"));
-      if (isTestDb) {
-        const dbPath = join(COMIS_DIR, entry);
-        for (const suffix of ["", "-wal", "-shm"]) {
-          try {
-            unlinkSync(dbPath + suffix);
-          } catch {
-            // File may not exist (WAL/SHM already cleaned by db-cleanup.ts)
-          }
-        }
-      }
-    }
-  } catch {
-    // Best-effort: directory read may fail
-  }
-
-  // 2. Remove test-only named agent workspace directories
-  for (const wsDir of TEST_AGENT_WORKSPACES) {
-    try {
-      rmSync(join(COMIS_DIR, wsDir), { recursive: true, force: true });
-    } catch {
-      // Best-effort
-    }
-  }
-
-  // 3. Clean scheduler artifacts from default workspace
-  try {
-    rmSync(join(COMIS_DIR, "workspace", ".scheduler"), {
-      recursive: true,
-      force: true,
-    });
-  } catch {
-    // Best-effort
-  }
-
-  // 4. Clean test-generated files from default workspace
-  //    Preserves: .git/, identity .md files, .scheduler/ (cleaned separately above)
-  const WORKSPACE_PRESERVED = new Set([
-    ".git",
-    ".scheduler", // Already handled in section 3
-    "AGENTS.md",
-    "SOUL.md",
-    "IDENTITY.md",
-    "BOOTSTRAP.md",
-    "HEARTBEAT.md",
-    "TOOLS.md",
-    "USER.md",
-  ]);
-
-  try {
-    const workspaceDir = join(COMIS_DIR, "workspace");
-    if (existsSync(workspaceDir)) {
-      const wsEntries = readdirSync(workspaceDir);
-      for (const entry of wsEntries) {
-        if (WORKSPACE_PRESERVED.has(entry)) continue;
-        try {
-          rmSync(join(workspaceDir, entry), { recursive: true, force: true });
-        } catch {
-          // Best-effort
-        }
-      }
-    }
-  } catch {
-    // Best-effort: directory read may fail
-  }
-
-  // 5. Clean up a stale Vitest JSON results file before a run. The current
+  // 1. Clean up a stale Vitest JSON results file before a run. The current
   //    run's report must survive teardown so orchestrate.ts can consume it.
   if (removeResultsFile) {
     try {
@@ -155,7 +66,7 @@ function cleanTestArtifacts(removeResultsFile: boolean): void {
     }
   }
 
-  // 6. Clean up nested config-history repo created by the test daemon
+  // 2. Clean up nested config-history repo created by the test daemon
   //    in test/config/. Without this, the .git/ and .gitignore linger
   //    between runs (and the daemon's gitignore template un-ignores
   //    *.yaml, which makes *.last-good.yaml show as untracked in the

@@ -130,6 +130,28 @@ function freshTmpDataDir(): string {
   return mkdtempSync(path.join(os.tmpdir(), "comis-oauth-login-"));
 }
 
+/**
+ * Environment for a CLI subprocess whose data dir must resolve from `HOME`.
+ *
+ * `test/support/vitest-process-listeners.ts` exports `COMIS_DATA_DIR` into the
+ * worker so no test can write to the operator's real `~/.comis`. That variable
+ * OUTRANKS `HOME` in the CLI's data-dir resolution, so a child that inherits
+ * `process.env` wholesale would read the worker's empty sandbox instead of the
+ * `HOME` this test seeded -- and report "No OAuth profiles stored" for profiles
+ * that are on disk. Drop it (and the sandbox config path) so the subprocess
+ * exercises the `HOME`-derived path these tests exist to cover; the override
+ * still points somewhere disposable, so the operator's data dir stays safe.
+ */
+function cliEnvWithHome(
+  home: string,
+  extra: Record<string, string> = {},
+): NodeJS.ProcessEnv {
+  const env = { ...process.env, HOME: home, ...extra };
+  delete env["COMIS_DATA_DIR"];
+  if (extra["COMIS_CONFIG_PATHS"] === undefined) delete env["COMIS_CONFIG_PATHS"];
+  return env;
+}
+
 function cleanupTmpDir(dir: string | undefined): void {
   if (!dir) return;
   try {
@@ -350,11 +372,7 @@ describe("comis auth login (end-to-end against mock OAuth server)", () => {
         [cliPath, "auth", "login", "--provider", "anthropic"],
         {
           encoding: "utf-8",
-          env: {
-            ...process.env,
-            HOME: tmpHome,
-            COMIS_CONFIG_PATHS: fakeConfig,
-          },
+          env: cliEnvWithHome(tmpHome, { COMIS_CONFIG_PATHS: fakeConfig }),
         },
       );
 
@@ -389,11 +407,7 @@ describe("comis auth login (end-to-end against mock OAuth server)", () => {
         ],
         {
           encoding: "utf-8",
-          env: {
-            ...process.env,
-            HOME: tmpHome,
-            COMIS_CONFIG_PATHS: fakeConfig,
-          },
+          env: cliEnvWithHome(tmpHome, { COMIS_CONFIG_PATHS: fakeConfig }),
         },
       );
       expect(result.status).toBe(2);
@@ -451,11 +465,7 @@ describe("comis auth list / logout / status", () => {
       const cliPath = path.resolve(process.cwd(), "packages/cli/dist/cli.js");
       const result = spawnSync("node", [cliPath, "auth", "list"], {
         encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpHome,
-          COMIS_CONFIG_PATHS: fakeConfig,
-        },
+        env: cliEnvWithHome(tmpHome, { COMIS_CONFIG_PATHS: fakeConfig }),
       });
 
       expect(result.status).toBe(0);
@@ -493,11 +503,7 @@ describe("comis auth list / logout / status", () => {
         [cliPath, "auth", "logout", "--profile", "openai-codex:a@example.com"],
         {
           encoding: "utf-8",
-          env: {
-            ...process.env,
-            HOME: tmpHome,
-            COMIS_CONFIG_PATHS: fakeConfig,
-          },
+          env: cliEnvWithHome(tmpHome, { COMIS_CONFIG_PATHS: fakeConfig }),
         },
       );
       expect(r1.status).toBe(0);
@@ -508,11 +514,7 @@ describe("comis auth list / logout / status", () => {
         [cliPath, "auth", "logout", "--profile", "openai-codex:bogus"],
         {
           encoding: "utf-8",
-          env: {
-            ...process.env,
-            HOME: tmpHome,
-            COMIS_CONFIG_PATHS: fakeConfig,
-          },
+          env: cliEnvWithHome(tmpHome, { COMIS_CONFIG_PATHS: fakeConfig }),
         },
       );
       expect(r2.status).toBe(1);
@@ -542,11 +544,7 @@ describe("comis auth list / logout / status", () => {
       const cliPath = path.resolve(process.cwd(), "packages/cli/dist/cli.js");
       const result = spawnSync("node", [cliPath, "auth", "status"], {
         encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpHome,
-          COMIS_CONFIG_PATHS: fakeConfig,
-        },
+        env: cliEnvWithHome(tmpHome, { COMIS_CONFIG_PATHS: fakeConfig }),
       });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("openai-codex");

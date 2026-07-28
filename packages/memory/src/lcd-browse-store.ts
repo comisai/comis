@@ -23,6 +23,7 @@ import type {
   ContextBrowseScope,
   LcdConversationPage,
   LcdConversationSummary,
+  LcdToolOutcomeEvidence,
 } from "@comis/core";
 import { ConversationRefSchema } from "@comis/core";
 import { z } from "zod";
@@ -47,6 +48,22 @@ const conversationRowMapper = createRowMapper(ConversationRowSchema);
 /** Single-column COUNT(DISTINCT conversation_ref) projection for the unpaginated total. */
 const TotalRowSchema = z.strictObject({ total: z.number() });
 const totalRowMapper = createRowMapper(TotalRowSchema);
+
+const ToolOutcomeRowSchema = z.strictObject({
+  seq: z.number(),
+  tool_call_id: z.string().nullable(),
+  tool_name: z.string(),
+  is_error: z.number().int(),
+});
+const toolOutcomeRowMapper = createRowMapper(ToolOutcomeRowSchema);
+
+const ToolOutcomeCountsRowSchema = z.strictObject({
+  message_count: z.number(),
+  tool_result_count: z.number(),
+});
+const toolOutcomeCountsRowMapper = createRowMapper(ToolOutcomeCountsRowSchema);
+
+const MAX_TOOL_OUTCOMES = 1_000;
 
 /**
  * Create a ContextBrowsePort bound to the given database.
@@ -82,6 +99,34 @@ export function createLcdBrowseStore(db: Database.Database): ContextBrowsePort {
     WHERE agent_id = ? AND tenant_id = ?
   `);
 
+  const selectToolOutcomeCounts = db.prepare(`
+    SELECT
+      (
+        SELECT COUNT(*)
+        FROM lcd_messages
+        WHERE agent_id = ? AND tenant_id = ? AND session_key = ?
+      ) AS message_count,
+      COUNT(*) AS tool_result_count
+    FROM lcd_messages m
+    JOIN lcd_message_parts p ON p.message_id = m.id
+    WHERE m.agent_id = ? AND m.tenant_id = ? AND m.session_key = ?
+      AND p.kind = 'tool_result' AND p.tool_name IS NOT NULL
+  `);
+
+  const selectToolOutcomes = db.prepare(`
+    SELECT
+      m.seq AS seq,
+      p.tool_call_id AS tool_call_id,
+      p.tool_name AS tool_name,
+      COALESCE(p.is_error, 0) AS is_error
+    FROM lcd_messages m
+    JOIN lcd_message_parts p ON p.message_id = m.id
+    WHERE m.agent_id = ? AND m.tenant_id = ? AND m.session_key = ?
+      AND p.kind = 'tool_result' AND p.tool_name IS NOT NULL
+    ORDER BY m.seq DESC, p.ordinal DESC
+    LIMIT ?
+  `);
+
   return {
     listConversations(
       scope: ContextBrowseScope,
@@ -111,6 +156,57 @@ export function createLcdBrowseStore(db: Database.Database): ContextBrowsePort {
       const total = totalRow.ok && totalRow.value ? totalRow.value.total : conversations.length;
 
       return { conversations, total };
+    },
+
+    readToolOutcomes(
+      scope: ContextBrowseScope,
+      sessionKey: string,
+      opts: { limit: number },
+    ): LcdToolOutcomeEvidence {
+      const requestedLimit = Number.isFinite(opts.limit)
+        ? Math.trunc(opts.limit)
+        : 1;
+      const limit = Math.min(MAX_TOOL_OUTCOMES, Math.max(1, requestedLimit));
+      const counts = toolOutcomeCountsRowMapper.parseOptionalRow(
+        selectToolOutcomeCounts.get(
+          scope.agentId,
+          scope.tenantId,
+          sessionKey,
+          scope.agentId,
+          scope.tenantId,
+          sessionKey,
+        ),
+      );
+      const messageCount = counts.ok && counts.value
+        ? counts.value.message_count
+        : 0;
+      const toolResultCount = counts.ok && counts.value
+        ? counts.value.tool_result_count
+        : 0;
+      const outcomes: LcdToolOutcomeEvidence["outcomes"] = [];
+      for (const raw of selectToolOutcomes.all(
+        scope.agentId,
+        scope.tenantId,
+        sessionKey,
+        limit,
+      )) {
+        const parsed = toolOutcomeRowMapper.parseOptionalRow(raw);
+        if (!parsed.ok || !parsed.value) continue;
+        const row = parsed.value;
+        outcomes.push({
+          seq: row.seq,
+          ...(row.tool_call_id === null ? {} : { toolCallId: row.tool_call_id }),
+          toolName: row.tool_name,
+          isError: row.is_error === 1,
+        });
+      }
+      outcomes.reverse();
+      return {
+        messageCount,
+        toolResultCount,
+        truncated: toolResultCount > outcomes.length,
+        outcomes,
+      };
     },
   };
 }

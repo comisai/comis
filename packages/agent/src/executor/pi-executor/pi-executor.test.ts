@@ -230,6 +230,28 @@ const {
   };
 });
 
+const mockCreateCacheTrace = vi.hoisted(() =>
+  vi.fn(() => ({
+    filePath: "/tmp/cache-trace.jsonl",
+    includeMessages: false,
+    includePrompt: true,
+    includeSystem: false,
+    recordStage: vi.fn(() => "queued" as const),
+    setLatestTokenUsage: vi.fn(),
+    flush: vi.fn(async () => undefined),
+    flushAndClose: vi.fn(async () => undefined),
+    failureCount: vi.fn(() => 0),
+  })),
+);
+
+vi.mock("@comis/observability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/observability")>();
+  return {
+    ...actual,
+    createCacheTrace: mockCreateCacheTrace,
+  };
+});
+
 // ---------------------------------------------------------------------------
 // Module mocks
 // ---------------------------------------------------------------------------
@@ -672,6 +694,37 @@ describe("PiExecutor", () => {
     // Reset skill mocks
     mockResourceLoaderArgs.captured = null;
     mockGetSkills.mockReturnValue({ skills: [], diagnostics: [] });
+  });
+
+  it("roots default cache telemetry in the configured data directory", async () => {
+    const deps = createMockDeps({
+      dataDir: "/tmp/comis-isolated-data",
+      cacheTraceConfig: {
+        enabled: true,
+        includeMessages: false,
+        includePrompt: true,
+        includeSystem: false,
+      },
+    });
+    Object.assign(deps.sessionAdapter, {
+      getSessionPath: () =>
+        "/tmp/comis-isolated-data/workspace/sessions/tenant/channel/session.jsonl",
+    });
+    const executor = createPiExecutor(testConfig, deps);
+
+    await executor.execute(
+      testMessage,
+      testSessionKey,
+      undefined,
+      undefined,
+      deps.agentId,
+    );
+
+    expect(mockCreateCacheTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        confinedBaseDir: "/tmp/comis-isolated-data",
+      }),
+    );
   });
 
   // -------------------------------------------------------------------------

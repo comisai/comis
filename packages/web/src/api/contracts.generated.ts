@@ -12343,6 +12343,34 @@ export const CONTRACTS = {
               ],
               "additionalProperties": false
             },
+            "losslessContext": {
+              "type": "object",
+              "properties": {
+                "found": {
+                  "type": "boolean"
+                },
+                "messages": {
+                  "type": "number"
+                },
+                "toolResults": {
+                  "type": "number"
+                },
+                "toolResultsReturned": {
+                  "type": "number"
+                },
+                "truncated": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "found",
+                "messages",
+                "toolResults",
+                "toolResultsReturned",
+                "truncated"
+              ],
+              "additionalProperties": false
+            },
             "toolStats": {
               "type": "object",
               "properties": {

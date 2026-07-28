@@ -31,6 +31,34 @@ describe("default workspace template ownership", () => {
     expect(combined).not.toContain("e.g.");
   });
 
+  it("seeds complete operator-editable guides instead of empty placeholder files", () => {
+    const minimumBytes = {
+      "SOUL.md": 2_000,
+      "IDENTITY.md": 300,
+      "USER.md": 300,
+      "AGENTS.md": 5_000,
+      "ROLE.md": 400,
+      "TOOLS.md": 800,
+      "HEARTBEAT.md": 1_500,
+      "BOOT.md": 300,
+    } as const;
+
+    for (const [fileName, expectedBytes] of Object.entries(minimumBytes)) {
+      expect(Buffer.byteLength(DEFAULT_TEMPLATES[fileName as keyof typeof minimumBytes]))
+        .toBeGreaterThanOrEqual(expectedBytes);
+    }
+
+    expect(DEFAULT_TEMPLATES["SOUL.md"]).toMatch(/core principles/iu);
+    expect(DEFAULT_TEMPLATES["IDENTITY.md"]).toMatch(/communication style/iu);
+    expect(DEFAULT_TEMPLATES["USER.md"]).toMatch(/timezone/iu);
+    expect(DEFAULT_TEMPLATES["AGENTS.md"]).toMatch(/every session/iu);
+    expect(DEFAULT_TEMPLATES["AGENTS.md"]).toMatch(/workspace organization/iu);
+    expect(DEFAULT_TEMPLATES["ROLE.md"]).toMatch(/behavioral guidelines/iu);
+    expect(DEFAULT_TEMPLATES["TOOLS.md"]).toMatch(/what goes here/iu);
+    expect(DEFAULT_TEMPLATES["HEARTBEAT.md"]).toMatch(/periodic checks/iu);
+    expect(DEFAULT_TEMPLATES["BOOT.md"]).toMatch(/session startup/iu);
+  });
+
   it("starts BOOTSTRAP.md with neutral first-run setup state", () => {
     const bootstrap = DEFAULT_TEMPLATES["BOOTSTRAP.md"];
 
@@ -57,7 +85,7 @@ describe("default workspace template ownership", () => {
     expect(ONBOARDING_COMPLETE_TOOL_RESULT).toMatch(/summarize.*confirmed/iu);
   });
 
-  it("classifies only operator placeholders as untouched", () => {
+  it("classifies only unchanged operator starter guides as untouched", () => {
     for (const fileName of OPERATOR_OWNED_FILES) {
       expect(isUntouchedWorkspaceTemplate(fileName, DEFAULT_TEMPLATES[fileName])).toBe(true);
     }

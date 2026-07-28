@@ -14,11 +14,11 @@
 
 import { systemGetEnv } from "@comis/core";
 
-// Re-aliased from the cluster slice in api/types.ts. Single source of
-// truth: ObservabilityApiDeps. The cluster slice covers obs-handler
-// fields (eventBus, agents, embeddingCacheStats,
-// embeddingCircuitBreakerState, tokenTracker).
-import type { ObservabilityApiDeps as ObsHandlerDeps } from "../types.js";
+// Re-aliased from the cluster slices in api/types.ts. The lossless-context
+// evidence source belongs to MemoryApiDeps; observability consumes that
+// existing port without duplicating its field onto ObservabilityApiDeps.
+import type { MemoryApiDeps, ObservabilityApiDeps } from "../types.js";
+type ObsHandlerDeps = ObservabilityApiDeps & Pick<MemoryApiDeps, "contextBrowse">;
 export type { ObsHandlerDeps };
 
 /**
