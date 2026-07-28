@@ -10,8 +10,8 @@
  *   1. readSessionRecords    — the per-session trajectory JSONL. The session
  *      lives in the REAL production layout the pi-agent session manager writes:
  *      `<workspaceDir>/sessions/<tenantId>/<channelId>/<file>.jsonl` (resolved
- *      by `sessionKeyToPath`, the authoritative SessionKey→path mapper). The
- *      trajectory is then located the canonical way — read the
+ *      from the authoritative pointer session ID, with a bounded co-located
+ *      trajectory-envelope fallback). The trajectory is then located by reading the
  *      `<sessionFile>.trajectory-path.json` pointer and use its `runtimeFile`,
  *      else fall back to the co-located `<sessionFile>.trajectory.jsonl` (the
  *      same resolution `bundle-exporter.ts:readRuntimeTrajectory` performs).
@@ -212,51 +212,38 @@ function defaultDataDir(): string {
  * the basis of the lossy-key fallback below.
  */
 const TRAJECTORY_POINTER_SUFFIX = ".trajectory-path.json";
+const COLOCATED_TRAJECTORY_SUFFIX = ".trajectory.jsonl";
 
 /**
- * Runaway backstop on the pointer-`sessionId` fallback scan: at most this many
- * pointer files are read per resolution. A tenant with more sessions than this
- * loses only the fallback for the overflow — never the fast path (the common
- * case), which never enters the scan.
+ * Runaway backstop on fallback artifact scans. A workspace with more sessions
+ * than this loses only fallback resolution for the overflow.
  */
-const MAX_POINTER_SCAN = 5_000;
+const MAX_SESSION_ARTIFACT_SCAN = 5_000;
+const MAX_TRAJECTORY_ID_SCAN_BYTES = 64 * 1024;
 
 /**
- * True when the fast-path session file resolves to a real session on disk — the
+ * True when a resolved session file corresponds to a real session on disk — the
  * `.jsonl` itself, its trajectory pointer, or its `_session-metadata.json`
- * companion exists. A clean round-trip (telegram + any single-colon-field key)
- * hits this and skips the fallback scan entirely.
+ * companion exists.
  */
 function sessionArtifactsExist(sessionFile: string): boolean {
   return (
     fs.existsSync(sessionFile) ||
     fs.existsSync(`${sessionFile}${TRAJECTORY_POINTER_SUFFIX}`) ||
+    fs.existsSync(`${sessionFile}${COLOCATED_TRAJECTORY_SUFFIX}`) ||
     fs.existsSync(resolveMetadataFile(sessionFile))
   );
 }
 
 /**
- * Fallback resolution for a display session label whose canonical parser
- * round-trip is LOSSY. A colon-bearing userId — webhook sessions are created with
- * `userId:"hook:devtask:<id>"`, `channelId:"webhook"` — is greedily mis-split into
- * channelId by the parser (the inverse of the writer's intent), so `sessionKeyToPath`
- * computes a path that does not exist and the readers report a false "nothing
- * happened" for a session that succeeded.
- *
- * The authoritative key→file mapping lives ONLY on disk: each session's
- * `<file>.jsonl.trajectory-path.json` pointer carries the verbatim formatted key in
- * `sessionId`. Scan the tenant's session dirs for the pointer whose `sessionId`
- * EXACTLY equals the requested key and return its session `.jsonl` (the pointer path
- * minus the suffix). Bounded: tenant-scoped (the tenant dir is the first colon
- * segment — never mis-split), depth 2 (tenant/channel/<pointer>), capped at
- * MAX_POINTER_SCAN. The untrusted sessionKey is used ONLY for the `===` comparison,
- * never for path construction (the scanned names come from `readdirSync` of the
- * contained tenant dir). Returns `undefined` on no match → the caller keeps the
- * fast-path miss behavior (soft-fail to `[]`/`null`).
+ * Traverse the actual `<sessions>/<tenant>/<channel>/<artifact>` layout and
+ * return the first value produced by `visit`. Names come only from contained
+ * directory entries; callers never construct paths from a requested key.
  */
-function findSessionFileByPointerSessionId(
-  sessionKey: string,
+function scanSessionArtifacts(
   sessionsBase: string,
+  suffix: string,
+  visit: (artifactFile: string) => string | undefined,
 ): string | undefined {
   let tenants: fs.Dirent[];
   try {
@@ -284,26 +271,110 @@ function findSessionFileByPointerSessionId(
         continue;
       }
       for (const name of entries) {
-        if (!name.endsWith(TRAJECTORY_POINTER_SUFFIX)) continue;
-        if (scanned >= MAX_POINTER_SCAN) return undefined;
+        if (!name.endsWith(suffix)) continue;
+        if (scanned >= MAX_SESSION_ARTIFACT_SCAN) return undefined;
         scanned++;
-        const pointerPath = safePath(channelDir, name);
-        let pointer: Record<string, unknown>;
-        try {
-          pointer = JSON.parse(fs.readFileSync(pointerPath, "utf-8")) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-        if (
-          pointer["traceSchema"] === "comis-trajectory-pointer"
-          && pointer["sessionId"] === sessionKey
-        ) {
-          return pointerPath.slice(0, -TRAJECTORY_POINTER_SUFFIX.length);
-        }
+        const result = visit(safePath(channelDir, name));
+        if (result !== undefined) return result;
       }
     }
   }
   return undefined;
+}
+
+/**
+ * Fallback resolution for a display session label whose canonical parser
+ * round-trip is LOSSY. A colon-bearing userId — webhook sessions are created with
+ * `userId:"hook:devtask:<id>"`, `channelId:"webhook"` — is greedily mis-split into
+ * channelId by the parser (the inverse of the writer's intent), so `sessionKeyToPath`
+ * computes a path that does not exist and the readers report a false "nothing
+ * happened" for a session that succeeded.
+ *
+ * The authoritative key→file mapping lives ONLY on disk: each session's
+ * `<file>.jsonl.trajectory-path.json` pointer carries the verbatim formatted key in
+ * `sessionId`. Scan the tenant's session dirs for the pointer whose `sessionId`
+ * EXACTLY equals the requested key and return its session `.jsonl` (the pointer path
+ * minus the suffix). Bounded at depth 2
+ * (tenant/channel/<pointer>) and capped at MAX_SESSION_ARTIFACT_SCAN. The
+ * untrusted sessionKey is used ONLY for the `===` comparison, never for path
+ * construction. Returns `undefined` on no match.
+ */
+function findSessionFileByPointerSessionId(
+  sessionKey: string,
+  sessionsBase: string,
+): string | undefined {
+  return scanSessionArtifacts(sessionsBase, TRAJECTORY_POINTER_SUFFIX, (pointerPath) => {
+    let pointer: Record<string, unknown>;
+    try {
+      pointer = JSON.parse(fs.readFileSync(pointerPath, "utf-8")) as Record<string, unknown>;
+    } catch {
+      return undefined;
+    }
+    if (
+      pointer["traceSchema"] === "comis-trajectory-pointer"
+      && pointer["sessionId"] === sessionKey
+    ) {
+      return pointerPath.slice(0, -TRAJECTORY_POINTER_SUFFIX.length);
+    }
+    return undefined;
+  });
+}
+
+/**
+ * Read only the leading bounded portion of an orphan trajectory and verify that
+ * one complete trajectory envelope carries the exact requested session key.
+ * The key is compared only as data; it never participates in path construction.
+ */
+function trajectoryMatchesSessionKey(trajectoryFile: string, sessionKey: string): boolean {
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(trajectoryFile, "r");
+    const buffer = Buffer.alloc(MAX_TRAJECTORY_ID_SCAN_BYTES);
+    const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, 0);
+    const raw = buffer.toString("utf-8", 0, bytesRead);
+    for (const line of raw.split("\n")) {
+      if (line.trim().length === 0) continue;
+      try {
+        const record = JSON.parse(line) as Record<string, unknown>;
+        if (
+          record["traceSchema"] === "comis-trajectory"
+          && (record["sessionId"] === sessionKey || record["sessionKey"] === sessionKey)
+        ) {
+          return true;
+        }
+      } catch {
+        // The final bounded line may be partial; keep checking complete records.
+      }
+    }
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        fs.closeSync(descriptor);
+      } catch {
+        // An unreadable descriptor is equivalent to a non-matching artifact.
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Recovery path for a trajectory whose pointer disappeared during workspace
+ * recreation while its writer remained alive. Scan the actual nested session
+ * layout for co-located trajectories and match their bounded envelope headers.
+ */
+function findSessionFileByCoLocatedTrajectorySessionId(
+  sessionKey: string,
+  sessionsBase: string,
+): string | undefined {
+  return scanSessionArtifacts(sessionsBase, COLOCATED_TRAJECTORY_SUFFIX, (trajectoryFile) => {
+    if (trajectoryMatchesSessionKey(trajectoryFile, sessionKey)) {
+      return trajectoryFile.slice(0, -COLOCATED_TRAJECTORY_SUFFIX.length);
+    }
+    return undefined;
+  });
 }
 
 /**
@@ -312,15 +383,19 @@ function findSessionFileByPointerSessionId(
  * ({@link findSessionFileByPointerSessionId}): each session's
  * `<file>.jsonl.trajectory-path.json` pointer carries the verbatim formatted
  * key in `sessionId`, and the scan returns the session `.jsonl` whose pointer
- * matches EXACTLY. No display-label parsing happens here — the on-disk pointer
- * is the authoritative key→file mapping.
+ * matches EXACTLY. If workspace recreation removed that pointer while a writer
+ * retained its co-located trajectory, a bounded envelope scan recovers it.
+ * No display-label parsing happens here.
  *
  * Returns `undefined` on a scan miss (the reader then soft-fails to
  * `[]`/`null`). Traversal-safe: the untrusted key is used only for the `===`
  * comparison, never for path construction.
  */
 function resolveSessionFile(sessionKey: string, sessionsBase: string): string | undefined {
-  return findSessionFileByPointerSessionId(sessionKey, sessionsBase);
+  return (
+    findSessionFileByPointerSessionId(sessionKey, sessionsBase)
+    ?? findSessionFileByCoLocatedTrajectorySessionId(sessionKey, sessionsBase)
+  );
 }
 
 function workspaceDirectoryCandidates(
@@ -356,17 +431,14 @@ function resolveSessionFileAcrossWorkspaces(
  *
  * Mirrors `makeRealReader`'s workspace base
  * (`<dataDir>/workspace/sessions`, NOT a flat `<dataDir>/sessions`) and
- * delegates to the private `resolveSessionFile` (fast path via
- * `sessionKeyToPath`, then the on-disk pointer-`sessionId` fallback for
- * lossy keys). Every path component runs through `safePath`, so a
- * traversal-bearing key cannot escape the sessions base.
+ * delegates to the private `resolveSessionFile`: first the on-disk pointer
+ * `sessionId`, then a bounded co-located trajectory-envelope recovery scan.
+ * Every path component runs through `safePath`, so a traversal-bearing key
+ * cannot escape the sessions base.
  *
- * The private resolver soft-fails to the fast path even on a miss (so
- * `makeRealReader` can read an empty `[]`); this wrapper converts that into an
- * HONEST `undefined` — it returns a path ONLY when the session artifacts (the
- * `.jsonl`, its pointer, or its `_session-metadata.json`) exist on disk. A
- * caller (the export closure) can then warn instead of stat-failing on a
- * fabricated path.
+ * The wrapper returns a path ONLY when session artifacts exist on disk. A
+ * caller can then warn on a genuine miss instead of attempting a fabricated
+ * path.
  *
  * @param dataDir - the `~/.comis` root (empty → the default `~/.comis`).
  * @param sessionKey - a formatted agent-scoped SessionKey.
@@ -424,54 +496,29 @@ export function rankCandidateSessionKeys(
  * Scan the workspace sessions base for the formatted keys of every real session
  * (from the `<file>.jsonl.trajectory-path.json` pointers, the authoritative
  * key→file record) and rank them against `requested`. Scans ALL tenant dirs (a
- * lossy `channel:chatId` key's first segment is NOT a real tenant, so the
- * tenant-scoped fast path can't be used), bounded by `MAX_POINTER_SCAN` total.
+ * lossy `channel:chatId` key may not reveal a real tenant), bounded by
+ * `MAX_SESSION_ARTIFACT_SCAN` total.
  * Soft-fails to `[]` (a missing base / unreadable dir never throws). Content-free.
  */
 function scanCandidateSessionKeys(workspaceDir: string, requested: string): string[] {
   const sessionsBase = safePath(workspaceDir, "sessions");
-  let tenants: fs.Dirent[];
-  try {
-    tenants = fs.readdirSync(sessionsBase, { withFileTypes: true });
-  } catch {
-    return []; // sessions base absent/unreadable — soft-fail.
-  }
   const keys: string[] = [];
-  let scanned = 0;
-  outer: for (const tenant of tenants) {
-    if (!tenant.isDirectory()) continue;
-    const tenantDir = safePath(sessionsBase, tenant.name);
-    let channels: fs.Dirent[];
+  scanSessionArtifacts(sessionsBase, TRAJECTORY_POINTER_SUFFIX, (pointerFile) => {
     try {
-      channels = fs.readdirSync(tenantDir, { withFileTypes: true });
+      const pointer = JSON.parse(fs.readFileSync(pointerFile, "utf-8")) as Record<string, unknown>;
+      const sessionId = pointer["sessionId"];
+      if (
+        pointer["traceSchema"] === "comis-trajectory-pointer"
+        && typeof sessionId === "string"
+        && sessionId.length > 0
+      ) {
+        keys.push(sessionId);
+      }
     } catch {
-      continue;
+      // Corrupt or unreadable pointer — skip it.
     }
-    for (const channel of channels) {
-      if (!channel.isDirectory()) continue;
-      const channelDir = safePath(tenantDir, channel.name);
-      let entries: string[];
-      try {
-        entries = fs.readdirSync(channelDir);
-      } catch {
-        continue;
-      }
-      for (const name of entries) {
-        if (!name.endsWith(TRAJECTORY_POINTER_SUFFIX)) continue;
-        if (scanned >= MAX_POINTER_SCAN) break outer; // Runaway backstop.
-        scanned++;
-        try {
-          const pointer = JSON.parse(fs.readFileSync(safePath(channelDir, name), "utf-8")) as Record<string, unknown>;
-          const sid = pointer["sessionId"];
-          if (pointer["traceSchema"] === "comis-trajectory-pointer" && typeof sid === "string" && sid.length > 0) {
-            keys.push(sid);
-          }
-        } catch {
-          continue; // Corrupt/unreadable pointer — skip.
-        }
-      }
-    }
-  }
+    return undefined;
+  });
   return rankCandidateSessionKeys(requested, keys);
 }
 
