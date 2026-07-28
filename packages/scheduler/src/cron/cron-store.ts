@@ -481,8 +481,9 @@ export function createCronStore(options: CronStoreOptions): CronStore {
 
   async function readExistingRoot(): Promise<Result<CronStoreRoot, CronStoreError>> {
     const read = await fromPromise(fs.readFile(options.filePath));
-    return read.ok
-      ? decodeRoot(read.value)
+    if (read.ok) return decodeRoot(read.value);
+    return isNodeError(read.error, "ENOENT")
+      ? err(storeError("io", "precondition", "Initialized cron store file is missing"))
       : err(storeError("io", "internal", "Unable to read initialized cron store"));
   }
 

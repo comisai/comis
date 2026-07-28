@@ -178,6 +178,7 @@ async function createDurableCronFixture(options: {
     logger: makeNoopSchedulerLogger(),
     clock,
     timers,
+    agentId: "agent_a",
     bootId: "boot_a",
     idFactory: () => `execution_${++executionId}`,
     config: {

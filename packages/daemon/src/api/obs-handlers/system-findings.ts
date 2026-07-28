@@ -22,6 +22,7 @@ import type { PipelineAuthoringAggregate } from "@comis/observability";
 import {
   chimericModelFromRow,
   cronOwnershipFailureFromRow,
+  cronTimerDegradationFromRow,
   unresolvedModelFromRow,
   DEDICATED_SCRIPT_SIGNALS,
   deliveryDeadletteredFromRow,
@@ -205,6 +206,26 @@ export function buildFindings(
       detail: `${cronOwnershipFailureCount} cron ownership reconciliation failure(s) (${breakdown})`,
       count: cronOwnershipFailureCount,
       hint: "run `comis cron status --agent <agentId>`; preserve both authority files before repair or a guarded whole-authority reset",
+    });
+  }
+
+  const cronTimerErrors = new Map<string, number>();
+  for (const row of healthSignals) {
+    const parsed = cronTimerDegradationFromRow(row);
+    if (parsed === null) continue;
+    cronTimerErrors.set(parsed.errorKind, (cronTimerErrors.get(parsed.errorKind) ?? 0) + 1);
+  }
+  const cronTimerFailureCount = [...cronTimerErrors.values()].reduce((sum, count) => sum + count, 0);
+  if (cronTimerFailureCount > 0) {
+    const breakdown = [...cronTimerErrors.entries()]
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .map(([kind, count]) => `${kind}=${count}`)
+      .join(", ");
+    findings.push({
+      code: "cron_timer_degraded",
+      detail: `${cronTimerFailureCount} cron timer degradation transition(s) (${breakdown})`,
+      count: cronTimerFailureCount,
+      hint: "run `comis cron status --agent <agentId>`; verify workspace/.scheduler/cron-jobs.json exists and is readable, then restart the daemon after restoring intentionally deleted workspace state",
     });
   }
 

@@ -5,13 +5,60 @@ import {
   cronModelDriftEventToRow,
   cronStoreResetEventToRow,
   cronOwnershipReconciliationEventToRow,
+  cronTimerHealthEventToRow,
   wireSchedulerDiagnostics,
 } from "./obs-scheduler-rows.js";
-import * as schedulerRows from "./obs-scheduler-rows.js";
 
 describe("scheduler ownership diagnostic persistence", () => {
-  it("exports cron timer health mapping for daemon-wide diagnostics", () => {
-    expect(schedulerRows).toHaveProperty("cronTimerHealthEventToRow");
+  it("persists cron timer degradation and recovery as content-free health transitions", () => {
+    expect(cronTimerHealthEventToRow({
+      agentId: "agent-a",
+      status: "degraded",
+      errorKind: "precondition",
+      retryMs: 5_000,
+      timestamp: 500,
+    })).toMatchObject({
+      timestamp: 500,
+      category: "health_signal",
+      severity: "warning",
+      agentId: "agent-a",
+      message: "scheduler:cron_timer_health",
+      details: JSON.stringify({
+        signal: "cron_timer_health",
+        status: "degraded",
+        errorKind: "precondition",
+        retryMs: 5_000,
+      }),
+    });
+
+    expect(cronTimerHealthEventToRow({
+      agentId: "agent-a",
+      status: "recovered",
+      degradedDurationMs: 10_000,
+      timestamp: 10_500,
+    })).toMatchObject({
+      severity: "info",
+      details: JSON.stringify({
+        signal: "cron_timer_health",
+        status: "recovered",
+        degradedDurationMs: 10_000,
+      }),
+    });
+
+    const eventBus = new TypedEventBus();
+    const push = vi.fn();
+    wireSchedulerDiagnostics({ eventBus, diagnosticBuffer: { push } });
+    eventBus.emit("scheduler:cron_timer_health", {
+      agentId: "agent-a",
+      status: "degraded",
+      errorKind: "precondition",
+      retryMs: 5_000,
+      timestamp: 500,
+    });
+    expect(push).toHaveBeenCalledWith(expect.objectContaining({
+      message: "scheduler:cron_timer_health",
+      severity: "warning",
+    }));
   });
 
   it("maps a completed reconciliation to a content-free informational row", () => {

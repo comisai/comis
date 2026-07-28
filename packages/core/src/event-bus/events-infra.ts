@@ -333,6 +333,22 @@ export interface InfraEvents {
     | { workKind: "internal_action"; action: "memory_review" | "reflection" }
   );
 
+  /** Runtime cron timer health changed after a failed or successful retry. */
+  "scheduler:cron_timer_health": {
+    agentId: string;
+    timestamp: number;
+  } & (
+    | {
+      status: "degraded";
+      errorKind: ErrorKind;
+      retryMs: number;
+    }
+    | {
+      status: "recovered";
+      degradedDurationMs: number;
+    }
+  );
+
   /** Boot-time reconciliation of durable cron claims against execution facts. */
   "scheduler:cron_ownership_reconciliation": {
     agentId: string;
