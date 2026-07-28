@@ -760,24 +760,66 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     logger.info({ shutdownDurationMs: systemNowMs() - shutdownStartMs, signal }, "Graceful shutdown complete");
 
     // Defense-in-depth flush before exit (pino runtime feature; narrow via local shape).
-    const flushable = logger as unknown as { flush?: (cb?: () => void) => void };
-    if (typeof flushable.flush === "function") {
-      await new Promise<void>((resolve) => {
-        flushable.flush!(() => resolve());
-        systemSetTimeout(() => resolve(), 2_000).unref(); // safety timeout
-      });
-    }
-
-    systemClearTimeout(timer);
-    // Exit code: SIGUSR2 ⇒ 42. The installer-generated systemd unit names 42
-    // in RestartForceExitStatus; Docker and PM2 treat it as a restartable
-    // non-zero exit. SIGTERM/SIGINT ⇒ 0 (operator-initiated stop).
-    const isRestartSignal = signal === "SIGUSR2";
+    const flushable = logger as unknown as {
+      flush?: (cb?: (error?: Error) => void) => void;
+    };
+    const warnFlushFailure = (error: unknown): void => {
+      try {
+        logger.warn({
+          err: error,
+          hint: "Inspect the configured logging transport and its destination",
+          errorKind: "dependency" as const,
+        }, "Logger flush failed during shutdown");
+      } catch {
+        // The process must still exit when the logging transport itself is unusable.
+      }
+    };
     try {
-      exitFnLocal(isRestartSignal ? 42 : 0);
-    } catch {
-      // Test harness's exit() throws "Daemon exit with code N" by design;
-      // swallow to avoid a spurious unhandled-rejection log line.
+      if (typeof flushable.flush === "function") {
+        await new Promise<void>((resolve) => {
+          let settled = false;
+          const finish = (): void => {
+            if (settled) return;
+            settled = true;
+            systemClearTimeout(deadline);
+            resolve();
+          };
+          const deadline = systemSetTimeout(() => {
+            try {
+              logger.warn({
+                timeoutMs: 2_000,
+                hint: "Inspect the configured logging transport; shutdown will continue",
+                errorKind: "timeout" as const,
+              }, "Logger flush timed out during shutdown");
+            } finally {
+              finish();
+            }
+          }, 2_000);
+          try {
+            flushable.flush!((error) => {
+              if (error) warnFlushFailure(error);
+              finish();
+            });
+          } catch (error) {
+            warnFlushFailure(error);
+            finish();
+          }
+        });
+      }
+    } catch (error) {
+      warnFlushFailure(error);
+    } finally {
+      systemClearTimeout(timer);
+      // Exit code: SIGUSR2 ⇒ 42. The installer-generated systemd unit names 42
+      // in RestartForceExitStatus; Docker and PM2 treat it as a restartable
+      // non-zero exit. SIGTERM/SIGINT ⇒ 0 (operator-initiated stop).
+      const isRestartSignal = signal === "SIGUSR2";
+      try {
+        exitFnLocal(isRestartSignal ? 42 : 0);
+      } catch {
+        // Test harness's exit() throws "Daemon exit with code N" by design;
+        // swallow to avoid a spurious unhandled-rejection log line.
+      }
     }
   }
 
