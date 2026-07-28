@@ -61,7 +61,7 @@ export interface AutonomyDownshift {
 
 /** The actionable remediation surfaced on a namespace-preflight downshift. */
 const NAMESPACE_PREFLIGHT_DOWNSHIFT_HINT =
-  "Autonomy needs an unprivileged user namespace to build the jail, and the namespace preflight failed — downshifted to the 'assistant' profile (no orchestration surfaces). Enable unprivileged user namespaces (e.g. sysctl kernel.unprivileged_userns_clone=1 / kernel.apparmor_restrict_unprivileged_userns=0) and restart, or set autonomy.profile: assistant to silence this. See docs/agents/autonomy.";
+  "Autonomy needs a Linux unprivileged user namespace to build the jail, and the namespace preflight failed — downshifted to the 'assistant' profile (no orchestration surfaces). On Linux, enable unprivileged user namespaces (for example, kernel.unprivileged_userns_clone=1 and kernel.apparmor_restrict_unprivileged_userns=0) and restart. On non-Linux hosts, run autonomy-bearing agents on a supported Linux host, or set autonomy.profile: assistant to silence this. See docs/agents/autonomy.";
 
 /**
  * Honest legible degrade. Given a fully-resolved posture and the
