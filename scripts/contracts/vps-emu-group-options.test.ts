@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
-import { toCreateGroupChatOptions } from "../../test/live/bin/vps-emu-group-options.js";
+import {
+  nextStandaloneMessageIdBase,
+  toCreateGroupChatOptions,
+} from "../../test/live/bin/vps-emu-group-options.js";
 
 describe("standalone emulator group provisioning", () => {
   it("preserves forum and supergroup flags required by topic scenarios", () => {
@@ -20,5 +23,11 @@ describe("standalone emulator group provisioning", () => {
       supergroup: true,
       forum: true,
     });
+  });
+
+  it("reserves a new message-id block across standalone restarts", () => {
+    expect(nextStandaloneMessageIdBase(undefined)).toBe(100);
+    expect(nextStandaloneMessageIdBase({})).toBe(1_000_100);
+    expect(nextStandaloneMessageIdBase({ messageIdBase: 1_000_100 })).toBe(2_000_100);
   });
 });

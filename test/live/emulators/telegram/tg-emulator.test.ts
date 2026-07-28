@@ -95,6 +95,18 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base", () => {
   // -------------------------------------------------------------------------
   // getMe (blocks boot) + setMyCommands (fire-and-forget)
   // -------------------------------------------------------------------------
+  it("starts injected message ids at the configured restart-safe base", () => {
+    const seeded = createTgEmulator({ botToken: TOKEN, initialMessageId: 1_000_100 });
+
+    expect(
+      seeded.injectMessage(
+        { chatId: CHAT_ID },
+        { id: 7, firstName: "tester" },
+        "restart-safe",
+      ),
+    ).toBe(1_000_100);
+  });
+
   describe("getMe / setMyCommands (boot envelopes)", () => {
     it("getMe returns the boot identity envelope the adapter awaits", async () => {
       const env = await callMethod(apiRoot, "getMe", {});
