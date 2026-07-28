@@ -7,7 +7,7 @@
  * per line, date-rolled at midnight UTC.
  *
  * Writer registry is module-private (a top-level `Map<string, QueuedFileWriter>`)
- * so concurrent emit sites (session_started, turn_completed, session_ended) all
+ * so concurrent session and execution lifecycle emit sites all
  * share a single writer per file-path without cross-call leakage.
  *
  * Security properties:

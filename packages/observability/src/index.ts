@@ -424,13 +424,14 @@ export { parseSince } from "./cache-stats/parse-since.js";
 // ---------------------------------------------------------------------------
 //
 // Append-only `session-index.YYYY-MM-DD.jsonl` writer via QueuedFileWriter.
-// Three discriminated-union event types: session_started, turn_completed,
-// session_ended. Emit sites in @comis/agent (pi-event-bridge, comis-session-manager).
+// Typed lifecycle events for sessions, executions, turns, and session shutdown.
+// Emit sites live in @comis/agent (pi-event-bridge, comis-session-manager).
 
 export { appendSessionIndexEntry } from "./session-index/index.js";
 export type {
   SessionIndexEvent,
   SessionStartedEvent,
+  ExecutionStartedEvent,
   TurnCompletedEvent,
   SessionEndedEvent,
 } from "./session-index/index.js";

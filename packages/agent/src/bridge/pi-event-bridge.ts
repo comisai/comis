@@ -768,17 +768,35 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // (legacy/test callers), fall through to the legacy
           // unconditional emit so existing harnesses keep working.
           const formattedKey = formatSessionKey(deps.sessionKey);
+          const channelType = tryGetContext()?.channelType ?? "";
+          const traceId = tryGetContext()?.traceId ?? deps.executionId;
+          appendSessionIndexEntry(
+            deps.dataDir ?? pathModule.join(os.homedir(), ".comis"),
+            {
+              traceSchema: "comis-session-index",
+              schemaVersion: 1,
+              event: "execution_started",
+              ts: systemDateFrom(systemNowMs()).toISOString(),
+              sessionId: formattedKey,
+              sessionKey: formattedKey,
+              messageId: deps.inboundMessageId,
+              traceId,
+              agentId: deps.agentId,
+              channelType,
+              channelId: deps.channelId ?? "",
+              source: "runtime" as const,
+            },
+          );
           if (deps.trajectoryRegistry?.hasSessionStartedBeenEmitted(formattedKey) === true) {
             break;
           }
           // channelType lives on RequestContext (AsyncLocalStorage); fall
           // back to "" when running outside a scope (e.g., direct test
           // invocation). Trajectory consumers tolerate the empty case.
-          const channelType = tryGetContext()?.channelType ?? "";
           deps.eventBus.emit("session:started", {
             agentId: deps.agentId,
             sessionKey: formattedKey,
-            traceId: tryGetContext()?.traceId ?? deps.executionId,
+            traceId,
             channelType,
             channelId: deps.channelId,
             timestamp: systemNowMs(),

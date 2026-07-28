@@ -241,8 +241,10 @@ export function readSessionIndexWindow(
       // The rows are untrusted JSONL — narrow defensively against the SSOT union
       // and treat unexpected shapes as skip-fields, never throw.
       const event = rec.event;
-      if (event === "session_started") {
-        const r = rec as Partial<Extract<SessionIndexEvent, { event: "session_started" }>>;
+      if (event === "session_started" || event === "execution_started") {
+        const r = rec as Partial<
+          Extract<SessionIndexEvent, { event: "session_started" | "execution_started" }>
+        >;
         if (typeof r.agentId === "string" && r.agentId.length > 0) {
           agents.add(r.agentId);
         }

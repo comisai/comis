@@ -115,7 +115,7 @@ export function seedMessageIdLru(dataDir: string): void {
       try {
         const rec = JSON.parse(line) as Record<string, unknown>;
         if (
-          rec.event === "turn_completed" &&
+          (rec.event === "execution_started" || rec.event === "turn_completed") &&
           typeof rec.messageId === "string" &&
           typeof rec.traceId === "string" &&
           typeof rec.sessionId === "string"
@@ -189,7 +189,7 @@ async function scanSessionIndexByMessageId(
         const rec = JSON.parse(line) as Record<string, unknown>;
         if (rec.synthetic === true && !includeSynthetic) continue;
         if (
-          rec.event === "turn_completed" &&
+          (rec.event === "execution_started" || rec.event === "turn_completed") &&
           rec.messageId === messageId &&
           typeof rec.traceId === "string" &&
           typeof rec.sessionId === "string"
