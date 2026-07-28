@@ -151,6 +151,8 @@ export interface RecordedOutbound extends AgnosticRecordedOutbound {
  * may read; all optional (the test author supplies what a scenario needs).
  */
 export interface MediaMeta {
+  /** Caption carried by the inbound Telegram media message. */
+  readonly caption?: string;
   /** Original filename (document). */
   readonly fileName?: string;
   /** MIME type (voice/document/video) — also seeds the file-route content-type when present. */
@@ -1678,6 +1680,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         // Echo the meta fields the per-kind grammy object carries (each spread
         // only when defined — the builder is exact-optional-safe).
         ...(meta?.mimeType !== undefined ? { mimeType: meta.mimeType } : {}),
+        ...(meta?.caption !== undefined ? { caption: meta.caption } : {}),
         ...(meta?.duration !== undefined ? { duration: meta.duration } : {}),
         ...(meta?.width !== undefined ? { width: meta.width } : {}),
         ...(meta?.height !== undefined ? { height: meta.height } : {}),

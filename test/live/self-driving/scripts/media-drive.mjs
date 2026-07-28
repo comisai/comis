@@ -53,7 +53,7 @@ const inj = await (
   await fetch(`${base}/control/chats/${chatId}/media`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ fromUserId: fromUser, kind, fileBase64, meta: caption ? { caption } : undefined }),
+    body: JSON.stringify({ fromUserId: fromUser, kind, fileBase64, caption: caption || undefined }),
   })
 ).json();
 process.stderr.write(`injected media messageId=${inj.messageId} kind=${kind} (caption: ${JSON.stringify(caption).slice(0, 80)})\n`);

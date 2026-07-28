@@ -252,6 +252,8 @@ export interface InjectMediaParams {
   readonly kind: string;
   /** The file bytes, base64-encoded (decoded to a `Buffer` in the handler). */
   readonly fileBase64: string;
+  /** Optional Telegram media caption, preserved as the inbound message text. */
+  readonly caption?: string;
   /** Optional original filename (document). */
   readonly fileName?: string;
   /** Optional MIME type (voice/document/video). */
@@ -860,6 +862,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       // Map the optional meta fields (durationMs → seconds for MediaMeta.duration).
       const durationMs = toNum(body["durationMs"]);
       const meta: MediaMeta = {
+        ...(toStr(body["caption"]) !== undefined ? { caption: toStr(body["caption"])! } : {}),
         ...(toStr(body["fileName"]) !== undefined ? { fileName: toStr(body["fileName"])! } : {}),
         ...(toStr(body["mimeType"]) !== undefined ? { mimeType: toStr(body["mimeType"])! } : {}),
         ...(durationMs !== undefined ? { duration: Math.round(durationMs / 1000) } : {}),
@@ -1041,6 +1044,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       }
       const durationMs = params.durationMs;
       const meta: MediaMeta = {
+        ...(params.caption !== undefined ? { caption: params.caption } : {}),
         ...(params.fileName !== undefined ? { fileName: params.fileName } : {}),
         ...(params.mimeType !== undefined ? { mimeType: params.mimeType } : {}),
         ...(durationMs !== undefined ? { duration: Math.round(durationMs / 1000) } : {}),

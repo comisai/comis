@@ -378,6 +378,8 @@ export interface MakeMediaUpdateOptions {
   readonly fileId: string;
   /** The Telegram file_unique_id (grammy requires it on every media object). */
   readonly fileUniqueId: string;
+  /** Telegram media caption, mapped to the normalized inbound text. */
+  readonly caption?: string;
   /** Media duration in seconds (voice/video/video_note — the mapper ×1000 → ms downstream). */
   readonly duration?: number;
   /** MIME type (voice/document/video — `extractVoice` falls back to `audio/ogg` when absent). */
@@ -495,6 +497,7 @@ export function makeMediaUpdate(opts: MakeMediaUpdateOptions): Update {
       // Telegram unix SECONDS (NOT ms) — the mapper multiplies ×1000.
       date: Math.floor(Date.now() / 1000),
       ...buildMediaFields(opts),
+      ...(opts.caption !== undefined ? { caption: opts.caption } : {}),
       ...(opts.spoiler === true ? { has_media_spoiler: true } : {}),
     },
   };

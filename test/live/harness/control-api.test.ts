@@ -809,7 +809,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
         }
       });
 
-      it("forwards the optional meta (fileName/mimeType/durationMs/spoiler) to injectMedia", async () => {
+      it("forwards optional caption and file metadata to injectMedia", async () => {
         const spy = makeSpyControl();
         await spy.start();
         try {
@@ -818,6 +818,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
             fromUserId: 111,
             kind: "document",
             fileBase64,
+            caption: "file note",
             fileName: "report.pdf",
             mimeType: "application/pdf",
             durationMs: 4200,
@@ -827,6 +828,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
           const call = spy.mediaCalls[0]!;
           expect(call.kind).toBe("document");
           expect(call.meta).toMatchObject({
+            caption: "file note",
             fileName: "report.pdf",
             mimeType: "application/pdf",
             spoiler: true,
