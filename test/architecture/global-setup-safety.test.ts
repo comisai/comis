@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -49,6 +50,20 @@ describe("test artifact cleanup safety", () => {
 
     for (const relativePath of protectedPaths) {
       expect(existsSync(resolve(workspace, relativePath))).toBe(true);
+    }
+  });
+
+  it("isolates every daemon test configuration from operator telemetry", () => {
+    const repoRoot = resolve(import.meta.dirname, "../..");
+    const configPaths = [
+      "test/vitest.config.ts",
+      "test/e2e/vitest.config.ts",
+      "test/live/vitest.config.ts",
+    ];
+
+    for (const relativePath of configPaths) {
+      const source = readFileSync(resolve(repoRoot, relativePath), "utf8");
+      expect(source, relativePath).toContain("vitest-process-listeners.ts");
     }
   });
 });
