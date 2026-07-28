@@ -205,7 +205,7 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
   // The per-session health rollup must land in the trajectory as
   // session.summary carrying counts/flags only — the replay shape
   // (degraded run, 8/10 web_fetch failures). obs.explain reads it.
-  it("session_summary_maps_to_session.summary with degraded/turnCount/costUsd/toolStats/breakerTripCount", () => {
+  it("session_summary_preserves_complete_execution_outcome_evidence", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -219,6 +219,9 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
       costUsd: 1.45,
       toolStats: { web_fetch: { ok: 2, failed: 8 } },
       breakerTripCount: 1,
+      topErrorKinds: { dependency: 8 },
+      source: "runtime",
+      endReason: "completed_with_tool_errors",
       timestamp: Date.now(),
     });
 
@@ -230,6 +233,9 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     expect(data.costUsd).toBe(1.45);
     expect(data.toolStats).toEqual({ web_fetch: { ok: 2, failed: 8 } });
     expect(data.breakerTripCount).toBe(1);
+    expect(data.topErrorKinds).toEqual({ dependency: 8 });
+    expect(data.source).toBe("runtime");
+    expect(data.endReason).toBe("completed_with_tool_errors");
   });
 
   // The trajectory record carries counts/flags ONLY — the envelope
