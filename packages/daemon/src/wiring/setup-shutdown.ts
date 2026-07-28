@@ -70,7 +70,7 @@ export interface ShutdownDeps {
   container: AppContainer;
   /** Override process.exit for testability. */
   exitFn: (code: number) => void;
-  flushLogger: (logger: ComisLogger) => Result<void, Error>;
+  drainLogger: (logger: ComisLogger) => Promise<Result<void, Error>>;
   /** Hard-timeout (ms) before shutdown force-exits with code 1. Default 45_000; must be < systemd TimeoutStopSec. */
   timeoutMs?: number;
   /** In-flight gateway executions for shutdown observability. */
@@ -212,7 +212,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     processMonitor,
     container,
     exitFn,
-    flushLogger,
+    drainLogger,
     tokenTracker,
     startupTimestamp,
     activeExecutions,
@@ -762,9 +762,9 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
 
     logger.info({ shutdownDurationMs: systemNowMs() - shutdownStartMs, signal }, "Graceful shutdown complete");
 
-    // Drain the concrete transport before process.exit. Pino's callback-based
-    // multi-target flush can park the event loop in a 10-second wait, so the
-    // runtime adapter uses the transport's synchronous drain at this boundary.
+    // Give the transport worker a bounded quiet period before process.exit.
+    // Callback and synchronous Pino flush paths can both park in thread-stream's
+    // ten-second failure wait, so neither is entered during shutdown.
     const warnFlushFailure = (error: unknown): void => {
       try {
         logger.warn({
@@ -776,8 +776,8 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         // The process must still exit when the logging transport itself is unusable.
       }
     };
-    const flushResult = flushLogger(logger);
-    if (!flushResult.ok) warnFlushFailure(flushResult.error);
+    const drainResult = await drainLogger(logger);
+    if (!drainResult.ok) warnFlushFailure(drainResult.error);
 
     systemClearTimeout(timer);
     // Exit code: SIGUSR2 ⇒ 42. The installer-generated systemd unit names 42

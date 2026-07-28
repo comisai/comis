@@ -7,7 +7,7 @@
 // `from "@comis/infra"` for the runtime Pino path) see no public-surface drift.
 
 // Logging (Pino logger factory with credential redaction, audit level)
-export { createLogger, flushLoggerSync } from "./logging/index.js";
+export { createLogger } from "./logging/index.js";
 export type { LoggerOptions, ComisLogger } from "./logging/index.js";
 export type { LogFields, ErrorKind } from "@comis/core";
 export { isValidLogLevel, VALID_LOG_LEVELS } from "@comis/core";

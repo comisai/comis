@@ -177,5 +177,11 @@ export function createFileTransport(
     });
   }
 
-  return { targets: targets as unknown as pino.TransportTargetOptions[] };
+  // Comis owns the bounded shutdown path. Pino's default autoEnd hook calls
+  // thread-stream.flushSync(), whose transport failure path blocks for ten
+  // seconds before returning and races the CLI's hard-stop deadline.
+  return {
+    targets: targets as unknown as pino.TransportTargetOptions[],
+    worker: { autoEnd: false },
+  };
 }
