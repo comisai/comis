@@ -12,6 +12,15 @@ describe("isHeartbeatContentEffectivelyEmpty", () => {
     expect(isHeartbeatContentEffectivelyEmpty(DEFAULT_TEMPLATES["HEARTBEAT.md"])).toBe(true);
   });
 
+  it("returns false once the operator writes a check into the starter", () => {
+    // The starter is a guide, so its prose is not an instruction. The moment
+    // the operator edits it the file stops being an untouched starter and its
+    // content becomes real heartbeat policy -- byte-equality is the same
+    // ownership test prompt assembly uses, so the two can never disagree.
+    const edited = `${DEFAULT_TEMPLATES["HEARTBEAT.md"]}\n- Check the nightly backup completed.\n`;
+    expect(isHeartbeatContentEffectivelyEmpty(edited)).toBe(false);
+  });
+
   it("returns true for empty string", () => {
     expect(isHeartbeatContentEffectivelyEmpty("")).toBe(true);
   });
