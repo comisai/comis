@@ -78,6 +78,18 @@ describe("createTelegramPlugin", () => {
     expect(typeof plugin.createResolver).toBe("function");
   });
 
+  it("exposes the adapter's current spoken mention names", () => {
+    const plugin = createTelegramPlugin(makeDeps());
+    const getBotMentionNames = (
+      plugin as unknown as {
+        getBotMentionNames?: () => readonly string[];
+      }
+    ).getBotMentionNames;
+
+    expect(getBotMentionNames).toBeTypeOf("function");
+    expect(getBotMentionNames?.()).toEqual([]);
+  });
+
   it("has correct plugin metadata", () => {
     const plugin = createTelegramPlugin(makeDeps());
 
