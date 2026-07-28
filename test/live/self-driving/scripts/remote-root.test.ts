@@ -259,4 +259,12 @@ describe("local rig mode", () => {
     expect(restart).toMatch(/tmux new-session -d -s/u);
     expect(restart).toMatch(/COMIS_CONFIG_PATHS[^]*daemon\.console\.log/u);
   });
+
+  it("binds local daemon boot and runtime storage to the isolated rig data directory", () => {
+    const restart = readFileSync(RESTART_DAEMON, "utf8");
+
+    expect(restart).toMatch(
+      /COMIS_DATA_DIR=['"]?\$DATA['"]?[^]*COMIS_CONFIG_PATHS=['"]?\$DATA\/config\.yaml/u,
+    );
+  });
 });
