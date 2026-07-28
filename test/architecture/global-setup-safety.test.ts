@@ -66,4 +66,14 @@ describe("test artifact cleanup safety", () => {
       expect(source, relativePath).toContain("vitest-process-listeners.ts");
     }
   });
+
+  it("binds the daemon unit-test container to the worker sandbox", () => {
+    const repoRoot = resolve(import.meta.dirname, "../..");
+    const source = readFileSync(
+      resolve(repoRoot, "packages/daemon/src/daemon.test.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain('dataDir: process.env["COMIS_DATA_DIR"]');
+  });
 });
