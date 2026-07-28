@@ -26,6 +26,8 @@ import type {
   ImageAnalysisPort,
   FileExtractionPort,
   FileExtractionConfig,
+  SttPreprocessReceipt,
+  SttPreprocessSelection,
   WrapExternalContentOptions,
 } from "@comis/core";
 import { DOCUMENT_MIME_WHITELIST } from "@comis/core";
@@ -54,6 +56,8 @@ export interface MediaProcessorLogger {
 export interface MediaProcessorDeps {
   /** Transcription adapter (e.g., Whisper). Omit to skip voice processing. */
   readonly transcriber?: TranscriptionPort;
+  /** Boot-resolved selection corresponding to the injected transcriber. */
+  readonly sttSelection?: SttPreprocessSelection;
   /** Image analysis adapter (e.g., Claude Vision). Omit to skip image processing. */
   readonly imageAnalyzer?: ImageAnalysisPort;
   /** Function to resolve attachment URLs/protocols to raw Buffer data. */
@@ -88,6 +92,8 @@ export interface PreprocessResult {
   message: NormalizedMessage;
   /** Transcription results (one per audio attachment). */
   transcriptions: Array<{ attachmentUrl: string; text: string; language?: string }>;
+  /** Content-free evidence from automatic inbound transcription attempts. */
+  sttReceipts: SttPreprocessReceipt[];
   /** Image analysis results (one per image attachment). */
   analyses: Array<{ attachmentUrl: string; description: string }>;
   /** Image content blocks for native multimodal injection (populated when visionAvailable=true). */
@@ -186,6 +192,7 @@ export async function preprocessMessage(
   msg: NormalizedMessage,
 ): Promise<PreprocessResult> {
   const transcriptions: PreprocessResult["transcriptions"] = [];
+  const sttReceipts: PreprocessResult["sttReceipts"] = [];
   const analyses: PreprocessResult["analyses"] = [];
   const imageContents: PreprocessResult["imageContents"] = [];
   const videoDescriptions: PreprocessResult["videoDescriptions"] = [];
@@ -193,13 +200,13 @@ export async function preprocessMessage(
 
   // Short-circuit: no attachments to process
   if (!msg.attachments || msg.attachments.length === 0) {
-    return { message: msg, transcriptions, analyses, imageContents, videoDescriptions, fileExtractions };
+    return { message: msg, transcriptions, sttReceipts, analyses, imageContents, videoDescriptions, fileExtractions };
   }
 
   // Short-circuit: no resolver means we cannot fetch any media data
   if (!deps.resolveAttachment) {
     deps.logger.info("No resolveAttachment provided, skipping media preprocessing");
-    return { message: msg, transcriptions, analyses, imageContents, videoDescriptions, fileExtractions };
+    return { message: msg, transcriptions, sttReceipts, analyses, imageContents, videoDescriptions, fileExtractions };
   }
 
   const textPrefixes: string[] = [];
@@ -224,9 +231,16 @@ export async function preprocessMessage(
     const kind = classifyAttachment(att);
 
     if (kind === "audio") {
-      const r = await processAudioAttachment(att, { transcriber: deps.transcriber, resolveAttachment, logger: deps.logger, onSuspiciousContent: deps.onSuspiciousContent }, (a) => buildAttachmentHint("audio", a, "transcribe_audio"));
+      const r = await processAudioAttachment(att, {
+        transcriber: deps.transcriber,
+        sttSelection: deps.sttSelection,
+        resolveAttachment,
+        logger: deps.logger,
+        onSuspiciousContent: deps.onSuspiciousContent,
+      }, (a) => buildAttachmentHint("audio", a, "transcribe_audio"));
       if (r.textPrefix) textPrefixes.push(r.textPrefix);
       if (r.transcription) transcriptions.push(r.transcription);
+      if (r.sttReceipt) sttReceipts.push(r.sttReceipt);
     } else if (kind === "image") {
       const r = await processImageAttachment(att, { imageAnalyzer: deps.imageAnalyzer, resolveAttachment, visionAvailable: deps.visionAvailable, sanitizeImage: deps.sanitizeImage, logger: deps.logger, onSuspiciousContent: deps.onSuspiciousContent }, imageContents.length, (a) => buildAttachmentHint("image", a, "image_analyze"));
       if (r.textPrefix) textPrefixes.push(r.textPrefix);
@@ -253,6 +267,7 @@ export async function preprocessMessage(
   return {
     message: { ...msg, text: enrichedText },
     transcriptions,
+    sttReceipts,
     analyses,
     imageContents,
     videoDescriptions,

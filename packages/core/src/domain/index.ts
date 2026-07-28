@@ -6,6 +6,7 @@ export {
   VoiceMetaSchema,
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
   LinkPrefetchReceiptSchema,
+  SttPreprocessReceiptsSchema,
   NormalizedMessageSchema,
   parseMessage,
   parseInboundMessageProvenanceBatch,
@@ -16,6 +17,8 @@ export type {
   Attachment,
   VoiceMeta,
   LinkPrefetchReceipt,
+  SttPreprocessReceipt,
+  SttPreprocessSelection,
   OriginalInboundMessage,
   NormalizedMessage,
 } from "./normalized-message.js";

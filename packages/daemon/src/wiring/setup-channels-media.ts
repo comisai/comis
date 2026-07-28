@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { AppContainer, Attachment, ChannelPort, NormalizedMessage, ResolvedTurnScope, TranscriptionPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, WrapExternalContentOptions } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, NormalizedMessage, ResolvedTurnScope, SttPreprocessSelection, TranscriptionPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, WrapExternalContentOptions } from "@comis/core";
 import type { MediaResolverPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { isVisionCapable } from "@comis/agent";
@@ -34,7 +34,7 @@ import {
 } from "@comis/skills";
 import type { LinkRunner, MediaPersistenceService, PersistedFile } from "@comis/skills";
 import { getModel } from "@earendil-works/pi-ai/compat";
-import { safePath, systemNowMs } from "@comis/core";
+import { safePath, SttPreprocessReceiptsSchema, systemNowMs } from "@comis/core";
 import os from "node:os";
 
 // ---------------------------------------------------------------------------
@@ -72,6 +72,10 @@ export interface MediaPipelineDeps {
   ssrfFetcher: SsrfGuardedFetcher;
   linkRunner: LinkRunner;
   transcriber?: TranscriptionPort;
+  /** Boot-resolved provider selection paired with the transcriber. */
+  voiceSelection?: {
+    stt?: Omit<SttPreprocessSelection, "model">;
+  };
   maxMediaBytes: number;
   defaultAgentId: string;
   imageAnalyzer?: ImageAnalysisPort;
@@ -111,6 +115,18 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
     maxMediaBytes,
     onSuspiciousContent,
   } = deps;
+  const transcriptionConfig = container.config.integrations.media.transcription;
+  const sttSelection: SttPreprocessSelection | undefined =
+    deps.voiceSelection?.stt === undefined
+      ? undefined
+      : {
+          ...deps.voiceSelection.stt,
+          ...(deps.voiceSelection.stt.provider === "local"
+            ? { model: transcriptionConfig.local?.model ?? "base" }
+            : transcriptionConfig.model !== undefined
+              ? { model: transcriptionConfig.model }
+              : {}),
+        };
 
   // -- Media file persistence --
   const persistenceConfig = container.config.integrations.media.persistence;
@@ -374,6 +390,9 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
           transcriber: container.config.integrations.media.transcription.autoTranscribe && audioEnabled
             ? transcriber
             : undefined,
+          sttSelection: container.config.integrations.media.transcription.autoTranscribe && audioEnabled
+            ? sttSelection
+            : undefined,
           // Pass imageAnalyzer ONLY when vision is NOT available AND images are enabled
           imageAnalyzer: visionAvailable ? undefined : (imagesEnabled ? deps.imageAnalyzer : undefined),
           resolveAttachment: effectiveResolve,
@@ -396,6 +415,19 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
         },
         enrichedMsg,
       );
+      const sttReceipts = SttPreprocessReceiptsSchema.safeParse(
+        result.sttReceipts,
+      );
+      const resultMessage = sttReceipts.success
+        && sttReceipts.data.length > 0
+        ? {
+            ...result.message,
+            metadata: {
+              ...result.message.metadata,
+              sttPreprocess: sttReceipts.data,
+            },
+          }
+        : result.message;
 
       // Emit file extraction events
       for (const fe of result.fileExtractions) {
@@ -480,13 +512,13 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
         return {
           ...result.message,
           metadata: {
-            ...result.message.metadata,
+            ...resultMessage.metadata,
             imageContents: result.imageContents,
           },
         };
       }
 
-      return result.message;
+      return resultMessage;
     }
 
     return enrichedMsg;

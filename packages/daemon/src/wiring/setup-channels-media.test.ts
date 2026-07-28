@@ -228,6 +228,7 @@ describe("buildMediaPipeline", () => {
     } as never);
     const transcriber = { transcribe: vi.fn() } as any;
     const deps = makeDeps({ transcriber });
+    deps.container.config.integrations.media.transcription.autoTranscribe = true;
     (deps as unknown as Record<string, unknown>).voiceSelection = {
       stt: {
         provider: "local",

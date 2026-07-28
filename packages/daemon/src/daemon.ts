@@ -302,7 +302,7 @@ function buildChannelManagerDeps(deps: {
   const { agents, assembleToolsForAgent, getInboundMessageIdResolver, getSessionTracker, msTeamsConversationStore } = deps;
   const {
     container, executors, defaultAgentId, agentsConfig, sessionManager, sessionStore,
-    logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
+    logger, channelsLogger, linkRunner, ssrfFetcher, transcriber, voiceSelection,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
     workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, memoryLifecycleStore, outcomeStore, learnedSkillStore, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
@@ -374,7 +374,7 @@ function buildChannelManagerDeps(deps: {
     // authority that intercepts inbound button callbacks (inbound-gate.ts) BEFORE
     // slash parsing — without this hop the signed payload reaches the LLM as text.
     interactiveCallbackRouter: interactiveCallbackWiring?.router,
-    linkRunner, ssrfFetcher, transcriber,
+    linkRunner, ssrfFetcher, transcriber, voiceSelection,
     maxMediaBytes: container.config.integrations.media.infrastructure.maxRemoteFetchBytes,
     assembleToolsForAgent,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore,

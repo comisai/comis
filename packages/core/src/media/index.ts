@@ -38,7 +38,7 @@ export type { VideoModelCaps, VideoDurations } from "./video-models.js";
 // daemon setup-audio-provider.ts is the cross-package consumer of the
 // resolvers + the capability map + the error bridge.
 export { VOICE_KEYLESS, MAIN_PROVIDER_AUDIO } from "./voice-capability.js";
-export { STT_ERR_TO_LOG } from "./voice-error.js";
+export { STT_ERROR_KINDS, STT_ERR_TO_LOG } from "./voice-error.js";
 export type { SttErrorKind } from "./voice-error.js";
 export { resolveTranscriptionProvider } from "./resolve-transcription-provider.js";
 export type {

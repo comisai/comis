@@ -62,6 +62,7 @@ import {
   createConversationRef,
   emitObservationalEventSafely,
   LinkPrefetchReceiptSchema,
+  SttPreprocessReceiptsSchema,
   safePath,
   sanitizeLogString,
   toSafeErrorLogString,
@@ -1581,6 +1582,47 @@ async function runSessionLocked(
     );
     if (receipt.success) {
       trajectoryRecorder.recordEvent("link.prefetch", receipt.data);
+    }
+    const sttReceipts = SttPreprocessReceiptsSchema.safeParse(
+      msg.metadata?.sttPreprocess,
+    );
+    if (sttReceipts.success) {
+      for (const sttReceipt of sttReceipts.data) {
+        trajectoryRecorder.recordEvent("media.stt.requested", {
+          provider: sttReceipt.provider,
+          keyless: sttReceipt.keyless,
+          source: sttReceipt.source,
+          ...(sttReceipt.onSkip !== undefined
+            ? { onSkip: sttReceipt.onSkip }
+            : {}),
+        });
+        if (sttReceipt.outcome === "ok") {
+          trajectoryRecorder.recordEvent("media.stt.completed", {
+            provider: sttReceipt.provider,
+            keyless: sttReceipt.keyless,
+            source: sttReceipt.source,
+            outcome: "ok",
+            ...(sttReceipt.model !== undefined
+              ? { model: sttReceipt.model }
+              : {}),
+            ...(sttReceipt.durationMs !== undefined
+              ? { durationMs: sttReceipt.durationMs }
+              : {}),
+            ...(sttReceipt.audioBytes !== undefined
+              ? { audioBytes: sttReceipt.audioBytes }
+              : {}),
+            ...(sttReceipt.keyless ? { costUsd: 0 } : {}),
+          });
+        } else {
+          trajectoryRecorder.recordEvent("media.stt.failed", {
+            provider: sttReceipt.provider,
+            keyless: sttReceipt.keyless,
+            source: sttReceipt.source,
+            outcome: "failed",
+            errorKind: sttReceipt.errorKind,
+          });
+        }
+      }
     }
   }
 

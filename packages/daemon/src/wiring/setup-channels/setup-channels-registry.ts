@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, MsTeamsConversationStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, EnvPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, SttPreprocessSelection, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, MsTeamsConversationStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, EnvPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, ComisSessionManager, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -168,6 +168,10 @@ export interface ChannelsDeps {
   ssrfFetcher: SsrfGuardedFetcher;
   /** STT transcriber for audio preflight (optional -- config/key may be missing). */
   transcriber?: TranscriptionPort;
+  /** Boot-resolved STT selection paired with the transcriber. */
+  voiceSelection?: {
+    stt?: Omit<SttPreprocessSelection, "model">;
+  };
   /** Maximum media file size in bytes for inbound pre-check. */
   maxMediaBytes: number;
   /** Tool assembler passed through to channel-manager deps. Options.sessionKey threads
@@ -341,6 +345,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     linkRunner,
     ssrfFetcher,
     transcriber,
+    voiceSelection,
     maxMediaBytes,
   } = deps;
 
@@ -401,6 +406,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     ssrfFetcher,
     linkRunner,
     transcriber,
+    voiceSelection,
     maxMediaBytes,
     defaultAgentId,
     imageAnalyzer: deps.imageAnalyzer,

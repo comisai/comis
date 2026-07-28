@@ -6,6 +6,7 @@ export {
   AttachmentSchema,
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
   LinkPrefetchReceiptSchema,
+  SttPreprocessReceiptsSchema,
   NormalizedMessageSchema,
   parseMessage,
   parseInboundMessageProvenanceBatch,
@@ -136,6 +137,8 @@ export { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "../provider/ke
 export type {
   Attachment,
   LinkPrefetchReceipt,
+  SttPreprocessReceipt,
+  SttPreprocessSelection,
   OriginalInboundMessage,
   NormalizedMessage,
   NormalizedReaction,

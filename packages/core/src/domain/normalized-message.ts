@@ -2,6 +2,7 @@
 import { ok, err, type Result } from "@comis/shared";
 import { z } from "zod";
 import { CanonicalLocaleSchema } from "./response-locale-policy.js";
+import { STT_ERROR_KINDS } from "../media/voice-error.js";
 
 const MAX_DATE_EPOCH_MS = 8_640_000_000_000_000;
 
@@ -99,6 +100,56 @@ export const LinkPrefetchReceiptSchema = z.strictObject({
 });
 export type LinkPrefetchReceipt = z.infer<typeof LinkPrefetchReceiptSchema>;
 
+const SttSelectionSourceSchema = z.enum([
+  "explicit",
+  "keyless-local",
+  "follow-main-key",
+  "fallback",
+]);
+
+/**
+ * Content-free evidence from one automatic inbound transcription attempt.
+ *
+ * The trusted media preprocessor creates this receipt before the session
+ * trajectory opens. It deliberately excludes the attachment URL, transcript,
+ * provider error text, and audio content.
+ */
+const SttPreprocessReceiptBaseSchema = z.strictObject({
+  provider: z.string().min(1).max(128),
+  keyless: z.boolean(),
+  model: z.string().min(1).max(256).optional(),
+  source: SttSelectionSourceSchema,
+  onSkip: z.array(z.string().min(1).max(256)).max(16).optional(),
+  durationMs: z.number().int().nonnegative().optional(),
+  audioBytes: z.number().int().nonnegative().optional(),
+});
+
+export const SttPreprocessReceiptSchema = z.discriminatedUnion("outcome", [
+  SttPreprocessReceiptBaseSchema.extend({
+    outcome: z.literal("ok"),
+  }),
+  SttPreprocessReceiptBaseSchema.extend({
+    outcome: z.literal("failed"),
+    errorKind: z.enum(STT_ERROR_KINDS),
+  }),
+]);
+
+export const SttPreprocessReceiptsSchema = z
+  .array(SttPreprocessReceiptSchema)
+  .max(16);
+
+export type SttPreprocessReceipt = z.infer<
+  typeof SttPreprocessReceiptSchema
+>;
+
+export interface SttPreprocessSelection {
+  readonly provider: string;
+  readonly keyless: boolean;
+  readonly model?: string;
+  readonly source: z.infer<typeof SttSelectionSourceSchema>;
+  readonly onSkip?: string[];
+}
+
 /**
  * NormalizedMessage: Channel-agnostic representation of an incoming message.
  *
@@ -136,6 +187,8 @@ export const NormalizedMessageSchema = z.strictObject({
       locale: CanonicalLocaleSchema.optional(),
       /** Trusted, counts-only automatic link-prefetch receipt. */
       linkPrefetch: LinkPrefetchReceiptSchema.optional(),
+      /** Trusted, content-free automatic inbound transcription receipts. */
+      sttPreprocess: SttPreprocessReceiptsSchema.optional(),
     }).default({}),
     /** Exact physical messages represented by a synthetic coalesced turn. */
     originalMessages: z.array(OriginalInboundMessageSchema).min(1).max(10_000).optional(),
