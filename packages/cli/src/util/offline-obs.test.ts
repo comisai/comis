@@ -69,16 +69,41 @@ describe("offline observability module boundary", () => {
 // reader must match.
 describe("resolveOfflineDataDir", () => {
   const prev = process.env.COMIS_DATA_DIR;
+  const previousConfigPaths = process.env.COMIS_CONFIG_PATHS;
   afterEach(() => {
     if (prev === undefined) delete process.env.COMIS_DATA_DIR;
     else process.env.COMIS_DATA_DIR = prev;
+    if (previousConfigPaths === undefined) delete process.env.COMIS_CONFIG_PATHS;
+    else process.env.COMIS_CONFIG_PATHS = previousConfigPaths;
   });
   it("honors COMIS_DATA_DIR when set (matches the daemon + wizard data-dir resolution)", () => {
+    delete process.env.COMIS_CONFIG_PATHS;
     process.env.COMIS_DATA_DIR = "/srv/custom-comis-data";
     expect(resolveOfflineDataDir()).toBe("/srv/custom-comis-data");
   });
+  it("uses the data directory selected by an explicit config path", () => {
+    const configDir = tmpDataDir();
+    const configuredDataDir = tmpDataDir();
+    const configPath = path.join(configDir, "config.yaml");
+    fs.writeFileSync(configPath, `dataDir: ${configuredDataDir}\n`, "utf8");
+    delete process.env.COMIS_DATA_DIR;
+    process.env.COMIS_CONFIG_PATHS = configPath;
+
+    expect(resolveOfflineDataDir()).toBe(configuredDataDir);
+  });
+  it("gives an explicit config data directory precedence over COMIS_DATA_DIR", () => {
+    const configDir = tmpDataDir();
+    const configuredDataDir = tmpDataDir();
+    const configPath = path.join(configDir, "config.yaml");
+    fs.writeFileSync(configPath, `dataDir: ${configuredDataDir}\n`, "utf8");
+    process.env.COMIS_DATA_DIR = "/srv/environment-comis-data";
+    process.env.COMIS_CONFIG_PATHS = configPath;
+
+    expect(resolveOfflineDataDir()).toBe(configuredDataDir);
+  });
   it("falls back to <homedir>/.comis when COMIS_DATA_DIR is unset", () => {
     delete process.env.COMIS_DATA_DIR;
+    delete process.env.COMIS_CONFIG_PATHS;
     expect(resolveOfflineDataDir()).toBe(safePath(os.homedir(), ".comis"));
   });
 });
