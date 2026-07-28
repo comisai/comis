@@ -272,6 +272,35 @@ describe("buildMediaPipeline", () => {
     expect(result.audioPreflight).toBeDefined();
   });
 
+  it("audioPreflight reads the live Telegram bot mention names", async () => {
+    const transcriber = { transcribe: vi.fn() } as any;
+    const tgPlugin = {
+      createResolver: vi.fn(() => ({ resolve: vi.fn(), schemes: ["tg-file"] })),
+      getBotMentionNames: vi.fn(() => ["test_bot"]),
+    } as any;
+    const deps = makeDeps({ transcriber, tgPlugin });
+    const result = await buildMediaPipeline(deps);
+
+    await result.audioPreflight?.({
+      id: "m1",
+      channelId: "group_a",
+      channelType: "telegram",
+      senderId: "user_a",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [{ type: "audio", url: "tg-file://voice" }],
+      metadata: { telegramChatType: "group" },
+    });
+
+    expect(tgPlugin.getBotMentionNames).toHaveBeenCalledOnce();
+    expect(audioPreflightFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        botNames: expect.arrayContaining(["TestBot", "test_bot"]),
+      }),
+      expect.anything(),
+    );
+  });
+
   it("audioPreflight is undefined when no transcriber", async () => {
     const deps = makeDeps({ transcriber: undefined });
     const result = await buildMediaPipeline(deps);
