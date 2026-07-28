@@ -20,6 +20,7 @@ const DEPLOY_EMULATOR = resolve(HERE, "deploy-emu.sh");
 const RIG_DOCTOR = resolve(HERE, "rig-doctor.sh");
 const VERIFY_BUILD = resolve(HERE, "verify-build.sh");
 const INSTALL_VPS = resolve(HERE, "install-vps.sh");
+const MEDIA_DRIVE = resolve(HERE, "media-drive.mjs");
 const temporaryDirectories: string[] = [];
 
 function shellQuote(value: string): string {
@@ -134,6 +135,13 @@ describe("sudo-aware live rig transport", () => {
 });
 
 describe("local rig mode", () => {
+  it("lets media injection select a sender independently from the chat", () => {
+    const source = readFileSync(MEDIA_DRIVE, "utf8");
+
+    expect(source).toContain("process.env.FROMUSER");
+    expect(source).toContain("fromUserId: fromUser");
+  });
+
   it("runs the command in a local shell with stdin intact and never reaches ssh", () => {
     const output = runRemoteRoot("0", "stream-data", "local");
 
