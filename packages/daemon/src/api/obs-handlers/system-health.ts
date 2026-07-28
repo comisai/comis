@@ -500,10 +500,22 @@ export async function assembleSystemHealthReport(
       ? ["no sessions in the window — widen `--since` or confirm the daemon is recording session summaries"]
       : ["run `comis explain <sessionKey>` on the worst session for the per-session post-mortem"];
 
+  const hardDegradedCount = Math.max(0, degraded - system.deliveredWithToolErrorsCount);
+
   return {
     schemaVersion: 1,
     windowHours,
-    sessions: { total: system.sessionCount, degraded, degradedRate: system.degradedRate, deliveredWithToolErrors: system.deliveredWithToolErrorsCount },
+    sessions: {
+      total: system.sessionCount,
+      degraded,
+      degradedRate: system.degradedRate,
+      deliveredWithToolErrors: system.deliveredWithToolErrorsCount,
+      // The HARD split the findings fire on, computed ONCE here so every
+      // renderer agrees (the CLI used to derive it locally and disagree with
+      // this report's own JSON).
+      hardDegraded: hardDegradedCount,
+      hardDegradedRate: system.sessionCount > 0 ? hardDegradedCount / system.sessionCount : 0,
+    },
     topErrorKinds,
     // The system-level degradation detector: degraded counts by named
     // endReason cause, computed by reduceSystemWindow from the per-session rows
@@ -520,7 +532,7 @@ export async function assembleSystemHealthReport(
     // figure as `activity.tokenTotal` (a single source of truth — no second
     // aggregate); consumers cross-reference `coverage` before trusting a 0. The
     // `comis system-health` table render drops the misleading "· 0 tok" in that case.
-    cost: { costUsd: system.costUsd, totalTokens: activity.tokenTotal, offSessionUsd },
+    cost: { costUsd: system.costUsd, totalTokens: activity.tokenTotal, tokenBasis: "input+output" as const, offSessionUsd },
     activity: {
       activeAgents: activity.activeAgents,
       activeChannels: activity.activeChannels,

@@ -11166,6 +11166,10 @@ export const CONTRACTS = {
             "totalTokens": {
               "type": "number"
             },
+            "tokenBasis": {
+              "type": "string",
+              "const": "input+output+cache"
+            },
             "cacheReadRatio": {
               "type": "number"
             }
@@ -11567,6 +11571,20 @@ export const CONTRACTS = {
                 "downshifted",
                 "exhausted"
               ]
+            },
+            "freshTailSteps": {
+              "type": "number"
+            },
+            "freshTailStepsConfigured": {
+              "type": "number"
+            },
+            "originatingRequestRetained": {
+              "type": "boolean"
+            },
+            "freshTailTrimmedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
             }
           },
           "required": [
@@ -12636,6 +12654,12 @@ export const CONTRACTS = {
             },
             "deliveredWithToolErrors": {
               "type": "number"
+            },
+            "hardDegraded": {
+              "type": "number"
+            },
+            "hardDegradedRate": {
+              "type": "number"
             }
           },
           "required": [
@@ -12706,6 +12730,10 @@ export const CONTRACTS = {
             },
             "totalTokens": {
               "type": "number"
+            },
+            "tokenBasis": {
+              "type": "string",
+              "const": "input+output"
             },
             "offSessionUsd": {
               "type": "number"

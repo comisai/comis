@@ -17,6 +17,12 @@
 // Header regex
 // ---------------------------------------------------------------------------
 
+/**
+ * Resolves the accepted values for a failing parameter, given its dot-notation
+ * path. Returns undefined when the parameter is not a known enum.
+ */
+export type AllowedValuesResolver = (parameterPath: string) => string[] | undefined;
+
 /** Matches the pi-ai validation error header line. */
 const HEADER_RE = /^Validation failed for tool "([^"]+)":/;
 
@@ -74,7 +80,11 @@ function convertInstancePath(path: string): string {
 /**
  * Rewrite a single AJV error (path + message) into LLM-friendly text.
  */
-function rewriteErrorMessage(path: string, message: string): string {
+function rewriteErrorMessage(
+  path: string,
+  message: string,
+  allowedValuesFor?: AllowedValuesResolver,
+): string {
   const displayPath = convertInstancePath(path);
 
   // "must have required property 'X'" -> "Required parameter `X` is missing"
@@ -96,8 +106,14 @@ function rewriteErrorMessage(path: string, message: string): string {
     return `\`${displayPath}\` expected ${typeMatch[1]}`;
   }
 
-  // "must be equal to one of the allowed values" -> simplified
+  // "must be equal to one of the allowed values" -> name the values when the
+  // caller can resolve them from the tool's own schema. AJV's wording omits
+  // them, which leaves a model retrying the same rejected argument.
   if (ENUM_RE.test(message)) {
+    const allowed = allowedValuesFor?.(displayPath);
+    if (allowed !== undefined && allowed.length > 0) {
+      return `\`${displayPath}\` must be one of: ${allowed.join(", ")}`;
+    }
     return `\`${displayPath}\` must be one of the allowed values`;
   }
 
@@ -119,10 +135,16 @@ function rewriteErrorMessage(path: string, message: string): string {
  * concise, LLM-friendly format.
  *
  * @param errorText - The raw error string from a tool result
+ * @param allowedValuesFor - Optional resolver returning the accepted values for
+ *        a failing parameter, so an enum rejection can name them. Omitting it
+ *        keeps the previous generic wording byte-identical.
  * @returns Reformatted error string, or `null` if the text is not a
  *          validation error matching the pi-ai pattern
  */
-export function formatValidationError(errorText: string): string | null {
+export function formatValidationError(
+  errorText: string,
+  allowedValuesFor?: AllowedValuesResolver,
+): string | null {
   // Quick exit for non-validation errors
   const headerMatch = HEADER_RE.exec(errorText);
   if (!headerMatch) return null;
@@ -145,7 +167,7 @@ export function formatValidationError(errorText: string): string | null {
 
     const path = match[1]!;
     const message = match[2]!;
-    rewritten.push(rewriteErrorMessage(path, message));
+    rewritten.push(rewriteErrorMessage(path, message, allowedValuesFor));
   }
 
   if (rewritten.length === 0) return null;

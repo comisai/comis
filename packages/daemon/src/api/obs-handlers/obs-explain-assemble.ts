@@ -437,7 +437,7 @@ export function assembleIncidentReport(
     agentId,
     channel,
     outcome: { endReason, degraded, severity },
-    cost: { costUsd, totalTokens, cacheReadRatio },
+    cost: { costUsd, totalTokens, tokenBasis: "input+output+cache" as const, cacheReadRatio },
     timing: { durationMs, turnCount },
     toolStats,
     failures,

@@ -269,16 +269,10 @@ export interface CapabilityLayerHandle {
   escalate: NotifyFn;
 }
 
-/** Result of {@link constructCapabilityLayer}: the cap handle + the boot preflight boolean. */
-export interface CapabilityLayerResult {
-  /** Undefined when NO agent resolves to an autonomy-bearing profile. */
-  capEndpointHandle: CapabilityLayerHandle | undefined;
-  /**
-   * Shutdown teardown thunk for the cap endpoint socket (stops + unlinks
-   * cap.sock), or `undefined` when no endpoint was constructed. Threaded into
-   * `setupShutdown` (mirrors the broker teardown).
-   */
-  capEndpointStop: (() => Promise<void>) | undefined;
+/** Closed reason for constructing no capability endpoint. */
+export type CapabilityEndpointUnavailableReason = "autonomy_disabled" | "activation_failed";
+
+interface CapabilityLayerResultBase {
   /**
    * Host namespace preflight result (the unprivileged-userns +
    * `--unshare-net` probe, run once at boot). Fed to the SHIPPED degradeAutonomy
@@ -298,6 +292,21 @@ export interface CapabilityLayerResult {
    */
   resolveRootRunId?: RootRunIdResolver;
 }
+
+/** Result of capability-layer construction and its host preflight. */
+export type CapabilityLayerResult = CapabilityLayerResultBase & (
+  | {
+      capEndpointHandle: CapabilityLayerHandle;
+      /** Stops the capability endpoint and unlinks its socket. */
+      capEndpointStop: () => Promise<void>;
+      capEndpointUnavailableReason?: never;
+    }
+  | {
+      capEndpointHandle: undefined;
+      capEndpointStop: undefined;
+      capEndpointUnavailableReason: CapabilityEndpointUnavailableReason;
+    }
+);
 
 /** The shipped web-search provider keys, read from the secret store (or none). */
 function buildWebSearchConfig(
@@ -587,7 +596,12 @@ export async function constructCapabilityLayer(
     .map((a) => resolveAutonomy(a.autonomy))
     .find((r) => r.enabled);
   if (!autonomyBearingConfig) {
-    return { capEndpointHandle: undefined, capEndpointStop: undefined, namespacePreflightOk };
+    return {
+      capEndpointHandle: undefined,
+      capEndpointStop: undefined,
+      capEndpointUnavailableReason: "autonomy_disabled",
+      namespacePreflightOk,
+    };
   }
 
   // Use the daemon-supplied LeaseManager when provided
@@ -762,6 +776,11 @@ export async function constructCapabilityLayer(
       },
       "Capability lease layer DEGRADED — cap-socket activation failed; autonomy surface unavailable (daemon continues serving channels)",
     );
-    return { capEndpointHandle: undefined, capEndpointStop: undefined, namespacePreflightOk };
+    return {
+      capEndpointHandle: undefined,
+      capEndpointStop: undefined,
+      capEndpointUnavailableReason: "activation_failed",
+      namespacePreflightOk,
+    };
   }
 }

@@ -8,7 +8,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
 import type { TypedEventBus } from "@comis/core";
+import { MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Mock MCP SDK modules before importing the module under test
@@ -604,10 +606,18 @@ describe("McpClientManager", () => {
       expect(result.value.content[0].text).toBe("result text");
       expect(result.value.isError).toBe(false);
 
+      // The construction-time fallback is the SCHEMA default — asserting a local
+      // literal here is what let the client (60_000) drift from the schema
+      // (120_000), silently halving the deadline on any un-threaded wiring path.
       expect(mockCallTool).toHaveBeenCalledWith(
         { name: "search", arguments: { query: "test" } },
         undefined,
-        { timeout: 60_000 },
+        {
+          timeout: MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT,
+          maxTotalTimeout: MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT,
+                  onprogress: expect.any(Function),
+          resetTimeoutOnProgress: true,
+        },
       );
     });
 
@@ -744,11 +754,21 @@ describe("McpClientManager", () => {
 
       await mgr.callTool("mcp:test-server/search", { query: "test" });
 
-      // SDK callTool should receive timeout in third arg (options)
+      // SDK callTool receives the timeout in the third arg (options), plus the
+      // absolute ceiling — `maxTotalTimeout` is unconditional, because a
+      // deadline that applies only on some code paths is not a deadline.
       expect(mockCallTool).toHaveBeenCalledWith(
         { name: "search", arguments: { query: "test" } },
         undefined,
-        { timeout: 120_000 },
+        {
+          timeout: 120_000,
+          maxTotalTimeout: 120_000,
+          // Registered on EVERY path: without a handler the SDK rejects an
+          // incoming progress notification as an unknown token and closes the
+          // connection.
+          onprogress: expect.any(Function),
+          resetTimeoutOnProgress: true,
+        },
       );
     });
 
@@ -1753,5 +1773,38 @@ describe("keepalive queue routing (concurrency-aware)", () => {
       "mcp:server:disconnected",
       expect.objectContaining({ serverName: "test-server", reason: "keepalive_failed" }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Progress-handler registration
+// ---------------------------------------------------------------------------
+
+/**
+ * The SDK only accepts a progress notification when the request registered a
+ * handler for it. Gating `onprogress` on a trace context meant that on ANY
+ * untraced path — which is exactly where a backgrounded call runs — a server
+ * that reports progress produced:
+ *
+ *   MCP client error: Received a progress notification for an unknown token
+ *
+ * and the client CLOSED THE CONNECTION, failing the tool with -32000 and forcing
+ * a reconnect. The same reasoning already made `maxTotalTimeout` unconditional:
+ * a protection that applies only when tracing happens to be on is not a
+ * protection.
+ */
+describe("callTool registers a progress handler on every path", () => {
+  it("passes onprogress whether or not a trace context exists", () => {
+    const source = readFileSync(
+      new URL("./mcp-client/mcp-client-call.ts", import.meta.url),
+      "utf8",
+    );
+    const optionsBlock = source.slice(
+      source.indexOf("maxTotalTimeout:"),
+      source.indexOf("maxTotalTimeout:") + 1200,
+    );
+    // onprogress must NOT sit inside a requestTraceId conditional.
+    expect(optionsBlock).toContain("onprogress");
+    expect(optionsBlock).not.toMatch(/requestTraceId\s*\?[\s\S]{0,120}onprogress/);
   });
 });

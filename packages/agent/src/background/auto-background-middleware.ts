@@ -9,6 +9,7 @@
  * @module
  */
 import { suppressError } from "@comis/shared";
+import { tryGetContext } from "@comis/core";
 import type { BackgroundTasksConfig } from "@comis/core";
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -165,7 +166,16 @@ export function wrapToolForAutoBackground(
         return await taskPromise;
       }
 
-      const promoteResult = manager.promote(tool.name, taskPromise, ac, origin);
+      // Ids-only correlation so the TERMINAL background event can close the
+      // activity card this tool call opened (the card is keyed on the
+      // toolCallId; without it a backgrounded tool's lifecycle was closed
+      // "completed" at hand-off and the real outcome never reached the card).
+      const turnCtx = tryGetContext();
+      const promoteResult = manager.promote(tool.name, taskPromise, ac, origin, undefined, {
+        toolCallId,
+        ...(turnCtx?.sessionKey !== undefined ? { sessionKey: turnCtx.sessionKey } : {}),
+        ...(turnCtx?.traceId !== undefined ? { traceId: turnCtx.traceId } : {}),
+      });
       if (!promoteResult.ok) {
         // Concurrency limit hit: fall back to foreground (await normally)
         return await taskPromise;

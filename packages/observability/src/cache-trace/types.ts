@@ -152,6 +152,13 @@ export const CacheTraceEventSchema = z.object({
   messagesDigest: z.string().optional(),
   system: z.unknown().optional(),
   systemDigest: z.string().optional(),
+  // The tool array — the prefix component between system and messages. A
+  // change here invalidates every cached block after the system prompt.
+  toolCount: z.number().int().nonnegative().optional(),
+  // Cumulative prefix hashes at exponentially spaced depths — fixed-size, so it
+  // survives the array bound that strips messageFingerprints on long sessions.
+  messagePrefixHashes: z.array(z.object({ depth: z.number().int(), hash: z.string() })).optional(),
+  toolsDigest: z.string().optional(),
   // Token attribution. `session:after` aggregates across the session via
   // the EventBus bridge stash; `model:after` carries the per-call snapshot
   // from the StreamFn return value's usage block.

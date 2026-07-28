@@ -7,7 +7,7 @@ icon: "chart-line"
 Comis correlates structured events, traces, and diagnostic artifacts so an
 operator can investigate a deployment-wide failure from one workflow.
 
-This page documents the observability foundations. It covers the trajectory layer, the 66-entry bridge mapping, lifecycle envelopes, forensic INFO promotions, the dedup detector, boot invariants, the alert budget, `step:` discipline, log rotation, the memory & recall diagnostics (recall-trace artifact, recall events, degradation signals), and the bundle export entry point. If you are new to Comis observability, start here; then follow the cross-links for operator workflows.
+This page documents the observability foundations. It covers the trajectory layer, the event-bus bridge mapping, lifecycle envelopes, forensic INFO promotions, the dedup detector, boot invariants, the alert budget, `step:` discipline, log rotation, the memory & recall diagnostics (recall-trace artifact, recall events, degradation signals), and the bundle export entry point. If you are new to Comis observability, start here; then follow the cross-links for operator workflows.
 
 <CardGroup cols={2}>
   <Card title="Incident Bundle" icon="folder-tree" href="/operations/incident-bundle">
@@ -19,6 +19,24 @@ This page documents the observability foundations. It covers the trajectory laye
 </CardGroup>
 
 ---
+
+### Token counts differ between lenses — by design
+
+`obs.explain` and `obs.system.health` both report `cost.totalTokens`, and they count
+**different things**. Each now declares which via a `tokenBasis` discriminator:
+
+| lens | `tokenBasis` | counts |
+|---|---|---|
+| `obs.explain` (one session) | `input+output+cache` | every token the session moved, **including** cache reads and writes |
+| `obs.system.health` (window) | `input+output` | billable input + output only, cache **excluded** |
+
+One 27-minute session legitimately reported 6,043,245 on the first and 18,637 on the
+second. Neither is wrong — read `tokenBasis` before comparing them, and never treat a
+mismatch between the two as a bug on its own.
+
+A third number exists: the per-session `_session-metadata.json` rollup is written per
+**execution** (last write wins), so on a multi-turn session it reflects the most recent
+execution rather than the whole session. Prefer `obs.explain` for a session total.
 
 ## 1. Trace Propagation
 
@@ -44,6 +62,7 @@ Key properties:
 - **Content-free at runtime** — digests and structural fields only; no prompt text, response text, or tool-result bodies at recording time. Content is synthesized at bundle-export time from the SDK session JSONL.
 - **Multi-source discriminator** — `source: "runtime" | "transcript" | "export"`. Runtime events carry `"runtime"`. The bundle exporter synthesizes `"transcript"` events from the session JSONL and `"export"` events for bundle-level summaries.
 - **Causality DAG** — each event carries `entryId` (per-event UUID), monotonic `seq`, optional `sourceSeq`, and optional `parentEntryId`. The session branch is reconstructed leaf-to-root at export time.
+- **Bounded cache-prefix evidence** — each `stream:context` record carries `systemDigest`, `toolsDigest`, and cumulative `messagePrefixHashes` at exponentially spaced depths. Comparing adjacent calls distinguishes system/tool changes from message-prefix changes and bounds the first divergent message range even after the full fingerprint array is replaced by its persistence sentinel.
 
 ---
 
@@ -63,12 +82,13 @@ The bundle exporter reads `trace.metadata` to populate `metadata.json` and `trac
 
 ---
 
-## 4. Bridge Mapping (66 entries)
+## 4. Bridge Mapping
 
-The trajectory bus-bridge maps 66 event types from the typed event bus to trajectory events.
+The trajectory bus-bridge maps typed event-bus events to trajectory events. The
+`TRAJECTORY_BRIDGE_MAPPING` constant is the authoritative closed set.
 
 <Info>
-**Architecture invariant:** `test/architecture/trajectory-event-types-known.test.ts` asserts the disjoint-set invariant (no overlap between bridge-mapped types and direct-emit types) and a bridge count ≥ 45. Current count: 66.
+**Architecture invariant:** `test/architecture/trajectory-event-types-known.test.ts` asserts the disjoint-set invariant (no overlap between bridge-mapped types and direct-emit types) and a minimum bridge count.
 </Info>
 
 | Category | Bridge prefix | Event types |
@@ -475,7 +495,7 @@ Read the trace with [`comis memory recall-trace <session>`](/reference/cli#comis
 
 ### 15.2 Recall & curation events
 
-Typed events report recall, generation-quality, and curation activity on the event bus. Three of them — **`memory:recalled`**, **`memory:reranked`**, and **`memory:generation_quality`** — are part of the [§4 bridge mapping](#4-bridge-mapping-66-entries): they cross onto the per-session **trajectory timeline** as `memory.recalled` / `memory.reranked` / `memory.generation_quality`. A recall shows up in `comis explain` (its lane/candidate/final counts and the rerank outcome) and aggregates into the report's [`recall` section](/reference/json-rpc#obs-explain). A memory-generation pass whose output diverged from its source fires `memory:generation_quality` (only on an issue) and rolls up into the `comis system-health` `generation_quality` finding. The remaining recall/curation events (`memory:entities_linked`, `memory:consolidated`, `memory:recall_used`, `memory:review_completed`) are emitted **directly** at a single canonical site each and are **not** bridge-mapped — `test/architecture/trajectory-event-types-known.test.ts` allowlists those four as not-trajectory-mapped, and asserts the disjoint-set invariant (no event is both bridged and direct-emit).
+Typed events report recall, generation-quality, and curation activity on the event bus. Three of them — **`memory:recalled`**, **`memory:reranked`**, and **`memory:generation_quality`** — are part of the [§4 bridge mapping](#4-bridge-mapping): they cross onto the per-session **trajectory timeline** as `memory.recalled` / `memory.reranked` / `memory.generation_quality`. A recall shows up in `comis explain` (its lane/candidate/final counts and the rerank outcome) and aggregates into the report's [`recall` section](/reference/json-rpc#obs-explain). A memory-generation pass whose output diverged from its source fires `memory:generation_quality` (only on an issue) and rolls up into the `comis system-health` `generation_quality` finding. The remaining recall/curation events (`memory:entities_linked`, `memory:consolidated`, `memory:recall_used`, `memory:review_completed`) are emitted **directly** at a single canonical site each and are **not** bridge-mapped — `test/architecture/trajectory-event-types-known.test.ts` allowlists those four as not-trajectory-mapped, and asserts the disjoint-set invariant (no event is both bridged and direct-emit).
 
 Every payload is **counts, booleans, and IDs only** — never query text, memory bodies, or entity names (AGENTS.md §2.7). The per-recall ranking detail lives in the opt-in recall-trace artifact above, not on the bus.
 

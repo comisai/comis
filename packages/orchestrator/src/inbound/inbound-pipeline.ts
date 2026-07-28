@@ -9,6 +9,7 @@
  */
 
 import type { AgentExecutor, InboundMessageProvenancePlan } from "@comis/agent";
+import type { PlatformReplyLocale } from "../execution/execution-platform-reply-locale.js";
 // Relative path used because orchestrator cannot import its own published name.
 import type { MessageRouter } from "../routing/message-router.js";
 import type { SessionLifecycle } from "@comis/agent";
@@ -101,6 +102,8 @@ export interface InboundPipelineDeps {
   getResetTriggers?: (agentId: string) => string[];
   queueConfig?: QueueConfig;
   getElevatedReplyConfig?: (agentId: string) => ElevatedReplyConfig | undefined;
+  /** See ChannelManagerDeps. */
+  getPlatformReplyLocale?: (agentId: string) => PlatformReplyLocale | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   assembleToolsForAgent?: (agentId: string, options?: { sessionKey?: SessionKey }) => Promise<any[]>;
   audioPreflight?: (msg: NormalizedMessage) => Promise<PreflightResult>;

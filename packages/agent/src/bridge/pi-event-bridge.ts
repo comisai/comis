@@ -11,6 +11,8 @@
  */
 
 import { shouldCompact } from "@earendil-works/pi-coding-agent";
+import { isRelayedBackgroundFailure } from "../safety/background-failure-attribution.js";
+import { isBreakerBlockMessage } from "../safety/tool-retry-breaker.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
@@ -1126,7 +1128,24 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // dedicated MCP classifier into the closed ErrorKind union
             // (timeout → timeout, connection/transport → dependency,
             // everything else → classifyToolError fallback).
-            if (toolErrorKind === undefined) {
+            // A breaker REFUSAL is authoritative and OVERRIDES any earlier
+            // classification. It cannot be a fallback branch: the block text
+            // quotes the original failure verbatim (`…with the same error:
+            // "…timed out…"`), so every text-sniffing classifier upstream —
+            // the failure detector as well as the MCP classifier — reads that
+            // QUOTATION and classifies the refusal as a fresh failure of the
+            // quoted kind. Gating on `toolErrorKind === undefined` therefore
+            // never fired: the detector had already set "timeout", and the
+            // refusal was published as `tool.timeout {timeoutMs: 3}` — the
+            // breaker's 3ms refusal latency dressed up as an expired 120000ms
+            // deadline. A blocked call never reached the server, so nothing
+            // about the text is evidence of a transport outcome.
+            if (!toolSuccess && isBreakerBlockMessage(errorText)) {
+              // "precondition" — a guard the call did not satisfy.
+              toolErrorKind = "precondition";
+              classifiedFailureBy = "runtime_guard";
+              transportOk = false;
+            } else if (toolErrorKind === undefined) {
               if (runtimeToolGuard !== undefined) {
                 toolErrorKind = "resource";
                 classifiedFailureBy = "runtime_guard";
@@ -1248,7 +1267,19 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // Runtime guards do not describe tool health. Feeding them into the
           // per-tool retry breaker would blame a healthy tool for a local
           // execution budget and manufacture a provider-outage diagnosis.
-          if (deps.toolRetryBreaker && classifiedFailureBy !== "runtime_guard") {
+          // The poller relaying SOMEONE ELSE's failure is the poller working
+          // correctly. Counting it blames the one tool the agent needs in order to
+          // observe outcomes, while the tool that actually failed reports success
+          // on every launch (auto-backgrounding) and never trips. The failing tool
+          // is counted instead, via background_task:failed — see
+          // background-failure-attribution.ts.
+          const relayedBackgroundFailure =
+            !toolSuccess && isRelayedBackgroundFailure(endEvent.toolName, errorText);
+          if (
+            deps.toolRetryBreaker
+            && classifiedFailureBy !== "runtime_guard"
+            && !relayedBackgroundFailure
+          ) {
             const transition = deps.toolRetryBreaker.recordResult(
               endEvent.toolName,
               (sanitizedArgs ?? {}) as Record<string, unknown>,
@@ -1376,11 +1407,22 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ? extractWebResultMetadata(endEvent.toolName, endEvent.result)
             : undefined;
 
+          // A background HAND-OFF is not an outcome: the middleware returns a
+          // non-error placeholder carrying details.status:"backgrounded", so
+          // toolSuccess is true while the tool is still running. Mark it so
+          // outcome consumers (the activity card above all) do not close a
+          // still-running tool as "completed".
+          const resultBackgrounded =
+            endEvent.result != null
+            && typeof endEvent.result === "object"
+            && ((endEvent.result as Record<string, unknown>).details as Record<string, unknown> | undefined)
+              ?.status === "backgrounded";
           deps.eventBus.emit("tool:executed", {
             toolName: endEvent.toolName,
             toolCallId: endEvent.toolCallId,
             durationMs,
             success: toolSuccess,
+            ...(resultBackgrounded ? { backgrounded: true } : {}),
             timestamp: systemNowMs(),
             agentId: deps.agentId,
             sessionKey: formatSessionKey(deps.sessionKey),

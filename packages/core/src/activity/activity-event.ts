@@ -56,7 +56,7 @@ export const ActivityEventSchema = z.strictObject({
   durationMs: z.number().nonnegative().optional(),
   errorKind: z.enum([
     "config", "network", "auth", "validation", "precondition",
-    "timeout", "resource", "dependency", "internal", "platform",
+    "timeout", "resource", "dependency", "internal", "platform", "sandbox_unavailable",
   ]).optional() satisfies z.ZodType<ErrorKind | undefined>,
 
   // --- rendering hints (advisory; not authoritative) --------------------

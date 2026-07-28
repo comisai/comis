@@ -335,26 +335,11 @@ export async function setupObservability(deps: {
     }
   }
 
-  // Log cache break events for operational observability
-  if (deps.logger) {
-    eventBus.on("observability:cache_break", (payload) => {
-      deps.logger!.info(
-        {
-          provider: payload.provider,
-          reason: payload.reason,
-          tokenDrop: payload.tokenDrop,
-          tokenDropRelative: payload.tokenDropRelative,
-          agentId: payload.agentId,
-          sessionKey: payload.sessionKey,
-          ttlCategory: payload.ttlCategory,
-          toolsChanged: payload.toolsChanged.length,
-          systemChanged: payload.changes.systemChanged,
-          modelChanged: payload.changes.modelChanged,
-        },
-        "Cache break detected",
-      );
-    });
-  }
+  // Cache-break events are logged ONCE, at the detector (`cache-state.ts`), which
+  // carries every field this wiring used to re-log. A second INFO with the same
+  // `msg` for one event made every counting lens double-count — a 9-break session
+  // read as 18 and inflated the `cache_prefix_churn` system finding accordingly.
+  // The diff-writer subscription below is the operational work that belongs here.
 
   // Persist cache break diagnostics to ~/.comis/cache-breaks/
   if (deps.dataDir && deps.logger) {

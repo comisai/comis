@@ -176,10 +176,20 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       // production for CLOUDFLARE_ACCOUNT_ID).
       // eslint-disable-next-line no-restricted-syntax -- env-handler placeholder-rejection guard (not the Pino censor literal)
       if (value === "[REDACTED]" || /^\[REDACTED[^\]]*\]$/.test(value)) {
+        // "Re-send the actual value" is unreachable advice on the common path:
+        // after the redaction pass the value is gone from the caller's context,
+        // so the only way to comply is to have the user re-transmit the
+        // credential through the conversation. Name the real cause and point at
+        // the out-of-band path. (The upstream-bug reading is still possible —
+        // this IS the last line of defense — so mention both.)
         throw new Error(
           `Refusing to persist secret "${key}": value is a session-redaction ` +
-          `placeholder, not a real secret. This indicates a replay-poisoning ` +
-          `bug upstream. Re-send the actual value.`,
+          `placeholder, not a real secret. Either an approval-gated write lost the ` +
+          `value to the redaction pass between the request and its confirmation, or ` +
+          `a replay-scrub layer upstream regressed. Do NOT re-request the credential ` +
+          `through the conversation; set it out of band with \`comis secrets set ${key}\` ` +
+          `on the host, which writes the encrypted store without routing the value ` +
+          `through a session.`,
         );
       }
 

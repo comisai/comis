@@ -356,6 +356,27 @@ export async function assembleIncidentReportFromSources(
     records.length === 0 && metadata === null && reader.listCandidateSessionKeys
       ? await reader.listCandidateSessionKeys(candidateSeed)
       : [];
+  // A NON-EMPTY `sessionKey` that resolved nothing is ALSO unresolved — and it
+  // never reached the traceId/rootRunId arms above, so `refResolutionMissed`
+  // stayed false and the empty report masqueraded as a healthy zero-activity
+  // session. Live friction (comis-moshe 2026-07-26): `explain
+  // "telegram:<user>~peer~<peer>"` CONTAINS a ':' so the CLI routes it as a
+  // sessionKey; the report came back all-zero with likelyRootCause:null while
+  // coverage.candidateSessionKeys already held the correct full key.
+  //
+  // The DISCRIMINATOR is the ranker: a session that genuinely exists but has no
+  // telemetry ranks ITSELF; a key that does not exist ranks only OTHER keys. So
+  // "ranker returned candidates, none of which is the requested key" is positive
+  // evidence the ref missed — while an empty candidate list (or one containing
+  // the request) keeps the honest clean-empty report.
+  const sessionKeyRefMissed =
+    params.sessionKey !== undefined &&
+    records.length === 0 &&
+    metadata === null &&
+    candidateSessionKeys.length > 0 &&
+    !candidateSessionKeys.includes(params.sessionKey);
+  const anyRefMissed = refResolutionMissed || sessionKeyRefMissed;
+  const missedField = sessionKeyRefMissed ? "sessionKey" : missedRefField;
   // Pass the trajectory READ count (records.length) so coverage.trajectory
   // reflects what the reader actually READ — the meta-observability point: a
   // "reader read nothing" bug surfaces as coverage.trajectory.records:0
@@ -393,7 +414,7 @@ export async function assembleIncidentReportFromSources(
     report.breakerTimeline.length === 0 &&
     report.offloads.length === 0 &&
     Object.keys(report.toolStats).length === 0;
-  if (refResolutionMissed && reportIsEmpty) {
+  if (anyRefMissed && reportIsEmpty) {
     // An honest not-found verdict + ledger note so the empty report
     // does not masquerade as a healthy zero-activity session. The bound pass
     // preserves both (it seeds truncations[] from the report and never
@@ -408,7 +429,7 @@ export async function assembleIncidentReportFromSources(
       candidateSessionKeys.length > 0
         ? {
             code: "session_not_found",
-            detail: `${missedRefField} did not resolve — it looks like a lossy/partial sessionKey (e.g. a bare chatId or the "<user>~peer~<peer>" trajectory-filename form), which routes to a traceId lookup and misses. See coverage.candidateSessionKeys for the closest real keys.`,
+            detail: `${missedField} did not resolve — it looks like a lossy/partial sessionKey (e.g. a bare chatId or the "<user>~peer~<peer>" trajectory-filename form), which matches no session on disk. See coverage.candidateSessionKeys for the closest real keys.`,
             suggestedNextSteps: [
               `re-run with one of the candidate session keys (coverage.candidateSessionKeys), e.g. "${candidateSessionKeys[0]}"`,
               "or pass the traceId from the trajectory's model.completed record",
@@ -416,16 +437,16 @@ export async function assembleIncidentReportFromSources(
           }
         : {
             code: "session_not_found",
-            detail: `${missedRefField} did not resolve to any session in the index (today/yesterday). Either the reference is wrong or older than the 2-day resolution horizon, OR the turn aborted BEFORE it recorded a session — a pre-execution fail-closed (e.g. unresolved conversation authority, a rejected identity, or tool assembly) never reaches the index, so a real failure can look like a missing reference`,
+            detail: `${missedField} did not resolve to any session in the index (today/yesterday). Either the reference is wrong or older than the 2-day resolution horizon, OR the turn aborted BEFORE it recorded a session — a pre-execution fail-closed (e.g. unresolved conversation authority, a rejected identity, or tool assembly) never reaches the index, so a real failure can look like a missing reference`,
             suggestedNextSteps: [
-              `verify the ${missedRefField}, or query by sessionKey directly`,
+              `verify the ${missedField}, or query by sessionKey directly`,
               "confirm the session ended within the last two days (the session-index lookup window)",
               `if the trigger is known to have fired, treat this as a possible pre-execution abort: grep the daemon log for this ${missedRefField} — a turn that failed before recording emits an ERROR carrying its step and errorKind but no session`,
             ],
           };
     report.truncations.push({
-      field: missedRefField,
-      reason: `${missedRefField} not found in session index (today/yesterday) — empty report is unresolved, not a clean session`,
+      field: missedField,
+      reason: `${missedField} not found in session index (today/yesterday) — empty report is unresolved, not a clean session`,
     });
   } else {
     // Thread the mapped terminal endReason (the NAMED degradation cause)

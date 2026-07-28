@@ -22,6 +22,13 @@ crossing account, thread, or conversation boundaries.
 
 The `message` tool supports **7 actions** -- `send`, `reply`, `react`, `edit`, `delete`, `fetch`, and `attach`. Comis verifies the requested coordinates against the turn's authoritative endpoint, then dispatches to its exact channel adapter instance. Not every action is supported on every platform (see the [capability matrix](#per-channel-capability-matrix) below); the tool returns a structured error if you ask for something the channel cannot do.
 
+<Note>
+The turn's final assistant text is delivered automatically. After `message`
+already sends or replies with the user-facing content, the agent should finish
+with `NO_REPLY`; restating the same content as the final response sends a second
+message. `NO_REPLY` suppresses only that automatic final delivery.
+</Note>
+
 All actions require the `channel_type` parameter to specify which platform adapter handles the request. This is a required string identifying the channel type (e.g., `telegram`, `discord`, `slack`, `whatsapp`, `signal`, `imessage`, `line`, `irc`, `email`).
 
 ### Quick Reference

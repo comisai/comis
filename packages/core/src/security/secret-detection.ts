@@ -230,12 +230,94 @@ const SECRET_FIELD_NAMES: ReadonlySet<string> = new Set([
   "api-key",
 ]);
 
+// ── Keyword-boundary matcher (closes the end-anchor hole) ──
+
+/**
+ * Segments whose bare presence marks a credential name. Plurals of the
+ * unambiguous keywords are included (`secrets`, `passwords`, `credentials`);
+ * `tokens`/`keys` are NOT — the plural token family is counting vocabulary
+ * (`max_tokens`, `total_tokens`) and `keys` is a collection name.
+ */
+/**
+ * Single segments whose bare presence marks a credential name. Deliberately
+ * TINY: bare `secret`/`password`/`token`/`key` segments appear constantly in
+ * META names — flags and components ABOUT credentials, not credentials
+ * (`writeSecretGuard`, `secretName`, `passwordResetRequired`, `tokenizer`) —
+ * and a name-half false positive is not harmless: it REDACTS the value, which
+ * corrupts tool contracts and config (the `range_token` incident class; adding
+ * bare `secret` here false-flagged the stock `security.writeSecretGuard`
+ * boolean within one test cycle). `apikey` is the one collapsed word specific
+ * enough to stand alone.
+ */
+const CREDENTIAL_SEGMENTS: ReadonlySet<string> = new Set(["apikey"]);
+
+/**
+ * Adjacent-pair rules: an AMBIGUOUS keyword counts only when the segment
+ * BEFORE it gives it credential meaning. This closes the END-ANCHOR hole
+ * (`AWS_BEARER_TOKEN_BEDROCK` → `bearer`+`token` mid-name;
+ * `SECRETS_MASTER_KEY` → `master`+`key`) without the `.*token.*` widening
+ * that would false-redact counting vocabulary, and without bare-keyword
+ * matches that would false-redact meta names.
+ */
+const TOKEN_QUALIFIERS: ReadonlySet<string> = new Set([
+  "bearer", "auth", "access", "refresh", "session", "gateway", "bot", "id",
+  "api", "oauth", "csrf", "jwt",
+]);
+const KEY_QUALIFIERS: ReadonlySet<string> = new Set([
+  "api", "private", "master", "signing", "encryption", "secret",
+]);
+const SECRET_QUALIFIERS: ReadonlySet<string> = new Set([
+  "client", "app", "webhook", "hmac", "signing",
+]);
+const PASSWORD_QUALIFIERS: ReadonlySet<string> = new Set([
+  "user", "db", "database", "admin", "root", "smtp", "proxy", "vendor",
+]);
+
+function fieldNameSegments(name: string): string[] {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[_\-.\s]+/)
+    .map((seg) => seg.toLowerCase())
+    .filter((seg) => seg.length > 0);
+}
+
+/**
+ * True when the segmented field name carries a credential keyword — including
+ * MID-NAME, which the end-anchored pattern structurally missed
+ * (`AWS_BEARER_TOKEN_BEDROCK`, `SECRETS_MASTER_KEY`, `SECRET_KEY_OLD`).
+ */
+function hasCredentialSegments(name: string): boolean {
+  const segs = fieldNameSegments(name);
+  for (let i = 0; i < segs.length; i += 1) {
+    const seg = segs[i]!;
+    if (CREDENTIAL_SEGMENTS.has(seg)) return true;
+    if (i === 0) continue;
+    const prev = segs[i - 1]!;
+    if (seg === "token" && TOKEN_QUALIFIERS.has(prev)) return true;
+    if (seg === "key" && KEY_QUALIFIERS.has(prev)) return true;
+    if (seg === "secret" && SECRET_QUALIFIERS.has(prev)) return true;
+    if (seg === "password" && PASSWORD_QUALIFIERS.has(prev)) return true;
+  }
+  return false;
+}
+
 /**
  * True if a FIELD NAME implies a secret:
- * `SECRET_FIELD_PATTERN` ∪ the header set above, case-insensitive.
+ * `SECRET_FIELD_PATTERN` ∪ the header set ∪ the keyword-BOUNDARY matcher,
+ * case-insensitive.
+ *
+ * The boundary matcher closes the
+ * end-anchor hole (a credential keyword with a SUFFIX after it was invisible
+ * to the `$`-anchored pattern) without the wildcard widening that would
+ * false-redact counting vocabulary.
  */
 export function isSecretFieldName(name: string): boolean {
-  return SECRET_FIELD_PATTERN.test(name) || SECRET_FIELD_NAMES.has(name.toLowerCase());
+  const lower = name.toLowerCase();
+  return (
+    SECRET_FIELD_PATTERN.test(name)
+    || SECRET_FIELD_NAMES.has(lower)
+    || hasCredentialSegments(name)
+  );
 }
 
 // ── Env-ref exemption (reuses the EXPORTED env-substitution patterns) ──

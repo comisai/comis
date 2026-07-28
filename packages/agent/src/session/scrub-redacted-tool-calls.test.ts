@@ -272,3 +272,89 @@ describe("scrubRedactedToolCalls", () => {
     expect(rewriteCalls).toBe(0);
   });
 });
+
+describe("scrubRedactedToolCalls — approval-gated secrets keep their recovery handle", () => {
+  // Observed live. The user pasted MCP credentials; the agent called env_set three
+  // times; each returned requiresConfirmation with a `pending_action_id` and a hint
+  // saying to re-call with that id and _confirmed:true, OMITTING the value (the
+  // value is replayed server-side precisely because it gets redacted from context).
+  // The user replied "yes" — and the agent had nothing to confirm with, because this
+  // scrub had replaced the RESULT (which held the id) with an opaque placeholder and
+  // told the model the action "completed". It listed secrets, found none, and asked
+  // the user to re-paste the password in cleartext on Telegram: the exact deadlock
+  // the pending_action_id exists to break.
+  //
+  // The tool_use ARGS hold the secret and must still be scrubbed. The RESULT holds
+  // no secret — only an opaque server-side handle — so the handle must survive.
+  const gatedResultText = JSON.stringify({
+    requiresConfirmation: true,
+    actionType: "env.set",
+    pending_action_id: "c7a047d5-4023-462d-a9b6-03568c4edbb1",
+    hint: "NOT performed — present it to the user; re-call with _confirmed: true.",
+  });
+
+  function gatedEntries() {
+    return [
+      msg("user", [{ type: "text", text: "store these" }]),
+      msg("assistant", [
+        {
+          type: "toolCall",
+          id: "tc_1",
+          name: "gateway",
+          arguments: { action: "env_set", env_key: "VENDOR_API_PASSWORD", env_value: "[REDACTED]" },
+        },
+      ]),
+      toolResult("tc_1", gatedResultText),
+    ];
+  }
+
+  it("preserves the pending_action_id so the confirm can still be issued", () => {
+    const fileEntries = gatedEntries();
+    const result = scrubRedactedToolCalls({ fileEntries } as any);
+    expect(result.scrubbed).toBe(true);
+
+    const replaced = (fileEntries[2] as any).message.content[0].text as string;
+    expect(replaced).toContain("c7a047d5-4023-462d-a9b6-03568c4edbb1");
+    expect(replaced).toMatch(/_confirmed/);
+  });
+
+  it("still strips the secret VALUE from the replayed tool_use args", () => {
+    const fileEntries = gatedEntries();
+    scrubRedactedToolCalls({ fileEntries } as any);
+    const blob = JSON.stringify(fileEntries);
+    expect(blob).not.toContain("env_value");
+    // The key name is fine to keep; the value never reappears.
+    expect(blob).toContain("VENDOR_API_PASSWORD");
+  });
+
+  it("does NOT tell the model a gated action completed — it never ran", () => {
+    const fileEntries = gatedEntries();
+    scrubRedactedToolCalls({ fileEntries } as any);
+    const summary = (fileEntries[1] as any).message.content[0].text as string;
+    expect(summary).not.toMatch(/completed/i);
+    expect(summary).not.toMatch(/do not retry/i);
+    // …and it must say what IS still required.
+    expect(summary).toMatch(/confirm/i);
+  });
+
+  it("an UNGATED redacted call still reports completion (no behaviour change)", () => {
+    const fileEntries = [
+      msg("user", [{ type: "text", text: "store it" }]),
+      msg("assistant", [
+        {
+          type: "toolCall",
+          id: "tc_9",
+          name: "gateway",
+          arguments: { action: "env_set", env_key: "PLAIN_KEY", env_value: "[REDACTED]" },
+        },
+      ]),
+      toolResult("tc_9", JSON.stringify({ ok: true })),
+    ];
+    scrubRedactedToolCalls({ fileEntries } as any);
+    const summary = (fileEntries[1] as any).message.content[0].text as string;
+    expect(summary).toMatch(/completed/i);
+    expect((fileEntries[2] as any).message.content[0].text).toBe(
+      "(prior secret operation — no output shown)",
+    );
+  });
+});

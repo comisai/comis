@@ -59,8 +59,9 @@ export function classifyMcpErrorType(errorText: string | undefined): string {
 /**
  * Convert a basic JSON Schema definition to a TypeBox TSchema.
  *
- * Handles primitive types, arrays, and objects. Complex schema features
- * (oneOf, allOf, $ref, etc.) fall back to Type.Any().
+ * Handles primitive types, arrays, objects, and the composition keywords
+ * anyOf / oneOf / allOf. `$ref` still falls back to Type.Any() — resolving it
+ * needs the document root, which this function does not receive.
  *
  * This is intentionally simple -- MCP tool schemas are typically flat
  * objects with primitive properties. Complex schemas still work but
@@ -68,29 +69,60 @@ export function classifyMcpErrorType(errorText: string | undefined): string {
  */
 export function jsonSchemaToTypeBox(schema: Record<string, unknown>): TSchema {
   const type = schema.type;
+  const annotations = carriedKeywords(schema);
+
+  // Composition keywords, BEFORE the `type` checks — a composed schema often
+  // carries no top-level `type` at all, so it used to reach the Type.Any()
+  // fallback and erase the shape completely: the model was told nothing, local
+  // validation accepted any value, and a wrong type only surfaced as an opaque
+  // MCP -32602 from the server. Live: an object-typed parameter sent as a
+  // string, waved through locally, rejected twice upstream.
+  if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
+    const variants = (schema.oneOf as Array<Record<string, unknown>>).map(jsonSchemaToTypeBox);
+    return Type.Unsafe({ ...annotations, oneOf: variants });
+  }
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
+    const variants = (schema.anyOf as Array<Record<string, unknown>>).map(jsonSchemaToTypeBox);
+    return Type.Union(variants, annotations);
+  }
+  if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
+    const parts = (schema.allOf as Array<Record<string, unknown>>).map(jsonSchemaToTypeBox);
+    return Type.Intersect(parts, annotations);
+  }
+
+  if (Array.isArray(type) && type.length > 0) {
+    return Type.Union(
+      type.map((variant) => jsonSchemaToTypeBox({ ...schema, type: variant })),
+      annotations,
+    );
+  }
+
+  if (type === "null") {
+    return Type.Null(annotations);
+  }
 
   if (type === "string") {
-    return Type.String();
+    return Type.String(annotations);
   }
 
   if (type === "number") {
-    return Type.Number();
+    return Type.Number(annotations);
   }
 
   if (type === "integer") {
-    return Type.Integer();
+    return Type.Integer(annotations);
   }
 
   if (type === "boolean") {
-    return Type.Boolean();
+    return Type.Boolean(annotations);
   }
 
   if (type === "array") {
     const items = schema.items as Record<string, unknown> | undefined;
     if (items) {
-      return Type.Array(jsonSchemaToTypeBox(items));
+      return Type.Array(jsonSchemaToTypeBox(items), annotations);
     }
-    return Type.Array(Type.Any());
+    return Type.Array(Type.Any(), annotations);
   }
 
   if (type === "object") {
@@ -98,7 +130,7 @@ export function jsonSchemaToTypeBox(schema: Record<string, unknown>): TSchema {
     const required = (schema.required as string[]) ?? [];
 
     if (!properties) {
-      return Type.Object({});
+      return Type.Object({}, annotations);
     }
 
     const typeboxProps: Record<string, TSchema> = {};
@@ -107,11 +139,51 @@ export function jsonSchemaToTypeBox(schema: Record<string, unknown>): TSchema {
       typeboxProps[key] = required.includes(key) ? converted : Type.Optional(converted);
     }
 
-    return Type.Object(typeboxProps);
+    return Type.Object(typeboxProps, annotations);
+  }
+
+  // A typeless `{enum:[...]}` is legal JSON Schema and common in MCP servers.
+  // Carrying the keywords here keeps the allowed values instead of erasing
+  // them into an untyped Any.
+  if (Object.keys(annotations).length > 0) {
+    return Type.Unsafe(annotations);
   }
 
   // Fallback for unknown or complex schema types
   return Type.Any();
+}
+
+/**
+ * JSON Schema keywords copied through the conversion verbatim.
+ *
+ * Deliberately a copy-through list, not an interpretation: TypeBox stores
+ * unknown options as plain JSON Schema keywords, so a keyword listed here
+ * survives into the tool's published `parameters` untouched. `type`,
+ * `properties`, `items` and `required` are excluded because the conversion
+ * above reconstructs them structurally.
+ */
+const CARRIED_SCHEMA_KEYWORDS = [
+  // Numeric bounds. Their loss is what made a model guess `page_size` and
+  // `top_n` and take an MCP -32602 rejection for each guess.
+  "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+  // Value sets — an out-of-range enum is unguessable without them.
+  "enum", "const",
+  // String shape.
+  "minLength", "maxLength", "pattern", "format",
+  // Array/object cardinality.
+  "minItems", "maxItems", "uniqueItems", "minProperties", "maxProperties",
+  // The tool's own prose and defaults: the model reads these as guidance, and
+  // dropping them silently discarded the server's advice about its own inputs.
+  "description", "title", "default", "examples",
+] as const;
+
+/** Pick the carried keywords present on a source schema. */
+function carriedKeywords(schema: Record<string, unknown>): Record<string, unknown> {
+  const carried: Record<string, unknown> = {};
+  for (const keyword of CARRIED_SCHEMA_KEYWORDS) {
+    if (schema[keyword] !== undefined) carried[keyword] = schema[keyword];
+  }
+  return carried;
 }
 
 // ---------------------------------------------------------------------------

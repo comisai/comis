@@ -15,9 +15,14 @@
 import { describe, it, expect } from "vitest";
 import {
   buildOutputStarvedAnnotation,
+  buildToolFailureNotice,
+  buildPromptTimeoutReply,
+  buildToolFailureNoticeUnnamed,
   buildContextExhaustedReply,
   buildLoopDetectedReply,
   buildDegradedReply,
+  catalogFromLocalePacks,
+  LOCALE_MESSAGE_IDS,
 } from "./degraded-reply.js";
 import {
   selectOutputStarvedAnnotation,
@@ -295,5 +300,68 @@ describe("builders consume the resolved language tag (delegate to i18n)", () => 
     expect(buildDegradedReply("loop_detected", { language: "ru", traceId: "z" })).toBe(
       selectLoopDetectedReply("ru", { traceId: "z" }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Nameless tool-failure notice
+// ---------------------------------------------------------------------------
+
+/**
+ * The named notice ends with an em-dash because the caller appends the failing
+ * tool's name verbatim. When the only unrecovered failure is the background
+ * poller — which must never be named as the culprit, since it merely relays
+ * another tool's failure — there is no name to append, and the reply ended in a
+ * dangling "incomplete — " with nothing after it.
+ *
+ * Seen live at the end of a Hebrew answer about a timed-out report tool.
+ */
+describe("buildToolFailureNoticeUnnamed", () => {
+  it("ends as a complete sentence with no dangling dash", () => {
+    const text = buildToolFailureNoticeUnnamed();
+    expect(text.trimEnd()).not.toMatch(/[—-]$/);
+    expect(text.trimEnd()).toMatch(/\.$/);
+  });
+
+  it("still separates itself from the preceding reply", () => {
+    expect(buildToolFailureNoticeUnnamed().startsWith("\n\n")).toBe(true);
+  });
+
+  it("differs from the named variant", () => {
+    expect(buildToolFailureNoticeUnnamed()).not.toBe(buildToolFailureNotice());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prompt-timeout reply
+// ---------------------------------------------------------------------------
+
+/**
+ * The whole-turn / stall-budget timeout reply was a hard-coded English literal
+ * in error-classifier.ts, delivered verbatim regardless of the conversation's
+ * language — the same gap already closed for pipeline_timeout. A stalled turn is
+ * one of the few messages a user is guaranteed to see, so it is exactly the one
+ * that must live inside the localizable platform-reply set.
+ *
+ * Observed live: a Hebrew conversation whose 404s stall produced
+ * "The request took too long to process. Please try again with a simpler message."
+ */
+describe("buildPromptTimeoutReply", () => {
+  it("returns the canonical English text with no locale configured", () => {
+    expect(buildPromptTimeoutReply()).toContain("took too long");
+  });
+
+  it("is a member of the locale message set", () => {
+    expect(LOCALE_MESSAGE_IDS).toContain("prompt_timeout");
+  });
+
+  it("uses an operator-supplied pack for the resolved locale", () => {
+    const catalog = catalogFromLocalePacks({ he: { prompt_timeout: "לקח יותר מדי זמן" } });
+    expect(buildPromptTimeoutReply("he", catalog)).toBe("לקח יותר מדי זמן");
+  });
+
+  it("falls back to English for a locale with no pack", () => {
+    const catalog = catalogFromLocalePacks({ he: { prompt_timeout: "x" } });
+    expect(buildPromptTimeoutReply("fr", catalog)).toContain("took too long");
   });
 });

@@ -27,6 +27,33 @@ function noopLogger() {
 }
 
 describe("classifyPrefixMutation — diagnostic honesty", () => {
+
+  // LIVE INCIDENT (comis-moshe 2026-07-26): 30 "Unstable prefix detected" WARNs, and
+  // 29 of the 31 counted `cache_prefix_churn` signals were labelled "unknown" — while
+  // the signature it printed already carried the answer:
+  //   assistant|b1|t0|r0|len590 -> assistant|b2|t0|r0|len590
+  //   assistant|b1|t0|r0|len240 -> assistant|b2|t0|r0|len30
+  // The BLOCK COUNT moved. `parseSig` never parsed `b`, so a pure block-count
+  // reshape (same role, thinking unchanged, <500 char delta) fell through to
+  // "unknown" — leaving the dominant churn cause unnamed on every occurrence.
+  it("names a block-count reshape instead of returning 'unknown' (same role, same length)", () => {
+    const msg = { role: "assistant", content: [{ type: "text", text: "x" }] };
+    const cls = classifyPrefixMutation(msg, "assistant|b1|t0|r0|len590", "assistant|b2|t0|r0|len590");
+    expect(cls).not.toBe("unknown");
+    expect(cls).toContain("block-count-changed");
+  });
+
+  it("names a block-count reshape when the length ALSO moved but under the content-cleared threshold", () => {
+    const msg = { role: "assistant", content: [{ type: "text", text: "x" }] };
+    const cls = classifyPrefixMutation(msg, "assistant|b1|t0|r0|len240", "assistant|b2|t0|r0|len30");
+    expect(cls).toContain("block-count-changed");
+  });
+
+  it("does NOT invent the class when the block count is stable", () => {
+    const msg = { role: "assistant", content: [{ type: "text", text: "x" }] };
+    const cls = classifyPrefixMutation(msg, "assistant|b2|t0|r0|len100", "assistant|b2|t0|r0|len100");
+    expect(cls).not.toContain("block-count-changed");
+  });
   it("labels a ROLE CHANGE (assistant→user) as a structural index-shift, not datetime-preamble", () => {
     // The exact comis-harel sig: an empty assistant tool-use turn at an index
     // becomes a user turn carrying the dynamic preamble (which contains the

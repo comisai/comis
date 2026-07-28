@@ -15,8 +15,11 @@ const MARKDOWN_LINK_RE = /\[[^\]]*\]\((https?:\/\/\S+?)\)/g;
 /** Regex to find bare URLs in text */
 const BARE_URL_RE = /https?:\/\/\S+/g;
 
-/** Characters that commonly trail URLs in natural text */
-const TRAILING_PUNCTUATION = new Set([".", ",", ")", "]", ">", ";", "!"]);
+/** Characters that commonly trail URLs in natural text — including the quote
+ *  family: a URL pasted inside a JSON/YAML/code snippet carries its closing
+ *  quote into the `\S+` match (live: a config snippet yielded a fetch of
+ *  `…/api/v2%22` — the encoded trailing `"` — which 404'd). */
+const TRAILING_PUNCTUATION = new Set([".", ",", ")", "]", ">", ";", "!", '"', "'", "`", "}"]);
 
 /** Hostnames considered localhost / loopback */
 const LOCALHOST_NAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);

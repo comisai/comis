@@ -53,6 +53,20 @@ export interface DeliveryFailureReceipt {
  */
 export type DeliveryStageResult = Result<FinalDeliveryReceipt, DeliveryFailureReceipt>;
 
+/**
+ * The fixed `reason` for a `failure` outcome that carries NO failed activity
+ * event — the turn failed, but nothing on the user-visible tool timeline can be
+ * named as the cause.
+ *
+ * Without it, `failureLabel()` renders the bare `"<marker> {errorKind}"`, which
+ * reached a real user as a chat bubble whose entire text was "❌ dependency"
+ * (comis-moshe 2026-07-26). That happened because every tool that actually failed
+ * had been closed `status:"completed"` at background hand-off, leaving
+ * `failedEvents: []` on a genuine failure. A closed-vocabulary named constant —
+ * never raw provider/internal text.
+ */
+export const UNATTRIBUTED_FAILURE_REASON = "a step failed outside the tool timeline";
+
 export type TurnOutcome =
   | { kind: "success"; trivial: boolean; delivery: FinalDeliveryReceipt }
   | { kind: "success_with_recovered_failures"; trivial: false;
@@ -66,7 +80,15 @@ export type TurnOutcome =
        * rendered status reads truthfully instead of the bare errorKind. A
        * closed-vocabulary named-constant string — never raw provider/internal text.
        */
-      reason?: string }
+      reason?: string;
+      /**
+       * Present when the final answer was fully delivered despite an execution
+       * error. The coordinator reclassifies only when the activity timeline also
+       * proves that each failed tool later completed successfully. Never set for
+       * a resource abort (`reason` present): a stopped run must render as stopped
+       * even when partial text delivered.
+       */
+      delivery?: FinalDeliveryReceipt }
   | { kind: "silent"; reason: "SILENT" | "HEARTBEAT_OK" | "NO_REPLY" }
   | { kind: "aborted"; reason: "user_cancel" | "timeout" | "fatal" };
 

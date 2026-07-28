@@ -72,4 +72,77 @@ describe("resolveClampedFreshTailTurns", () => {
     expect(result).toBeGreaterThanOrEqual(1);
     expect(result).toBeLessThanOrEqual(30);
   });
+
+  // ---------------------------------------------------------------------------
+  // THE PRODUCTION PATH (comis-moshe 2026-07-26).
+  //
+  // Every test above pins the clamp with an EXPLICIT avgTokensPerStep — but
+  // `lcd-assembler.ts` calls it with TWO arguments, so production always takes
+  // the auto-estimate branch. That branch estimated a step at `W/20` — 5% of the
+  // window — which SCALES WITH W, so the ratio 0.3W / (W/20) cancels and the
+  // result was the constant 6 for EVERY finite window and EVERY configured
+  // value. `contextEngine.freshTailTurns` (schema 1..50, default 8) was
+  // therefore unreachable above 6 on every deployment.
+  //
+  // Live consequence: on a 1M-token window with 87,740 tokens in use (9%), a turn
+  // with 4 background-tool cycles (8 steps) slid the user's ORIGINATING request out
+  // of the verbatim tail — and the agent apologized to the user for work they had
+  // explicitly requested. The two smoke tests above could not catch it: both
+  // assertions (>=1, <=configured) hold for a constant 6.
+  // ---------------------------------------------------------------------------
+
+  it("does NOT clamp the DEFAULT 8 on a frontier 1M window (the live shape)", () => {
+    expect(resolveClampedFreshTailTurns(1_000_000, 8)).toBe(8);
+  });
+
+  it("honors a RAISED freshTailTurns on a large window", () => {
+    expect(resolveClampedFreshTailTurns(1_000_000, 20)).toBe(20);
+    expect(resolveClampedFreshTailTurns(1_000_000, 50)).toBe(50);
+  });
+
+  it("does not clamp the default on the common 128K/200K windows", () => {
+    expect(resolveClampedFreshTailTurns(128_000, 8)).toBe(8);
+    expect(resolveClampedFreshTailTurns(200_000, 8)).toBe(8);
+  });
+
+  it("is NOT window-independent — a bigger window must afford at least as many steps", () => {
+    // The bug's signature: the auto-estimate returned the SAME number for every
+    // window. Monotonic non-decreasing in W is the invariant that kills it.
+    const windows = [8_000, 32_000, 128_000, 200_000, 1_000_000, 2_000_000];
+    const results = windows.map((w) => resolveClampedFreshTailTurns(w, 50));
+    for (let i = 1; i < results.length; i += 1) {
+      expect(results[i]!).toBeGreaterThanOrEqual(results[i - 1]!);
+    }
+    // …and it must actually VARY (a constant is monotonic too).
+    expect(new Set(results).size).toBeGreaterThan(1);
+  });
+
+  it("STILL clamps on a genuinely small window (the clamp keeps its purpose)", () => {
+    // A tiny window cannot let the verbatim tail eat it.
+    expect(resolveClampedFreshTailTurns(4_096, 8)).toBeLessThan(8);
+    expect(resolveClampedFreshTailTurns(4_096, 8)).toBeGreaterThanOrEqual(1);
+    // …and it floors at 1, never 0.
+    expect(resolveClampedFreshTailTurns(1_000, 8)).toBe(1);
+  });
+
+  it("is NON-REGRESSING at the smallest viable window: 8192 still yields the previous 6", () => {
+    // The calibration constant is chosen so no existing deployment loses tail
+    // steps — floor(0.3 * 8192 / 400) = 6, exactly what the buggy constant gave.
+    expect(resolveClampedFreshTailTurns(8_192, 8)).toBe(6);
+  });
+
+  it("never returns FEWER steps than the pre-fix constant 6 at any viable window", () => {
+    for (const w of [8_192, 16_000, 32_000, 128_000, 200_000, 1_000_000]) {
+      expect(resolveClampedFreshTailTurns(w, 8)).toBeGreaterThanOrEqual(Math.min(8, 6));
+    }
+  });
+
+  it("never exceeds the configured value, on any window", () => {
+    for (const w of [1_000, 8_000, 32_000, 128_000, 1_000_000]) {
+      for (const c of [1, 4, 8, 20, 50]) {
+        expect(resolveClampedFreshTailTurns(w, c)).toBeLessThanOrEqual(c);
+        expect(resolveClampedFreshTailTurns(w, c)).toBeGreaterThanOrEqual(1);
+      }
+    }
+  });
 });

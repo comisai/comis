@@ -10990,6 +10990,10 @@
             "totalTokens": {
               "type": "number"
             },
+            "tokenBasis": {
+              "type": "string",
+              "const": "input+output+cache"
+            },
             "cacheReadRatio": {
               "type": "number"
             }
@@ -11391,6 +11395,20 @@
                 "downshifted",
                 "exhausted"
               ]
+            },
+            "freshTailSteps": {
+              "type": "number"
+            },
+            "freshTailStepsConfigured": {
+              "type": "number"
+            },
+            "originatingRequestRetained": {
+              "type": "boolean"
+            },
+            "freshTailTrimmedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
             }
           },
           "required": [
@@ -12460,6 +12478,12 @@
             },
             "deliveredWithToolErrors": {
               "type": "number"
+            },
+            "hardDegraded": {
+              "type": "number"
+            },
+            "hardDegradedRate": {
+              "type": "number"
             }
           },
           "required": [
@@ -12530,6 +12554,10 @@
             },
             "totalTokens": {
               "type": "number"
+            },
+            "tokenBasis": {
+              "type": "string",
+              "const": "input+output"
             },
             "offSessionUsd": {
               "type": "number"

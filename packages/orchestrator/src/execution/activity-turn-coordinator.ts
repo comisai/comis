@@ -12,8 +12,8 @@
  *      injected `TimerPort` (`handle.cancel()` for cancellation — never a raw
  *      timer global),
  *   3. on `finalize(outcome)` enforces the delete gate:
- *      • any observed `ActivityEvent{status:"failed"}` on a DELIVERED success
- *        reclassifies the outcome to `success_with_recovered_failures` — the
+ *      • a delivered success with observed failures reclassifies the outcome
+ *        to `success_with_recovered_failures` — the
  *        renderer's success-shaped cleanup runs (a recovered turn never keeps
  *        a "❌ {errorKind}" pill above its delivered answer) and the failed
  *        events ride the outcome + the `activity:turn_finalized` event as
@@ -51,7 +51,7 @@ import type {
   ComisLogger,
   ErrorKind,
 } from "@comis/core";
-import { isNonEmptyEvents, redactValue, toSafeErrorLogString } from "@comis/core";
+import { isNonEmptyEvents, redactValue, toSafeErrorLogString, UNATTRIBUTED_FAILURE_REASON } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { fromPromise, suppressError, tryCatch } from "@comis/shared";
 import { randomUUID } from "node:crypto";
@@ -573,6 +573,49 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
           recoveredFailures: failedEvents,
         };
       }
+    }
+
+    // (1a2) A failure whose answer was fully delivered, with every observed
+    // failure followed by a successful completion of the same tool, is a
+    // SUCCESS WITH RECOVERED FAILURES:
+    // the user's chat shows the answer (no failure pill), while the failed
+    // events ride the outcome + `activity:turn_finalized` as evidence. This is
+    // Delivery without matching recovery evidence keeps the failure.
+    if (effective.kind === "failure" && effective.delivery !== undefined) {
+      const failedEvents = events.filter((e) => e.status === "failed");
+      const everyFailureRecovered = failedEvents.length > 0 && failedEvents.every((failed) => {
+        const failureIndex = events.indexOf(failed);
+        return events.slice(failureIndex + 1).some((later) =>
+          later.status === "completed"
+          && later.kind === failed.kind
+          && later.toolName !== undefined
+          && later.toolName === failed.toolName,
+        );
+      });
+      if (everyFailureRecovered && isNonEmptyEvents(failedEvents)) {
+        effective = {
+          kind: "success_with_recovered_failures",
+          trivial: false,
+          delivery: effective.delivery,
+          recoveredFailures: failedEvents,
+        };
+      }
+    }
+
+    // (1b) An unattributed FAILURE must still read truthfully. A `failure` with
+    // zero failed events cannot name a tool, so `failureLabel()` renders the bare
+    // "❌ {errorKind}" — which reached a real user as a chat bubble whose entire
+    // text was "❌ dependency" (comis-moshe 2026-07-26: the four MCP tools that
+    // failed had each been closed status:"completed" at background hand-off, so
+    // failedEventCount was 0 on a genuine failure). Fill the closed-vocabulary
+    // reason the union already carries for exactly this purpose. An explicit
+    // reason (a resource abort's own wording) is never overwritten.
+    if (
+      effective.kind === "failure"
+      && effective.failedEvents.length === 0
+      && (effective.reason === undefined || effective.reason.length === 0)
+    ) {
+      effective = { ...effective, reason: UNATTRIBUTED_FAILURE_REASON };
     }
 
     // Announce the EFFECTIVE terminal surface state (the user-visible pill's

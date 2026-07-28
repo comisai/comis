@@ -169,6 +169,16 @@ Do not start the real test plan until ALL hold:
 - **`pkill -f "daemon.js"` self-matches your ssh shell** (its argv contains the pattern) → kills the shell → ssh exit 255. Always anchor: `pkill -9 -f "^node .*daemon\.js"`. **Same trap for the emulator:** `pkill -f "vps-emu"` self-kills the ssh shell running it (argv has "vps-emu.ts") — anchor `pkill -9 -f "^node .*vps-emu"`. And a backgrounded `nohup/setsid … &` emulator dies on ssh close → launch it in **tmux**. Both are baked into **`scripts/restart-emu.sh`** (use it; the port is kernel-allocated, so re-wire after: `node /root/wire-emu.mjs && bash /root/restart-daemon.sh`).
 - **Severing the LCD needs the FORMATTED session key, not the trajectory-filename form.** `session.reset_conversation {session_key}` wants `default:<chatId>:<chatId>:peer:<chatId>` (read it from `db.mjs sql "SELECT DISTINCT session_key FROM lcd_messages"`), NOT the `~`-separated trajectory filename (`<chatId>~peer~<chatId>`). On a key-format mismatch it returns `lcdRowsDeleted:0` **silently** (no error) → the LCD is NOT cleared and a "cross-session" recall test is invalid. Verify `lcdRowsDeleted>0` after a sever.
 - **Media OUTPUT delivery (image-gen/TTS/video-gen) is observable on the channel oracle** — the emulator records `sendPhoto`/`sendAudio`/`sendVideo` (with `mediaKind`), not just `sendVoice`/`sendDocument`. A media-only turn delivers no text, so `drive.mjs` prints `[NO SUBSTANTIVE ANSWER]` — read the outbound (`…/outbound` shows the `sendAudio`/`sendPhoto`) not the drive's text verdict.
+- **A symbol grep run as ROOT returns a FALSE NEGATIVE — `/home/comis` is `0700`.** The
+  HEAD-only symbol proof (§2b) must run as the service user:
+  `ssh $VPS 'sudo -u comis -i bash -s' <<'EOS' … EOS`. Run as root it prints
+  `Permission denied` on stderr and `grep -rl … | wc -l` reports **0 files** on stdout —
+  which reads exactly like "the deploy didn't land / the build is stale" and sends you
+  chasing a non-existent packaging bug. Verify the tarball too when in doubt:
+  `tar xzOf packages/comis/comisai-*.tgz 'package/node_modules/@comis/<pkg>/dist/<file>.js' | grep -c <symbol>`.
+- **`sudo -u comis -i bash -lc "…"` mangles multi-line loops** (the newlines collapse and
+  you get `syntax error near unexpected token 'do'`). Use a heredoc into
+  `bash -s` instead — same trap family as the `su - comis -c` quoting note below.
 - **SSH drops on long sleeps** → add `-o ServerAliveInterval=5`. macOS has no `timeout`.
 - **`pgrep -f daemon.js` false-matches** your `bash -lc`/`sudo` wrappers → filter `grep -vE "bash|sudo|grep"`.
 - **Don't chase an `effectiveWindow:8192` viable-floor WARN** — for a catalog-unknown model it's usually an invalid/mistyped model, not a window bug. Pick a valid model.

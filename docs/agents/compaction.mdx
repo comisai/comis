@@ -361,9 +361,11 @@ A three-tier escalation ensures summaries always fit within their target size:
 - **Truncation** -- A bounded count-only note (marker-prefixed, guaranteed to
   fit and to shrink below the source it replaces).
 
-The most recent turns (the "fresh tail", default 8 turns) are always protected
-from compaction, ensuring your agent has full, uncompressed access to the latest
-exchanges.
+The "fresh tail" starts with a configured floor of recent steps plus every
+message newer than the store's persisted horizon. If residual token bounding is
+needed, completed tool segments may be trimmed, but the current turn's
+originating request stays pinned. See the [`freshTailTurns` config contract](/reference/config-yaml#context-engine-agents-contextengine)
+for the small-window clamp and residual-token rules.
 
 One size guard applies inside the protected fresh tail: a single message whose
 text alone approaches the model's effective context window (an oversized tool
@@ -491,7 +493,7 @@ change anything.
 | `contextEngine.observationDeactivationChars` | number | `80000` | Character threshold to deactivate observation masking (20K-500K) |
 | `contextEngine.ephemeralKeepWindow` | number | `10` | Recent ephemeral tool results to preserve from masking (1-50) |
 | `contextEngine.contextThreshold` | number | `0.75` | **DAG mode:** context-utilization fraction (of the turn's effective budget window — the reconciled context window under any capability-class cap) that triggers a leaf-summarization pass at the end of a turn (0.1-0.95) |
-| `contextEngine.freshTailTurns` | number | `8` | **DAG mode:** most-recent steps (assistant + tool round-trips) always kept verbatim and never summarized/evicted (1-50) |
+| `contextEngine.freshTailTurns` | number | `8` | **DAG mode:** configured step floor for the verbatim tail (1-50). See the [config reference](/reference/config-yaml#context-engine-agents-contextengine) for the effective-tail, persisted-horizon, and residual-token rules. |
 | `contextEngine.leafChunkTokens` | number | `20000` | **DAG mode:** token cap for the oldest out-of-tail chunk summarized into one leaf summary (1K-100K); clamped at runtime to the resolved summarizer model's window — the smaller of its configured window and the probed served window when the summarizer runs on the served-bound provider — minus the summary target, template overhead, and previous-summary size, so a small compaction summarizer or a served-bound primary is never fed an over-window chunk; a single message larger than the clamped cap is replaced by a bounded deterministic extraction (no LLM call) |
 | `contextEngine.leafTargetTokens` | number | `1200` | **DAG mode:** target token size for a leaf summary (96-5000) |
 | `contextEngine.deferCompaction` | boolean | `true` | **DAG mode:** run the afterTurn leaf + condense passes in the background on the per-conversation serializer (never blocking the turn). `false` runs them inline (deterministic, for tests) |

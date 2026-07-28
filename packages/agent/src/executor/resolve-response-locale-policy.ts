@@ -41,7 +41,19 @@ export function resolveResponseLocalePolicy(
 ): ResponseLocalePolicy {
   const candidates: ReadonlyArray<readonly [string | undefined, ResponseLocaleSource, boolean]> = [
     [input.explicitLocale, "explicit", true],
-    [input.requestLocale, "request", true],
+    // ADVISORY, never ENFORCED — for the same reason the script tier below is.
+    // This tier is a DEVICE SETTING (a client UI language_code), so making it
+    // enforcing left the strongest signal in the system belonging to the one
+    // input that is not about the conversation at all. Live: a Hebrew
+    // conversation, one English technical instruction — which does not
+    // contradict a client language_code of "en", so the transport tier engaged
+    // and, being enforcing, outranked the conversation's own (advisory) Hebrew
+    // signal. The agent switched to English mid-conversation and stayed there.
+    //
+    // Only an OPERATOR PIN (`explicitLocale`) enforces. An operator who needs a
+    // guaranteed response language sets `agents.<id>.language`; everything else
+    // is a hint, which is all a per-message or per-device signal can honestly be.
+    [input.requestLocale, "request", false],
   ];
   const translationTarget = canonicalLocale(input.translationTarget);
   for (const [raw, source, enforceLocale] of candidates) {
@@ -72,7 +84,20 @@ export function resolveResponseLocalePolicy(
       locale: requestScriptLocale,
       source: "request",
       ...(translationTarget === undefined ? {} : { translationTarget }),
-      enforceLocale: true,
+      // ADVISORY, never ENFORCED. This tier infers a locale from the script of the
+      // CURRENT message alone, so enforcing it made a single message switch the
+      // whole conversation's language — and then spend a repair round-trip trying
+      // to make the model comply. Live: one English instruction inside an
+      // otherwise-Hebrew conversation set `locale=en enforce=true`; all three
+      // repair passes correctly came back Hebrew (the model was honouring the
+      // established language), each costing a full extra model call and a
+      // prompt-cache break.
+      //
+      // Only an OPERATOR PIN (`explicitLocale` → source "explicit") enforces. The
+      // inferred locale still rides the prompt as a hint, which is all it was ever
+      // reliable enough to be: a model already mirrors its interlocutor's language
+      // without being policed into it.
+      enforceLocale: false,
     };
   }
   return {

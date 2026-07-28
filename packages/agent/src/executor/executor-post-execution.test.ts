@@ -13,6 +13,7 @@
 // "NO_REPLY" responses.
 
 import { readFileSync } from "node:fs";
+import * as fs from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, expectTypeOf, vi } from "vitest";
@@ -811,10 +812,23 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/function\s+modelAcknowledgedFailure\s*\(/);
   });
 
-  it("source-grep — failure notice '[tool failure]' appended to result.response at call site", () => {
+  it("source-grep — the failure notice is built through the locale seam, not a literal", () => {
     const stripped = readPostExecStripped();
-    // The notice text must appear in non-comment source.
-    expect(stripped).toMatch(/\[tool failure\]/);
+    // It used to be a bare English `[tool failure] <tool> reported an error`
+    // appended raw to a reply in any language — a bracket-tagged internal
+    // string sitting outside the only mechanism that can translate it.
+    expect(stripped).toMatch(/buildToolFailureNotice\(/);
+    expect(stripped).not.toMatch(/\[tool failure\]/);
+    // The tool NAME still rides along verbatim (identifiers are never translated).
+    expect(stripped).toMatch(/failedToolName/);
+  });
+
+  it("source-grep — the notice never names the background poller as the culprit", () => {
+    const stripped = readPostExecStripped();
+    // The poller relays OTHER tools' failures, so naming it points the reader at
+    // the one tool that was working — the same mis-attribution the retry
+    // breaker had.
+    expect(stripped).toMatch(/BACKGROUND_POLLER_TOOL/);
   });
 
   it("source-grep — isSilentResponse guards the failure notice append (not the endReason override)", () => {
@@ -857,7 +871,7 @@ describe("tool-failure endReason and notice", () => {
     // The notice call site must consult the recovery-aware helper, not raw failedTools.
     expect(stripped).toMatch(/unrecoveredFailedToolNames/);
     // The notice append must be guarded by a non-empty unrecovered set.
-    const noticeBlock = stripped.match(/unrecovered[A-Za-z]*\s*\.length\s*>\s*0[\s\S]{0,400}?\[tool failure\]/);
+    const noticeBlock = stripped.match(/unrecovered[A-Za-z]*\s*\.length\s*>\s*0[\s\S]{0,600}?buildToolFailureNotice/);
     expect(noticeBlock).not.toBeNull();
   });
 });
@@ -2504,8 +2518,9 @@ describe("degraded-reply chokepoint consumes the typed locale policy", () => {
 
   it("source-grep — the resolved tag reaches all three builders (language passed in)", () => {
     const block = readDegradedBlock();
-    // output_starved: buildOutputStarvedAnnotation(<tag>) — called with an argument.
-    expect(block).toMatch(/buildOutputStarvedAnnotation\(\s*[A-Za-z_$][\w$]*\s*\)/);
+    // output_starved: buildOutputStarvedAnnotation(<tag>, <catalog>) — the tag
+    // is the first argument; the operator-config catalog rides alongside it.
+    expect(block).toMatch(/buildOutputStarvedAnnotation\(\s*[A-Za-z_$][\w$]*\s*,/);
     // context_exhausted + loop_detected: a `language:` field in the opts object.
     const languageFields = block.match(/\blanguage\s*:/g) ?? [];
     // At least the context_exhausted and loop_detected opts carry `language:`.
@@ -2558,5 +2573,36 @@ describe("degraded-reply chokepoint consumes the typed locale policy", () => {
     expect(buildLoopDetectedReply({ traceId: "q", language: replyLanguage })).toBe(
       buildLoopDetectedReply({ traceId: "q" }),
     );
+  });
+});
+
+describe("the paired-memory security-scan WARN distinguishes a leak from a false positive", () => {
+  // Observed live: THREE paired memories were dropped in one session with an
+  // identical WARN. Two were genuine credential matches (the firewall working);
+  // one was a suspicious-PATTERN heuristic on ordinary prose — a silently LOST
+  // memory. The line named the pattern sources but nothing told an operator which
+  // case they were looking at, so a false positive was indistinguishable from a
+  // blocked leak.
+  function detectorFor(patterns: readonly string[]): "secret" | "heuristic" {
+    return patterns.includes("secret-egress-guard") ? "secret" : "heuristic";
+  }
+
+  it("labels a secret-detector verdict `secret`", () => {
+    expect(detectorFor(["secret-egress-guard"])).toBe("secret");
+  });
+
+  it("labels a suspicious-pattern verdict `heuristic`", () => {
+    expect(detectorFor(["system[ \\t]{0,20}:?[ \\t]{0,20}(prompt|override|command)"])).toBe("heuristic");
+  });
+
+  it("the two branches produce DIFFERENT operator guidance", () => {
+    const src = fs.readFileSync(
+      new URL("./executor-post-execution.ts", import.meta.url),
+      "utf8",
+    );
+    // The secret branch reassures (no action needed); the heuristic branch warns
+    // that a legitimate memory may have been lost. They must not be one string.
+    expect(src).toMatch(/firewall working as intended/);
+    expect(src).toMatch(/lost memory, not a blocked leak/);
   });
 });

@@ -96,6 +96,121 @@ describe("isSecretFieldName — superset", () => {
     }
   });
 
+  it("does not flag token-count names that do not end in singular token", () => {
+    for (const name of [
+      "max_tokens",    // provider request knob
+      "maxTokens",
+      "num_tokens",
+      "tokens",
+      "token_count",
+      "tokenCount",
+      "input_tokens",
+      "output_tokens",
+      "total_tokens",
+      "cache_read_input_tokens",
+      "prompt_tokens",
+      "completion_tokens",
+      "token_limit",
+      "tokenizer",
+    ]) {
+      expect(isSecretFieldName(name), `${name} must NOT be treated as a secret`).toBe(false);
+    }
+  });
+
+  it("keeps the global detector conservative for ambiguous token fields", () => {
+    expect(isSecretFieldName("range_token")).toBe(true);
+    expect(isSecretFieldName("rangeToken")).toBe(true);
+    expect(scanForSecrets({
+      plugins: { vendor: { config: { range_token: "shortsecret" } } },
+    })).toEqual([
+      expect.objectContaining({
+        path: "plugins.vendor.config.range_token",
+        reason: "secret-field",
+      }),
+    ]);
+  });
+
+  it("flags credential-bearing token names", () => {
+    for (const name of [
+      "token",
+      "botToken",
+      "bot_token",
+      "accessToken",
+      "access_token",
+      "refresh_token",
+      "refreshToken",
+      "id_token",
+      "auth_token",
+      "authToken",
+      "api_token",
+      "apiToken",
+      "bearer_token",
+      "session_token",
+      "gateway_token",
+      "COMIS_GATEWAY_TOKEN",
+      "TELEGRAM_BOT_TOKEN",
+      "x-auth-token",
+      "vendor_password",
+      "VENDOR_PASSWORD",
+    ]) {
+      expect(isSecretFieldName(name), `${name} MUST stay redacted`).toBe(true);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // The end-anchor hole — CLOSED by the keyword-boundary matcher.
+  //
+  // The suffix-anchored pattern missed any credential keyword with a suffix
+  // after it. The boundary matcher splits the name into word segments
+  // (separators + camelCase) and matches on credential segments, with the two
+  // AMBIGUOUS words (`token`, `key`) counting only when adjacent to a
+  // qualifying word — which is what closes the hole WITHOUT the `.*token.*`
+  // widening that would false-redact counting vocabulary (the `range_token`
+  // incident class).
+  // ---------------------------------------------------------------------------
+  it("flags credential keywords MID-NAME (the closed end-anchor hole)", () => {
+    for (const name of [
+      "AWS_BEARER_TOKEN_BEDROCK", // bearer+token, mid-name
+      "SECRETS_MASTER_KEY",       // "secrets" + master+key
+      "SECRET_KEY_OLD",           // "secret", suffix after it
+      "OAUTH_TOKEN_V2",           // oauth+token with a version suffix
+      "apiKeyRotationSchedule",   // camelCase api+key mid-name
+      "DB_PASSWORD_OLD",          // db+password with a suffix
+      "clientSecretBackup",       // client+secret mid-name
+    ]) {
+      expect(isSecretFieldName(name), `${name} MUST be flagged`).toBe(true);
+    }
+  });
+
+  it("still does NOT flag counting/selector vocabulary (the false-redaction fence)", () => {
+    for (const name of [
+      "max_tokens_to_sample",
+      "token_count_by_model",
+      "tokenizer_config",
+      "primary_key",   // database vocabulary — `key` needs a credential qualifier
+      "foreign_key",
+      "keyboard_layout",
+      "monkey_patch",
+      // META names — flags/components ABOUT credentials, never credentials.
+      // Redacting these corrupts config booleans and audit fields.
+      "writeSecretGuard",       // the stock security.writeSecretGuard flag (bit live)
+      "secretName",
+      "passwordResetRequired",
+      "secretsStoreAvailable",
+    ]) {
+      expect(isSecretFieldName(name), `${name} must NOT be flagged`).toBe(false);
+    }
+  });
+
+  it("residual known miss, pinned: a bare unqualified `token` segment is not flagged", () => {
+    // MY_TOKEN_V2 → [my, token, v2]: "my" is not a credential qualifier. Flagging
+    // every bare `token` segment is exactly the over-match that false-redacted
+    // `range_token`. Accepted residual — the value-entropy half still covers a
+    // real credential stored under such a name.
+    expect(isSecretFieldName("MY_TOKEN_V2")).toBe(false);
+  });
+
   it("flags pattern-matched secret field names (botToken, appSecret, …)", () => {
     for (const name of [
       "botToken",

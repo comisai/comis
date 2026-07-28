@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from "vitest";
 
-import { mapAbortToTurnOutcome } from "./turn-outcome-mapper.js";
+import { mapAbortToTurnOutcome, withDeliveredEvidence } from "./turn-outcome-mapper.js";
 
 describe("mapAbortToTurnOutcome", () => {
   it("maps a max_steps resource abort to a truthful resource failure mentioning the step limit", () => {
@@ -78,5 +78,46 @@ describe("mapAbortToTurnOutcome", () => {
     });
     if (outcome?.kind !== "failure") throw new Error("expected failure");
     expect(outcome.failedEvents).toEqual([]);
+  });
+});
+
+describe("withDeliveredEvidence", () => {
+  const receipt = { deliveredAtMs: 1000 } as never;
+
+  it("attaches the receipt to an UNATTRIBUTED failure", () => {
+    const out = withDeliveredEvidence(
+      { kind: "failure", errorKind: "dependency", failedEvents: [] },
+      receipt,
+    );
+    expect(out.kind).toBe("failure");
+    expect((out as { delivery?: unknown }).delivery).toBe(receipt);
+  });
+
+  it("NEVER attaches to a resource abort — a stopped run renders as stopped", () => {
+    const out = withDeliveredEvidence(
+      { kind: "failure", errorKind: "resource", failedEvents: [], reason: "stopped — hit step limit" },
+      receipt,
+    );
+    expect((out as { delivery?: unknown }).delivery).toBeUndefined();
+  });
+
+  it("never attaches to a DELIVERY failure (deliveryReceipt present)", () => {
+    const out = withDeliveredEvidence(
+      { kind: "failure", errorKind: "platform", failedEvents: [], deliveryReceipt: {} as never },
+      receipt,
+    );
+    expect((out as { delivery?: unknown }).delivery).toBeUndefined();
+  });
+
+  it("passes success/aborted outcomes through untouched", () => {
+    const success = { kind: "success", trivial: false, delivery: receipt } as const;
+    expect(withDeliveredEvidence(success as never, receipt)).toBe(success);
+    const aborted = { kind: "aborted", reason: "timeout" } as const;
+    expect(withDeliveredEvidence(aborted as never, receipt)).toBe(aborted);
+  });
+
+  it("no receipt (delivery failed) → unchanged", () => {
+    const failure = { kind: "failure", errorKind: "dependency", failedEvents: [] } as const;
+    expect(withDeliveredEvidence(failure as never, undefined)).toBe(failure);
   });
 });

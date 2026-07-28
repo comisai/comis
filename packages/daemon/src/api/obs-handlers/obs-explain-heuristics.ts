@@ -75,6 +75,7 @@ import {
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
 import { subagentStuckKilledVerdict } from "./obs-explain-subagent-killed-verdict.js"; // health-monitor-killed sub-agent (sibling — subdir cap)
+import { freshTailOriginLostVerdict } from "./obs-explain-fresh-tail-verdict.js";
 import {
   backgroundPendingVerdict,
   backgroundRecoveryVerdict,
@@ -289,9 +290,20 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
         "provider timeout: " +
         failure.toolName +
         " exceeded its deadline (errorKind=timeout)",
+      // Narrowing FIRST. "Raise the per-call timeout" led this list, which is
+      // the one action that makes a deadline-bound turn worse: the turn budget
+      // is fixed, so a longer per-call deadline just buys a longer burn before
+      // the same wall-clock abort. Narrowing is what actually completes. The
+      // deadline is still worth naming — but by its exact key, and with the
+      // fact that an agent cannot patch it (immutable config path), so the
+      // reader knows the step needs an operator and a daemon restart.
       suggestedNextSteps: [
-        "raise the per-call timeout or reduce the request size for " + failure.toolName,
+        "narrow the request for " + failure.toolName
+          + " (a smaller page / date window / fewer entities) so it completes inside the deadline",
         "check provider latency / rate-limit headroom",
+        "if it genuinely needs longer, an operator can raise"
+          + " `integrations.mcp.callToolTimeoutMs` (MCP tools) in the config file"
+          + " and restart the daemon — it is an immutable path an agent cannot patch",
         "obs.explain depth=full",
       ],
     };
@@ -569,6 +581,10 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       ],
     };
   },
+
+  //  N) fresh_tail_origin_lost — DEAD LAST. A context-shaping advisory, not a
+  //     terminal cause: every acute verdict above out-ranks it.
+  freshTailOriginLostVerdict,
 ];
 
 /** Run the ordered registry; first non-null `RootCause` wins, else `null` (clean session). */

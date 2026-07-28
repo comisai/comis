@@ -1098,6 +1098,10 @@
           "description": "Maximum results. For history: default 10. For env_list: default 100, max 500 (clamped).",
           "type": "number"
         },
+        "pending_action_id": {
+          "description": "The pending_action_id returned by a gated env_set. Pass it back with _confirmed: true INSTEAD of re-sending env_value — the daemon replays the stashed value, so the secret never has to survive in conversation context across the approval round-trip.",
+          "type": "string"
+        },
         "section": {
           "description": "Config section name. Required for patch/apply/schema, optional for read. Valid sections: agents, channels, memory, security, routing, daemon, scheduler, gateway, integrations, monitoring, browser, models, providers, messages, approvals. Note: MCP server settings are under 'integrations', not 'mcp'.",
           "type": "string"

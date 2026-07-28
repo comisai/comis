@@ -31,7 +31,7 @@ import type { ComisLogger } from "@comis/core";
 
 import type { StreamFnWrapper } from "../types.js";
 import { createAccumulativeLatch } from "../../session-latch.js";
-import { isAnthropicFamily } from "../../../provider/capabilities.js";
+import { isAnthropicFamily, supportsExtendedCacheTtl } from "../../../provider/capabilities.js";
 
 import type { RequestBodyInjectorConfig } from "./types.js";
 import { getMinCacheableTokens } from "./cache-breakpoints.js";
@@ -373,7 +373,7 @@ export function createRequestBodyInjector(
                 // net so any stray 5m-before-1h gets upgraded before the
                 // request leaves the wrapper. The sweep is a no-op when the
                 // promoted layout happens to remain monotonic.
-                enforceMonotonicTtlOrdering(result, logger);
+                enforceMonotonicTtlOrdering(result, logger, supportsExtendedCacheTtl(model.provider));
               }
             }
           }

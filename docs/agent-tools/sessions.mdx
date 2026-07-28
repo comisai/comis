@@ -151,7 +151,7 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
     | `async` | boolean | No | Accepted for explicit asynchronous intent; every spawn runs in the background and returns `runId` immediately. |
     | `model` | string | No | Model override for the sub-agent |
     | `artifact_refs` | string[] | No | File paths for the sub-agent to reference in its workspace |
-    | `tool_groups` | string[] | No | Tool group names for sub-agent tool filtering (e.g., `"coding"`, `"web"`) |
+    | `tool_groups` | string[] | No | Tool group names for sub-agent tool filtering (e.g., `"coding"`, `"web"`). The default child profile excludes MCP tools and `message`; use `"full"` when the task genuinely requires those capabilities. |
     | `required_tools` | string[] | No | Tool names that must be reachable; spawn fails before execution if the child profile cannot reach one. |
     | `objective` | string | No | Objective statement that survives context compaction |
     | `include_parent_history` | `"none"` or `"summary"` | No | Include a condensed summary of the parent conversation (default: `"none"`) |
@@ -159,6 +159,8 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
     | `expected_outputs` | string[] | No | File paths to validate after sub-agent execution completes |
     | `max_steps` | integer | No | Maximum execution steps (floor of 30, default 50, capped at config default) |
     `sessions_spawn` never blocks for the child result. It returns the run ID and a background-running marker immediately; a queued spawn additionally returns `queued: true`. The result is delivered to the immutable originating conversation, so the model-facing tool cannot select an announcement channel. Use `subagents` with `action: wait` to await owned children without polling.
+
+    **When the agent reaches for it.** An agent that has `sessions_spawn` on its surface receives a concise delegation directive in its initial system prompt: delegate rather than work inline whenever a task needs more than ~30 seconds of tool time, generates media, writes three or more files, requires deep research, or runs four or more dependent steps. Independent subtasks are spawned as multiple calls in one response and run in parallel. The fuller guide (goal-oriented task phrasing, child tool-profile guidance, and what not to delegate) follows the first successful tool result and is delivered only once.
 
     Sub-agent results are automatically condensed (if over the token threshold) and formatted with metadata tags before being returned to the parent. See [Subagent Context Lifecycle](/agents/subagent-lifecycle) for the full pipeline.
 
