@@ -26,17 +26,29 @@
  * TEST-HARNESS — lives under the test tree; consumes only the @comis-free
  * emulator subtree (node: built-ins at runtime; grammy is type-only / erased).
  */
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createTgEmulator } from "../emulators/telegram/tg-emulator.js";
 import { registerControlApi } from "../harness/control-api.js";
 import {
+  nextStandaloneMessageIdBase,
   toCreateGroupChatOptions,
   type StandaloneGroupSpec,
 } from "./vps-emu-group-options.js";
 
 const BOT_TOKEN = process.env["EMU_BOT_TOKEN"] ?? "1234567:emulator-fake-token";
+const WIRING_PATH = "/tmp/comis-emu.json";
+const priorState = existsSync(WIRING_PATH)
+  ? (() => {
+      try {
+        return JSON.parse(readFileSync(WIRING_PATH, "utf8")) as { messageIdBase?: unknown };
+      } catch {
+        return {};
+      }
+    })()
+  : undefined;
+const messageIdBase = nextStandaloneMessageIdBase(priorState);
 
-const emu = createTgEmulator({ botToken: BOT_TOKEN });
+const emu = createTgEmulator({ botToken: BOT_TOKEN, initialMessageId: messageIdBase });
 registerControlApi(emu.backend, emu);
 
 // Optionally pre-create group chats for the group/reaction scenarios.
@@ -61,9 +73,10 @@ const info = {
   port,
   botToken: BOT_TOKEN,
   pid: process.pid,
+  messageIdBase,
   groups: groups.map((g) => g.chatId),
 };
-writeFileSync("/tmp/comis-emu.json", JSON.stringify(info, null, 2));
+writeFileSync(WIRING_PATH, JSON.stringify(info, null, 2));
 console.log("EMU_UP " + JSON.stringify(info));
 
 const stop = async (): Promise<void> => {

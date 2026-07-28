@@ -534,6 +534,12 @@ export interface CreateTgEmulatorOptions {
   /** The bot token grammy builds `/bot<token>/<method>` paths from (loopback stub). */
   readonly botToken: string;
   /**
+   * First Telegram `message_id` minted by this process. Standalone launchers
+   * advance this across restarts because a real Telegram chat never rewinds its
+   * message identity while Comis retains the conversation.
+   */
+  readonly initialMessageId?: number;
+  /**
    * Emulator-side cap on the long-poll block (ms). Defaults to 10s; the
    * scenario's request `timeout` (seconds) is honored but never exceeds this
    * cap, keeping tests deterministic regardless of the poller's request
@@ -800,6 +806,10 @@ function fileRouteForKind(kind: MediaKind, id: string): { filePath: string; cont
 export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   const backend: HttpBackend = createHttpBackend();
   const maxPollMs = opts.maxPollMs ?? DEFAULT_MAX_POLL_MS;
+  const initialMessageId = opts.initialMessageId ?? 100;
+  if (!Number.isSafeInteger(initialMessageId) || initialMessageId < 1) {
+    throw new TypeError("initialMessageId must be a positive safe integer");
+  }
   // The opt-in webhook-POST target (URL + secret). Absent → the
   // emulator is polling-only and `postWebhookMessage` throws (the default inject
   // path is unchanged). When present, `postWebhookMessage` POSTs the built
@@ -824,7 +834,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   // just the bot-global serve filter for a single DM.
   let pending: Update[] = [];
   const waiters: PollWaiter[] = [];
-  let nextMessageId = 100;
+  let nextMessageId = initialMessageId;
   // Per-chat group metadata (the recorded chat shape + members +
   // admins + bot identity). `injectMessage` stamps the recorded `Chat` onto a
   // group message so the mapper derives chatType group|forum + reads is_forum;
