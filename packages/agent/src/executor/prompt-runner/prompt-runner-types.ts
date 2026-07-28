@@ -35,6 +35,7 @@ import type { LastKnownModelTracker } from "../../model/last-known-model.js";
 import type { EnvelopeConfig } from "@comis/core";
 import type { CapabilityIndexRenderResult } from "../capability-index-context.js";
 import type { ModelProfile } from "../model-profile.js";
+import type { ToolExecutionResultRecord } from "../../bridge/tool-failure-recovery.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -51,6 +52,8 @@ export interface PromptRunnerBridge {
     tokensUsed?: { output?: number };
     stepsExecuted?: number;
     toolCallHistory?: string[];
+    failedTools?: string[];
+    toolExecResults?: ToolExecutionResultRecord[];
     /** Abort redirect message set at bridge abort sites; undefined for normal completions. */
     abortResponse?: string;
   };

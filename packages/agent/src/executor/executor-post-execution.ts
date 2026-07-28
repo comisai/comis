@@ -129,6 +129,10 @@ import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { generateCanaryToken } from "@comis/core";
 import type { BackgroundTaskManager } from "../background/background-task-manager.js";
 import { reconcilePendingBackgroundTurn } from "./pending-background-reply.js";
+import {
+  classifyToolFailureRecovery,
+  type ToolExecutionResultRecord,
+} from "../bridge/tool-failure-recovery.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -162,7 +166,7 @@ export interface PostExecutionBridgeResult {
   executionCostUsd?: number;
   /** Per-tool execution results carrying the classified errorKind —
    *  the rollup's failure source for toolStats + topErrorKinds. */
-  toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>;
+  toolExecResults?: ToolExecutionResultRecord[];
   /** How many times a tool circuit breaker opened this session. */
   breakerTripCount?: number;
   /** Turn count for the session:summary event. */
@@ -941,13 +945,10 @@ export function snapshotSummarizerDepsForDefer(
 /**
  * Classify failed tools into the subset that was NOT recovered this turn.
  *
- * A tool failure is "recovered" when the SAME tool name also has a successful
- * execution in `toolExecResults` for this turn — e.g. the model retried after a
- * transient error and the retry succeeded. The user-facing `[tool failure]`
- * notice must surface only UNRECOVERED failures: a tool that failed and never
- * succeeded. The live case is the NVDA pipeline — attempt-1 (validation) failed,
- * attempt-2 launched the graph, yet the user saw "[tool failure] pipeline reported
- * an error" because the notice keyed off raw failedTools.
+ * Recovery requires a later invocation and later completion of the same tool.
+ * Message operations additionally require the same action and content-free exact
+ * route/target identity. The user-facing `[tool failure]` notice surfaces only
+ * failures without that evidence.
  *
  * Safe fallback: when `toolExecResults` is absent/empty (success record not
  * plumbed on some path) every failed tool is reported as unrecovered —
@@ -956,23 +957,18 @@ export function snapshotSummarizerDepsForDefer(
  * Observability is unaffected: effectiveFinishReason / logs / system rollup still
  * record the failure. Only the user-facing reply is gated.
  *
- * Pure: no I/O, no side effects. Returns deduped failed names with no same-name success.
+ * Pure: no I/O, no side effects. Returns deduped names with no proven recovery.
  */
 export function unrecoveredFailedToolNames(
   failedTools: string[],
-  toolExecResults?: Array<{ toolName: string; success: boolean }>,
+  toolExecResults?: ToolExecutionResultRecord[],
 ): string[] {
-  if (failedTools.length === 0) return [];
-  const succeeded = new Set(
-    (toolExecResults ?? []).filter((r) => r.success).map((r) => r.toolName),
-  );
-  return [...new Set(failedTools)].filter((name) => !succeeded.has(name));
+  return [...classifyToolFailureRecovery(failedTools, toolExecResults).unrecoveredToolNames];
 }
 
 /**
- * The COMPLEMENT of {@link unrecoveredFailedToolNames}: failed tools that LATER
- * succeeded in the same turn — a self-heal (the live case: a `write` rejected on
- * an absolute /tmp path, then re-run to the workspace and succeeded).
+ * The COMPLEMENT of {@link unrecoveredFailedToolNames}: failed tools with a
+ * later matching recovery in the same turn.
  *
  * Surfaced on the execution bookend (`recoveredTools`) so an operator reading
  * `failedTools:["write"]` + `completed_with_tool_errors` can tell a SELF-HEALED
@@ -984,11 +980,9 @@ export function unrecoveredFailedToolNames(
  */
 export function recoveredFailedToolNames(
   failedTools: string[],
-  toolExecResults?: Array<{ toolName: string; success: boolean }>,
+  toolExecResults?: ToolExecutionResultRecord[],
 ): string[] {
-  if (failedTools.length === 0) return [];
-  const unrecovered = new Set(unrecoveredFailedToolNames(failedTools, toolExecResults));
-  return [...new Set(failedTools)].filter((name) => !unrecovered.has(name));
+  return [...classifyToolFailureRecovery(failedTools, toolExecResults).recoveredToolNames];
 }
 
 /**
@@ -1219,8 +1213,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // fields read from the same observation (the getter is cheap but the
   // read-twice pattern would still be a micro-divergence risk).
   const scrubCounters = ceSetup.getSignatureScrubCounters();
-  // recoveredTools: failed tools that self-healed in the same turn (in failedTools
-  // AND with a later same-name success). Surfaced on the bookend so a self-healed
+  // recoveredTools: failed tools that self-healed in the same turn. Surfaced on the bookend so a self-healed
   // turn is distinguishable from a terminally-degraded one. effectiveFinishReason
   // STILL records the failure (by design) — this is visibility only.
   const recoveredTools = recoveredFailedToolNames(
@@ -1365,9 +1358,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   }
 
   // Notice append is recovery-gated: surface ONLY tools that failed and were NOT
-  // recovered (no same-name success this turn) — a fail-then-retry-succeed (e.g.
-  // the NVDA pipeline's attempt-1 validation error → attempt-2 launch) must not
-  // read as a user-facing failure. Also suppressed when the model already
+  // recovered by a proven later matching invocation. An unrelated same-tool
+  // success must not hide a failure. Also suppressed when the model already
   // acknowledged the failure or the response is a silent sentinel. The
   // observability label (effectiveFinishReason) is unchanged — operators still
   // see the recovered failure in logs/system.

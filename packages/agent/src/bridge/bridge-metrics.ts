@@ -11,14 +11,12 @@
  */
 
 import { systemNowMs } from "@comis/core";
-import type {
-  ErrorKind,
-  ExecutionSideEffectSummary,
-} from "@comis/core";
+import type { ExecutionSideEffectSummary } from "@comis/core";
 import type { ExecutionResult } from "../executor/types.js";
 import type { ContextUsageData } from "../safety/context-window-guard.js";
 import { createBridgeSideEffectSummary } from "./bridge-side-effect-accumulator.js";
 import type { ThinkingBlockHash } from "./thinking-block-hash-invariant.js";
+import type { ToolExecutionResultRecord } from "./tool-failure-recovery.js";
 
 // ---------------------------------------------------------------------------
 // Metrics state
@@ -58,6 +56,7 @@ export interface BridgeMetricsState {
 
   // Tool tracking
   toolStartTimes: Map<string, number>;
+  toolInvocationSequences: Map<string, number>;
   toolCallHistory: string[];
   lastActiveToolName: string | undefined;
   toolArgSnapshots: Map<string, Record<string, unknown>>;
@@ -67,7 +66,7 @@ export interface BridgeMetricsState {
    *  `toolArgSnapshots` (which holds the `sanitizeToolArgs` failure-diagnostic
    *  snapshot); deleted in lockstep with `toolArgSnapshots` at tool_execution_end. */
   toolRawArgs: Map<string, unknown>;
-  toolExecResults: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>;
+  toolExecResults: ToolExecutionResultRecord[];
   /** Skill-use attribution: the named per-turn carrier. The bridge
    *  adds a skillName here when a `read`'s path matches a frozen learned-skill
    *  `<location>` (resolved via getSessionPromptSkillLocations). The executor
@@ -235,6 +234,7 @@ export function createBridgeMetrics(): BridgeMetricsState {
     lastLlmErrorMessage: undefined,
     outboundLog: [],
     toolStartTimes: new Map(),
+    toolInvocationSequences: new Map(),
     toolCallHistory: [],
     lastActiveToolName: undefined,
     toolArgSnapshots: new Map(),
@@ -299,7 +299,7 @@ export function buildBridgeResult(
   lastLlmErrorMessage?: string;
   failedToolCalls?: number;
   failedTools?: string[];
-  toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>;
+  toolExecResults?: ToolExecutionResultRecord[];
   breakerTripCount?: number;
   turnCount?: number;
   lastStopReason?: string;

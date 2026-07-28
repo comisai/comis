@@ -9,12 +9,37 @@ import {
 import type { RunPromptParams } from "./prompt-runner-types.js";
 import { allowProviderDispatch } from "../provider-dispatch.js";
 import { err } from "@comis/shared";
+import { buildToolRecoveryIdentity } from "../../bridge/tool-failure-recovery.js";
 
 const ARABIC_POLICY: ResponseLocalePolicy = {
   locale: "ar",
   source: "request",
   enforceLocale: true,
 };
+
+const RECOVERY_IDENTITY_SALT = "identity-salt-a";
+
+function messageToolResult(input: {
+  success: boolean;
+  action: "send" | "attach";
+  channelId?: string;
+  attachmentUrl?: string;
+  invocationSequence: number;
+}) {
+  const args = {
+    action: input.action,
+    channel_type: "telegram",
+    channel_id: input.channelId ?? "channel-a",
+    ...(input.attachmentUrl === undefined ? {} : { attachment_url: input.attachmentUrl }),
+  };
+  return {
+    toolName: "message",
+    success: input.success,
+    durationMs: 5,
+    invocationSequence: input.invocationSequence,
+    recoveryIdentity: buildToolRecoveryIdentity("message", args, RECOVERY_IDENTITY_SALT),
+  };
+}
 
 function makeSession(onPrompt?: () => void) {
   const tools = [{ name: "write" }, { name: "message" }];
@@ -270,6 +295,10 @@ describe("applyResponseLocaleEnforcement", () => {
       responseLocalePolicy: ARABIC_POLICY,
       result,
       session,
+      bridge: {
+        getResult: () => ({}),
+        hasOutboundDelivery: () => false,
+      },
       agentId: "agent-a",
       sessionKey: {
         tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
@@ -326,6 +355,10 @@ describe("applyResponseLocaleEnforcement", () => {
       responseLocalePolicy: ARABIC_POLICY,
       result,
       session,
+      bridge: {
+        getResult: () => ({}),
+        hasOutboundDelivery: () => false,
+      },
       agentId: "agent-a",
       sessionKey: {
         tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
@@ -350,6 +383,227 @@ describe("applyResponseLocaleEnforcement", () => {
     }));
     expect(JSON.stringify(recoveryEvent.mock.calls)).not.toContain("English draft");
     expect(JSON.stringify(recoveryEvent.mock.calls)).not.toContain("إجابة مصححة");
+  });
+
+  it("does not let an unrelated send hide a failed attachment during locale repair", async () => {
+    const eventBus = new TypedEventBus();
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    };
+    const originalResponse = "The file was not sent because the delivery tool failed.";
+    const session = {
+      agent: { state: { tools: [{ name: "message" }] } },
+      messages: [{ role: "assistant", content: [{ type: "text", text: originalResponse }] }],
+      prompt: vi.fn(async () => {
+        session.messages.push({
+          role: "assistant",
+          content: [{ type: "text", text: "تم إرسال الملف بنجاح." }],
+        });
+      }),
+    };
+    const result = { response: originalResponse };
+    const params = {
+      responseLocalePolicy: ARABIC_POLICY,
+      result,
+      session,
+      bridge: {
+        getResult: () => ({
+          failedToolCalls: 1,
+          failedTools: ["message"],
+          toolExecResults: [
+            messageToolResult({
+              success: false,
+              action: "attach",
+              attachmentUrl: "/workspace/report.pdf",
+              invocationSequence: 0,
+            }),
+            messageToolResult({ success: true, action: "send", invocationSequence: 1 }),
+          ],
+        }),
+        hasOutboundDelivery: () => false,
+      },
+      agentId: "agent-a",
+      sessionKey: {
+        tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
+      },
+      deps: {
+        eventBus,
+        logger,
+        clock: { now: () => 10, nowDate: () => new Date(10) },
+      },
+    } as unknown as RunPromptParams;
+
+    await applyResponseLocaleEnforcement(params);
+
+    expect(result.response).toBe(originalResponse);
+    expect(result).toMatchObject({
+      localeQualityFinding: {
+        kind: "locale_script_mismatch",
+        locale: "ar",
+        expectedScript: "Arab",
+        actualScript: "Latn",
+      },
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith(
+      {
+        step: "response-locale-repair-skipped",
+        locale: "ar",
+        expectedScript: "Arab",
+        actualScript: "Latn",
+        unrecoveredToolCount: 1,
+        unrecoveredToolFailureCount: 1,
+        unrecoveredTools: ["message"],
+      },
+      "Response locale repair skipped after an unrecovered tool failure",
+    );
+    expect(JSON.stringify(logger.debug.mock.calls)).not.toContain(originalResponse);
+    expect(JSON.stringify(logger.debug.mock.calls)).not.toContain("تم إرسال الملف بنجاح");
+  });
+
+  it("allows locale repair after a failed tool succeeds on retry", async () => {
+    const eventBus = new TypedEventBus();
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    };
+    const originalResponse = "The file was sent after the delivery tool recovered.";
+    const session = {
+      agent: { state: { tools: [{ name: "message" }] } },
+      messages: [{ role: "assistant", content: [{ type: "text", text: originalResponse }] }],
+      prompt: vi.fn(async () => {
+        session.messages.push({
+          role: "assistant",
+          content: [{ type: "text", text: "تم إرسال الملف بعد استعادة أداة التسليم." }],
+        });
+      }),
+    };
+    const result = { response: originalResponse };
+    const params = {
+      responseLocalePolicy: ARABIC_POLICY,
+      result,
+      session,
+      bridge: {
+        getResult: () => ({
+          failedToolCalls: 1,
+          failedTools: ["message"],
+          toolExecResults: [
+            messageToolResult({
+              success: false,
+              action: "attach",
+              attachmentUrl: "/workspace/report.pdf",
+              invocationSequence: 0,
+            }),
+            messageToolResult({
+              success: true,
+              action: "attach",
+              attachmentUrl: "/workspace/report.pdf",
+              invocationSequence: 1,
+            }),
+          ],
+        }),
+        hasOutboundDelivery: () => true,
+      },
+      agentId: "agent-a",
+      sessionKey: {
+        tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
+      },
+      deps: {
+        eventBus,
+        logger,
+        clock: { now: () => 10, nowDate: () => new Date(10) },
+      },
+    } as unknown as RunPromptParams;
+
+    await applyResponseLocaleEnforcement(params);
+
+    expect(result.response).toBe("تم إرسال الملف بعد استعادة أداة التسليم.");
+    expect(session.prompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns silently when a failed-tool turn has no locale mismatch", async () => {
+    const eventBus = new TypedEventBus();
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    };
+    const response = "هذه إجابة عربية.";
+    const session = {
+      agent: { state: { tools: [{ name: "message" }] } },
+      messages: [{ role: "assistant", content: [{ type: "text", text: response }] }],
+      prompt: vi.fn(),
+    };
+    const result = { response };
+    const getResult = vi.fn(() => ({
+      failedTools: ["message"],
+      toolExecResults: [messageToolResult({
+        success: false,
+        action: "send",
+        invocationSequence: 0,
+      })],
+    }));
+    const params = {
+      responseLocalePolicy: ARABIC_POLICY,
+      result,
+      session,
+      bridge: {
+        getResult,
+        hasOutboundDelivery: () => false,
+      },
+      agentId: "agent-a",
+      sessionKey: {
+        tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
+      },
+      deps: {
+        eventBus,
+        logger,
+        clock: { now: () => 10, nowDate: () => new Date(10) },
+      },
+    } as unknown as RunPromptParams;
+
+    await applyResponseLocaleEnforcement(params);
+
+    expect(result.response).toBe(response);
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(getResult).not.toHaveBeenCalled();
+    expect(logger.debug).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty("localeQualityFinding");
+  });
+
+  it("returns silently when locale enforcement is disabled", async () => {
+    const eventBus = new TypedEventBus();
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    };
+    const response = "English response with a failed delivery.";
+    const session = {
+      agent: { state: { tools: [{ name: "message" }] } },
+      messages: [{ role: "assistant", content: [{ type: "text", text: response }] }],
+      prompt: vi.fn(),
+    };
+    const result = { response };
+    const getResult = vi.fn(() => ({ failedTools: ["message"] }));
+    const params = {
+      responseLocalePolicy: { ...ARABIC_POLICY, enforceLocale: false },
+      result,
+      session,
+      bridge: { getResult, hasOutboundDelivery: () => false },
+      agentId: "agent-a",
+      sessionKey: {
+        tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
+      },
+      deps: {
+        eventBus,
+        logger,
+        clock: { now: () => 10, nowDate: () => new Date(10) },
+      },
+    } as unknown as RunPromptParams;
+
+    await applyResponseLocaleEnforcement(params);
+
+    expect(result.response).toBe(response);
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(getResult).not.toHaveBeenCalled();
+    expect(logger.debug).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty("localeQualityFinding");
   });
 
   it("warns without content and reports failed recovery when repair drops literals", async () => {
@@ -379,6 +633,10 @@ describe("applyResponseLocaleEnforcement", () => {
       responseLocalePolicy: ARABIC_POLICY,
       result,
       session,
+      bridge: {
+        getResult: () => ({}),
+        hasOutboundDelivery: () => false,
+      },
       agentId: "agent-a",
       sessionKey: {
         tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
