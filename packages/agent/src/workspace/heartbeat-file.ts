@@ -2,11 +2,14 @@
 /**
  * HEARTBEAT.md content classifier for preflight file gate.
  *
- * Classifies content as empty when it contains only comments, structural
- * Markdown, and whitespace, meaning no heartbeat instruction exists.
+ * Classifies content as empty when it carries no heartbeat instruction --
+ * either an untouched operator starter, or only comments, structural
+ * Markdown, and whitespace.
  *
  * @module
  */
+
+import { isUntouchedWorkspaceTemplate } from "@comis/core";
 
 /**
  * Line shapes that carry no heartbeat instruction content:
@@ -35,10 +38,18 @@ function isEffectivelyEmptyLine(line: string): boolean {
 /**
  * Classify HEARTBEAT.md content as effectively empty.
  *
- * A file is "effectively empty" if EVERY line is one of:
+ * A file is "effectively empty" when it is the untouched operator starter,
+ * or when EVERY line is one of:
  * - Empty or whitespace only
  * - Markdown ATX header (# Title, ## Section)
  * - Empty list item (- , * , - [ ], - [x])
+ *
+ * The starter is a guide the operator is meant to replace, so its prose is
+ * never a heartbeat instruction. Ownership is decided by the SAME byte-equality
+ * test prompt assembly uses to omit untouched starters
+ * ({@link isUntouchedWorkspaceTemplate}) -- a second, looser rule here (say,
+ * "still carries the template marker") would let the two layers disagree about
+ * whether a file is operator policy.
  *
  * When effectively empty, the heartbeat preflight should skip the LLM call
  * entirely (zero API cost when no tasks are defined).
@@ -47,6 +58,7 @@ function isEffectivelyEmptyLine(line: string): boolean {
  * the caller must handle ENOENT separately.
  */
 export function isHeartbeatContentEffectivelyEmpty(content: string): boolean {
+  if (isUntouchedWorkspaceTemplate("HEARTBEAT.md", content)) return true;
   const withoutComments = stripHtmlComments(content);
   if (!withoutComments.trim()) return true;
   const lines = withoutComments.split("\n");
