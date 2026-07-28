@@ -141,6 +141,42 @@ describe("createSsrfGuardedFetcher", () => {
     expect(mockValidateUrl).not.toHaveBeenCalled();
   });
 
+  it("keeps credential-bearing media URLs out of every log field", async () => {
+    const logger = createMockLogger();
+    const credentialBearingUrl =
+      "http://127.0.0.1:38411/file/bot1234567:emulator-fake-token/voice/message.ogg";
+    const fetcher = createSsrfGuardedFetcher(
+      { maxBytes: 1024 * 1024, trustedFetchOrigins: ["http://127.0.0.1:38411"] },
+      logger,
+    );
+    mockValidateLocalServerUrl.mockResolvedValue(
+      ok(makeValidatedUrl({
+        hostname: "127.0.0.1",
+        ip: "127.0.0.1",
+        url: new URL(credentialBearingUrl),
+      })),
+    );
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      createMockResponse({
+        headers: { "content-type": "audio/ogg" },
+        body: new Uint8Array([1, 2, 3]),
+      }),
+    );
+
+    const result = await fetcher.fetch(credentialBearingUrl);
+
+    expect(result.ok).toBe(true);
+    const emittedLogs = [
+      ...logger.debug.mock.calls,
+      ...logger.warn.mock.calls,
+      ...logger.error.mock.calls,
+    ].map((call) => JSON.stringify(call));
+    for (const serialized of emittedLogs) {
+      expect(serialized).not.toContain("emulator-fake-token");
+      expect(serialized).not.toContain(credentialBearingUrl);
+    }
+  });
+
   it("an UNtrusted loopback URL (different port) still uses strict validateUrl (SSRF block preserved)", async () => {
     const logger = createMockLogger();
     const fetcher = createSsrfGuardedFetcher(
