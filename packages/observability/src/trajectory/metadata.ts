@@ -34,6 +34,10 @@ export interface TraceMetadataParams {
   readonly config: unknown; // raw — sanitized inside buildTraceMetadata
   readonly plugins: ReadonlyArray<{ readonly name: string; readonly version?: string }>;
   readonly skills: ReadonlyArray<{ readonly id: string; readonly version?: string }>;
+  readonly toolInventory?: {
+    /** Names assembled by the runtime before provider-specific deferral. */
+    readonly names: ReadonlyArray<string>;
+  };
   readonly prompting: {
     readonly systemPromptDigest?: string;
     readonly systemPromptByteLen?: number;
@@ -48,6 +52,11 @@ export interface TraceMetadataPayload extends Record<string, unknown> {
   readonly config: Record<string, unknown>;
   readonly plugins: TraceMetadataParams["plugins"];
   readonly skills: TraceMetadataParams["skills"];
+  readonly toolInventory?: {
+    readonly count: number;
+    readonly names: ReadonlyArray<string>;
+    readonly truncated: boolean;
+  };
   readonly prompting: Record<string, unknown>;
   readonly redaction: { policy: string };
 }
@@ -65,12 +74,26 @@ export function buildTraceMetadata(params: TraceMetadataParams): TraceMetadataPa
   // sanitizeForPersistence returns an object-shaped value (or sentinel object) for object input.
   // Cast is safe — the recorder constructor's same cast at runtime.ts:171 documents this contract.
   const sanitizedConfig = sanitizeForPersistence(params.config) as Record<string, unknown>;
+  const uniqueToolNames =
+    params.toolInventory === undefined
+      ? []
+      : [...new Set(params.toolInventory.names)].sort();
+  const toolNameLimit = 256;
   return {
     harness: compactObject(params.harness as unknown as Record<string, unknown>),
     model: compactObject(params.model as unknown as Record<string, unknown>),
     config: sanitizedConfig,
     plugins: params.plugins,
     skills: params.skills,
+    ...(params.toolInventory !== undefined
+      ? {
+          toolInventory: {
+            count: uniqueToolNames.length,
+            names: uniqueToolNames.slice(0, toolNameLimit),
+            truncated: uniqueToolNames.length > toolNameLimit,
+          },
+        }
+      : {}),
     prompting: compactObject(params.prompting as unknown as Record<string, unknown>),
     redaction: { policy: params.redaction.policy },
   };

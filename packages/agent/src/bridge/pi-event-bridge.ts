@@ -495,8 +495,8 @@ export interface PiEventBridgeDeps {
   /**
    * Snapshot passed into `trace.metadata` once per session, immediately
    * after `session.started`. Contains harness/model/config/plugins/skills/
-   * prompting/redaction. When omitted, the trace.metadata lifecycle envelope
-   * is skipped for this session.
+   * bounded tool inventory/prompting/redaction. When omitted, the
+   * trace.metadata lifecycle envelope is skipped for this session.
    *
    * The config field is run through `sanitizeForPersistence` inside
    * `buildTraceMetadata` — raw config may contain secrets.

@@ -2265,6 +2265,14 @@ async function runSessionLocked(
         id: s.name,
         ...(s.version !== undefined ? { version: String(s.version) } : {}),
       })) ?? [],
+      // The actual assembled names are safe, content-free capability metadata.
+      // Persist them once per session so an operator can distinguish an honest
+      // self-description from a tool hallucination without inspecting a raw
+      // provider request. buildTraceMetadata deduplicates, sorts, and bounds
+      // the list before it reaches disk.
+      toolInventory: {
+        names: mergedCustomTools.map((tool) => tool.name),
+      },
       // Scaffold in place so future writers cannot bypass
       // the redactor. When userPromptPrefixText is wired from a config path,
       // pass it here; the helper routes it through redactString +

@@ -7710,7 +7710,12 @@ describe("populated runtimeSnapshot.skills", () => {
     ];
     const deps = createMockDeps({ customTools: customTools as any });
     const executor = createPiExecutor(testConfig, deps);
-    await executor.execute(testMessage, testSessionKey);
+    const inventorySessionKey: SessionKey = {
+      tenantId: "t1",
+      channelId: "c-tool-inventory",
+      userId: "u1",
+    };
+    await executor.execute(testMessage, inventorySessionKey);
 
     const bridgeCall = (createPiEventBridge as Mock).mock.calls[0]![0]!;
     expect(bridgeCall.runtimeSnapshot.toolInventory).toEqual({
