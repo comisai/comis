@@ -619,6 +619,20 @@ export const IncidentReportSchema = z.object({
       rollup: z.object({ present: z.boolean() }),
       offloads: z.object({ pointersResolved: z.number(), pointersTotal: z.number() }),
       /**
+       * Content-free fallback coverage from the lossless SQLite context store.
+       * Present only when trajectory records were unavailable and the bounded
+       * tool-outcome projection was read.
+       */
+      losslessContext: z
+        .object({
+          found: z.boolean(),
+          messages: z.number(),
+          toolResults: z.number(),
+          toolResultsReturned: z.number(),
+          truncated: z.boolean(),
+        })
+        .optional(),
+      /**
        * The toolStats reconciliation between THIS report (the whole-session
        * trajectory union, the headline `toolStats`) and the persisted per-session
        * rollup that `obs.system.health` reads (latest-execution-wins). The two

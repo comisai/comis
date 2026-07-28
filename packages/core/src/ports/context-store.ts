@@ -21,6 +21,7 @@ import type {
   ContextStoreScope,
   LcdContextItem,
   LcdConversationPage,
+  LcdToolOutcomeEvidence,
   LcdMessage,
   LcdSearchResult,
   LcdSummary,
@@ -306,4 +307,15 @@ export interface ContextBrowsePort {
     scope: ContextBrowseScope,
     opts: { limit: number; offset: number },
   ): LcdConversationPage;
+  /**
+   * Return a bounded, content-free projection of tool results for one display
+   * session. The method is optional so read-only adapters that only enumerate
+   * conversations degrade honestly; the SQLite production adapter implements
+   * it for incident reconstruction when trajectory files are unavailable.
+   */
+  readToolOutcomes?(
+    scope: ContextBrowseScope,
+    sessionKey: string,
+    opts: { limit: number },
+  ): LcdToolOutcomeEvidence;
 }

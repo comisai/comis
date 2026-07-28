@@ -80,6 +80,7 @@ export type {
   ContextBrowseScope,
   LcdConversationSummary,
   LcdConversationPage,
+  LcdToolOutcomeEvidence,
   AppendMessageInput,
   LcdSummary,
   LcdSummaryKind,

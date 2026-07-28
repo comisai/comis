@@ -279,6 +279,27 @@ export interface LcdConversationPage {
   total: number;
 }
 
+/** One content-free tool-result projection for incident reconstruction. */
+export interface LcdToolOutcome {
+  seq: number;
+  toolCallId?: string;
+  toolName: string;
+  isError: boolean;
+}
+
+/**
+ * Bounded content-free evidence recovered from the lossless context store.
+ *
+ * Counts describe the full matching session; `outcomes` contains only the
+ * newest bounded window and never carries tool input, output, or message text.
+ */
+export interface LcdToolOutcomeEvidence {
+  messageCount: number;
+  toolResultCount: number;
+  truncated: boolean;
+  outcomes: LcdToolOutcome[];
+}
+
 /**
  * One FTS/scan hit from {@link ContextStorePort.searchLcd}. `snippet` is
  * recovered/UNTRUSTED content — the calling tool MUST taint-wrap it via

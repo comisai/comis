@@ -32,7 +32,12 @@ import {
   systemNowDate,
   systemNowMs,
 } from "@comis/core";
-import type { ClockPort, SystemHealthReport, IncidentReport } from "@comis/core";
+import type {
+  ClockPort,
+  ContextBrowsePort,
+  SystemHealthReport,
+  IncidentReport,
+} from "@comis/core";
 import type { SessionMessagesFilter, SessionMessagesResult } from "@comis/daemon";
 import type { CostBucketFilter, QuarterHourBucket } from "@comis/memory";
 
@@ -49,6 +54,7 @@ import type { AuditSummary } from "../support-bundle/types.js";
 import { resolveDoctorConfig } from "../doctor/config-resolve.js";
 import {
   createObservabilityStore,
+  createLcdBrowseStore,
   openSqliteDatabase,
   type ObservabilityStore,
 } from "./offline-secrets-store.js";
@@ -93,10 +99,13 @@ const systemClock: ClockPort = { now: () => systemNowMs(), nowDate: () => system
  */
 function openObsStoreIfPresent(dataDir: string): {
   store: ObservabilityStore | undefined;
+  contextBrowse: ContextBrowsePort | undefined;
   close: () => void;
 } {
   const dbPath = safePath(dataDir, "memory.db");
-  if (!fs.existsSync(dbPath)) return { store: undefined, close: () => undefined };
+  if (!fs.existsSync(dbPath)) {
+    return { store: undefined, contextBrowse: undefined, close: () => undefined };
+  }
   // No-op initSchema: the offline path only ever opens an EXISTING db; the
   // daemon owns schema creation. A db whose obs tables are missing (observed
   // live after an operator reset recreated memory.db) throws at
@@ -105,10 +114,22 @@ function openObsStoreIfPresent(dataDir: string): {
   let db: ReturnType<typeof openSqliteDatabase> | undefined;
   try {
     db = openSqliteDatabase({ dbPath, initSchema: () => undefined });
-    const store = createObservabilityStore(db);
+    let store: ObservabilityStore | undefined;
+    let contextBrowse: ContextBrowsePort | undefined;
+    try {
+      store = createObservabilityStore(db);
+    } catch {
+      store = undefined;
+    }
+    try {
+      contextBrowse = createLcdBrowseStore(db);
+    } catch {
+      contextBrowse = undefined;
+    }
     const opened = db;
     return {
       store,
+      contextBrowse,
       close: () => {
         try {
           opened.close();
@@ -123,7 +144,7 @@ function openObsStoreIfPresent(dataDir: string): {
     } catch {
       // The open itself failed — nothing to release.
     }
-    return { store: undefined, close: () => undefined };
+    return { store: undefined, contextBrowse: undefined, close: () => undefined };
   }
 }
 
@@ -144,9 +165,13 @@ export async function assembleIncidentReportOffline(
   params: { sessionKey?: string; traceId?: string; rootRunId?: string; depth?: "summary" | "full" },
 ): Promise<IncidentReport> {
   const { assembleIncidentReportFromSources, makeRealReader } = await loadDaemonAssemblers();
-  const { store, close } = openObsStoreIfPresent(dataDir);
+  const { store, contextBrowse, close } = openObsStoreIfPresent(dataDir);
   try {
-    return await assembleIncidentReportFromSources(makeRealReader(dataDir, store), dataDir, params);
+    return await assembleIncidentReportFromSources(
+      makeRealReader(dataDir, store, undefined, contextBrowse),
+      dataDir,
+      params,
+    );
   } finally {
     close();
   }

@@ -265,6 +265,11 @@ export function assembleIncidentReport(
    * Stays PURE here — the caller does the I/O. Undefined ⇒ the field is omitted.
    */
   sessionSourcePath?: string,
+  /**
+   * Coverage for the bounded lossless-context fallback. The fallback supplies
+   * content-free tool outcomes only; trajectory coverage remains unchanged.
+   */
+  losslessContext?: NonNullable<IncidentReport["coverage"]>["losslessContext"],
 ): IncidentReport {
   const sessionEnd = sessionEndOf(metadata);
   const rollupPayload = rollupPayloadOf(rollup);
@@ -435,6 +440,7 @@ export function assembleIncidentReport(
     ...(sessionSourcePath !== undefined
       ? { sources: { session: sessionSourcePath, trajectory: `${sessionSourcePath}${TRAJECTORY_JSONL_SUFFIX}` } }
       : {}),
+    ...(losslessContext === undefined ? {} : { losslessContext }),
   };
 
   return {

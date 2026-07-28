@@ -53,7 +53,12 @@
 
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { parseFormattedSessionKey, safePath, type EventMap } from "@comis/core";
+import {
+  parseFormattedSessionKey,
+  safePath,
+  type ContextBrowsePort,
+  type EventMap,
+} from "@comis/core";
 import {
   resolveTrajectoryPointerFilePath,
   safeTrajectorySessionFileName,
@@ -123,6 +128,14 @@ export interface TaskCheckLifecycleEvidence {
   readonly ambiguousChunks?: number | null;
 }
 
+/** Content-free tool-result evidence reconstructed from the lossless context store. */
+export interface LosslessToolEvidence {
+  readonly messageCount: number;
+  readonly toolResultCount: number;
+  readonly truncated: boolean;
+  readonly records: Array<Record<string, unknown>>;
+}
+
 /**
  * Bounded window queried from `obs_audit_events` (tenant-scoped) before the
  * caller's traceId filter. `AuditQueryParams` has no traceId predicate,
@@ -142,6 +155,12 @@ export interface IncidentSourceReader {
   readCacheTraceRecords(sessionKey: string): Promise<Array<Record<string, unknown>>>;
   readSessionMetadata(sessionKey: string): Promise<Record<string, unknown> | null>;
   readDiagnosticsRollup(sessionKey: string): Promise<Record<string, unknown> | null>;
+  /**
+   * Bounded content-free tool outcomes from the lossless context store. Used
+   * only when the trajectory is absent, so deleted session artifacts remain
+   * diagnosable without exposing message or tool-result content.
+   */
+  readLosslessToolEvidence?(sessionKey: string): Promise<LosslessToolEvidence | null>;
   /**
    * Resolve one scheduler task-check root through the durable diagnostic row.
    * OPTIONAL so existing fixture readers remain valid. Production implements
@@ -606,6 +625,7 @@ export function makeRealReader(
   dataDir: string,
   obsStore?: ObservabilityStore,
   workspaceDirs?: ReadonlyMap<string, string>,
+  contextBrowse?: ContextBrowsePort,
 ): IncidentSourceReader {
   const base = dataDir.length > 0 ? dataDir : defaultDataDir();
   const logsDir = safePath(base, "logs");
@@ -668,6 +688,35 @@ export function makeRealReader(
       });
       const match = rows.find((r) => r.sessionKey === sessionKey);
       return match === undefined ? null : (match as unknown as Record<string, unknown>);
+    },
+
+    async readLosslessToolEvidence(sessionKey: string): Promise<LosslessToolEvidence | null> {
+      if (contextBrowse?.readToolOutcomes === undefined) return null;
+      const key = parseFormattedSessionKey(sessionKey);
+      if (key === undefined) return null;
+      const evidence = contextBrowse.readToolOutcomes(
+        { tenantId: key.tenantId, agentId: key.agentId },
+        sessionKey,
+        { limit: AUDIT_QUERY_LIMIT },
+      );
+      return {
+        messageCount: evidence.messageCount,
+        toolResultCount: evidence.toolResultCount,
+        truncated: evidence.truncated,
+        records: evidence.outcomes.map((outcome) => ({
+          traceSchema: "comis-trajectory",
+          schemaVersion: 1,
+          type: "tool.result",
+          seq: outcome.seq,
+          agentId: key.agentId,
+          data: {
+            ...(outcome.toolCallId === undefined ? {} : { toolCallId: outcome.toolCallId }),
+            toolName: outcome.toolName,
+            success: !outcome.isError,
+            ...(outcome.isError ? { errorKind: "unknown" } : {}),
+          },
+        })),
+      };
     },
 
     async readTaskCheckLifecycle(rootRunId: string): Promise<TaskCheckLifecycleEvidence | null> {

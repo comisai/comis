@@ -19,6 +19,7 @@ import {
   offlineOAuthProfileSet as _offlineOAuthProfileSet,
   openSqliteDatabase as _openSqliteDatabase,
   createObservabilityStore as _createObservabilityStore,
+  createLcdBrowseStore as _createLcdBrowseStore,
 } from "@comis/memory";
 import type { ObservabilityStore } from "@comis/memory";
 import type { SecretMetadata } from "@comis/core";
@@ -45,3 +46,4 @@ export const offlineOAuthProfileSet = _offlineOAuthProfileSet;
 // only @comis/cli → @comis/memory import site.
 export const openSqliteDatabase = _openSqliteDatabase;
 export const createObservabilityStore = _createObservabilityStore;
+export const createLcdBrowseStore = _createLcdBrowseStore;
