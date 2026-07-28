@@ -57,12 +57,9 @@ import {
   systemNowMs,
 } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
-import { createLogger } from "@comis/infra";
 import { rmSync, existsSync } from "node:fs";
 import type { RpcHandler } from "./types.js";
 import { runBundleInstallHook } from "../skills/bundle-install-helper.js";
-
-const logger = createLogger({ name: "skill-handlers" });
 
 /** Skill name validation regex: lowercase alphanumeric + hyphens, 1-64 chars. */
 const SKILL_NAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
@@ -245,7 +242,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         confinedBaseDir: skillsBaseDir,
       });
       if (!skillDirResult.ok) {
-        logger.warn(
+        deps.logger.warn(
           {
             err: skillDirResult.error,
             skillName: params.name,
@@ -272,7 +269,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
             confinedBaseDir: skillsBaseDir,
           });
           if (!parentDirResult.ok) {
-            logger.warn(
+            deps.logger.warn(
               {
                 err: parentDirResult.error,
                 skillName: params.name,
@@ -291,7 +288,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
           confinedBaseDir: skillsBaseDir,
         });
         if (!writeResult.ok) {
-          logger.warn(
+          deps.logger.warn(
             {
               err: writeResult.error,
               skillName: params.name,
@@ -405,7 +402,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         confinedBaseDir: skillsBaseDir,
       });
       if (!skillDirResult.ok) {
-        logger.warn(
+        deps.logger.warn(
           {
             err: skillDirResult.error,
             skillName: name,
@@ -427,7 +424,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
             confinedBaseDir: skillsBaseDir,
           });
           if (!parentDirResult.ok) {
-            logger.warn(
+            deps.logger.warn(
               {
                 err: parentDirResult.error,
                 skillName: name,
@@ -446,7 +443,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
           confinedBaseDir: skillsBaseDir,
         });
         if (!writeResult.ok) {
-          logger.warn(
+          deps.logger.warn(
             {
               err: writeResult.error,
               skillName: name,
@@ -581,7 +578,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
 
       // Validate skill name
       if (!params.name || params.name.length > 64 || !SKILL_NAME_RE.test(params.name) || params.name.includes("--")) {
-        logger.warn({ skillName: params.name || "(empty)", agentId: callingAgentId, hint: "Skill name must be 1-64 chars, lowercase alphanumeric with single hyphens", errorKind: "validation" as const }, "Skill create rejected: invalid name");
+        deps.logger.warn({ skillName: params.name || "(empty)", agentId: callingAgentId, hint: "Skill name must be 1-64 chars, lowercase alphanumeric with single hyphens", errorKind: "validation" as const }, "Skill create rejected: invalid name");
         deps.eventBus?.emit("skill:failed", { skillName: params.name || "(empty)", error: "Invalid skill name", phase: "create", agentId: callingAgentId, timestamp: systemNowMs() });
         throw new Error("Invalid skill name: must be 1-64 chars, lowercase alphanumeric with hyphens, no leading/trailing/consecutive hyphens");
       }
@@ -596,7 +593,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         const criticalFindings = scanResult.findings.filter((f) => f.severity === "CRITICAL");
         if (criticalFindings.length > 0) {
           const summary = criticalFindings.map((f) => f.description).join("; ");
-          logger.warn({ skillName: params.name, agentId: callingAgentId, scanSummary: summary, hint: "Remove injection patterns, crypto mining, or obfuscated content from skill body", errorKind: "validation" as const }, "Skill create rejected: content scan failed");
+          deps.logger.warn({ skillName: params.name, agentId: callingAgentId, scanSummary: summary, hint: "Remove injection patterns, crypto mining, or obfuscated content from skill body", errorKind: "validation" as const }, "Skill create rejected: content scan failed");
           deps.eventBus?.emit("skill:failed", { skillName: params.name, error: `Content scan failed: ${summary}`, phase: "scan", agentId: callingAgentId, timestamp: systemNowMs() });
           throw new Error(`Skill content rejected by security scan: ${summary}`);
         }
@@ -635,7 +632,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         confinedBaseDir: skillsBaseDir,
       });
       if (!skillDirResult.ok) {
-        logger.warn(
+        deps.logger.warn(
           {
             err: skillDirResult.error,
             skillName: params.name,
@@ -654,7 +651,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         confinedBaseDir: skillsBaseDir,
       });
       if (!writeResult.ok) {
-        logger.warn(
+        deps.logger.warn(
           {
             err: writeResult.error,
             skillName: params.name,
@@ -697,7 +694,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
 
       // Validate name
       if (!params.name || params.name.length > 64 || !SKILL_NAME_RE.test(params.name) || params.name.includes("--")) {
-        logger.warn({ skillName: params.name || "(empty)", agentId: callingAgentId, hint: "Skill name must be 1-64 chars, lowercase alphanumeric with single hyphens", errorKind: "validation" as const }, "Skill update rejected: invalid name");
+        deps.logger.warn({ skillName: params.name || "(empty)", agentId: callingAgentId, hint: "Skill name must be 1-64 chars, lowercase alphanumeric with single hyphens", errorKind: "validation" as const }, "Skill update rejected: invalid name");
         throw new Error("Invalid skill name");
       }
 
@@ -724,7 +721,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         const criticalFindings = scanResult.findings.filter((f) => f.severity === "CRITICAL");
         if (criticalFindings.length > 0) {
           const summary = criticalFindings.map((f) => f.description).join("; ");
-          logger.warn({ skillName: params.name, agentId: callingAgentId, scanSummary: summary, hint: "Remove injection patterns, crypto mining, or obfuscated content from skill body", errorKind: "validation" as const }, "Skill update rejected: content scan failed");
+          deps.logger.warn({ skillName: params.name, agentId: callingAgentId, scanSummary: summary, hint: "Remove injection patterns, crypto mining, or obfuscated content from skill body", errorKind: "validation" as const }, "Skill update rejected: content scan failed");
           deps.eventBus?.emit("skill:failed", { skillName: params.name, error: `Content scan failed: ${summary}`, phase: "scan", agentId: callingAgentId, timestamp: systemNowMs() });
           throw new Error(`Skill content rejected by security scan: ${summary}`);
         }
@@ -751,7 +748,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         confinedBaseDir: skill.location,
       });
       if (!writeResult.ok) {
-        logger.warn(
+        deps.logger.warn(
           {
             err: writeResult.error,
             skillName: params.name,
