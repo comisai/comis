@@ -48,6 +48,18 @@ import {
   suggestWorstSessionOffline,
 } from "./offline-obs.js";
 
+describe("offline observability module boundary", () => {
+  it("loads the narrow daemon observability surface instead of the daemon runtime entrypoint", () => {
+    const source = fs.readFileSync(
+      new URL("./offline-obs.ts", import.meta.url),
+      "utf-8",
+    );
+
+    expect(source).toContain('import("@comis/daemon/offline-observability")');
+    expect(source).not.toContain('import("@comis/daemon")');
+  });
+});
+
 // Regression guard: if `comis explain --offline` / `comis system-health --offline`
 // resolved the data dir from `os.homedir()` ALONE, ignoring `COMIS_DATA_DIR`,
 // then running the CLI as a different user than the daemon (e.g. the daemon as
