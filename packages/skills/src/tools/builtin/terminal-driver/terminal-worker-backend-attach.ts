@@ -14,8 +14,8 @@
  * argv` (the plan is composed upstream); the ONE exception is an `unsandboxed` plan (operator
  * `unsafeDisableSandbox`), where the plan is the CLI itself and the spawns run it directly with
  * `plan.cwd`. An unsandboxed plan STILL takes the durable tmux backend when requested — the tmux
- * server env is kept clean by starting it with the scrubbed `plan.env` and injecting the current
- * scrubbed env per pane via `new-session -e`, so no jail `--unsetenv` is needed (see attachBackend).
+ * server env is kept clean by starting a session-private server with the scrubbed `plan.env`, so
+ * no jail `--unsetenv` is needed and no env value ever reaches argv (see attachBackend).
  *
  * INFRA-FREE (like every worker-side sibling): value-imports ONLY node builtins, and
  * type-imports the worker's structural contracts from the neutral leaf
@@ -46,8 +46,8 @@ interface BackendSpawnPlan {
    * `true` when the jail was bypassed (`unsafeDisableSandbox`) — the child runs DIRECTLY, no bwrap,
    * with `cwd` set. It does NOT force the PTY backend: a durable `backend:"tmux"` request still uses
    * tmux, because the tmux server env stays clean without the jail's `--unsetenv` — `new-session`
-   * (the only server-starting command) runs the scrubbed `plan.env`, and each `new-session -e`
-   * re-injects the current scrubbed env per pane. See {@link attachBackend}.
+   * (the only server-starting command) runs the scrubbed `plan.env`, and each drive gets its OWN
+   * server, so that env is the CURRENT one rather than an earlier drive's. See {@link attachBackend}.
    */
   unsandboxed?: boolean;
 }
@@ -146,9 +146,10 @@ export interface AttachBackendArgs {
    * this path (the surviving pane is read, never re-spawned).
    */
   attachOnly?: boolean;
-  /** On the `attachOnly` re-attach, the surviving session's OWN per-boot `-S` socket
-   *  (from its descriptor) — forwarded to {@link TmuxBackendLike.reattach} so it targets THAT
-   *  server, not this boot's. Absent ⇒ the worker's legacy single-socket default. */
+  /** On the `attachOnly` re-attach, the surviving session's OWN `-S` socket (from its
+   *  descriptor) — forwarded to {@link TmuxBackendLike.reattach} so it targets THAT server.
+   *  Absent ⇒ the worker DERIVES `tmux-<sessionId>.sock` in its durable dir (the socket is a
+   *  pure function of the session id, so it is stable across daemon restarts). */
   tmuxSocket?: string;
 }
 
@@ -193,9 +194,12 @@ export function attachBackend(args: AttachBackendArgs): boolean {
   // this path too: session persistence is a hard requirement, and the tmux server env is safe
   // WITHOUT the jail's `--unsetenv` because (1) the SERVER is only ever started by `new-session`,
   // which runs with the already-scrubbed `plan.env` (no daemon secrets in its global env — the
-  // security floor; `has-session` never starts a server, verified on tmux 3.4), and (2) each
-  // `new-session -e` injects the current scrubbed env per pane (freshness — it also overrides
-  // anything stale in the server global). That is parity with the sandbox-off PTY path (both run
+  // security floor; `has-session` never starts a server, verified on tmux 3.4), and (2) each drive
+  // gets its OWN server on its own `-S` socket, so the env that server captured is THIS drive's
+  // current scrubbed env, never an earlier drive's (freshness — a rotated secret reaches the new
+  // pane because the server is new, not because it is re-injected per pane; env values must never
+  // ride argv, where /proc/<pid>/cmdline makes them world-readable). That is parity with the
+  // sandbox-off PTY path (both run
   // the scrubbed env, no jail). The handle is FakePtyLike-shaped, so it wires EXACTLY like the pty
   // branch (onData→ring, onExit→markExited, set state.pty so writeToBackend uses it) — one seam, no
   // worker-entry branching. A tmux-less host (no loadTmux) still falls through to the PTY path below.

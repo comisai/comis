@@ -210,11 +210,14 @@ export interface TmuxBackendDeps {
   /** Absolute tmux path (operator/daemon-resolved — like the resolved bwrapPath). */
   tmuxPath: string;
   /**
-   * The explicit `-S` socket path — a STABLE file under the data dir (e.g.
-   * `<dataDir>/terminal-worker/tmux.sock`), NOT tmux's default /tmp socket. Survival
-   * key: systemd `PrivateTmp=yes` privatizes /tmp per daemon start, so the default socket is
-   * unreachable after a restart; the data-dir socket is reachable by both daemon generations
-   * so the restarted daemon re-attaches. See {@link tmuxSocketHead}.
+   * The explicit `-S` socket path — a per-session file under the data dir
+   * (`<dataDir>/terminal-worker/tmux-<sessionId>.sock`, from
+   * {@link tmuxSocketPathForSession}), NOT tmux's default /tmp socket. Survival key: systemd
+   * `PrivateTmp=yes` privatizes /tmp per daemon start, so the default socket is unreachable
+   * after a restart. The data-dir path is a pure function of the session id, so every daemon
+   * generation derives the SAME socket and the restarted daemon re-attaches. Do NOT pass a
+   * shared socket: one server per drive is what keeps each drive's env current and stops a
+   * `kill-server` from taking down every concurrent drive. See {@link tmuxSocketHead}.
    */
   socketPath: string;
   /**
