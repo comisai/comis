@@ -743,7 +743,6 @@ export function makeRealReader(
             ...(outcome.toolCallId === undefined ? {} : { toolCallId: outcome.toolCallId }),
             toolName: outcome.toolName,
             success: !outcome.isError,
-            ...(outcome.isError ? { errorKind: "unknown" } : {}),
           },
         })),
       };
