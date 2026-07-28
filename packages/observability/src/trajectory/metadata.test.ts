@@ -5,7 +5,10 @@
  * @module
  */
 import { describe, it, expect } from "vitest";
+import { sanitizeForPersistence } from "../redact/redact-secrets.js";
+import { PAYLOAD_BOUNDS } from "../shared/bounded-payload.js";
 import { buildTraceMetadata, type TraceMetadataParams } from "./metadata.js";
+import { limitTrajectoryPayloadValue } from "./runtime.js";
 
 const baseParams: TraceMetadataParams = {
   harness: { type: "comis", version: "1.0.41", os: "linux", node: "v22.0.0" },
@@ -82,7 +85,16 @@ describe("buildTraceMetadata", () => {
       },
     } as TraceMetadataParams);
     expect(oversized.toolInventory).toMatchObject({ count: 300, truncated: true });
-    expect((oversized.toolInventory as { names: string[] }).names).toHaveLength(256);
+    expect((oversized.toolInventory as { names: string[] }).names).toHaveLength(
+      PAYLOAD_BOUNDS.maxArrayLength,
+    );
+
+    const persisted = limitTrajectoryPayloadValue(
+      sanitizeForPersistence(oversized),
+    ) as TraceMetadataParams;
+    expect(persisted.toolInventory?.names).toEqual(
+      (oversized.toolInventory as { names: string[] }).names,
+    );
   });
 
   it("return value satisfies Record<string, unknown> (assignable to recordEvent data param)", () => {
