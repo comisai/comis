@@ -11744,6 +11744,7 @@
                 "main-vision",
                 "registry",
                 "gemini-video",
+                "vision-direct",
                 "unavailable"
               ]
             },

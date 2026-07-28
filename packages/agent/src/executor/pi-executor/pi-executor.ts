@@ -63,6 +63,7 @@ import {
   emitObservationalEventSafely,
   LinkPrefetchReceiptSchema,
   SttPreprocessReceiptsSchema,
+  VisionDirectPreprocessReceiptSchema,
   safePath,
   sanitizeLogString,
   toSafeErrorLogString,
@@ -1623,6 +1624,24 @@ async function runSessionLocked(
           });
         }
       }
+    }
+    const visionReceipt = VisionDirectPreprocessReceiptSchema.safeParse(
+      msg.metadata?.visionPreprocess,
+    );
+    if (visionReceipt.success) {
+      trajectoryRecorder.recordEvent("media.vision.requested", {
+        provider: visionReceipt.data.provider,
+        mainProvider: visionReceipt.data.mainProvider,
+      });
+      trajectoryRecorder.recordEvent("media.vision.completed", {
+        provider: visionReceipt.data.provider,
+        mainProvider: visionReceipt.data.mainProvider,
+        path: visionReceipt.data.path,
+        outcome: visionReceipt.data.outcome,
+        ...(visionReceipt.data.model !== undefined
+          ? { model: visionReceipt.data.model }
+          : {}),
+      });
     }
   }
 

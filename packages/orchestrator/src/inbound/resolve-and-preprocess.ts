@@ -11,6 +11,7 @@
 import {
   LinkPrefetchReceiptSchema,
   SttPreprocessReceiptsSchema,
+  VisionDirectPreprocessReceiptSchema,
   toSafeErrorLogString,
   type NormalizedMessage,
   type ResolvedTurnScope,
@@ -134,11 +135,13 @@ function projectContentEnrichment(
     allowVisionImages: boolean;
     allowLinkPrefetch: boolean;
     allowSttPreprocess: boolean;
+    allowVisionPreprocess: boolean;
   },
 ): NormalizedMessage {
   const metadata = { ...authoritative.metadata };
   delete metadata.linkPrefetch;
   delete metadata.sttPreprocess;
+  delete metadata.visionPreprocess;
   if (options.allowAudioMention && candidate.metadata.isBotMentioned === true) {
     metadata.isBotMentioned = true;
   }
@@ -161,6 +164,12 @@ function projectContentEnrichment(
     if (receipts.success && receipts.data.length > 0) {
       metadata.sttPreprocess = receipts.data;
     }
+  }
+  if (options.allowVisionPreprocess) {
+    const receipt = VisionDirectPreprocessReceiptSchema.safeParse(
+      candidate.metadata.visionPreprocess,
+    );
+    if (receipt.success) metadata.visionPreprocess = receipt.data;
   }
 
   return {
@@ -280,6 +289,7 @@ export async function resolveAndPreprocess(
   const ingressMetadata = { ...effectiveMsg.metadata };
   delete ingressMetadata.linkPrefetch;
   delete ingressMetadata.sttPreprocess;
+  delete ingressMetadata.visionPreprocess;
   let processedMsg: NormalizedMessage = {
     ...effectiveMsg,
     metadata: ingressMetadata,
@@ -318,6 +328,7 @@ export async function resolveAndPreprocess(
               allowVisionImages: false,
               allowLinkPrefetch: false,
               allowSttPreprocess: false,
+              allowVisionPreprocess: false,
             },
           );
           deps.logger.debug({
@@ -351,6 +362,7 @@ export async function resolveAndPreprocess(
           allowVisionImages: true,
           allowLinkPrefetch: true,
           allowSttPreprocess: true,
+          allowVisionPreprocess: true,
         },
       );
     } catch (preprocessErr) {

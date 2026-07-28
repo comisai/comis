@@ -381,7 +381,7 @@ export interface IncidentSignals {
     mainProvider?: string;
     model?: string;
     costUsd?: number;
-    path?: "main-vision" | "registry" | "gemini-video" | "unavailable";
+    path?: "main-vision" | "registry" | "gemini-video" | "vision-direct" | "unavailable";
     outcome: "ok" | "failed";
     errorKind?: string;
   };

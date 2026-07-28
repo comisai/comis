@@ -11920,6 +11920,7 @@ export const CONTRACTS = {
                 "main-vision",
                 "registry",
                 "gemini-video",
+                "vision-direct",
                 "unavailable"
               ]
             },

@@ -142,6 +142,26 @@ export type SttPreprocessReceipt = z.infer<
   typeof SttPreprocessReceiptSchema
 >;
 
+/**
+ * Content-free evidence that sanitized inbound images were injected directly
+ * into the executing agent model's multimodal request.
+ *
+ * The trusted media preprocessor creates this receipt before the session
+ * trajectory opens. It excludes image bytes, attachment URLs, captions,
+ * extracted text, and model output.
+ */
+export const VisionDirectPreprocessReceiptSchema = z.strictObject({
+  provider: z.string().min(1).max(128),
+  mainProvider: z.string().min(1).max(128),
+  model: z.string().min(1).max(256).optional(),
+  path: z.literal("vision-direct"),
+  outcome: z.literal("ok"),
+});
+
+export type VisionDirectPreprocessReceipt = z.infer<
+  typeof VisionDirectPreprocessReceiptSchema
+>;
+
 export interface SttPreprocessSelection {
   readonly provider: string;
   readonly keyless: boolean;
@@ -189,6 +209,8 @@ export const NormalizedMessageSchema = z.strictObject({
       linkPrefetch: LinkPrefetchReceiptSchema.optional(),
       /** Trusted, content-free automatic inbound transcription receipts. */
       sttPreprocess: SttPreprocessReceiptsSchema.optional(),
+      /** Trusted, content-free direct model-vision preprocessing receipt. */
+      visionPreprocess: VisionDirectPreprocessReceiptSchema.optional(),
     }).default({}),
     /** Exact physical messages represented by a synthetic coalesced turn. */
     originalMessages: z.array(OriginalInboundMessageSchema).min(1).max(10_000).optional(),

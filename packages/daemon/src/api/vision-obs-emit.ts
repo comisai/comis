@@ -40,7 +40,12 @@ import type { ComisLogger, ImageErrorKind } from "@comis/core";
  *  the `path` literals `resolveVisionPath` returns (+ the `MediaVisionEvents`
  *  EventMap `VisionPath`); kept local so the daemon helper takes no extra
  *  `@comis/core` barrel surface. `unavailable` is failure-only. */
-type VisionPath = "main-vision" | "registry" | "gemini-video" | "unavailable";
+type VisionPath =
+  | "main-vision"
+  | "registry"
+  | "gemini-video"
+  | "vision-direct"
+  | "unavailable";
 
 /** The `resolveVisionPath` outcome, structurally typed to avoid the barrel. */
 type VisionSelection =

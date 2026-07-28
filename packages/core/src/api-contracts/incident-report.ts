@@ -323,7 +323,7 @@ export const IncidentReportSchema = z.object({
       /** The analysis cost in USD, reconstructed from the trajectory. Absent on a failed turn OR the registry/gemini-video tiers (which carry no per-call cost). */
       costUsd: z.number().optional(),
       /** Which ladder tier served (the "which path" signal). Absent on a partial record. */
-      path: z.enum(["main-vision", "registry", "gemini-video", "unavailable"]).optional(),
+      path: z.enum(["main-vision", "registry", "gemini-video", "vision-direct", "unavailable"]).optional(),
       /** The terminal outcome of the vision turn. */
       outcome: z.enum(["ok", "failed"]),
       /** The classified failure kind when `outcome === "failed"`. Absent on success. */

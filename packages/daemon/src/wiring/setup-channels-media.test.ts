@@ -105,6 +105,7 @@ function makeDeps(overrides: Partial<MediaPipelineDeps> = {}): MediaPipelineDeps
     linkRunner: { processMessage: vi.fn(async (text: string) => ({ enrichedText: text })) } as any,
     maxMediaBytes: 10_000_000,
     defaultAgentId: "default",
+    onSuspiciousContent: undefined,
     ...overrides,
   };
 }
