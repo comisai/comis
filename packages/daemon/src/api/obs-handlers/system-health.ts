@@ -125,6 +125,9 @@ interface SystemSignals {
   topDegradedCause?: string;
   healthSignalCount: number;
   configPostureCount: number;
+  /** The bounded current-posture finding already assembled for the report. */
+  configPostureDetail?: string;
+  configPostureHint?: string;
   topErrorKind?: string;
   /** Count of DEGRADED autonomy runs (orphaned + revoked/killed) in the
    *  window — the acute autonomy event the worst-rootRunId verdict fires on. */
@@ -255,12 +258,16 @@ const SYSTEM_HEURISTICS: ReadonlyArray<(s: SystemSignals) => SystemRootCause | n
   // 3) Recurring config-posture signal — an insecure/drifted config across the system.
   (s) => {
     if (s.configPostureCount === 0) return null;
+    const postureDetail =
+      s.configPostureDetail
+      ?? `${s.configPostureCount} config-posture signal(s) flagged across the system`;
     return {
       code: "system_config_posture",
-      detail: `${s.configPostureCount} config-posture signal(s) flagged across the system`,
+      detail: postureDetail,
       suggestedNextSteps: [
-        "review the gateway TLS / token posture",
-        "reconcile the flagged config keys against the secure baseline",
+        `correct the exact flagged posture named by system-health: ${postureDetail}`,
+        s.configPostureHint
+          ?? "reconcile the named flagged keys against the secure baseline",
       ],
     };
   },
@@ -427,6 +434,7 @@ export async function assembleSystemHealthReport(
 
   // findings[] — counts + codes + hints ONLY (no raw bodies).
   const allFindings = buildFindings(healthSignals, modelHealth, configPosture, learningHealth, memoryLifecycle, cronWakeGate);
+  const configPostureFinding = allFindings.find((finding) => finding.code === "config_posture");
   const truncations: TruncationEntry[] = [];
   const findings = boundFindings(allFindings, truncations);
 
@@ -494,6 +502,12 @@ export async function assembleSystemHealthReport(
     // discipline the findings rollup applies.
     healthSignalCount: healthSignals.filter((r) => r.severity !== "info").length,
     configPostureCount: configPosture.length,
+    ...(configPostureFinding === undefined
+      ? {}
+      : {
+          configPostureDetail: configPostureFinding.detail,
+          configPostureHint: configPostureFinding.hint,
+        }),
     topErrorKind: topErrorKinds[0]?.kind,
     // Name the exact worst degraded session so the acute-degradation verdict
     // pastes straight into `comis explain` (undefined-safe spread).
