@@ -13,6 +13,7 @@
 import { isSignedReplayError } from "./signed-replay-detector.js";
 import { describeTimeoutKnob, describeRetryTimeoutKnob } from "./timeout-knob.js";
 
+import type { ErrorKind } from "@comis/core";
 import type { PromptTimeoutError } from "./prompt-timeout.js";
 import type { TimeoutSource } from "../model/operation-model-resolver.js";
 
@@ -319,6 +320,46 @@ export function classifyError(error: unknown): ClassifiedError {
   }
 
   return UNKNOWN_ERROR;
+}
+
+/**
+ * Project a provider-facing error category onto the closed operational
+ * taxonomy used by structured logs and observability aggregates.
+ */
+export function errorKindForCategory(category: ErrorCategory): ErrorKind {
+  switch (category) {
+    case "credit_exhausted":
+    case "rate_limited":
+    case "context_too_long":
+      return "resource";
+    case "auth_invalid":
+    case "aws_auth_invalid":
+    case "aws_auth_expired":
+    case "aws_model_access":
+      return "auth";
+    case "aws_region_or_model":
+    case "model_not_available":
+      return "config";
+    case "overloaded":
+    case "empty_response":
+      return "dependency";
+    case "client_request_signed_replay":
+    case "tool_schema_unsupported":
+    case "client_request":
+      return "validation";
+    case "prompt_timeout":
+      return "timeout";
+    case "provider_unreachable":
+      return "network";
+    case "content_filtered":
+      return "precondition";
+    case "unknown":
+      return "internal";
+    default: {
+      const _exhaustive: never = category;
+      return _exhaustive;
+    }
+  }
 }
 
 /**

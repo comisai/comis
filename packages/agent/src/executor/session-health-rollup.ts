@@ -39,6 +39,8 @@ export interface SessionHealthRollup {
 interface RollupInput {
   executionCostUsd?: number;
   breakerTripCount?: number;
+  /** Settled execution-level failure for model/envelope failures without a failed tool record. */
+  terminalErrorKind?: ErrorKind;
   toolExecResults?: ReadonlyArray<{
     toolName: string;
     success: boolean;
@@ -102,6 +104,14 @@ export function buildSessionHealthRollup(
         rawErrorKinds.set(r.errorKind, (rawErrorKinds.get(r.errorKind) ?? 0) + 1);
       }
     }
+  }
+
+  if (
+    !CLEAN_END_REASONS.has(endReason) &&
+    rawErrorKinds.size === 0 &&
+    bridgeResult.terminalErrorKind !== undefined
+  ) {
+    rawErrorKinds.set(bridgeResult.terminalErrorKind, 1);
   }
 
   // Top-N by count (descending). The cap bounds the map so it cannot grow with
