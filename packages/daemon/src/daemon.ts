@@ -2160,10 +2160,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
       logger: daemonLogger,
     }),
     dataDir: container.config.dataDir || ".",
-    sdkSkillReadOnlyPaths: [
-      safePath(safePath(os.homedir(), ".agents"), "skills"),
-      pathResolve(singleAgentDeps.resolvedAgentDir, "skills"),
-    ],
+    sdkSkillReadOnlyPaths: [safePath(safePath(os.homedir(), ".agents"), "skills"), pathResolve(singleAgentDeps.resolvedAgentDir, "skills")],
     secretManager: container.secretManager, platformSecretNames: container.platformSecretNames,
     eventBus: container.eventBus, skillsLogger, linkRunner,
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
@@ -2537,8 +2534,7 @@ async function bootGateway(
     suspendedAgents, gatewaySendRef,
     interactiveCallbackWiring,
     msTeamsIngress,
-    obsStore, // backs the obs_explain assembler closure (diagnostics rollup)
-    contextBrowse, // lossless tool-outcome fallback when session artifacts are absent
+    obsStore, contextBrowse, // diagnostics rollup + lossless tool-outcome fallback
     dataDir: bootDataDir, // absolute fallback data dir (always abs; ~/.comis or $COMIS_DATA_DIR)
   } = channels;
   const _createGatewayServer = overrides.createGatewayServer ?? createGatewayServer;
@@ -2584,10 +2580,8 @@ async function bootGateway(
     obsStore,
     clock: boot.clock,
     durableRuns: boot.durableRunStore,
-    workspaceDirs,
-    contextBrowse,
+    workspaceDirs, contextBrowse,
   });
-
   const { gatewayHandle, activeExecutions, getActiveConnectionCount, wsConnections } = await setupGateway({
     container, gwConfig, webhooksConfig: container.config.webhooks, agents, defaultAgentId,
     configPaths, defaultConfigPaths: DEFAULT_CONFIG_PATHS, gatewayLogger,
