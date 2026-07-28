@@ -70,6 +70,21 @@ describe("createGatewayServer", () => {
     });
   });
 
+  it("starting the gateway preserves the native fetch constructors", async () => {
+    const initialRequest = globalThis.Request;
+    const initialResponse = globalThis.Response;
+    const config = { ...defaultConfig(), port: 0 };
+    const handle = createGatewayServer(createServerDeps({ config }));
+
+    await handle.start();
+    try {
+      expect(globalThis.Request).toBe(initialRequest);
+      expect(globalThis.Response).toBe(initialResponse);
+    } finally {
+      await handle.stop();
+    }
+  });
+
   // Plain-HTTP boot posture: the default install (loopback bind, no TLS, no
   // config.yaml) must NOT warn about itself — a loopback listener has no
   // off-host exposure, matching the system `tlsOff` posture finding and the
