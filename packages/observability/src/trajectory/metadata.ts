@@ -13,6 +13,7 @@
  * @module
  */
 import { sanitizeForPersistence } from "../redact/redact-secrets.js";
+import { PAYLOAD_BOUNDS } from "../shared/bounded-payload.js";
 
 export interface TraceMetadataParams {
   readonly harness: {
@@ -78,7 +79,10 @@ export function buildTraceMetadata(params: TraceMetadataParams): TraceMetadataPa
     params.toolInventory === undefined
       ? []
       : [...new Set(params.toolInventory.names)].sort();
-  const toolNameLimit = 256;
+  // Keep the array at or below the persistence walker's canonical bound.
+  // Longer arrays are replaced wholesale by a sentinel, which would preserve
+  // the count but erase every sampled tool name from the artifact.
+  const toolNameLimit = PAYLOAD_BOUNDS.maxArrayLength;
   return {
     harness: compactObject(params.harness as unknown as Record<string, unknown>),
     model: compactObject(params.model as unknown as Record<string, unknown>),
