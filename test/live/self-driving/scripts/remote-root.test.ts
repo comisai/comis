@@ -12,6 +12,7 @@ const RIG_HELPER = resolve(HERE, "_rig.sh");
 const RESTART_DAEMON = resolve(HERE, "restart-daemon.sh");
 const CLEAN_RESTART = resolve(HERE, "clean-restart.sh");
 const PHASE_ZERO_CHECK = resolve(HERE, "phase0-check.sh");
+const LOCAL_UP = resolve(HERE, "local-up.sh");
 const WIRE_EMULATOR = resolve(HERE, "wire-emu.mjs");
 const DEPLOY_SCRIPTS = resolve(HERE, "deploy-scripts.sh");
 const DEPLOY_EMULATOR = resolve(HERE, "deploy-emu.sh");
@@ -229,6 +230,54 @@ describe("local rig mode", () => {
 
     expect(isolated).toContain("/tmp/explicit-isolated-rig|/tmp/fake-home|");
     expect(isolated).not.toContain("comis-does-not-exist-here");
+  });
+
+  it("reuses the rendered isolated rig after dropping stale remote live-env defaults", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-up-rig-env-"));
+    temporaryDirectories.push(directory);
+    const isolatedData = resolve(directory, "isolated-data");
+    const rigEnv = resolve(directory, "rig.env");
+    writeFileSync(
+      rigEnv,
+      [
+        'export RIG_MODE="${RIG_MODE:-local}"',
+        `export COMIS_USER="\${COMIS_USER:-test-user}"`,
+        `export COMIS_HOME="\${COMIS_HOME:-${directory}}"`,
+        `export DATA="\${DATA:-${isolatedData}}"`,
+        `export PKG="\${PKG:-${resolve(HERE, "../../../..")}}"`,
+        'export SERVICE="${SERVICE:-comis}"',
+        'export GW_PORT="${GW_PORT:-4767}"',
+        'export CHATID="${CHATID:-678314278}"',
+        `export EMU_DIR="\${EMU_DIR:-${resolve(HERE, "../../../..")}}"`,
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+
+    let output = "";
+    try {
+      execFileSync("bash", [LOCAL_UP], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: directory,
+          RIG_ENV: rigEnv,
+          COMIS_USER: "comis",
+          COMIS_HOME: "/home/comis-does-not-exist-here",
+          DATA: "/home/comis-does-not-exist-here/.comis",
+          PKG: "/home/comis-does-not-exist-here/.npm-global/lib/node_modules/comisai",
+          EMU_DIR: "/root/comis-emu",
+          SKIP_BUILD: "1",
+        },
+        stdio: "pipe",
+      });
+    } catch (error) {
+      const failure = error as { stdout?: Buffer | string; stderr?: Buffer | string };
+      output = `${String(failure.stdout ?? "")}${String(failure.stderr ?? "")}`;
+    }
+
+    expect(output).toContain(`data=${isolatedData}`);
+    expect(output).toContain(`no ${isolatedData}/config.yaml`);
+    expect(output).not.toContain(`data=${directory}/.comis`);
   });
 
   it("keeps the portable probes off Linux-only tools", () => {
