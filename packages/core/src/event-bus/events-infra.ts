@@ -338,15 +338,8 @@ export interface InfraEvents {
     agentId: string;
     timestamp: number;
   } & (
-    | {
-      status: "degraded";
-      errorKind: ErrorKind;
-      retryMs: number;
-    }
-    | {
-      status: "recovered";
-      degradedDurationMs: number;
-    }
+    | { status: "degraded"; errorKind: ErrorKind; retryMs: number }
+    | { status: "recovered"; degradedDurationMs: number }
   );
 
   /** Boot-time reconciliation of durable cron claims against execution facts. */
