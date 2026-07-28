@@ -10,7 +10,6 @@
  */
 
 import {
-  sanitizeLogString,
   type ClockPort,
   type LinkPrefetchReceipt,
   type LinkUnderstandingConfig,
@@ -107,6 +106,23 @@ export function createLinkRunner(deps: LinkRunnerDeps): LinkRunner {
     }
   };
 
+  const failureLogMessage = (stage: LinkFetchFailureStage): string => {
+    switch (stage) {
+      case "validation":
+        return "URL rejected by SSRF policy";
+      case "request":
+        return "Link request failed";
+      case "response":
+        return "Link response was unsuccessful";
+      case "extraction":
+        return "Link content extraction failed";
+      default: {
+        const _exhaustive: never = stage;
+        return _exhaustive;
+      }
+    }
+  };
+
   return {
     async processMessage(text: string): Promise<LinkProcessResult> {
       // Short-circuit when disabled
@@ -160,7 +176,7 @@ export function createLinkRunner(deps: LinkRunnerDeps): LinkRunner {
             {
               step: "link-fetch",
               failureStage: "request",
-              error: sanitizeLogString(String(outcome.reason)),
+              error: failureLogMessage("request"),
               hint: failureHint("request"),
               errorKind: "dependency" as const,
             },
@@ -178,7 +194,7 @@ export function createLinkRunner(deps: LinkRunnerDeps): LinkRunner {
             {
               step: "link-fetch",
               failureStage: result.error.stage,
-              error: sanitizeLogString(result.error.error.message),
+              error: failureLogMessage(result.error.stage),
               hint: failureHint(result.error.stage),
               errorKind:
                 result.error.stage === "validation"
