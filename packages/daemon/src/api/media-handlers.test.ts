@@ -873,7 +873,11 @@ describe("createMediaHandlers", () => {
 
       expect(sendAttachment).toHaveBeenCalledWith(
         "678314278",
-        expect.objectContaining({ type: "audio", url: result.filePath }),
+        expect.objectContaining({
+          type: "audio",
+          url: result.filePath,
+          isVoiceNote: true,
+        }),
       );
       expect(result.delivered).toBe(true);
     });
