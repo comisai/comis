@@ -85,7 +85,7 @@ describe("default workspace template ownership", () => {
     expect(ONBOARDING_COMPLETE_TOOL_RESULT).toMatch(/summarize.*confirmed/iu);
   });
 
-  it("classifies only operator placeholders as untouched", () => {
+  it("classifies only unchanged operator starter guides as untouched", () => {
     for (const fileName of OPERATOR_OWNED_FILES) {
       expect(isUntouchedWorkspaceTemplate(fileName, DEFAULT_TEMPLATES[fileName])).toBe(true);
     }

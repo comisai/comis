@@ -17,7 +17,7 @@ Skills, memories, files, web content, media text, API overrides, tool results, a
 
 `WorkspacePolicyPort` loads operator-owned workspace files once at turn start and returns a strict `WorkspacePolicySnapshot`. The snapshot contains typed sections and a deterministic combined hash. Prompt compilation, execution diagnostics, durable checkpoints, and outcome evaluation use that exact snapshot; they do not reread mutable workspace files during the turn. An asynchronous consumer that cannot resolve the recorded hash returns an unknown result instead of substituting current or partial policy.
 
-Operator-owned workspace starters are neutral comments, created only when absent, and omitted from prompts while untouched. A newly created workspace receives neutral first-run state in `BOOTSTRAP.md`; it invites operator-guided setup without assuming a domain, identity, locale, or permissions. `BOOTSTRAP.md` remains untrusted agent state, is never promoted to operator policy, and is cleared when setup completes. Because files are created only when absent, normal startup preserves a cleared file while deleting and recreating the workspace starts onboarding again.
+Operator-owned workspace starters are complete neutral editing guides, created only when absent, marked with `COMIS-TEMPLATE`, and omitted from prompts while untouched. They provide the structure needed to configure identity, user context, operating rules, role, tool notes, periodic work, and session startup without making those examples active policy. A newly created workspace receives neutral first-run state in `BOOTSTRAP.md`; it invites operator-guided setup without assuming a domain, identity, locale, or permissions. `BOOTSTRAP.md` remains untrusted agent state, is never promoted to operator policy, and is cleared when setup completes. Because files are created only when absent, normal startup preserves a cleared file while deleting and recreating the workspace starts onboarding again.
 
 ## Identity and storage scope
 
@@ -38,7 +38,7 @@ The prompt compiler consumes typed instruction and runtime sections. It produces
 - a bounded runtime preamble;
 - a content-free compile report with section identities, sources, trust, stability, budgets, hashes, sizes, and inclusion outcomes.
 
-The engine kernel remains below 1,000 estimated tokens and minimal mode below 500 before provider-native tool schemas. Security invariants are never silently truncated. Empty starter content costs zero prompt tokens. The registered tool set and provider schemas remain authoritative; prompt prose does not advertise unavailable capabilities.
+The engine kernel remains below 1,000 estimated tokens and minimal mode below 500 before provider-native tool schemas. Security invariants are never silently truncated. Untouched starter content costs zero prompt tokens because marked starters are omitted. The registered tool set and provider schemas remain authoritative; prompt prose does not advertise unavailable capabilities.
 
 Execution state such as sender trust, locale policy, selected skills, and compaction state is passed structurally. Consumers do not parse Markdown headings to recover state.
 
