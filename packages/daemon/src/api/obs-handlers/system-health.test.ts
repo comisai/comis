@@ -788,6 +788,13 @@ describe("assembleSystemHealthReport (4-source read fan-in)", () => {
       detail: expect.stringContaining("1 config-posture signal"),
     });
     expect(report.likelyRootCause?.detail).toContain("1 config-posture signal");
+    expect(report.likelyRootCause?.detail).toContain("CANARY_SECRET (unset)");
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" | ")).toContain(
+      "CANARY_SECRET (unset)",
+    );
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" | ")).not.toContain(
+      "gateway TLS / token posture",
+    );
   });
 
   it("clears config posture findings when the latest boot snapshot is healthy", async () => {
