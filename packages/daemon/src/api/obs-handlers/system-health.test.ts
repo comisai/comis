@@ -765,6 +765,58 @@ describe("assembleSystemHealthReport (4-source read fan-in)", () => {
     expect(report.likelyRootCause?.code).toBe("system_config_posture");
   });
 
+  it("reports config posture as one current state instead of counting daemon boots", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    for (const timestamp of [now - 2_000, now - 1_000]) {
+      store.insertDiagnostic({
+        timestamp,
+        category: "config_posture",
+        severity: "warning",
+        message: "config_posture",
+        details: JSON.stringify({ canaryFallbackActive: true }),
+      });
+    }
+
+    const report = await assembleSystemHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now) },
+      24,
+    );
+
+    expect(report.findings.find((finding) => finding.code === "config_posture")).toMatchObject({
+      count: 1,
+      detail: expect.stringContaining("1 config-posture signal"),
+    });
+    expect(report.likelyRootCause?.detail).toContain("1 config-posture signal");
+  });
+
+  it("clears config posture findings when the latest boot snapshot is healthy", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    store.insertDiagnostic({
+      timestamp: now - 2_000,
+      category: "config_posture",
+      severity: "warning",
+      message: "config_posture",
+      details: JSON.stringify({ canaryFallbackActive: true }),
+    });
+    store.insertDiagnostic({
+      timestamp: now - 1_000,
+      category: "config_posture",
+      severity: "info",
+      message: "config_posture",
+      details: JSON.stringify({ canaryFallbackActive: false }),
+    });
+
+    const report = await assembleSystemHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now) },
+      24,
+    );
+
+    expect(report.findings.some((finding) => finding.code === "config_posture")).toBe(false);
+    expect(report.likelyRootCause).toBeNull();
+  });
+
   it("HEURISTIC: a high degraded rate yields a deterministic likelyRootCause verdict", async () => {
     const now = systemNowMs();
     const store = makeStore();
@@ -784,6 +836,43 @@ describe("assembleSystemHealthReport (4-source read fan-in)", () => {
 
     expect(report.likelyRootCause).not.toBeNull();
     expect(report.likelyRootCause?.suggestedNextSteps.length).toBeGreaterThan(0);
+  });
+
+  it("high degradation names the cause and exact session when no error kind was recorded", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    for (const [index, key] of ["s-failed-old", "s-failed-new"].entries()) {
+      store.insertDiagnostic({
+        timestamp: now - (2 - index) * 100,
+        category: "session_summary",
+        severity: "warning",
+        sessionKey: key,
+        message: "session:summary",
+        details: summaryDetails({
+          degraded: true,
+          costUsd: 0,
+          turnCount: 0,
+          topErrorKinds: {},
+          endReason: "error",
+        }),
+      });
+    }
+
+    const report = await assembleSystemHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now) },
+      24,
+    );
+
+    expect(report.likelyRootCause?.code).toBe("system_high_degraded_rate");
+    expect(report.likelyRootCause?.detail).toContain("top cause: error");
+    expect(report.likelyRootCause?.detail).toContain("worst: s-failed-new");
+    expect(report.likelyRootCause?.detail).not.toContain("the top error kind");
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" | ")).toContain(
+      "comis explain s-failed-new",
+    );
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" | ")).not.toMatch(
+      /provider\/transport|rate-limit/,
+    );
   });
 });
 
