@@ -62,6 +62,14 @@ describe("createPipelineRedactStage", () => {
     expect(out).toBe('{"msg":"completed"}\n');
   });
 
+  it("canonicalizes duplicate structured fields after redaction", async () => {
+    const out = await runStage([
+      '{"agentId":"bound-agent","msg":"completed","agentId":"request-agent"}\n',
+    ]);
+    expect(out).toBe('{"agentId":"request-agent","msg":"completed"}\n');
+    expect(out.match(/"agentId":/g)).toHaveLength(1);
+  });
+
   it("is fail-soft: a throw inside redaction yields the original line, never crashes", async () => {
     redactMock.mockImplementation(() => {
       throw new Error("redact boom");
