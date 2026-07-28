@@ -2,13 +2,14 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HELPER = resolve(HERE, "_remote-root.sh");
 const RIG_HELPER = resolve(HERE, "_rig.sh");
+const RIG_NODE_HELPER = resolve(HERE, "_rig.mjs");
 const RESTART_DAEMON = resolve(HERE, "restart-daemon.sh");
 const CLEAN_RESTART = resolve(HERE, "clean-restart.sh");
 const PHASE_ZERO_CHECK = resolve(HERE, "phase0-check.sh");
@@ -325,6 +326,59 @@ describe("local rig mode", () => {
       const source = readFileSync(script, "utf8");
       expect(source, script).toContain("rig_load_persisted_env");
     }
+  });
+
+  it("lets bare node helpers discover the rendered local rig mode", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-node-rig-mode-"));
+    temporaryDirectories.push(directory);
+    const helperCopy = resolve(directory, "_rig.mjs");
+    const isolatedData = resolve(directory, "isolated-data");
+    writeFileSync(helperCopy, readFileSync(RIG_NODE_HELPER, "utf8"));
+    writeFileSync(
+      resolve(directory, ".rig-env"),
+      [
+        'export RIG_MODE="${RIG_MODE:-local}"',
+        `export COMIS_USER="\${COMIS_USER:-test-user}"`,
+        `export COMIS_HOME="\${COMIS_HOME:-${directory}}"`,
+        `export DATA="\${DATA:-${isolatedData}}"`,
+        `export PKG="\${PKG:-${directory}}"`,
+        'export SERVICE="${SERVICE:-comis}"',
+        'export GW_PORT="${GW_PORT:-4767}"',
+        'export CHATID="${CHATID:-678314278}"',
+        `export EMU_DIR="\${EMU_DIR:-${directory}}"`,
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    const env = { ...process.env };
+    for (const key of [
+      "RIG_MODE",
+      "RIG_ENV",
+      "COMIS_USER",
+      "COMIS_HOME",
+      "COMIS_DATA_DIR",
+      "DATA",
+      "COMIS_SRC",
+      "GW_PORT",
+      "EMU_DIR",
+    ]) {
+      delete env[key];
+    }
+
+    const output = execFileSync(
+      "node",
+      [
+        "--input-type=module",
+        "-e",
+        `import { rig } from ${JSON.stringify(pathToFileURL(helperCopy).href)}; console.log(JSON.stringify({ mode: rig.mode, dataDir: rig.dataDir, gwPort: rig.gwPort }));`,
+      ],
+      { encoding: "utf8", env },
+    );
+
+    expect(JSON.parse(output)).toEqual({
+      mode: "local",
+      dataDir: isolatedData,
+      gwPort: 4767,
+    });
   });
 
   it("keeps the portable probes off Linux-only tools", () => {
