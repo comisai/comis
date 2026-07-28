@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# phase0-check.sh — PREFLIGHT readiness gate for a webhook→claude TERMINAL-DRIVE test. Run ON THE VPS.
+# phase0-check.sh — PREFLIGHT readiness gate for a webhook→claude TERMINAL-DRIVE test. Runs ON the
+# rig: on the VPS for RIG_MODE=remote, in this scripts dir for RIG_MODE=local (it auto-sources
+# .live-env + the rendered rig env, and every probe is already command-guarded).
 #
 # WHY: a webhook→claude run can burn turns discovering the rig wasn't ready ONE
 # check at a time — a FATAL config (the terminal schema needs a full `worker` + `defaults` block, not
@@ -18,7 +20,14 @@
 #        COMIS_USER (comis). Override WH_PATH via arg 1.
 
 set -uo pipefail
-[ -f /root/comis-rig.env ] && . /root/comis-rig.env
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -f "$HERE/.live-env" ] && . "$HERE/.live-env"
+# shellcheck source=./_rig.sh
+if [ -f "$HERE/_rig.sh" ]; then . "$HERE/_rig.sh" && rig_defaults; fi
+for _f in "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env; do
+  # shellcheck disable=SC1090 # the rig env path is mode-resolved at run time
+  [ -n "$_f" ] && [ -f "$_f" ] && . "$_f" && break
+done
 DATA="${DATA:-/home/comis/.comis}"
 GW_HOST="${GW_HOST:-127.0.0.1}"
 GW_PORT="${GW_PORT:-4766}"

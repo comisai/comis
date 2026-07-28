@@ -1,26 +1,44 @@
-# Per-box live-test rig config. THIS is where your VPS ssh target + the gateway token go.
+# Per-rig live-test config. THIS is where your rig choice, ssh target and gateway token go.
 #
 #   Setup:  cp .live-env.example .live-env   &&  $EDITOR .live-env   (it's gitignored — never committed)
 #
-# The rig targets the PRODUCTION installation that website/public/install.sh creates (or that
-# scripts/install-vps.sh creates from this checkout): systemd `comis.service`, daemon as the
-# dedicated service user, code at the npm-global comisai package, data dir ~<user>/.comis.
+# TWO RIGS. `RIG_MODE` picks one; everything below defaults per mode.
 #
-# The LOCAL scripts (install-vps.sh, deploy-dist.sh, deploy-scripts.sh, deploy-emu.sh,
-# run-linux-tests.sh) AUTO-SOURCE ./.live-env; deploy-scripts.sh renders these values to
-# /root/comis-rig.env ON the box, where the box-side scripts source them and the .mjs helpers read
-# them via _rig.mjs. For ad-hoc one-liners, `source .live-env` first.
+#   RIG_MODE=remote (default) — the PRODUCTION installation that website/public/install.sh creates
+#     (or that scripts/install-vps.sh creates from this checkout): systemd `comis.service`, the
+#     daemon as a dedicated service user, code at the npm-global comisai package, data dir
+#     ~<user>/.comis. This is the canonical rig — it tests the layout users actually get, and it is
+#     the ONLY rig that can exercise the Linux-only surfaces (bubblewrap sandbox/jail, systemd
+#     lifecycle, the *.linux.test.ts tier). Only VPS is mandatory.
 #
-# Only VPS is mandatory — every other value below IS the standard install.sh layout; override per box.
+#   RIG_MODE=local — THIS machine. The daemon runs from this checkout against a local data dir
+#     (default ~/.comis), the emulator binds loopback here, and every rig command runs in a local
+#     shell. No VPS, no ssh key, no deploy step. Fast inner loop; honest degradation documented in
+#     `01-SETUP.md §Local mode` (a macOS local run CANNOT validate the sandbox/jail oracles).
+#     Bring it up with: ./local-up.sh
+#
+# The LOCAL scripts (install-vps.sh, deploy-dist.sh, deploy-scripts.sh, deploy-emu.sh, local-up.sh,
+# rig-doctor.sh, verify-build.sh, run-linux-tests.sh) AUTO-SOURCE ./.live-env; deploy-scripts.sh
+# renders these values to the rig env file (/root/comis-rig.env remotely, ./.rig-env locally), where
+# the rig-side scripts source them and the .mjs helpers read them via _rig.mjs. For ad-hoc
+# one-liners, `source .live-env` first.
 #
 # EVERY value uses DEFAULT-ASSIGN (`: "${X:=...}"; export X`), never a bare `export X=...`,
-# so a single run can target a DIFFERENT box without editing the file:
+# so a single run can target a DIFFERENT rig without editing the file:
 #
 #     VPS=comis-test1 ./install-vps.sh
+#     RIG_MODE=local ./local-up.sh
 #
 # A bare `export` here silently CLOBBERS an inline override — which is exactly how a live-test
 # run once ended up pointed at a PRODUCTION box.
 
+: "${RIG_MODE:=remote}"; export RIG_MODE   # remote (VPS production install) | local (this machine)
+
+# ---- REMOTE rig -------------------------------------------------------------------------------
+# GUARDED BY MODE ON PURPOSE. These paths describe the VPS install; assigning them unconditionally
+# would leave a RIG_MODE=local run pointed at /home/comis paths that do not exist on your machine.
+# (_rig.sh detects and drops that leak with a named warning, but the guard is the real fix.)
+if [ "${RIG_MODE:-remote}" = remote ]; then
 : "${VPS:=user@your-vps-host-or-ip}"; export VPS # ssh target — how you reach the test VPS (ssh KEY lives in ~/.ssh)
 : "${REMOTE_SUDO:=0}"; export REMOTE_SUDO                 # 1 for an SSH deployment user with passwordless sudo -n
 : "${COMIS_USER:=comis}"; export COMIS_USER             # the dedicated service user install.sh creates
@@ -28,14 +46,39 @@
 : "${DATA:=/home/comis/.comis}"; export DATA      # daemon data dir (config.yaml, secrets.db, logs, workspace)
 : "${PKG:=/home/comis/.npm-global/lib/node_modules/comisai}"; export PKG # installed package root (daemon+cli dist live under its node_modules/@comis/)
 : "${SERVICE:=comis}"; export SERVICE                # systemd unit name
+: "${EMU_DIR:=/root/comis-emu}"; export EMU_DIR      # emulator tree on the box (deploy-emu.sh rsyncs test/live/ here)
+fi
+
+# ---- LOCAL rig --------------------------------------------------------------------------------
+# Uncomment the block below (and set RIG_MODE=local above) to drive this machine instead. Every
+# value already defaults correctly for a local run — the block exists so the two knobs that matter
+# are visible:
+#
+#   DATA — ⚠ defaults to ~/.comis, i.e. YOUR everyday install. `local-up.sh` repoints its
+#          channels.telegram at the emulator (original preserved at $DATA/config.pre-emu.yaml) and
+#          `clean-restart.sh` DELETES its sessions/memory.db/logs for real. Point DATA at a
+#          dedicated directory for from-scratch workloads, and give that rig its own GW_PORT so it
+#          cannot collide with a daemon already listening on 4766.
+#   LOCAL_SUPERVISOR — auto (use pm2 when it already supervises $SERVICE, else relaunch directly) |
+#          pm2 | direct.
+#
+# : "${DATA:=$HOME/.comis-live}"; export DATA
+# : "${GW_PORT:=4767}"; export GW_PORT
+# : "${LOCAL_SUPERVISOR:=auto}"; export LOCAL_SUPERVISOR
+
+# ---- Both rigs --------------------------------------------------------------------------------
 : "${GW_PORT:=4766}"; export GW_PORT                 # gateway port (config.yaml gateway.port)
 : "${CHATID:=678314278}"; export CHATID             # emulator chat/sender id to drive
-: "${EMU_DIR:=/root/comis-emu}"; export EMU_DIR      # emulator tree on the box (deploy-emu.sh rsyncs test/live/ here)
+
+# Group chats exist ONLY if the emulator is launched with them — they cannot be created over the
+# /control API. Set this to drive group/mention arcs (restart-emu.sh passes it through):
+#   : "${EMU_GROUPS:=[{"chatId":-1001234567890,"members":[{"id":678314278,"firstName":"owner"},{"id":678314279,"firstName":"peer"}],"botId":1234567,"botUsername":"comis_bot"}]}"; export EMU_GROUPS
 
 # Gateway bearer token for the RPC helpers (revoke.mjs & co). Under a production install `comis init`
-# stores it in the encrypted secrets store and config.yaml references ${COMIS_GATEWAY_TOKEN} — fetch
-# the RESOLVED literal once per box:
-#   ssh $VPS "su - comis -c 'comis secrets get COMIS_GATEWAY_TOKEN'"
-# (If your config.yaml carries a literal token instead, copy that. Fresh box with no config yet:
+# stores it in the encrypted secrets store and config.yaml references ${COMIS_GATEWAY_TOKEN} —
+# deploy-scripts.sh auto-fetches the RESOLVED literal from the rig when this is unset:
+#   remote:  ssh $VPS "su - comis -c 'comis secrets get COMIS_GATEWAY_TOKEN'"
+#   local:   node packages/cli/dist/cli.js secrets get --offline COMIS_GATEWAY_TOKEN
+# (If your config.yaml carries a literal token instead, copy that. Fresh rig with no config yet:
 # generate a fresh ≥32-char token and put the SAME literal in config.yaml gateway.tokens[].secret.)
-: "${GWTOKEN:=REPLACE-WITH-THE-BOX-GATEWAY-TOKEN-min-32-chars}"; export GWTOKEN
+: "${GWTOKEN:=REPLACE-WITH-THE-RIG-GATEWAY-TOKEN-min-32-chars}"; export GWTOKEN

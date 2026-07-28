@@ -1,17 +1,45 @@
 #!/usr/bin/env bash
-# VPS (run as ROOT) — clean slate then relaunch. Wipes the test session + LCD + follow-up tasks +
-# logs; PRESERVES config.yaml, secrets.db, and the master key (~/.comis/.env). Then restarts the
-# PRODUCTION daemon via systemd (the installed comis.service — the unit handles the SIGUSR2 exit-42
-# hot-restart, so there is no supervisor to manage).
+# Clean slate then relaunch. Wipes the test session + LCD + follow-up tasks + logs; PRESERVES
+# config.yaml, secrets.db, and the master key (<dataDir>/.env). Then restarts the daemon via
+# restart-daemon.sh (systemd on the remote rig; an explicit stop/relaunch locally).
+#
+# RIG_MODE=remote (default) — VPS, run as ROOT against the SERVICE user's data dir.
 #   Usage:  [WIPE_CRONS=1] bash /root/clean-restart.sh
-# Env: SERVICE (comis), DATA (/home/comis/.comis), COMIS_USER (comis), GW_PORT (4766) —
-# /root/comis-rig.env (rendered by deploy-scripts.sh) supplies per-box values; explicit env wins.
+# RIG_MODE=local — THIS machine, against your own data dir. No sudo: the files are already yours.
+#   Usage:  [WIPE_CRONS=1] ./clean-restart.sh
+#
+# ⚠ LOCAL MODE DESTROYS REAL STATE. `DATA` defaults to ~/.comis, so on a machine where that is your
+# everyday Comis install this deletes YOUR sessions, memory.db and logs — not a scratch rig's. Point
+# `DATA` at a dedicated directory (see `01-SETUP.md §Local mode`) before running a from-scratch
+# workload, or accept that the wipe is real.
+#
+# Env: SERVICE, DATA, COMIS_USER, GW_PORT — the rig env file supplies per-rig values; explicit env wins.
 set -euo pipefail
-[ -f /root/comis-rig.env ] && . /root/comis-rig.env
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -f "$HERE/.live-env" ] && . "$HERE/.live-env"
+# shellcheck source=./_rig.sh
+. "$HERE/_rig.sh" 2>/dev/null || {
+  echo "missing $HERE/_rig.sh — re-run deploy-scripts.sh (the kit ships as a unit)" >&2
+  exit 2
+}
+for _f in "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env; do
+  # shellcheck disable=SC1090 # the rig env path is mode-resolved at run time
+  [ -n "$_f" ] && [ -f "$_f" ] && . "$_f" && break
+done
+rig_defaults
 SERVICE="${SERVICE:-comis}"
 DATA="${DATA:-/home/comis/.comis}"
 COMIS_USER="${COMIS_USER:-comis}"
 GW_PORT="${GW_PORT:-4766}"
+
+# Run a wipe step as the data dir's owner. Remote: root drops to the service user. Local: the files
+# are already the caller's, and a sudo here would leave root-owned leftovers in their own data dir —
+# the EACCES class 01-SETUP §1 exists to prevent.
+if rig_is_local; then
+  as_service_user() { bash -c "$1"; }
+else
+  as_service_user() { sudo -u "$COMIS_USER" bash -c "$1"; }
+fi
 # WIPE_CRONS=1 → also clear the persisted cron store (default OFF). The scheduler persists jobs to
 # <workspace>/.scheduler/cron-jobs.json which survives a memory.db wipe, so STALE crons registered by a
 # PRIOR (different-dist) daemon linger into a "from-scratch" run — e.g. a daemon with 3 learning crons
@@ -22,7 +50,16 @@ GW_PORT="${GW_PORT:-4766}"
 # scratch-acceptance runs (EXAMPLE-verified-learning target) MUST set WIPE_CRONS=1 for a true clean slate.
 WIPE_CRONS="${WIPE_CRONS:-0}"
 
-systemctl stop "$SERVICE" 2>/dev/null || true
+if rig_is_local; then
+  if [ "${LOCAL_SUPERVISOR:-auto}" != "direct" ] && rig_pm2_manages; then
+    pm2 stop "$SERVICE" >/dev/null 2>&1 || true
+  else
+    _pid="$(rig_daemon_pid)"
+    [ -n "$_pid" ] && kill "$_pid" 2>/dev/null || true
+  fi
+else
+  systemctl stop "$SERVICE" 2>/dev/null || true
+fi
 sleep 2
 # Reap orphan terminal-driver tmux servers + their jailed coding-CLIs (claude/codex). The daemon is dead
 # now, but the unit uses KillMode=process (so durable drives CAN survive restarts) — the tmux servers are
@@ -31,13 +68,13 @@ sleep 2
 # recover-on-boot replays the persisted journal and RE-LAUNCHES + re-runs the drive (not a clean
 # re-attach), so a prior run's backgrounded "build X" drive comes back into a from-scratch run, burning
 # model tokens (the sockets are PID-named `tmux-<pid>.sock`, so the new daemon can't re-attach the pane).
-for s in "$DATA"/terminal-worker/*.sock; do [ -e "$s" ] && { sudo -u "$COMIS_USER" tmux -S "$s" kill-server 2>/dev/null || true; }; done
+for s in "$DATA"/terminal-worker/*.sock; do [ -e "$s" ] && { as_service_user "tmux -S '$s' kill-server" 2>/dev/null || true; }; done
 pkill -9 -f "share/claude/versions|share/codex|bwrap.*permission-mode" 2>/dev/null || true
 rm -f "$DATA"/terminal-worker/*.sock 2>/dev/null || true
 sleep 1
 # IMPORTANT: the session dir is default/<chatId>/ — NOT default/telegram/. Replacing memory.db clears the
 # LCD (prior-conversation replay); a bare jsonl rm is not enough (runbook §5).
-sudo -u "$COMIS_USER" bash -c "
+as_service_user "
   # Wipe ALL default/* session dirs, NOT just default/<CHATID>.
   # A chatId-only wipe leaves STALE per-chat / cron@ / sub-agent dirs from prior (possibly different-config)
   # runs — they pollute (a) system activeChannels, (b) cross-run model greps (a prior CODEX run's cron@ dirs
@@ -84,5 +121,4 @@ sudo -u "$COMIS_USER" bash -c "
 # Relaunch via systemd + verify the boot from the fresh structured log (restart-daemon.sh waits for
 # a post-restart 'Comis daemon started' and probes the gateway port; the log wipe above guarantees
 # whatever it finds belongs to THIS boot).
-HERE="$(cd "$(dirname "$0")" && pwd)"
-SERVICE="$SERVICE" DATA="$DATA" GW_PORT="$GW_PORT" bash "$HERE/restart-daemon.sh"
+RIG_MODE="$(rig_mode)" SERVICE="$SERVICE" DATA="$DATA" GW_PORT="$GW_PORT" bash "$HERE/restart-daemon.sh"

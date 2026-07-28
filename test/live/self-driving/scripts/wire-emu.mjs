@@ -40,7 +40,11 @@ writeFileSync(cfgPath, YAML.stringify(cfg));
 try {
   chmodSync(cfgPath, 0o600);
   chmodSync(backup, 0o600);
-  execFileSync("chown", [`${rig.comisUser}:${rig.comisUser}`, cfgPath, backup]);
+  // Remote rig only: this runs as root against the SERVICE user's data dir, so the rewritten config
+  // must be handed back or the daemon EACCESes its own config (01-SETUP §1). In local mode the files
+  // are already the invoking user's — a chown there would be a no-op at best and, run under sudo, the
+  // very root-owned-leftover class that trap exists to prevent.
+  if (!rig.isLocal) execFileSync("chown", [`${rig.comisUser}:${rig.comisUser}`, cfgPath, backup]);
 } catch {
   /* non-root local runs: ownership already right */
 }
@@ -48,4 +52,8 @@ console.log(
   `wired channels.telegram → ${emu.apiRoot} (was ${before.apiRoot ?? "<real Telegram>"}), ` +
     `botToken=<emulator>, allowFrom+=${rig.chatId}; original kept at ${backup}`,
 );
-console.log("NEXT: bash /root/restart-daemon.sh   (the daemon reads config at boot)");
+console.log(
+  rig.isLocal
+    ? "NEXT: ./restart-daemon.sh   (the daemon reads config at boot)"
+    : "NEXT: bash /root/restart-daemon.sh   (the daemon reads config at boot)",
+);
