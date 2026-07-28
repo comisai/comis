@@ -1099,12 +1099,13 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
 
     // ---- the REAL TgEmulator wire (the four verbs trip the long-poll) -------
     describe("the four routes drive the REAL TgEmulator (served by getUpdates)", () => {
-      it("media: a media route post queues a media `message` update with a resolvable file_id", async () => {
+      it("media: a media route post preserves its caption and queues a resolvable file_id", async () => {
         const fileBase64 = Buffer.from("real-photo-bytes").toString("base64");
         const { status, json } = await postControl(apiRoot, `/control/chats/${CHAT_ID}/media`, {
           fromUserId: 111,
           kind: "photo",
           fileBase64,
+          caption: "log this",
         });
         expect(status).toBe(200);
         expect((json as { ok?: boolean }).ok).toBe(true);
@@ -1113,6 +1114,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
         const updates = env.result as Array<Record<string, unknown>>;
         expect(updates.length).toBe(1);
         const msg = updates[0]!["message"] as Record<string, unknown>;
+        expect(msg["caption"]).toBe("log this");
         const photo = msg["photo"] as Array<Record<string, unknown>>;
         expect(Array.isArray(photo)).toBe(true);
         const fileId = photo[photo.length - 1]!["file_id"] as string;

@@ -142,6 +142,13 @@ describe("local rig mode", () => {
     expect(source).toContain("fromUserId: fromUser");
   });
 
+  it("sends the media caption in the control API field the emulator preserves", () => {
+    const source = readFileSync(MEDIA_DRIVE, "utf8");
+
+    expect(source).toContain("caption: caption || undefined");
+    expect(source).not.toContain("meta: caption");
+  });
+
   it("runs the command in a local shell with stdin intact and never reaches ssh", () => {
     const output = runRemoteRoot("0", "stream-data", "local");
 
