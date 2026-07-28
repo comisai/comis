@@ -77,7 +77,8 @@ if rig_is_local; then
 
   if [ "$use_pm2" = 1 ]; then
     echo "supervisor: pm2 (${SERVICE})"
-    pm2 restart "$SERVICE" --update-env >/dev/null || {
+    COMIS_DATA_DIR="$DATA" COMIS_CONFIG_PATHS="$DATA/config.yaml" \
+      pm2 restart "$SERVICE" --update-env >/dev/null || {
       echo "pm2 restart $SERVICE FAILED:"
       pm2 describe "$SERVICE" 2>&1 | tail -8
       exit 1
@@ -105,13 +106,14 @@ if rig_is_local; then
       # the child after this shell exits, including under PTY/agent runners that
       # reap ordinary nohup descendants.
       tmux new-session -d -s "$tmux_session" \
-        "exec env COMIS_CONFIG_PATHS='$DATA/config.yaml' node ${NODE_ARGS:-} '$ENTRY' >>'$DATA/daemon.console.log' 2>&1"
+        "exec env COMIS_DATA_DIR='$DATA' COMIS_CONFIG_PATHS='$DATA/config.yaml' node ${NODE_ARGS:-} '$ENTRY' >>'$DATA/daemon.console.log' 2>&1"
     else
       echo "supervisor: direct ($ENTRY)"
-      # COMIS_CONFIG_PATHS must be on the command line: an `export` does not survive into a process
-      # backgrounded from a tool/agent shell, and the daemon then boots against a different config
-      # than the one this rig just wired (the silent wrong-config class).
-      COMIS_CONFIG_PATHS="$DATA/config.yaml" nohup node ${NODE_ARGS:-} "$ENTRY" \
+      # Both roots must be on the child command line. COMIS_DATA_DIR owns
+      # boot-time secrets and the singleton lock; COMIS_CONFIG_PATHS owns the
+      # runtime configuration. Splitting them defeats local-rig isolation.
+      COMIS_DATA_DIR="$DATA" COMIS_CONFIG_PATHS="$DATA/config.yaml" \
+        nohup node ${NODE_ARGS:-} "$ENTRY" \
         >>"$DATA/daemon.console.log" 2>&1 &
       disown 2>/dev/null || true
     fi
