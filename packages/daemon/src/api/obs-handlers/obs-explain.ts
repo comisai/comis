@@ -143,8 +143,9 @@ function metadataForExecution(
   metadata: Record<string, unknown> | null,
   records: ReadonlyArray<Record<string, unknown>>,
   traceId: string,
-): Record<string, unknown> {
+): Record<string, unknown> | null {
   const matchingMetadata = metadata?.traceId === traceId ? metadata : undefined;
+  if (matchingMetadata === undefined && records.length === 0) return null;
   const matchingSessionEnd =
     typeof matchingMetadata?.sessionEnd === "object" && matchingMetadata.sessionEnd !== null
       ? matchingMetadata.sessionEnd as Record<string, unknown>

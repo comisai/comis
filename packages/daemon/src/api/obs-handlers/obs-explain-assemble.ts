@@ -295,7 +295,10 @@ export function assembleIncidentReport(
     (sessionEnd !== undefined ? asBoolean(sessionEnd.degraded) : undefined) ??
     (metadata !== null ? asBoolean(metadata.degraded) : undefined) ??
     asBoolean(rollupPayload.degraded);
-  const derivedDegraded = isHardFailure || DEGRADED_END_REASONS.has(endReason);
+  const derivedDegraded =
+    isHardFailure ||
+    DEGRADED_END_REASONS.has(endReason) ||
+    signals.failures.length > 0;
   const degraded = explicitDegraded ?? derivedDegraded;
   const severity: "ok" | "degraded" | "failed" = isHardFailure
     ? "failed"

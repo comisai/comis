@@ -12,9 +12,9 @@
  *   - the 678 fixture yields content_heuristic_misclassification + degraded +
  *     a non-empty breaker timeline + costUsd 1.320669; the 503 fixture yields
  *     breaker_opened_repeated_failure + web_fetch.
- *   - by-traceId == by-sessionKey: both 678 traceIds resolve (via the REAL
- *     resolveTraceToSession against a seeded session-index) to the one
- *     sessionKey → one assembler path → byte-identical reports.
+ *   - both 678 traceIds resolve (via the REAL resolveTraceToSession against a
+ *     seeded session-index) to one sessionKey while remaining isolated to
+ *     their individual execution records.
  *   - depth:"summary" serializes ≤6144 bytes end-to-end and NEVER inlines the
  *     678 "SECURITY NOTICE" prompt-injection block (summary AND full).
  *
@@ -200,10 +200,10 @@ describe("bindObsExplainHandlers", () => {
   });
 
   // ------------------------------------------------------------------------
-  // by-traceId == by-sessionKey (both 678 traceIds → one report).
+  // Both traceIds resolve to one session while retaining execution isolation.
   // ------------------------------------------------------------------------
 
-  it("by-sessionKey == by-traceId(A) == by-traceId(B) — identical reports", async () => {
+  it("trace references resolve one session without merging distinct executions", async () => {
     const dataDir = seedSessionIndex();
     const reader = makeFixtureReader("session-678314278");
     const handlers = bindObsExplainHandlers(makeDeps({ dataDir, incidentReader: reader }));
@@ -221,10 +221,19 @@ describe("bindObsExplainHandlers", () => {
       _trustLevel: "admin",
     })) as IncidentReport;
 
-    expect(byTraceA).toEqual(bySession);
-    expect(byTraceB).toEqual(bySession);
-    // Sanity: the resolver actually produced the canonical sessionKey.
+    expect(byTraceA).not.toEqual(bySession);
+    expect(byTraceB).not.toEqual(bySession);
+    expect(byTraceA).not.toEqual(byTraceB);
     expect(byTraceA.sessionKey).toBe(SESSION_678);
+    expect(byTraceB.sessionKey).toBe(SESSION_678);
+    expect(byTraceA.traceId).toBe(TRACE_678_A);
+    expect(byTraceB.traceId).toBe(TRACE_678_B);
+    expect(byTraceA.coverage?.trajectory.records).toBeLessThan(
+      bySession.coverage?.trajectory.records ?? 0,
+    );
+    expect(byTraceB.coverage?.trajectory.records).toBeLessThan(
+      bySession.coverage?.trajectory.records ?? 0,
+    );
   });
 
   // ------------------------------------------------------------------------
