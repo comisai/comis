@@ -280,6 +280,44 @@ describe("local rig mode", () => {
     expect(output).not.toContain(`data=${directory}/.comis`);
   });
 
+  it("restores the rendered local gateway port with the isolated data root", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-rig-port-"));
+    temporaryDirectories.push(directory);
+    const isolatedData = resolve(directory, "isolated-data");
+    const rigEnv = resolve(directory, "rig.env");
+    writeFileSync(
+      rigEnv,
+      [
+        'export RIG_MODE="${RIG_MODE:-local}"',
+        `export COMIS_USER="\${COMIS_USER:-test-user}"`,
+        `export COMIS_HOME="\${COMIS_HOME:-${directory}}"`,
+        `export DATA="\${DATA:-${isolatedData}}"`,
+        `export PKG="\${PKG:-${resolve(HERE, "../../../..")}}"`,
+        'export SERVICE="${SERVICE:-comis}"',
+        'export GW_PORT="${GW_PORT:-4767}"',
+        'export CHATID="${CHATID:-678314278}"',
+        `export EMU_DIR="\${EMU_DIR:-${resolve(HERE, "../../../..")}}"`,
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+
+    const resolved = runRigHelper(
+      `rig_load_persisted_env "$RIG_ENV"; printf '%s|%s\\n' "$DATA" "$GW_PORT"`,
+      {
+        HOME: directory,
+        RIG_ENV: rigEnv,
+        COMIS_USER: "comis",
+        COMIS_HOME: "/home/comis-does-not-exist-here",
+        DATA: "/home/comis-does-not-exist-here/.comis",
+        PKG: "/home/comis-does-not-exist-here/.npm-global/lib/node_modules/comisai",
+        EMU_DIR: "/root/comis-emu",
+        GW_PORT: "4766",
+      },
+    );
+
+    expect(resolved.trim()).toBe(`${isolatedData}|4767`);
+  });
+
   it("keeps the portable probes off Linux-only tools", () => {
     // `ss` does not exist on macOS and `date -d` is GNU-only: a local rig that shelled out to either
     // would report a healthy daemon as down (or a fresh build as stale) instead of failing honestly.
