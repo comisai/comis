@@ -174,4 +174,33 @@ describe("buildSessionHealthRollup", () => {
       topErrorKinds: {},
     });
   });
+
+  it("attributes a model-only terminal failure when no tool error kind exists", () => {
+    const rollup = buildSessionHealthRollup(
+      { terminalErrorKind: "network" },
+      "error",
+    );
+
+    expect(rollup.degraded).toBe(true);
+    expect(rollup.topErrorKinds).toEqual({ network: 1 });
+    expect(rollup.toolStats).toEqual({});
+  });
+
+  it("does not double count the terminal kind already represented by a failed tool", () => {
+    const rollup = buildSessionHealthRollup(
+      {
+        terminalErrorKind: "dependency",
+        toolExecResults: [
+          {
+            toolName: "web_fetch",
+            success: false,
+            errorKind: "dependency",
+          },
+        ],
+      },
+      "completed_with_tool_errors",
+    );
+
+    expect(rollup.topErrorKinds).toEqual({ dependency: 1 });
+  });
 });
