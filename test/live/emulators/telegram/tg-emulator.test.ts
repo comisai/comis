@@ -1018,6 +1018,19 @@ describe("TgEmulator — group/forum chats + addressing inject", () => {
       expect(typeof topic.threadId).toBe("number");
       expect(topic.threadId).toBeGreaterThan(0);
     });
+
+    it("group media preserves the recorded shared-chat shape", async () => {
+      const group = emu.createGroupChat({
+        members: [{ id: 111, firstName: "a" }],
+        supergroup: true,
+      });
+
+      emu.injectMedia(group, { id: 111, firstName: "a" }, "voice", Buffer.from("voice"));
+      const updates = await pollUpdates();
+      const message = updates[0]!["message"] as Record<string, unknown>;
+
+      expect((message["chat"] as Record<string, unknown>)["type"]).toBe("supergroup");
+    });
   });
 
   describe("injectMessage with InjectOpts (mention/command/replyTo/thread)", () => {
