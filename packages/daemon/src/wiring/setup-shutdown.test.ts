@@ -29,6 +29,7 @@ function createMinimalDeps(overrides: Partial<ShutdownDeps> = {}): ShutdownDeps 
     container: { shutdown: vi.fn(async () => {}) } as any,
     exitFn: vi.fn(),
     flushLogger: vi.fn(() => ok(undefined)),
+    ...({ drainLogger: vi.fn(async () => ok(undefined)) } as object),
     activeExecutions: undefined,
     subAgentRunner: { shutdown: vi.fn(async () => {}) },
     ownedCronSchedulers: new Map(),
@@ -454,19 +455,19 @@ describe("setupShutdown", () => {
     expect(deps.exitFn).toHaveBeenCalledWith(0);
   }, 15_000);
 
-  it("synchronous logger flush failure cannot prevent the explicit shutdown exit", async () => {
+  it("logger drain failure cannot prevent the explicit shutdown exit", async () => {
     const logger = createMockLogger();
-    const flushLogger = vi.fn(() => err(new Error("transport flush failed")));
+    const drainLogger = vi.fn(async () => err(new Error("transport drain failed")));
     const deps = createMinimalDeps({
       logger,
-      flushLogger,
+      drainLogger,
     } as unknown as Partial<ShutdownDeps>);
     const setupShutdown = await getSetupShutdown();
     const result = setupShutdown(deps);
 
     await expect(result.shutdownHandle.trigger("SIGTERM")).resolves.toBeUndefined();
 
-    expect(flushLogger).toHaveBeenCalledWith(logger);
+    expect(drainLogger).toHaveBeenCalledWith(logger);
     expect(deps.exitFn).toHaveBeenCalledWith(0);
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -477,15 +478,15 @@ describe("setupShutdown", () => {
     );
   });
 
-  it("shutdown never enters the transport asynchronous flush wait", async () => {
+  it("shutdown never enters the transport callback flush wait", async () => {
     const logger = createMockLogger() as any;
     logger.flush = vi.fn(() => {
       throw new Error("asynchronous flush must not run");
     });
-    const flushLogger = vi.fn(() => ok(undefined));
+    const drainLogger = vi.fn(async () => ok(undefined));
     const deps = createMinimalDeps({
       logger,
-      flushLogger,
+      drainLogger,
     } as unknown as Partial<ShutdownDeps>);
     const setupShutdown = await getSetupShutdown();
     const result = setupShutdown(deps);
@@ -493,18 +494,18 @@ describe("setupShutdown", () => {
     await expect(result.shutdownHandle.trigger("SIGTERM")).resolves.toBeUndefined();
 
     expect(logger.flush).not.toHaveBeenCalled();
-    expect(flushLogger).toHaveBeenCalledWith(logger);
+    expect(drainLogger).toHaveBeenCalledWith(logger);
     expect(deps.exitFn).toHaveBeenCalledWith(0);
   });
 
-  it("synchronous logger flush completes before the explicit shutdown exit", async () => {
+  it("logger drain grace completes before the explicit shutdown exit", async () => {
     const callOrder: string[] = [];
-    const flushLogger = vi.fn(() => {
-      callOrder.push("flushLogger");
+    const drainLogger = vi.fn(async () => {
+      callOrder.push("drainLogger");
       return ok(undefined);
     });
     const deps = createMinimalDeps({
-      flushLogger,
+      drainLogger,
       exitFn: vi.fn(() => {
         callOrder.push("exitFn");
       }),
@@ -514,7 +515,7 @@ describe("setupShutdown", () => {
 
     await result.shutdownHandle.trigger("SIGTERM");
 
-    expect(callOrder).toEqual(["flushLogger", "exitFn"]);
+    expect(callOrder).toEqual(["drainLogger", "exitFn"]);
   });
 
   // -------------------------------------------------------------------------
@@ -962,6 +963,7 @@ describe("setup-shutdown honors §1.4 mode invariants", () => {
       container: { shutdown: vi.fn(async () => {}) } as any,
       exitFn: vi.fn(),
       flushLogger: vi.fn(() => ok(undefined)),
+      ...({ drainLogger: vi.fn(async () => ok(undefined)) } as object),
       subAgentRunner: { shutdown: vi.fn(async () => {}) },
       ownedCronSchedulers: new Map(),
       resetSchedulers: new Map(),
@@ -1033,6 +1035,7 @@ describe("brokerStop runs after shutdownBackgroundProcesses (shutdown ordering)"
       container: { shutdown: vi.fn(async () => {}) } as any,
       exitFn: vi.fn(),
       flushLogger: vi.fn(() => ok(undefined)),
+      ...({ drainLogger: vi.fn(async () => ok(undefined)) } as object),
       subAgentRunner: { shutdown: vi.fn(async () => {}) },
       ownedCronSchedulers: new Map(),
       resetSchedulers: new Map(),
