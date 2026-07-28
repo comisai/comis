@@ -33,6 +33,7 @@ export default defineConfig({
   },
   test: {
     globalSetup: ["./test/support/global-setup.ts"],
+    setupFiles: ["./test/support/vitest-process-listeners.ts"],
     include: ["test/support/**/*.test.ts", "test/integration/**/*.test.ts", "test/live/**/*.test.ts"],
     testTimeout: 60_000,
     hookTimeout: 60_000,

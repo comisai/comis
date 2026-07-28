@@ -56,6 +56,9 @@ export default defineConfig({
     name: "e2e",
     // Path is resolved relative to the project root (not this config file).
     globalSetup: [resolve(__dirname, "../support/global-setup.ts")],
+    setupFiles: [
+      resolve(__dirname, "../support/vitest-process-listeners.ts"),
+    ],
     // Include only top-level test/e2e/*.test.ts files. The mock-server
     // helper files under test/e2e/mocks/<channel>/ are NOT test files;
     // they're fixtures imported by the e2e tests.

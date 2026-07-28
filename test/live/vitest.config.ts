@@ -63,6 +63,7 @@ export default defineConfig({
   // above are config-file-relative — those DO use ../../.)
   test: {
     globalSetup: ["./test/support/global-setup.ts"],
+    setupFiles: ["./test/support/vitest-process-listeners.ts"],
     // Live-tier scope only — the deterministic Stage-A/B + the env-gated
     // Stage-C/operator scenarios under test/live/**.
     include: ["test/live/**/*.test.ts"],
