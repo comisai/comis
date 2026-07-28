@@ -1704,3 +1704,30 @@ describe("buildFindings — cron ownership reconciliation failure", () => {
     expect(findings.some((candidate) => candidate.code === "health_signal:cron_ownership_reconciliation")).toBe(false);
   });
 });
+
+describe("buildFindings — cron timer degradation", () => {
+  it("reports runtime scheduler degradation with the exact authority check", () => {
+    const row: DiagnosticRow = {
+      timestamp: 1_000,
+      category: "health_signal",
+      severity: "warning",
+      agentId: "agent-a",
+      message: "scheduler:cron_timer_health",
+      details: JSON.stringify({
+        signal: "cron_timer_health",
+        status: "degraded",
+        errorKind: "precondition",
+        retryMs: 5_000,
+      }),
+    };
+
+    const findings = buildFindings([row], [], []);
+    const finding = findings.find((candidate) => candidate.code === "cron_timer_degraded");
+
+    expect(finding).toMatchObject({ count: 1 });
+    expect(finding?.detail).toContain("precondition=1");
+    expect(finding?.hint).toContain("comis cron status --agent <agentId>");
+    expect(finding?.hint).toContain("cron-jobs.json");
+    expect(findings.some((candidate) => candidate.code === "health_signal:cron_timer_health")).toBe(false);
+  });
+});

@@ -7,8 +7,13 @@ import {
   cronOwnershipReconciliationEventToRow,
   wireSchedulerDiagnostics,
 } from "./obs-scheduler-rows.js";
+import * as schedulerRows from "./obs-scheduler-rows.js";
 
 describe("scheduler ownership diagnostic persistence", () => {
+  it("exports cron timer health mapping for daemon-wide diagnostics", () => {
+    expect(schedulerRows).toHaveProperty("cronTimerHealthEventToRow");
+  });
+
   it("maps a completed reconciliation to a content-free informational row", () => {
     const row = cronOwnershipReconciliationEventToRow({
       agentId: "agent-a",

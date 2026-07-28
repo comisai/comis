@@ -192,6 +192,7 @@ async function fixture(options: {
     clock: fakeClock,
     timers: timer,
     bootId: "boot_a",
+    ...({ agentId: "agent_a" } as unknown as Partial<CronSchedulerDeps>),
     idFactory: () => `execution_${++execution}`,
     config: {
       maxRunsPerTick: options.maxRunsPerTick ?? 2,
@@ -1118,6 +1119,10 @@ describe("durable cron scheduler lifecycle", () => {
     );
 
     const ticking = await fixture({ seedJob: job("future", { kind: "at", atMs: NOW_MS + 1 }) });
+    const timerHealth: unknown[] = [];
+    (ticking.eventBus as unknown as {
+      on(event: string, handler: (payload: unknown) => void): void;
+    }).on("scheduler:cron_timer_health", (payload) => timerHealth.push(payload));
     await ticking.scheduler.initialize();
     ticking.scheduler.activate();
     vi.spyOn(ticking.store, "getSnapshot").mockReturnValueOnce(err({ code: "io", errorKind: "internal", message: "expected" }));
@@ -1131,6 +1136,21 @@ describe("durable cron scheduler lifecycle", () => {
       cancelled: false,
       unrefed: true,
     });
+    expect(timerHealth).toEqual([expect.objectContaining({
+      agentId: "agent_a",
+      status: "degraded",
+      errorKind: "internal",
+      retryMs: 5_000,
+    })]);
+
+    ticking.clock.advance(5_000);
+    ticking.timer.fireFirst(5_000);
+    await vi.waitFor(() => expect(timerHealth).toHaveLength(2));
+    expect(timerHealth[1]).toEqual(expect.objectContaining({
+      agentId: "agent_a",
+      status: "recovered",
+      degradedDurationMs: 5_000,
+    }));
   });
 
   it("reports scheduler-seed failures while validating recurring additions", async () => {

@@ -303,7 +303,14 @@ describe("strict cron store root", () => {
     const missing = await fixture();
     expect((await missing.store.initialize()).ok).toBe(true);
     await unlink(missing.filePath);
-    expect(await missing.store.addJob(recurringJob())).toMatchObject({ ok: false, error: { code: "io" } });
+    expect(await missing.store.addJob(recurringJob())).toMatchObject({
+      ok: false,
+      error: {
+        code: "io",
+        errorKind: "precondition",
+        message: "Initialized cron store file is missing",
+      },
+    });
   });
 
   it("prunes expired terminal one-shots while retaining recent authority", async () => {
