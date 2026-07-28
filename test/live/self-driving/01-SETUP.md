@@ -1,11 +1,24 @@
-# 01 — SETUP: stand up the rig (VPS + emulator + build under test)
+# 01 — SETUP: stand up the rig (VPS or local + emulator + build under test)
 
-> Goal of this step: a **green baseline** — the build under test running on the VPS as the **production
-> installation** (the same systemd + npm-global layout `website/public/install.sh` gives real users),
-> driven through the loopback Telegram emulator, with every observability lens readable. All commands
-> have a ready-to-run script in `scripts/` (see `scripts/README.md`). Every per-box value comes from
-> **`scripts/.live-env`** (copy `.live-env.example`; only `VPS` is mandatory — the rest default to the
-> standard install layout).
+> Goal of this step: a **green baseline** — the build under test running on the rig, driven through the
+> loopback Telegram emulator, with every observability lens readable. All commands have a ready-to-run
+> script in `scripts/` (see `scripts/README.md`). Every per-rig value comes from **`scripts/.live-env`**
+> (copy `.live-env.example`).
+>
+> **Two rigs, one kit.** `RIG_MODE` in `.live-env` picks which:
+>
+> | | `RIG_MODE=remote` (default) | `RIG_MODE=local` |
+> |---|---|---|
+> | Where | the VPS **production installation** (systemd + npm-global layout `website/public/install.sh` gives real users) | **this machine**, from this checkout |
+> | Daemon | `comis.service` as the dedicated service user | direct `node …/daemon.js` (or pm2 if it already supervises) |
+> | Data dir | `/home/comis/.comis` | `~/.comis` (override `DATA`) |
+> | Deploy step | `install-vps.sh` / `deploy-dist.sh` + verify | **none** — the checkout IS the build |
+> | Bring-up | `install-vps.sh` → `deploy-scripts.sh` → `WIRE=1 deploy-emu.sh` | **`./local-up.sh`** |
+> | Mandatory `.live-env` | `VPS` | nothing |
+>
+> The remote rig stays **canonical** — it is the layout users actually get, and the only one that can
+> exercise the Linux-only surfaces. Local mode is the **fast inner loop**; §Local mode below states
+> exactly what it cannot prove.
 
 ## 0. Rig topology (the production installation)
 
@@ -164,6 +177,54 @@ Do not start the real test plan until ALL hold:
 6. **CLI = the DEPLOYED build.** Under the production install the PATH `comis` IS the installed package — `install-vps.sh` reinstalls it from this checkout and records the SHA at `/root/comis-deployed-build`. **Check once:** `cat /root/comis-deployed-build` + `sudo -u comis bash -lc 'comis --version'` vs your local `git rev-parse --short HEAD`; if the box was installed from the REGISTRY (or another checkout) and you dist-overlaid since, the CLI dist was overlaid too ($PKG/node_modules/@comis/cli) — when in doubt, run the pure-CLI oracles (`security audit`, `doctor`, `explain`, `system`) via the explicit dist: `node $PKG/node_modules/@comis/cli/dist/cli.js …`. (RPC-based lenses via `revoke.mjs` already hit the daemon, so they're unaffected.)
 
 > A harness with a silent gotcha (a too-short token that 401s, a stale `dist/`, a wrong env var, the wrong session path) makes a healthy daemon look broken and burns a whole cycle. Phase 0 is where you make the rig tell the truth.
+
+## Local mode (`RIG_MODE=local`) — the fast inner loop on this machine
+
+Set `RIG_MODE=local` in `scripts/.live-env` (or inline per command) and run **`./local-up.sh`**. It
+builds this checkout, launches the emulator on loopback, wires `channels.telegram` at it, restarts the
+daemon, renders the rig env, and gates on `rig-doctor.sh`. Every driver/oracle then works unchanged —
+`drive.mjs`, `db.mjs`, `explain.mjs`, `revoke.mjs`, `logscan.mjs` — because the mode resolution lives in
+`_rig.sh` (shell) and `_rig.mjs` (node), not at the call sites.
+
+**What it is for.** The remote round-trip costs an ssh hop per inject and a deploy+restart per patch.
+Local mode removes both: edit `packages/*/src`, `pnpm build`, `./restart-daemon.sh`, re-drive. Use it to
+develop a fix and to shorten a reproduction; then confirm the result on the remote rig.
+
+**What it CANNOT prove — be honest about these, never record them as passes:**
+- **The sandbox/jail HARD oracles.** bubblewrap is Linux-only, so on macOS the jail oracles (egress
+  blocked, `SECRETS_MASTER_KEY` absent, `~/.comis` masked, `COMIS_CAP_LEASE` present) and H5's
+  destructive-containment test are **not exercised**. Record them `[NO-ACCESS: needs the Linux rig]`.
+- **The production install layout.** systemd lifecycle (including the SIGUSR2 exit-42 hot-restart the
+  config-mutating RPCs rely on), the npm-global package layout, the dedicated-service-user ownership
+  rules, and the installer itself are all remote-only. A config-mutating RPC that "restarts" the daemon
+  behaves differently here.
+- **`*.linux.test.ts`** and anything needing real `bwrap`/ffmpeg-on-Linux.
+- **Provenance-by-SHA.** There is no deploy record, so `verify-build.sh` swaps the SHA check for the
+  question that actually bites locally: is `dist/` newer than `src/`? (An edit without a rebuild is the
+  local twin of a deploy without a restart — same false result, same script catches it.)
+
+**⚠ `DATA` defaults to `~/.comis` — your everyday install.** `local-up.sh` repoints its
+`channels.telegram` at the emulator (original preserved once at `$DATA/config.pre-emu.yaml`, restore
+with `cp $DATA/config.pre-emu.yaml $DATA/config.yaml && ./restart-daemon.sh`), and `clean-restart.sh`
+**really deletes** its sessions, `memory.db` and logs. For a from-scratch workload, give the rig its own
+directory and port:
+
+```bash
+DATA="$HOME/.comis-live" GW_PORT=4767 ./local-up.sh
+```
+
+**Two local-only traps:**
+- **A `.live-env` written before `RIG_MODE` existed assigns the REMOTE layout unconditionally**
+  (`DATA=/home/comis/.comis`, `PKG=…`), and a `RIG_MODE=local` run would inherit it — every probe then
+  fails for the wrong reason. `_rig.sh` detects the leak (its anchor `COMIS_HOME` does not exist here),
+  drops that whole group with a named warning, and falls back to the local defaults. The real fix is in
+  `.live-env.example`: the remote block is wrapped in `if [ "${RIG_MODE:-remote}" = remote ]; then … fi`.
+- **The daemon holds its `dist/` in memory here exactly as it does on the box.** `pnpm build` alone
+  changes nothing about the running process — `./restart-daemon.sh` (or `verify-build.sh`, which names
+  it) is still mandatory.
+
+**Group chats** need `EMU_GROUPS` at emulator launch (they cannot be created over the `/control` API);
+`restart-emu.sh` passes it through in both modes — see the commented example in `.live-env.example`.
 
 ## Traps that cost cycles (the short list — full set in `scripts/README.md` + `03-OBSERVABILITY.md`)
 - **`pkill -f "daemon.js"` self-matches your ssh shell** (its argv contains the pattern) → kills the shell → ssh exit 255. Always anchor: `pkill -9 -f "^node .*daemon\.js"`. **Same trap for the emulator:** `pkill -f "vps-emu"` self-kills the ssh shell running it (argv has "vps-emu.ts") — anchor `pkill -9 -f "^node .*vps-emu"`. And a backgrounded `nohup/setsid … &` emulator dies on ssh close → launch it in **tmux**. Both are baked into **`scripts/restart-emu.sh`** (use it; the port is kernel-allocated, so re-wire after: `node /root/wire-emu.mjs && bash /root/restart-daemon.sh`).

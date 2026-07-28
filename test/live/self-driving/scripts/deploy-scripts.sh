@@ -9,20 +9,20 @@
 #   Setup once:  cp .live-env.example .live-env  &&  edit it (VPS=user@host; GWTOKEN optional —
 #                it auto-fetches from the box when unset)
 #   Then:        bash deploy-scripts.sh            # .live-env is auto-sourced; or pass VPS=… inline
+#
+# RIG_MODE=local: there is nothing to push — the kit IS this directory. The script then only does the
+# half that still matters locally: resolve the gateway token and render the rig env file
+# (scripts/.rig-env) the same helpers read, so the RPC oracles work without an env prefix.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[ -f "$HERE/.live-env" ] && . "$HERE/.live-env" # per-box rig config (VPS ssh target, GWTOKEN, …) — see .live-env.example
+[ -f "$HERE/.live-env" ] && . "$HERE/.live-env" # per-rig config (VPS ssh target, GWTOKEN, …) — see .live-env.example
 # shellcheck source=./_remote-root.sh
 . "$HERE/_remote-root.sh"
-VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or the env}"
-COMIS_USER="${COMIS_USER:-comis}"
-COMIS_HOME="${COMIS_HOME:-/home/$COMIS_USER}"
-DATA="${DATA:-$COMIS_HOME/.comis}"
+rig_defaults
 PKG="${PKG:-$COMIS_HOME/.npm-global/lib/node_modules/comisai}"
-SERVICE="${SERVICE:-comis}"
-GW_PORT="${GW_PORT:-4766}"
-CHATID="${CHATID:-678314278}"
-EMU_DIR="${EMU_DIR:-/root/comis-emu}"
+if ! rig_is_local; then
+  VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or the env}"
+fi
 
 # /root — ALL driver/oracle helpers, pushed FIRST (the token auto-fetch below uses rig-token.mjs).
 # GLOB every *.mjs + the box-run *.sh (a hardcoded list silently DROPPED new helpers —
@@ -32,16 +32,20 @@ EMU_DIR="${EMU_DIR:-/root/comis-emu}"
 # LOCAL-only scripts (the deploy-*/install-* family, run-linux-tests, verify-build, rig-doctor, and
 # this transport helper) are excluded from the /root push. A tar stream works for both a direct-root
 # SSH target and an unprivileged target using REMOTE_SUDO=1; no protected staging path is needed.
-box_files=("$HERE"/*.mjs "$HERE/config.example.yaml")
-for file in "$HERE"/*.sh; do
-  case "$(basename "$file")" in
-  deploy-scripts.sh|deploy-dist.sh|deploy-emu.sh|install-vps.sh|run-linux-tests.sh|verify-build.sh|rig-doctor.sh|_remote-root.sh) ;;
-  *) box_files+=("$file") ;;
-  esac
-done
-relative_files=()
-for file in "${box_files[@]}"; do relative_files+=("${file#"$HERE/"}"); done
-COPYFILE_DISABLE=1 tar --no-xattrs -C "$HERE" -cf - "${relative_files[@]}" | remote_root "tar -xf - -C /root"
+if rig_is_local; then
+  echo "local rig — kit push skipped (the helpers ARE $HERE); rendering $RIG_ENV only"
+else
+  box_files=("$HERE"/*.mjs "$HERE/config.example.yaml")
+  for file in "$HERE"/*.sh; do
+    case "$(basename "$file")" in
+    deploy-scripts.sh | deploy-dist.sh | deploy-emu.sh | install-vps.sh | run-linux-tests.sh | verify-build.sh | rig-doctor.sh | local-up.sh | _remote-root.sh) ;;
+    *) box_files+=("$file") ;;
+    esac
+  done
+  relative_files=()
+  for file in "${box_files[@]}"; do relative_files+=("${file#"$HERE/"}"); done
+  COPYFILE_DISABLE=1 tar --no-xattrs -C "$HERE" -cf - "${relative_files[@]}" | remote_root "tar -xf - -C /root"
+fi
 
 # GWTOKEN auto-fetch — when .live-env doesn't carry it, resolve it FROM THE BOX so the rendered
 # rig env (and every RPC helper) still works: the secrets store first (`comis secrets get` — the
@@ -49,27 +53,35 @@ COPYFILE_DISABLE=1 tar --no-xattrs -C "$HERE" -cf - "${relative_files[@]}" | rem
 # init-config.mjs flow). Also self-heals token ROTATION: a re-deploy re-fetches the current value
 # instead of shipping a stale one that 4001s mid-run.
 if [ -z "${GWTOKEN:-}" ]; then
-  GWTOKEN="$(remote_root "su - $COMIS_USER -c 'comis secrets get --offline COMIS_GATEWAY_TOKEN' 2>/dev/null" | tail -1 | tr -d '[:space:]')" || true
-  src="the box secrets store"
+  if rig_is_local; then
+    # The `comis` CLI is not on PATH in a checkout — call the built dist directly.
+    GWTOKEN="$(COMIS_CONFIG_PATHS="$DATA/config.yaml" node "$REPO/packages/cli/dist/cli.js" secrets get --offline COMIS_GATEWAY_TOKEN 2>/dev/null | tail -1 | tr -d '[:space:]')" || true
+    src="the local secrets store"
+  else
+    GWTOKEN="$(remote_root "su - $COMIS_USER -c 'comis secrets get --offline COMIS_GATEWAY_TOKEN' 2>/dev/null" | tail -1 | tr -d '[:space:]')" || true
+    src="the box secrets store"
+  fi
   if [ "${#GWTOKEN}" -lt 32 ]; then
-    GWTOKEN="$(remote_root 'node /root/rig-token.mjs 2>/dev/null' | tr -d '[:space:]')" || true
+    GWTOKEN="$(remote_root "node '$KIT_DIR/rig-token.mjs' 2>/dev/null" | tr -d '[:space:]')" || true
     src="the config.yaml literal"
   fi
   if [ "${#GWTOKEN}" -ge 32 ]; then
-    echo "GWTOKEN auto-fetched from $src (set it in .live-env to skip this ssh round-trip)"
+    echo "GWTOKEN auto-fetched from $src (set it in .live-env to skip this lookup)"
   else
     GWTOKEN=""
-    echo "⚠ GWTOKEN unset and not resolvable from the box (fresh box with no config yet?) — the RPC"
-    echo "  helpers will 401 until it exists. Fresh box: run 'node /root/init-config.mjs' next (it"
-    echo "  generates the token and updates /root/comis-rig.env itself)."
+    echo "⚠ GWTOKEN unset and not resolvable from the rig (no config yet?) — the RPC helpers will 401"
+    echo "  until it exists. Fresh rig: run 'node $KIT_DIR/init-config.mjs' next (it generates the"
+    echo "  token and updates $RIG_ENV itself)."
   fi
 fi
 
-# /root/comis-rig.env — the box-side rig config, rendered from THIS .live-env. Box scripts source it;
-# .mjs helpers read it via _rig.mjs. The `${VAR:-…}` form keeps explicit-env-wins semantics on the box.
-# 0600: it carries GWTOKEN (root already reads config.yaml on this rig, so no new exposure).
-remote_root "umask 077 && cat > /root/comis-rig.env" <<EOF
-# Rendered by deploy-scripts.sh from the local scripts/.live-env — do not hand-edit (re-deploy instead).
+# The rig env file — rendered from THIS .live-env. Rig-side scripts source it; the .mjs helpers read
+# it via _rig.mjs. The `${VAR:-…}` form keeps explicit-env-wins semantics. 0600: it carries GWTOKEN.
+# RIG_MODE is rendered too, so a helper invoked bare (no .live-env in scope) still resolves the right
+# data dir / layout instead of silently assuming the production-install one.
+remote_root "umask 077 && cat > '$RIG_ENV'" <<EOF
+# Rendered by deploy-scripts.sh from the local scripts/.live-env — do not hand-edit (re-render instead).
+export RIG_MODE="\${RIG_MODE:-$(rig_mode)}"
 export COMIS_USER="\${COMIS_USER:-$COMIS_USER}"
 export COMIS_HOME="\${COMIS_HOME:-$COMIS_HOME}"
 export DATA="\${DATA:-$DATA}"
@@ -81,8 +93,12 @@ export EMU_DIR="\${EMU_DIR:-$EMU_DIR}"
 export GWTOKEN="\${GWTOKEN:-${GWTOKEN:-}}"
 EOF
 
-remote_root '
-  echo "=== kit on /root ==="; ls -1 /root/*.mjs /root/clean-restart.sh /root/restart-daemon.sh /root/models-sweep.sh 2>/dev/null
-  echo "=== rig env ==="; ls -l /root/comis-rig.env; grep -c "^export" /root/comis-rig.env
-'
-echo "kit deployed to $VPS (install-vps.sh installs the daemon; setup-vps.sh preps the box once)"
+remote_root "
+  echo '=== kit at $KIT_DIR ==='; ls -1 '$KIT_DIR'/*.mjs '$KIT_DIR'/clean-restart.sh '$KIT_DIR'/restart-daemon.sh '$KIT_DIR'/models-sweep.sh 2>/dev/null | head -40
+  echo '=== rig env ==='; ls -l '$RIG_ENV'; grep -c '^export' '$RIG_ENV'
+"
+if rig_is_local; then
+  echo "local rig env rendered at $RIG_ENV (pnpm build produces the daemon under test; ./local-up.sh brings the rig up)"
+else
+  echo "kit deployed to $VPS (install-vps.sh installs the daemon; setup-vps.sh preps the box once)"
+fi

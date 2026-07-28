@@ -14,8 +14,24 @@
 // so a helper never hand-builds either path: use comisDist()/importCli()/requireCodeRoot().
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { homedir, userInfo } from "node:os";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const RIG_ENV_PATH = process.env.RIG_ENV || "/root/comis-rig.env";
+// RIG_MODE=local — the rig is THIS machine: the daemon runs from this checkout against a local data
+// dir (default ~/.comis) and every default below shifts from the VPS production-install layout to
+// the caller's own. Anything explicitly set in env / the rig env file still wins, so a local run can
+// still point DATA at an isolated directory. See `_rig.sh` for the shell-side twin.
+const isLocal = process.env.RIG_MODE === "local";
+
+// This file's own directory. In the source checkout that is
+// <repo>/test/live/self-driving/scripts; on the box it is /root (deploy-scripts.sh globs *.mjs
+// there), which is exactly why the repo root is only derived in local mode.
+const scriptsDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(scriptsDir, "../../../..");
+
+const RIG_ENV_PATH =
+  process.env.RIG_ENV || (isLocal ? resolve(scriptsDir, ".rig-env") : "/root/comis-rig.env");
 
 const fileVars = (() => {
   const vars = {};
@@ -35,14 +51,22 @@ const fileVars = (() => {
 
 const pick = (...cands) => cands.find((v) => v !== undefined && v !== "");
 
-const comisUser = pick(process.env.COMIS_USER, fileVars.COMIS_USER, "comis");
-const comisHome = pick(process.env.COMIS_HOME, fileVars.COMIS_HOME, `/home/${comisUser}`);
+const comisUser = pick(process.env.COMIS_USER, fileVars.COMIS_USER, isLocal ? userInfo().username : "comis");
+const comisHome = pick(
+  process.env.COMIS_HOME,
+  fileVars.COMIS_HOME,
+  isLocal ? homedir() : `/home/${comisUser}`,
+);
 const dataDir = pick(process.env.COMIS_DATA_DIR, process.env.DATA, fileVars.DATA, `${comisHome}/.comis`);
 
 // The Comis code root on this box — an installed comisai package dir OR a source checkout.
 const codeRoot = (() => {
   const explicit = pick(process.env.COMIS_SRC, fileVars.PKG, fileVars.SRC);
   if (explicit) return explicit;
+  // Local mode: the checkout this helper lives in IS the build under test — never an installed
+  // package elsewhere on the machine. Resolving to a stale global `comisai` here would reproduce
+  // the exact wrong-build false result the remote rig's provenance checks exist to catch.
+  if (isLocal && existsSync(`${repoRoot}/packages/daemon/dist`)) return repoRoot;
   for (const cand of [
     `${comisHome}/.npm-global/lib/node_modules/comisai`, // install.sh dedicated-user default
     "/usr/lib/node_modules/comisai", // root-prefix global install
@@ -94,14 +118,20 @@ export const ensureRpcEnv = () => {
 };
 
 export const rig = {
+  /** "local" (this machine) or "remote" (the VPS production install) — the shell twin is `_rig.sh`. */
+  mode: isLocal ? "local" : "remote",
+  /** True when the rig is this machine, so a helper can skip ownership/privilege steps. */
+  isLocal,
   comisUser,
   comisHome,
   dataDir,
   codeRoot,
   layout,
+  /** The repo root — meaningful in local mode (in remote mode the helper runs from /root). */
+  repoRoot,
   chatId: pick(process.env.CHATID, fileVars.CHATID, "678314278"),
   service: pick(process.env.SERVICE, fileVars.SERVICE, "comis"),
   gwPort: Number(pick(process.env.GW_PORT, fileVars.GW_PORT, "4766")),
-  emuDir: pick(process.env.EMU_DIR, fileVars.EMU_DIR, "/root/comis-emu"),
+  emuDir: pick(process.env.EMU_DIR, fileVars.EMU_DIR, isLocal ? repoRoot : "/root/comis-emu"),
   emuWiringPath: pick(process.env.EMU_JSON, fileVars.EMU_JSON, "/tmp/comis-emu.json"),
 };

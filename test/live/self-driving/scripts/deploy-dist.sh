@@ -14,6 +14,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$HERE/.live-env" ] && . "$HERE/.live-env" # per-box rig config (VPS ssh target, PKG, …) — see .live-env.example
 # shellcheck source=./_remote-root.sh
 . "$HERE/_remote-root.sh"
+rig_remote_only "the checkout IS the build — run 'pnpm build', then ./restart-daemon.sh" || exit 0
 REPO="${REPO:-$(git rev-parse --show-toplevel)}"
 VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or the env}"
 COMIS_USER="${COMIS_USER:-comis}"
