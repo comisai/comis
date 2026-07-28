@@ -275,4 +275,14 @@ describe("local rig mode", () => {
     expect(phaseZero).toContain("$DATA/workspace/BOOTSTRAP.md");
     expect(phaseZero).toContain("finish or explicitly skip setup through the channel");
   });
+
+  it("uses portable local gateway and Linux-jail preflight semantics", () => {
+    const phaseZero = readFileSync(PHASE_ZERO_CHECK, "utf8");
+
+    expect(phaseZero).toContain('rig_port_listening "$GW_PORT"');
+    expect(phaseZero).not.toContain('timeout 3 bash -c "exec 3<>/dev/tcp/');
+    expect(phaseZero).toMatch(
+      /rig_is_local[^]*"\$bin" = "bwrap"[^]*warn "jail-dep:\$bin"[^]*NO-ACCESS/u,
+    );
+  });
 });
