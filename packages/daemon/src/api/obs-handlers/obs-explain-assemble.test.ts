@@ -763,6 +763,30 @@ describe("assembleIncidentReport — identity & invariants", () => {
     expect(report.sessionKey).toBe(SESSION_KEY);
   });
 
+  it("surfaces aggregated automatic link-prefetch evidence", () => {
+    const linkPrefetch = {
+      attempts: 3,
+      detected: 4,
+      attempted: 4,
+      fetched: 2,
+      failed: 2,
+      validationRejected: 2,
+      invalid: 0,
+      duplicates: 0,
+      capped: 0,
+      durationMs: 41,
+    };
+    const report = assembleIncidentReport(
+      makeSignals({ linkPrefetch }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.linkPrefetch).toEqual(linkPrefetch);
+  });
+
   it("reads traceId / agentId / channel from the metadata", () => {
     const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(report.traceId).toBe("f942d38c-0000-0000-0000-000000000000");

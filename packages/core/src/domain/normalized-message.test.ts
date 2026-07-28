@@ -137,6 +137,35 @@ describe("NormalizedMessage", () => {
       }
     });
 
+    it("validates the internal link-prefetch receipt as a strict counts-only shape", () => {
+      const receipt = {
+        detected: 2,
+        attempted: 2,
+        fetched: 1,
+        failed: 1,
+        validationRejected: 1,
+        invalid: 0,
+        duplicates: 0,
+        capped: 0,
+        durationMs: 14,
+      };
+      const valid = parseMessage(validMessage({
+        metadata: { linkPrefetch: receipt },
+      }));
+      const invalid = parseMessage(validMessage({
+        metadata: {
+          linkPrefetch: {
+            ...receipt,
+            fetched: -1,
+          },
+        },
+      }));
+
+      expect(valid.ok).toBe(true);
+      if (valid.ok) expect(valid.value.metadata.linkPrefetch).toEqual(receipt);
+      expect(invalid.ok).toBe(false);
+    });
+
     it("accepts a canonical per-turn response locale in message metadata", () => {
       const result = parseMessage(validMessage({ metadata: { locale: "ar" } }));
 

@@ -173,6 +173,48 @@ describe("toIncidentSignals — turnCount (flag cumulative-across-turns toolStat
   });
 });
 
+describe("toIncidentSignals — automatic link-prefetch receipts", () => {
+  it("aggregates counts-only receipts across session turns", () => {
+    const signals = toIncidentSignals([
+      event("link.prefetch", 1, {
+        detected: 1,
+        attempted: 1,
+        fetched: 1,
+        failed: 0,
+        validationRejected: 0,
+        invalid: 0,
+        duplicates: 0,
+        capped: 0,
+        durationMs: 12,
+      }),
+      event("link.prefetch", 2, {
+        detected: 2,
+        attempted: 1,
+        fetched: 0,
+        failed: 1,
+        validationRejected: 1,
+        invalid: 1,
+        duplicates: 0,
+        capped: 0,
+        durationMs: 7,
+      }),
+    ]);
+
+    expect(signals.linkPrefetch).toEqual({
+      attempts: 2,
+      detected: 3,
+      attempted: 2,
+      fetched: 1,
+      failed: 1,
+      validationRejected: 1,
+      invalid: 1,
+      duplicates: 0,
+      capped: 0,
+      durationMs: 19,
+    });
+  });
+});
+
 describe("toIncidentSignals — log shape (678-like)", () => {
   function signals678(): IncidentSignals {
     return toIncidentSignals([

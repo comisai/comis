@@ -279,6 +279,63 @@ describe("resolveAndPreprocess enrichment boundary", () => {
     });
   });
 
+  it("preserves a validated counts-only link-prefetch receipt from the trusted preprocessor", async () => {
+    const receipt = {
+      detected: 1,
+      attempted: 1,
+      fetched: 0,
+      failed: 1,
+      validationRejected: 1,
+      invalid: 0,
+      duplicates: 0,
+      capped: 0,
+      durationMs: 8,
+    };
+    const preprocessMessage = vi.fn(async (message: NormalizedMessage) => ({
+      ...message,
+      metadata: {
+        ...message.metadata,
+        linkPrefetch: receipt,
+      },
+    }));
+
+    const result = await resolveAndPreprocess(
+      makeDeps({ preprocessMessage }),
+      makeAdapter(),
+      makeMessage(),
+    );
+
+    expect(result?.processedMsg.metadata.linkPrefetch).toEqual(receipt);
+  });
+
+  it("does not trust a link-prefetch receipt supplied by channel ingress", async () => {
+    const input = makeMessage({
+      metadata: {
+        ...makeMessage().metadata,
+        linkPrefetch: {
+          detected: 999,
+          attempted: 999,
+          fetched: 999,
+          failed: 0,
+          validationRejected: 0,
+          invalid: 0,
+          duplicates: 0,
+          capped: 0,
+          durationMs: 0,
+        },
+      },
+    });
+    const preprocessMessage = vi.fn(async (message: NormalizedMessage) => message);
+
+    const result = await resolveAndPreprocess(
+      makeDeps({ preprocessMessage }),
+      makeAdapter(),
+      input,
+    );
+
+    expect(result?.processedMsg.metadata.linkPrefetch).toBeUndefined();
+  });
+
   it("accepts transcript content and mention enrichment without accepting audio control fields", async () => {
     const input = makeMessage({
       chatType: "group",

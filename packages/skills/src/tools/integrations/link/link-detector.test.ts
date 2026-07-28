@@ -111,6 +111,15 @@ describe("extractLinksFromMessage", () => {
 
     expect(result).toHaveLength(0);
   });
+
+  it("passes private targets to the authoritative SSRF validator instead of dropping them during detection", () => {
+    const result = extractLinksFromMessage(
+      "http://127.0.0.1/admin http://169.254.169.254/latest/meta-data",
+    );
+
+    expect(result).toContain("http://127.0.0.1/admin");
+    expect(result).toContain("http://169.254.169.254/latest/meta-data");
+  });
 });
 
 describe("URLs pasted inside JSON/config snippets", () => {

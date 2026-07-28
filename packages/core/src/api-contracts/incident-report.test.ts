@@ -97,6 +97,39 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     expect(parsed.audit?.byKind).toEqual({ secret_access: 2, injection_detected: 3 });
   });
 
+  it("retains the counts-only automatic link-prefetch section", () => {
+    const linkPrefetch = {
+      attempts: 4,
+      detected: 5,
+      attempted: 4,
+      fetched: 2,
+      failed: 2,
+      validationRejected: 2,
+      invalid: 1,
+      duplicates: 0,
+      capped: 0,
+      durationMs: 52,
+    };
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      linkPrefetch,
+    });
+
+    expect(parsed.linkPrefetch).toEqual(linkPrefetch);
+    expect(Object.keys(parsed.linkPrefetch ?? {}).sort()).toEqual([
+      "attempted",
+      "attempts",
+      "capped",
+      "detected",
+      "duplicates",
+      "durationMs",
+      "failed",
+      "fetched",
+      "invalid",
+      "validationRejected",
+    ]);
+  });
+
   it("strips a planted value-shaped field from the audit section (content-free)", () => {
     // z.object strips unknown keys on parse — a `value`/`secret` field can never
     // ride the audit? section even if a caller tries to smuggle one.

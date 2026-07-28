@@ -23,6 +23,12 @@ describe("TRAJECTORY_EVENT_TYPES contains lifecycle envelope types", () => {
   });
 });
 
+describe("TRAJECTORY_EVENT_TYPES contains automatic link-prefetch evidence", () => {
+  it("includes the content-free link.prefetch receipt", () => {
+    expect((TRAJECTORY_EVENT_TYPES as readonly string[]).includes("link.prefetch")).toBe(true);
+  });
+});
+
 // The four image-generation lifecycle types are appended
 // to the closed tuple so the daemon image RPC handler can `recordEvent(...)`
 // them via the per-session recorder (recordEvent REJECTS a type absent from

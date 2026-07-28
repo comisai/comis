@@ -7574,6 +7574,15 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     expect(src).toContain("Trajectory recorder could not resume persisted state");
   });
 
+  it("records the trusted link-prefetch receipt after the session recorder opens", async () => {
+    const src = await readPiExecutorSrc();
+    const recorderResolution = src.indexOf("trajectoryRecorder = trajectoryResult.value.recorder");
+    const receiptRecord = src.indexOf('trajectoryRecorder.recordEvent("link.prefetch"');
+
+    expect(recorderResolution).toBeGreaterThan(0);
+    expect(receiptRecord).toBeGreaterThan(recorderResolution);
+  });
+
   it("trajectory_init_includes_sessionFile_from_sessionAdapter (pointer sidecar)", async () => {
     // The pointer file <sessionFile>.trajectory-path.json
     // is written by createTrajectoryRecorder ONLY when init.sessionFile
