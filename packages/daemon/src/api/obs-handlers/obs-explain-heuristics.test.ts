@@ -537,6 +537,30 @@ describe("obs-explain-heuristics", () => {
     expect(rootCause(makeSignals({ endReason: "success", toolStats: { web_fetch: { ok: 3, failed: 0 } } }))).toBeNull();
   });
 
+  it("historical failures do not override an explicitly clean latest outcome", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "success",
+        degraded: false,
+        toolStats: { read: { ok: 3, failed: 1, topErrorKind: "dependency" } },
+        failures: [
+          {
+            seq: 1,
+            toolName: "read",
+            classifiedFailureBy: "sdk_iserror",
+            transportOk: false,
+            errorKind: "dependency",
+            resultDigest: "d",
+            resultBytes: 0,
+            errorPreview: "",
+          },
+        ],
+      }),
+    );
+
+    expect(r).toBeNull();
+  });
+
   // ------------------------------------------------------------------------
   // The recall_miss verdict.
   // ------------------------------------------------------------------------
