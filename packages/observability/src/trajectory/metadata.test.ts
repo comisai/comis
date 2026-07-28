@@ -63,6 +63,28 @@ describe("buildTraceMetadata", () => {
     expect((payload.prompting as Record<string, unknown>).systemPromptByteLen).toBe(1234);
   });
 
+  it("records a deterministic bounded inventory of authoritative tool names", () => {
+    const payload = buildTraceMetadata({
+      ...baseParams,
+      toolInventory: { names: ["web_search", "cron", "web_search"] },
+    } as TraceMetadataParams);
+
+    expect(payload.toolInventory).toEqual({
+      count: 2,
+      names: ["cron", "web_search"],
+      truncated: false,
+    });
+
+    const oversized = buildTraceMetadata({
+      ...baseParams,
+      toolInventory: {
+        names: Array.from({ length: 300 }, (_, index) => `tool_${String(index).padStart(3, "0")}`),
+      },
+    } as TraceMetadataParams);
+    expect(oversized.toolInventory).toMatchObject({ count: 300, truncated: true });
+    expect((oversized.toolInventory as { names: string[] }).names).toHaveLength(256);
+  });
+
   it("return value satisfies Record<string, unknown> (assignable to recordEvent data param)", () => {
     const payload = buildTraceMetadata(baseParams);
     // Compile-time check: assign to a Record<string, unknown> variable

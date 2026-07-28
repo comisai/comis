@@ -7702,6 +7702,21 @@ describe("populated runtimeSnapshot.skills", () => {
     // Back-compat: legacy mock without getSnapshot keeps skills []
     expect(snapshot.skills).toEqual([]);
   });
+
+  it("populates trace metadata with the exact assembled tool inventory", async () => {
+    const customTools = [
+      { name: "web_search", description: "Search", parameters: {} },
+      { name: "cron", description: "Schedule", parameters: {} },
+    ];
+    const deps = createMockDeps({ customTools: customTools as any });
+    const executor = createPiExecutor(testConfig, deps);
+    await executor.execute(testMessage, testSessionKey);
+
+    const bridgeCall = (createPiEventBridge as Mock).mock.calls[0]![0]!;
+    expect(bridgeCall.runtimeSnapshot.toolInventory).toEqual({
+      names: ["web_search", "cron"],
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
