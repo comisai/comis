@@ -1711,27 +1711,22 @@ async function bootAgents(
   // path wrote a plaintext disk store while the manager read the mode-selected
   // store. selectMcpTokenStore: encrypted → mcp_credentials (AES-256-GCM, no disk
   // files); file → chokidar mcp-tokens/ store; env → undefined (no MCP OAuth).
+  const activeDataDir =
+    container.config.dataDir && container.config.dataDir.length > 0 ? container.config.dataDir : dataDir;
   const mcpTokenStore = selectMcpTokenStore({
     storage: container.config.security.storage,
     logger: skillsLogger,
-    dataDir: container.config.dataDir && container.config.dataDir.length > 0
-      ? container.config.dataDir
-      : dataDir,
+    dataDir: activeDataDir,
     secretsDb,
     secretsCrypto,
   });
-
   // Construct daemon-global MCP manager BEFORE setupAgents (ordering constraint
   // -- per-agent ToolCapabilityPort adapters close over mcpClientManager).
   // setupMcp consumes the injected mcpTokenStore; it no longer mode-selects.
   const { mcpClientManager } = await setupMcp({
     servers: container.config.integrations.mcp.servers,
     logger: skillsLogger,
-    osvCacheDir: safePath(
-      container.config.dataDir && container.config.dataDir.length > 0 ? container.config.dataDir : dataDir,
-      "cache",
-      "osv",
-    ),
+    osvCacheDir: safePath(activeDataDir, "cache", "osv"),
     callToolTimeoutMs: container.config.integrations.mcp.callToolTimeoutMs,
     defaultCwd: defaultWorkspaceDir,
     eventBus: container.eventBus,
