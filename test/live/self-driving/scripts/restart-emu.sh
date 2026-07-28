@@ -21,10 +21,11 @@
 #   remote:  node /root/wire-emu.mjs && bash /root/restart-daemon.sh
 #   local:   node ./wire-emu.mjs && ./restart-daemon.sh
 #
-# EMU_GROUPS (a JSON array of {chatId, members:[{id,firstName,username?}], botId, botUsername}) is
-# passed through to the launcher. Group chats CANNOT be created over the /control API — only at
-# emulator launch — so a run that drives group/mention behaviour MUST set this (in .live-env or
-# inline) or those arcs are undrivable.
+# EMU_GROUPS (a JSON array of {chatId, members:[{id,firstName,username?}], botId, botUsername,
+# supergroup?, forum?}) is passed through to the launcher. Group chats CANNOT be created over the
+# /control API — only at emulator launch — so a run that drives group/mention behaviour MUST set
+# this (in .live-env or inline) or those arcs are undrivable. Topic scenarios require both
+# `supergroup:true` and `forum:true`.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$HERE/.live-env" ] && . "$HERE/.live-env"
