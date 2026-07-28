@@ -68,4 +68,16 @@ describe("live driver session correlation", () => {
       ),
     ).toBe(true);
   });
+
+  it("correlates Markdown session text with Telegram rendered HTML", () => {
+    expect(
+      wireContainsAssistantReply(
+        [{
+          method: "sendMessage",
+          text: "Got it—category: <b>groceries</b>. Please resend it.",
+        }],
+        "Got it—category: **groceries**. Please resend it.",
+      ),
+    ).toBe(true);
+  });
 });
