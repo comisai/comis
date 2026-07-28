@@ -409,6 +409,26 @@ describe("makeRealReader.readSessionMetadata", () => {
   });
 });
 
+describe("makeRealReader.readLosslessToolEvidence", () => {
+  it("does not invent a non-canonical error kind when LCD lacks classification", async () => {
+    const contextBrowse = {
+      readToolOutcomes: vi.fn(() => ({
+        messageCount: 2,
+        toolResultCount: 1,
+        truncated: false,
+        outcomes: [{ seq: 2, toolName: "read", isError: true }],
+      })),
+    } as unknown as NonNullable<Parameters<typeof makeRealReader>[3]>;
+    const reader = makeRealReader(tmpDataDir(), undefined, undefined, contextBrowse);
+
+    const evidence = await reader.readLosslessToolEvidence!(SESSION_KEY);
+    const data = evidence!.records[0]!.data as Record<string, unknown>;
+
+    expect(data.success).toBe(false);
+    expect(data).not.toHaveProperty("errorKind");
+  });
+});
+
 describe("makeRealReader.readDiagnosticsRollup (session-scoped)", () => {
   it("returns the row whose sessionKey MATCHES — NOT the most-recent (multi-session RED-pin)", async () => {
     const dataDir = tmpDataDir();
