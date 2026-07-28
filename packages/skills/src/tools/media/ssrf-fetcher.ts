@@ -407,7 +407,6 @@ export function createSsrfGuardedFetcher(
           if (!validated.ok) {
             logger.error(
               {
-                url,
                 err: validated.error,
                 hint: "URL failed SSRF validation — ensure the target is a public host and not an internal/metadata IP",
                 errorKind: "validation" as const,
@@ -439,7 +438,6 @@ export function createSsrfGuardedFetcher(
             if (!response.ok) {
               logger.error(
                 {
-                  url,
                   status: response.status,
                   resolvedIp: ip,
                   hint: "Check that the remote media URL is publicly accessible and returns a valid HTTP status",
@@ -447,7 +445,7 @@ export function createSsrfGuardedFetcher(
                 },
                 "SSRF-guarded fetch failed — HTTP error response",
               );
-              throw new Error(`HTTP ${response.status} fetching ${url}`);
+              throw new Error(`HTTP ${response.status} fetching media`);
             }
 
             // 3. Content-Length pre-check + streamed-byte cap (shared with the auth path).
@@ -456,7 +454,7 @@ export function createSsrfGuardedFetcher(
               response.headers.get("content-type") ?? "application/octet-stream";
 
             logger.debug(
-              { url, resolvedIp: ip, sizeBytes: buffer.length, mimeType },
+              { resolvedIp: ip, sizeBytes: buffer.length, mimeType },
               "SSRF-guarded fetch complete",
             );
 
@@ -475,7 +473,6 @@ export function createSsrfGuardedFetcher(
             const classified = classifyFetchError(error);
             logger.warn(
               {
-                url,
                 resolvedIp: ip,
                 err: error,
                 errorKind: classified.errorKind,
