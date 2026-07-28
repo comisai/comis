@@ -68,6 +68,16 @@ else
   fail "gateway-port" "$GW_HOST:$GW_PORT not listening — gateway didn't bind (config? FATAL boot?)"
 fi
 
+# 2b) A fresh workspace intentionally answers its first message with the
+# onboarding conversation, so the required PONG42 adapter smoke cannot pass
+# while BOOTSTRAP.md is active. Surface that setup precondition before a valid
+# product behavior is misclassified as a transport/model failure.
+if [ -s "$DATA/workspace/BOOTSTRAP.md" ]; then
+  fail "onboarding" "pending — finish or explicitly skip setup through the channel, then clean-restart before the PONG42 smoke"
+else
+  pass "onboarding" "complete (BOOTSTRAP.md is empty)"
+fi
+
 # 3) clean boot — the LAST boot record is a healthy start, not a FATAL. The structured Pino log is
 #    authoritative (CLAUDE.md), not the pm2/stdout capture. Compare the most-recent marker of each.
 LOG_GLOB=("$DATA"/logs/daemon*.log)

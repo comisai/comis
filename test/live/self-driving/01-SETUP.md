@@ -169,6 +169,12 @@ The daemon's real grammy Telegram adapter takes `channels.telegram.apiRoot`; poi
 ## 6. Phase 0 baseline (exit gate)
 
 Do not start the real test plan until ALL hold:
+0. **First-run onboarding is complete.** A newly created workspace intentionally answers its first
+   message with the neutral onboarding prompt, so it cannot satisfy the exact `PONG42` smoke yet.
+   Finish onboarding or explicitly send `skip setup` through the real channel, verify
+   `workspace/BOOTSTRAP.md` is empty, then run `clean-restart.sh` once more to remove those setup
+   turns while preserving the completed workspace. `phase0-check.sh` fails loudly while onboarding
+   is pending.
 1. One **text round-trip** is green through the real adapter (`drive.mjs … "reply with PONG42"` → `PONG42` on the wire) and both oracles agree.
 2. **Every observability lens is readable** on that trivial turn — daemon log, trajectory, `revoke.mjs capabilities.introspect`/`explain` (prove you can read each before you need it).
 3. The **model serves** (the configured provider/model completes; `modelId`==config; no degraded-provider, no viable-floor WARN you didn't expect).
