@@ -63,15 +63,31 @@ import {
 } from "./offline-secrets-store.js";
 
 /**
- * The CLI's offline data dir. Honors `COMIS_DATA_DIR` (the daemon's + the wizard's
- * data-dir env, `04-oauth-helpers.ts`), falling back to `<homedir>/.comis`. Without the
- * env check, `comis explain --offline` / `comis system-health --offline` read the INVOKING user's
- * home — so running the CLI as a different user than the daemon (or against a non-default
- * `COMIS_DATA_DIR` install) silently reads an empty dir and reports a false "nothing
- * happened" for a session that succeeded.
+ * Resolve the CLI's offline data dir with the same precedence as bootstrap:
+ * explicit config `dataDir` > `COMIS_DATA_DIR` > `<homedir>/.comis`.
+ * `COMIS_CONFIG_PATHS` selects the same layered config the gateway client uses;
+ * otherwise the standard user config layers are inspected. Without the config
+ * read, a CLI pointed at a non-default daemon config connects to the right
+ * gateway, then its offline fallback silently reads the wrong session store.
  */
 export function resolveOfflineDataDir(): string {
-  return systemGetEnv("COMIS_DATA_DIR") ?? safePath(os.homedir(), ".comis");
+  const homeDataDir = safePath(os.homedir(), ".comis");
+  const environmentDataDir = systemGetEnv("COMIS_DATA_DIR");
+  const fallbackDataDir = environmentDataDir ?? homeDataDir;
+  const configuredPaths = parseConfigPaths(systemGetEnv("COMIS_CONFIG_PATHS"));
+  const configPaths = configuredPaths.length > 0
+    ? configuredPaths
+    : [
+        safePath(homeDataDir, "config.yaml"),
+        safePath(homeDataDir, "config.local.yaml"),
+      ].filter((candidate) => fs.existsSync(candidate));
+  const resolution = resolveDoctorConfig(configPaths, {
+    defaultDataDir: fallbackDataDir,
+  });
+  const configuredDataDir = resolution.config?.dataDir.trim();
+  return configuredDataDir !== undefined && configuredDataDir.length > 0
+    ? configuredDataDir
+    : fallbackDataDir;
 }
 
 /** Resolve the trajectory relocation root from the same effective config layers as startup. */

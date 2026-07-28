@@ -43,6 +43,7 @@ import { registerControlApi, type ControlClient } from "./control-api.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CONTROL_API_SOURCE = resolve(HERE, "control-api.ts");
+const DRIVE_SOURCE = resolve(HERE, "../self-driving/scripts/drive.mjs");
 
 // A stub bot token of the `<id>:<secret>` shape grammy builds paths from. No
 // real credential — loopback only.
@@ -144,6 +145,107 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
       const env = await callBotMethod(apiRoot, "getUpdates", { timeout: 5 });
       const updates = env.result as Array<Record<string, unknown>>;
       expect((updates[0]!["message"] as Record<string, unknown>)["text"]).toBe("form ping");
+    });
+
+    it("threads mention, bot reply, and topic options through the HTTP route", async () => {
+      const groupId = -100_424_242;
+      emu.createGroupChat({
+        chatId: groupId,
+        members: [{ id: USER_ID, firstName: "owner" }],
+        bot: { id: 12345, firstName: "TestBot", username: "test_bot" },
+        supergroup: true,
+        forum: true,
+      });
+
+      const { status } = await postControl(apiRoot, `/control/chats/${groupId}/messages`, {
+        fromUserId: USER_ID,
+        text: "@test_bot and next week?",
+        opts: { mention: true, replyTo: 91, thread: 7 },
+      });
+      expect(status).toBe(200);
+
+      const env = await callBotMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      const message = updates[0]!["message"] as Record<string, unknown>;
+      expect(message["message_thread_id"]).toBe(7);
+      expect(message["entities"]).toEqual([
+        { type: "mention", offset: 0, length: "@test_bot".length },
+      ]);
+      expect((message["reply_to_message"] as Record<string, unknown>)["message_id"]).toBe(91);
+      expect(
+        ((message["reply_to_message"] as Record<string, unknown>)["from"] as Record<string, unknown>)["is_bot"],
+      ).toBe(true);
+    });
+
+    it("threads a reply-to-user option without misattributing the reply to the bot", async () => {
+      const groupId = -100_424_243;
+      emu.createGroupChat({
+        chatId: groupId,
+        members: [
+          { id: USER_ID, firstName: "owner" },
+          { id: 778, firstName: "housemate" },
+        ],
+        bot: { id: 12345, firstName: "TestBot", username: "test_bot" },
+      });
+
+      const { status } = await postControl(apiRoot, `/control/chats/${groupId}/messages`, {
+        fromUserId: USER_ID,
+        text: "the other one",
+        opts: { replyToUser: 778 },
+      });
+      expect(status).toBe(200);
+
+      const env = await callBotMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      const message = updates[0]!["message"] as Record<string, unknown>;
+      const repliedFrom = (message["reply_to_message"] as Record<string, unknown>)["from"] as Record<
+        string,
+        unknown
+      >;
+      expect(repliedFrom["id"]).toBe(778);
+      expect(repliedFrom["is_bot"]).toBe(false);
+    });
+
+    it("keeps addressing options reachable from the standalone relationship driver", () => {
+      const source = readFileSync(DRIVE_SOURCE, "utf8");
+      expect(source).toContain("INJECT_OPTS");
+      expect(source).toMatch(/JSON\.stringify\(\{[^}]*fromUserId:[^}]*text:[^}]*opts/s);
+    });
+  });
+
+  describe("POST /control/chats/:id/service (forum service event)", () => {
+    it("queues a closed-kind service update that carries no prompt text", async () => {
+      const groupId = -100_424_244;
+      emu.createGroupChat({
+        chatId: groupId,
+        members: [{ id: USER_ID, firstName: "owner" }],
+        bot: { id: 12345, firstName: "TestBot", username: "test_bot" },
+        supergroup: true,
+        forum: true,
+      });
+
+      const { status, json } = await postControl(apiRoot, `/control/chats/${groupId}/service`, {
+        kind: "forum_topic_closed",
+      });
+      expect(status).toBe(200);
+      expect(json).toMatchObject({ ok: true, messageId: expect.any(Number) });
+
+      const env = await callBotMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      const message = updates[0]!["message"] as Record<string, unknown>;
+      expect(message["forum_topic_closed"]).toEqual({});
+      expect("text" in message).toBe(false);
+    });
+
+    it("rejects an unknown service kind without queuing an update", async () => {
+      const { status, json } = await postControl(apiRoot, `/control/chats/${CHAT_ID}/service`, {
+        kind: "channel_post",
+      });
+      expect(status).toBe(400);
+      expect(json).toMatchObject({ ok: false });
+
+      const env = await callBotMethod(apiRoot, "getUpdates", { timeout: 0 });
+      expect(env.result).toEqual([]);
     });
   });
 

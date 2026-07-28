@@ -59,8 +59,8 @@ fi
 #          `clean-restart.sh` DELETES its sessions/memory.db/logs for real. Point DATA at a
 #          dedicated directory for from-scratch workloads, and give that rig its own GW_PORT so it
 #          cannot collide with a daemon already listening on 4766.
-#   LOCAL_SUPERVISOR — auto (use pm2 when it already supervises $SERVICE, else relaunch directly) |
-#          pm2 | direct.
+#   LOCAL_SUPERVISOR — auto (pm2 when it manages $SERVICE, else tmux when installed, else direct) |
+#          pm2 | tmux | direct.
 #
 # : "${DATA:=$HOME/.comis-live}"; export DATA
 # : "${GW_PORT:=4767}"; export GW_PORT

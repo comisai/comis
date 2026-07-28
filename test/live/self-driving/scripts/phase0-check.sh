@@ -61,11 +61,23 @@ else
   warn "service" "no $SERVICE.service unit — not the production systemd install? (source-rig runs are legacy)"
 fi
 
-# 2) gateway TCP port bound — pure-bash /dev/tcp connect, no curl/ss needed
-if timeout 3 bash -c "exec 3<>/dev/tcp/$GW_HOST/$GW_PORT" 2>/dev/null; then
+# 2) gateway TCP port bound — use the shared mode-portable probe. GNU
+# `timeout` is absent on a stock macOS host, so a timeout-wrapped /dev/tcp
+# check falsely reports the local gateway down.
+if rig_port_listening "$GW_PORT"; then
   pass "gateway-port" "$GW_HOST:$GW_PORT accepts connections"
 else
   fail "gateway-port" "$GW_HOST:$GW_PORT not listening — gateway didn't bind (config? FATAL boot?)"
+fi
+
+# 2b) A fresh workspace intentionally answers its first message with the
+# onboarding conversation, so the required PONG42 adapter smoke cannot pass
+# while BOOTSTRAP.md is active. Surface that setup precondition before a valid
+# product behavior is misclassified as a transport/model failure.
+if [ -s "$DATA/workspace/BOOTSTRAP.md" ]; then
+  fail "onboarding" "pending — finish or explicitly skip setup through the channel, then clean-restart before the PONG42 smoke"
+else
+  pass "onboarding" "complete (BOOTSTRAP.md is empty)"
 fi
 
 # 3) clean boot — the LAST boot record is a healthy start, not a FATAL. The structured Pino log is
@@ -175,9 +187,13 @@ else
   warn "terminal-config" "cannot read $CONFIG as $COMIS_USER — skip config shape check"
 fi
 
-# 6) jail deps present — a terminal drive spawns claude under bwrap in a tmux pane
+# 6) jail deps present — a terminal drive spawns the coding CLI under bwrap in
+# a tmux pane on Linux. macOS cannot materialize that jail, so bwrap is an
+# explicit NO-ACCESS coverage gap rather than a false local-rig blocker.
 for bin in bwrap tmux node; do
-  if command -v "$bin" >/dev/null 2>&1; then pass "jail-dep:$bin" "$(command -v "$bin")"
+  if rig_is_local && [ "$bin" = "bwrap" ]; then
+    warn "jail-dep:$bin" "NO-ACCESS on the local macOS rig — prove containment on Linux"
+  elif command -v "$bin" >/dev/null 2>&1; then pass "jail-dep:$bin" "$(command -v "$bin")"
   else fail "jail-dep:$bin" "not on PATH — the bwrap/tmux jail cannot launch"; fi
 done
 

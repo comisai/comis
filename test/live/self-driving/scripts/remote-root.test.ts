@@ -11,6 +11,7 @@ const HELPER = resolve(HERE, "_remote-root.sh");
 const RIG_HELPER = resolve(HERE, "_rig.sh");
 const RESTART_DAEMON = resolve(HERE, "restart-daemon.sh");
 const CLEAN_RESTART = resolve(HERE, "clean-restart.sh");
+const PHASE_ZERO_CHECK = resolve(HERE, "phase0-check.sh");
 const WIRE_EMULATOR = resolve(HERE, "wire-emu.mjs");
 const DEPLOY_SCRIPTS = resolve(HERE, "deploy-scripts.sh");
 const DEPLOY_EMULATOR = resolve(HERE, "deploy-emu.sh");
@@ -217,6 +218,19 @@ describe("local rig mode", () => {
     expect(leaked).not.toContain("comis-does-not-exist-here");
   });
 
+  it("preserves an explicit isolated DATA override while dropping the leaked remote layout", () => {
+    const isolated = runRigHelper('rig_defaults 2>/dev/null; echo "$DATA|$COMIS_HOME|$PKG"', {
+      RIG_MODE: "local",
+      HOME: "/tmp/fake-home",
+      COMIS_HOME: "/home/comis-does-not-exist-here",
+      DATA: "/tmp/explicit-isolated-rig",
+      PKG: "/home/comis-does-not-exist-here/.npm-global/lib/node_modules/comisai",
+    });
+
+    expect(isolated).toContain("/tmp/explicit-isolated-rig|/tmp/fake-home|");
+    expect(isolated).not.toContain("comis-does-not-exist-here");
+  });
+
   it("keeps the portable probes off Linux-only tools", () => {
     // `ss` does not exist on macOS and `date -d` is GNU-only: a local rig that shelled out to either
     // would report a healthy daemon as down (or a fresh build as stale) instead of failing honestly.
@@ -237,5 +251,38 @@ describe("local rig mode", () => {
     expect(restart).toMatch(/if rig_is_local; then[\s\S]*else[\s\S]*systemctl restart/u);
     expect(clean).toContain("as_service_user");
     expect(clean).not.toMatch(/^\s*sudo -u "\$COMIS_USER" bash -c/mu);
+  });
+
+  it("offers a tmux-backed local supervisor for shells that reap detached children", () => {
+    const restart = readFileSync(RESTART_DAEMON, "utf8");
+
+    expect(restart).toMatch(/LOCAL_SUPERVISOR[^]*tmux/u);
+    expect(restart).toMatch(/tmux new-session -d -s/u);
+    expect(restart).toMatch(/COMIS_CONFIG_PATHS[^]*daemon\.console\.log/u);
+  });
+
+  it("binds local daemon boot and runtime storage to the isolated rig data directory", () => {
+    const restart = readFileSync(RESTART_DAEMON, "utf8");
+
+    expect(restart).toMatch(
+      /COMIS_DATA_DIR=['"]?\$DATA['"]?[^]*COMIS_CONFIG_PATHS=['"]?\$DATA\/config\.yaml/u,
+    );
+  });
+
+  it("blocks the baseline while first-run onboarding is still pending", () => {
+    const phaseZero = readFileSync(PHASE_ZERO_CHECK, "utf8");
+
+    expect(phaseZero).toContain("$DATA/workspace/BOOTSTRAP.md");
+    expect(phaseZero).toContain("finish or explicitly skip setup through the channel");
+  });
+
+  it("uses portable local gateway and Linux-jail preflight semantics", () => {
+    const phaseZero = readFileSync(PHASE_ZERO_CHECK, "utf8");
+
+    expect(phaseZero).toContain('rig_port_listening "$GW_PORT"');
+    expect(phaseZero).not.toContain('timeout 3 bash -c "exec 3<>/dev/tcp/');
+    expect(phaseZero).toMatch(
+      /rig_is_local[^]*"\$bin" = "bwrap"[^]*warn "jail-dep:\$bin"[^]*NO-ACCESS/u,
+    );
   });
 });
