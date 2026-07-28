@@ -42,6 +42,73 @@ rig_banner() {
   fi
 }
 
+# Discard only an obsolete remote-layout block after a caller has selected local mode. This runs
+# before the rendered rig env is sourced so its isolated DATA/GW_PORT values can fill the gap left
+# by the discarded block. Running the same cleanup only inside rig_defaults() is too late: defaults
+# would select ~/.comis and a bare local-up would repoint the operator's everyday install.
+rig_drop_leaked_remote_layout() {
+  if rig_is_local; then
+    # A `.live-env` written before RIG_MODE existed assigns the REMOTE layout unconditionally, and
+    # the default-assigns below would then KEEP it — silently pointing a "local" run at
+    # /home/comis paths that do not exist on this machine (the wrong-rig false result this kit
+    # exists to prevent, in its most confusing form: every probe fails for the wrong reason). The
+    # remote layout is one group, so detect it by its anchor. Drop only values that actually
+    # belong to that leaked home/root layout: an explicit DATA=/tmp/isolated-rig override must
+    # survive even when the same .live-env supplied a stale COMIS_HOME.
+    if [ -n "${COMIS_HOME:-}" ] && [ ! -d "${COMIS_HOME}" ]; then
+      _leaked_comis_home="$COMIS_HOME"
+      echo "rig: RIG_MODE=local but COMIS_HOME=$COMIS_HOME does not exist here — ignoring the" >&2
+      echo "     remote values from .live-env (COMIS_USER/COMIS_HOME/DATA/PKG/EMU_DIR/GW_PORT). Wrap that" >&2
+      echo "     block in 'if [ \"\${RIG_MODE:-remote}\" = remote ]; then … fi', or set them inline." >&2
+      case "${DATA:-}" in
+      "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset DATA ;;
+      esac
+      case "${PKG:-}" in
+      "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset PKG ;;
+      esac
+      case "${EMU_DIR:-}" in
+      /root | /root/* | "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset EMU_DIR ;;
+      esac
+      # 4766 is the shared default carried by the obsolete remote block. A non-default value may
+      # be an explicit local override and must survive just like an explicit isolated DATA path.
+      [ "${GW_PORT:-}" = "4766" ] && unset GW_PORT
+      [ "${COMIS_USER:-}" = "comis" ] && unset COMIS_USER
+      unset COMIS_HOME _leaked_comis_home
+    fi
+  fi
+}
+
+# Load the first rendered rig env after determining its persisted mode. Callers source .live-env
+# first, so the precedence remains explicit env → valid .live-env → rendered rig env → defaults.
+# A pre-RIG_MODE .live-env is the exceptional case: its nonexistent remote home is removed before
+# the rendered local file is sourced, allowing the last selected isolated rig to be reused safely.
+rig_load_persisted_env() {
+  local _rig_env_file=""
+  local _rig_mode_line=""
+  for _candidate in "$@"; do
+    if [ -n "$_candidate" ] && [ -f "$_candidate" ]; then
+      _rig_env_file="$_candidate"
+      break
+    fi
+  done
+
+  if [ -z "${RIG_MODE:-}" ] && [ -n "$_rig_env_file" ]; then
+    _rig_mode_line="$(grep -E '^(export[[:space:]]+)?RIG_MODE=' "$_rig_env_file" 2>/dev/null | head -1)"
+    case "$_rig_mode_line" in
+    *local*) RIG_MODE=local ;;
+    *remote*) RIG_MODE=remote ;;
+    esac
+    [ -n "${RIG_MODE:-}" ] && export RIG_MODE
+  fi
+
+  rig_drop_leaked_remote_layout
+  if [ -n "$_rig_env_file" ]; then
+    # shellcheck disable=SC1090 # the rig env path is selected at run time
+    . "$_rig_env_file"
+  fi
+  rig_defaults
+}
+
 # Per-mode defaults for every rig value. Explicit env / .live-env still wins (`:=` default-assign),
 # so a run can override any single value without editing a file.
 rig_defaults() {
@@ -57,31 +124,8 @@ rig_defaults() {
     exit 2
     ;;
   esac
+  rig_drop_leaked_remote_layout
   if rig_is_local; then
-    # A `.live-env` written before RIG_MODE existed assigns the REMOTE layout unconditionally, and
-    # the default-assigns below would then KEEP it — silently pointing a "local" run at
-    # /home/comis paths that do not exist on this machine (the wrong-rig false result this kit
-    # exists to prevent, in its most confusing form: every probe fails for the wrong reason). The
-    # remote layout is one group, so detect it by its anchor. Drop only values that actually
-    # belong to that leaked home/root layout: an explicit DATA=/tmp/isolated-rig override must
-    # survive even when the same .live-env supplied a stale COMIS_HOME.
-    if [ -n "${COMIS_HOME:-}" ] && [ ! -d "${COMIS_HOME}" ]; then
-      _leaked_comis_home="$COMIS_HOME"
-      echo "rig: RIG_MODE=local but COMIS_HOME=$COMIS_HOME does not exist here — ignoring the" >&2
-      echo "     remote values from .live-env (COMIS_USER/COMIS_HOME/DATA/PKG/EMU_DIR). Wrap that" >&2
-      echo "     block in 'if [ \"\${RIG_MODE:-remote}\" = remote ]; then … fi', or set them inline." >&2
-      case "${DATA:-}" in
-      "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset DATA ;;
-      esac
-      case "${PKG:-}" in
-      "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset PKG ;;
-      esac
-      case "${EMU_DIR:-}" in
-      /root | /root/* | "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset EMU_DIR ;;
-      esac
-      [ "${COMIS_USER:-}" = "comis" ] && unset COMIS_USER
-      unset COMIS_HOME _leaked_comis_home
-    fi
     : "${COMIS_USER:=$(id -un)}"
     : "${COMIS_HOME:=$HOME}"
     : "${DATA:=$HOME/.comis}"

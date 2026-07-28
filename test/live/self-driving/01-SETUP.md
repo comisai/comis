@@ -191,6 +191,9 @@ builds this checkout, launches the emulator on loopback, wires `channels.telegra
 daemon, renders the rig env, and gates on `rig-doctor.sh`. Every driver/oracle then works unchanged —
 `drive.mjs`, `db.mjs`, `explain.mjs`, `revoke.mjs`, `logscan.mjs` — because the mode resolution lives in
 `_rig.sh` (shell) and `_rig.mjs` (node), not at the call sites.
+After the first render, a bare `./local-up.sh` reuses the selected local root from `.rig-env`. A stale
+pre-`RIG_MODE` remote block in `.live-env` is discarded before that rendered fallback is loaded, so it
+cannot silently redirect the next local run to the everyday `~/.comis`.
 
 **What it is for.** The remote round-trip costs an ssh hop per inject and a deploy+restart per patch.
 Local mode removes both: edit `packages/*/src`, `pnpm build`, `./restart-daemon.sh`, re-drive. Use it to

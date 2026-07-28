@@ -33,11 +33,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   echo "missing $HERE/_rig.sh — re-run deploy-scripts.sh (the kit ships as a unit)" >&2
   exit 2
 }
-for _f in "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env; do
-  # shellcheck disable=SC1090 # the rig env path is mode-resolved at run time
-  [ -n "$_f" ] && [ -f "$_f" ] && . "$_f" && break
-done
-rig_defaults
+rig_load_persisted_env "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env
 if rig_is_local; then
   EMU_LOG="${EMU_LOG:-/tmp/comis-emu.log}"
   # tsx from the workspace (a devDependency of this repo) — never assume a global install locally.
