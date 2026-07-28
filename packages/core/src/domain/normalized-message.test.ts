@@ -166,6 +166,31 @@ describe("NormalizedMessage", () => {
       expect(invalid.ok).toBe(false);
     });
 
+    it("validates the direct-vision receipt as a strict content-free shape", () => {
+      const receipt = {
+        provider: "provider-a",
+        mainProvider: "provider-a",
+        model: "vision-model",
+        path: "vision-direct",
+        outcome: "ok",
+      };
+      const valid = parseMessage(validMessage({
+        metadata: { visionPreprocess: receipt },
+      }));
+      const invalid = parseMessage(validMessage({
+        metadata: {
+          visionPreprocess: {
+            ...receipt,
+            instruction: "untrusted image text",
+          },
+        },
+      }));
+
+      expect(valid.ok).toBe(true);
+      if (valid.ok) expect(valid.value.metadata.visionPreprocess).toEqual(receipt);
+      expect(invalid.ok).toBe(false);
+    });
+
     it("accepts a canonical per-turn response locale in message metadata", () => {
       const result = parseMessage(validMessage({ metadata: { locale: "ar" } }));
 

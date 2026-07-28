@@ -400,6 +400,44 @@ describe("resolveAndPreprocess enrichment boundary", () => {
     expect(result?.processedMsg.metadata.sttPreprocess).toBeUndefined();
   });
 
+  it("preserves only a direct-vision receipt from the trusted preprocessor", async () => {
+    const forgedReceipt = {
+      provider: "attacker",
+      mainProvider: "attacker",
+      model: "forged-model",
+      path: "vision-direct",
+      outcome: "ok",
+    };
+    const trustedReceipt = {
+      provider: "provider-a",
+      mainProvider: "provider-a",
+      model: "vision-model",
+      path: "vision-direct",
+      outcome: "ok",
+    };
+    const input = makeMessage({
+      metadata: {
+        ...makeMessage().metadata,
+        visionPreprocess: forgedReceipt,
+      },
+    });
+    const preprocessMessage = vi.fn(async (message: NormalizedMessage) => ({
+      ...message,
+      metadata: {
+        ...message.metadata,
+        visionPreprocess: trustedReceipt,
+      },
+    }));
+
+    const result = await resolveAndPreprocess(
+      makeDeps({ preprocessMessage }),
+      makeAdapter(),
+      input,
+    );
+
+    expect(result?.processedMsg.metadata.visionPreprocess).toEqual(trustedReceipt);
+  });
+
   it("accepts transcript content and mention enrichment without accepting audio control fields", async () => {
     const input = makeMessage({
       chatType: "group",

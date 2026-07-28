@@ -50,6 +50,8 @@ import {
   audioPreflight as audioPreflightFn,
 } from "@comis/channels";
 import { createCompositeResolver, preprocessMessage } from "@comis/skills";
+import { isVisionCapable } from "@comis/agent";
+import { getModel } from "@earendil-works/pi-ai/compat";
 
 const TEST_TURN_SCOPE = {
   conversation: { agentId: "default" },
@@ -261,6 +263,73 @@ describe("buildMediaPipeline", () => {
       }),
       expect.anything(),
     );
+  });
+
+  it("uses the executing agent model for direct-vision preprocessing and its receipt", async () => {
+    vi.mocked(getModel).mockImplementation((_provider, model) => ({
+      id: model,
+    }) as never);
+    vi.mocked(isVisionCapable).mockImplementation(
+      (model) => (model as { id?: string }).id === "vision-model",
+    );
+    vi.mocked(preprocessMessage).mockImplementationOnce(async (mediaDeps, msg) => ({
+      message: msg,
+      transcriptions: [],
+      analyses: [],
+      imageContents: mediaDeps.visionAvailable
+        ? [{
+            type: "image",
+            data: "c2FuaXRpemVkLWltYWdl",
+            mimeType: "image/png",
+          }]
+        : [],
+      videoDescriptions: [],
+      fileExtractions: [],
+      sttReceipts: [],
+    }));
+    const container = makeContainer({
+      agents: {
+        default: {
+          name: "Default",
+          provider: "provider-a",
+          model: "text-model",
+        },
+        visual: {
+          name: "Visual",
+          provider: "provider-b",
+          model: "vision-model",
+        },
+      },
+    });
+    const result = await buildMediaPipeline(makeDeps({ container }));
+    const preprocessed = await result.preprocessMessage({
+      id: "m1",
+      channelId: "c1",
+      channelType: "telegram",
+      senderId: "u1",
+      text: "inspect this",
+      timestamp: Date.now(),
+      attachments: [{
+        type: "image",
+        url: "tg-file://image",
+        mimeType: "image/png",
+      }],
+      metadata: {},
+    }, {
+      conversation: { agentId: "visual" },
+    } as unknown as ResolvedTurnScope);
+
+    expect(preprocessMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ visionAvailable: true }),
+      expect.anything(),
+    );
+    expect(preprocessed.metadata.visionPreprocess).toEqual({
+      provider: "provider-b",
+      mainProvider: "provider-b",
+      model: "vision-model",
+      path: "vision-direct",
+      outcome: "ok",
+    });
   });
 
   it("audioPreflight is defined when transcriber provided", async () => {

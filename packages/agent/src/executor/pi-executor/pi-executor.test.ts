@@ -7603,6 +7603,22 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     expect(failedRecord).toBeGreaterThan(requestedRecord);
   });
 
+  it("records a trusted direct-vision receipt after the session recorder opens", async () => {
+    const src = await readPiExecutorSrc();
+    const recorderResolution = src.indexOf("trajectoryRecorder = trajectoryResult.value.recorder");
+    const receiptParse = src.indexOf("VisionDirectPreprocessReceiptSchema.safeParse");
+    const requestedRecord = src.indexOf(
+      'trajectoryRecorder.recordEvent("media.vision.requested"',
+    );
+    const completedRecord = src.indexOf(
+      'trajectoryRecorder.recordEvent("media.vision.completed"',
+    );
+
+    expect(receiptParse).toBeGreaterThan(recorderResolution);
+    expect(requestedRecord).toBeGreaterThan(receiptParse);
+    expect(completedRecord).toBeGreaterThan(requestedRecord);
+  });
+
   it("trajectory_init_includes_sessionFile_from_sessionAdapter (pointer sidecar)", async () => {
     // The pointer file <sessionFile>.trajectory-path.json
     // is written by createTrajectoryRecorder ONLY when init.sessionFile
