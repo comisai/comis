@@ -4,6 +4,7 @@ import pino from "pino";
 import type { TransportMultiOptions, TransportSingleOptions } from "pino";
 import type { ComisLogger as CoreComisLogger } from "@comis/core";
 import { CREDENTIAL_KEYS, redactSecretsInText } from "@comis/observability";
+import { err, tryCatch, type Result } from "@comis/shared";
 
 // `maskToken` is loaded via createRequire on the EDGE-KEEPING SUBPATH
 // (not the package barrel) to defeat the cyclic-package cycle detection
@@ -144,6 +145,27 @@ const AUDIT_LEVEL_VALUE = 35;
  * expect-type@1.2.0; expect-type@1.3.0 ships with Vitest 4.1.5.
  */
 export type ComisLogger = CoreComisLogger;
+
+/**
+ * Drain the concrete Pino transport synchronously at process shutdown.
+ *
+ * The core logger contract remains Pino-free. This adapter is deliberately
+ * hosted in infra so only the runtime implementation touches Pino's stream
+ * symbol.
+ */
+export function flushLoggerSync(
+  logger: CoreComisLogger,
+): Result<void, Error> {
+  const runtimeLogger = logger as unknown as Record<symbol, unknown>;
+  const stream = runtimeLogger[pino.symbols.streamSym] as
+    | { flushSync?: () => void }
+    | undefined;
+  const flushSync = stream?.flushSync;
+  if (typeof flushSync !== "function") {
+    return err(new Error("Logger transport does not support synchronous flush"));
+  }
+  return tryCatch(() => flushSync.call(stream));
+}
 
 /**
  * Create an Comis logger with credential redaction and audit level.

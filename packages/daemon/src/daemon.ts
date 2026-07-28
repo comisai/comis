@@ -36,7 +36,7 @@ import {
   type WorkspacePolicySnapshot,
 } from "@comis/core";
 // Runtime adapter factories are constructed at this composition root.
-import { createSystemClock, createSystemEnv, createSystemTimers } from "@comis/infra";
+import { createSystemClock, createSystemEnv, createSystemTimers, flushLoggerSync } from "@comis/infra";
 import {
   setupSecrets as _setupSecretsImpl,
   createNamedGraphStore,
@@ -2769,7 +2769,7 @@ async function bootShutdown(
 
   // 8. Graceful shutdown: signal-handler registration + teardown ordering (setupShutdown).
   const { shutdownHandle } = setupShutdown({
-    logger, daemonLogger, processMonitor, container, exitFn,
+    logger, daemonLogger, processMonitor, container, exitFn, flushLogger: flushLoggerSync,
     tokenTracker, startupTimestamp: startupStartMs, clock: boot.clock, timers: boot.timers,
     activeExecutions, graphCoordinator, subAgentRunner, ownedCronSchedulers, resetSchedulers,
     browserServices, channelManager, proactiveSchedulers, gatewayHandle,
