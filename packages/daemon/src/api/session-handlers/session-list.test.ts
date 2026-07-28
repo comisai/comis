@@ -89,6 +89,64 @@ describe("session list explicit authority", () => {
     expect(result.total).toBe(1);
   });
 
+  it("lists an authority-scoped LCD conversation when the session table is empty", async () => {
+    const conversationScope = scope("agent_a");
+    const conversationRef = reference(conversationScope);
+    const listConversations = vi.fn().mockReturnValue({
+      conversations: [{
+        conversationRef,
+        tenantId: "tenant_a",
+        agentId: "agent_a",
+        sessionKey: "tenant_a:agent:agent_a:principal-agent_a:telegram",
+        title: null,
+        createdAt: 1_700_000_000_000,
+        updatedAt: 1_700_000_010_000,
+        messageCount: 4,
+      }],
+      total: 1,
+    });
+    const deps = {
+      ...makeDeps(),
+      sessionStore: {
+        listDetailed: vi.fn().mockReturnValue(ok([])),
+        loadByRef: vi.fn().mockReturnValue(ok(undefined)),
+      },
+      contextBrowse: { listConversations },
+    } as unknown as SessionHandlerDeps;
+    const handlers = bindSessionListHandlers(deps);
+
+    const result = await handlers["session.list"]!({
+      tenant_id: "tenant_a",
+      agent_id: "agent_a",
+    }) as {
+      sessions: Array<{
+        conversationRef: string;
+        agentId: string;
+        kind: string;
+        messageCount: number;
+        updatedAt: number;
+      }>;
+      total: number;
+    };
+
+    expect(listConversations).toHaveBeenCalledWith(
+      { tenantId: "tenant_a", agentId: "agent_a" },
+      { limit: 200, offset: 0 },
+    );
+    expect(result).toEqual({
+      sessions: [{
+        conversationRef,
+        agentId: "agent_a",
+        kind: "dm",
+        messageCount: 4,
+        totalTokens: 2_000,
+        updatedAt: 1_700_000_010_000,
+        createdAt: 1_700_000_000_000,
+      }],
+      total: 1,
+    });
+  });
+
   it("searches only transcripts inside the requested authority scope", async () => {
     const handlers = bindSessionListHandlers(makeDeps());
     const result = await handlers["session.search"]!({
