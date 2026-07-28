@@ -533,9 +533,13 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     with errorKind=dependency on bad input). Keys on ACTUAL failures, never
   //     the endReason label alone, so a `completed_with_tool_errors` end state
   //     with no failure records (a degenerate/contradictory signal) still names
-  //     nothing — and a clean session (zero failures) never fires.
+  //     nothing. An explicitly clean latest outcome suppresses the catch-all
+  //     when an append-only trajectory still contains failures from older runs;
+  //     those failures remain visible in the report without becoming the
+  //     current root cause.
   (s) => {
     if (s.failures.length === 0) return null;
+    if (s.endReason === "success" && s.degraded === false) return null;
     const failedTools = [...new Set(s.failures.map((f) => f.toolName))];
     const kinds = [...new Set(s.failures.map((f) => f.errorKind))].filter(Boolean);
     const kindStr = kinds.length > 0 ? ` (errorKind: ${kinds.join(", ")})` : "";
