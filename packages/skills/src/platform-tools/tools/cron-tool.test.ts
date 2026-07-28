@@ -11,6 +11,15 @@ function parseResult(result: { content: Array<{ type: string; text?: string }> }
 }
 
 describe("cron tool", () => {
+  it("explains that execution health and user delivery are independent run outcomes", () => {
+    const tool = createCronTool(vi.fn());
+
+    expect(tool.description).toContain(
+      'deliveryStatus="accepted" means the final response reached the bound conversation',
+    );
+    expect(tool.description).toContain('even when status="failed"');
+  });
+
   it("list action returns jobs from rpcCall('cron.list')", async () => {
     const mockRpcCall: RpcCall = vi.fn(async (method, _params) => {
       if (method === "cron.list") {
