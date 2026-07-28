@@ -17,11 +17,13 @@ import { execFileSync } from "node:child_process";
 import {
   parseStuckMs,
   durableDir,
+  terminalWorkerDir,
   resolveTmuxSocketPath,
   buildLoadTmux,
   createFileLogger,
   warnIfDurableTmuxUnavailable,
 } from "./terminal-worker-main.js";
+import { tmuxSocketPathForSession } from "./terminal-tmux-backend.js";
 
 // Mock the sync child-process runner so we can assert WHICH env each tmux invocation runs with,
 // without a live tmux server. Only execFileSync is replaced; the rest of node:child_process is real.
@@ -55,6 +57,29 @@ describe("terminal-worker-main helpers", () => {
   it("durableDir = <COMIS_TERMINAL_DATA_DIR>/terminal-worker (matches the --allow-fs-write scope)", () => {
     process.env.COMIS_TERMINAL_DATA_DIR = "/data/x";
     expect(durableDir()).toBe(resolve("/data/x", "terminal-worker"));
+  });
+
+  it("the DAEMON-side dir derivation equals the WORKER's durableDir — one server, one socket, both sides", () => {
+    // The daemon stamps each durable session's socket on its descriptor with
+    // `tmuxSocketPathForSession(terminalWorkerDir(dataDir), id)`; the worker derives the SAME
+    // socket with `tmuxSocketPathForSession(durableDir(), id)`. The two derivations meet only
+    // through `COMIS_TERMINAL_DATA_DIR`, which the daemon injects with the dataDir it also fed
+    // to `terminalWorkerDir` — and both sides are plain `string`, so a divergence is silent:
+    // recover-on-boot would probe an empty socket, every durable drive would fail to re-attach,
+    // and the reaper would kill nothing. Nail the equality in both halves.
+    const dataDir = "/data/x";
+    process.env.COMIS_TERMINAL_DATA_DIR = dataDir;
+    expect(durableDir()).toBe(terminalWorkerDir(dataDir));
+    expect(tmuxSocketPathForSession(terminalWorkerDir(dataDir), "sess-7")).toBe(
+      tmuxSocketPathForSession(durableDir(), "sess-7"),
+    );
+    // And it is the per-session socket, not the legacy shared one.
+    expect(tmuxSocketPathForSession(durableDir(), "sess-7")).toBe(
+      resolve(dataDir, "terminal-worker", "tmux-sess-7.sock"),
+    );
+    expect(tmuxSocketPathForSession(durableDir(), "sess-7")).not.toBe(
+      resolveTmuxSocketPath(durableDir()),
+    );
   });
 
   it("resolveTmuxSocketPath = <durableDir>/tmux.sock — the LEGACY fallback socket, under the data dir and NEVER /tmp", () => {

@@ -31,6 +31,12 @@ const captured: {
 
 const detectSandboxProviderSpy = vi.fn(() => ({ name: "fresh-detect" }));
 
+// The socket-derivation pair, spied so a test can assert WHICH dir + id the wiring derives with
+// (asserting the arguments, not a re-implemented path string — a mock that recomputes the path
+// itself would pass no matter which dir production passed).
+const terminalWorkerDirSpy = vi.fn((dataDir: string) => `${dataDir}/terminal-worker`);
+const tmuxSocketPathForSessionSpy = vi.fn((dir: string, sessionId: string) => `${dir}/tmux-${sessionId}.sock`);
+
 vi.mock("@comis/skills/tools", () => ({
   createTerminalSessionRegistry: vi.fn((deps: Record<string, unknown>) => {
     captured.registryDeps = deps;
@@ -46,8 +52,9 @@ vi.mock("@comis/skills/tools", () => ({
   }),
   buildProductionSpawnWorker: vi.fn(() => () => ({})),
   resolveWorkerMainPath: vi.fn(() => "/tmp/terminal-worker-main.js"),
-  terminalWorkerDir: (dataDir: string) => `${dataDir}/terminal-worker`,
+  terminalWorkerDir: terminalWorkerDirSpy,
   resolveTmuxSocketPath: (dir: string) => `${dir}/tmux.sock`,
+  tmuxSocketPathForSession: tmuxSocketPathForSessionSpy,
   createTerminalEgressProxy: vi.fn(() => ({ materialize: vi.fn(async () => ({ socketPath: "/tmp/egress.sock", dispose: vi.fn() })) })),
   detectSandboxProvider: detectSandboxProviderSpy,
   createTerminalSessionCreateTool: vi.fn((deps: Record<string, unknown>) => {
@@ -96,6 +103,55 @@ beforeEach(() => {
   captured.createToolDeps = undefined;
   captured.registryDeps = undefined;
   detectSandboxProviderSpy.mockClear();
+  terminalWorkerDirSpy.mockClear();
+  tmuxSocketPathForSessionSpy.mockClear();
+});
+
+describe("wireTerminalTools — the per-session tmux socket the daemon stamps on each descriptor", () => {
+  it("derives it as tmuxSocketPathForSession(terminalWorkerDir(dataDir), sessionId) — the worker's own derivation", () => {
+    // The wiring comment says this MUST match the worker's derivation and that "only a test can
+    // catch that mismatch" — this is that test. The worker resolves its half from
+    // `COMIS_TERMINAL_DATA_DIR` (`durableDir()`), which `terminal-worker-main.test.ts` pins to
+    // `terminalWorkerDir(dataDir)`; here we pin the DAEMON half to the same dir + the session id.
+    // If someone rewires the dataDir plumbing so the two disagree, recover-on-boot probes an empty
+    // socket: every durable drive silently fails to re-attach and the reaper kills nothing.
+    const dataDir = "/tmp/comis-sock-derivation";
+    wireTerminalTools([] as never, new Map(), "agent-s", {
+      dataDir,
+      skillsLogger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+      eventBus: makeBus() as never,
+      sandboxProvider: { name: "p" } as never,
+    });
+
+    const tmuxSocketForSession = captured.registryDeps?.tmuxSocketForSession as
+      | ((sessionId: string) => string)
+      | undefined;
+    expect(tmuxSocketForSession).toBeTypeOf("function");
+
+    tmuxSocketPathForSessionSpy.mockClear();
+    terminalWorkerDirSpy.mockClear();
+    const socket = tmuxSocketForSession?.("sess-42");
+
+    // Derived from the agent's OWN data dir…
+    expect(terminalWorkerDirSpy).toHaveBeenCalledWith(dataDir);
+    // …and from THAT dir plus the session id — never a hard-coded or shared socket.
+    expect(tmuxSocketPathForSessionSpy).toHaveBeenCalledWith(`${dataDir}/terminal-worker`, "sess-42");
+    expect(socket).toBe(`${dataDir}/terminal-worker/tmux-sess-42.sock`);
+  });
+
+  it("gives two sessions two DIFFERENT sockets (one tmux server per drive)", () => {
+    wireTerminalTools([] as never, new Map(), "agent-s", {
+      dataDir: "/tmp/comis-sock-derivation",
+      skillsLogger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+      eventBus: makeBus() as never,
+      sandboxProvider: { name: "p" } as never,
+    });
+    const forSession = captured.registryDeps?.tmuxSocketForSession as (id: string) => string;
+    // A shared socket would collapse every drive onto one server: the second drive would inherit
+    // the first server's boot-time env (a rotated secret would never reach it) and one
+    // `kill-server` would take down every concurrent drive.
+    expect(forSession("a")).not.toBe(forSession("b"));
+  });
 });
 
 describe("wireTerminalTools — reuse the cached sandboxProvider (no per-create bwrap re-detect)", () => {

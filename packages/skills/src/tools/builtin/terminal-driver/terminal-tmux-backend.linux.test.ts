@@ -183,6 +183,34 @@ describe.skipIf(!isLinux() || !tmuxAvailable())(
         }
         if (paneSaw === undefined) return; // pane never wrote (transient) — soak-tier tolerant
         expect(paneSaw).toBe("new-val-qqq"); // its own server's env, not server A's old-val-zzz
+
+        // POSITIVE CONTROL — the reason the socket must be per-session. Without it the assertion
+        // above is trivially true (a fresh server always sees its own spawn env) and would stay
+        // green even if production regressed to ONE shared socket. So exercise that regression
+        // here: a third session created on server A's socket, with the CURRENT env in its process
+        // environment, still reads A's boot-time capture — because `new-session` on a socket that
+        // already has a server does not start a new one, it commands the existing one, and the
+        // pane inherits that server's global env. THAT is the staleness per-session sockets fix,
+        // and `-e` (now removed) used to paper over.
+        const S3 = `comis-efresh3-${RUN}`;
+        const OUT_C = join(tmpdir(), `comis-pane-env-c-${RUN}.txt`);
+        try {
+          const third = spawnSync(
+            TMUX,
+            ["-S", SOCK, "new-session", "-d", "-s", S3, "--", "sh", "-c", `printenv TOKEN_VAL > ${OUT_C}; sleep 5`],
+            { env: { ...process.env, TOKEN_VAL: "new-val-qqq" }, timeout: 5_000, encoding: "utf8" },
+          );
+          if (third.status !== 0) return; // soak-tier tolerant
+          let sharedSaw: string | undefined;
+          for (let i = 0; i < 20 && sharedSaw === undefined; i++) {
+            await new Promise((r) => setTimeout(r, 100));
+            if (existsSync(OUT_C)) sharedSaw = readFileSync(OUT_C, "utf8").trim();
+          }
+          if (sharedSaw === undefined) return; // pane never wrote (transient)
+          expect(sharedSaw).toBe("old-val-zzz"); // pinned to server A's boot env — the regression
+        } finally {
+          rmSync(OUT_C, { force: true });
+        }
       } finally {
         runTmuxArgv([TMUX, "-S", SOCK_B, "kill-server"]);
         for (const p of [OUT_B, SOCK_B]) {
