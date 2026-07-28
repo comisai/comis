@@ -1527,7 +1527,7 @@ async function runSessionLocked(
     if (deps.cacheTraceConfig?.enabled) {
       const cacheTraceConfinedBase =
         deps.cacheTraceConfig.filePath === undefined
-          ? safePath(os.homedir(), ".comis")
+          ? (deps.dataDir ?? safePath(os.homedir(), ".comis"))
           : undefined;
       // Envelope cluster — wire the contextual fields reachable
       // from this site without widening the Deps interface. `runId`
