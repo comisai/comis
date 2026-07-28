@@ -398,7 +398,14 @@ export function assembleIncidentReport(
   };
 
   // --- deterministic summary one-liner (NO LLM) ----------------------------
-  const summary = `${failures.length} tool failures across ${turnCount} turns; endReason=${endReason}`;
+  // Count the same reconciled toolStats presented in the report. failures[]
+  // contains only trajectory records that carried a normalized preview and can
+  // therefore be shorter than the authoritative invocation counts.
+  let failedToolInvocations = 0;
+  for (const stat of Object.values(toolStats)) {
+    failedToolInvocations += stat.failed;
+  }
+  const summary = `${failedToolInvocations} tool failures across ${turnCount} turns; endReason=${endReason}`;
 
   // --- READ-coverage (meta-observability, NOT cost) ------------------------
   // Did the assembler actually locate + read each source? `recordCount` is the
