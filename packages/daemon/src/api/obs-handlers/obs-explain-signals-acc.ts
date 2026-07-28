@@ -169,6 +169,8 @@ export interface Acc {
   agentId?: string;
   /** Channel identity from the session.started record's data. */
   channel?: { type: string; id: string };
+  /** Channel-health lifecycle after the first degraded transition. */
+  channelHealth?: NonNullable<IncidentSignals["channelHealth"]>;
   sessionKey: string;
   seq: number;
   /** The LAST `terminal.drive_promoted` reason seen (mode_detached |

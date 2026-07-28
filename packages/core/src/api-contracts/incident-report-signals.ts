@@ -74,6 +74,18 @@ export interface IncidentSignals {
   /** Channel identity from the session.started trajectory record. Fallback for
    *  reports whose metadata rollup carries no channel. */
   channel?: { type: string; id: string };
+  /** Channel-health lifecycle folded from `channel.health_changed` trajectory
+   * records. Present only after at least one degraded transition. The terminal
+   * state determines `recovered`, preventing an old outage from labeling later
+   * healthy turns while retaining the incident count and latest problem state. */
+  channelHealth?: {
+    channelType: string;
+    connectionMode: string;
+    degradedTransitions: number;
+    currentState: string;
+    latestProblemState: string;
+    recovered: boolean;
+  };
   toolStats: Record<
     string,
     { ok: number; failed: number; topErrorKind?: string }

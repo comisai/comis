@@ -153,6 +153,27 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
 
   backgroundRecoveryVerdict,
 
+  // An unrecovered channel transition means the transport stopped accepting
+  // inbound work even when the last completed agent turn itself was clean.
+  // A later healthy lifecycle record sets recovered=true in the signal fold,
+  // preventing this historical outage from labeling future turns.
+  (s) => {
+    const health = s.channelHealth;
+    if (health === undefined || health.recovered) return null;
+    const disconnected = health.currentState === "disconnected";
+    return {
+      code: disconnected ? "channel_disconnected" : "channel_health_degraded",
+      detail:
+        `${health.channelType} ${health.connectionMode} channel is ${health.currentState} `
+        + `after ${String(health.degradedTransitions)} degraded transition(s)`,
+      suggestedNextSteps: [
+        `inspect the ${health.channelType} adapter boundary logs for the first failing operation`,
+        "check adapter credentials and network connectivity, then restart the channel",
+        "run comis system-health to confirm the daemon-wide channel signal",
+      ],
+    };
+  },
+
   // 3) execution_step_limit_reached. The executor records every blocked call
   //    as a tool failure, so count-only breaker inference would otherwise
   //    describe a local resource guard as an upstream outage.

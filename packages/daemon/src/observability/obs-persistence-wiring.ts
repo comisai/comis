@@ -51,6 +51,7 @@ import {
   backgroundRecoveryEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
+  channelHealthChangedEventToRow,
   recallDegradedEventToRow,
   prefixUnstableEventToRow,
   channelInboundSilentEventToRow,
@@ -237,6 +238,7 @@ export {
   backgroundRecoveryEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
+  channelHealthChangedEventToRow,
   recallDegradedEventToRow,
   prefixUnstableEventToRow,
   channelInboundSilentEventToRow,
@@ -520,6 +522,10 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("health:budget_exceeded", (payload) => {
     diagnosticBuffer.push(healthBudgetExceededEventToRow(payload));
+  });
+  eventBus.on("channel:health_changed", (payload) => {
+    const row = channelHealthChangedEventToRow(payload);
+    if (row !== null) diagnosticBuffer.push(row);
   });
   wireSchedulerDiagnostics({ eventBus, diagnosticBuffer });
   // A degraded/failed recall lane → a health_signal row (system finding

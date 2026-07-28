@@ -52,6 +52,13 @@ export const BREAKER_N = 5;
 /** Token literals the misclassification heuristic looks for in a failure body. */
 const MISCLASS_TOKEN_RE = /"?status"?\s*:?\s*(200|403)|\b(200|403)\b|status/i;
 const DO_NOT_RETRY_RE = /DO NOT retry/i;
+const PROBLEMATIC_CHANNEL_STATES = new Set([
+  "disconnected",
+  "errored",
+  "stale",
+  "stuck",
+  "unknown",
+]);
 
 function ensureTool(acc: Acc, tool: string): { ok: number; failed: number; errorKinds: Map<string, number> } {
   let entry = acc.toolStats.get(tool);
@@ -151,6 +158,38 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       const channelId = asString(data.channelId);
       if (acc.channel === undefined && (channelType !== undefined || channelId !== undefined)) {
         acc.channel = { type: channelType ?? "", id: channelId ?? "" };
+      }
+      return;
+    }
+    case "channel.health_changed": {
+      const channelType = asString(data.channelType);
+      const connectionMode = asString(data.connectionMode);
+      const currentState = asString(data.currentState);
+      if (
+        channelType === undefined
+        || connectionMode === undefined
+        || currentState === undefined
+      ) return;
+      const isProblematic = PROBLEMATIC_CHANNEL_STATES.has(currentState);
+      if (acc.channelHealth === undefined) {
+        if (!isProblematic) return;
+        acc.channelHealth = {
+          channelType,
+          connectionMode,
+          degradedTransitions: 1,
+          currentState,
+          latestProblemState: currentState,
+          recovered: false,
+        };
+        return;
+      }
+      acc.channelHealth.channelType = channelType;
+      acc.channelHealth.connectionMode = connectionMode;
+      acc.channelHealth.currentState = currentState;
+      acc.channelHealth.recovered = !isProblematic;
+      if (isProblematic) {
+        acc.channelHealth.degradedTransitions += 1;
+        acc.channelHealth.latestProblemState = currentState;
       }
       return;
     }
@@ -859,6 +898,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(learning !== undefined ? { learning } : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),
+    ...(acc.channelHealth !== undefined ? { channelHealth: acc.channelHealth } : {}),
     // Surface the backgrounding ONLY when ≥1 promotion fired (undefined,
     // never {}, when no drive backgrounded) — lets the terminal-drive verdict cite it.
     ...(acc.terminalDrivePromotedCount > 0
