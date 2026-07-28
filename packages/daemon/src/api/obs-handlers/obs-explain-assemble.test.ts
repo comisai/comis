@@ -1355,6 +1355,52 @@ describe("assembleIncidentReport — user surface (activity finalize + skipped d
     expect(report.activityFinalize).toBeUndefined();
     expect(report.deliverySkipped).toBeUndefined();
   });
+
+  it("degrades a clean child rollup when its completion had no delivery route", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "subagent.delivery_skipped",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: {
+          runId: "run-route-lost",
+          reason: "no_origin",
+        },
+      },
+    ]);
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata({
+        sessionEnd: {
+          endReason: "success",
+          degraded: false,
+          toolStats: {},
+        },
+      }),
+      null,
+      SESSION_KEY,
+      1,
+    );
+    const delivery = (report as unknown as {
+      subagentDeliverySkipped?: {
+        count: number;
+        lastRunId: string;
+        lastReason: string;
+      };
+    }).subagentDeliverySkipped;
+
+    expect(delivery).toEqual({
+      count: 1,
+      lastRunId: "run-route-lost",
+      lastReason: "no_origin",
+    });
+    expect(report.outcome).toEqual({
+      endReason: "success",
+      degraded: true,
+      severity: "degraded",
+    });
+  });
 });
 
 describe("assembleIncidentReport — degraded-recall visibility (memory.recall_degraded)", () => {

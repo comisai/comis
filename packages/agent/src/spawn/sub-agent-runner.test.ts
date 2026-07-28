@@ -518,6 +518,28 @@ describe("createSubAgentRunner", () => {
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 
+  it("missing completion route emits a child-routed delivery-skipped event", async () => {
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "route-less task",
+      agentId: "default",
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const skipped = vi.mocked(deps.eventBus.emit).mock.calls.find(
+      ([eventName]) => (eventName as string) === "subagent:delivery_skipped",
+    );
+    expect(skipped?.[1]).toEqual(expect.objectContaining({
+      runId,
+      agentId: "default",
+      sessionKey: expect.any(String),
+      reason: "no_origin",
+      timestamp: expect.any(Number),
+    }));
+    expect(skipped?.[1]).not.toHaveProperty("task");
+  });
+
   // -----------------------------------------------------------------------
   // Announce includes [System Message] format with stats
   // -----------------------------------------------------------------------

@@ -52,6 +52,7 @@ import * as os from "node:os";
 import * as nodePath from "node:path";
 import { initSchema, createObservabilityStore, queryCacheBreakRateByReason } from "@comis/memory";
 import type { DiagnosticEvent } from "./diagnostic-collector.js";
+import * as orchestrationRows from "./obs-orchestration-rows.js";
 
 function deliveryAuthorityEventFields(channelType: string, conversationId: string) {
   return {
@@ -1419,6 +1420,45 @@ describe("deliveryDeadletteredEventToRow", () => {
   });
 });
 
+describe("deliverySkippedEventToRow", () => {
+  it("maps a missing sub-agent completion route to a content-free warning health signal", () => {
+    const mapper = (
+      orchestrationRows as unknown as {
+        deliverySkippedEventToRow: (payload: Record<string, unknown>) => {
+          timestamp: number;
+          category: string;
+          severity: string;
+          agentId?: string;
+          sessionKey?: string;
+          message: string;
+          details?: string;
+        };
+      }
+    ).deliverySkippedEventToRow;
+    const row = mapper({
+      runId: "run-route-lost",
+      agentId: "default",
+      sessionKey: "child-session-key",
+      reason: "no_origin",
+      timestamp: 8_500,
+    });
+
+    expect(row).toMatchObject({
+      timestamp: 8_500,
+      category: "health_signal",
+      severity: "warning",
+      agentId: "default",
+      sessionKey: "child-session-key",
+      message: "subagent:delivery_skipped",
+    });
+    expect(JSON.parse(row.details ?? "{}")).toEqual({
+      signal: "subagent_delivery_skipped",
+      reason: "no_origin",
+    });
+    expect(JSON.stringify(row)).not.toContain("run-route-lost");
+  });
+});
+
 describe("nodeBudgetExceededEventToRow", () => {
   it("maps a subagent:budget_exceeded payload to a warning health_signal row (capSource label only)", () => {
     const row = nodeBudgetExceededEventToRow({
@@ -1854,6 +1894,7 @@ describe("setupObsPersistence", () => {
     // The three previously-dark daemon-side orchestration subscriptions.
     expect(eventBus.on).toHaveBeenCalledWith("security:sandbox_downgrade_refused", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("subagent:delivery_deadlettered", expect.any(Function));
+    expect(eventBus.on).toHaveBeenCalledWith("subagent:delivery_skipped", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("subagent:budget_exceeded", expect.any(Function));
 
     // Cleanup

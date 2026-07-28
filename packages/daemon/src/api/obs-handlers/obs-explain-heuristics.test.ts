@@ -91,6 +91,24 @@ describe("obs-explain-heuristics", () => {
     expect(r!.detail).toMatch(/web_fetch/);
   });
 
+  it("missing sub-agent completion route outranks a clean execution rollup", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "success",
+        degraded: true,
+        subagentDeliverySkipped: {
+          count: 1,
+          lastRunId: "run-route-lost",
+          lastReason: "no_origin",
+        },
+      } as Partial<IncidentSignals>),
+    );
+
+    expect(r?.code).toBe("subagent_delivery_skipped");
+    expect(r?.detail).toMatch(/no_origin|route/i);
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/requesterOrigin|announce/i);
+  });
+
   it("repeated-failure BELOW BREAKER_N (and no breaker/DO-NOT-retry) does NOT trip the breaker rule", () => {
     const r = rootCause(
       makeSignals({
