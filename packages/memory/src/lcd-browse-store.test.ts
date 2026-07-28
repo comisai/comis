@@ -29,6 +29,30 @@ function textParts(text: string): LcdMessagePart[] {
   return [{ kind: "text", metadata: { raw: { type: "text", text }, rawType: "text" } }];
 }
 
+function toolResultParts(
+  toolCallId: string,
+  toolName: string,
+  isError: boolean,
+): LcdMessagePart[] {
+  return [{
+    kind: "tool_result",
+    toolCallId,
+    toolName,
+    toolOutput: { type: "text", text: "content must not enter diagnostics" },
+    isError,
+    metadata: {
+      raw: {
+        role: "toolResult",
+        toolCallId,
+        toolName,
+        isError,
+        content: [{ type: "text", text: "content must not enter diagnostics" }],
+      },
+      rawType: "toolResult",
+    },
+  }];
+}
+
 function appendInput(scope: ContextStoreScope, seq: number, createdAt: number): AppendMessageInput {
   return { scope, seq, role: "user", tokenCount: 3, createdAt, parts: textParts("hello") };
 }
@@ -81,6 +105,59 @@ describe("createLcdBrowseStore.listConversations", () => {
     expect(c1.messageCount).toBe(2);
     expect(c1.createdAt).toBe(1000); // min created_at
     expect(c1.updatedAt).toBe(2000); // max created_at
+  });
+
+  it("reads a bounded content-free projection of tool outcomes", () => {
+    const scope: ContextStoreScope = {
+      conversationRef: REF_1,
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      sessionKey: "session-a",
+    };
+    store.append(appendInput(scope, 0, 1000));
+    store.append({
+      scope,
+      seq: 1,
+      role: "toolResult",
+      tokenCount: 2,
+      createdAt: 2000,
+      parts: toolResultParts("call-read", "read", true),
+    });
+    store.append({
+      scope,
+      seq: 2,
+      role: "toolResult",
+      tokenCount: 2,
+      createdAt: 3000,
+      parts: toolResultParts("call-skills", "skills_manage", false),
+    });
+
+    const evidence = (
+      browse as typeof browse & {
+        readToolOutcomes(
+          scope: { tenantId: string; agentId: string },
+          sessionKey: string,
+          opts: { limit: number },
+        ): unknown;
+      }
+    ).readToolOutcomes(
+      { tenantId: "tenant_a", agentId: "agent_a" },
+      "session-a",
+      { limit: 1 },
+    );
+
+    expect(evidence).toEqual({
+      messageCount: 3,
+      toolResultCount: 2,
+      truncated: true,
+      outcomes: [{
+        seq: 2,
+        toolCallId: "call-skills",
+        toolName: "skills_manage",
+        isError: false,
+      }],
+    });
+    expect(JSON.stringify(evidence)).not.toContain("content must not enter diagnostics");
   });
 
   it("isolates conversations per agent so a shared conversation_ref never leaks across agents", () => {

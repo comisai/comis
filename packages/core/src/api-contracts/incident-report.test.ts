@@ -42,6 +42,32 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     expect(parsed.cacheBreaks).toBeUndefined();
   });
 
+  it("retains bounded lossless-context fallback coverage", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      coverage: {
+        trajectory: { found: false, records: 0 },
+        rollup: { present: false },
+        offloads: { pointersResolved: 0, pointersTotal: 0 },
+        losslessContext: {
+          found: true,
+          messages: 4,
+          toolResults: 2,
+          toolResultsReturned: 2,
+          truncated: false,
+        },
+      },
+    });
+
+    expect(parsed.coverage?.losslessContext).toEqual({
+      found: true,
+      messages: 4,
+      toolResults: 2,
+      toolResultsReturned: 2,
+      truncated: false,
+    });
+  });
+
   it("accepts a cacheBreaks section ([{reason,count,estCostUsd}]); schemaVersion stays 1", () => {
     const report = {
       ...baseReport(),

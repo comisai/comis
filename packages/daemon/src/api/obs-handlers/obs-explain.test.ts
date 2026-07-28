@@ -783,6 +783,70 @@ describe("bindObsExplainHandlers", () => {
 // These tests pin that seam: the fn produces the SAME
 // report as the RPC handler for the SAME inputs, WITHOUT any _trustLevel param.
 describe("assembleIncidentReportFromSources", () => {
+  it("uses bounded lossless tool outcomes when trajectory records are missing", async () => {
+    const sessionKey = "tenant-a:agent:agent-a:user-a:telegram:peer:user-a";
+    const reader = Object.assign(
+      {
+        readSessionRecords: async () => [],
+        readCacheTraceRecords: async () => [],
+        readSessionMetadata: async () => null,
+        readDiagnosticsRollup: async () => null,
+      },
+      {
+        readLosslessToolEvidence: async () => ({
+          messageCount: 4,
+          toolResultCount: 2,
+          truncated: false,
+          records: [
+            {
+              traceSchema: "comis-trajectory",
+              schemaVersion: 1,
+              type: "tool.result",
+              seq: 2,
+              agentId: "agent-a",
+              data: {
+                toolCallId: "call-read",
+                toolName: "read",
+                success: false,
+                errorKind: "internal",
+              },
+            },
+            {
+              traceSchema: "comis-trajectory",
+              schemaVersion: 1,
+              type: "tool.result",
+              seq: 3,
+              agentId: "agent-a",
+              data: {
+                toolCallId: "call-skills",
+                toolName: "skills_manage",
+                success: true,
+              },
+            },
+          ],
+        }),
+      },
+    ) as IncidentSourceReader;
+
+    const report = await assembleIncidentReportFromSources(reader, ".", {
+      sessionKey,
+    });
+
+    expect(report.toolStats).toMatchObject({
+      read: { ok: 0, failed: 1 },
+      skills_manage: { ok: 1, failed: 0 },
+    });
+    expect(report.coverage?.trajectory).toEqual({ found: false, records: 0 });
+    expect(report.coverage?.losslessContext).toEqual({
+      found: true,
+      messages: 4,
+      toolResults: 2,
+      toolResultsReturned: 2,
+      truncated: false,
+    });
+    expect(report.summary).toContain("1 tool failures");
+  });
+
   it("surfaces a protected background recovery incident in session explain", async () => {
     const sessionKey = "default:agent-a:telegram:chat-a:user_a";
     const records = [{
