@@ -67,6 +67,7 @@ describe("applyRotationPolicy", () => {
     const gzPath = rotatedPath + ".gz";
     expect(fs.existsSync(gzPath), "gzip file should exist").toBe(true);
     expect(fs.existsSync(rotatedPath), "original .log should be removed").toBe(false);
+    expect(fs.statSync(gzPath).mode & 0o777).toBe(0o600);
 
     // Verify gzip is valid and round-trips to the original length.
     const gz = fs.readFileSync(gzPath);
