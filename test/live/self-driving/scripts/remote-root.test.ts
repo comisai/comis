@@ -11,6 +11,7 @@ const HELPER = resolve(HERE, "_remote-root.sh");
 const RIG_HELPER = resolve(HERE, "_rig.sh");
 const RESTART_DAEMON = resolve(HERE, "restart-daemon.sh");
 const CLEAN_RESTART = resolve(HERE, "clean-restart.sh");
+const PHASE_ZERO_CHECK = resolve(HERE, "phase0-check.sh");
 const WIRE_EMULATOR = resolve(HERE, "wire-emu.mjs");
 const DEPLOY_SCRIPTS = resolve(HERE, "deploy-scripts.sh");
 const DEPLOY_EMULATOR = resolve(HERE, "deploy-emu.sh");
@@ -266,5 +267,12 @@ describe("local rig mode", () => {
     expect(restart).toMatch(
       /COMIS_DATA_DIR=['"]?\$DATA['"]?[^]*COMIS_CONFIG_PATHS=['"]?\$DATA\/config\.yaml/u,
     );
+  });
+
+  it("blocks the baseline while first-run onboarding is still pending", () => {
+    const phaseZero = readFileSync(PHASE_ZERO_CHECK, "utf8");
+
+    expect(phaseZero).toContain("$DATA/workspace/BOOTSTRAP.md");
+    expect(phaseZero).toContain("finish or explicitly skip setup through the channel");
   });
 });
