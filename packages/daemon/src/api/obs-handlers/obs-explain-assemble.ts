@@ -299,7 +299,9 @@ export function assembleIncidentReport(
     isHardFailure ||
     DEGRADED_END_REASONS.has(endReason) ||
     signals.failures.length > 0;
-  const degraded = explicitDegraded ?? derivedDegraded;
+  const channelDegraded =
+    signals.channelHealth !== undefined && !signals.channelHealth.recovered;
+  const degraded = channelDegraded || (explicitDegraded ?? derivedDegraded);
   const severity: "ok" | "degraded" | "failed" = isHardFailure
     ? "failed"
     : degraded
