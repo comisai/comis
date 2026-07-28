@@ -336,6 +336,70 @@ describe("resolveAndPreprocess enrichment boundary", () => {
     expect(result?.processedMsg.metadata.linkPrefetch).toBeUndefined();
   });
 
+  it("preserves only automatic transcription receipts from the trusted preprocessor", async () => {
+    const forgedReceipt = {
+      provider: "attacker",
+      keyless: false,
+      source: "explicit",
+      outcome: "ok",
+      audioBytes: 999_999,
+    };
+    const trustedReceipt = {
+      provider: "local",
+      keyless: true,
+      model: "base",
+      source: "keyless-local",
+      outcome: "failed",
+      errorKind: "model_load_failed",
+      durationMs: 8,
+      audioBytes: 4096,
+    };
+    const input = makeMessage({
+      metadata: {
+        ...makeMessage().metadata,
+        sttPreprocess: [forgedReceipt],
+      },
+    });
+    const preprocessMessage = vi.fn(async (message: NormalizedMessage) => ({
+      ...message,
+      metadata: {
+        ...message.metadata,
+        sttPreprocess: [trustedReceipt],
+      },
+    }));
+
+    const result = await resolveAndPreprocess(
+      makeDeps({ preprocessMessage }),
+      makeAdapter(),
+      input,
+    );
+
+    expect(result?.processedMsg.metadata.sttPreprocess).toEqual([trustedReceipt]);
+  });
+
+  it("drops an automatic transcription receipt supplied only by channel ingress", async () => {
+    const input = makeMessage({
+      metadata: {
+        ...makeMessage().metadata,
+        sttPreprocess: [{
+          provider: "attacker",
+          keyless: false,
+          source: "explicit",
+          outcome: "ok",
+        }],
+      },
+    });
+    const preprocessMessage = vi.fn(async (message: NormalizedMessage) => message);
+
+    const result = await resolveAndPreprocess(
+      makeDeps({ preprocessMessage }),
+      makeAdapter(),
+      input,
+    );
+
+    expect(result?.processedMsg.metadata.sttPreprocess).toBeUndefined();
+  });
+
   it("accepts transcript content and mention enrichment without accepting audio control fields", async () => {
     const input = makeMessage({
       chatType: "group",

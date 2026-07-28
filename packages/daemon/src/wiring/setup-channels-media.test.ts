@@ -197,6 +197,71 @@ describe("buildMediaPipeline", () => {
     expect(preprocessed.metadata.linkPrefetch).toEqual(receipt);
   });
 
+  it("attaches trusted automatic transcription receipts to message metadata", async () => {
+    const receipt = {
+      provider: "local",
+      keyless: true,
+      model: "base",
+      source: "keyless-local",
+      outcome: "failed",
+      errorKind: "model_load_failed",
+      durationMs: 12,
+      audioBytes: 4096,
+    };
+    vi.mocked(preprocessMessage).mockResolvedValueOnce({
+      message: {
+        id: "m1",
+        channelId: "c1",
+        channelType: "telegram",
+        senderId: "u1",
+        text: "voice",
+        timestamp: Date.now(),
+        attachments: [{ type: "audio", url: "tg-file://voice" }],
+        metadata: {},
+      },
+      transcriptions: [],
+      analyses: [],
+      imageContents: [],
+      videoDescriptions: [],
+      fileExtractions: [],
+      sttReceipts: [receipt],
+    } as never);
+    const transcriber = { transcribe: vi.fn() } as any;
+    const deps = makeDeps({ transcriber });
+    (deps as unknown as Record<string, unknown>).voiceSelection = {
+      stt: {
+        provider: "local",
+        keyless: true,
+        source: "keyless-local",
+      },
+    };
+    const result = await buildMediaPipeline(deps);
+
+    const preprocessed = await result.preprocessMessage({
+      id: "m1",
+      channelId: "c1",
+      channelType: "telegram",
+      senderId: "u1",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [{ type: "audio", url: "tg-file://voice" }],
+      metadata: {},
+    }, TEST_TURN_SCOPE);
+
+    expect(preprocessed.metadata.sttPreprocess).toEqual([receipt]);
+    expect(preprocessMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sttSelection: expect.objectContaining({
+          provider: "local",
+          keyless: true,
+          model: "base",
+          source: "keyless-local",
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
   it("audioPreflight is defined when transcriber provided", async () => {
     const transcriber = { transcribe: vi.fn() } as any;
     const container = makeContainer({ agents: { bot1: { name: "Bot1", provider: "anthropic", model: "claude-opus-4-6" } } });

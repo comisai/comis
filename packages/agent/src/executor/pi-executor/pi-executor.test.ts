@@ -7583,6 +7583,26 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     expect(receiptRecord).toBeGreaterThan(recorderResolution);
   });
 
+  it("records trusted automatic transcription receipts after the session recorder opens", async () => {
+    const src = await readPiExecutorSrc();
+    const recorderResolution = src.indexOf("trajectoryRecorder = trajectoryResult.value.recorder");
+    const receiptParse = src.indexOf("SttPreprocessReceiptsSchema.safeParse");
+    const requestedRecord = src.indexOf(
+      'trajectoryRecorder.recordEvent("media.stt.requested"',
+    );
+    const completedRecord = src.indexOf(
+      'trajectoryRecorder.recordEvent("media.stt.completed"',
+    );
+    const failedRecord = src.indexOf(
+      'trajectoryRecorder.recordEvent("media.stt.failed"',
+    );
+
+    expect(receiptParse).toBeGreaterThan(recorderResolution);
+    expect(requestedRecord).toBeGreaterThan(receiptParse);
+    expect(completedRecord).toBeGreaterThan(requestedRecord);
+    expect(failedRecord).toBeGreaterThan(requestedRecord);
+  });
+
   it("trajectory_init_includes_sessionFile_from_sessionAdapter (pointer sidecar)", async () => {
     // The pointer file <sessionFile>.trajectory-path.json
     // is written by createTrajectoryRecorder ONLY when init.sessionFile
