@@ -337,6 +337,7 @@ export async function setupSchedulers(deps: {
         logger: cronLogger,
         clock,
         timers,
+        agentId,
         bootId,
         idFactory: randomUUID,
         config: {

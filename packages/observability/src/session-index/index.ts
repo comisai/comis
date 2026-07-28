@@ -4,7 +4,7 @@
  *
  * Public surface:
  *   - `appendSessionIndexEntry` — append one lifecycle event to the date-rolled JSONL file
- *   - `SessionIndexEvent` — discriminated union (session_started | turn_completed | session_ended)
+ *   - `SessionIndexEvent` — typed session and execution lifecycle records
  *   - Individual event types for callers that want explicit shapes
  *
  * @module
@@ -14,6 +14,7 @@ export { appendSessionIndexEntry } from "./append.js";
 export type {
   SessionIndexEvent,
   SessionStartedEvent,
+  ExecutionStartedEvent,
   TurnCompletedEvent,
   SessionEndedEvent,
 } from "./types.js";

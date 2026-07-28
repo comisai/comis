@@ -177,6 +177,9 @@ export interface LogFields {
   /** Error classification for filtering and alerting. */
   errorKind: ErrorKind;
 
+  /** Provider-specific failure category retained alongside the canonical errorKind. */
+  providerErrorCategory: string;
+
   /**
    * Module name binding (e.g., "gateway", "agent", "scheduler").
    *

@@ -134,6 +134,73 @@ function trajectoryLines(): string {
   return [failure, offload].join("\n") + "\n";
 }
 
+function multiExecutionTrajectoryLines(): string {
+  return [
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.started",
+      seq: 1,
+      traceId: "trace-healthy",
+      data: { channelType: "telegram", channelId: "678314278" },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.summary",
+      seq: 2,
+      traceId: "trace-failed",
+      data: {
+        degraded: true,
+        turnCount: 0,
+        costUsd: 0,
+        toolStats: {},
+        breakerTripCount: 0,
+        topErrorKinds: { config: 1 },
+        source: "runtime",
+        endReason: "error",
+      },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "model.completed",
+      seq: 3,
+      traceId: "trace-healthy",
+      data: {
+        inputTokens: 100,
+        outputTokens: 20,
+        stopReason: "stop",
+      },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "delivery.dispatched",
+      seq: 4,
+      traceId: "trace-healthy",
+      data: { status: "success" },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.summary",
+      seq: 5,
+      traceId: "trace-healthy",
+      data: {
+        degraded: false,
+        turnCount: 1,
+        costUsd: 0.01,
+        toolStats: {},
+        breakerTripCount: 0,
+        topErrorKinds: {},
+        source: "runtime",
+        endReason: "success",
+      },
+    },
+  ].map((line) => JSON.stringify(line)).join("\n") + "\n";
+}
+
 function taskTrajectoryLines(): string {
   return [
     {
@@ -327,6 +394,60 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     expect(report.outcome.endReason).toBe("completed_with_tool_errors");
     expect(report.toolStats.web_fetch?.failed).toBeGreaterThanOrEqual(1);
     expect(report.offloads[0]?.pointer).toBe("tool-results/call_abc.json");
+  });
+
+  it("resolves a failed trace from durable diagnostics and isolates its execution", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = buildRealSessionFile(dataDir);
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(runtimeFile, multiExecutionTrajectoryLines(), "utf-8");
+    writeTrajectoryPointerFileBestEffort({
+      sessionFile,
+      sessionId: SESSION_KEY,
+      runtimeFile,
+    });
+    writeRealMetadata(sessionFile);
+
+    const db = new Database(":memory:");
+    initSchema(db, 1_536);
+    const store = createObservabilityStore(db);
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "error",
+      agentId: "default",
+      sessionKey: SESSION_KEY,
+      message: "session:summary",
+      details: JSON.stringify({
+        degraded: true,
+        turnCount: 0,
+        costUsd: 0,
+        toolStats: {},
+        breakerTripCount: 0,
+        topErrorKinds: { config: 1 },
+        source: "runtime",
+        endReason: "error",
+      }),
+      traceId: "trace-failed",
+    });
+
+    const report = await assembleIncidentReportFromSources(
+      makeRealReader(dataDir, store),
+      dataDir,
+      { traceId: "trace-failed", depth: "summary" },
+    );
+
+    expect(report.sessionKey).toBe(SESSION_KEY);
+    expect(report.traceId).toBe("trace-failed");
+    expect(report.outcome).toEqual({
+      endReason: "error",
+      degraded: true,
+      severity: "failed",
+    });
+    expect(report.cost.costUsd).toBe(0);
+    expect(report.summary).toContain("endReason=error");
+    expect(report.likelyRootCause?.code).not.toBe("session_not_found");
+    db.close();
   });
 
   it("resolves a task-check root to its real origin session and folds durable delivery evidence", async () => {

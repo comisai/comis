@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./config-resolve.js", () => ({
   resolveDoctorConfig: vi.fn(),
+  resolveDoctorSecretPresence: vi.fn(() => true),
 }));
 
 vi.mock("../util/cli-version.js", () => ({
@@ -22,12 +23,13 @@ describe("diagnostic suite", () => {
     vi.mocked(resolveDoctorConfig).mockReset();
   });
 
-  it("keeps health and doctor on the complete ten-check registry", () => {
+  it("keeps health and doctor on the complete runtime-aware registry", () => {
     expect(DIAGNOSTIC_CHECKS.map((check) => check.id)).toEqual([
       "config-health",
       "daemon-health",
       "gateway-health",
       "version-skew-health",
+      "runtime-posture-health",
       "channel-health",
       "msteams-health",
       "workspace-health",
@@ -52,6 +54,8 @@ describe("diagnostic suite", () => {
     expect(context.config).toBe(config);
     expect(context.dataDir).toBe("/srv/comis-data");
     expect(context.daemonPidFile).toBe("/srv/comis-data/daemon.pid");
+    expect(context.secretPresent?.("CANARY_SECRET")).toBe(true);
+    expect(context.platform).toBe(process.platform);
     expect(context.memoryDbPath).toBe("/srv/comis-data/memory.db");
     expect(context.gatewayUrl).toBe("http://127.0.0.1:9876");
     expect(context.cliVersion).toBe("test-cli-version");

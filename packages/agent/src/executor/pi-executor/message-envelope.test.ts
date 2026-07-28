@@ -176,6 +176,29 @@ describe("handleEnvelopeException", () => {
     expect(warnCall![0].hint).toBe("PiExecutor unexpected error");
   });
 
+  it("carries a classified provider failure onto the result and warning", () => {
+    const result = makeResult();
+    const warn = vi.fn();
+    const logger = makeNoopLogger();
+    logger.warn = warn;
+
+    handleEnvelopeException(
+      { result },
+      makeDeps({ logger: logger as unknown as MessageEnvelopeDeps["logger"] }),
+      {
+        error: new Error("429 rate limit exceeded"),
+        sessionKey: result.sessionKey,
+        agentId: "a1",
+        executionStartMs: 0,
+      },
+    );
+
+    expect(result.finishReason).toBe("error");
+    expect(result.terminalErrorKind).toBe("resource");
+    const warnCall = warn.mock.calls.find((c) => c[1] === "Unexpected execution error");
+    expect(warnCall?.[0].errorKind).toBe("resource");
+  });
+
   it("invokes outputGuard scan when configured and response non-empty", () => {
     const result = makeResult();
     const scan = vi.fn().mockReturnValue({ matches: [], redacted: false });

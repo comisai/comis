@@ -8,7 +8,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { TypedEventBus } from "@comis/core";
 import { MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT } from "@comis/core";
 
@@ -500,11 +502,13 @@ describe("McpClientManager", () => {
   // -----------------------------------------------------------------------
   describe("OSV malicious-package rejection", () => {
     let originalFetch: typeof globalThis.fetch | undefined;
+    let osvCacheDir: string;
 
     beforeEach(() => {
       // Stash and replace the global fetch so the OSV check sees a
       // controllable response. We restore in afterEach.
       originalFetch = globalThis.fetch;
+      osvCacheDir = mkdtempSync(join(tmpdir(), "comis-mcp-osv-"));
     });
 
     afterEach(() => {
@@ -513,6 +517,7 @@ describe("McpClientManager", () => {
       if (originalFetch !== undefined) {
         globalThis.fetch = originalFetch;
       }
+      rmSync(osvCacheDir, { recursive: true, force: true });
     });
 
     it("returns err on OSV malicious verdict AND does NOT create an error-state connection entry", async () => {
@@ -524,29 +529,21 @@ describe("McpClientManager", () => {
       } as unknown as Response);
       globalThis.fetch = mockFetch as unknown as typeof fetch;
 
-      // Use a unique per-test temp cache dir so prior runs do not poison
-      // this test's OSV verdict via cache hit. The OSV check uses
-      // DEFAULT_OSV_CACHE_DIR (~/.comis/cache/osv) by default, which we
-      // cannot stub via opts since this path is the manager-level
-      // connect flow. Mitigate by using a package name unique to this
-      // test (`evil-pkg`) so no prior cache hit exists in a
-      // freshly-mkdtempSync'd home; failing that, the fetch mock fires
-      // first and writes the new cache anyway, so the verdict is
-      // deterministic.
-      const deps = makeDeps();
+      const deps = makeDeps({ osvCacheDir });
       const mgr = createMcpClientManager(deps);
 
       const result = await mgr.connect(
         makeStdioConfig({
           name: "evil-server",
           command: "npx",
-          args: ["-y", "evil-pkg-7c4f1d2a"],
+          args: ["-y", "isolated-malicious-pkg-5e2c8d91"],
         }),
       );
 
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error.message).toMatch(/\[osv_malware_detected\]/);
+      expect(existsSync(join(osvCacheDir, "npm-isolated-malicious-pkg-5e2c8d91.json"))).toBe(true);
 
       // Invariant: no error-state McpConnection was written. Otherwise
       // the catch path inside connectServer would write a `status:"error"`

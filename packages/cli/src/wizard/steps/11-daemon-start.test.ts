@@ -231,6 +231,11 @@ describe("daemonStartStep", () => {
     const openedPaths = vi.mocked(openSync).mock.calls.map((c) => String(c[0]));
     expect(openedPaths.some((p) => p.endsWith("daemon.console.log"))).toBe(true);
     expect(openedPaths.some((p) => p.endsWith("/daemon.log"))).toBe(false);
+    expect(openSync).toHaveBeenCalledWith(
+      expect.stringContaining("daemon.console.log"),
+      "w",
+      0o600,
+    );
   });
 
   it("health check success -> spinner stops with ready message", async () => {

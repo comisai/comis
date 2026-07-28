@@ -53,6 +53,7 @@ import {
 import type { ActiveRunRegistry } from "./active-run-registry.js";
 import type { ComisSessionManager, SessionMetadata } from "../session/comis-session-manager.js";
 import { buildSessionHealthRollup, type SessionHealthRollup } from "./session-health-rollup.js";
+import { classifyError, errorKindForCategory } from "./error-classifier.js";
 import {
   setBreakpointIndex,
   deleteBreakpointIndex,
@@ -769,6 +770,7 @@ export function settleExecutionResult(
   bridgeResult: {
     sideEffectSummary: ExecutionSideEffectSummary;
     toolExecResults?: PostExecutionBridgeResult["toolExecResults"];
+    terminalErrorKind?: ErrorKind;
   },
 ): void {
   const mutableResult = result as ExecutionResult & {
@@ -783,6 +785,7 @@ export function settleExecutionResult(
     )?.errorKind;
     mutableResult.terminalErrorKind = firstFailedKind
       ?? mutableResult.terminalErrorKind
+      ?? bridgeResult.terminalErrorKind
       ?? "internal";
     return;
   }
@@ -1195,6 +1198,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   settleExecutionResult(result, effectiveFinishReason, {
     sideEffectSummary: bridgeResult.sideEffectSummary ?? result.sideEffectSummary,
     toolExecResults: bridgeResult.toolExecResults,
+    terminalErrorKind: bridgeResult.lastLlmErrorMessage !== undefined
+      ? errorKindForCategory(classifyError(bridgeResult.lastLlmErrorMessage).category)
+      : undefined,
   });
 
   // Execution bookend INFO log with summary stats
@@ -1538,7 +1544,17 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // degraded is derived from the mapped endReason (≠ "success"); the same record
   // feeds BOTH sinks below — the sessionEnd metadata and the session:summary
   // event — so persist and emit never diverge.
-  const sessionHealthRollup = buildSessionHealthRollup(bridgeResult, endReason);
+  const sessionHealthRollup = buildSessionHealthRollup(
+    {
+      ...bridgeResult,
+      terminalErrorKind:
+        result.finishReason === "error" ||
+        result.finishReason === "completed_with_tool_errors"
+          ? result.terminalErrorKind
+          : undefined,
+    },
+    endReason,
+  );
 
   // Write session metadata companion file with trace correlation.
   // traceId comes from the AsyncLocalStorage request scope so `_session-metadata.json`

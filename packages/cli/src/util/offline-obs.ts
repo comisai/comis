@@ -38,7 +38,10 @@ import type {
   SystemHealthReport,
   IncidentReport,
 } from "@comis/core";
-import type { SessionMessagesFilter, SessionMessagesResult } from "@comis/daemon";
+import type {
+  SessionMessagesFilter,
+  SessionMessagesResult,
+} from "@comis/daemon/offline-observability";
 import type { CostBucketFilter, QuarterHourBucket } from "@comis/memory";
 
 // Re-exported so command modules consume the extractor's types from THIS seam —
@@ -48,7 +51,7 @@ export type {
   SessionMessagesResult,
   ExtractedChannelMessage,
   SessionMessagesCoverage,
-} from "@comis/daemon";
+} from "@comis/daemon/offline-observability";
 import { resolveTrajectoryPointerFilePath } from "@comis/observability";
 import type { AuditSummary } from "../support-bundle/types.js";
 import { resolveDoctorConfig } from "../doctor/config-resolve.js";
@@ -149,14 +152,14 @@ function openObsStoreIfPresent(dataDir: string): {
 }
 
 /**
- * LAZY daemon import: @comis/daemon's index pulls the whole runtime graph
- * (channels, skills, orchestrator, …). A static import would load it on EVERY
- * CLI start just to register the commands — the offline path pays the cost
- * only when it actually runs. (Still the single L18 import site; the arch
- * test scans dynamic import specifiers too.)
+ * Lazy import of the daemon-owned local-read surface. Its dedicated package
+ * entry point excludes daemon startup and integration graphs, while keeping
+ * these filesystem readers authoritative in one package.
  */
-async function loadDaemonAssemblers(): Promise<typeof import("@comis/daemon")> {
-  return import("@comis/daemon");
+async function loadDaemonAssemblers(): Promise<
+  typeof import("@comis/daemon/offline-observability")
+> {
+  return import("@comis/daemon/offline-observability");
 }
 
 /** Assemble an IncidentReport from the local data dir without a daemon. */

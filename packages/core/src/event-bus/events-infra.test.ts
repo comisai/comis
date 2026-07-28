@@ -370,6 +370,16 @@ describe("InfraEvents payload structure", () => {
     expect(JSON.stringify(payload)).not.toMatch(/prompt|message|result|secret|token/iu);
   });
 
+  it("declares a content-free cron timer health transition event", () => {
+    const eventSource = readFileSync(new URL("./events-infra.ts", import.meta.url), "utf8");
+
+    expect(eventSource).toContain('"scheduler:cron_timer_health":');
+    expect(eventSource).toContain('status: "degraded"');
+    expect(eventSource).toContain('status: "recovered"');
+    expect(eventSource).toContain("retryMs: number");
+    expect(eventSource).toContain("degradedDurationMs: number");
+  });
+
   it("scheduler ownership reconciliation reports completed and failed boot health", () => {
     const eventSource = readFileSync(new URL("./events-infra.ts", import.meta.url), "utf8");
     const bus = new TypedEventBus();

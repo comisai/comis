@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { classifyError, classifyPromptTimeout } from "./error-classifier.js";
+import {
+  classifyError,
+  classifyPromptTimeout,
+  errorKindForCategory,
+} from "./error-classifier.js";
 import { PromptTimeoutError } from "./prompt-timeout.js";
 
 describe("classifyError", () => {
@@ -271,6 +275,29 @@ describe("classifyError", () => {
       expect(result.userMessage).not.toContain("anthropic.com");
       expect(result.userMessage).not.toContain("api.anthropic");
     }
+  });
+});
+
+describe("errorKindForCategory", () => {
+  it("maps every provider category onto the closed operational error taxonomy", () => {
+    expect(errorKindForCategory("credit_exhausted")).toBe("resource");
+    expect(errorKindForCategory("rate_limited")).toBe("resource");
+    expect(errorKindForCategory("auth_invalid")).toBe("auth");
+    expect(errorKindForCategory("aws_auth_invalid")).toBe("auth");
+    expect(errorKindForCategory("aws_auth_expired")).toBe("auth");
+    expect(errorKindForCategory("aws_model_access")).toBe("auth");
+    expect(errorKindForCategory("aws_region_or_model")).toBe("config");
+    expect(errorKindForCategory("overloaded")).toBe("dependency");
+    expect(errorKindForCategory("context_too_long")).toBe("resource");
+    expect(errorKindForCategory("content_filtered")).toBe("precondition");
+    expect(errorKindForCategory("client_request_signed_replay")).toBe("validation");
+    expect(errorKindForCategory("tool_schema_unsupported")).toBe("validation");
+    expect(errorKindForCategory("client_request")).toBe("validation");
+    expect(errorKindForCategory("prompt_timeout")).toBe("timeout");
+    expect(errorKindForCategory("empty_response")).toBe("dependency");
+    expect(errorKindForCategory("model_not_available")).toBe("config");
+    expect(errorKindForCategory("provider_unreachable")).toBe("network");
+    expect(errorKindForCategory("unknown")).toBe("internal");
   });
 });
 

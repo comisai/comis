@@ -40,6 +40,7 @@ import { configHealthCheck } from "../doctor/checks/config-health.js";
 import { daemonHealthCheck } from "../doctor/checks/daemon-health.js";
 import { gatewayHealthCheck } from "../doctor/checks/gateway-health.js";
 import { versionSkewHealthCheck } from "../doctor/checks/version-skew-health.js";
+import { runtimePostureHealthCheck } from "../doctor/checks/runtime-posture-health.js";
 import { channelHealthCheck } from "../doctor/checks/channel-health.js";
 import { workspaceHealthCheck } from "../doctor/checks/workspace-health.js";
 import { oauthHealthCheck } from "../doctor/checks/oauth-health.js";
@@ -64,15 +65,15 @@ import { writeSupportBundle, ensureSupportBundleDir } from "./writer.js";
 import type { SupportBundleWarning, ConfigPostureDigest, AuditSummary } from "./types.js";
 
 /**
- * The nine health checks, composed in the same execution order the doctor
- * command runs — config, daemon, gateway, version skew, channels, workspace,
- * OAuth, secrets audit, and the LCD store. All run daemon-down by design.
+ * The daemon-down health checks, composed in the same execution order the
+ * doctor command runs.
  */
 const SUPPORT_BUNDLE_CHECKS: readonly DoctorCheck[] = [
   configHealthCheck,
   daemonHealthCheck,
   gatewayHealthCheck,
   versionSkewHealthCheck,
+  runtimePostureHealthCheck,
   channelHealthCheck,
   workspaceHealthCheck,
   oauthHealthCheck,

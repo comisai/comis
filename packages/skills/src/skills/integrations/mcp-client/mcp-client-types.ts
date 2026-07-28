@@ -331,6 +331,8 @@ export interface McpClientManagerDeps {
   readonly circuitBreakerThreshold?: number;
   /** Default circuit breaker cooldown (ms). Resolved at factory construction. */
   readonly circuitBreakerCooldownMs?: number;
+  /** OSV verdict cache directory under the active data directory. */
+  readonly osvCacheDir?: string;
   /**
    * OAuth integration seam. When present, connectServer constructs an
    * OAuthClientProvider adapter for `auth:"oauth"` servers (token store +
@@ -394,7 +396,6 @@ export interface McpClientManager {
   /** Reconnect a named server using its stored config. */
   reconnect(name: string): Promise<Result<McpConnection, Error>>;
 }
-
 // ---------------------------------------------------------------------------
 // Closure-state interface
 // ---------------------------------------------------------------------------
@@ -418,7 +419,6 @@ export interface McpClientManagerOptions {
   /** Global default cooldown (ms) between open → half-open transitions. Per-server override on McpServerConfig. */
   readonly circuitBreakerCooldownMs: number;
 }
-
 /**
  * Closure-captured state shape for the mcp-client manager. The
  * createMcpClientManager factory closure body is split into per-concern

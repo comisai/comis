@@ -130,6 +130,11 @@ describe("daemon start", () => {
       detached: true,
       stdio: ["ignore", 99, 99],
     });
+    expect(fs.openSync).toHaveBeenCalledWith(
+      expect.stringContaining("daemon.console.log"),
+      "w",
+      0o600,
+    );
 
     // Assert PID file was written
     expect(fs.writeFileSync).toHaveBeenCalledWith(

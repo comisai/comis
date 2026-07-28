@@ -12,6 +12,7 @@
 
 import type { AppContainer, ApprovalGate, ClockPort, SecretStorePort, TimerPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
+import type { Result } from "@comis/shared";
 import type { GatewayServerHandle } from "@comis/gateway";
 import type { CronScheduler } from "@comis/scheduler";
 import type { BrowserService, MediaTempManager } from "@comis/skills";
@@ -69,6 +70,7 @@ export interface ShutdownDeps {
   container: AppContainer;
   /** Override process.exit for testability. */
   exitFn: (code: number) => void;
+  drainLogger: (logger: ComisLogger) => Promise<Result<void, Error>>;
   /** Hard-timeout (ms) before shutdown force-exits with code 1. Default 45_000; must be < systemd TimeoutStopSec. */
   timeoutMs?: number;
   /** In-flight gateway executions for shutdown observability. */
@@ -210,6 +212,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     processMonitor,
     container,
     exitFn,
+    drainLogger,
     tokenTracker,
     startupTimestamp,
     activeExecutions,
@@ -759,14 +762,22 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
 
     logger.info({ shutdownDurationMs: systemNowMs() - shutdownStartMs, signal }, "Graceful shutdown complete");
 
-    // Defense-in-depth flush before exit (pino runtime feature; narrow via local shape).
-    const flushable = logger as unknown as { flush?: (cb?: () => void) => void };
-    if (typeof flushable.flush === "function") {
-      await new Promise<void>((resolve) => {
-        flushable.flush!(() => resolve());
-        systemSetTimeout(() => resolve(), 2_000).unref(); // safety timeout
-      });
-    }
+    // Give the transport worker a bounded quiet period before process.exit.
+    // Callback and synchronous Pino flush paths can both park in thread-stream's
+    // ten-second failure wait, so neither is entered during shutdown.
+    const warnFlushFailure = (error: unknown): void => {
+      try {
+        logger.warn({
+          err: error,
+          hint: "Inspect the configured logging transport and its destination",
+          errorKind: "dependency" as const,
+        }, "Logger flush failed during shutdown");
+      } catch {
+        // The process must still exit when the logging transport itself is unusable.
+      }
+    };
+    const drainResult = await drainLogger(logger);
+    if (!drainResult.ok) warnFlushFailure(drainResult.error);
 
     systemClearTimeout(timer);
     // Exit code: SIGUSR2 ⇒ 42. The installer-generated systemd unit names 42

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { ClockPort, ErrorKind, TimerHandle, TimerPort, TypedEventBus } from "@comis/core";
+import type { ClockPort, ErrorKind, EventMap, TimerHandle, TimerPort, TypedEventBus } from "@comis/core";
 import { err, ok, type Result } from "@comis/shared";
 import type { SchedulerLogger } from "../shared-types.js";
 import {
@@ -38,6 +38,7 @@ import {
 import type { CronJob } from "./cron-types.js";
 
 const MAX_TIMER_DELAY_MS = 60_000;
+const TIMER_FAILURE_RETRY_MS = 5_000;
 
 export type CronRootRegistrationError = {
   errorKind: ErrorKind;
@@ -62,6 +63,7 @@ export interface CronSchedulerDeps {
   logger: SchedulerLogger;
   clock: ClockPort;
   timers: TimerPort;
+  agentId: string;
   bootId: string;
   idFactory: () => string;
   config: {
@@ -112,6 +114,7 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
   let initialized = false;
   let active = false;
   let timer: TimerHandle | undefined;
+  let timerDegradedAtMs: number | undefined;
   const running = new Map<string, Promise<Result<string, CronSchedulerLifecycleError>>>();
   const activeControllers = new Map<string, AbortController>();
   const configError = validateConfig(deps);
@@ -556,24 +559,70 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
     if (deadlines.length === 0) return;
     const earliest = Math.min(...deadlines);
     const delay = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, earliest - nowMs));
+    armTick(delay);
+  }
+
+  function armTick(delayMs: number): void {
+    cancelTimer();
+    if (!active) return;
     timer = deps.timers.setTimeout(() => {
       timer = undefined;
       void runMissedJobs().then((result) => {
         if (!result.ok) {
           logFailure("Cron timer tick failed", result.error, {
             step: "timer_tick",
-            hint: "Inspect scheduler health and persisted cron ownership before retrying",
+            hint: "Run comis cron status for this agent and verify workspace/.scheduler/cron-jobs.json exists and is readable",
           });
+          reportTimerDegraded(result.error);
+          armTick(TIMER_FAILURE_RETRY_MS);
+          return;
         }
+        reportTimerRecovered();
         armTimer();
       });
-    }, delay);
+    }, delayMs);
     timer.unref();
   }
 
   function cancelTimer(): void {
     timer?.cancel();
     timer = undefined;
+  }
+
+  function reportTimerDegraded(failure: { errorKind: ErrorKind }): void {
+    if (timerDegradedAtMs !== undefined) return;
+    timerDegradedAtMs = deps.clock.now();
+    emitTimerHealth({
+      agentId: deps.agentId,
+      status: "degraded",
+      errorKind: failure.errorKind,
+      retryMs: TIMER_FAILURE_RETRY_MS,
+      timestamp: timerDegradedAtMs,
+    });
+  }
+
+  function reportTimerRecovered(): void {
+    if (timerDegradedAtMs === undefined) return;
+    const timestamp = deps.clock.now();
+    const degradedDurationMs = Math.max(0, timestamp - timerDegradedAtMs);
+    timerDegradedAtMs = undefined;
+    emitTimerHealth({
+      agentId: deps.agentId,
+      status: "recovered",
+      degradedDurationMs,
+      timestamp,
+    });
+  }
+
+  function emitTimerHealth(payload: EventMap["scheduler:cron_timer_health"]): void {
+    const emitted = deps.eventBus.emitSafely("scheduler:cron_timer_health", payload);
+    if (emitted.failures.length === 0) return;
+    deps.logger.warn({
+      event: "scheduler:cron_timer_health",
+      subscriberFailures: emitted.failures.length,
+      errorKind: "internal" as const,
+      hint: "Inspect the scheduler diagnostic subscriber; timer retry protection remains active",
+    }, "Cron timer health event subscriber failed");
   }
 
   function activeClaimIds(): string[] {

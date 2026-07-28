@@ -83,6 +83,33 @@ export function cronModelDriftEventToRow(
   };
 }
 
+export function cronTimerHealthEventToRow(
+  payload: EventMap["scheduler:cron_timer_health"],
+): DiagnosticRow {
+  const details = payload.status === "degraded"
+    ? {
+      signal: "cron_timer_health",
+      status: payload.status,
+      errorKind: payload.errorKind,
+      retryMs: payload.retryMs,
+    }
+    : {
+      signal: "cron_timer_health",
+      status: payload.status,
+      degradedDurationMs: payload.degradedDurationMs,
+    };
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: payload.status === "degraded" ? "warning" : "info",
+    agentId: payload.agentId,
+    sessionKey: "",
+    message: "scheduler:cron_timer_health",
+    details: JSON.stringify(details),
+    traceId: undefined,
+  };
+}
+
 export function taskEventToRow<K extends TaskDiagnosticEventName>(
   eventName: K,
   payload: EventMap[K],
@@ -133,6 +160,9 @@ export function wireSchedulerDiagnostics(input: {
   });
   input.eventBus.on("scheduler:cron_model_drift", (payload) => {
     input.diagnosticBuffer.push(cronModelDriftEventToRow(payload));
+  });
+  input.eventBus.on("scheduler:cron_timer_health", (payload) => {
+    input.diagnosticBuffer.push(cronTimerHealthEventToRow(payload));
   });
   input.eventBus.on("scheduler:task_extraction_completed", (payload) => {
     input.diagnosticBuffer.push(taskEventToRow("scheduler:task_extraction_completed", payload));

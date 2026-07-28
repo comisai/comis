@@ -44,7 +44,7 @@ import { randomUUID } from "node:crypto";
 import { resolveModelPricing } from "@comis/core";
 import { getCacheProviderInfo } from "../executor/cache-usage-helpers.js";
 import { sanitizeMcpToolNameForAnalytics } from "../executor/cache-detection/index.js";
-import { classifyError } from "../executor/error-classifier.js";
+import { classifyError, errorKindForCategory } from "../executor/error-classifier.js";
 import { getSessionPromptSkillLocations, getSessionPromptTopicMatchedSkills } from "../executor/prompt-assembly.js";
 import { suggestClosestTool } from "./tool-name-suggest.js";
 import { toolFailureHint } from "./tool-failure-hint.js";
@@ -768,17 +768,35 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // (legacy/test callers), fall through to the legacy
           // unconditional emit so existing harnesses keep working.
           const formattedKey = formatSessionKey(deps.sessionKey);
+          const channelType = tryGetContext()?.channelType ?? "";
+          const traceId = tryGetContext()?.traceId ?? deps.executionId;
+          appendSessionIndexEntry(
+            deps.dataDir ?? pathModule.join(os.homedir(), ".comis"),
+            {
+              traceSchema: "comis-session-index",
+              schemaVersion: 1,
+              event: "execution_started",
+              ts: systemDateFrom(systemNowMs()).toISOString(),
+              sessionId: formattedKey,
+              sessionKey: formattedKey,
+              messageId: deps.inboundMessageId,
+              traceId,
+              agentId: deps.agentId,
+              channelType,
+              channelId: deps.channelId ?? "",
+              source: "runtime" as const,
+            },
+          );
           if (deps.trajectoryRegistry?.hasSessionStartedBeenEmitted(formattedKey) === true) {
             break;
           }
           // channelType lives on RequestContext (AsyncLocalStorage); fall
           // back to "" when running outside a scope (e.g., direct test
           // invocation). Trajectory consumers tolerate the empty case.
-          const channelType = tryGetContext()?.channelType ?? "";
           deps.eventBus.emit("session:started", {
             agentId: deps.agentId,
             sessionKey: formattedKey,
-            traceId: tryGetContext()?.traceId ?? deps.executionId,
+            traceId,
             channelType,
             channelId: deps.channelId,
             timestamp: systemNowMs(),
@@ -2718,7 +2736,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 delayMs,
                 errorMessage,
                 hint: "Rate-limit windows are per-minute; SDK retry budget cannot bridge the window -- aborting retry to surface terminal failure",
-                errorKind: "rate_limited" as const,
+                errorKind: errorKindForCategory(classification.category),
+                providerErrorCategory: classification.category,
               },
               "Aborting SDK auto-retry on rate-limited error",
             );

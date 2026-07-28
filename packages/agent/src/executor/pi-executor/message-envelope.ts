@@ -31,7 +31,11 @@ import { toSafeErrorLogString } from "@comis/core";
 
 import type { ExecutionResult } from "../types.js";
 import { PromptTimeoutError } from "../prompt-timeout.js";
-import { classifyError, classifyPromptTimeout } from "../error-classifier.js";
+import {
+  classifyError,
+  classifyPromptTimeout,
+  errorKindForCategory,
+} from "../error-classifier.js";
 import { scanWithOutputGuard } from "../executor-response-filter.js";
 import type { PromptRunResult } from "../prompt-runner/prompt-runner-types.js";
 import { ContextExhaustionError } from "../../context-engine/errors.js";
@@ -155,17 +159,25 @@ export function handleEnvelopeException(
   const classifiedOuter = isPromptTimeout
     ? classifyPromptTimeout(error, { agentId }, durationMs)
     : classifyError(error);
+  const terminalErrorKind = errorKindForCategory(classifiedOuter.category);
   const safeErrorMessage = toSafeErrorLogString(error);
   deps.logger.warn(
     {
       err: safeErrorMessage,
       durationMs,
       hint: classifiedOuter.hint ?? "PiExecutor unexpected error",
-      errorKind: (isPromptTimeout ? "timeout" : "internal") as ErrorKind,
+      errorKind: terminalErrorKind,
     },
     "Unexpected execution error",
   );
-  state.result.finishReason = isPromptTimeout ? "prompt_timeout" : "error";
+  const mutableResult = state.result as ExecutionResult & {
+    finishReason: ExecutionResult["finishReason"];
+    terminalErrorKind?: ErrorKind;
+  };
+  mutableResult.finishReason = isPromptTimeout ? "prompt_timeout" : "error";
+  if (!isPromptTimeout) {
+    mutableResult.terminalErrorKind = terminalErrorKind;
+  }
   // Never expose raw error internals (API keys, URLs, stack traces) to users.
   // The classified userMessage stays generic/user-safe — the knob detail
   // rides ONLY the hint above.

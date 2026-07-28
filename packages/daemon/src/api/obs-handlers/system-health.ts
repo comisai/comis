@@ -125,6 +125,9 @@ interface SystemSignals {
   topDegradedCause?: string;
   healthSignalCount: number;
   configPostureCount: number;
+  /** The bounded current-posture finding already assembled for the report. */
+  configPostureDetail?: string;
+  configPostureHint?: string;
   topErrorKind?: string;
   /** Count of DEGRADED autonomy runs (orphaned + revoked/killed) in the
    *  window — the acute autonomy event the worst-rootRunId verdict fires on. */
@@ -196,18 +199,27 @@ const SYSTEM_HEURISTICS: ReadonlyArray<(s: SystemSignals) => SystemRootCause | n
     const hardRate = hardDegraded / s.sessionCount;
     if (hardRate < HIGH_DEGRADED_RATE) return null;
     const pct = Math.round(hardRate * 100);
-    const kind = s.topErrorKind ?? "the top error kind";
+    const dominantSignal = s.topErrorKind !== undefined
+      ? `dominant errorKind: ${s.topErrorKind}`
+      : `top cause: ${s.topDegradedCause ?? "unknown"}`;
+    const worst =
+      s.worstDegradedSessionKey === undefined ? "" : `; worst: ${s.worstDegradedSessionKey}`;
+    const explainStep = s.worstDegradedSessionKey === undefined
+      ? "run `comis explain <sessionKey>` on the worst degraded session"
+      : `run \`comis explain ${s.worstDegradedSessionKey}\` on the worst degraded session`;
+    const diagnoseStep = s.topErrorKind !== undefined
+      ? `inspect failures classified as ${s.topErrorKind} in the per-session report`
+      : `address the dominant degradation cause (${s.topDegradedCause ?? "unknown"}) shown in the per-session report`;
     const deliveredNote =
       s.deliveredWithToolErrorsCount > 0
         ? ` (excludes ${s.deliveredWithToolErrorsCount} delivered-with-tool-errors — the user still got a reply)`
         : "";
     return {
       code: "system_high_degraded_rate",
-      detail: `${pct}% of ${s.sessionCount} sessions HARD-degraded over the window (dominant errorKind: ${kind})${deliveredNote}`,
+      detail: `${pct}% of ${s.sessionCount} sessions HARD-degraded over the window (${dominantSignal}${worst})${deliveredNote}`,
       suggestedNextSteps: [
-        "run `comis explain` on the worst session to localize the failure",
-        `inspect the upstream provider/transport for ${kind}`,
-        "check provider rate-limit headroom and breaker thresholds",
+        explainStep,
+        diagnoseStep,
       ],
     };
   },
@@ -246,12 +258,16 @@ const SYSTEM_HEURISTICS: ReadonlyArray<(s: SystemSignals) => SystemRootCause | n
   // 3) Recurring config-posture signal — an insecure/drifted config across the system.
   (s) => {
     if (s.configPostureCount === 0) return null;
+    const postureDetail =
+      s.configPostureDetail
+      ?? `${s.configPostureCount} config-posture signal(s) flagged across the system`;
     return {
       code: "system_config_posture",
-      detail: `${s.configPostureCount} config-posture signal(s) flagged across the system`,
+      detail: postureDetail,
       suggestedNextSteps: [
-        "review the gateway TLS / token posture",
-        "reconcile the flagged config keys against the secure baseline",
+        `correct the exact flagged posture named by system-health: ${postureDetail}`,
+        s.configPostureHint
+          ?? "reconcile the named flagged keys against the secure baseline",
       ],
     };
   },
@@ -390,7 +406,16 @@ export async function assembleSystemHealthReport(
   // Diagnostics — windowed health_signal; latest model_health / config_posture.
   const healthSignals = deps.obsStore?.queryDiagnostics({ category: "health_signal", sinceMs }) ?? [];
   const modelHealth = deps.obsStore?.queryDiagnostics({ category: "model_health", sinceMs }) ?? [];
-  const configPosture = deps.obsStore?.queryDiagnostics({ category: "config_posture", sinceMs }) ?? [];
+  const configPostureHistory =
+    deps.obsStore?.queryDiagnostics({ category: "config_posture", sinceMs }) ?? [];
+  const latestConfigPosture = configPostureHistory.reduce(
+    (latest, row) => latest === undefined || row.timestamp > latest.timestamp ? row : latest,
+    configPostureHistory[0],
+  );
+  const configPosture =
+    latestConfigPosture !== undefined && latestConfigPosture.severity !== "info"
+      ? [latestConfigPosture]
+      : [];
   // The reflection funnel rows → the learning_health finding.
   const learningHealth = deps.obsStore?.queryDiagnostics({ category: "learning_health", sinceMs }) ?? [];
   // The forget-sweep rows → the memory_lifecycle finding.
@@ -409,6 +434,7 @@ export async function assembleSystemHealthReport(
 
   // findings[] — counts + codes + hints ONLY (no raw bodies).
   const allFindings = buildFindings(healthSignals, modelHealth, configPosture, learningHealth, memoryLifecycle, cronWakeGate);
+  const configPostureFinding = allFindings.find((finding) => finding.code === "config_posture");
   const truncations: TruncationEntry[] = [];
   const findings = boundFindings(allFindings, truncations);
 
@@ -462,6 +488,7 @@ export async function assembleSystemHealthReport(
   const topDegradedCause = Object.entries(system.degradedByCause)
     .filter(([cause]) => cause !== "completed_with_tool_errors")
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
+  const worstDegradedSessionKey = pickWorstDegradedSessionKey(rows, topDegradedCause);
   const likelyRootCause = systemRootCause({
     degradedRate: system.degradedRate,
     sessionCount: system.sessionCount,
@@ -475,11 +502,17 @@ export async function assembleSystemHealthReport(
     // discipline the findings rollup applies.
     healthSignalCount: healthSignals.filter((r) => r.severity !== "info").length,
     configPostureCount: configPosture.length,
+    ...(configPostureFinding === undefined
+      ? {}
+      : {
+          configPostureDetail: configPostureFinding.detail,
+          configPostureHint: configPostureFinding.hint,
+        }),
     topErrorKind: topErrorKinds[0]?.kind,
     // Name the exact worst degraded session so the acute-degradation verdict
     // pastes straight into `comis explain` (undefined-safe spread).
-    ...(pickWorstDegradedSessionKey(rows, topDegradedCause) !== undefined
-      ? { worstDegradedSessionKey: pickWorstDegradedSessionKey(rows, topDegradedCause) }
+    ...(worstDegradedSessionKey !== undefined
+      ? { worstDegradedSessionKey }
       : {}),
     // The autonomy verdict keys on the DEGRADED autonomy run count +
     // the worst rootRunId (both from the slice above) — undefined-safe spread.

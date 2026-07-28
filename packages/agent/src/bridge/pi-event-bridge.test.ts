@@ -5816,7 +5816,7 @@ describe("createPiEventBridge", () => {
       ).not.toThrow();
     });
 
-    it("logs structured INFO with errorKind:'rate_limited' on abort", () => {
+    it("logs a canonical resource error kind with provider classification on abort", () => {
       const onAbortRetry = vi.fn();
       const localDeps = createMockDeps({ onAbortRetry });
       const { listener } = createPiEventBridge(localDeps);
@@ -5835,7 +5835,8 @@ describe("createPiEventBridge", () => {
           attempt: 2,
           maxAttempts: 3,
           delayMs: 7500,
-          errorKind: "rate_limited",
+          errorKind: "resource",
+          providerErrorCategory: "rate_limited",
         }),
         "Aborting SDK auto-retry on rate-limited error",
       );
@@ -6263,6 +6264,40 @@ describe("session-index emit sites", () => {
     expect(payload.schemaVersion).toBe(1);
     expect(Array.isArray(payload.traceIds)).toBe(true);
     expect(payload.agentId).toBe("test-agent");
+  });
+
+  it("agent_start_indexes_each_execution_when_the_session_lifecycle_is_already_open", () => {
+    const fakeRegistry = {
+      hasSessionStartedBeenEmitted: vi.fn().mockReturnValue(true),
+      markSessionStarted: vi.fn(),
+      getOrCreate: vi.fn(),
+      getRecorder: vi.fn().mockReturnValue(undefined),
+      close: vi.fn(),
+      closeAll: vi.fn(),
+    } as any;
+    const deps = createMockDeps({
+      executionId: "exec-after-session-start",
+      inboundMessageId: "message-after-session-start",
+      trajectoryRegistry: fakeRegistry,
+    });
+    const { listener } = createPiEventBridge(deps);
+
+    listener({ type: "agent_start" } as any);
+
+    const appendMock = vi.mocked(mockAppendSessionIndexEntry);
+    const executionStartedCalls = appendMock.mock.calls.filter(
+      (call) => call[1].event === "execution_started",
+    );
+    expect(executionStartedCalls).toHaveLength(1);
+    expect(executionStartedCalls[0]?.[1]).toMatchObject({
+      event: "execution_started",
+      sessionId: formatSessionKey(deps.sessionKey),
+      sessionKey: formatSessionKey(deps.sessionKey),
+      messageId: "message-after-session-start",
+      traceId: "exec-after-session-start",
+      agentId: "test-agent",
+      source: "runtime",
+    });
   });
 
   it("appendSessionIndexEntry called once with turn_completed carrying BOTH inputTokens and outputTokens on turn_end", () => {

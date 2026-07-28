@@ -7,6 +7,7 @@ import type { ShutdownDeps } from "./setup-shutdown.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
+import { err, ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -27,6 +28,7 @@ function createMinimalDeps(overrides: Partial<ShutdownDeps> = {}): ShutdownDeps 
     processMonitor: { start: vi.fn(), stop: vi.fn() } as any,
     container: { shutdown: vi.fn(async () => {}) } as any,
     exitFn: vi.fn(),
+    drainLogger: vi.fn(async () => ok(undefined)),
     activeExecutions: undefined,
     subAgentRunner: { shutdown: vi.fn(async () => {}) },
     ownedCronSchedulers: new Map(),
@@ -451,6 +453,69 @@ describe("setupShutdown", () => {
     expect(process.exitCode).toBe(0);
     expect(deps.exitFn).toHaveBeenCalledWith(0);
   }, 15_000);
+
+  it("logger drain failure cannot prevent the explicit shutdown exit", async () => {
+    const logger = createMockLogger();
+    const drainLogger = vi.fn(async () => err(new Error("transport drain failed")));
+    const deps = createMinimalDeps({
+      logger,
+      drainLogger,
+    } as unknown as Partial<ShutdownDeps>);
+    const setupShutdown = await getSetupShutdown();
+    const result = setupShutdown(deps);
+
+    await expect(result.shutdownHandle.trigger("SIGTERM")).resolves.toBeUndefined();
+
+    expect(drainLogger).toHaveBeenCalledWith(logger);
+    expect(deps.exitFn).toHaveBeenCalledWith(0);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "dependency",
+        hint: expect.stringContaining("logging transport"),
+      }),
+      "Logger flush failed during shutdown",
+    );
+  });
+
+  it("shutdown never enters the transport callback flush wait", async () => {
+    const logger = createMockLogger() as any;
+    logger.flush = vi.fn(() => {
+      throw new Error("asynchronous flush must not run");
+    });
+    const drainLogger = vi.fn(async () => ok(undefined));
+    const deps = createMinimalDeps({
+      logger,
+      drainLogger,
+    } as unknown as Partial<ShutdownDeps>);
+    const setupShutdown = await getSetupShutdown();
+    const result = setupShutdown(deps);
+
+    await expect(result.shutdownHandle.trigger("SIGTERM")).resolves.toBeUndefined();
+
+    expect(logger.flush).not.toHaveBeenCalled();
+    expect(drainLogger).toHaveBeenCalledWith(logger);
+    expect(deps.exitFn).toHaveBeenCalledWith(0);
+  });
+
+  it("logger drain grace completes before the explicit shutdown exit", async () => {
+    const callOrder: string[] = [];
+    const drainLogger = vi.fn(async () => {
+      callOrder.push("drainLogger");
+      return ok(undefined);
+    });
+    const deps = createMinimalDeps({
+      drainLogger,
+      exitFn: vi.fn(() => {
+        callOrder.push("exitFn");
+      }),
+    } as unknown as Partial<ShutdownDeps>);
+    const setupShutdown = await getSetupShutdown();
+    const result = setupShutdown(deps);
+
+    await result.shutdownHandle.trigger("SIGTERM");
+
+    expect(callOrder).toEqual(["drainLogger", "exitFn"]);
+  });
 
   // -------------------------------------------------------------------------
   // 9. unhandledRejection handler
@@ -896,6 +961,7 @@ describe("setup-shutdown honors §1.4 mode invariants", () => {
       processMonitor: { start: vi.fn(), stop: vi.fn() } as any,
       container: { shutdown: vi.fn(async () => {}) } as any,
       exitFn: vi.fn(),
+      drainLogger: vi.fn(async () => ok(undefined)),
       subAgentRunner: { shutdown: vi.fn(async () => {}) },
       ownedCronSchedulers: new Map(),
       resetSchedulers: new Map(),
@@ -966,6 +1032,7 @@ describe("brokerStop runs after shutdownBackgroundProcesses (shutdown ordering)"
       processMonitor: { start: vi.fn(), stop: vi.fn() } as any,
       container: { shutdown: vi.fn(async () => {}) } as any,
       exitFn: vi.fn(),
+      drainLogger: vi.fn(async () => ok(undefined)),
       subAgentRunner: { shutdown: vi.fn(async () => {}) },
       ownedCronSchedulers: new Map(),
       resetSchedulers: new Map(),

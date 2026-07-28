@@ -15,6 +15,7 @@
  *
  * @module
  */
+import { ERROR_KINDS } from "@comis/core";
 import type { DiagnosticRow } from "@comis/memory";
 
 /**
@@ -242,6 +243,7 @@ export const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   // finding — finding + entry MOVE TOGETHER.
   "subagent_killed",
   "cron_ownership_reconciliation",
+  "cron_timer_health",
   // The four persisted autonomy/durable-run signals
   // are EXCLUDED from the generic `health_signal:<label>` rollup.
   // durable_orphaned / autonomy_revoked / autonomy_killed each get a dedicated
@@ -286,6 +288,25 @@ export function cronOwnershipFailureFromRow(row: DiagnosticRow): { errorCode: st
       && typeof parsed.errorCode === "string"
       && CRON_OWNERSHIP_ERROR_CODES.has(parsed.errorCode)
       ? { errorCode: parsed.errorCode }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function cronTimerDegradationFromRow(row: DiagnosticRow): { errorKind: string } | null {
+  if (row.severity === "info" || row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as {
+      signal?: unknown;
+      status?: unknown;
+      errorKind?: unknown;
+    };
+    return parsed.signal === "cron_timer_health"
+      && parsed.status === "degraded"
+      && typeof parsed.errorKind === "string"
+      && ERROR_KINDS.includes(parsed.errorKind as (typeof ERROR_KINDS)[number])
+      ? { errorKind: parsed.errorKind }
       : null;
   } catch {
     return null;

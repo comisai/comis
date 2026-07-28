@@ -2,11 +2,12 @@
 /**
  * Session index event types for the append-only session lifecycle log.
  *
- * Three discriminated-union event types are written to
+ * Four discriminated-union event types are written to
  * `~/.comis/logs/session-index.YYYY-MM-DD.jsonl`:
  *
  *   - `session_started` — once per session, fired from pi-event-bridge
  *     inside the !alreadyEmitted guard
+ *   - `execution_started` — once per execution, before model invocation
  *   - `turn_completed` — once per LLM turn, fired from the
  *     `observability:token_usage` bus event which carries BOTH input
  *     AND output tokens
@@ -48,6 +49,25 @@ export interface SessionStartedEvent extends SessionIndexEventBase {
   readonly agentId: string;
   /** Initial execution ID(s) for this session. */
   readonly traceIds: string[];
+}
+
+/** Emitted once when an execution enters the agent loop. */
+export interface ExecutionStartedEvent extends SessionIndexEventBase {
+  readonly event: "execution_started";
+  /** Formatted session key. */
+  readonly sessionId: string;
+  /** Formatted session key (same as sessionId, explicit for readers). */
+  readonly sessionKey: string;
+  /** Inbound channel message ID that initiated this execution. */
+  readonly messageId?: string;
+  /** Execution trace identifier. */
+  readonly traceId: string;
+  /** Agent ID. */
+  readonly agentId: string;
+  /** Channel type, empty when no request context is active. */
+  readonly channelType: string;
+  /** Platform chat ID. */
+  readonly channelId: string;
 }
 
 /**
@@ -101,5 +121,6 @@ export interface SessionEndedEvent extends SessionIndexEventBase {
 /** Discriminated union of all session index event types. */
 export type SessionIndexEvent =
   | SessionStartedEvent
+  | ExecutionStartedEvent
   | TurnCompletedEvent
   | SessionEndedEvent;

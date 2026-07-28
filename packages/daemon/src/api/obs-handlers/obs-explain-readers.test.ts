@@ -189,6 +189,35 @@ describe("makeRealReader REAL production layout (workspace/sessions + pointer)",
     expect(records.some((r) => r.type === "tool.result_offloaded")).toBe(true);
   });
 
+  it("readSessionRecords recovers a co-located trajectory when workspace recreation omitted its pointer", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = makeRealSessionDir(dataDir);
+    fs.unlinkSync(`${sessionFile}.trajectory-path.json`);
+
+    const failureEvent = JSON.stringify({
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "tool.result",
+      seq: 1,
+      sessionId: SESSION_KEY,
+      sessionKey: SESSION_KEY,
+      data: {
+        toolName: "read",
+        success: false,
+        errorKind: "dependency",
+        classifiedFailureBy: "sdk_iserror",
+      },
+    });
+    fs.writeFileSync(`${sessionFile}.trajectory.jsonl`, `${failureEvent}\n`, "utf-8");
+
+    const reader = makeRealReader(dataDir);
+    const records = await reader.readSessionRecords(SESSION_KEY);
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.sessionKey).toBe(SESSION_KEY);
+    expect((records[0]?.data as Record<string, unknown>)?.errorKind).toBe("dependency");
+  });
+
   it("readSessionMetadata reads the <file>_session-metadata.json companion next to the session JSONL (sessionEnd rollup)", async () => {
     const dataDir = tmpDataDir();
     const sessionFile = makeRealSessionDir(dataDir);
@@ -406,6 +435,26 @@ describe("makeRealReader.readSessionMetadata", () => {
     fs.writeFileSync(realMetadataPath(dataDir), "{ corrupt json not closed", "utf-8");
     const reader = makeRealReader(dataDir);
     expect(await reader.readSessionMetadata(SESSION_KEY)).toBeNull();
+  });
+});
+
+describe("makeRealReader.readLosslessToolEvidence", () => {
+  it("does not invent a non-canonical error kind when LCD lacks classification", async () => {
+    const contextBrowse = {
+      readToolOutcomes: vi.fn(() => ({
+        messageCount: 2,
+        toolResultCount: 1,
+        truncated: false,
+        outcomes: [{ seq: 2, toolName: "read", isError: true }],
+      })),
+    } as unknown as NonNullable<Parameters<typeof makeRealReader>[3]>;
+    const reader = makeRealReader(tmpDataDir(), undefined, undefined, contextBrowse);
+
+    const evidence = await reader.readLosslessToolEvidence!(SESSION_KEY);
+    const data = evidence!.records[0]!.data as Record<string, unknown>;
+
+    expect(data.success).toBe(false);
+    expect(data).not.toHaveProperty("errorKind");
   });
 });
 

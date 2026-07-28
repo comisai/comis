@@ -97,17 +97,17 @@ describe("daemon file permission hardening", () => {
     }
   });
 
-  it("source contains openSync with mode 0o600 for log file creation", async () => {
+  it("source truncates each console capture with private permissions", async () => {
     const fs = await import("node:fs");
     const url = await import("node:url");
     const sourcePath = url.fileURLToPath(new URL("./daemon.ts", import.meta.url));
     const source = fs.readFileSync(sourcePath, "utf-8");
 
-    // openSync for log file should include 0o600
+    // The raw console capture is bounded to one run and remains private.
     const openCalls = source.match(/openSync\([^)]+\)/g) ?? [];
     expect(openCalls.length).toBeGreaterThanOrEqual(1);
 
-    const logOpenCall = openCalls.find((c) => c.includes('"a"'));
+    const logOpenCall = openCalls.find((c) => c.includes('"w"'));
     expect(logOpenCall).toBeDefined();
     expect(logOpenCall).toContain("0o600");
   });

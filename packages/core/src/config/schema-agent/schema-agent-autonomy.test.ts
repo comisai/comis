@@ -204,6 +204,8 @@ describe("degradeAutonomy (honest legible degrade on a failed preflight)", () =>
     // The hint must be actionable (name a remediation), not empty.
     expect(typeof signal.hint).toBe("string");
     expect(signal.hint.length).toBeGreaterThan(0);
+    expect(signal.hint).toContain("On Linux");
+    expect(signal.hint).toContain("non-Linux");
   });
 
   it("namespacePreflightOk:true (the default) leaves the resolved profile UNCHANGED + no signal", () => {

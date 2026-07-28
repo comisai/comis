@@ -106,7 +106,7 @@ export async function connectServer(
       // (logs WARN with errorKind:"network"|"dependency" and returns
       // verdict:"safe"). The only throw path here is verdict==="malicious".
       const osvResult = await osvMalwareCheck(pkg.name, pkg.ecosystem, {
-        cacheDir: DEFAULT_OSV_CACHE_DIR,
+        cacheDir: deps.osvCacheDir ?? DEFAULT_OSV_CACHE_DIR,
         ttlMs: config.osvCacheTtlMs ?? 86_400_000,
         logger,
       });

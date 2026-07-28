@@ -112,7 +112,7 @@ export async function applyRotationPolicy(
         await pipeline(
           createReadStream(entry.path),
           createGzip(),
-          createWriteStream(gzPath),
+          createWriteStream(gzPath, { flags: "wx", mode: 0o600 }),
         );
         await fs.unlink(entry.path);
         entry.path = gzPath; // update for subsequent steps

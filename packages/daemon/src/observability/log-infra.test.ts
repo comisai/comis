@@ -233,6 +233,12 @@ describe("createFileTransport", () => {
     expect(getPipelineTargetName(transport, 1)).toBe("pino/file");
   });
 
+  it("disables the transport exit hook so shutdown owns its deadline", () => {
+    const transport = createFileTransport(defaultConfig);
+
+    expect(transport.worker?.autoEnd).toBe(false);
+  });
+
   it("returns only pino-roll when under pm2 (stdout skipped)", () => {
     process.env.PM2_HOME = "/home/user/.pm2";
     const transport = createFileTransport(defaultConfig);
@@ -261,6 +267,13 @@ describe("createFileTransport", () => {
     const rollOpts = getPipelineTarget(transport, 0);
 
     expect(rollOpts.mkdir).toBe(true);
+  });
+
+  it("creates every rotated daemon log with owner-only permissions", () => {
+    const transport = createFileTransport(defaultConfig);
+    const rollOpts = getPipelineTarget(transport, 0);
+
+    expect(rollOpts.mode).toBe(0o600);
   });
 
   it("sets removeOtherLogFiles:true in limit", () => {

@@ -44,6 +44,7 @@ import {
   McpDisconnectContract,
   McpReconnectContract,
   McpTestContract,
+  safePath,
   stripInternalFields,
   systemGetEnv,
 } from "@comis/core";
@@ -66,7 +67,10 @@ import type { RpcHandler } from "./types.js";
 // AuthApiDeps.mutableSecretManager (required). Production wires it always.
 import type { WorkspaceApiDeps } from "./types.js";
 import type { MutableSecretManager } from "@comis/core";
-export type McpHandlerDeps = WorkspaceApiDeps & { mutableSecretManager?: MutableSecretManager };
+export type McpHandlerDeps = WorkspaceApiDeps & {
+  mutableSecretManager?: MutableSecretManager;
+  dataDir?: string;
+};
 
 import { looksLikeSecretValue } from "@comis/core";
 // Persisted-entry construction extracted (single source of
@@ -730,6 +734,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const tempManager = createMcpClientManager({
         logger: deps.logger,
         connectTimeoutMs: 15_000,
+        ...(deps.dataDir !== undefined
+          ? { osvCacheDir: safePath(deps.dataDir, "cache", "osv") }
+          : {}),
       });
 
       try {
