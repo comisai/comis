@@ -737,6 +737,35 @@ describe("hardenDataDirPermissions", () => {
     }
     expect(fs.statSync(outsideArtifact).mode & 0o777).toBe(0o644);
   });
+
+  it("hardens existing structured and JSONL logs without following symlinks", () => {
+    fs.chmodSync(testDir, 0o700);
+    const logsDir = nodePath.join(testDir, "logs");
+    fs.mkdirSync(logsDir, { mode: 0o755 });
+    const daemonLog = nodePath.join(logsDir, "daemon.42.log");
+    const sessionIndex = nodePath.join(logsDir, "session-index.2026-07-28.jsonl");
+    fs.writeFileSync(daemonLog, "{}\n", { mode: 0o644 });
+    fs.writeFileSync(sessionIndex, "{}\n", { mode: 0o644 });
+    fs.chmodSync(logsDir, 0o755);
+    fs.chmodSync(daemonLog, 0o644);
+    fs.chmodSync(sessionIndex, 0o644);
+
+    const outsideLog = nodePath.join(testDir, "outside.log");
+    fs.writeFileSync(outsideLog, "{}\n", { mode: 0o644 });
+    fs.symlinkSync(outsideLog, nodePath.join(logsDir, "outside-link.log"));
+
+    const corrections = hardenDataDirPermissions(testDir);
+
+    expect(fs.statSync(logsDir).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(daemonLog).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(sessionIndex).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(outsideLog).mode & 0o777).toBe(0o644);
+    expect(corrections).toContainEqual({
+      file: daemonLog,
+      oldMode: 0o644,
+      newMode: 0o600,
+    });
+  });
 });
 
 describe("runPreflightDoctor", () => {
