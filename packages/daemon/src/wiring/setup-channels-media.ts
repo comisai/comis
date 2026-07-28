@@ -525,12 +525,18 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
   };
 
   // Build audioPreflight callback (wraps transcriber + resolveAttachment)
-  const botNames = Object.values(container.config.agents)
+  const configuredBotNames = Object.values(container.config.agents)
     .map((a) => a.name)
     .filter((n): n is string => typeof n === "string" && n.length > 0);
 
   const preflightFn = transcriber
     ? async (msg: NormalizedMessage) => {
+        const botNames = [
+          ...configuredBotNames,
+          ...(msg.channelType === "telegram"
+            ? tgPlugin?.getBotMentionNames() ?? []
+            : []),
+        ];
         return audioPreflight(
           {
             transcriber,

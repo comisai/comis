@@ -46,6 +46,8 @@ export interface TelegramAdapterDeps {
 export interface TelegramAdapterHandle extends ChannelPort {
   /** Grammy Bot instance for media resolver creation. */
   readonly bot: Bot;
+  /** Current platform handle used to recognize a spoken group mention. */
+  getBotMentionNames(): readonly string[];
 }
 
 // ---------------------------------------------------------------------------
