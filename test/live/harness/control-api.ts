@@ -58,7 +58,14 @@ import type { MediaKind } from "./channel-emulator.js";
 // media/fault routes use — these are NOT part of the channel-agnostic oracle
 // surface (the Signal send/react/explain proof does not exercise them), so they
 // stay scoped to the telegram emulator until a second channel needs them.
-import type { FailOpts, MediaMeta, PlaceInput, TgFault } from "../emulators/telegram/tg-emulator.js";
+import type {
+  FailOpts,
+  ForumServiceKind,
+  InjectOpts,
+  MediaMeta,
+  PlaceInput,
+  TgFault,
+} from "../emulators/telegram/tg-emulator.js";
 
 /**
  * The closed media-kind union as a runtime set, so the media route can validate
@@ -70,6 +77,21 @@ const MEDIA_KINDS = ["photo", "voice", "document", "video", "video_note"] as con
 /** Type guard: is `value` one of the closed {@link MediaKind} union members? */
 function isMediaKind(value: unknown): value is MediaKind {
   return typeof value === "string" && (MEDIA_KINDS as readonly string[]).includes(value);
+}
+
+/** Closed forum-service kinds the production Telegram inbound filter recognizes. */
+const FORUM_SERVICE_KINDS = [
+  "forum_topic_created",
+  "forum_topic_edited",
+  "forum_topic_closed",
+  "forum_topic_reopened",
+  "general_forum_topic_hidden",
+  "general_forum_topic_unhidden",
+] as const satisfies readonly ForumServiceKind[];
+
+/** Type guard for the closed {@link ForumServiceKind} route input. */
+function isForumServiceKind(value: unknown): value is ForumServiceKind {
+  return typeof value === "string" && (FORUM_SERVICE_KINDS as readonly string[]).includes(value);
 }
 
 /**
@@ -85,7 +107,14 @@ export interface ControlEmulator {
     chat: { readonly chatId: number },
     from: { id: number; firstName: string; username?: string },
     text: string,
+    opts?: InjectOpts,
   ): number;
+  /**
+   * Queue a Telegram forum-service message. This Telegram-specific extension is
+   * intentionally optional for non-Telegram emulators; the service route returns
+   * an honest 501 when an emulator does not implement it.
+   */
+  injectServiceMessage?(chat: { readonly chatId: number }, kind: ForumServiceKind): number;
   /**
    * Queue an inbound reaction-ADD on an EXISTING bot reply (`botMessageId`).
    * Mints NO message id (the reacted-to message already exists) — returns
@@ -174,6 +203,16 @@ export interface InjectMessageParams {
   readonly fromFirstName?: string;
   /** Optional sender @username. */
   readonly fromUsername?: string;
+  /** Optional Telegram addressing/threading metadata for group-shaped drives. */
+  readonly opts?: InjectOpts;
+}
+
+/** Parameters for the forum-service handler / `ControlClient.injectService`. */
+export interface InjectServiceParams {
+  /** The forum/supergroup chat that receives the service update. */
+  readonly chatId: number;
+  /** The closed service-message kind the production adapter filters. */
+  readonly kind: ForumServiceKind;
 }
 
 /** Parameters for the isolated chat-reset handler / `ControlClient.resetChat`. */
@@ -339,6 +378,11 @@ export interface ControlClient {
    */
   injectEdit(params: InjectEditParams): Promise<void>;
   /**
+   * Inject a forum-service update through the same handler as
+   * `POST /control/chats/:id/service`.
+   */
+  injectService(params: InjectServiceParams): Promise<number>;
+  /**
    * Block for new outbounds after `afterMessageId` (the in-process equivalent of
    * `GET /control/chats/:id/outbound`). Returns `[]` on timeout — an honest
    * no-reply, never a fabricated success.
@@ -413,6 +457,51 @@ function toStr(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+type InjectOptsResult =
+  | { readonly ok: true; readonly value?: InjectOpts }
+  | { readonly ok: false };
+
+/**
+ * Strictly validate Telegram addressing metadata at the HTTP trust boundary.
+ * Unknown keys and ambiguous bot+user reply attribution are rejected instead
+ * of silently degrading a group test into a plain message.
+ */
+function resolveInjectOpts(raw: unknown): InjectOptsResult {
+  if (raw === undefined) return { ok: true };
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { ok: false };
+  const input = raw as Record<string, unknown>;
+  const allowedKeys = new Set(["mention", "command", "replyTo", "replyToUser", "thread", "spoiler"]);
+  if (Object.keys(input).some((key) => !allowedKeys.has(key))) return { ok: false };
+
+  const booleanKeys = ["mention", "command", "spoiler"] as const;
+  if (booleanKeys.some((key) => input[key] !== undefined && typeof input[key] !== "boolean")) {
+    return { ok: false };
+  }
+  const replyTo = input["replyTo"] === undefined ? undefined : toNum(input["replyTo"]);
+  const replyToUser = input["replyToUser"] === undefined ? undefined : toNum(input["replyToUser"]);
+  const thread = input["thread"] === undefined ? undefined : toNum(input["thread"]);
+  if (
+    (input["replyTo"] !== undefined && replyTo === undefined) ||
+    (input["replyToUser"] !== undefined && replyToUser === undefined) ||
+    (input["thread"] !== undefined && thread === undefined) ||
+    (replyTo !== undefined && replyToUser !== undefined)
+  ) {
+    return { ok: false };
+  }
+
+  return {
+    ok: true,
+    value: {
+      ...(input["mention"] === true ? { mention: true } : {}),
+      ...(input["command"] === true ? { command: true } : {}),
+      ...(replyTo !== undefined ? { replyTo } : {}),
+      ...(replyToUser !== undefined ? { replyToUser } : {}),
+      ...(thread !== undefined ? { thread } : {}),
+      ...(input["spoiler"] === true ? { spoiler: true } : {}),
+    },
+  };
+}
+
 /**
  * Resolve a location body into the discriminated {@link PlaceInput}, or
  * `undefined` if it is neither a valid plain point nor a valid venue (→ 400 at
@@ -470,6 +559,8 @@ const CHAT_LOCATION_PATH = /^\/control\/chats\/(-?\d+)\/location\/?$/;
 const CHAT_CALLBACKS_PATH = /^\/control\/chats\/(-?\d+)\/callbacks\/?$/;
 /** The `/control/chats/:id/edits` path → the captured chat id (the inject-edit route). */
 const CHAT_EDITS_PATH = /^\/control\/chats\/(-?\d+)\/edits\/?$/;
+/** The `/control/chats/:id/service` path → the captured chat id (forum service route). */
+const CHAT_SERVICE_PATH = /^\/control\/chats\/(-?\d+)\/service\/?$/;
 /** The `/control/chats/:id/reset` path → the captured chat id. */
 const CHAT_RESET_PATH = /^\/control\/chats\/(-?\d+)\/reset\/?$/;
 /** The `/control/faults` path — POST sets a fault, DELETE clears all (the fault-injection route). */
@@ -499,8 +590,23 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
         ...(params.fromUsername !== undefined ? { username: params.fromUsername } : {}),
       },
       params.text,
+      params.opts,
     );
     return { messageId };
+  }
+
+  /** POST /control/chats/:id/service — queue a filtered forum-service update. */
+  function handleInjectService(
+    chatId: number,
+    params: InjectServiceParams,
+  ): { ok: true; messageId: number } | { ok: false; error: string } {
+    if (emulator.injectServiceMessage === undefined) {
+      return { ok: false, error: "service injection is not implemented by this channel emulator" };
+    }
+    return {
+      ok: true,
+      messageId: emulator.injectServiceMessage({ chatId }, params.kind),
+    };
   }
 
   /**
@@ -666,11 +772,16 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       const body = parseControlBody(ctx.body);
       const fromUserId = toNum(body["fromUserId"]);
       const text = toStr(body["text"]);
-      if (fromUserId === undefined || text === undefined) {
+      const opts = resolveInjectOpts(body["opts"]);
+      if (fromUserId === undefined || text === undefined || !opts.ok) {
         // Bad input → 400 (defensive; never crash).
         return {
           status: 400,
-          body: { ok: false, error: "fromUserId (number) and text (string) are required" },
+          body: {
+            ok: false,
+            error:
+              "fromUserId (number), text (string), and optional strict opts:{ mention, command, replyTo, replyToUser, thread, spoiler } are required",
+          },
         };
       }
       const params: InjectMessageParams = {
@@ -679,8 +790,29 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
         text,
         ...(toStr(body["fromFirstName"]) !== undefined ? { fromFirstName: toStr(body["fromFirstName"])! } : {}),
         ...(toStr(body["fromUsername"]) !== undefined ? { fromUsername: toStr(body["fromUsername"])! } : {}),
+        ...(opts.value !== undefined ? { opts: opts.value } : {}),
       };
       return { status: 200, body: handleInject(chatId, params) };
+    }
+
+    // POST /control/chats/:id/service (inject a filtered forum-service message)
+    const serviceMatch = ctx.path.match(CHAT_SERVICE_PATH);
+    if (serviceMatch && ctx.httpMethod === "POST") {
+      const chatId = Number(serviceMatch[1]);
+      const body = parseControlBody(ctx.body);
+      const kind = body["kind"];
+      if (!isForumServiceKind(kind)) {
+        return {
+          status: 400,
+          body: {
+            ok: false,
+            error:
+              "kind must be one of forum_topic_created|forum_topic_edited|forum_topic_closed|forum_topic_reopened|general_forum_topic_hidden|general_forum_topic_unhidden",
+          },
+        };
+      }
+      const result = handleInjectService(chatId, { chatId, kind });
+      return { status: result.ok ? 200 : 501, body: result };
     }
 
     // POST /control/chats/:id/reactions (the inject-reaction route)
@@ -955,6 +1087,13 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
         fromUserId: params.fromUserId ?? 1,
       });
       return Promise.resolve();
+    },
+    injectService(params) {
+      const result = handleInjectService(params.chatId, params);
+      if (!result.ok) {
+        throw new Error(`injectService: ${result.error}`);
+      }
+      return Promise.resolve(result.messageId);
     },
     waitForOutbound(params) {
       return handleOutbound(params.chatId, params.afterMessageId, params.waitMs);

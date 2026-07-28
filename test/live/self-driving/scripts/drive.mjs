@@ -13,6 +13,8 @@
 //         printf '<one-line text>\n' | node drive.mjs <chatId> -
 //         node drive.mjs <chatId> @/path/to/message.txt
 //   - DATA: data dir (for the trajectory turn-end watch). env DATA also honored. Empty → wire-only mode.
+//   - INJECT_OPTS: optional JSON object carrying Telegram mention/reply/thread metadata, for example
+//     `{"mention":true,"replyTo":42,"thread":7}`. The control route validates the closed shape.
 //   - Use `-` or `@file` for credential-bearing prompts so values never enter argv/process listings.
 //   - NOTE the DAG caveat: a `pipeline`/`graph.execute` turn ENDS at the agent's "running it now" answer,
 //     then the GRAPH runs separately — poll `graph.status`/the daemon log for the final node, not this.
@@ -51,6 +53,19 @@ if (Number.isNaN(quiesceMs) || Number.isNaN(maxMs)) {
   process.exit(2);
 }
 const DATA = dataArg || rig.dataDir;
+let injectOpts;
+if (process.env.INJECT_OPTS) {
+  try {
+    injectOpts = JSON.parse(process.env.INJECT_OPTS);
+  } catch {
+    console.error("drive.mjs: INJECT_OPTS must be a valid JSON object");
+    process.exit(2);
+  }
+  if (injectOpts === null || typeof injectOpts !== "object" || Array.isArray(injectOpts)) {
+    console.error("drive.mjs: INJECT_OPTS must be a JSON object");
+    process.exit(2);
+  }
+}
 // FROMUSER (env) — drive a chat as a DIFFERENT sender than the chatId. The session/trajectory stays
 // keyed by chatId, but the inbound message author is FROMUSER. Lets one trusted sender drive N distinct
 // chat-SESSIONS (reflection anti-domination cardinality is distinct (sessionId, sender) — so two chats
@@ -95,7 +110,7 @@ const getOutbound = async (after, waitMs) => {
 const inject = async (t) =>
   (await fetch(`${base}/control/chats/${chatId}/messages`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ fromUserId: fromUser, text: t }),
+    body: JSON.stringify({ fromUserId: fromUser, text: t, opts: injectOpts }),
   })).json();
 
 // v2: a message is PROGRESS (not the final answer) if it's a tool/announce/checklist/plan line.
