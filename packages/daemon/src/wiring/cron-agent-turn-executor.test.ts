@@ -54,6 +54,17 @@ function failedExecution(
   };
 }
 
+function completedWithToolErrors(
+  sessionKey: ExecutionResult["sessionKey"],
+): ExecutionResult {
+  return {
+    ...successfulExecution(sessionKey),
+    response: "Queue healthy; one optional source was unavailable.",
+    finishReason: "completed_with_tool_errors",
+    terminalErrorKind: "dependency",
+  };
+}
+
 function target() {
   const destinationEndpoint = {
     channelType: "telegram",
@@ -227,6 +238,31 @@ describe("cron governed agent-turn executor", () => {
       },
       signal: expect.any(AbortSignal),
     });
+  });
+
+  it("delivers a final cron response that completed with recoverable tool errors", async () => {
+    const deps = makeDeps();
+    vi.mocked(deps._executor.execute).mockImplementationOnce(async (_message, sessionKey) => (
+      completedWithToolErrors(sessionKey)
+    ));
+    const execute = createCronAgentTurnExecutor(deps);
+
+    const result = await execute(input(), new AbortController().signal);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.value.kind !== "agent_turn") return;
+    expect(result.value.outcome.execution).toEqual({
+      status: "completed",
+      finishReason: "completed_with_tool_errors",
+      errorKind: "dependency",
+    });
+    expect(result.value.outcome.delivery).toMatchObject({
+      status: "accepted",
+      deliveredChunks: 1,
+    });
+    expect(deps.deliverText).toHaveBeenCalledWith(expect.objectContaining({
+      text: "Queue healthy; one optional source was unavailable.",
+    }));
   });
 
   it("consumes a configured gate as a closed pre-model skip when capability is disabled", async () => {
