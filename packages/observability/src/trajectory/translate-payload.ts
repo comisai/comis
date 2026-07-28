@@ -245,6 +245,9 @@ export function translatePayload(
         costUsd: payload.costUsd,
         toolStats: payload.toolStats,
         breakerTripCount: payload.breakerTripCount,
+        topErrorKinds: payload.topErrorKinds,
+        source: payload.source,
+        endReason: payload.endReason,
       };
 
     case "memory:injected":

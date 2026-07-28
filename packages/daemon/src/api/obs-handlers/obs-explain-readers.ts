@@ -151,6 +151,11 @@ const AUDIT_QUERY_LIMIT = 1000;
  * real implementation reads files; tests inject fixture records.
  */
 export interface IncidentSourceReader {
+  /**
+   * Resolve an execution trace through the durable session-summary store when
+   * the bounded session index no longer contains the execution.
+   */
+  resolveTraceSessionKey?(traceId: string, includeSynthetic?: boolean): Promise<string>;
   readSessionRecords(sessionKey: string): Promise<Array<Record<string, unknown>>>;
   readCacheTraceRecords(sessionKey: string): Promise<Array<Record<string, unknown>>>;
   readSessionMetadata(sessionKey: string): Promise<Record<string, unknown> | null>;
@@ -631,6 +636,31 @@ export function makeRealReader(
   const logsDir = safePath(base, "logs");
 
   return {
+    async resolveTraceSessionKey(traceId: string, includeSynthetic = false): Promise<string> {
+      if (obsStore === undefined) return "";
+      const rows = obsStore.queryDiagnostics({
+        category: "session_summary",
+        limit: DIAGNOSTICS_QUERY_LIMIT,
+      });
+      for (const row of rows) {
+        if (row.traceId !== traceId || row.sessionKey === undefined || row.sessionKey.length === 0) {
+          continue;
+        }
+        if (!includeSynthetic) {
+          let source: unknown;
+          try {
+            const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+            source = details.source;
+          } catch {
+            continue;
+          }
+          if (source !== "runtime") continue;
+        }
+        return row.sessionKey;
+      }
+      return "";
+    },
+
     async readSessionRecords(sessionKey: string): Promise<Array<Record<string, unknown>>> {
       const sessionFile = resolveSessionFileAcrossWorkspaces(base, sessionKey, workspaceDirs);
       if (sessionFile !== undefined) {

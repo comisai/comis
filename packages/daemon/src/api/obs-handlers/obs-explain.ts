@@ -139,7 +139,7 @@ function successfulExecutionEndReason(
  * trajectory. Durable scheduler sessions reuse one metadata file, so metadata
  * for an earlier trace is no longer authoritative after the next cron turn.
  */
-function metadataForCronExecution(
+function metadataForExecution(
   metadata: Record<string, unknown> | null,
   records: ReadonlyArray<Record<string, unknown>>,
   traceId: string,
@@ -152,9 +152,13 @@ function metadataForCronExecution(
   const hasMatchingSessionEnd = Object.keys(matchingSessionEnd).length > 0;
   const summary = recordData(lastRecordOfType(records, "session.summary"));
   const durationMs = matchingMetadata === undefined ? executionDurationMs(records) : undefined;
+  const summaryEndReason =
+    typeof summary.endReason === "string" && summary.endReason.length > 0
+      ? summary.endReason
+      : undefined;
   const endReason = hasMatchingSessionEnd
     ? undefined
-    : successfulExecutionEndReason(records, summary);
+    : summaryEndReason ?? successfulExecutionEndReason(records, summary);
 
   return {
     ...(matchingMetadata ?? {}),
@@ -262,7 +266,7 @@ export async function assembleIncidentReportFromSources(
   const taskCheck = params.rootRunId !== undefined && reader.readTaskCheckLifecycle !== undefined
     ? await reader.readTaskCheckLifecycle(params.rootRunId)
     : null;
-  const sessionKey = params.rootRunId
+  const indexedSessionKey = params.rootRunId
     ? await resolveRootRunToSession(dataDir, params.rootRunId, taskCheck)
     : params.traceId
       ? await resolveTraceToSession(dataDir, params.traceId, params.includeSynthetic)
@@ -270,6 +274,13 @@ export async function assembleIncidentReportFromSources(
   const cronExecutionTraceId = params.rootRunId !== undefined
     ? traceIdFromCronRootRun(params.rootRunId)
     : undefined;
+  const fallbackTraceId = params.traceId ?? cronExecutionTraceId;
+  const sessionKey =
+    indexedSessionKey.length === 0 &&
+      fallbackTraceId !== undefined &&
+      reader.resolveTraceSessionKey !== undefined
+      ? await reader.resolveTraceSessionKey(fallbackTraceId, params.includeSynthetic)
+      : indexedSessionKey;
 
   // A traceId OR a rootRunId that resolves to "" (no row in
   // today/yesterday's session index, and not a synthetic root) is UNRESOLVABLE —
@@ -295,21 +306,27 @@ export async function assembleIncidentReportFromSources(
   const sessionRollup = await reader.readDiagnosticsRollup(sessionKey);
   const taskExecutionSessionKey = taskCheck === null
     ? ""
-    : await resolveTraceToSession(dataDir, taskCheck.correlationId, params.includeSynthetic);
+    : await resolveTraceToSession(dataDir, taskCheck.correlationId, params.includeSynthetic)
+      || await reader.resolveTraceSessionKey?.(
+        taskCheck.correlationId,
+        params.includeSynthetic,
+      )
+      || "";
   const taskSessionRecords = taskCheck === null || taskExecutionSessionKey.length === 0
     ? []
     : await reader.readSessionRecords(taskExecutionSessionKey);
   const taskSessionCache = taskCheck === null || taskExecutionSessionKey.length === 0
     ? []
     : await reader.readCacheTraceRecords(taskExecutionSessionKey);
+  const executionTraceId = params.traceId ?? cronExecutionTraceId;
   const selectedRecords = taskCheck !== null
     ? taskSessionRecords
-    : cronExecutionTraceId === undefined
+    : executionTraceId === undefined
       ? sessionRecords
-      : sessionRecords.filter((record) => recordHasTraceId(record, cronExecutionTraceId));
+      : sessionRecords.filter((record) => recordHasTraceId(record, executionTraceId));
   const losslessEvidence =
     taskCheck === null &&
-      cronExecutionTraceId === undefined &&
+      executionTraceId === undefined &&
       selectedRecords.length === 0 &&
       reader.readLosslessToolEvidence !== undefined
       ? await reader.readLosslessToolEvidence(sessionKey)
@@ -319,21 +336,21 @@ export async function assembleIncidentReportFromSources(
     : losslessEvidence?.records ?? [];
   const cache = taskCheck !== null
     ? taskSessionCache
-    : cronExecutionTraceId === undefined
+    : executionTraceId === undefined
       ? sessionCache
-      : sessionCache.filter((record) => recordHasTraceId(record, cronExecutionTraceId));
+      : sessionCache.filter((record) => recordHasTraceId(record, executionTraceId));
   const metadata = taskCheck !== null
     ? metadataForTaskCheckExecution(sessionMetadata, taskCheck)
-    : cronExecutionTraceId === undefined
+    : executionTraceId === undefined
       ? sessionMetadata
-      : metadataForCronExecution(sessionMetadata, records, cronExecutionTraceId);
+      : metadataForExecution(sessionMetadata, records, executionTraceId);
   // Diagnostics rows are session-scoped and last-write-wins. They cannot
   // safely contribute to a historical cron execution report.
-  const rollup = taskCheck !== null || cronExecutionTraceId !== undefined ? null : sessionRollup;
+  const rollup = taskCheck !== null || executionTraceId !== undefined ? null : sessionRollup;
   // A durable scheduler session emits session.started only once. Retain that
   // single session-invariant identity envelope for channel attribution, while
   // every execution-varying record remains selected by traceId above.
-  const sessionIdentityRecords = taskCheck !== null || cronExecutionTraceId === undefined
+  const sessionIdentityRecords = taskCheck !== null || executionTraceId === undefined
     ? []
     : sessionRecords.filter((record) => record.type === "session.started");
   // The 5th source — the session's audit events (persisted
