@@ -38,6 +38,7 @@ import {
 import type { CronJob } from "./cron-types.js";
 
 const MAX_TIMER_DELAY_MS = 60_000;
+const TIMER_FAILURE_RETRY_MS = 5_000;
 
 export type CronRootRegistrationError = {
   errorKind: ErrorKind;
@@ -556,6 +557,12 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
     if (deadlines.length === 0) return;
     const earliest = Math.min(...deadlines);
     const delay = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, earliest - nowMs));
+    armTick(delay);
+  }
+
+  function armTick(delayMs: number): void {
+    cancelTimer();
+    if (!active) return;
     timer = deps.timers.setTimeout(() => {
       timer = undefined;
       void runMissedJobs().then((result) => {
@@ -564,10 +571,12 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
             step: "timer_tick",
             hint: "Inspect scheduler health and persisted cron ownership before retrying",
           });
+          armTick(TIMER_FAILURE_RETRY_MS);
+          return;
         }
         armTimer();
       });
-    }, delay);
+    }, delayMs);
     timer.unref();
   }
 
