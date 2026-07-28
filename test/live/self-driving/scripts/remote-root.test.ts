@@ -251,4 +251,12 @@ describe("local rig mode", () => {
     expect(clean).toContain("as_service_user");
     expect(clean).not.toMatch(/^\s*sudo -u "\$COMIS_USER" bash -c/mu);
   });
+
+  it("offers a tmux-backed local supervisor for shells that reap detached children", () => {
+    const restart = readFileSync(RESTART_DAEMON, "utf8");
+
+    expect(restart).toMatch(/LOCAL_SUPERVISOR[^]*tmux/u);
+    expect(restart).toMatch(/tmux new-session -d -s/u);
+    expect(restart).toMatch(/COMIS_CONFIG_PATHS[^]*daemon\.console\.log/u);
+  });
 });
