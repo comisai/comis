@@ -255,6 +255,24 @@ export const IncidentReportSchema = z.object({
       lastDegradedErrorKind: z.string().optional(),
     })
     .optional(),
+  /** Automatic inbound link-prefetch evidence aggregated over the session.
+   * The section is counts-and-duration only so operators can distinguish
+   * fetched, failed, validation-rejected, malformed, duplicate, and capped
+   * targets without exposing URLs or page content. */
+  linkPrefetch: z
+    .object({
+      attempts: z.number().int().nonnegative(),
+      detected: z.number().int().nonnegative(),
+      attempted: z.number().int().nonnegative(),
+      fetched: z.number().int().nonnegative(),
+      failed: z.number().int().nonnegative(),
+      validationRejected: z.number().int().nonnegative(),
+      invalid: z.number().int().nonnegative(),
+      duplicates: z.number().int().nonnegative(),
+      capped: z.number().int().nonnegative(),
+      durationMs: z.number().int().nonnegative(),
+    })
+    .optional(),
   /** The image-generation turn reconstructed from the
    *  session's `image.*` trajectory records (the terminal image record wins).
    *  The image cost (`costUsd`) rides HERE — `comis explain` shows it from the

@@ -62,6 +62,13 @@ function ensureTool(acc: Acc, tool: string): { ok: number; failed: number; error
   return entry;
 }
 
+function nonnegativeInteger(value: unknown): number {
+  const parsed = asNumber(value);
+  return parsed !== undefined && Number.isSafeInteger(parsed) && parsed >= 0
+    ? parsed
+    : 0;
+}
+
 // ---------------------------------------------------------------------------
 // Per-shape record handlers.
 // ---------------------------------------------------------------------------
@@ -145,6 +152,35 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       if (acc.channel === undefined && (channelType !== undefined || channelId !== undefined)) {
         acc.channel = { type: channelType ?? "", id: channelId ?? "" };
       }
+      return;
+    }
+    case "link.prefetch": {
+      const current = acc.linkPrefetch ?? {
+        attempts: 0,
+        detected: 0,
+        attempted: 0,
+        fetched: 0,
+        failed: 0,
+        validationRejected: 0,
+        invalid: 0,
+        duplicates: 0,
+        capped: 0,
+        durationMs: 0,
+      };
+      acc.linkPrefetch = {
+        attempts: current.attempts + 1,
+        detected: current.detected + nonnegativeInteger(data.detected),
+        attempted: current.attempted + nonnegativeInteger(data.attempted),
+        fetched: current.fetched + nonnegativeInteger(data.fetched),
+        failed: current.failed + nonnegativeInteger(data.failed),
+        validationRejected:
+          current.validationRejected
+          + nonnegativeInteger(data.validationRejected),
+        invalid: current.invalid + nonnegativeInteger(data.invalid),
+        duplicates: current.duplicates + nonnegativeInteger(data.duplicates),
+        capped: current.capped + nonnegativeInteger(data.capped),
+        durationMs: current.durationMs + nonnegativeInteger(data.durationMs),
+      };
       return;
     }
     case "terminal.drive_promoted": {
@@ -874,6 +910,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
               : {}),
           },
         }
+      : {}),
+    ...(acc.linkPrefetch !== undefined
+      ? { linkPrefetch: acc.linkPrefetch }
       : {}),
     // Surface the reconstructed image/vision/video/voice turns (presence-conditional; keyless voice costUsd:0 stays visible).
     ...(acc.image !== undefined ? { image: acc.image } : {}),

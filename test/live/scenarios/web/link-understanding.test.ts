@@ -34,7 +34,8 @@ const START_MARKER_RE = /<<<UNTRUSTED_[a-f0-9]+>>>/;
 const END_MARKER_RE = /<<<END_UNTRUSTED_[a-f0-9]+>>>/;
 
 /** A no-op logger satisfying the LinkRunner's { info, warn } requirement. */
-const noopLogger = { info: () => {}, warn: () => {} };
+const noopLogger = { debug: () => {}, info: () => {}, warn: () => {} };
+const fixedClock = { now: () => 0, nowDate: () => new Date(0) };
 
 // ---------------------------------------------------------------------------
 // Stage-A — warning constant + suspicious-pattern detection (pure)
@@ -93,7 +94,11 @@ describe("WEB-02 Stage-B — wrapWebContent taint markers + marker-sanitization 
   });
 
   it("createLinkRunner({enabled:false}).processMessage(text) short-circuits unchanged (no network)", async () => {
-    const runner = createLinkRunner({ config: buildLinkConfig({ enabled: false }), logger: noopLogger });
+    const runner = createLinkRunner({
+      config: buildLinkConfig({ enabled: false }),
+      logger: noopLogger,
+      clock: fixedClock,
+    });
     const text = "see https://example.com now";
     const result = await runner.processMessage(text);
     expect(result.enrichedText).toBe(text);

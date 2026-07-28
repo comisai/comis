@@ -407,6 +407,12 @@ export const TRAJECTORY_EVENT_TYPES = [
   "scheduler.task_store_degraded",
   "scheduler.task_cancelled",
   "scheduler.task_store_reset",
+
+  // Automatic inbound link-prefetch receipt. Direct-emitted by the executor
+  // after the session recorder opens because preprocessing necessarily runs
+  // before the per-session EventBus bridge subscribes. Counts and duration
+  // only — never a URL, page title, response body, or error message.
+  "link.prefetch",
 ] as const;
 
 /** Closed union of trajectory event type strings. */

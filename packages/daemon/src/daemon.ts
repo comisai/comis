@@ -1908,7 +1908,13 @@ async function bootAgents(
     ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner,
     mediaTempManager, mediaSemaphore, audioConverter,
     transcriber, ssrfFetcher, fileExtractor, voiceSelection,
-  } = await _setupMedia({ container, skillsLogger, onSuspiciousContent, audioSelector });
+  } = await _setupMedia({
+    container,
+    skillsLogger,
+    clock,
+    onSuspiciousContent,
+    audioSelector,
+  });
 
   // 6.6.7.5. RPC bridge (deferred dispatch) -- moved before setupChannels so rpcCall
   // can be threaded into channel config command handling.

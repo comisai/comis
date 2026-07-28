@@ -191,4 +191,6 @@ export interface Acc {
   backgroundRecoveryByTask: Map<string, { unresolved: boolean; toolName?: string }>;
   backgroundRecoveryLastTaskId?: string;
   backgroundRecoveryLastToolName?: string;
+  /** Session aggregate of direct `link.prefetch` counts-only receipts. */
+  linkPrefetch?: NonNullable<IncidentSignals["linkPrefetch"]>;
 }

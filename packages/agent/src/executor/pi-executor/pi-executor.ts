@@ -61,6 +61,7 @@ import {
   formatSessionKey,
   createConversationRef,
   emitObservationalEventSafely,
+  LinkPrefetchReceiptSchema,
   safePath,
   sanitizeLogString,
   toSafeErrorLogString,
@@ -1573,6 +1574,14 @@ async function runSessionLocked(
       { err, hint: "trajectory/cache-trace recorder init failed; continuing without sidecar", errorKind: "internal" as ErrorKind },
       "Trajectory/cache-trace recorder init failed",
     );
+  }
+  if (trajectoryRecorder !== null) {
+    const receipt = LinkPrefetchReceiptSchema.safeParse(
+      msg.metadata?.linkPrefetch,
+    );
+    if (receipt.success) {
+      trajectoryRecorder.recordEvent("link.prefetch", receipt.data);
+    }
   }
 
   // Per-execution tool retry breaker (state resets each message)

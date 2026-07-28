@@ -294,6 +294,15 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
       if (linkResult.enrichedText !== msg.text) {
         enrichedMsg = { ...msg, text: linkResult.enrichedText };
       }
+      if (linkResult.receipt !== undefined) {
+        enrichedMsg = {
+          ...enrichedMsg,
+          metadata: {
+            ...enrichedMsg.metadata,
+            linkPrefetch: linkResult.receipt,
+          },
+        };
+      }
     }
 
     // 2. Media preprocessing with vision gating

@@ -37,8 +37,13 @@ function makeConfig(overrides: Partial<LinkUnderstandingConfig> = {}): LinkUnder
 }
 
 const mockLogger = {
+  debug: vi.fn(),
   info: vi.fn(),
   warn: vi.fn(),
+};
+const mockClock = {
+  now: vi.fn(() => 1_000),
+  nowDate: vi.fn(() => new Date(1_000)),
 };
 
 // ---------------------------------------------------------------------------
@@ -54,6 +59,7 @@ describe("createLinkRunner", () => {
     const runner = createLinkRunner({
       config: makeConfig({ enabled: false }),
       logger: mockLogger,
+      clock: mockClock,
     });
 
     const result = await runner.processMessage("Check https://example.com");
@@ -81,6 +87,7 @@ describe("createLinkRunner", () => {
     const runner = createLinkRunner({
       config: makeConfig(),
       logger: mockLogger,
+      clock: mockClock,
     });
 
     const result = await runner.processMessage("Hello https://example.com");
@@ -105,7 +112,10 @@ describe("createLinkRunner", () => {
     const mockFetch = vi.mocked(fetchLinkContent);
     mockFetch.mockResolvedValueOnce({
       ok: false,
-      error: new Error("HTTP 500"),
+      error: {
+        stage: "response",
+        error: new Error("HTTP 500"),
+      },
     } as any);
 
     const mockFormat = vi.mocked(formatLinkContext);
@@ -117,6 +127,7 @@ describe("createLinkRunner", () => {
     const runner = createLinkRunner({
       config: makeConfig(),
       logger: mockLogger,
+      clock: mockClock,
     });
 
     const result = await runner.processMessage("Check https://example.com");
@@ -144,6 +155,7 @@ describe("createLinkRunner", () => {
     const runner = createLinkRunner({
       config: makeConfig({ maxLinks: 2 }),
       logger: mockLogger,
+      clock: mockClock,
     });
 
     const text = "https://one.com https://two.com https://three.com https://four.com https://five.com";
@@ -159,6 +171,7 @@ describe("createLinkRunner", () => {
     const runner = createLinkRunner({
       config: makeConfig(),
       logger: mockLogger,
+      clock: mockClock,
     });
 
     const result = await runner.processMessage("Hello world, no links here");
@@ -183,6 +196,7 @@ describe("createLinkRunner", () => {
     const runner = createLinkRunner({
       config: makeConfig(),
       logger: mockLogger,
+      clock: mockClock,
     });
 
     const result = await runner.processMessage("Check https://example.com");
@@ -205,6 +219,7 @@ describe("createLinkRunner", () => {
     const runner = createLinkRunner({
       config: makeConfig(),
       logger: mockLogger,
+      clock: mockClock,
     });
 
     const result = await runner.processMessage(

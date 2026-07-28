@@ -80,6 +80,26 @@ type InboundMessageProvenanceBatch = z.infer<
 export const INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE = "comis.inbound-message-provenance";
 
 /**
+ * Content-free receipt from automatic inbound link prefetching.
+ *
+ * This field is produced by the trusted media preprocessor and recorded after
+ * the session trajectory opens. It contains counts and elapsed time only:
+ * never a URL, page title, response body, or error message.
+ */
+export const LinkPrefetchReceiptSchema = z.strictObject({
+  detected: z.number().int().nonnegative(),
+  attempted: z.number().int().nonnegative(),
+  fetched: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  validationRejected: z.number().int().nonnegative(),
+  invalid: z.number().int().nonnegative(),
+  duplicates: z.number().int().nonnegative(),
+  capped: z.number().int().nonnegative(),
+  durationMs: z.number().int().nonnegative(),
+});
+export type LinkPrefetchReceipt = z.infer<typeof LinkPrefetchReceiptSchema>;
+
+/**
  * NormalizedMessage: Channel-agnostic representation of an incoming message.
  *
  * Every channel adapter converts its native message format into this shape
@@ -114,6 +134,8 @@ export const NormalizedMessageSchema = z.strictObject({
       traceId: z.guid().optional(),
       /** Canonical BCP-47 response locale resolved at the trusted ingress boundary. */
       locale: CanonicalLocaleSchema.optional(),
+      /** Trusted, counts-only automatic link-prefetch receipt. */
+      linkPrefetch: LinkPrefetchReceiptSchema.optional(),
     }).default({}),
     /** Exact physical messages represented by a synthetic coalesced turn. */
     originalMessages: z.array(OriginalInboundMessageSchema).min(1).max(10_000).optional(),

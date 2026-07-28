@@ -57,7 +57,7 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 19 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 20 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / promptTimeout /
@@ -111,6 +111,21 @@ export interface IncidentSignals {
     unresolvedCount: number;
     lastTaskId?: string;
     lastToolName?: string;
+  };
+  /** Aggregate of automatic inbound link-prefetch receipts in this session.
+   * Counts and elapsed time only; no URL or fetched content crosses the
+   * trajectory or incident-report boundary. */
+  linkPrefetch?: {
+    attempts: number;
+    detected: number;
+    attempted: number;
+    fetched: number;
+    failed: number;
+    validationRejected: number;
+    invalid: number;
+    duplicates: number;
+    capped: number;
+    durationMs: number;
   };
   failures: IncidentFailure[]; // normalized, newest-first
   breakerEvents: Array<{

@@ -162,7 +162,23 @@ describe("buildMediaPipeline", () => {
   });
 
   it("preprocessMessage calls linkRunner.processMessage when text present", async () => {
-    const lr = { processMessage: vi.fn(async (t: string) => ({ enrichedText: `enriched: ${t}` })) };
+    const receipt = {
+      detected: 1,
+      attempted: 1,
+      fetched: 1,
+      failed: 0,
+      validationRejected: 0,
+      invalid: 0,
+      duplicates: 0,
+      capped: 0,
+      durationMs: 3,
+    };
+    const lr = {
+      processMessage: vi.fn(async (t: string) => ({
+        enrichedText: `enriched: ${t}`,
+        receipt,
+      })),
+    };
     const deps = makeDeps({ linkRunner: lr as any });
     const result = await buildMediaPipeline(deps);
 
@@ -176,8 +192,9 @@ describe("buildMediaPipeline", () => {
       attachments: [],
     };
 
-    await result.preprocessMessage(msg, TEST_TURN_SCOPE);
+    const preprocessed = await result.preprocessMessage(msg, TEST_TURN_SCOPE);
     expect(lr.processMessage).toHaveBeenCalledWith("hello https://example.com");
+    expect(preprocessed.metadata.linkPrefetch).toEqual(receipt);
   });
 
   it("audioPreflight is defined when transcriber provided", async () => {

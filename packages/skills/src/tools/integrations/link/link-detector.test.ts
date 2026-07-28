@@ -4,7 +4,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { extractLinksFromMessage } from "./link-detector.js";
+import { detectLinksInMessage } from "./link-detector.js";
+
+function extractLinksFromMessage(message: string, maxLinks?: number): string[] {
+  return detectLinksInMessage(message, maxLinks).urls;
+}
 
 // ---------------------------------------------------------------------------
 // extractLinksFromMessage
@@ -59,20 +63,20 @@ describe("extractLinksFromMessage", () => {
     expect(result[0]).toBe("https://example.com/");
   });
 
-  it("skips localhost and private IPs", () => {
+  it("keeps localhost targets for the authoritative SSRF validator", () => {
     const result = extractLinksFromMessage(
       "Try http://127.0.0.1/admin and http://localhost:3000/api",
     );
 
-    expect(result).toHaveLength(0);
+    expect(result).toHaveLength(2);
   });
 
-  it("skips RFC 1918 private range IPs", () => {
+  it("keeps RFC 1918 targets for the authoritative SSRF validator", () => {
     const result = extractLinksFromMessage(
       "http://10.0.0.1/secret http://192.168.1.1/config http://172.16.0.1/admin",
     );
 
-    expect(result).toHaveLength(0);
+    expect(result).toHaveLength(3);
   });
 
   it("skips malformed/invalid URLs and excludes them from extracted-link results", () => {
@@ -106,10 +110,10 @@ describe("extractLinksFromMessage", () => {
     expect(result[0]).toContain("q=test");
   });
 
-  it("skips link-local addresses", () => {
+  it("keeps link-local targets for the authoritative SSRF validator", () => {
     const result = extractLinksFromMessage("http://169.254.169.254/latest/meta-data");
 
-    expect(result).toHaveLength(0);
+    expect(result).toHaveLength(1);
   });
 
   it("passes private targets to the authoritative SSRF validator instead of dropping them during detection", () => {

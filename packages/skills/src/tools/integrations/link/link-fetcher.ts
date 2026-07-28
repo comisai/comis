@@ -12,7 +12,7 @@
  */
 
 import type { Result } from "@comis/shared";
-import { ok, err } from "@comis/shared";
+import { ok, err, fromPromise } from "@comis/shared";
 import { systemClearTimeout, systemSetTimeout, validateUrl } from "@comis/core";
 import {
   extractReadableContent,
@@ -37,6 +37,17 @@ export interface LinkFetchResult {
   url: string;
 }
 
+export type LinkFetchFailureStage =
+  | "validation"
+  | "request"
+  | "response"
+  | "extraction";
+
+export interface LinkFetchFailure {
+  stage: LinkFetchFailureStage;
+  error: Error;
+}
+
 /**
  * Fetch the content of a URL with SSRF protection and readability extraction.
  *
@@ -54,55 +65,59 @@ export interface LinkFetchResult {
 export async function fetchLinkContent(
   url: string,
   config: LinkFetchConfig,
-): Promise<Result<LinkFetchResult, Error>> {
-  try {
-    // Step 1: SSRF guard validation -- CRITICAL security check
-    const validation = await validateUrl(url);
-    if (!validation.ok) {
-      return err(validation.error);
-    }
-
-    // Step 2: Fetch with timeout
-    const controller = new AbortController();
-    const timeoutId = systemSetTimeout(() => controller.abort(), config.fetchTimeoutMs);
-
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          "User-Agent": config.userAgentString,
-          Accept: "text/html, application/xhtml+xml, */*;q=0.8",
-        },
-        redirect: "error",
-      });
-    } finally {
-      systemClearTimeout(timeoutId);
-    }
-
-    // Step 3: Check HTTP status
-    if (!response.ok) {
-      return err(new Error(`HTTP ${response.status}`));
-    }
-
-    // Step 4: Extract readable content
-    const html = await response.text();
-    const readable = await extractReadableContent({
-      html,
-      url,
-      extractMode: "text",
-    });
-
-    const title = readable?.title ?? "";
-    const rawContent = readable?.text ?? "";
-
-    // Step 5: Truncate to maxContentChars
-    const { text: content } = truncateText(rawContent, config.maxContentChars);
-
-    return ok({ title, content, url });
-  } catch (error) {
-    return err(
-      error instanceof Error ? error : new Error(String(error)),
-    );
+): Promise<Result<LinkFetchResult, LinkFetchFailure>> {
+  // Step 1: SSRF guard validation -- CRITICAL security check
+  const validation = await validateUrl(url);
+  if (!validation.ok) {
+    return err({ stage: "validation", error: validation.error });
   }
+
+  // Step 2: Fetch with timeout
+  const controller = new AbortController();
+  const timeoutId = systemSetTimeout(() => controller.abort(), config.fetchTimeoutMs);
+  const responseResult = await fromPromise(
+    fetch(validation.value.url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": config.userAgentString,
+        Accept: "text/html, application/xhtml+xml, */*;q=0.8",
+      },
+      redirect: "error",
+    }).finally(() => {
+      systemClearTimeout(timeoutId);
+    }),
+  );
+  if (!responseResult.ok) {
+    return err({ stage: "request", error: responseResult.error });
+  }
+
+  // Step 3: Check HTTP status
+  const response = responseResult.value;
+  if (!response.ok) {
+    return err({
+      stage: "response",
+      error: new Error(`HTTP ${response.status}`),
+    });
+  }
+
+  // Step 4-5: Extract and bound readable content.
+  const extraction = await fromPromise(
+    (async (): Promise<LinkFetchResult> => {
+      const html = await response.text();
+      const readable = await extractReadableContent({
+        html,
+        url: validation.value.url.toString(),
+        extractMode: "text",
+      });
+
+      const title = readable?.title ?? "";
+      const rawContent = readable?.text ?? "";
+      const { text: content } = truncateText(rawContent, config.maxContentChars);
+      return { title, content, url: validation.value.url.toString() };
+    })(),
+  );
+  if (!extraction.ok) {
+    return err({ stage: "extraction", error: extraction.error });
+  }
+  return ok(extraction.value);
 }

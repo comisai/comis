@@ -485,6 +485,11 @@ export function assembleIncidentReport(
     ...(signals.cronWakeGate !== undefined ? { cronWakeGate: signals.cronWakeGate } : {}),
     // The memory-recall outcome (absent when the trajectory has no recall records).
     ...(signals.recall !== undefined ? { recall: signals.recall } : {}),
+    // Automatic inbound link-prefetch census. Counts and duration only; the
+    // trajectory deliberately carries no URL or fetched content.
+    ...(signals.linkPrefetch !== undefined
+      ? { linkPrefetch: signals.linkPrefetch }
+      : {}),
     // The per-reason cache breaks (absent when the session
     // had none). Bounded to CACHE_BREAKS_CAP highest-count-first; the bound pass
     // (obs-explain-bound.ts) records a truncations[] breadcrumb when it sheds the

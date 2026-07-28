@@ -2,6 +2,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
+const TEST_CLOCK = {
+  now: () => 1_700_000_000_000,
+  nowDate: () => new Date(1_700_000_000_000),
+};
+
 // ---------------------------------------------------------------------------
 // Hoisted mocks
 // ---------------------------------------------------------------------------
@@ -146,7 +151,8 @@ describe("setupMedia", () => {
 
   async function getSetupMedia() {
     const mod = await import("./setup-media.js");
-    return mod.setupMedia;
+    return (deps: Omit<Parameters<typeof mod.setupMedia>[0], "clock">) =>
+      mod.setupMedia({ ...deps, clock: TEST_CLOCK });
   }
 
   // -------------------------------------------------------------------------
@@ -633,7 +639,8 @@ describe("STT/TTS lazy-delegation — rotated key observed per call without rest
 
   async function getSetupMedia() {
     const mod = await import("./setup-media.js");
-    return mod.setupMedia;
+    return (deps: Omit<Parameters<typeof mod.setupMedia>[0], "clock">) =>
+      mod.setupMedia({ ...deps, clock: TEST_CLOCK });
   }
 
   // -------------------------------------------------------------------------
@@ -813,7 +820,8 @@ describe("setupMedia — construction follows the resolver's chosen provider", (
 
   async function getSetupMedia() {
     const mod = await import("./setup-media.js");
-    return mod.setupMedia;
+    return (deps: Omit<Parameters<typeof mod.setupMedia>[0], "clock">) =>
+      mod.setupMedia({ ...deps, clock: TEST_CLOCK });
   }
 
   /** A selector stub whose resolveStt/resolveTts return the supplied selections. */
