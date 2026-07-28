@@ -94,7 +94,7 @@ describe("buildTraceMetadata", () => {
 
     const persisted = limitTrajectoryPayloadValue(
       sanitizeForPersistence(oversized),
-    ) as TraceMetadataParams;
+    ) as typeof oversized;
     expect(persisted.toolInventory).toEqual(oversized.toolInventory);
   });
 

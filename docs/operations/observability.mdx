@@ -72,11 +72,16 @@ Three sentinel events fire once per session to bracket the trajectory with conte
 
 | Envelope | Fires | Carries | Once-per-session |
 |---|---|---|---|
-| `trace.metadata` | After `session.started` | harness, model, config, plugins, skills, prompting, redaction snapshot | Yes (latch in `pi-event-bridge.ts`) |
+| `trace.metadata` | After `session.started` | harness, model, config, chunked plugin/skill/tool inventories, prompting, redaction snapshot | Yes (latch in `pi-event-bridge.ts`) |
 | `trace.artifacts` | Before `session.ended` | finalStatus, abort, timeout, token usage, prompt-cache hit rate, compaction count, lastToolError | Yes (in `comis-session-manager.ts`) |
 | `trace.truncated` | When file fills | droppedEvents, droppedEventBytes, limitBytes | At most once per file (then writer halts) |
 
 `trace.metadata` answers "what configuration ran this session?" `trace.artifacts` answers "how did it end and what did it cost?" `trace.truncated` answers "was any data lost?" — a non-zero `droppedEvents` value means the trajectory file was capped before the session ended.
+
+Plugin, skill, and tool inventories use `{ count, chunks, truncated }`. Each inner chunk and the
+outer chunk list stay within the persistence walker's 64-item array bound, so a live inventory is
+not replaced wholesale by an array-limit sentinel. `count` is the unique pre-cap total and
+`truncated` reports whether the 4,096-entry chunk grid omitted anything.
 
 The bundle exporter reads `trace.metadata` to populate `metadata.json` and `trace.artifacts` to populate `artifacts.json`.
 

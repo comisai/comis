@@ -311,9 +311,17 @@ function buildSupplementalCaptures(
     typeof promptingRaw["userPromptPrefixText"] === "string"
       ? promptingRaw["userPromptPrefixText"]
       : undefined;
-  const skills = Array.isArray(lastMetadataData["skills"])
-    ? (lastMetadataData["skills"] as unknown[])
+  const skillsInventory =
+    typeof lastMetadataData["skills"] === "object" &&
+    lastMetadataData["skills"] !== null
+      ? (lastMetadataData["skills"] as Record<string, unknown>)
+      : {};
+  const skillChunks = Array.isArray(skillsInventory["chunks"])
+    ? skillsInventory["chunks"]
     : [];
+  const skills = skillChunks.flatMap((chunk) =>
+    Array.isArray(chunk) ? chunk : [],
+  );
 
   const prompts: { systemPrompt: string; userPromptPrefixText?: string; skills: unknown[] } = {
     systemPrompt,
