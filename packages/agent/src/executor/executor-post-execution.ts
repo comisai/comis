@@ -1358,9 +1358,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   }
 
   // Notice append is recovery-gated: surface ONLY tools that failed and were NOT
-  // recovered (no same-name success this turn) — a fail-then-retry-succeed (e.g.
-  // the NVDA pipeline's attempt-1 validation error → attempt-2 launch) must not
-  // read as a user-facing failure. Also suppressed when the model already
+  // recovered by a proven later matching invocation. An unrelated same-tool
+  // success must not hide a failure. Also suppressed when the model already
   // acknowledged the failure or the response is a silent sentinel. The
   // observability label (effectiveFinishReason) is unchanged — operators still
   // see the recovered failure in logs/system.

@@ -858,14 +858,10 @@ describe("tool-failure endReason and notice", () => {
   });
 
   // -------------------------------------------------------------------------
-  // The user-facing '[tool failure]' notice must NOT fire for a
-  // tool that FAILED then SUCCEEDED on retry in the SAME turn (recovered).
-  // Live: pipeline attempt-1 (validation) failed, attempt-2 launched the graph,
-  // yet the user still saw "[tool failure] pipeline reported an error". The notice
-  // must surface only UNRECOVERED failures (a failed tool with no same-name
-  // success this turn). Observability (effectiveFinishReason/logs/system) still
-  // records the failure — only the user-facing reply is gated.
-  // See design/small-model-orchestration-fidelity.md §4.
+  // The user-facing '[tool failure]' notice must surface only failures without a
+  // proven later matching invocation. Delivery recovery additionally requires
+  // the same action and exact content-free route/target identity. Observability
+  // still records recovered failures; only the user-facing reply is gated.
   it("source-grep — failure notice gated on unrecoveredFailedToolNames (recovered failures suppressed)", () => {
     const stripped = readPostExecStripped();
     // The notice call site must consult the recovery-aware helper, not raw failedTools.

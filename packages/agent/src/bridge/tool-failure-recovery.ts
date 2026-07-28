@@ -147,7 +147,7 @@ export function classifyToolFailureRecovery(
   let unrecoveredFailureCount = 0;
 
   for (let failureIndex = 0; failureIndex < results.length; failureIndex += 1) {
-    const failure = results[failureIndex];
+    const failure = results.at(failureIndex);
     if (failure === undefined || failure.success) continue;
     failureNames.add(failure.toolName);
     const recovered = results.slice(failureIndex + 1).some(
