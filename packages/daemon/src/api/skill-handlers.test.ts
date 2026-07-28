@@ -1044,7 +1044,8 @@ describe("skills.update handler", () => {
   });
 
   it("rejects update when skill name fails validation pattern with uppercase letters", async () => {
-    const handlers = createSkillHandlers(makeDeps());
+    const logger = createMockLogger();
+    const handlers = createSkillHandlers(makeDeps({ logger }));
     await expect(
       handlers["skills.update"]!({
         name: "BadName",
@@ -1052,6 +1053,13 @@ describe("skills.update handler", () => {
         _agentId: "agent-a",
       }),
     ).rejects.toThrow(/Invalid skill name/i);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skillName: "BadName",
+        errorKind: "validation",
+      }),
+      "Skill update rejected: invalid name",
+    );
   });
 
   it("rejects update when content is the empty string per zod min-length contract validation", async () => {
