@@ -112,3 +112,18 @@ describe("extractLinksFromMessage", () => {
     expect(result).toHaveLength(0);
   });
 });
+
+describe("URLs pasted inside JSON/config snippets", () => {
+  // Live: `"BASE_URL": "https://api.example.invalid/api/v2",` extracted the URL
+  // WITH its closing quote; the fetcher then requested `…/api/v2%22` and 404'd.
+  it("strips a trailing double quote from a JSON snippet", () => {
+    const urls = extractLinksFromMessage('Install: "BASE_URL": "https://api.example.invalid/api/v2",');
+    expect(urls).toContain("https://api.example.invalid/api/v2");
+    expect(urls.some((u) => u.includes('"'))).toBe(false);
+  });
+
+  it("strips trailing single quotes and braces from YAML/code shapes", () => {
+    expect(extractLinksFromMessage("url: 'https://example.invalid/x'")).toContain("https://example.invalid/x");
+    expect(extractLinksFromMessage('{"u":"https://example.invalid/y"}')).toContain("https://example.invalid/y");
+  });
+});

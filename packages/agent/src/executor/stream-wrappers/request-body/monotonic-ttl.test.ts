@@ -295,3 +295,59 @@ describe("enforceMonotonicTtlOrdering", () => {
     expect(msg0Content[1]!.cache_control).toEqual({ type: "custom" });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Provider without extended TTL
+// ---------------------------------------------------------------------------
+
+/**
+ * On a provider that cannot honor the 1-hour beta (Bedrock), the sweep must
+ * normalize DOWNWARD: any 1h marker becomes 5m, which satisfies monotonicity
+ * trivially and keeps every marker honorable.
+ *
+ * Upgrading instead is actively harmful there — an unhonored 1h marker is billed
+ * as a cache write and never matched. Observed live after the retention cap
+ * landed: this sweep fired on EVERY turn ("upgraded out-of-order 5m markers to
+ * 1h"), silently undoing the cap, because sites like the UNTRUSTED_ anchor and
+ * adaptive zone promotion still emit 1h directly.
+ */
+describe("enforceMonotonicTtlOrdering — provider without extended TTL", () => {
+  function payload() {
+    return {
+      system: [{ type: "text", text: "s", cache_control: { type: "ephemeral" } }],
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "m", cache_control: { type: "ephemeral", ttl: "1h" } }],
+        },
+      ],
+    } as Record<string, unknown>;
+  }
+
+  it("downgrades 1h markers to 5m when extended TTL is unavailable", () => {
+    const result = payload();
+    enforceMonotonicTtlOrdering(result, makeLogger(), false);
+    expect(JSON.stringify(result)).not.toContain("1h");
+  });
+
+  it("leaves every marker ephemeral after the downgrade", () => {
+    const result = payload();
+    enforceMonotonicTtlOrdering(result, makeLogger(), false);
+    const msgs = result.messages as Array<{ content: Array<Record<string, unknown>> }>;
+    expect(msgs[0]!.content[0]!.cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  it("still upgrades to 1h when extended TTL IS available", () => {
+    const result = payload();
+    enforceMonotonicTtlOrdering(result, makeLogger(), true);
+    const sys = result.system as Array<Record<string, unknown>>;
+    expect(sys[0]!.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+  });
+
+  it("defaults to the upgrade behaviour when the flag is omitted", () => {
+    const result = payload();
+    enforceMonotonicTtlOrdering(result, makeLogger());
+    const sys = result.system as Array<Record<string, unknown>>;
+    expect(sys[0]!.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+  });
+});

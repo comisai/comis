@@ -63,11 +63,11 @@ A quick reference for the events developers are most likely to need when buildin
 | `plugin:registered` | Infra | Plugin loaded | Plugin lifecycle tracking |
 | `diagnostic:message_processed` | Infra | Full message lifecycle complete | End-to-end metrics |
 
-## Complete Event Reference
+## Event Reference
 
 <AccordionGroup>
 
-<Accordion title="MessagingEvents (38 events)">
+<Accordion title="MessagingEvents">
 
 Message lifecycle, session management, subagent lifecycle, compaction, context engine lifecycle, context engine metrics, response filtering, execution control, and dead-letter queue events.
 
@@ -80,6 +80,7 @@ Message lifecycle, session management, subagent lifecycle, compaction, context e
 | `compaction:flush` | sessionKey, memoriesWritten, trigger, success, timestamp |
 | `context:masked` | agentId, sessionKey, maskedCount, totalChars, persistedToDisk, timestamp |
 | `context:compacted` | agentId, sessionKey, fallbackLevel, attempts, originalMessages, keptMessages, timestamp |
+| `context:budget_computed` | agentId, sessionKey, windowTokens, rawContextWindowTokens, windowCapSource, systemTokens, freshTailTokens, budgetedHistoryTokens, keptCount, assembledInputTokens, outputHeadroom, verdict, freshTailSteps, freshTailStepsConfigured, originatingRequestRetained, freshTailTrimmedCount |
 | `context:rehydrated` | agentId, sessionKey, sectionsInjected, filesInjected, skillsInjected, overflowStripped, timestamp |
 | `context:overflow` | agentId, sessionKey, contextTokens, budgetTokens, recoveryAction, timestamp |
 | `context:evicted` | agentId, sessionKey, evictedCount, evictedChars, categories, timestamp |
@@ -124,7 +125,7 @@ See [Compaction](/agents/compaction) for details on what triggers each event.
 
 </Accordion>
 
-<Accordion title="AgentEvents (47 events)">
+<Accordion title="AgentEvents">
 
 Skill lifecycle, tool execution, audit logging, observability (tokens and latency), cache break detection, model failover, security, execution graph, per-node sub-agent budget breaches, pipeline authoring telemetry, small-model graph authoring (repair + intent synthesis), provider health, SEP (step-execution planning), and exec command blocking events.
 
@@ -171,7 +172,7 @@ Skill lifecycle, tool execution, audit logging, observability (tokens and latenc
 | `skill:rejected` | skillName, reason, violations, timestamp |
 | `skill:updated` | skillName, scope, agentId, timestamp |
 | `skills:reloaded` | agentId, skillCount, timestamp |
-| `tool:executed` | toolName, durationMs, success, timestamp, userId, traceId, agentId, sessionKey, params, errorMessage, errorKind, description, truncated, fullChars, returnedChars |
+| `tool:executed` | toolName, toolCallId, durationMs, success, backgrounded, timestamp, userId, traceId, agentId, sessionKey, params, errorMessage, errorKind, description, truncated, fullChars, returnedChars |
 | `tool:policy_filtered` | profile, agentId, filtered, timestamp |
 | `tool:started` | toolName, toolCallId, timestamp, agentId, sessionKey, traceId, description |
 
@@ -218,7 +219,7 @@ See [Resilience: Self-healing delivery retries](/agents/resilience#self-healing-
 
 </Accordion>
 
-<Accordion title="ChannelEvents (44 events)">
+<Accordion title="ChannelEvents">
 
 Channel registration, sender blocking, command queuing, streaming delivery, typing indicators, auto-reply, send policies, debounce, group history, follow-up chains, priority lanes, elevated routing, retry engine, ack reactions, inbound reaction capture, steer lifecycle, block coalescing, unified delivery pipeline, delivery queue, channel health monitoring, delivery hooks, and sub-agent proxy typing events.
 
@@ -286,8 +287,8 @@ Approval gates, config patches, plugin lifecycle, hook execution, auth token rot
 | `approval:resolved` | requestId, approved, approvedBy, reason, resolvedAt |
 | `auth:token_rotated` | provider, profileName, expiresAtMs, timestamp |
 | `background_task:cancelled` | agentId, taskId, toolName, timestamp |
-| `background_task:completed` | agentId, taskId, toolName, durationMs, origin, timestamp |
-| `background_task:failed` | agentId, taskId, toolName, error, durationMs, origin, timestamp |
+| `background_task:completed` | agentId, taskId, toolName, durationMs, origin, dispatchRedelivery, toolCallId, sessionKey, traceId, timestamp |
+| `background_task:failed` | agentId, taskId, toolName, error, errorKind, durationMs, origin, dispatchRedelivery, toolCallId, sessionKey, traceId, timestamp |
 | `background_task:notified` | agentId, taskId, toolName, sessionKey, notified, reason, traceId, timestamp, trajectoryRecorded |
 | `background_task:promoted` | agentId, taskId, toolName, timestamp |
 | `background_task:reentered` | taskId, agentId, sessionKey, hopCount, traceId, timestamp |
@@ -328,7 +329,7 @@ Approval gates, config patches, plugin lifecycle, hook execution, auth token rot
 | `scheduler:heartbeat_wake_terminal` | correlationId, target, lane, retainedReason, status, cancellationReason, eventEntryCount, durationMs, errorKind, timestamp |
 | `scheduler:job_suspended` | jobId, jobName, agentId, consecutiveErrors, lastError, timestamp, deliveryTarget |
 | `scheduler:wake_gate` | jobId, agentId, wake, durationMs, toolCalls, estTurnsSaved, failedOpen, timestamp |
-| `secret:accessed` | secretName, agentId, outcome, timestamp |
+| `secret:accessed` | secretName, agentId, outcome, sessionKey, traceId, timestamp |
 | `secret:modified` | secretName, action, timestamp |
 | `security:warn` | category, agentId, message, timestamp |
 | `system:error` | error, source |

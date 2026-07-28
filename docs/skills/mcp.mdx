@@ -160,6 +160,24 @@ message because the active tool set is fixed for the current turn.
 See the [configuration reference](/reference/config-yaml) for MCP's place in
 the broader Comis configuration.
 
+## Tool-call contracts and deadlines
+
+Discovered MCP input schemas remain structured when Comis publishes them to the
+model. Objects, arrays, primitive types, type unions, `oneOf` / `anyOf` /
+`allOf`, enums, bounds, string formats, defaults, and descriptions are
+preserved. An unresolved `$ref` is the exception: without the schema document
+root, Comis exposes that node as unconstrained rather than pretending it
+resolved the reference.
+
+Every call registers an MCP progress handler, including background calls. A
+progress notification refreshes the idle portion of the SDK timeout and does
+not close the connection, but it never extends the call past the absolute
+`integrations.mcp.callToolTimeoutMs` ceiling. The default is 120,000 ms. A
+timeout error names the resolved value and tells the agent to narrow the request
+instead of retrying the same call. The timeout is runtime-immutable; an operator
+must edit `config.yaml` and restart the daemon to change it. See the
+[`callToolTimeoutMs` config contract](/reference/config-yaml#integrations).
+
 <CardGroup cols={3}>
   <Card title="Config Reference" icon="file-code" href="/reference/config-yaml">
     MCP configuration structure and core fields

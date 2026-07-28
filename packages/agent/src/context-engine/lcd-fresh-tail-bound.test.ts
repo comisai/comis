@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { computeFreshTailCapChars, boundFreshTailMessages, boundProtectedFreshTail } from "./lcd-fresh-tail-bound.js";
+import { computeFreshTailCapChars, boundFreshTailMessages, boundProtectedFreshTail, boundFreshTailTotalToResidual } from "./lcd-fresh-tail-bound.js";
 import { factoredMessageTokens } from "./factored-message-tokens.js";
 import { LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS } from "./constants.js";
 
@@ -191,16 +191,29 @@ describe("boundProtectedFreshTail — instrumentation + the live OpenAI growth r
     // Each step is small, so the trim CAN reduce the tail to ≤ residual (+ one kept step).
     const oneStep = factoredMessageTokens(tail[0]!) + factoredMessageTokens(tail[1]!);
     expect(outFactored).toBeLessThanOrEqual(residual + oneStep);
-    // Instrumentation present: stepCount = 28 (14×2 non-toolResult msgs), dropped > 0.
+    // Instrumentation present: tailSegmentCount = 28 (14×2 non-toolResult msgs), dropped > 0.
+    // Named `tailSegment*`, NOT `step*`: this grouping opens a segment at every
+    // non-toolResult message, so USER messages count too — unlike `freshTailSteps`
+    // on the lcd-fresh-tail line, which counts assistants only. Reading one as the
+    // other inverts the diagnosis (a segment count of steps+1 is the healthy shape,
+    // not an over-bound turn), so the two names must stay distinct.
     const call =
       logger.debug.mock.calls.find((c) => (c[0] as { step?: string }).step === "fresh-tail-bound") ??
       logger.warn.mock.calls.find((c) => (c[0] as { step?: string }).step === "fresh-tail-bound");
     expect(call, "fresh-tail-bound log must be emitted").toBeDefined();
-    const p = call![0] as { stepCount: number; stepSizes: number[]; droppedSteps: number; freshTailResidual: number };
-    expect(p.stepCount).toBe(28);
-    expect(p.stepSizes.length).toBe(28); // NOT one giant step — grouping splits the turns
-    expect(p.droppedSteps).toBeGreaterThan(0); // it actually trimmed
+    const p = call![0] as {
+      tailSegmentCount: number;
+      segmentSizes: number[];
+      droppedSegments: number;
+      freshTailResidual: number;
+    };
+    expect(p.tailSegmentCount).toBe(28);
+    expect(p.segmentSizes.length).toBe(28); // NOT one giant step — grouping splits the turns
+    expect(p.droppedSegments).toBeGreaterThan(0); // it actually trimmed
     expect(p.freshTailResidual).toBe(residual);
+    // The ambiguous names are gone — a log reader cannot resurrect the misread.
+    expect(p).not.toHaveProperty("stepCount");
+    expect(p).not.toHaveProperty("stepSizes");
   });
 
   it("WARN fires when the protected tail CANNOT be trimmed below the residual (single oversized current turn)", () => {
@@ -223,5 +236,24 @@ describe("boundProtectedFreshTail — instrumentation + the live OpenAI growth r
     expect(warn, "the could-not-trim WARN must fire").toBeDefined();
     expect((warn![0] as { fitsResidual: boolean }).fitsResidual).toBe(false);
     expect((warn![0] as { errorKind: string }).errorKind).toBe("resource");
+  });
+});
+
+describe("boundFreshTailTotalToResidual protected request", () => {
+  it("keeps the originating user request while dropping completed tool segments", () => {
+    const request = { role: "user", content: "produce the report" } as AgentMessage;
+    const tail = [
+      request,
+      { role: "assistant", content: [{ type: "toolCall", id: "old", name: "report", arguments: {} }] },
+      { role: "toolResult", toolCallId: "old", content: [{ type: "text", text: "x".repeat(8_000) }] },
+      { role: "assistant", content: [{ type: "toolCall", id: "new", name: "report", arguments: {} }] },
+      { role: "toolResult", toolCallId: "new", content: [{ type: "text", text: "done" }] },
+    ] as unknown as AgentMessage[];
+
+    const bounded = boundFreshTailTotalToResidual(tail, 100, 0);
+
+    expect(bounded).toContain(request);
+    expect(JSON.stringify(bounded)).not.toContain('"id":"old"');
+    expect(JSON.stringify(bounded)).toContain('"id":"new"');
   });
 });

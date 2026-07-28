@@ -48,6 +48,7 @@ export {
   BraveSearchConfigSchema,
   McpServerEntrySchema,
   McpConfigSchema,
+  MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT,
   TranscriptionConfigSchema,
   TtsConfigSchema,
   TtsAutoModeSchema,

@@ -650,7 +650,7 @@ export function buildFindings(
       code: "learning_health",
       detail: `${learningHealth.length} reflection run(s) in the window; latest outcome=${latestOutcome}, admitted=${admittedSum}, untrustedDrops=${untrustedSum}`,
       count: learningHealth.length,
-      hint: 'admitted=0 with untrustedDrops/uncorroborated is the anti-poison gates WORKING (not a fault); admitted=0 DESPITE genuine corroboration ⇒ a topicKey under-merge. Use `comis cron runs "Memory review" --agent <agentId>` for the per-run funnel; these summed counts are the deployment-wide surface.',
+      hint: 'admitted=0 with untrustedDrops/uncorroborated is the anti-poison gates WORKING (not a fault); admitted=0 DESPITE genuine corroboration ⇒ a topicKey under-merge. Use `comis cron runs "Memory review" --agent <agentId>` for the per-run funnel; these summed counts are the deployment-wide surface. If outcome COVERAGE is low, also check the boot log for `outcome judge unavailable` / `correction detector unavailable` — without a cheap-model key both silently no-op while learning events keep firing, so the funnel starves upstream of admission.',
     });
   }
 

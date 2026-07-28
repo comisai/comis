@@ -105,3 +105,39 @@ describe("compileExecutionPrompt", () => {
       .toBe("included");
   });
 });
+
+/**
+ * The delegation policy previously rode a TOOL RESULT, which lands AFTER the model
+ * has read the request, chosen an approach and issued its first call. Measured on
+ * a real Telegram turn: the policy arrived on the first MCP tool result while the
+ * model was already working inline, and it carried on inline to completion — the
+ * user got no "running, I'll send it when ready" and no chance to interact.
+ *
+ * A directive that must shape the FIRST decision belongs in the system prompt.
+ */
+describe("compileExecutionPrompt delegation directive", () => {
+
+
+  it("puts the delegation directive in the engine kernel when spawning is available", () => {
+    const out = compileExecutionPrompt(makeInput({ delegationAvailable: true }));
+    expect(out.stableEnginePrefix).toContain("sessions_spawn");
+    expect(out.stableEnginePrefix).toMatch(/30 ?seconds|~30/);
+  });
+
+  it("tells the model to end the turn rather than work inline", () => {
+    const out = compileExecutionPrompt(makeInput({ delegationAvailable: true }));
+    expect(out.stableEnginePrefix).toMatch(/end the turn/i);
+    expect(out.stableEnginePrefix).toMatch(/inline/i);
+  });
+
+  it("stays silent for an agent without the tool", () => {
+    const out = compileExecutionPrompt(makeInput({ delegationAvailable: false }));
+    expect(out.stableEnginePrefix).not.toContain("sessions_spawn");
+  });
+
+  it("adds nothing when the flag is omitted", () => {
+    const out = compileExecutionPrompt(makeInput()).stableEnginePrefix;
+    expect(out.length).toBeGreaterThan(0);
+    expect(out).not.toContain("sessions_spawn");
+  });
+});

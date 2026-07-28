@@ -322,7 +322,8 @@ describe("createActivityTurnCoordinator — delete gate", () => {
     coord.start(makeCtx());
 
     // Observe a failed event during the turn (a recovered tool retry).
-    stream.emit(makeEvent({ status: "failed", errorKind: "dependency", phase: "end" }));
+    stream.emit(makeEvent({ status: "failed", errorKind: "dependency", phase: "end", toolName: "report" }));
+    stream.emit(makeEvent({ status: "completed", phase: "end", toolName: "report" }));
     timer.advance(800);
 
     // Delivery SUCCEEDED — the turn recovered. The renderer must get the
@@ -1213,6 +1214,149 @@ describe("createActivityTurnCoordinator — planStream subscription", () => {
     const label = snapshotArg!.entries[0].label;
     expect(label).toContain("<redacted>");
     expect(label).not.toContain("sk-test-1234567890ABCDEF");
+    coord.dispose();
+  });
+});
+
+describe("a failure with no failed activity events never renders a naked errorKind", () => {
+  // LIVE INCIDENT (comis-moshe 2026-07-26): the user's chat received a bubble whose
+  // ENTIRE text was "❌ dependency". The turn finalized
+  // `{outcome:"failure", errorKind:"dependency", failedEventCount:0}` — the four
+  // MCP tools that actually failed had each been closed `status:"completed"` at
+  // background hand-off, so the card had no failed event to name and
+  // `failureLabel()` fell through to the bare errorKind token. This module's own
+  // comment says a kept "❌ {errorKind}" pill above a delivered answer must never
+  // happen; the guard only covered `outcome.kind === "success"`.
+  it("populates a truthful `reason` so the pill is not a bare token", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    await coord.finalize({ kind: "failure", errorKind: "dependency", failedEvents: [] });
+
+    expect(renderer.finalizeCalls.length).toBe(1);
+    const outcome = renderer.finalizeCalls[0].outcome as Extract<
+      typeof renderer.finalizeCalls[0]["outcome"],
+      { kind: "failure" }
+    >;
+    expect(outcome.kind).toBe("failure");
+    expect(outcome.reason, "an unattributed failure must carry a reason").toBeDefined();
+    expect(outcome.reason!.length).toBeGreaterThan(0);
+    coord.dispose();
+  });
+
+  it("does NOT overwrite an explicit reason (a resource abort keeps its own wording)", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    await coord.finalize({
+      kind: "failure",
+      errorKind: "resource",
+      failedEvents: [],
+      reason: "stopped — spend limit reached",
+    });
+
+    const outcome = renderer.finalizeCalls[0].outcome as Extract<
+      typeof renderer.finalizeCalls[0]["outcome"],
+      { kind: "failure" }
+    >;
+    expect(outcome.reason).toBe("stopped — spend limit reached");
+    coord.dispose();
+  });
+});
+
+describe("a delivered answer never renders a failure pill (F-ACT-1 layer 4)", () => {
+  // Proven live on the fixed-hint build: the Excel turn DELIVERED its artifact
+  // and the card still showed "❌ dependency — a step failed outside the tool
+  // timeline" above it; the agent then explained the pill away unprompted.
+  it("failure + delivered evidence + observed failed events → success_with_recovered_failures", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    // The backgrounded tool's REAL terminal, observed during the turn.
+    stream.emit(makeEvent({ status: "failed", errorKind: "dependency", phase: "end", toolName: "report" }));
+    stream.emit(makeEvent({ status: "completed", phase: "end", toolName: "report" }));
+    timer.advance(800);
+
+    await coord.finalize({
+      kind: "failure",
+      errorKind: "dependency",
+      failedEvents: [],
+      delivery: { deliveredAtMs: clock.now() } as never,
+    });
+
+    const outcome = renderer.finalizeCalls[0]!.outcome;
+    expect(outcome.kind).toBe("success_with_recovered_failures");
+    // The failure evidence is PRESERVED, not erased.
+    const recovered = (outcome as { recoveredFailures: readonly unknown[] }).recoveredFailures;
+    expect(recovered.length).toBeGreaterThan(0);
+    coord.dispose();
+  });
+
+  it("delivery alone does not recover a terminal execution failure", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+    stream.emit(makeEvent({ status: "failed", errorKind: "dependency", phase: "end", toolName: "report" }));
+    timer.advance(800);
+
+    await coord.finalize({
+      kind: "failure",
+      errorKind: "dependency",
+      failedEvents: [],
+      delivery: { deliveredAtMs: clock.now() } as never,
+    });
+
+    expect(renderer.finalizeCalls[0]!.outcome.kind).toBe("failure");
+    coord.dispose();
+  });
+
+  it("failure + delivered evidence but NO observed failed events keeps the truthful failure", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    await coord.finalize({
+      kind: "failure",
+      errorKind: "dependency",
+      failedEvents: [],
+      delivery: { deliveredAtMs: clock.now() } as never,
+    });
+
+    // No events to attribute — reclassifying would ERASE the failure (the
+    // false-success trap). It stays a failure, with the named reason.
+    const outcome = renderer.finalizeCalls[0]!.outcome;
+    expect(outcome.kind).toBe("failure");
+    expect((outcome as { reason?: string }).reason).toBeDefined();
+    coord.dispose();
+  });
+
+  it("a resource abort with delivery evidence NEVER reclassifies (stopped renders as stopped)", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+    stream.emit(makeEvent({ status: "failed", errorKind: "resource", phase: "end" }));
+    timer.advance(800);
+
+    // withDeliveredEvidence never attaches delivery to a reasoned abort, so the
+    // coordinator sees a plain failure — but pin the coordinator side too:
+    await coord.finalize({
+      kind: "failure",
+      errorKind: "resource",
+      failedEvents: [],
+      reason: "stopped — spend limit reached",
+    });
+    const outcome = renderer.finalizeCalls[0]!.outcome;
+    expect(outcome.kind).toBe("failure");
+    expect((outcome as { reason?: string }).reason).toBe("stopped — spend limit reached");
     coord.dispose();
   });
 });

@@ -119,11 +119,23 @@ The `gateway` tool is the Swiss Army knife for system management, with **11 acti
     |-----------|------|----------|-------------|
     | `action` | string | Yes | `"env_set"` |
     | `env_key` | string | Yes | Environment variable / secret name (uppercase, e.g., `OPENAI_API_KEY`) |
-    | `env_value` | string | Yes | Secret value to store. Write-only: cannot be read back. |
+    | `env_value` | string | On the first call | Secret value to store. Write-only: cannot be read back. Omit on the confirm leg (see below). |
+    | `pending_action_id` | string | On the confirm leg | The id returned by the gated first call. Pass it with `_confirmed: true` **instead of** re-sending `env_value`. |
 
     <Warning>
     Setting environment variables requires security approval and user confirmation. The stored value is write-only and cannot be retrieved. Reference it in config as `${VAR_NAME}` (e.g., `GEMINI_API_KEY: ${GEMINI_API_KEY}`). Never write raw API keys into config files.
     </Warning>
+
+    **The two-call approval flow never re-sends the secret.** The gated first call
+    stashes the value server-side (5-minute TTL, one-shot) and returns a
+    `pending_action_id`; after the user approves, the confirm call passes
+    `{ _confirmed: true, pending_action_id }` and the daemon replays the stashed
+    value. This matters because session redaction rewrites the secret in
+    conversation context between the two calls — re-sending `env_value` on the
+    confirm leg risks transmitting a redaction placeholder (rejected), and asking
+    the user to re-paste a credential into the chat is never acceptable. An
+    expired or already-consumed id returns `pending_action_expired`; re-initiate,
+    or have the operator run `comis secrets set <KEY>` on the host.
   </Accordion>
 
   <Accordion title="env_list -- List configured secret names" icon="list">

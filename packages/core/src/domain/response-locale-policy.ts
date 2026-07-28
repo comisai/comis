@@ -12,6 +12,22 @@ export const CanonicalLocaleSchema = z.string().trim().min(2).max(128).refine(
   "locale must be a canonical BCP-47 language tag",
 );
 
+/**
+ * Operator-supplied strings for the deterministic platform replies (the canned
+ * lines the runtime sends when a turn degrades — timeout, context exhausted,
+ * output truncated, loop halted). Keyed locale tag → message id → string.
+ *
+ * The runtime ships ONE pack, English, as its fallback. It does not know any
+ * other human language and must not: a deployment that answers its users in
+ * another language supplies that language's strings here. Message ids are
+ * validated by the consuming runtime, not here — core deliberately does not
+ * own that list.
+ */
+export const LocalePacksSchema = z.record(
+  CanonicalLocaleSchema,
+  z.record(z.string().min(1).max(64), z.string().min(1).max(2000)),
+);
+
 export const ResponseLocaleSourceSchema = z.enum([
   "request",
   "explicit",

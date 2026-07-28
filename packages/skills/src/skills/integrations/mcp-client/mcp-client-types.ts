@@ -317,7 +317,7 @@ export interface McpClientManagerDeps {
   readonly healthCheckIntervalMs?: number;
   /** Timeout for connect + listTools in milliseconds (default: 30000). */
   readonly connectTimeoutMs?: number;
-  /** Timeout for individual callTool invocations in milliseconds (default: 60000). */
+  /** Timeout for individual callTool invocations in milliseconds (default: {@link MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT} = 120000). */
   readonly callToolTimeoutMs?: number;
   /** Optional EventBus for emitting connection lifecycle events. */
   readonly eventBus?: TypedEventBus;

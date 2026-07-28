@@ -27,6 +27,7 @@ import type { ComisLogger } from "@comis/core";
 
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, resolveBreakpointStrategy } from "../config-resolver.js";
 import { djb2 } from "../../cache-detection/index.js";
+import { supportsExtendedCacheTtl } from "../../../provider/capabilities.js";
 
 import { addCacheControlToLastBlock } from "./cache-control-block.js";
 import { placeCacheBreakpoints } from "./breakpoint-placement.js";
@@ -65,8 +66,32 @@ export function runCacheBreakpointPhase(
     config.getCacheRetentionOverrides?.(),
   );
 
+  // Downgrade "long" to "short" on a provider that cannot honor the extended
+  // TTL beta (Bedrock/Vertex). Done HERE, at the single point where retention is
+  // resolved, so every downstream `=== "long"` site emits a plain 5m marker —
+  // rather than adding a parallel provider guard at each of the four places that
+  // write `ttl: "1h"`. An unhonored 1h marker is billed as a cache write and
+  // never matched on the next request.
+  const providerCappedRetention: CacheRetention =
+    effectiveRetention === "long" && !supportsExtendedCacheTtl(model.provider)
+      ? "short"
+      : effectiveRetention;
+  if (providerCappedRetention !== effectiveRetention) {
+    logger.debug(
+      {
+        provider: model.provider,
+        modelId,
+        requested: effectiveRetention,
+        applied: providerCappedRetention,
+        hint: "provider does not support the extended cache TTL beta; using the 5m default",
+        step: "cache-retention",
+      },
+      "Cache retention capped for provider",
+    );
+  }
+
   // Latch retention on first resolution
-  const rawRetention = effectiveRetention;
+  const rawRetention = providerCappedRetention;
   const retentionLatch = config.getRetentionLatch?.();
   const resolvedRetention: CacheRetention = retentionLatch
     ? retentionLatch.setOnce(rawRetention)
@@ -405,7 +430,7 @@ export function runCacheBreakpointPhase(
   // anchor-aware retention above correctly coordinates the source placement.
   // Logs WARN with errorKind:"internal" if any upgrade fires — that
   // indicates an upstream placement bug.
-  enforceMonotonicTtlOrdering(result, logger);
+  enforceMonotonicTtlOrdering(result, logger, supportsExtendedCacheTtl(model.provider));
 
   return resolvedRetention;
 }

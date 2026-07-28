@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { sanitizeSessionSecrets, looksLikeApiKey } from "./sanitize-session-secrets.js";
+import {
+  sanitizeSessionSecrets,
+  looksLikeApiKey,
+  projectSessionValueForPersistence,
+} from "./sanitize-session-secrets.js";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -544,5 +548,63 @@ describe("looksLikeApiKey", () => {
 
   it("rejects already-redacted values", () => {
     expect(looksLikeApiKey("[REDACTED]")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bare-`token` name collision
+// ---------------------------------------------------------------------------
+
+/**
+ * The sensitive-argument matcher is name-based and value-blind, so the bare
+ * `token` keyword captures any parameter ending in `_token` — including opaque
+ * cursors and plain enums that never carry a credential.
+ *
+ * Redacting one of those is not merely over-cautious, it is corrupting: the
+ * placeholder is persisted into the session, replayed back into the model's
+ * context on the next turn, and copied forward as a literal argument. That is
+ * the same replay hazard scrub-redacted-tool-calls.ts already documents for
+ * `env_value`. Observed live: an MCP tool whose `range_token` parameter is a
+ * fixed date-range enum failed schema validation three times in a row as the
+ * model paginated, each call re-sending "[REDACTED]".
+ *
+ * Values that could plausibly be a credential must still be redacted on these
+ * names — the exemption is for values that cannot be one.
+ */
+describe("projectSessionValueForPersistence — bare-token name collision", () => {
+  it("keeps a short lowercase enum on a *_token parameter", () => {
+    const out = projectSessionValueForPersistence({ range_token: "last_7_days" });
+    expect(out.value).toEqual({ range_token: "last_7_days" });
+    expect(out.redactions).toBe(0);
+  });
+
+  it("keeps an opaque pagination cursor that cannot be a credential", () => {
+    const out = projectSessionValueForPersistence({ page_token: "next_page" });
+    expect(out.value).toEqual({ page_token: "next_page" });
+  });
+
+  it("still redacts a credential-shaped value on a *_token parameter", () => {
+    const out = projectSessionValueForPersistence({
+      range_token: "sk-AbC123XyZ456DeF789GhI012JkL345MnO",
+    });
+    expect((out.value as Record<string, string>).range_token).toBe("[REDACTED]");
+    expect(out.redactions).toBe(1);
+  });
+
+  it("still redacts qualified credential token names regardless of value shape", () => {
+    for (const name of ["access_token", "auth_token", "refresh_token", "id_token"]) {
+      const out = projectSessionValueForPersistence({ [name]: "last_7_days" });
+      expect(
+        (out.value as Record<string, string>)[name],
+        `${name} must stay redacted`,
+      ).toBe("[REDACTED]");
+    }
+  });
+
+  it("still redacts the unqualified api_key/secret/password family by name", () => {
+    for (const name of ["api_key", "secret", "password", "private_key"]) {
+      const out = projectSessionValueForPersistence({ [name]: "short_value" });
+      expect((out.value as Record<string, string>)[name]).toBe("[REDACTED]");
+    }
   });
 });

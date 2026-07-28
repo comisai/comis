@@ -58,6 +58,21 @@
 
 import { partsToMessage } from "@comis/core";
 import { neutralizeForgedMarkersInMessage } from "../session/forged-context-markers.js";
+
+/**
+ * Message for the lcd-evict DEBUG.
+ *
+ * The line used to read "lcd history evicted under budget" unconditionally,
+ * including when droppedCount was 0. During a live cache investigation that
+ * reads as "the message array was rewritten" — the first thing to rule out when
+ * a cached prefix stops matching — and cost a full diagnostic detour before
+ * droppedCount showed 0 on every call. State what actually happened.
+ */
+export function evictionLogMessage(droppedCount: number): string {
+  return droppedCount > 0
+    ? "lcd history evicted under budget"
+    : "lcd history fit under budget (no eviction)";
+}
 import type {
   ContextStorePort,
   ContextStoreScope,
@@ -71,6 +86,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import { estimateMessageTokens } from "../safety/token-estimator.js";
 import { sanitizeToolUseResultPairing } from "./transcript-repair.js";
 import { resolveClampedFreshTailTurns } from "../model/fresh-tail-clamp.js";
+import { resolveFreshTailStart, warnOnCoverageShortfall } from "./lcd-coverage.js";
 import { computeTokenBudgetForProfile } from "./budget-capacity-cap.js";
 import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
 import { runPreflightFitCheck } from "./lcd-preflight.js";
@@ -224,20 +240,32 @@ export function createLcdContextEngine(
       // Clamp freshTailTurns to what the effective window can afford.
       // deps.modelProfile?.contextWindow is Infinity for frontier/mid — clamp never fires.
       const effectiveWindow = deps.modelProfile?.contextWindow ?? Infinity;
-      // The PROTECTED fresh tail ships UNCONDITIONALLY (the eviction cannot
-      // trim it), so on a tight window it is bounded to the RESIDUAL room
-      // (boundFreshTailTotalToResidual, below). The residual (= window − S − floor headroom
-      // − preamble) is computed JUST BEFORE the bound — AFTER `profile` is resolved — so it
-      // reads `profile.reasoningStyle`, the EXACT value the pre-flight uses (a
-      // pre-resolution `deps.modelProfile` read could diverge from the pre-flight's `profile`
-      // and under-count the native reasoning reserve → overflow). The clamp here keeps only
-      // its original 30%-of-window upper bound (no residual input — a turn-count estimate is
-      // skewed by a single oversized message, which the per-message bound handles anyway).
+      // The PROTECTED fresh tail ships UNCONDITIONALLY (the eviction cannot trim it),
+      // so on a tight window it is bounded to the RESIDUAL room
+      // (boundFreshTailTotalToResidual, below). That residual (= window − S − floor
+      // headroom − preamble) is computed JUST BEFORE the bound — AFTER `profile` is
+      // resolved — so it reads `profile.reasoningStyle`, the EXACT value the pre-flight
+      // uses (a pre-resolution `deps.modelProfile` read could diverge and under-count
+      // the native reasoning reserve → overflow). The clamp here keeps only its 30%-of-
+      // window upper bound (no residual input — a turn-count estimate is skewed by a
+      // single oversized message, which the per-message bound handles anyway).
       const clampedFreshTailTurns = resolveClampedFreshTailTurns(
         effectiveWindow,
         config.freshTailTurns,
       );
-      const tailStart = freshTailBoundaryIndex(liveMessages, clampedFreshTailTurns);
+      // persistedMsgCount is the TOTAL count of persisted messages in scope — NOT
+      // `rows.length`, the BOUNDED working set (message-refs only), which undercounts
+      // once the oldest messages fold into summary-refs and corrupts the fresh-tail/
+      // eviction overlap below. `countMessages` is a bounded COUNT(*) — one integer, NO
+      // O(total-history) row fetch. Fail-closed: no read scope ⇒ 0.
+      const persistedMsgCount = store.countMessages(readScope);
+      // COVERAGE: the step boundary and the store horizon come from different clocks,
+      // and a turn deeper than `freshTailTurns` drives the boundary past the horizon
+      // — opening a hole that silently swallows the turn's own originating request.
+      // lcd-coverage.ts owns the invariant + why the clamp needs a readable scope.
+      const scopeIsReadable = deps.agentId !== undefined && deps.tenantId !== undefined;
+      const stepBoundary = freshTailBoundaryIndex(liveMessages, clampedFreshTailTurns);
+      const tailStart = resolveFreshTailStart(stepBoundary, persistedMsgCount, scopeIsReadable);
       // The fresh tail is sliced VERBATIM from the live array (it bypasses the
       // store, so the ingest-time neutralization in executor/lcd-ingest.ts does not
       // reach it). Neutralize any forged context-boundary markers an assistant turn
@@ -255,6 +283,12 @@ export function createLcdContextEngine(
           configuredFreshTailSteps: config.freshTailTurns,
           freshTailCount: rawFreshTail.length,
           tailStart,
+          // Coverage seam, one-read visible: `inFlightGapCovered > 0` means the tail
+          // was WIDENED past its step bound to carry unpersisted messages — the turn
+          // shape that used to lose the user's own request.
+          stepBoundary,
+          persistedMsgCount,
+          inFlightGapCovered: Math.max(0, stepBoundary - tailStart),
           agentId: deps.agentId,
           sessionKey: deps.sessionKey,
         },
@@ -282,37 +316,30 @@ export function createLcdContextEngine(
       //    those map to RAW message-refs at the END of `context_items` (summaries
       //    collapse the OLDEST run, so the tail of the view is raw).
       //
-      //    Count/length robustness: `rawOverlap` is a RAW-message count (`persistedMsgCount`,
-      //    the bounded COUNT(*) total — NOT `rows.length`, which is only the referenced
-      //    working-set subset), while the slice indexes into the COLLAPSED
-      //    `resolved` view (`resolved.length ≤ persistedMsgCount` once any leaf/condense
-      //    pass has run).
-      //    Subtracting `rawOverlap` from `resolved.length` directly is correct ONLY
-      //    under the oldest-run-collapse invariant; if the fresh-tail window reaches
-      //    back further than the trailing raw run (a large `freshTailTurns`, or a
-      //    future non-oldest collapse), `resolved.length − rawOverlap` would slice
-      //    ACROSS the head summary-ref and silently DROP the oldest history. So we
-      //    bound the exclusion by `trailingMessageRefs` — the count of message-refs
-      //    at the END of `resolved`, stopping at the first summary-ref — so the
-      //    evictable-prefix slice can NEVER cut into a summary-ref. Under the normal
-      //    invariant `rawOverlap ≤ trailingMessageRefs`, so this is byte-identical
-      //    to the prior behavior; when the invariant is stressed it degrades to a
-      //    benign double at the seam (transcript repair re-pairs it) rather than a
-      //    silent drop.
+      //    Count/length robustness: `rawOverlap` is a RAW-message count
+      //    (`persistedMsgCount`, the bounded COUNT(*) total), while the slice indexes
+      //    into the COLLAPSED `resolved` view (`resolved.length ≤ persistedMsgCount`
+      //    once any leaf/condense pass has run). Subtracting `rawOverlap` from
+      //    `resolved.length` directly is correct ONLY under the oldest-run-collapse
+      //    invariant; if the fresh-tail window reaches back further than the trailing
+      //    raw run (a large `freshTailTurns`, or a future non-oldest collapse), it
+      //    would slice ACROSS the head summary-ref and silently DROP the oldest
+      //    history. So we bound the exclusion by `trailingMessageRefs` — the count of
+      //    message-refs at the END of `resolved`, stopping at the first summary-ref —
+      //    so the evictable-prefix slice can NEVER cut into a summary-ref. Under the
+      //    normal invariant `rawOverlap ≤ trailingMessageRefs`, so this is byte-
+      //    identical to the prior behavior; when the invariant is stressed it degrades
+      //    to a benign double at the seam (transcript repair re-pairs it), not a drop.
       //
       //    Drop-free + double-free for BOTH L>H (mid-turn: the store lags the live
       //    array by the in-flight delta, so the in-flight tail rides only via
-      //    `freshTail`) and L<=H (a heal shrank the live array).
-      // persistedMsgCount is the TOTAL count of persisted
-      // messages in scope — NOT `rows.length`. `rows` is the BOUNDED working
-      // set (message-refs only); once the oldest messages fold into summary-refs,
-      // `rows.length` undercounts the total and corrupts the fresh-tail/eviction
-      // overlap below (symptom: a broken
-      // fresh tail + a mis-placed condensed summary). `countMessages` is a bounded
-      // COUNT(*) — one integer, NO O(total-history) row fetch — so assembly is
-      // byte-identical to a full `getMessages(readScope).length` read while the
-      // row fetch stays O(referenced-ids). Fail-closed: no read scope ⇒ 0.
-      const persistedMsgCount = store.countMessages(readScope);
+      //    `freshTail` — which holds ONLY because `tailStart` is clamped to the
+      //    horizon above; without that clamp the delta beyond the fresh tail's step
+      //    bound rode NOTHING) and L<=H (a heal shrank the live array).
+      // `tailStart` is clamped to `persistedMsgCount` above, so this subtraction
+      // can no longer go negative — the max(0,…) is a retained guard, not a live
+      // branch (a negative here WAS the silent-hole bug: it clamped to "no
+      // overlap" and let the gap fall out of both segments).
       const rawOverlap = Math.max(0, persistedMsgCount - tailStart);
       let trailingMessageRefs = 0;
       for (let i = resolvedKinds.length - 1; i >= 0 && resolvedKinds[i] === "message"; i--) {
@@ -404,6 +431,17 @@ export function createLcdContextEngine(
       const freshTailCapChars = computeFreshTailCapChars(budget.availableHistoryTokens);
       const bounded = boundFreshTailMessages(rawFreshTail, freshTailCapChars);
       let freshTail = bounded.freshTail;
+      const firstInFlightIndex = Math.max(0, persistedMsgCount - tailStart);
+      const originatingRequestIndex = freshTail.findIndex((message, index) =>
+        index >= firstInFlightIndex
+        && (message as unknown as { role?: string }).role === "user",
+      );
+      const protectedOriginIndex = originatingRequestIndex >= 0
+        ? originatingRequestIndex
+        : undefined;
+      const originatingRequest = protectedOriginIndex === undefined
+        ? undefined
+        : freshTail[protectedOriginIndex];
       const { boundedResults, boundedMessages, charsRemoved } = bounded;
       if (boundedResults > 0 || boundedMessages > 0) {
         // Content-free DEBUG (AGENTS.md §2.2 / the lossless-store content-free rule):
@@ -453,7 +491,12 @@ export function createLcdContextEngine(
         logger: deps.logger,
         agentId: deps.agentId,
         sessionKey: deps.sessionKey,
+        protectedMessageIndex: protectedOriginIndex,
       });
+      const originatingRequestRetained = originatingRequest === undefined
+        ? undefined
+        : freshTail.includes(originatingRequest);
+      const freshTailTrimmedCount = rawFreshTail.length - freshTail.length;
 
       // Eviction seam (step 4 above). Frontier/mid (relevanceFirst falsy) take
       // the recency eviction call — the arbiter does NOT run for them, so their
@@ -511,7 +554,7 @@ export function createLcdContextEngine(
           agentId: deps.agentId,
           sessionKey: deps.sessionKey,
         },
-        "lcd history evicted under budget",
+        evictionLogMessage(droppedCount),
       );
 
       // Emit the content-free `context:evicted` event (parity with the pipeline engine)
@@ -521,6 +564,22 @@ export function createLcdContextEngine(
 
       // The fresh tail is concatenated UNCONDITIONALLY — never evicted.
       const assembled = [...budgeted, ...freshTail];
+
+      // Reconcile THIS seam against the live conversation — the check that would have
+      // made the silent hole self-reporting (lcd-coverage.ts owns the why).
+      const coverageShortfall = warnOnCoverageShortfall(deps.logger, {
+        liveCount: liveMessages.length,
+        assembledCount: assembled.length,
+        droppedCount,
+        freshTailTrimmedCount: rawFreshTail.length - freshTail.length,
+        persistedMsgCount,
+        stepBoundary,
+        tailStart,
+        historyCount: budgeted.length,
+        freshTailCount: freshTail.length,
+        agentId: deps.agentId,
+        sessionKey: deps.sessionKey,
+      });
 
       // 5. NORMALIZE assistant string content to array blocks.
       const normalized = assembled.map(normalizeAssistantContent);
@@ -553,6 +612,13 @@ export function createLcdContextEngine(
           windowCapSource: budget.windowCapSource,
           servedWindowTokens: budget.servedWindowTokens,
         },
+        // The verbatim-tail step bound and direct origin-retention evidence.
+        {
+          effective: clampedFreshTailTurns,
+          configured: config.freshTailTurns,
+          originatingRequestRetained,
+          freshTailTrimmedCount,
+        },
       );
 
       deps.logger.info(
@@ -562,6 +628,11 @@ export function createLcdContextEngine(
           historyCount: budgeted.length,
           freshTailCount: freshTail.length,
           assembledCount: repaired.length,
+          // The coverage reconciliation, inline: `liveCount` is what the
+          // assembled array must account for, `coverageShortfall` is what it
+          // failed to (0 on every healthy call).
+          liveCount: liveMessages.length,
+          coverageShortfall,
           // The budget equation at INFO: diagnosability must not depend on
           // logLevel having been debug before an incident
           // (the lcd-evict budget fields are DEBUG). One line per LLM call.

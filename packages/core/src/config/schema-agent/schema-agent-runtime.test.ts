@@ -164,6 +164,40 @@ describe("agents.<id>.language config key", () => {
 });
 
 // ---------------------------------------------------------------------------
+// agents.<id>.localePacks — operator strings for the deterministic platform
+// replies. The runtime ships English only; `language` alone cannot translate
+// them, so this is the key that actually makes a non-English deployment's
+// degraded replies match the language its users are answered in.
+// ---------------------------------------------------------------------------
+describe("agents.<id>.localePacks config key", () => {
+  it("is optional on a bare config", () => {
+    expect(PerAgentConfigSchema.parse({}).localePacks).toBeUndefined();
+  });
+
+  it("accepts locale-keyed message-id maps for any canonical tag", () => {
+    const cfg = PerAgentConfigSchema.parse({
+      localePacks: { he: { pipeline_timeout: "timed out", loop_detected: "looped" } },
+    });
+    expect(cfg.localePacks?.he?.pipeline_timeout).toBe("timed out");
+  });
+
+  it("rejects non-canonical locale keys the same way `language` does", () => {
+    expect(
+      PerAgentConfigSchema.safeParse({ localePacks: { French: { loop_detected: "x" } } }).success,
+    ).toBe(false);
+  });
+
+  it("rejects empty and non-string message values", () => {
+    expect(
+      PerAgentConfigSchema.safeParse({ localePacks: { he: { loop_detected: "" } } }).success,
+    ).toBe(false);
+    expect(
+      PerAgentConfigSchema.safeParse({ localePacks: { he: { loop_detected: 42 } } }).success,
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // agents.<id>.capabilityClass —
 // an operator pin for the capability class. Without it only codex models are
 // naturally nano-classed, so the small-window context-fit behavior can't be

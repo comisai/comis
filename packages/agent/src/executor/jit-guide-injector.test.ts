@@ -703,3 +703,92 @@ describe("same guide is not re-injected within a single turn", () => {
     expect(logger.info).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Delegation policy reachability
+// ---------------------------------------------------------------------------
+
+/**
+ * SYSTEM_PROMPT_GUIDES["sessions_spawn"] holds the "## Task Delegation" policy —
+ * the >30s rule, the media/multi-file criteria, the parallel fan-out
+ * instruction — and it was delivered ONLY after a successful sessions_spawn call.
+ * That is circular: the policy exists to make the model reach for the tool, and
+ * it was unreachable until the model had already reached for it.
+ *
+ * Proven live: sessions_spawn is present and works (a direct request spawned a
+ * run), yet across 119 prompts on two different model families the agent never
+ * once delegated — including an 11-tool, multi-minute, file-producing turn that
+ * matches three of the criteria.
+ *
+ * Deliver it on the FIRST tool result of any kind when delegation is available,
+ * keyed so the later sessions_spawn call does not repeat it.
+ */
+describe("wrapToolResultWithGuide delivers the delegation policy early", () => {
+  function ok(): AgentToolResult<unknown> {
+    return { content: [{ type: "text", text: "done" }], details: {} } as AgentToolResult<unknown>;
+  }
+
+  it("appends the delegation policy to an unrelated tool's first result", () => {
+    const delivered = new Set<string>();
+    const out = wrapToolResultWithGuide("read", ok(), delivered, createMockLogger(), {
+      delegationAvailable: true,
+    });
+    expect(JSON.stringify(out.content)).toContain("Task Delegation");
+  });
+
+  it("does not repeat it on a later sessions_spawn call", () => {
+    const delivered = new Set<string>();
+    wrapToolResultWithGuide("read", ok(), delivered, createMockLogger(), { delegationAvailable: true });
+    const second = wrapToolResultWithGuide("sessions_spawn", ok(), delivered, createMockLogger(), {
+      delegationAvailable: true,
+    });
+    expect(JSON.stringify(second.content)).not.toContain("## Task Delegation");
+  });
+
+  it("stays silent when delegation is not available", () => {
+    const delivered = new Set<string>();
+    const out = wrapToolResultWithGuide("read", ok(), delivered, createMockLogger(), {
+      delegationAvailable: false,
+    });
+    expect(JSON.stringify(out.content)).not.toContain("Task Delegation");
+  });
+
+  it("is byte-identical to before when no options are passed", () => {
+    const delivered = new Set<string>();
+    const out = wrapToolResultWithGuide("read", ok(), delivered, createMockLogger());
+    expect(JSON.stringify(out.content)).not.toContain("Task Delegation");
+  });
+});
+
+/**
+ * The gate must read the SESSION tool list. An earlier version read the
+ * discovery-injection array at the other call site, which holds only newly
+ * discovered tools, so it was always false and the policy never shipped —
+ * verified live by a guide log showing only "tool:read".
+ */
+describe("createJitGuideWrapper gates delegation on the session tool list", () => {
+  function tool(name: string): ToolDefinition {
+    return {
+      name,
+      description: "",
+      parameters: {},
+      execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+    } as unknown as ToolDefinition;
+  }
+
+  it("ships the delegation policy when sessions_spawn is in the session tools", async () => {
+    const delivered = new Set<string>();
+    const [wrapped] = createJitGuideWrapper(
+      [tool("read"), tool("sessions_spawn")], delivered, createMockLogger(),
+    );
+    const out = await wrapped!.execute("c1", {}, undefined, undefined, {} as never);
+    expect(JSON.stringify(out.content)).toContain("Task Delegation");
+  });
+
+  it("stays silent when sessions_spawn is absent", async () => {
+    const delivered = new Set<string>();
+    const [wrapped] = createJitGuideWrapper([tool("read")], delivered, createMockLogger());
+    const out = await wrapped!.execute("c1", {}, undefined, undefined, {} as never);
+    expect(JSON.stringify(out.content)).not.toContain("Task Delegation");
+  });
+});

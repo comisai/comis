@@ -345,6 +345,52 @@ describe("assembleSystemHealthReport (4-source read fan-in)", () => {
     expect(report.sessions.degraded).toBe(4); // the raw flag is unchanged (invariant)
   });
 
+  // LIVE INCIDENT (comis-moshe 2026-07-26): the TABLE view printed
+  // "Sessions: 1 (0 hard-degraded, 0%; +1 delivered-with-tool-errors)" while the
+  // JSON of the SAME report said degraded:1, degradedRate:1. Two renderings of one
+  // report disagreed because the CLI derived the hard split locally and the JSON
+  // shipped only the raw flag — so a JSON consumer read 100% degraded on a system
+  // the human view called healthy. The split belongs in the report.
+  it("carries the HARD degraded split in the report so the JSON and the table cannot disagree", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    for (let i = 0; i < 3; i++) {
+      store.insertDiagnostic({
+        timestamp: now - 1_000 - i, category: "session_summary", severity: "warning", sessionKey: `d${i}`,
+        message: "session:summary",
+        details: summaryDetails({ degraded: true, endReason: "completed_with_tool_errors" }),
+      });
+    }
+    store.insertDiagnostic({
+      timestamp: now - 400, category: "session_summary", severity: "warning", sessionKey: "hard",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, endReason: "context_exhausted" }),
+    });
+    const report = await assembleSystemHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
+
+    // The raw flag is preserved (invariant) …
+    expect(report.sessions.degraded).toBe(4);
+    expect(report.sessions.deliveredWithToolErrors).toBe(3);
+    // … and the HARD split the findings actually fire on is now IN the report.
+    expect(report.sessions.hardDegraded).toBe(1);
+    expect(report.sessions.hardDegradedRate).toBeCloseTo(0.25, 5);
+  });
+
+  it("reports a zero hard-degraded rate when every degraded session still delivered", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    store.insertDiagnostic({
+      timestamp: now - 1_000, category: "session_summary", severity: "warning", sessionKey: "only",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, endReason: "completed_with_tool_errors" }),
+    });
+    const report = await assembleSystemHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
+    // This is the EXACT live shape: 1 session, degraded:1, but 0 hard.
+    expect(report.sessions.degraded).toBe(1);
+    expect(report.sessions.hardDegraded).toBe(0);
+    expect(report.sessions.hardDegradedRate).toBe(0);
+  });
+
   it("STILL root-causes to acute degradation on a genuine HARD failure amid delivered-with-tool-errors", async () => {
     const now = systemNowMs();
     const store = makeStore();

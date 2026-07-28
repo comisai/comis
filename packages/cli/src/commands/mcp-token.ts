@@ -55,8 +55,19 @@ export function ensureGatewayToken(flagToken: string | undefined): void {
   loadEnvFile(join(homedir(), ".comis", ".env"));
   const existing = systemGetEnv("COMIS_GATEWAY_TOKEN");
   if (existing !== undefined && existing.length > 0) return;
+  // The old hint said "run `comis init` to generate a gateway token". Under
+  // `security.storage: encrypted` — the recommended posture — the token is NOT in
+  // `~/.comis/.env` (that file holds only SECRETS_MASTER_KEY); it lives in the
+  // encrypted `secrets.db`, which is why the daemon boots fine while this
+  // resolver misses. Following that hint on a healthy box ROTATES the live
+  // token and breaks the running daemon. Lead with the read-only recovery.
   throw new Error(
-    "Missing COMIS_GATEWAY_TOKEN — set in ~/.comis/.env or pass --token <token>.\n" +
-      "Hint: run `comis init` to generate a gateway token, or `comis pm2 setup` to bootstrap the environment file.",
+    "Missing COMIS_GATEWAY_TOKEN in the environment.\n" +
+      "If the daemon is running, a token already exists — it is just not in the environment:\n" +
+      "  • encrypted storage (`security.storage: encrypted`): the token is in `secrets.db`, not `~/.comis/.env`.\n" +
+      "    Read it and pass it through:  comis --token \"$(comis secrets get COMIS_GATEWAY_TOKEN)\" <command>\n" +
+      "  • file storage: export COMIS_GATEWAY_TOKEN, or add it to `~/.comis/.env`.\n" +
+      "Only run `comis init` on a box with NO working install — it generates a NEW token and " +
+      "will break a daemon that is already serving with the current one.",
   );
 }

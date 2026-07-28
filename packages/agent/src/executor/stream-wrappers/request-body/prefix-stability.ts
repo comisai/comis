@@ -75,10 +75,22 @@ function structEachMessage(messages: Array<Record<string, unknown>>, endIdx: num
 }
 
 /** Parse the `t<n>`/`r<n>`/`len<n>` fields out of a struct sig (returns {t,r,len} or undefined). */
-function parseSig(sig: string | undefined): { t: number; r: number; len: number } | undefined {
+function parseSig(
+  sig: string | undefined,
+): { b: number; t: number; r: number; len: number } | undefined {
   if (!sig) return undefined;
+  // `b` (content BLOCK count) was previously not parsed at all, which made the
+  // classifier structurally blind to a block-count reshape — the dominant live
+  // churn cause, reported as "unknown" on 29 of 31 signals while the printed
+  // signature already showed b1→b2 (comis-moshe 2026-07-26).
+  const b = /\|b(\d+)\|/.exec(sig);
   const t = /\|t(\d+)\|/.exec(sig); const r = /\|r(\d+)\|/.exec(sig); const len = /\|len(\d+)$/.exec(sig);
-  return { t: t ? Number(t[1]) : 0, r: r ? Number(r[1]) : 0, len: len ? Number(len[1]) : 0 };
+  return {
+    b: b ? Number(b[1]) : 0,
+    t: t ? Number(t[1]) : 0,
+    r: r ? Number(r[1]) : 0,
+    len: len ? Number(len[1]) : 0,
+  };
 }
 
 /**
@@ -132,6 +144,13 @@ export function classifyPrefixMutation(
     if (!roleChanged && p.r > c.r) return "inline-recall";
     if (p.t > c.t) classes.push("thinking-cleared");
     else if (p.len - c.len > 500) classes.push("content-cleared");
+    // A CACHED assistant message whose content-block COUNT moved between turns was
+    // re-serialized with a different block shape (text split/merged, a replay block
+    // added or stripped). Same role, thinking unchanged, length delta below the
+    // content-cleared threshold — so none of the classes above catch it, and it
+    // used to render as "unknown". It is a real, actionable cause: the cached
+    // prefix must be byte-stable, so a reshape re-pays the whole prefix.
+    if (p.b !== c.b) classes.push("block-count-changed");
   }
 
   // Content-pattern classes (per-request-varying injected content).

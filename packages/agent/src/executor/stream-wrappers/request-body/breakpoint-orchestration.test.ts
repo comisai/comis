@@ -268,3 +268,55 @@ describe("runCacheBreakpointPhase — UNTRUSTED_ block 1h cache anchor", () => {
     expect(violations).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Provider retention cap
+// ---------------------------------------------------------------------------
+
+/**
+ * Bedrock and Vertex serve Anthropic models but cannot accept the Anthropic beta
+ * that enables the 1-hour cache TTL. A `ttl: "1h"` marker sent there is billed as
+ * a cache write and never matched on the following request.
+ *
+ * Measured live on amazon-bedrock with a byte-stable system prompt AND a
+ * byte-stable 193-tool array: ~459k cache-creation tokens on every call and zero
+ * cache reads for the entire drive.
+ *
+ * The cap belongs at this single resolution point — the four downstream sites
+ * that write `ttl: "1h"` all read the retention decided here.
+ */
+describe("runCacheBreakpointPhase — extended-TTL provider cap", () => {
+  function retentionFor(provider: string) {
+    return runCacheBreakpointPhase(
+      makeResult([{ role: "user", content: [{ type: "text", text: "hi" }] }]),
+      { id: "claude-opus-4-8", provider },
+      makeConfig({ getCacheRetention: () => "long" }),
+      true,
+      false,
+      1024,
+      makeLogger(),
+    );
+  }
+
+  it("keeps long retention on direct Anthropic", () => {
+    expect(retentionFor("anthropic")).toBe("long");
+  });
+
+  it("caps long retention to short on amazon-bedrock", () => {
+    expect(retentionFor("amazon-bedrock")).toBe("short");
+  });
+
+  it("emits no 1h marker on the system block for bedrock", () => {
+    const result = makeResult([{ role: "user", content: [{ type: "text", text: "hi" }] }]);
+    runCacheBreakpointPhase(
+      result,
+      { id: "claude-opus-4-8", provider: "amazon-bedrock" },
+      makeConfig({ getCacheRetention: () => "long" }),
+      true,
+      false,
+      1024,
+      makeLogger(),
+    );
+    expect(JSON.stringify(result)).not.toContain('"1h"');
+  });
+});

@@ -28,7 +28,7 @@ import { LearningOutcomeConfigSchema } from "../schema-learning-outcome.js";
 import { LearningConfigSchema } from "../schema-learning.js";
 import { MemoryLifecycleConfigSchema } from "../schema-memory-lifecycle.js";
 import { validateProfileId } from "../../security/profile-id.js";
-import { CanonicalLocaleSchema } from "../../domain/response-locale-policy.js";
+import { CanonicalLocaleSchema, LocalePacksSchema } from "../../domain/response-locale-policy.js";
 import { ChannelEndpointSchema } from "../../domain/conversation-scope.js";
 
 // Sibling-leaf imports (one-directional dependency graph).
@@ -195,6 +195,13 @@ export const AgentConfigSchema = z.strictObject({
     operationModels: OperationModelsSchema,
     /** Canonical BCP-47 locale for response policy and deterministic platform replies. */
     language: CanonicalLocaleSchema.optional(),
+    /**
+     * Strings for the deterministic platform replies, per locale. Without an
+     * entry for the resolved `language`, those replies fall back to English —
+     * the only pack the runtime ships. Setting `language` alone does NOT
+     * translate them; it cannot, because the runtime holds no other language.
+     */
+    localePacks: LocalePacksSchema.optional(),
   });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;

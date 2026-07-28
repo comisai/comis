@@ -412,3 +412,26 @@ describe("matchExecRecoveryHint — workspace-rooted venv missing matcher", () =
     expect(result!).not.toContain("pyproject.toml");
   });
 });
+
+describe("matchExternallyManagedEnv (PEP 668)", () => {
+  const PEP668 = `error: externally-managed-environment
+
+\u00d7 This environment is externally managed
+\u2570\u2500> To install Python packages system-wide, try apt install python3-xyz
+    note: If you believe this is a mistake, please contact your Python installation provider.
+    hint: See PEP 668 for the detailed specification.`;
+
+  it("surfaces a workspace virtualenv without host-package bypass guidance", () => {
+    const hint = matchExecRecoveryHint({ stderr: PEP668, exitCode: 1, cwd: "/w" });
+    expect(hint).not.toBeNull();
+    expect(hint).toContain("PEP 668");
+    expect(hint).not.toContain("--break-system-packages");
+    expect(hint).toContain("venv");
+    expect(hint).toMatch(/Do not retry the identical command/);
+  });
+
+  it("abstains on success and on unrelated stderr", () => {
+    expect(matchExecRecoveryHint({ stderr: PEP668, exitCode: 0, cwd: "/w" })).toBeNull();
+    expect(matchExecRecoveryHint({ stderr: "some other error", exitCode: 1, cwd: "/w" })).toBeNull();
+  });
+});

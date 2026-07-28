@@ -17,6 +17,7 @@
  */
 
 import type { SystemIntervalHandle, SystemTimeoutHandle } from "@comis/core";
+import { MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT } from "@comis/core";
 import type PQueue from "p-queue";
 import type {
   CircuitState,
@@ -171,7 +172,10 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
   // Resolve defaults at construction
   const options: McpClientManagerOptions = {
     connectTimeoutMs: deps.connectTimeoutMs ?? 30_000,
-    callToolTimeoutMs: deps.callToolTimeoutMs ?? 60_000,
+    // The schema's default is the ONE source of truth — a local literal here
+    // silently halved the deadline (60s) whenever the wiring did not thread the
+    // configured value through. See MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT.
+    callToolTimeoutMs: deps.callToolTimeoutMs ?? MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT,
     stdioDefaultConcurrency: deps.stdioDefaultConcurrency ?? 1,
     httpDefaultConcurrency: deps.httpDefaultConcurrency ?? 4,
     reconnectOpts: {

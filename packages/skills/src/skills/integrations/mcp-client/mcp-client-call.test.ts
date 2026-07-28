@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import PQueue from "p-queue";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { runWithContext, type RequestContext } from "@comis/core";
 import type {
   McpClientManagerDeps,
@@ -171,6 +172,98 @@ describe("R8 needs_reauth", () => {
   });
 });
 
+describe("call timeout names its knob", () => {
+  // Observed live: a heavy report tool hit the 120s
+  // `integrations.mcp.callToolTimeoutMs` FOUR times. The surfaced error was the bare
+  // SDK string "MCP error -32001: Request timed out", with a wrapper hint saying
+  // "retry the underlying operation when appropriate" — so the agent retried 4x,
+  // burned 8 minutes of the user's time, and tripped the circuit breaker. The error
+  // must name the knob + the value that expired, and must NOT invite a blind retry.
+  let logger: ReturnType<typeof makeLogger>;
+  let deps: McpClientManagerDeps;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    logger = makeLogger();
+    deps = { logger } as unknown as McpClientManagerDeps;
+  });
+
+  it("names integrations.mcp.callToolTimeoutMs and the configured value in the error", async () => {
+    const serverName = "vendor-mcp";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new McpError(ErrorCode.RequestTimeout, "Request timed out")),
+    );
+
+    const result = await callTool(state, deps, `mcp:${serverName}/vendor_activity_report`, {});
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    const message = result.error.message;
+    expect(message).toContain("integrations.mcp.callToolTimeoutMs");
+    // the ACTUAL configured value, so the operator does not have to go look it up
+    expect(message).toContain(String(state.options.callToolTimeoutMs));
+    expect(message).toContain(serverName);
+  });
+
+  it("tells the caller NOT to retry unchanged (the retry storm is the failure mode)", async () => {
+    const serverName = "vendor-mcp";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new McpError(ErrorCode.RequestTimeout, "Request timed out")),
+    );
+
+    const result = await callTool(state, deps, `mcp:${serverName}/vendor_activity_report`, {});
+    if (result.ok) throw new Error("expected err");
+    // An identical retry deterministically re-expires the same deadline.
+    expect(result.error.message).toMatch(/do not retry (it |the call )?unchanged/i);
+    // …and it names the two things that DO change the outcome.
+    expect(result.error.message).toMatch(/narrow/i);
+  });
+
+  it("does not send the agent to patch the knob — that config path is immutable at runtime", async () => {
+    // Observed live: the hint's closing clause read "or raise
+    // `integrations.mcp.callToolTimeoutMs` for this deployment", so the agent did
+    // exactly that — one `gateway` patch call, rejected by the immutable-path guard
+    // ("Cannot patch immutable config path: integrations.mcp.callToolTimeoutMs.
+    // Patchable: integrations.mcp.servers."). The rejection surfaced in the chat as a
+    // bare "[tool failure] gateway reported an error" on top of the real answer.
+    // Naming the knob is right (an operator needs it); telling the AGENT to raise it
+    // is not — the only remedy available to the caller is narrowing the request.
+    const serverName = "vendor-mcp";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new McpError(ErrorCode.RequestTimeout, "Request timed out")),
+    );
+
+    const result = await callTool(state, deps, `mcp:${serverName}/vendor_activity_report`, {});
+    if (result.ok) throw new Error("expected err");
+    const message = result.error.message;
+
+    // Still names the knob and its value — the operator-facing half is unchanged.
+    expect(message).toContain("integrations.mcp.callToolTimeoutMs");
+    // But never phrases it as an action the caller can take.
+    expect(message).not.toMatch(/\braise\b|\bincrease\b/i);
+    // …and says whose job it is, so the agent stops instead of trying a patch.
+    expect(message).toMatch(/operator/i);
+  });
+
+  it("emits a WARN carrying the same hint + a dependency errorKind", async () => {
+    const serverName = "vendor-mcp";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new McpError(ErrorCode.RequestTimeout, "Request timed out")),
+    );
+
+    await callTool(state, deps, `mcp:${serverName}/vendor_activity_report`, {});
+
+    const timeoutWarn = logger.warn.mock.calls.find(
+      (c) => typeof c[1] === "string" && /timed out/i.test(c[1] as string),
+    );
+    expect(timeoutWarn).toBeDefined();
+    const fields = timeoutWarn![0] as Record<string, unknown>;
+    expect(fields.errorKind).toBe("dependency");
+    expect(String(fields.hint)).toContain("integrations.mcp.callToolTimeoutMs");
+    expect(fields.timeoutMs).toBe(state.options.callToolTimeoutMs);
+  });
+});
+
 describe("request correlation", () => {
   it("registers MCP progress handling while forwarding the request trace separately", async () => {
     const serverName = "inventory";
@@ -197,7 +290,51 @@ describe("request correlation", () => {
         timeout: 5000,
         onprogress: expect.any(Function),
         resetTimeoutOnProgress: true,
+        maxTotalTimeout: 5000,
       },
     );
+  });
+
+  // `resetTimeoutOnProgress` restarts the timeout on EVERY progress
+  // notification, and the SDK applies no total ceiling unless `maxTotalTimeout`
+  // is passed ("If not specified, there is no maximum total timeout"). So a
+  // server that emits progress held a call open indefinitely while the config
+  // key, the docs, and the expiry hint all called it the call deadline. Live:
+  // a 120000ms cap with observed call durations of 139478ms and 110004ms, and
+  // single calls free to consume the whole turn budget.
+  it("bounds a progress-emitting call with an absolute ceiling, not just a per-gap timeout", async () => {
+    const serverName = "inventory";
+    const state = makeConnectedState(serverName, () =>
+      Promise.resolve({ content: [{ type: "text", text: "{}" }] }),
+    );
+    const deps = { logger: makeLogger() } as unknown as McpClientManagerDeps;
+
+    await runWithContext(makeContext(), () =>
+      callTool(state, deps, `mcp:${serverName}/inventory_items_list`, {}),
+    );
+
+    const opts = (state.connections.get(serverName)?.client.callTool as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![2] as Record<string, unknown>;
+    expect(opts.resetTimeoutOnProgress).toBe(true);
+    expect(opts.maxTotalTimeout).toBe(state.options.callToolTimeoutMs);
+  });
+
+  // The ceiling must not be scoped to the tracing branch. Tying it to
+  // `requestTraceId` left every untraced path — which is where long-running
+  // background calls run — with no ceiling at all. Live: after a first cut that
+  // gated it, a background task still recorded 140233ms against a 120000ms cap.
+  it("applies the absolute ceiling even with no request trace context", async () => {
+    const serverName = "inventory";
+    const state = makeConnectedState(serverName, () =>
+      Promise.resolve({ content: [{ type: "text", text: "{}" }] }),
+    );
+    const deps = { logger: makeLogger() } as unknown as McpClientManagerDeps;
+
+    // No runWithContext → no requestTraceId.
+    await callTool(state, deps, `mcp:${serverName}/inventory_items_list`, {});
+
+    const opts = (state.connections.get(serverName)?.client.callTool as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![2] as Record<string, unknown>;
+    expect(opts.maxTotalTimeout).toBe(state.options.callToolTimeoutMs);
   });
 });

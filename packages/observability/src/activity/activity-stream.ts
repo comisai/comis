@@ -155,6 +155,8 @@ const SUBSCRIBED_EVENTS = [
   "tool:started",
   "tool:executed",
   "tool:timeout",
+  "background_task:completed",
+  "background_task:failed",
   "model:fallback_attempt",
   "model:fallback_exhausted",
   "model:lkw_fallback_attempt",
@@ -462,6 +464,13 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
 
   function onToolExecuted(p: EventMap["tool:executed"]): void {
     if (isSuppressed(p.toolName)) return;
+    // A background hand-off is NOT an outcome — the tool is still running and
+    // p.success is true only because the placeholder is a non-error result.
+    // Leave the activity running; the background_task:{completed,failed}
+    // terminal event closes it (onBackgroundTaskTerminal below). Closing here
+    // told the user four still-running reports had "completed" — every one of
+    // which subsequently failed.
+    if (p.backgrounded === true) return;
     if (p.agentId === undefined || p.sessionKey === undefined || p.traceId === undefined) return;
     const { defaultLabel, semanticPhase } = buildLabel(p.toolName, undefined, p.params ?? {});
     dispatch({
@@ -479,6 +488,42 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       toolName: p.toolName,
       durationMs: p.durationMs,
       ...(p.errorKind !== undefined ? { errorKind: p.errorKind } : {}),
+      defaultLabel,
+    });
+  }
+
+  /**
+   * Close a BACKGROUNDED tool's activity on its real terminal event.
+   *
+   * The hand-off left the card `running` (see onToolExecuted); this is the
+   * matching close. Correlation is the promote-time capture on the event;
+   * without it there is no activity card that can be closed safely.
+   * A `dispatchRedelivery` re-emit is a dispatch mechanism, not a second
+   * outcome — never re-close on it.
+   */
+  function onBackgroundTaskTerminal(
+    p: EventMap["background_task:completed"] | EventMap["background_task:failed"],
+    failed: boolean,
+  ): void {
+    if (p.dispatchRedelivery === true) return;
+    if (p.toolCallId === undefined || p.sessionKey === undefined) return;
+    if (isSuppressed(p.toolName)) return;
+    const { defaultLabel, semanticPhase } = buildLabel(p.toolName, undefined, {});
+    dispatch({
+      schemaVersion: 1,
+      activityId: activityIdFor(`tool:${p.toolCallId}`),
+      sessionKey: p.sessionKey,
+      agentId: p.agentId,
+      traceId: p.traceId ?? p.taskId,
+      toolCallId: p.toolCallId,
+      ts: ts(),
+      phase: "end",
+      status: failed ? "failed" : "completed",
+      kind: "tool",
+      semanticPhase: failed ? "error" : semanticPhase,
+      toolName: p.toolName,
+      durationMs: p.durationMs,
+      ...(failed ? { errorKind: (p as EventMap["background_task:failed"]).errorKind } : {}),
       defaultLabel,
     });
   }
@@ -656,6 +701,8 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
   bind("tool:started", onToolStarted);
   bind("tool:executed", onToolExecuted);
   bind("tool:timeout", onToolTimeout);
+  bind("background_task:completed", (p) => onBackgroundTaskTerminal(p, false));
+  bind("background_task:failed", (p) => onBackgroundTaskTerminal(p, true));
   bind("model:fallback_attempt", onModelEvent);
   bind("model:fallback_exhausted", onModelEvent);
   bind("model:lkw_fallback_attempt", onModelEvent);

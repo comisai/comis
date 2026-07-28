@@ -26,6 +26,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, it, expect } from "vitest";
 import { evictHistoryUnderBudget } from "./lcd-budget-eviction.js";
+import { evictionLogMessage } from "./lcd-assembler.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures (mirrors lcd-assembler.test.ts message shapes)
@@ -260,5 +261,29 @@ describe("evictHistoryUnderBudget", () => {
     // Budget 45 → a2(20)+a1(20)=40 fits; adding u0 → 60 > 45 stop. Kept = [a1, a2].
     const out = evictHistoryUnderBudget(evictable, 45);
     expect(out.map(textOf)).toEqual(["a1", "a2"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Eviction log honesty
+// ---------------------------------------------------------------------------
+
+/**
+ * The lcd-evict DEBUG fired on every assembly with the message "lcd history
+ * evicted under budget" even when droppedCount was 0 — i.e. when nothing was
+ * evicted at all. Reading it during a live cache investigation, it is a
+ * statement that the message array was rewritten, which is the single most
+ * important thing to rule out when a cached prefix stops matching. It cost a
+ * full diagnostic detour before droppedCount showed 0 on every call.
+ *
+ * The line must state what happened, so the two cases read differently.
+ */
+describe("lcd-evict log honesty", () => {
+  it("does not claim eviction when nothing was dropped", () => {
+    expect(evictionLogMessage(0)).not.toMatch(/evicted/i);
+  });
+
+  it("states eviction when messages were actually dropped", () => {
+    expect(evictionLogMessage(3)).toMatch(/evicted/i);
   });
 });

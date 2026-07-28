@@ -784,7 +784,7 @@ durably reset a task transition, the higher-priority
 reconciliation authority and the
 `health_signal:background_task_recovery_failed` system-health signal.
 
-For `context_exhausted` sessions the report carries an optional **`contextBudget`** section -- the terminal per-LLM-call budget equation extracted from the trajectory's `context.budget` records (last record wins): `{ windowTokens, rawContextWindowTokens, windowCapSource, systemTokens, freshTailTokens, budgetedHistoryTokens, keptCount, assembledInputTokens, outputHeadroom, verdict }`. `windowCapSource` names what clamped the effective window below the model's configured `contextWindow`: the exact `contextEngine.budget.*` knob (`effectiveContextCapSmall` / `effectiveContextCapNano`), `served` (the Ollama-served `num_ctx` bound the window -- fix with `OLLAMA_CONTEXT_LENGTH=<configured> ollama serve` or a Modelfile `PARAMETER num_ctx`), `capabilityClass` (the operator's `providers.entries.<id>.capabilities.capabilityClass` pin bound the window -- pin a higher class or remove the pin; the `contextEngine.budget.*` caps do not move this bind), or `none`. `verdict` is the fit-check outcome (`fits` / `downshifted` / `exhausted`). When present, `likelyRootCause` is numbers-backed: it states the assembled-vs-window totals, the binding cap, the system+tools share of the window, and the kept-history count, and its suggested steps name the binding lever (the budget knob to raise, the Ollama serve knobs, or the `capabilityClass` pin) or recommend reducing the active tool surface when tool schemas dominate. The section is absent when the trajectory carries no `context.budget` records; the verdict then falls back to the generic wording.
+For `context_exhausted` sessions the report carries an optional **`contextBudget`** section -- the terminal per-LLM-call budget equation extracted from the trajectory's `context.budget` records (last record wins): `{ windowTokens, rawContextWindowTokens, windowCapSource, systemTokens, freshTailTokens, budgetedHistoryTokens, keptCount, assembledInputTokens, outputHeadroom, verdict, freshTailSteps?, freshTailStepsConfigured?, originatingRequestRetained?, freshTailTrimmedCount? }`. `freshTailSteps` / `freshTailStepsConfigured` are the **effective vs operator-configured** count of trailing conversation steps kept verbatim (`contextEngine.freshTailTurns`). The verbatim tail also reaches back to the store's persisted horizon, and residual trimming pins the current turn's originating request while discarding completed tool segments. `originatingRequestRetained` records the resulting coverage directly; only an explicit `false` produces the `fresh_tail_origin_lost` root-cause verdict, while a step-count clamp alone is not treated as evidence of loss. `windowCapSource` names what clamped the effective window below the model's configured `contextWindow`: the exact `contextEngine.budget.*` knob (`effectiveContextCapSmall` / `effectiveContextCapNano`), `served` (the Ollama-served `num_ctx` bound the window -- fix with `OLLAMA_CONTEXT_LENGTH=<configured> ollama serve` or a Modelfile `PARAMETER num_ctx`), `capabilityClass` (the operator's `providers.entries.<id>.capabilities.capabilityClass` pin bound the window -- pin a higher class or remove the pin; the `contextEngine.budget.*` caps do not move this bind), or `none`. `verdict` is the fit-check outcome (`fits` / `downshifted` / `exhausted`). When present, `likelyRootCause` is numbers-backed: it states the assembled-vs-window totals, the binding cap, the system+tools share of the window, and the kept-history count, and its suggested steps name the binding lever (the budget knob to raise, the Ollama serve knobs, or the `capabilityClass` pin) or recommend reducing the active tool surface when tool schemas dominate. The section is absent when the trajectory carries no `context.budget` records; the verdict then falls back to the generic wording.
 
 When the session ran any memory recalls the report carries an optional **`recall`** section -- the memory-recall outcome aggregated over the trajectory's `memory.recalled` records: `{ recalls, zeroHits, lastLanes, lastFinalCount, rerankerAvailable, crossUserRecalls?, lastCrossUserCount? }` (counts and booleans only -- never the query text or any recalled memory body). `recalls` is how many recalls ran, `zeroHits` how many returned **no** injected memories (a recall miss), and the `last*` fields describe the terminal recall (its lane count and final injected-memory count). **`crossUserRecalls`** (present only when `> 0`) is how many recalls injected at least one memory scoped to a **different user** than the conversation -- the cross-sender privacy signal for agent-scoped recall (one shared agent surfacing sender A's memory into sender B's turn), so "was cross-sender data injected into this turn's context?" is answerable from the always-on report without pre-enabling the opt-in `diagnostics.recallTrace` artifact; **`lastCrossUserCount`** is the terminal recall's cross-user injected count. Counts only -- never the user-ids or bodies. This drives a dedicated **`recall_miss`** `likelyRootCause` verdict: a degraded session whose recalls **all** missed (`zeroHits === recalls`) and that matched no tool/context/breaker cause is root-caused as a recall miss, pointing the operator at the recall **scope** (agent- vs user-scoped) and, for non-Latin queries, the trigram-twin lanes (see [`comis system-health`](#obs-system-health) `health_signal` / `config_posture` embedder). A zero-hit recall on a **healthy** turn is benign -- the agent simply did not need memory -- and never names a cause. The section is absent for sessions with no recall records.
 
@@ -819,7 +819,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ sessionKey?: string, traceId?: string, rootRunId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` / `rootRunId` required. `rootRunId` is an autonomy run's id, canonicalized to its session before assembly (a `root-` synthetic root resolves by prefix-strip; a real spawned root by a session-index scan) and renders the run's `spawnTree`. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
-| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], contextBudget?, recall?, voice?, learning?, orchestrate?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
+| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, tokenBasis?, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], contextBudget?, recall?, voice?, learning?, orchestrate?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
@@ -837,7 +837,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
     "schemaVersion": 1,
     "sessionKey": "default:agent:default:user_a:telegram:peer:user_a",
     "outcome": { "endReason": "completed_with_tool_errors", "degraded": true, "severity": "degraded" },
-    "cost": { "costUsd": 1.320669, "totalTokens": 735800, "cacheReadRatio": 0 },
+    "cost": { "costUsd": 1.320669, "totalTokens": 735800, "tokenBasis": "input+output+cache", "cacheReadRatio": 0 },
     "timing": { "durationMs": 247740, "turnCount": 25 },
     "toolStats": { "web_fetch": { "ok": 2, "failed": 8, "topErrorKind": "dependency" } },
     "failures": [
@@ -892,13 +892,19 @@ When cron jobs ran a [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model
 
 This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.explain` post-mortems ONE session; `obs.system.health` rolls up a WINDOW of sessions.
 
+`sessions.degraded` is the raw count and includes
+`completed_with_tool_errors`, where a tool failed but a final answer was still
+delivered. `sessions.deliveredWithToolErrors` names that subset;
+`sessions.hardDegraded` and `hardDegradedRate` subtract it and drive the acute
+and high-degradation findings.
+
 `sinceHours` is optional; the **24h** default is applied in the handler. The report is digest-only: `findings[]` is capped top-N and `topErrorKinds` is merged + capped (counts only), with an honest `truncations[]` ledger recording anything the bounding pass dropped. An optional `coverage` block reports READ-coverage of the system sources -- the session-summary store (`{ found, rows }`), the multi-day session index (`{ daysRead, daysMissing }`), and the billing source (`{ present }`) -- so a silently-empty window (e.g. `rows: 0` or `daysMissing > 0`) is self-evident rather than masquerading as a clean zero-activity system.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ sinceHours?: number }` -- the aggregation window in hours (positive). Optional; defaults to `24` in the handler. |
-| **Returns** | A `SystemHealthReport`: `{ schemaVersion, windowHours, sessions: { total, degraded, degradedRate }, degradedByCause, topErrorKinds[], breakerTripTotal, toolStats, cost: { costUsd, totalTokens }, activity: { activeAgents[], activeChannels[], exitReasons, turnTotal, tokenTotal }, findings[], likelyRootCause, pipelineAuthoringGate?: { buildAuthor, reason }, autonomy?: { runs: { total, degraded, degradedRate }, orphaned, resumed, revoked, killed, breakerTrips, denialBreakerTrips, budgetBreaches, costUsd, worstRootRunId? }, cronWakeGate?: { fires: { total, skipped, skipRate }, turnsSaved, toolCalls, perAgent[] }, suggestedNextSteps[], truncations[], coverage? }` |
+| **Returns** | A `SystemHealthReport`: `{ schemaVersion, windowHours, sessions: { total, degraded, degradedRate, deliveredWithToolErrors?, hardDegraded?, hardDegradedRate? }, degradedByCause, topErrorKinds[], breakerTripTotal, toolStats, cost: { costUsd, totalTokens, tokenBasis?, offSessionUsd? }, activity: { activeAgents[], activeChannels[], exitReasons, turnTotal, tokenTotal }, findings[], likelyRootCause, pipelineAuthoringGate?: { buildAuthor, reason }, autonomy?: { runs: { total, degraded, degradedRate }, orphaned, resumed, revoked, killed, breakerTrips, denialBreakerTrips, budgetBreaches, costUsd, worstRootRunId? }, cronWakeGate?: { fires: { total, skipped, skipRate }, turnsSaved, toolCalls, perAgent[] }, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
@@ -915,12 +921,12 @@ This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.exp
   "result": {
     "schemaVersion": 1,
     "windowHours": 24,
-    "sessions": { "total": 40, "degraded": 22, "degradedRate": 0.55 },
+    "sessions": { "total": 40, "degraded": 22, "degradedRate": 0.55, "deliveredWithToolErrors": 18, "hardDegraded": 4, "hardDegradedRate": 0.1 },
     "degradedByCause": { "context_exhausted": 12, "completed_with_tool_errors": 7, "output_starved": 3 },
     "topErrorKinds": [ { "kind": "dependency", "count": 18 } ],
     "breakerTripTotal": 3,
     "toolStats": { "web_fetch": { "ok": 2, "failed": 8 } },
-    "cost": { "costUsd": 1.320669, "totalTokens": 735800 },
+    "cost": { "costUsd": 1.320669, "totalTokens": 735800, "tokenBasis": "input+output", "offSessionUsd": 0.042 },
     "activity": {
       "activeAgents": ["default"],
       "activeChannels": ["telegram"],

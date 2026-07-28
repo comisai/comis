@@ -94,9 +94,14 @@ export function registerSystemHealthCommand(program: Command): void {
         // reply) vs delivered-with-tool-errors (a final answer WAS delivered
         // despite a recovered/acknowledged tool error) so a system of self-healed
         // hiccups is not misread as a high failure rate.
+        // Read the split OFF the report — deriving it here is what let the table
+        // and the report's own JSON disagree (comis-moshe 2026-07-26). The `??`
+        // fallbacks keep an older daemon's report renderable.
         const delivered = report.sessions.deliveredWithToolErrors ?? 0;
-        const hardDegraded = report.sessions.degraded - delivered;
-        const hardPct = report.sessions.total > 0 ? Math.round((hardDegraded / report.sessions.total) * 100) : 0;
+        const hardDegraded = report.sessions.hardDegraded ?? (report.sessions.degraded - delivered);
+        const hardRate = report.sessions.hardDegradedRate
+          ?? (report.sessions.total > 0 ? hardDegraded / report.sessions.total : 0);
+        const hardPct = Math.round(hardRate * 100);
         info(
           delivered > 0
             ? `Sessions:   ${report.sessions.total} (${hardDegraded} hard-degraded, ${hardPct}%; +${delivered} delivered-with-tool-errors — user still got a reply)`

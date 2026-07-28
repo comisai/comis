@@ -94,6 +94,16 @@ export interface AgentEvents {
     timestamp: number;
     /** Correlates start↔end for a stable activityId. */
     toolCallId: string;
+    /**
+     * TRUE when the "result" is the auto-background hand-off placeholder, not a
+     * real outcome — the tool is still running in the background. `success` is
+     * true on this shape (the placeholder is a non-error result), which made the
+     * activity card close a still-running tool as "completed"; four reports that
+     * later timed out were each shown to the user as having succeeded. Consumers
+     * that render or count OUTCOMES must skip this emission and close on the
+     * `background_task:{completed,failed}` terminal event instead.
+     */
+    backgrounded?: boolean;
     userId?: string;
     traceId?: string;
     agentId?: string;

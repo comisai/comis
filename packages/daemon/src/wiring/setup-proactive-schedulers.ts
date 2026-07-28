@@ -725,6 +725,17 @@ function resolveRequiredRuntime(runtime: ProactiveBootSlice): Result<{
     deactivateCronSchedulers,
     getAgentSchedulerSeed,
   } = runtime;
+  // NAME the missing dependencies. This Result is the ONLY diagnostic an operator
+  // gets for this failure: `daemon.ts` turns it into
+  // `FATAL: Proactive scheduler activation failed: <message>` and exits, so
+  // systemd restart-loops on it. Collapsing eleven distinct wiring dependencies
+  // into one opaque sentence left a fresh install crash-looping with nothing to
+  // act on — the operator cannot tell a config problem from a composition-root
+  // regression. Identifiers only (no values) — these are wiring symbol names.
+  //
+  // The explicit `||` chain below is kept as the CONTROL-FLOW guard so TypeScript
+  // still narrows all eleven to non-undefined for the `ok(...)` return; the name
+  // list is built only on the failure branch.
   if (
     workspaceDirs === undefined
     || getExecutor === undefined
@@ -738,10 +749,31 @@ function resolveRequiredRuntime(runtime: ProactiveBootSlice): Result<{
     || deactivateCronSchedulers === undefined
     || getAgentSchedulerSeed === undefined
   ) {
+    const missingDependencies = (
+      [
+        ["workspaceDirs", workspaceDirs],
+        ["getExecutor", getExecutor],
+        ["piSessionAdapters", piSessionAdapters],
+        ["assembleToolsForAgent", assembleToolsForAgent],
+        ["sharedLeaseManager", sharedLeaseManager],
+        ["boundedAutonomyBudgetHolder", boundedAutonomyBudgetHolder],
+        ["capEndpointHandle", capEndpointHandle],
+        ["cronRuntimeBinding", cronRuntimeBinding],
+        ["activateCronSchedulers", activateCronSchedulers],
+        ["deactivateCronSchedulers", deactivateCronSchedulers],
+        ["getAgentSchedulerSeed", getAgentSchedulerSeed],
+      ] as ReadonlyArray<readonly [string, unknown]>
+    )
+      .filter(([, value]) => value === undefined)
+      .map(([name]) => name);
     return err({
       code: "dependency_unavailable",
       errorKind: "precondition",
-      message: "Proactive scheduler dependency is unavailable",
+      message:
+        `Proactive scheduler dependency is unavailable: ${missingDependencies.join(", ")} `
+        + `(${missingDependencies.length} of 11 runtime dependencies unset). `
+        + "These are composition-root wiring handles, not config keys — an unset one means the "
+        + "daemon reached scheduler activation before that subsystem finished initializing.",
     });
   }
   return ok({

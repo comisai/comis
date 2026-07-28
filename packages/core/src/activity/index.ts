@@ -27,7 +27,7 @@ export { ApprovalChoiceSchema, ApprovalCorrelationSchema } from "./approval.js";
 export type { ApprovalCorrelation, ApprovalChoice } from "./approval.js";
 
 // --- turn-outcome --------------------------------------------------------------
-export { isNonEmptyEvents } from "./turn-outcome.js";
+export { isNonEmptyEvents, UNATTRIBUTED_FAILURE_REASON } from "./turn-outcome.js";
 export type {
   FinalDeliveryReceipt,
   DeliveryFailureReceipt,

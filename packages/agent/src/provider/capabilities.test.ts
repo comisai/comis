@@ -23,6 +23,7 @@ import {
   resolveProviderCapabilities,
   normalizeProviderId,
   isAnthropicFamily,
+  supportsExtendedCacheTtl,
   isOpenAiFamily,
   isGoogleFamily,
   isGoogleAIStudio,
@@ -456,5 +457,42 @@ describe("validateProviderOverrides", () => {
     getProvidersMock.mockReturnValue([]);
     const warn = vi.fn();
     expect(() => validateProviderOverrides({ warn })).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Extended (1-hour) cache TTL
+// ---------------------------------------------------------------------------
+
+/**
+ * Anthropic's 1-hour cache TTL is an API beta. Bedrock and Vertex serve
+ * Anthropic models but do not accept Anthropic beta headers — the 1M-context
+ * beta is already gated to direct Anthropic for exactly this reason — so a
+ * `ttl: "1h"` marker sent to them cannot be honored.
+ *
+ * Observed live on amazon-bedrock: a byte-stable system prompt AND a byte-stable
+ * 193-tool array, ~459k cache-creation tokens on every single call, and zero
+ * cache reads across the whole drive.
+ */
+describe("supportsExtendedCacheTtl", () => {
+  it("returns true for direct Anthropic", () => {
+    expect(supportsExtendedCacheTtl("anthropic")).toBe(true);
+  });
+
+  it("returns false for Anthropic models served through Bedrock", () => {
+    expect(supportsExtendedCacheTtl("amazon-bedrock")).toBe(false);
+    expect(supportsExtendedCacheTtl("bedrock")).toBe(false);
+  });
+
+  it("returns false for non-Anthropic providers", () => {
+    expect(supportsExtendedCacheTtl("openai")).toBe(false);
+    expect(supportsExtendedCacheTtl("groq")).toBe(false);
+  });
+
+  it("agrees with isAnthropicFamily only for the direct provider", () => {
+    // Bedrock IS in the Anthropic family — that is precisely why the TTL gate
+    // cannot reuse the family check.
+    expect(isAnthropicFamily("amazon-bedrock")).toBe(true);
+    expect(supportsExtendedCacheTtl("amazon-bedrock")).toBe(false);
   });
 });

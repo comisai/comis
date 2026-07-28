@@ -117,6 +117,24 @@ export function isAnthropicFamily(provider: string): boolean {
 }
 
 /**
+ * Whether a provider can honor Anthropic's extended (1-hour) cache TTL.
+ *
+ * Deliberately NOT the family check. Extended TTL is an Anthropic-API beta, and
+ * Bedrock/Vertex serve Anthropic models without accepting Anthropic beta headers
+ * — the 1M-context beta is gated to the direct provider for the same reason
+ * (request-body/factory.ts: "direct Anthropic only -- NOT Bedrock/Vertex").
+ *
+ * Marking a block `ttl: "1h"` where the beta is unavailable produces a cache
+ * entry the provider will not match on the next request: the write is billed,
+ * the read never lands. Measured on amazon-bedrock with a byte-stable system
+ * prompt and a byte-stable 193-tool array — ~459k creation tokens per call,
+ * zero reads across the entire drive.
+ */
+export function supportsExtendedCacheTtl(provider: string): boolean {
+  return normalizeProviderId(provider) === "anthropic";
+}
+
+/**
  * Check if a provider belongs to the OpenAI family.
  * True for: openai, azure-openai-responses, openai-codex (and their aliases).
  */

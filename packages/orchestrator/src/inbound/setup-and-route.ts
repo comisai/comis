@@ -101,6 +101,7 @@ export type SetupAndRouteDeps = Pick<
   | "sessionResolver"
   | "sendPolicyConfig"
   | "getElevatedReplyConfig"
+  | "getPlatformReplyLocale"
   | "retryEngine"
   | "deliveryQueue"
   | "deliveryService"
@@ -306,6 +307,7 @@ export async function setupAndRoute(
       streamingConfig: deps.streamingConfig,
       sendPolicyConfig: deps.sendPolicyConfig,
       getElevatedReplyConfig: deps.getElevatedReplyConfig,
+      getPlatformReplyLocale: deps.getPlatformReplyLocale,
       channelRegistry: deps.channelRegistry,
       retryEngine: deps.retryEngine,
       deliveryQueue: deps.deliveryQueue,

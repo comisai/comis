@@ -113,13 +113,36 @@ export function loadConfigFile(
 
     return ok(processed);
   } catch (e) {
+    // Carry the parser's OWN reason into the message. It used to live only in
+    // `details`, and the boot FATAL prints `message` alone — so a broken edit
+    // produced "Failed to parse config file: <path>" with no line, no column,
+    // no reason, on a systemd restart loop that repeated it indefinitely. The
+    // YAML parser already knows exactly what it choked on and where; not
+    // passing that through is throwing away the answer at the one moment the
+    // operator has nothing else to go on (the daemon never reaches its logs).
+    const reason = parseFailureReason(e);
     return err({
       code: "PARSE_ERROR",
-      message: `Failed to parse config file: ${resolved}`,
+      message: reason === undefined
+        ? `Failed to parse config file: ${resolved}`
+        : `Failed to parse config file: ${resolved} — ${reason}`,
       path: resolved,
       details: e,
     });
   }
+}
+
+/**
+ * The underlying parser's single-line reason, trimmed for a boot-FATAL line.
+ *
+ * YAML errors carry a multi-line body (message + a source excerpt + a caret).
+ * The excerpt can echo config CONTENT, which must not reach a log line, so only
+ * the first line — the reason and its `at line N, column M` — is taken.
+ */
+function parseFailureReason(e: unknown): string | undefined {
+  if (!(e instanceof Error) || e.message.length === 0) return undefined;
+  const firstLine = e.message.split("\n")[0]!.trim();
+  return firstLine.length === 0 ? undefined : firstLine.slice(0, 300);
 }
 
 /**

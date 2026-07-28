@@ -327,3 +327,54 @@ describe("formatValidationError", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Enum errors must name the values
+// ---------------------------------------------------------------------------
+
+/**
+ * AJV's enum message ("must be equal to one of the allowed values") names no
+ * values, so a model that sent a wrong one has nothing to correct toward and
+ * simply retries the same argument. Observed live: three consecutive identical
+ * failures while paginating an MCP tool, because the rejected value was never
+ * contrasted with the accepted set.
+ *
+ * The allowed values are already in the tool's own schema at the call site, so
+ * the formatter takes a resolver and interpolates them.
+ */
+describe("formatValidationError — enum allowed values", () => {
+  const input = [
+    'Validation failed for tool "trips_search":',
+    "  - range_token: must be equal to one of the allowed values",
+    "",
+    "Received arguments:",
+    '{ "range_token": "[REDACTED]" }',
+  ].join("\n");
+
+  it("lists the allowed values when the resolver supplies them", () => {
+    const out = formatValidationError(input, () => ["today", "yesterday", "last_week"]);
+    expect(out).toContain("today");
+    expect(out).toContain("last_week");
+  });
+
+  it("passes the failing parameter name to the resolver", () => {
+    const seen: string[] = [];
+    formatValidationError(input, (param) => {
+      seen.push(param);
+      return undefined;
+    });
+    expect(seen).toContain("range_token");
+  });
+
+  it("falls back to the generic wording when no values are available", () => {
+    expect(formatValidationError(input, () => undefined)).toBe(
+      "[trips_search] Invalid parameters:\n- `range_token` must be one of the allowed values",
+    );
+  });
+
+  it("stays byte-identical with no resolver at all", () => {
+    expect(formatValidationError(input)).toBe(
+      "[trips_search] Invalid parameters:\n- `range_token` must be one of the allowed values",
+    );
+  });
+});

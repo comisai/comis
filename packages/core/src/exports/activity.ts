@@ -17,6 +17,7 @@ export {
   ApprovalCorrelationSchema,
   // turn-outcome
   isNonEmptyEvents,
+  UNATTRIBUTED_FAILURE_REASON,
   // template-engine / semantic-classifier / label-spec
   applyTemplate,
   classifySemanticPhase,
@@ -77,6 +78,7 @@ export type {
   ProjectionConfig,
   CoalesceResult,
   ActivityVerbosity,
+  FinalDeliveryReceipt,
 } from "../activity/index.js";
 
 // ExecutionPlanPort — read-only SEP accessor (rides on the activity surface).

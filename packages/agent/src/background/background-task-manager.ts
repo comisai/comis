@@ -11,6 +11,7 @@ import {
   type ClockPort,
   type TimerHandle,
   type TimerPort,
+  type ErrorKind,
 } from "@comis/core";
 import {
   persistTaskAtomically,
@@ -71,9 +72,12 @@ export interface BackgroundTaskManager {
     ac: AbortController,
     origin: BackgroundTaskOrigin,
     notificationPolicy?: BackgroundTaskNotificationPolicy,
+    /** Ids-only correlation to the originating tool call + turn — lets the
+     *  terminal event close the right activity card (see BackgroundTask). */
+    correlation?: { toolCallId?: string; sessionKey?: string; traceId?: string },
   ): Result<string, Error>;
   complete(taskId: string, result: unknown): Result<void, Error>;
-  fail(taskId: string, error: unknown): Result<void, Error>;
+  fail(taskId: string, error: unknown, errorKind?: ErrorKind): Result<void, Error>;
   cancel(taskId: string): Result<void, Error>;
   getTask(taskId: string): BackgroundTask | undefined;
   waitForTask(
@@ -248,6 +252,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       completedAt: terminal.completedAt,
       ...(terminal.result === undefined ? {} : { result: terminal.result }),
       ...(terminal.error === undefined ? {} : { error: terminal.error }),
+      ...(terminal.errorKind === undefined ? {} : { errorKind: terminal.errorKind }),
     };
     const persisted = persistTaskAtomically(dataDir, candidate, persistenceOps);
     if (!persisted.ok) {
@@ -268,6 +273,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     task.completedAt = terminal.completedAt;
     if (terminal.result !== undefined) task.result = terminal.result;
     if (terminal.error !== undefined) task.error = terminal.error;
+    if (terminal.errorKind !== undefined) task.errorKind = terminal.errorKind;
     task._pendingTerminal = undefined;
     terminalRetryTimers.get(task.id)?.cancel();
     terminalRetryTimers.delete(task.id);
@@ -296,7 +302,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
   }
 
   const manager: BackgroundTaskManager = {
-    promote(toolName, promise, ac, origin, notificationPolicy) {
+    promote(toolName, promise, ac, origin, notificationPolicy, correlation) {
       const parsedOrigin = BackgroundTaskOriginSchema.safeParse(origin);
       if (!parsedOrigin.success) {
         return err(new Error("BackgroundTaskOrigin requires valid structured turn authority"));
@@ -320,6 +326,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         startedAt: clock.now(),
         origin: acceptedOrigin,
         notificationPolicy: notificationPolicy ?? "deferred",
+        ...(correlation?.toolCallId !== undefined ? { toolCallId: correlation.toolCallId } : {}),
+        ...(correlation?.sessionKey !== undefined ? { sessionKey: correlation.sessionKey } : {}),
+        ...(correlation?.traceId !== undefined ? { traceId: correlation.traceId } : {}),
         dispatchState: "pending",
         continuationExecutionId: taskId,
         dispatchAttempts: 0,
@@ -365,7 +374,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       const timer = timers.setTimeout(() => {
         if (task.status === "running") {
           ac.abort();
-          manager.fail(taskId, new Error("Hard timeout exceeded"));
+          manager.fail(taskId, new Error("Hard timeout exceeded"), "timeout");
         }
       }, resolveMaxBackgroundDurationMs(agentId));
       timer.unref();
@@ -407,11 +416,14 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         durationMs,
         origin: task.origin,
         timestamp: clock.now(),
+        ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
+        ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
+        ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
       });
       return ok(undefined);
     },
 
-    fail(taskId, error) {
+    fail(taskId, error, errorKind = "dependency") {
       const task = tasks.get(taskId);
       if (!task || task.status !== "running") return ok(undefined);
       if (task._pendingTerminal !== undefined && task._pendingTerminal.status !== "failed") {
@@ -423,6 +435,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             status: "failed" as const,
             completedAt: clock.now(),
             error: error instanceof Error ? error.message : String(error),
+            errorKind,
           };
       const committed = commitTerminal(task, terminal);
       if (!committed.ok) return committed;
@@ -432,9 +445,13 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         taskId,
         toolName: task.toolName,
         error: terminal.error ?? "Background task failed",
+        errorKind: terminal.errorKind ?? errorKind,
         durationMs,
         origin: task.origin,
         timestamp: clock.now(),
+        ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
+        ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
+        ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
       });
       return ok(undefined);
     },
@@ -544,6 +561,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             ...persisted,
             status: "failed" as const,
             error: "Daemon restarted while task was running",
+            errorKind: "internal" as const,
             completedAt: clock.now(),
           };
           const committed = persistTaskAtomically(dataDir, terminal, persistenceOps);
@@ -552,6 +570,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
               status: "failed",
               completedAt: terminal.completedAt,
               error: terminal.error,
+              errorKind: terminal.errorKind,
             };
             tasks.set(task.id, task);
             scheduleTerminalRetry(task.id);
@@ -578,26 +597,33 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           dispatchPreserved++;
           continue;
         }
-        if (persisted.status === "completed") {
+        if (task.status === "completed") {
           count++;
           emitObservationalEventSafely({ eventBus, logger }, "background_task:completed", {
             agentId: task.origin.turnScope.conversation.agentId,
             taskId: task.id,
             toolName: task.toolName,
-            durationMs: (persisted.completedAt ?? clock.now()) - persisted.startedAt,
+            durationMs: (task.completedAt ?? clock.now()) - task.startedAt,
             origin: task.origin,
             timestamp: clock.now(),
+            ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
+            ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
+            ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
           });
-        } else if (persisted.status === "failed") {
+        } else if (task.status === "failed") {
           count++;
           emitObservationalEventSafely({ eventBus, logger }, "background_task:failed", {
             agentId: task.origin.turnScope.conversation.agentId,
             taskId: task.id,
             toolName: task.toolName,
-            error: persisted.error ?? "Background task failed",
-            durationMs: (persisted.completedAt ?? clock.now()) - persisted.startedAt,
+            error: task.error ?? "Background task failed",
+            errorKind: task.errorKind ?? "dependency",
+            durationMs: (task.completedAt ?? clock.now()) - task.startedAt,
             origin: task.origin,
             timestamp: clock.now(),
+            ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
+            ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
+            ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
           });
         }
       }
@@ -778,6 +804,14 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           durationMs: (current.completedAt ?? clock.now()) - current.startedAt,
           origin: current.origin,
           timestamp: clock.now(),
+          ...(current.toolCallId !== undefined ? { toolCallId: current.toolCallId } : {}),
+          ...(current.sessionKey !== undefined ? { sessionKey: current.sessionKey } : {}),
+          ...(current.traceId !== undefined ? { traceId: current.traceId } : {}),
+          // This is a DISPATCH redrive of an already-terminal task, not a new
+          // terminal transition. Marked so occurrence-counting consumers (the
+          // trajectory bridge) record the failure ONCE — the unmarked re-emit
+          // wrote one line per backoff tick (live: 55 records for 4 tasks).
+          dispatchRedelivery: true,
         };
         if (event === "background_task:completed") {
           emitObservationalEventSafely({ eventBus, logger }, event, common);
@@ -785,6 +819,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           emitObservationalEventSafely({ eventBus, logger }, event, {
             ...common,
             error: current.error ?? "Background task failed",
+            errorKind: current.errorKind ?? "dependency",
           });
         }
       }, delayMs);

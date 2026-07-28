@@ -301,7 +301,7 @@ describe("recoverEmptyFinalResponse — tool-call synthesis", () => {
           stopReason: "toolUse",
           timestamp: 2,
         },
-        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], timestamp: 3 },
+        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], isError: false, timestamp: 3 },
         { role: "toolResult", toolCallId: "tc2", content: [{ type: "text", text: "OK" }], timestamp: 4 },
         { role: "toolResult", toolCallId: "tc3", content: [{ type: "text", text: "OK" }], timestamp: 5 },
         { role: "assistant", content: [], stopReason: "stop", timestamp: 6 },
@@ -331,7 +331,7 @@ describe("recoverEmptyFinalResponse — tool-call synthesis", () => {
           stopReason: "toolUse",
           timestamp: 2,
         },
-        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], timestamp: 3 },
+        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], isError: false, timestamp: 3 },
         { role: "toolResult", toolCallId: "tc2", content: [{ type: "text", text: "OK" }], timestamp: 4 },
         { role: "toolResult", toolCallId: "tc3", content: [{ type: "text", text: "OK" }], timestamp: 5 },
         { role: "assistant", content: [], stopReason: "stop", timestamp: 6 },
@@ -391,7 +391,7 @@ describe("recoverEmptyFinalResponse — tool-call synthesis", () => {
           stopReason: "toolUse",
           timestamp: 2,
         },
-        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], timestamp: 3 },
+        { role: "toolResult", toolCallId: "tc1", isError: false, content: [{ type: "text", text: "OK" }], timestamp: 3 },
         { role: "toolResult", toolCallId: "tc2", content: [{ type: "text", text: "OK" }], timestamp: 4 },
         { role: "toolResult", toolCallId: "tc3", content: [{ type: "text", text: "OK" }], timestamp: 5 },
         { role: "assistant", content: [], stopReason: "stop", timestamp: 6 },
@@ -490,7 +490,7 @@ describe("recoverEmptyFinalResponse — tool-call synthesis", () => {
           stopReason: "toolUse",
           timestamp: 2,
         },
-        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], timestamp: 3 },
+        { role: "toolResult", toolCallId: "tc1", isError: false, content: [{ type: "text", text: "OK" }], timestamp: 3 },
         { role: "toolResult", toolCallId: "tc2", content: [{ type: "text", text: "OK" }], timestamp: 4 },
         { role: "assistant", content: [], stopReason: "stop", timestamp: 5 },
       ],
@@ -884,5 +884,82 @@ describe("recoverEmptyFinalResponse — synthesis branch URL/code preservation",
     });
     // Framing prose guard fires: URL must NOT appear in synthesis output
     expect(result).not.toContain("https://api.example.com/data");
+  });
+});
+
+describe("empty-turn recovery does not narrate an already-delivered reply", () => {
+  // LIVE: an onboarding turn sent its question via message({action:"send"}), so the
+  // final assistant text was empty. Recovery then posted a SECOND bubble on top of
+  // the real answer: "[comis: tool-call summary recovered …] • message({action:
+  // "send"}) … Please ask what you did" plus a raw `User actions: <id>`. The user
+  // read internal scaffolding. Recovery exists to stop a SILENT turn.
+  function recover(args: Record<string, unknown>, toolName = "message"): string {
+    return recoverEmptyFinalResponse({
+      extractedResponse: "",
+      // textEmitted:true is the live shape — text streamed during the turn but the
+      // FINAL extracted response was empty (the reply went out via the tool).
+      textEmitted: true,
+      messages: [
+        { role: "user", content: [{ type: "text", text: "hi" }], timestamp: 1 },
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "tc1", name: toolName, arguments: args }],
+          stopReason: "toolUse",
+          timestamp: 2,
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tc1",
+          isError: false,
+          content: [{ type: "text", text: "OK" }],
+          timestamp: 3,
+        },
+        { role: "assistant", content: [], stopReason: "stop", timestamp: 4 },
+      ] as never,
+      logger: mockLogger(),
+      userMessageIndex: 0,
+    });
+  }
+
+  it("suppresses the synthesis when the batch already sent text to the channel", () => {
+    const out = recover({ action: "send", channel_type: "telegram", channel_id: "1", text: "the real reply" });
+    expect(out).toBe("");
+    expect(out).not.toContain("tool-call summary recovered");
+  });
+
+  it("suppresses on a reply action too", () => {
+    expect(recover({ action: "reply", channel_type: "telegram", channel_id: "1", text: "answer", message_id: "9" })).toBe("");
+  });
+
+  it("still recovers when the message delivery tool failed", () => {
+    const out = recoverEmptyFinalResponse({
+      extractedResponse: "",
+      textEmitted: true,
+      messages: [
+        { role: "user", content: "send it" },
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "tc-failed", name: "message", arguments: { action: "send", text: "answer" } }],
+        },
+        { role: "toolResult", toolCallId: "tc-failed", isError: true, content: [{ type: "text", text: "delivery failed" }] },
+      ],
+      logger: mockLogger(),
+      userMessageIndex: 0,
+    });
+    expect(out).toContain("tool-call summary recovered");
+  });
+
+  it("STILL synthesizes when the batch delivered NO words (a react is not a reply)", () => {
+    expect(recover({ action: "react", channel_type: "telegram", channel_id: "1", emoji: "\u{1F44D}" }))
+      .toContain("tool-call summary recovered");
+  });
+
+  it("STILL synthesizes for a non-message tool batch (the silent-turn case it exists for)", () => {
+    expect(recover({ path: "a.txt" }, "write")).toContain("tool-call summary recovered");
+  });
+
+  it("STILL synthesizes when a send carries no text (attach-only delivers no words)", () => {
+    expect(recover({ action: "send", channel_type: "telegram", channel_id: "1", text: "   " }))
+      .toContain("tool-call summary recovered");
   });
 });

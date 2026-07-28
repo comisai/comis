@@ -170,11 +170,12 @@ describe("translatePayload — T2.2 background_task lifecycle (F9: now visible o
       taskId: "t-1",
       toolName: "exec",
       error: "secret-looking stack trace",
+      errorKind: "timeout",
       durationMs: 9,
       origin: { agentId: "a1", sessionKey: "k" },
       timestamp: 300,
     });
-    expect(data).toEqual({ taskId: "t-1", toolName: "exec", durationMs: 9 });
+    expect(data).toEqual({ taskId: "t-1", toolName: "exec", durationMs: 9, errorKind: "timeout" });
     expect(JSON.stringify(data)).not.toMatch(/secret-looking stack trace/);
   });
 });

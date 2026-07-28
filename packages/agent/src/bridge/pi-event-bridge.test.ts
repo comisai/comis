@@ -866,6 +866,38 @@ describe("createPiEventBridge", () => {
       expect(endEmit![1].errorKind).toBe("validation");
     });
 
+    // The breaker's block message QUOTES the original failure verbatim, so every
+    // text-sniffing classifier upstream reads the quotation and reports a fresh
+    // failure of the quoted kind. Live: a blocked MCP call came back
+    // errorKind:"timeout" and emitted `tool.timeout {timeoutMs: 3}` — the
+    // breaker's 3ms refusal latency published as an expired 120000ms deadline.
+    // The refusal must OVERRIDE, not merely fall back: a first attempt gated on
+    // "no kind assigned yet" never fired, because the failure detector had
+    // already set one.
+    it("a breaker refusal quoting a timeout is precondition, and emits no tool:timeout", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      const result = {
+        message:
+          'Tool "mcp__vendor--report" has failed 13 total times with the same error: '
+          + '"MCP tool error: MCP tool \"report\" on server \"vendor\" timed out — it '
+          + 'exceeded the call deadline of 120000ms". This tool appears to be unavailable.'
+          + "\n\nDO NOT retry this tool. Instead:\n- Use the data you already have",
+      };
+      listener(makeToolExecutionEndEvent("mcp__vendor--report", "tc-blk", true, result) as any);
+
+      const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const endEmit = calls.find(
+        (c) => c[0] === "tool:executed" && c[1].toolName === "mcp__vendor--report",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].success).toBe(false);
+      // Not "timeout" — the call never ran, so it has no transport outcome.
+      expect(endEmit![1].errorKind).toBe("precondition");
+      // ...and therefore nothing may be published on the timeout channel.
+      expect(calls.find((c) => c[0] === "tool:timeout")).toBeUndefined();
+    });
+
     it("isError=true with generic errorText emits errorKind=dependency", () => {
       const { listener } = createPiEventBridge(deps);
 
