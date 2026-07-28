@@ -241,6 +241,32 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base", () => {
       expect((updates[0]!["message"] as Record<string, unknown>)["text"]).toBe("late ping");
     });
 
+    it("CLIENT-DISCONNECT: an abandoned poll cannot consume the next update from a replacement poll", async () => {
+      const controller = new AbortController();
+      const abandonedPoll = fetch(botUrl(apiRoot, "getUpdates"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ timeout: 5 }),
+        signal: controller.signal,
+      });
+
+      // Let the empty poll register its server-side waiter, then reproduce a
+      // daemon stop by disconnecting the client before any update is available.
+      await new Promise((r) => setTimeout(r, 150));
+      controller.abort();
+      await expect(abandonedPoll).rejects.toMatchObject({ name: "AbortError" });
+
+      emu.injectMessage({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, "after restart");
+
+      // The disconnected waiter no longer owns delivery. A replacement daemon
+      // poll must receive the update exactly once instead of finding an empty
+      // queue after the dead socket silently consumed it.
+      const replacement = await callMethod(apiRoot, "getUpdates", { timeout: 0 });
+      const updates = replacement.result as Array<Record<string, unknown>>;
+      expect(updates).toHaveLength(1);
+      expect((updates[0]!["message"] as Record<string, unknown>)["text"]).toBe("after restart");
+    });
+
     it("BLOCK-then-timeout: an empty-queue poll returns [] after ~timeout when nothing is injected", async () => {
       const start = Date.now();
       // 1-second timeout — the emulator caps the poll small for determinism.
