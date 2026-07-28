@@ -5816,7 +5816,7 @@ describe("createPiEventBridge", () => {
       ).not.toThrow();
     });
 
-    it("logs structured INFO with errorKind:'rate_limited' on abort", () => {
+    it("logs a canonical resource error kind with provider classification on abort", () => {
       const onAbortRetry = vi.fn();
       const localDeps = createMockDeps({ onAbortRetry });
       const { listener } = createPiEventBridge(localDeps);
@@ -5835,7 +5835,8 @@ describe("createPiEventBridge", () => {
           attempt: 2,
           maxAttempts: 3,
           delayMs: 7500,
-          errorKind: "rate_limited",
+          errorKind: "resource",
+          providerErrorCategory: "rate_limited",
         }),
         "Aborting SDK auto-retry on rate-limited error",
       );
