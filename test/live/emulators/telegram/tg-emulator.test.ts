@@ -255,6 +255,9 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base", () => {
       await new Promise((r) => setTimeout(r, 150));
       controller.abort();
       await expect(abandonedPoll).rejects.toMatchObject({ name: "AbortError" });
+      // The client promise rejects before the server socket close necessarily
+      // reaches the loopback peer. Wait for that disconnect notification.
+      await new Promise((r) => setTimeout(r, 50));
 
       emu.injectMessage({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, "after restart");
 
