@@ -1126,6 +1126,11 @@ describe("durable cron scheduler lifecycle", () => {
       expect.objectContaining({ step: "timer_tick" }),
       "Cron timer tick failed",
     ));
+    expect(ticking.timer.records()).toContainEqual({
+      delayMs: 5_000,
+      cancelled: false,
+      unrefed: true,
+    });
   });
 
   it("reports scheduler-seed failures while validating recurring additions", async () => {
