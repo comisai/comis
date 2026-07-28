@@ -452,6 +452,60 @@ describe("setupShutdown", () => {
     expect(deps.exitFn).toHaveBeenCalledWith(0);
   }, 15_000);
 
+  it("logger flush failure cannot prevent the explicit shutdown exit", async () => {
+    const logger = createMockLogger() as any;
+    logger.flush = vi.fn(() => {
+      throw new Error("transport flush failed");
+    });
+    const deps = createMinimalDeps({ logger });
+    const setupShutdown = await getSetupShutdown();
+    const result = setupShutdown(deps);
+
+    await expect(result.shutdownHandle.trigger("SIGTERM")).resolves.toBeUndefined();
+
+    expect(deps.exitFn).toHaveBeenCalledWith(0);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "dependency",
+        hint: expect.stringContaining("logging transport"),
+      }),
+      "Logger flush failed during shutdown",
+    );
+  });
+
+  it("pending logger flush keeps its safety deadline referenced until exit", async () => {
+    let releaseFlush: (() => void) | undefined;
+    let markFlushStarted: (() => void) | undefined;
+    const flushStarted = new Promise<void>((resolve) => {
+      markFlushStarted = resolve;
+    });
+    const logger = createMockLogger() as any;
+    logger.flush = vi.fn((callback: () => void) => {
+      releaseFlush = callback;
+      markFlushStarted?.();
+    });
+    const deps = createMinimalDeps({ logger });
+    const setupShutdown = await getSetupShutdown();
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const result = setupShutdown(deps);
+    const shutdown = result.shutdownHandle.trigger("SIGTERM");
+
+    await flushStarted;
+    try {
+      const safetyTimerResult = timeoutSpy.mock.results.find(
+        (_entry, index) => timeoutSpy.mock.calls[index]?.[1] === 2_000,
+      );
+      const safetyTimer = safetyTimerResult?.value as NodeJS.Timeout | undefined;
+      expect(safetyTimer?.hasRef()).toBe(true);
+    } finally {
+      releaseFlush?.();
+      await shutdown;
+      timeoutSpy.mockRestore();
+    }
+
+    expect(deps.exitFn).toHaveBeenCalledWith(0);
+  });
+
   // -------------------------------------------------------------------------
   // 9. unhandledRejection handler
   // -------------------------------------------------------------------------
