@@ -217,6 +217,19 @@ describe("local rig mode", () => {
     expect(leaked).not.toContain("comis-does-not-exist-here");
   });
 
+  it("preserves an explicit isolated DATA override while dropping the leaked remote layout", () => {
+    const isolated = runRigHelper('rig_defaults 2>/dev/null; echo "$DATA|$COMIS_HOME|$PKG"', {
+      RIG_MODE: "local",
+      HOME: "/tmp/fake-home",
+      COMIS_HOME: "/home/comis-does-not-exist-here",
+      DATA: "/tmp/explicit-isolated-rig",
+      PKG: "/home/comis-does-not-exist-here/.npm-global/lib/node_modules/comisai",
+    });
+
+    expect(isolated).toContain("/tmp/explicit-isolated-rig|/tmp/fake-home|");
+    expect(isolated).not.toContain("comis-does-not-exist-here");
+  });
+
   it("keeps the portable probes off Linux-only tools", () => {
     // `ss` does not exist on macOS and `date -d` is GNU-only: a local rig that shelled out to either
     // would report a healthy daemon as down (or a fresh build as stale) instead of failing honestly.
