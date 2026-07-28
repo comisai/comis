@@ -55,14 +55,22 @@ export const ExecutionSideEffectSummarySchema = z.strictObject({
 export type ExecutionSideEffectSummary = z.infer<typeof ExecutionSideEffectSummarySchema>;
 
 const ErrorKindSchema = z.enum(ERROR_KINDS);
-const NonStopFinishReasonSchema = AgentExecutionFinishReasonSchema.exclude(["stop"]);
+const FailedFinishReasonSchema = AgentExecutionFinishReasonSchema.exclude([
+  "stop",
+  "completed_with_tool_errors",
+]);
 const NonUserAbortReasonSchema = AgentExecutionAbortReasonSchema.exclude(["user_stop"]);
 
 export const AgentTurnExecutionOutcomeSchema = z.union([
   z.strictObject({ status: z.literal("completed"), finishReason: z.literal("stop") }),
   z.strictObject({
+    status: z.literal("completed"),
+    finishReason: z.literal("completed_with_tool_errors"),
+    errorKind: ErrorKindSchema,
+  }),
+  z.strictObject({
     status: z.literal("failed"),
-    finishReason: NonStopFinishReasonSchema,
+    finishReason: FailedFinishReasonSchema,
     errorKind: ErrorKindSchema,
   }),
   z.strictObject({
@@ -161,6 +169,13 @@ export function classifyAgentTurnExecutionOutcome(input: {
   }
   if (input.finishReason === "stop") {
     return { status: "completed", finishReason: "stop" };
+  }
+  if (input.finishReason === "completed_with_tool_errors") {
+    return {
+      status: "completed",
+      finishReason: "completed_with_tool_errors",
+      errorKind: input.errorKind ?? "internal",
+    };
   }
   return {
     status: "failed",
