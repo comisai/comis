@@ -263,6 +263,13 @@ describe("createFileTransport", () => {
     expect(rollOpts.mkdir).toBe(true);
   });
 
+  it("creates every rotated daemon log with owner-only permissions", () => {
+    const transport = createFileTransport(defaultConfig);
+    const rollOpts = getPipelineTarget(transport, 0);
+
+    expect(rollOpts.mode).toBe(0o600);
+  });
+
   it("sets removeOtherLogFiles:true in limit", () => {
     const transport = createFileTransport(defaultConfig);
     const rollOpts = getPipelineTarget(transport, 0);
