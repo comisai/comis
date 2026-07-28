@@ -212,7 +212,9 @@ describe("createLinkRunner", () => {
       ok: false,
       error: {
         stage: "validation",
-        error: new Error("Blocked: loopback target"),
+        error: new Error(
+          "Blocked: resolved IP 169.254.169.254 is a cloud metadata service address",
+        ),
       },
     } as never);
 
@@ -238,6 +240,9 @@ describe("createLinkRunner", () => {
     });
     expect(JSON.stringify(mockLogger.info.mock.calls)).not.toContain("private-token");
     expect(JSON.stringify(mockLogger.warn.mock.calls)).not.toContain("private-token");
+    expect(JSON.stringify(mockLogger.warn.mock.calls)).not.toContain(
+      "169.254.169.254",
+    );
     expect(mockLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         step: "link-understanding",
