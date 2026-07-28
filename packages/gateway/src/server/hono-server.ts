@@ -331,6 +331,7 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
         port,
         hostname: host,
         createServer: () => httpsServer,
+        overrideGlobalObjects: false,
       });
 
       // Inject WebSocket support into the server
@@ -372,6 +373,7 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
         fetch: app.fetch,
         port,
         hostname: host,
+        overrideGlobalObjects: false,
       });
 
       // Inject WebSocket support into the server
