@@ -4,8 +4,8 @@
  *
  * Wraps `redactSecretsInText` in a `pino-abstract-transport` pipeline-compatible
  * transport. Use as `pipeline: [{ target: "@comis/infra/dist/logging/pipeline-redact-stage.js" }]`
- * on a pino file target — the stage runs upstream of the target and scrubs every
- * log line before it is written to disk.
+ * on a pino file target — the stage runs upstream of the target, scrubs every
+ * log line, and emits canonical JSON before it is written to disk.
  *
  * IMPORTANT: `enablePipelining: true` is required. Without it, pino sends the
  * raw bytes to the target in parallel (not upstream), so redaction has no effect.
@@ -40,10 +40,21 @@ export default function createPipelineRedactStage(_opts?: unknown): Transform {
           // in line-parse mode). The ternary fallback is a defensive no-op.
           const lineStr = line as string;
           try {
+            const redactedLine = redactSecretsInText(lineStr);
             // Re-append "\n" stripped by split2's line-parse mode.
             // Without this, every yielded value is written back-to-back with no
             // delimiter, producing one concatenated unparseable blob.
-            yield redactSecretsInText(lineStr) + "\n";
+            try {
+              // JSON.parse preserves the last value for a repeated key. Re-encoding
+              // removes duplicate child-binding and call-site fields while retaining
+              // Pino's established last-value semantics. Redaction deliberately runs
+              // first so an earlier repeated value cannot bypass secret scrubbing.
+              yield JSON.stringify(JSON.parse(redactedLine)) + "\n";
+            } catch {
+              // Native diagnostics and transport warnings may be plain text. They
+              // remain useful and have already passed through text redaction.
+              yield redactedLine + "\n";
+            }
           } catch {
             // Pino transport invariant: never throw. If redaction itself errors,
             // pass the line through unmodified so the log is never lost.
