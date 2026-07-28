@@ -60,7 +60,7 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
         batch: { batchSize: 100, indexOnStartup: true },
         autoReindex: true,
       },
-      dataDir: "",
+      dataDir: process.env["COMIS_DATA_DIR"],
       agents: {
         default: PerAgentConfigSchema.parse({
           name: "test-agent",
