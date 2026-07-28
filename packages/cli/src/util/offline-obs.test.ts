@@ -34,10 +34,9 @@ import {
   createObservabilityStore,
 } from "@comis/memory";
 import type { AuditEventRow } from "@comis/memory";
-// Preload the runtime graph during test-file setup. Production keeps the
-// offline seam lazy; timed assertions should measure offline assembly rather
-// than Vitest's first-time transform of the daemon graph.
-import "@comis/daemon";
+// Preload the same narrow surface production loads so timed assertions measure
+// offline assembly rather than Vitest's first transform.
+import "@comis/daemon/offline-observability";
 import {
   assembleIncidentReportOffline,
   assembleSystemHealthReportOffline,
@@ -399,9 +398,6 @@ describe("assembleSystemHealthReportOffline — local day files, no daemon, no m
 });
 
 describe("resolveSessionFileOffline — real nested layout via the daemon pointer seam", () => {
-  // Generous timeout: the first daemon-seam call lazy-loads the whole
-  // @comis/daemon graph (~10s cold under vitest's transform), like the
-  // assembler seam above.
   it("resolves a formatted sessionKey to its REAL workspace .jsonl through the daemon seam", { timeout: 30_000 }, async () => {
     const dataDir = tmpDataDir();
     const sessionFile = buildLiveShapedSession(dataDir);

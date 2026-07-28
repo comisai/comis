@@ -30,6 +30,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./offline-observability": {
+      "types": "./dist/offline-observability.d.ts",
+      "import": "./dist/offline-observability.js"
     }
   },
   "scripts": {
