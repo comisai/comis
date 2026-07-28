@@ -62,12 +62,25 @@ rig_defaults() {
     # the default-assigns below would then KEEP it — silently pointing a "local" run at
     # /home/comis paths that do not exist on this machine (the wrong-rig false result this kit
     # exists to prevent, in its most confusing form: every probe fails for the wrong reason). The
-    # remote layout is one group, so detect it by its anchor and drop the group as a whole.
+    # remote layout is one group, so detect it by its anchor. Drop only values that actually
+    # belong to that leaked home/root layout: an explicit DATA=/tmp/isolated-rig override must
+    # survive even when the same .live-env supplied a stale COMIS_HOME.
     if [ -n "${COMIS_HOME:-}" ] && [ ! -d "${COMIS_HOME}" ]; then
+      _leaked_comis_home="$COMIS_HOME"
       echo "rig: RIG_MODE=local but COMIS_HOME=$COMIS_HOME does not exist here — ignoring the" >&2
-      echo "     remote layout from .live-env (COMIS_USER/COMIS_HOME/DATA/PKG/EMU_DIR). Wrap that" >&2
+      echo "     remote values from .live-env (COMIS_USER/COMIS_HOME/DATA/PKG/EMU_DIR). Wrap that" >&2
       echo "     block in 'if [ \"\${RIG_MODE:-remote}\" = remote ]; then … fi', or set them inline." >&2
-      unset COMIS_USER COMIS_HOME DATA PKG EMU_DIR
+      case "${DATA:-}" in
+      "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset DATA ;;
+      esac
+      case "${PKG:-}" in
+      "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset PKG ;;
+      esac
+      case "${EMU_DIR:-}" in
+      /root | /root/* | "$_leaked_comis_home" | "$_leaked_comis_home"/*) unset EMU_DIR ;;
+      esac
+      [ "${COMIS_USER:-}" = "comis" ] && unset COMIS_USER
+      unset COMIS_HOME _leaked_comis_home
     fi
     : "${COMIS_USER:=$(id -un)}"
     : "${COMIS_HOME:=$HOME}"
