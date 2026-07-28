@@ -24,6 +24,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type { IncidentSignals } from "@comis/core";
+import { rootCause } from "./obs-explain-heuristics.js";
 import { toIncidentSignals } from "./obs-explain-signals.js";
 
 // ---------------------------------------------------------------------------
@@ -170,6 +171,64 @@ describe("toIncidentSignals — turnCount (flag cumulative-across-turns toolStat
       evt("agent-turn-b", "prompt.submitted", 3, { promptChars: 18 }),
     ]);
     expect(s.turnCount).toBe(2);
+  });
+});
+
+describe("toIncidentSignals — channel health transitions", () => {
+  const healthEvent = (
+    seq: number,
+    previousState: string,
+    currentState: string,
+  ): Record<string, unknown> => ({
+    traceSchema: "comis-trajectory",
+    schemaVersion: 1,
+    traceId: "session-fallback",
+    type: "channel.health_changed",
+    seq,
+    data: {
+      channelType: "telegram",
+      previousState,
+      currentState,
+      connectionMode: "polling",
+    },
+  });
+
+  it("names an unrecovered channel disconnection as the incident root cause", () => {
+    const signals = toIncidentSignals([
+      healthEvent(1, "startup-grace", "healthy"),
+      healthEvent(2, "healthy", "disconnected"),
+    ]);
+
+    expect(signals).toMatchObject({
+      channelHealth: {
+        channelType: "telegram",
+        connectionMode: "polling",
+        degradedTransitions: 1,
+        currentState: "disconnected",
+        latestProblemState: "disconnected",
+        recovered: false,
+      },
+    });
+    expect(rootCause(signals)).toMatchObject({
+      code: "channel_disconnected",
+    });
+  });
+
+  it("does not retain a channel failure verdict after a healthy recovery transition", () => {
+    const signals = toIncidentSignals([
+      healthEvent(1, "healthy", "disconnected"),
+      healthEvent(2, "startup-grace", "healthy"),
+    ]);
+
+    expect(signals).toMatchObject({
+      channelHealth: {
+        degradedTransitions: 1,
+        currentState: "healthy",
+        latestProblemState: "disconnected",
+        recovered: true,
+      },
+    });
+    expect(rootCause(signals)).toBeNull();
   });
 });
 
