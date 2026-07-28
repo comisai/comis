@@ -205,7 +205,7 @@ export function buildFindings(
       code: "cron_ownership_reconciliation_failed",
       detail: `${cronOwnershipFailureCount} cron ownership reconciliation failure(s) (${breakdown})`,
       count: cronOwnershipFailureCount,
-      hint: "run `comis cron status --agent <agentId>`; preserve both authority files before repair or a guarded whole-authority reset",
+      hint: "run `comis cron status` for the default agent; selecting another agent requires an admin-scoped token, then preserve both authority files before repair or a guarded whole-authority reset",
     });
   }
 
@@ -225,7 +225,7 @@ export function buildFindings(
       code: "cron_timer_degraded",
       detail: `${cronTimerFailureCount} cron timer degradation transition(s) (${breakdown})`,
       count: cronTimerFailureCount,
-      hint: "run `comis cron status --agent <agentId>`; verify workspace/.scheduler/cron-jobs.json exists and is readable, then restart the daemon after restoring intentionally deleted workspace state",
+      hint: "run `comis cron status` for the default agent; selecting another agent requires an admin-scoped token. Verify workspace/.scheduler/cron-jobs.json exists and is readable, then restart the daemon after restoring intentionally deleted workspace state",
     });
   }
 
