@@ -306,7 +306,10 @@ async function startDirectMode(): Promise<void> {
     process.exit(1);
   }
   mkdirSync(COMIS_DIR, { recursive: true, mode: 0o700 });
-  const logFd = openSync(LOG_FILE, "a", 0o600);
+  // Keep only the current process capture. Canonical structured history is
+  // independently rotated under ~/.comis/logs, while appending this duplicate
+  // stream indefinitely can consume the host disk.
+  const logFd = openSync(LOG_FILE, "w", 0o600);
   const child = spawn("node", [daemonPath], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
