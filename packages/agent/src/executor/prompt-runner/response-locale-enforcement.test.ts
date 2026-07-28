@@ -270,6 +270,10 @@ describe("applyResponseLocaleEnforcement", () => {
       responseLocalePolicy: ARABIC_POLICY,
       result,
       session,
+      bridge: {
+        getResult: () => ({}),
+        hasOutboundDelivery: () => false,
+      },
       agentId: "agent-a",
       sessionKey: {
         tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
@@ -326,6 +330,10 @@ describe("applyResponseLocaleEnforcement", () => {
       responseLocalePolicy: ARABIC_POLICY,
       result,
       session,
+      bridge: {
+        getResult: () => ({}),
+        hasOutboundDelivery: () => false,
+      },
       agentId: "agent-a",
       sessionKey: {
         tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
@@ -398,6 +406,64 @@ describe("applyResponseLocaleEnforcement", () => {
 
     expect(result.response).toBe(originalResponse);
     expect(session.prompt).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith(
+      {
+        step: "response-locale-repair-skipped",
+        unrecoveredToolCount: 1,
+      },
+      "Response locale repair skipped after an unrecovered tool failure",
+    );
+    expect(JSON.stringify(logger.debug.mock.calls)).not.toContain(originalResponse);
+    expect(JSON.stringify(logger.debug.mock.calls)).not.toContain("تم إرسال الملف بنجاح");
+  });
+
+  it("allows locale repair after a failed tool succeeds on retry", async () => {
+    const eventBus = new TypedEventBus();
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    };
+    const originalResponse = "The file was sent after the delivery tool recovered.";
+    const session = {
+      agent: { state: { tools: [{ name: "message" }] } },
+      messages: [{ role: "assistant", content: [{ type: "text", text: originalResponse }] }],
+      prompt: vi.fn(async () => {
+        session.messages.push({
+          role: "assistant",
+          content: [{ type: "text", text: "تم إرسال الملف بعد استعادة أداة التسليم." }],
+        });
+      }),
+    };
+    const result = { response: originalResponse };
+    const params = {
+      responseLocalePolicy: ARABIC_POLICY,
+      result,
+      session,
+      bridge: {
+        getResult: () => ({
+          failedToolCalls: 1,
+          failedTools: ["message"],
+          toolExecResults: [
+            { toolName: "message", success: false, durationMs: 5 },
+            { toolName: "message", success: true, durationMs: 4 },
+          ],
+        }),
+        hasOutboundDelivery: () => true,
+      },
+      agentId: "agent-a",
+      sessionKey: {
+        tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
+      },
+      deps: {
+        eventBus,
+        logger,
+        clock: { now: () => 10, nowDate: () => new Date(10) },
+      },
+    } as unknown as RunPromptParams;
+
+    await applyResponseLocaleEnforcement(params);
+
+    expect(result.response).toBe("تم إرسال الملف بعد استعادة أداة التسليم.");
+    expect(session.prompt).toHaveBeenCalledTimes(1);
   });
 
   it("warns without content and reports failed recovery when repair drops literals", async () => {
@@ -427,6 +493,10 @@ describe("applyResponseLocaleEnforcement", () => {
       responseLocalePolicy: ARABIC_POLICY,
       result,
       session,
+      bridge: {
+        getResult: () => ({}),
+        hasOutboundDelivery: () => false,
+      },
       agentId: "agent-a",
       sessionKey: {
         tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",

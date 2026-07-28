@@ -230,6 +230,24 @@ function emitLocaleRecovery(params: RunPromptParams, succeeded: boolean): void {
 /** Apply locale enforcement at the success-path egress boundary. */
 export async function applyResponseLocaleEnforcement(params: RunPromptParams): Promise<void> {
   if (params.responseLocalePolicy === undefined) return;
+  const bridgeResult = params.bridge.getResult();
+  const successfulTools = new Set(
+    (bridgeResult.toolExecResults ?? [])
+      .filter((toolResult) => toolResult.success)
+      .map((toolResult) => toolResult.toolName),
+  );
+  const unrecoveredToolCount = (bridgeResult.failedTools ?? [])
+    .filter((toolName) => !successfulTools.has(toolName)).length;
+  if (unrecoveredToolCount > 0) {
+    params.deps.logger.debug(
+      {
+        step: "response-locale-repair-skipped",
+        unrecoveredToolCount,
+      },
+      "Response locale repair skipped after an unrecovered tool failure",
+    );
+    return;
+  }
   const enforcementStartedAt = params.deps.clock.now();
   const outcome = await enforceResponseLocale({
     policy: params.responseLocalePolicy,

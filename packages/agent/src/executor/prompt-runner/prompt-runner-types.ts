@@ -51,6 +51,8 @@ export interface PromptRunnerBridge {
     tokensUsed?: { output?: number };
     stepsExecuted?: number;
     toolCallHistory?: string[];
+    failedTools?: string[];
+    toolExecResults?: Array<{ toolName: string; success: boolean }>;
     /** Abort redirect message set at bridge abort sites; undefined for normal completions. */
     abortResponse?: string;
   };
