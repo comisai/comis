@@ -1727,6 +1727,11 @@ async function bootAgents(
   const { mcpClientManager } = await setupMcp({
     servers: container.config.integrations.mcp.servers,
     logger: skillsLogger,
+    osvCacheDir: safePath(
+      container.config.dataDir && container.config.dataDir.length > 0 ? container.config.dataDir : dataDir,
+      "cache",
+      "osv",
+    ),
     callToolTimeoutMs: container.config.integrations.mcp.callToolTimeoutMs,
     defaultCwd: defaultWorkspaceDir,
     eventBus: container.eventBus,

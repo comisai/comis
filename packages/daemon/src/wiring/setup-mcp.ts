@@ -35,6 +35,8 @@ export interface McpDeps {
   readonly servers: readonly McpServerEntry[];
   /** Logger for MCP connection lifecycle. */
   readonly logger: ComisLogger;
+  /** Directory for cached OSV package verdicts under the active Comis data directory. */
+  readonly osvCacheDir?: string;
   /** Timeout for individual MCP tool calls in milliseconds (default: 120000). */
   readonly callToolTimeoutMs?: number;
   /** Default working directory for stdio MCP servers (typically the workspace directory). Per-server cwd in config overrides this. */
@@ -165,6 +167,7 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
 
   const manager = createMcpClientManager({
     logger,
+    osvCacheDir: deps.osvCacheDir,
     callToolTimeoutMs: deps.callToolTimeoutMs,
     eventBus: deps.eventBus,
     stdioDefaultConcurrency: deps.stdioDefaultConcurrency,

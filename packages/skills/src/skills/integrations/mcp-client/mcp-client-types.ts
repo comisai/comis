@@ -331,6 +331,8 @@ export interface McpClientManagerDeps {
   readonly circuitBreakerThreshold?: number;
   /** Default circuit breaker cooldown (ms). Resolved at factory construction. */
   readonly circuitBreakerCooldownMs?: number;
+  /** Directory for cached OSV package verdicts. The composition root injects the active data directory. */
+  readonly osvCacheDir?: string;
   /**
    * OAuth integration seam. When present, connectServer constructs an
    * OAuthClientProvider adapter for `auth:"oauth"` servers (token store +

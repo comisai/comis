@@ -111,6 +111,21 @@ describe("setupMcp", () => {
     expect(result.mcpClientManager.getAllConnections()).toEqual([]);
   });
 
+  it("forwards the active OSV cache directory to the client manager", async () => {
+    mockGetAllConnections.mockReturnValue([]);
+    await callSetupMcp({
+      servers: [],
+      logger,
+      osvCacheDir: "/tmp/comis-test-data/cache/osv",
+    });
+
+    expect(mockCreateMcpClientManager).toHaveBeenCalledWith(
+      expect.objectContaining({
+        osvCacheDir: "/tmp/comis-test-data/cache/osv",
+      }),
+    );
+  });
+
   // The global reliability config (circuitBreakerThreshold / circuitBreakerCooldownMs)
   // MUST be forwarded into createMcpClientManager. Without this, a daemon-wide override
   // is silently ignored for all startup-connected servers.
