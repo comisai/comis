@@ -35,6 +35,7 @@ export type OrchestrationBridgedEventName =
   | "security:sandbox_downgrade_refused"
   | "subagent:delivery_deadlettered"
   | "subagent:delivery_retried"
+  | "subagent:delivery_skipped"
   | "subagent:budget_exceeded"
   // The per-cap authorization decision
   // — the spawn-tree's per-node producer. Content-free: caps/tool-NAME/decision/
@@ -106,6 +107,11 @@ export function translateOrchestrationPayload(
       // number so an operator can see HOW MANY retries a completion took before it landed) —
       // NEVER the announcement body or the error string. timestamp envelope-only.
       return { runId: payload.runId, channelType: payload.channelType, attempt: payload.attempt, transient: payload.transient };
+
+    case "subagent:delivery_skipped":
+      // The affected run and the closed missing-route reason only. The child
+      // sessionKey routes the record and is stripped from trajectory data.
+      return { runId: payload.runId, reason: payload.reason };
 
     case "subagent:budget_exceeded":
       // The per-incident breach view for `comis explain` — graphId/

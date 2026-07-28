@@ -74,7 +74,10 @@ import {
 // The two BENIGN learning verdicts (sibling — subdir cap).
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
-import { subagentStuckKilledVerdict } from "./obs-explain-subagent-killed-verdict.js"; // health-monitor-killed sub-agent (sibling — subdir cap)
+import {
+  subagentDeliverySkippedVerdict,
+  subagentStuckKilledVerdict,
+} from "./obs-explain-subagent-killed-verdict.js";
 import { freshTailOriginLostVerdict } from "./obs-explain-fresh-tail-verdict.js";
 import {
   backgroundPendingVerdict,
@@ -150,6 +153,8 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     with killedBy health_monitor (absent on the established fixtures —
   //     cannot regress them; deliberate parent/operator kills return null).
   subagentStuckKilledVerdict,
+
+  subagentDeliverySkippedVerdict,
 
   backgroundRecoveryVerdict,
 

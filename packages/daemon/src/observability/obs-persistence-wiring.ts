@@ -22,6 +22,7 @@ import { wireAuditSink } from "./obs-audit-sink.js";
 import {
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
+  deliverySkippedEventToRow,
   nodeBudgetExceededEventToRow,
   subagentKilledEventToRow,
 } from "./obs-orchestration-rows.js";
@@ -255,14 +256,13 @@ export {
   orchestrateRunSummaryEventToRow,
 };
 
-// The three sub-agent-lifecycle
-// row-builders (sandbox-downgrade refusal / dead-lettered delivery / per-node budget
-// breach → content-free health_signal rows) are imported from obs-orchestration-rows.ts
+// The sub-agent-lifecycle row-builders are imported from obs-orchestration-rows.ts
 // (extracted for the 800-line cap) and RE-EXPORTED here so the
 // public API + the test imports stay byte-identical.
 export {
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
+  deliverySkippedEventToRow,
   nodeBudgetExceededEventToRow,
   subagentKilledEventToRow,
 };
@@ -610,8 +610,8 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   eventBus.on("orchestrate:run_summary", (payload) => {
     diagnosticBuffer.push(orchestrateRunSummaryEventToRow(payload));
   });
-  // The three daemon-side
-  // orchestration signals → health_signal rows (same diagnosticBuffer, NO migration).
+  // Daemon-side orchestration signals → health_signal rows
+  // (same diagnosticBuffer, NO migration).
   // The system health view rolls each into a dedicated finding (system-findings.ts). Each
   // mapper emits closed labels/counts only (no path/host/credential, no announcement
   // body, no per-node token numbers — AGENTS.md §2.7).
@@ -620,6 +620,9 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("subagent:delivery_deadlettered", (payload) => {
     diagnosticBuffer.push(deliveryDeadletteredEventToRow(payload));
+  });
+  eventBus.on("subagent:delivery_skipped", (payload) => {
+    diagnosticBuffer.push(deliverySkippedEventToRow(payload));
   });
   eventBus.on("subagent:budget_exceeded", (payload) => {
     diagnosticBuffer.push(nodeBudgetExceededEventToRow(payload));

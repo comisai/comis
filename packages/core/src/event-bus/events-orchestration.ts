@@ -210,6 +210,23 @@ export interface OrchestrationEvents {
     timestamp: number;
   };
 
+  /**
+   * A completed sub-agent result had no authenticated announcement route.
+   * Emitted at the runner's terminal delivery branch before the child
+   * trajectory closes. Counts/ids/closed-enum only — never task or result text.
+   * `sessionKey` is the child's formatted key so `comis explain` can reject a
+   * false clean rollup for the affected run.
+   */
+  "subagent:delivery_skipped": {
+    runId: string;
+    agentId: string;
+    /** The CHILD session's formatted key (trajectory routing + explain join). */
+    sessionKey: string;
+    /** Which required route component was absent. */
+    reason: "no_origin" | "no_channel_params";
+    timestamp: number;
+  };
+
   /** Graph reached terminal state (completed, failed, or cancelled) */
   "graph:completed": {
     graphId: string;

@@ -189,6 +189,9 @@ export interface Acc {
   subagentKilledRuntimeMs?: number;
   subagentKilledIdleMs?: number;
   subagentKilledThresholdMs?: number;
+  subagentDeliverySkippedCount: number;
+  subagentDeliverySkippedLastRunId?: string;
+  subagentDeliverySkippedLastReason?: "no_origin" | "no_channel_params";
   backgroundRecoveryRetryCount: number;
   backgroundRecoveryByTask: Map<string, { unresolved: boolean; toolName?: string }>;
   backgroundRecoveryLastTaskId?: string;

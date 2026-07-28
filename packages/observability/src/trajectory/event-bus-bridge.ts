@@ -180,6 +180,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // ONLY. NOTE: unlike its deadlettered sibling, retried is trajectory-only for now (NOT yet a system
   // health_signal/finding — a self-healed retry as a daemon-wide aggregate is a follow-up).
   "subagent:delivery_retried": "subagent.delivery_retried",
+  "subagent:delivery_skipped": "subagent.delivery_skipped",
   "subagent:budget_exceeded": "subagent.budget_exceeded",
 
   // The background-completion FALLBACK-NOTICE decision — makes the

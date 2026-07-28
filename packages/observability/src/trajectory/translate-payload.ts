@@ -327,6 +327,7 @@ export function translatePayload(
     case "security:sandbox_downgrade_refused":
     case "subagent:delivery_deadlettered":
     case "subagent:delivery_retried": // The self-healing transient retry (sibling of delivery_deadlettered) — content-free {runId, channelType, attempt, transient}
+    case "subagent:delivery_skipped": // Terminal result had no route — content-free {runId, reason}.
     case "subagent:budget_exceeded":
     case "capability:audited":
     case "graph:node_spawned":

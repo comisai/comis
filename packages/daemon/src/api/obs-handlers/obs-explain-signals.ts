@@ -255,6 +255,18 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       }
       return;
     }
+    case "subagent.delivery_skipped": {
+      const runId = asString(data.runId);
+      const reason = asString(data.reason);
+      if (
+        runId === undefined
+        || (reason !== "no_origin" && reason !== "no_channel_params")
+      ) return;
+      acc.subagentDeliverySkippedCount += 1;
+      acc.subagentDeliverySkippedLastRunId = runId;
+      acc.subagentDeliverySkippedLastReason = reason;
+      return;
+    }
     case "background_task.notified": {
       const reason = asString(data.reason);
       const taskId = asString(data.taskId);
@@ -709,6 +721,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     videoOutcomeSeq: -1,
     voiceOutcomeSeq: -1,
     terminalDrivePromotedCount: 0,
+    subagentDeliverySkippedCount: 0,
     backgroundRecoveryRetryCount: 0,
     backgroundRecoveryByTask: new Map(),
   };
@@ -933,6 +946,17 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             ...(acc.subagentKilledRuntimeMs !== undefined ? { runtimeMs: acc.subagentKilledRuntimeMs } : {}),
             ...(acc.subagentKilledIdleMs !== undefined ? { idleMs: acc.subagentKilledIdleMs } : {}),
             ...(acc.subagentKilledThresholdMs !== undefined ? { thresholdMs: acc.subagentKilledThresholdMs } : {}),
+          },
+        }
+      : {}),
+    ...(acc.subagentDeliverySkippedCount > 0
+      && acc.subagentDeliverySkippedLastRunId !== undefined
+      && acc.subagentDeliverySkippedLastReason !== undefined
+      ? {
+          subagentDeliverySkipped: {
+            count: acc.subagentDeliverySkippedCount,
+            lastRunId: acc.subagentDeliverySkippedLastRunId,
+            lastReason: acc.subagentDeliverySkippedLastReason,
           },
         }
       : {}),

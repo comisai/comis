@@ -289,6 +289,7 @@ Approval gates, config patches, plugin lifecycle, hook execution, auth token rot
 | `background_task:cancelled` | agentId, taskId, toolName, timestamp |
 | `background_task:completed` | agentId, taskId, toolName, durationMs, origin, dispatchRedelivery, toolCallId, sessionKey, traceId, timestamp |
 | `background_task:failed` | agentId, taskId, toolName, error, errorKind, durationMs, origin, dispatchRedelivery, toolCallId, sessionKey, traceId, timestamp |
+| `subagent:delivery_skipped` | runId, agentId, sessionKey, reason, timestamp |
 | `background_task:notified` | agentId, taskId, toolName, sessionKey, notified, reason, traceId, timestamp, trajectoryRecorded |
 | `background_task:promoted` | agentId, taskId, toolName, timestamp |
 | `background_task:reentered` | taskId, agentId, sessionKey, hopCount, traceId, timestamp |

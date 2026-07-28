@@ -301,7 +301,11 @@ export function assembleIncidentReport(
     signals.failures.length > 0;
   const channelDegraded =
     signals.channelHealth !== undefined && !signals.channelHealth.recovered;
-  const degraded = channelDegraded || (explicitDegraded ?? derivedDegraded);
+  const subagentDeliveryDegraded = signals.subagentDeliverySkipped !== undefined;
+  const degraded =
+    channelDegraded
+    || subagentDeliveryDegraded
+    || (explicitDegraded ?? derivedDegraded);
   const severity: "ok" | "degraded" | "failed" = isHardFailure
     ? "failed"
     : degraded
@@ -529,6 +533,9 @@ export function assembleIncidentReport(
       : {}),
     ...(signals.deliveryAborts !== undefined
       ? { deliverySkipped: { events: signals.deliveryAborts.events, chunksNotSent: signals.deliveryAborts.chunksNotSent } }
+      : {}),
+    ...(signals.subagentDeliverySkipped !== undefined
+      ? { subagentDeliverySkipped: signals.subagentDeliverySkipped }
       : {}),
     // The silent-failure recovery re-drives (model re-entry) — previously
     // log-only, so explain could not show a session re-entered the model.

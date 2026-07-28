@@ -57,7 +57,7 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 20 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 21 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / promptTimeout /
@@ -115,6 +115,13 @@ export interface IncidentSignals {
    *  autonomous stuck-kill — the child's own rollup can still read success when
    *  the kill races completion. Absent (never `{}`) when no kill fired. */
   subagentKilled?: { killedBy: string; runtimeMs?: number; idleMs?: number; thresholdMs?: number };
+  /** Completed sub-agent results that had no authenticated completion route.
+   * Folded from `subagent.delivery_skipped`; counts and stable identifiers only. */
+  subagentDeliverySkipped?: {
+    count: number;
+    lastRunId: string;
+    lastReason: "no_origin" | "no_channel_params";
+  };
   /** Protected background-continuation recovery incidents folded from
    *  `background_task.notified` records whose reason is
    *  `recovery_retry_required`. Counts and stable identifiers only. */

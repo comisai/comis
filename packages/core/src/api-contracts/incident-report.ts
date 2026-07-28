@@ -602,6 +602,15 @@ export const IncidentReportSchema = z.object({
       chunksNotSent: z.number(),
     })
     .optional(),
+  /** Completed sub-agent results that could not be announced because the
+   * authenticated origin or channel parameters were absent. */
+  subagentDeliverySkipped: z
+    .object({
+      count: z.number(),
+      lastRunId: z.string(),
+      lastReason: z.enum(["no_origin", "no_channel_params"]),
+    })
+    .optional(),
   /** Distinct agent turns derived from prompt anchors, with tool-lifecycle
    *  trace ids as the sparse-history fallback. Present only when greater than one so
    *  whole-session toolStats cannot be mistaken for one turn's counts. */

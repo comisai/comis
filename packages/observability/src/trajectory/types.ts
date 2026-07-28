@@ -163,6 +163,9 @@ export const TRAJECTORY_EVENT_TYPES = [
   // to `comis explain`. Content-free: runId + closed
   // channelType + attempt count + the transient tag ONLY — never an announcement body / error string.
   "subagent.delivery_retried",
+  // A terminal sub-agent result had no authenticated completion route.
+  // Content-free: runId + closed missing-route reason only.
+  "subagent.delivery_skipped",
   "subagent.budget_exceeded",
 
   // The per-capability authorization

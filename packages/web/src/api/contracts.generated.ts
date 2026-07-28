@@ -12301,6 +12301,30 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "subagentDeliverySkipped": {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "number"
+            },
+            "lastRunId": {
+              "type": "string"
+            },
+            "lastReason": {
+              "type": "string",
+              "enum": [
+                "no_origin",
+                "no_channel_params"
+              ]
+            }
+          },
+          "required": [
+            "count",
+            "lastRunId",
+            "lastReason"
+          ],
+          "additionalProperties": false
+        },
         "turnCount": {
           "type": "number"
         },

@@ -1884,7 +1884,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       thresholdMs: 180_000,
       timestamp: 0,
     },
-    // The three sub-agent-lifecycle events — the correlation invariant
+    // Sub-agent-lifecycle events — the correlation invariant
     // must hold (agent ids / timestamp never leak into data).
     "security:sandbox_downgrade_refused": {
       parentAgentId: "researcher",
@@ -1906,6 +1906,13 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       channelType: "telegram",
       attempt: 2,
       transient: true,
+      timestamp: 0,
+    },
+    "subagent:delivery_skipped": {
+      runId: "run-route-lost",
+      agentId: "agent-1",
+      sessionKey: "default:sub-agent:route-lost",
+      reason: "no_origin",
       timestamp: 0,
     },
     "subagent:budget_exceeded": {
@@ -2231,18 +2238,20 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- subagent:steered (operator visibility)", 
 // ---------------------------------------------------------------------------
 
 describe("TRAJECTORY_BRIDGE_MAPPING -- sub-agent lifecycle (operator visibility)", () => {
-  it("maps the four events to their reserved trajectory types (arch closure)", () => {
+  it("maps the five events to their reserved trajectory types (arch closure)", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["security:sandbox_downgrade_refused"]).toBe("security.sandbox_downgrade_refused");
     expect(TRAJECTORY_BRIDGE_MAPPING["subagent:delivery_deadlettered"]).toBe("subagent.delivery_deadlettered");
     // delivery_retried is emitted (announcement-batcher) via `?.emit`. It is the
     // sibling of delivery_deadlettered and must be reconstructable in `comis explain`
     // (the self-healing retry visibility).
     expect(TRAJECTORY_BRIDGE_MAPPING["subagent:delivery_retried"]).toBe("subagent.delivery_retried");
+    expect(TRAJECTORY_BRIDGE_MAPPING["subagent:delivery_skipped"]).toBe("subagent.delivery_skipped");
     expect(TRAJECTORY_BRIDGE_MAPPING["subagent:budget_exceeded"]).toBe("subagent.budget_exceeded");
     const allTypes = new Set<string>(TRAJECTORY_EVENT_TYPES as readonly string[]);
     expect(allTypes.has("security.sandbox_downgrade_refused")).toBe(true);
     expect(allTypes.has("subagent.delivery_deadlettered")).toBe(true);
     expect(allTypes.has("subagent.delivery_retried")).toBe(true);
+    expect(allTypes.has("subagent.delivery_skipped")).toBe(true);
     expect(allTypes.has("subagent.budget_exceeded")).toBe(true);
   });
 
@@ -2314,6 +2323,27 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- sub-agent lifecycle (operator visibility)
     for (const forbidden of ["message", "text", "body", "content", "error"]) {
       expect(data[forbidden]).toBeUndefined();
     }
+  });
+
+  it("translates subagent:delivery_skipped to runId/reason only and strips child routing identity", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("subagent:delivery_skipped", {
+      runId: "run-route-lost",
+      agentId: "default",
+      sessionKey: "default:sub-agent:route-lost",
+      reason: "no_origin",
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("subagent.delivery_skipped");
+    expect(recorder.calls[0]!.data).toEqual({
+      runId: "run-route-lost",
+      reason: "no_origin",
+    });
   });
 
   it("translates subagent:budget_exceeded to the per-incident breach view (graphId/nodeId/capSource/tokenBudget/tokensUsed — explain wants the numbers)", () => {
@@ -4024,7 +4054,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // 122 = 121 + memory:recall_degraded (the degraded/failed-recall record —
     // makes a dead recall diagnosable from `comis explain` + the system health view
     // instead of a daemon.log grep).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(132);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(133);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
