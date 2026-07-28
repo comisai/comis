@@ -16,6 +16,8 @@ const LOCAL_UP = resolve(HERE, "local-up.sh");
 const WIRE_EMULATOR = resolve(HERE, "wire-emu.mjs");
 const DEPLOY_SCRIPTS = resolve(HERE, "deploy-scripts.sh");
 const DEPLOY_EMULATOR = resolve(HERE, "deploy-emu.sh");
+const RIG_DOCTOR = resolve(HERE, "rig-doctor.sh");
+const VERIFY_BUILD = resolve(HERE, "verify-build.sh");
 const INSTALL_VPS = resolve(HERE, "install-vps.sh");
 const temporaryDirectories: string[] = [];
 
@@ -316,6 +318,13 @@ describe("local rig mode", () => {
     );
 
     expect(resolved.trim()).toBe(`${isolatedData}|4767`);
+  });
+
+  it("loads the rendered rig selection in every standalone local gate", () => {
+    for (const script of [DEPLOY_EMULATOR, RIG_DOCTOR, VERIFY_BUILD]) {
+      const source = readFileSync(script, "utf8");
+      expect(source, script).toContain("rig_load_persisted_env");
+    }
   });
 
   it("keeps the portable probes off Linux-only tools", () => {
