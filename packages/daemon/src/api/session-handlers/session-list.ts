@@ -5,8 +5,12 @@
 import {
   SessionListContract,
   SessionSearchContract,
+  parseFormattedSessionKey,
+  partsToMessage,
   stripInternalFields,
   systemNowMs,
+  type ChannelEndpoint,
+  type ConversationRef,
   type SessionDetailedEntry,
   type SessionQueryScope,
 } from "@comis/core";
@@ -29,7 +33,21 @@ function requireQueryAuthority(
   return { tenantId: params.tenant_id, agentId: params.agent_id };
 }
 
-function sessionKind(session: SessionDetailedEntry): "sub-agent" | "group" | "dm" {
+type ListableSessionKind = "sub-agent" | "group" | "dm";
+
+export interface ListableSession {
+  conversationRef: ConversationRef;
+  sessionKey: string;
+  agentId: string;
+  kind: ListableSessionKind;
+  endpoint?: ChannelEndpoint;
+  metadata: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+}
+
+function sessionKind(session: SessionDetailedEntry): ListableSessionKind {
   if (session.metadata.parentConversationRef !== undefined || session.metadata.parentSessionKey !== undefined) {
     return "sub-agent";
   }
@@ -43,10 +61,116 @@ function sessionKind(session: SessionDetailedEntry): "sub-agent" | "group" | "dm
   return "dm";
 }
 
-function listSessions(deps: SessionHandlerDeps, scope: SessionQueryScope): SessionDetailedEntry[] {
+function detailedSession(session: SessionDetailedEntry): ListableSession {
+  const partition = session.conversationScope.partition;
+  return {
+    conversationRef: session.conversationRef,
+    sessionKey: parseFormattedSessionKey(
+      typeof session.metadata.sessionKey === "string" ? session.metadata.sessionKey : "",
+    ) === undefined
+      ? session.conversationRef
+      : session.metadata.sessionKey as string,
+    agentId: session.agentId,
+    kind: sessionKind(session),
+    ...(
+      partition.kind === "endpoint-conversation"
+      || partition.kind === "endpoint-conversation-principal"
+        ? { endpoint: partition.endpoint }
+        : {}
+    ),
+    metadata: session.metadata,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    messageCount: session.messageCount,
+  };
+}
+
+const LCD_CONVERSATION_PAGE_SIZE = 200;
+const LCD_CONVERSATION_LIMIT = 5_000;
+
+function listSessions(deps: SessionHandlerDeps, scope: SessionQueryScope): ListableSession[] {
+  const startedAt = systemNowMs();
   const listed = deps.sessionStore.listDetailed(scope);
   if (!listed.ok) throw listed.error;
-  return listed.value;
+  const sessions = new Map<ConversationRef, ListableSession>();
+  for (const session of listed.value) {
+    sessions.set(session.conversationRef, detailedSession(session));
+  }
+
+  let lcdConversationCount = 0;
+  let lcdTotal = 0;
+  if (deps.contextBrowse !== undefined) {
+    let offset = 0;
+    while (offset < LCD_CONVERSATION_LIMIT) {
+      const page = deps.contextBrowse.listConversations(scope, {
+        limit: LCD_CONVERSATION_PAGE_SIZE,
+        offset,
+      });
+      lcdTotal = page.total;
+      for (const conversation of page.conversations) {
+        if (conversation.tenantId !== scope.tenantId || conversation.agentId !== scope.agentId) {
+          continue;
+        }
+        const parsedKey = parseFormattedSessionKey(conversation.sessionKey);
+        if (
+          parsedKey === undefined
+          || parsedKey.tenantId !== scope.tenantId
+          || parsedKey.agentId !== scope.agentId
+        ) {
+          continue;
+        }
+        lcdConversationCount += 1;
+        const existing = sessions.get(conversation.conversationRef);
+        if (existing !== undefined) {
+          existing.sessionKey = conversation.sessionKey;
+          existing.createdAt = Math.min(existing.createdAt, conversation.createdAt);
+          existing.updatedAt = Math.max(existing.updatedAt, conversation.updatedAt);
+          existing.messageCount = Math.max(existing.messageCount, conversation.messageCount);
+          continue;
+        }
+        sessions.set(conversation.conversationRef, {
+          conversationRef: conversation.conversationRef,
+          sessionKey: conversation.sessionKey,
+          agentId: conversation.agentId,
+          kind: parsedKey.guildId === undefined ? "dm" : "group",
+          metadata: {},
+          createdAt: conversation.createdAt,
+          updatedAt: conversation.updatedAt,
+          messageCount: conversation.messageCount,
+        });
+      }
+      offset += page.conversations.length;
+      if (page.conversations.length === 0 || offset >= page.total) break;
+    }
+  }
+
+  if (lcdTotal > LCD_CONVERSATION_LIMIT) {
+    deps.logger.warn(
+      {
+        tenantId: scope.tenantId,
+        agentId: scope.agentId,
+        errorKind: "resource" as const,
+        hint: `Narrow session.list with since_minutes; LCD enumeration is capped at ${LCD_CONVERSATION_LIMIT} conversations`,
+      },
+      "Session enumeration reached the LCD conversation cap",
+    );
+  }
+  const result = [...sessions.values()].sort(
+    (left, right) => right.updatedAt - left.updatedAt
+      || left.conversationRef.localeCompare(right.conversationRef),
+  );
+  deps.logger.info(
+    {
+      tenantId: scope.tenantId,
+      agentId: scope.agentId,
+      sessionStoreCount: listed.value.length,
+      lcdConversationCount,
+      sessionCount: result.length,
+      durationMs: systemNowMs() - startedAt,
+    },
+    "Session enumeration complete",
+  );
+  return result;
 }
 
 function messageText(message: unknown): string {
@@ -62,7 +186,7 @@ function messageText(message: unknown): string {
 export function enumerateListableSessions(
   deps: SessionHandlerDeps,
   scope: SessionQueryScope,
-): SessionDetailedEntry[] {
+): ListableSession[] {
   return listSessions(deps, scope);
 }
 
@@ -80,18 +204,13 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
         const cutoff = systemNowMs() - params.since_minutes * 60_000;
         sessions = sessions.filter((session) => session.updatedAt >= cutoff);
       }
-      if (kind !== "all") sessions = sessions.filter((session) => sessionKind(session) === kind);
+      if (kind !== "all") sessions = sessions.filter((session) => session.kind === kind);
       const result = {
         sessions: sessions.map((session) => ({
           conversationRef: session.conversationRef,
           agentId: session.agentId,
-          kind: sessionKind(session),
-          ...(
-            session.conversationScope.partition.kind === "endpoint-conversation"
-            || session.conversationScope.partition.kind === "endpoint-conversation-principal"
-              ? { endpoint: session.conversationScope.partition.endpoint }
-              : {}
-          ),
+          kind: session.kind,
+          ...(session.endpoint === undefined ? {} : { endpoint: session.endpoint }),
           messageCount: session.messageCount,
           totalTokens: session.messageCount * 500,
           updatedAt: session.updatedAt,
@@ -115,7 +234,7 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
         const recent = sessions.slice(0, limit).map((session) => ({
           conversationRef: session.conversationRef,
           agentId: session.agentId,
-          channelType: sessionKind(session),
+          channelType: session.kind,
           messageCount: session.messageCount,
           updatedAt: session.updatedAt,
           createdAt: session.createdAt,
@@ -142,8 +261,15 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
         if (results.length >= limit) break;
         const loaded = deps.sessionStore.loadByRef(authority, session.conversationRef);
         if (!loaded.ok) throw loaded.error;
-        if (!loaded.value) continue;
-        for (const message of loaded.value.messages) {
+        const messages = loaded.value?.messages
+          ?? deps.lcdStore?.getMessages({
+            conversationRef: session.conversationRef,
+            tenantId: authority.tenantId,
+            agentId: authority.agentId,
+            sessionKey: session.sessionKey,
+          }).map(partsToMessage)
+          ?? [];
+        for (const message of messages) {
           const candidate = message as Record<string, unknown>;
           const role = typeof candidate.role === "string" ? candidate.role : "";
           if (params.scope && params.scope !== "all") {
@@ -162,7 +288,7 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
           results.push({
             conversationRef: session.conversationRef,
             agentId: session.agentId,
-            channelType: sessionKind(session),
+            channelType: session.kind,
             snippet: `${start > 0 ? "..." : ""}${text.slice(start, end)}${end < text.length ? "..." : ""}`,
             score: 1,
             timestamp: typeof candidate.timestamp === "number" ? candidate.timestamp : session.updatedAt,
@@ -176,8 +302,17 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
           const session = sessions.find((candidate) => candidate.conversationRef === result.conversationRef);
           if (!session) return null;
           const loaded = deps.sessionStore.loadByRef(authority, session.conversationRef);
-          if (!loaded.ok || !loaded.value) return null;
-          return deps.summarizeSession!(loaded.value.messages, params.query!);
+          if (!loaded.ok) return null;
+          const messages = loaded.value?.messages
+            ?? deps.lcdStore?.getMessages({
+              conversationRef: session.conversationRef,
+              tenantId: authority.tenantId,
+              agentId: authority.agentId,
+              sessionKey: session.sessionKey,
+            }).map(partsToMessage)
+            ?? [];
+          if (messages.length === 0) return null;
+          return deps.summarizeSession!(messages, params.query!);
         }));
         outcomes.forEach((outcome, index) => {
           if (outcome.status === "fulfilled" && outcome.value) {
