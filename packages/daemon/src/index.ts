@@ -179,12 +179,6 @@ export { assembleSystemHealthReport } from "./api/obs-handlers/system-health.js"
 // (`packages/cli/src/util/offline-obs.ts`, the cost-export precedent).
 // Consumer: packages/cli/src/util/offline-obs.ts (extractSessionMessagesOffline)
 export { extractSessionMessages } from "./api/obs-handlers/session-messages.js";
-export type {
-  SessionMessagesFilter,
-  ExtractedChannelMessage,
-  SessionMessagesCoverage,
-  SessionMessagesResult,
-} from "./api/obs-handlers/session-messages.js";
 
 // pi-ai image shim: `createPiImageAdapter` +
 // `registerComisImageProviders` + `resolveImageApiKey` + the typed cross-plan
