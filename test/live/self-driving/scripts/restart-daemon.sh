@@ -10,9 +10,11 @@
 #
 # RIG_MODE=local — THIS machine. There is no systemd, so the lifecycle is explicit: stop the running
 #   daemon, relaunch it detached from this checkout's dist, then run the SAME boot verification.
-#   pm2 is used when it already supervises the service (LOCAL_SUPERVISOR=auto detects it); otherwise
-#   the daemon is relaunched directly, which is the shape a production install runs anyway.
+#   pm2 is used when it already supervises the service. Otherwise `auto` uses tmux when available so
+#   shells/agent runners that reap background descendants cannot kill the daemon after this script
+#   exits; a plain direct launch remains the final fallback.
 #     Usage:  ./restart-daemon.sh            # from scripts/, with RIG_MODE=local in .live-env
+#             LOCAL_SUPERVISOR=tmux ./restart-daemon.sh
 #             LOCAL_SUPERVISOR=direct ./restart-daemon.sh
 #
 # Env: SERVICE, DATA, GW_PORT — the rig env file supplies per-rig values; explicit env still wins.
@@ -39,7 +41,41 @@ MARK="$(date +%s)"
 
 if rig_is_local; then
   # ---- LOCAL: explicit stop → detached relaunch --------------------------------------------------
-  if [ "${LOCAL_SUPERVISOR:-auto}" != "direct" ] && rig_pm2_manages; then
+  local_supervisor="${LOCAL_SUPERVISOR:-auto}"
+  use_pm2=0
+  use_tmux=0
+  case "$local_supervisor" in
+  auto)
+    if rig_pm2_manages; then
+      use_pm2=1
+    elif command -v tmux >/dev/null 2>&1; then
+      use_tmux=1
+    fi
+    ;;
+  pm2)
+    if rig_pm2_manages; then
+      use_pm2=1
+    else
+      echo "LOCAL_SUPERVISOR=pm2 but pm2 is not managing '$SERVICE'"
+      exit 1
+    fi
+    ;;
+  tmux)
+    if command -v tmux >/dev/null 2>&1; then
+      use_tmux=1
+    else
+      echo "LOCAL_SUPERVISOR=tmux but tmux is not installed"
+      exit 1
+    fi
+    ;;
+  direct) ;;
+  *)
+    echo "LOCAL_SUPERVISOR must be auto|pm2|tmux|direct (got '$local_supervisor')"
+    exit 2
+    ;;
+  esac
+
+  if [ "$use_pm2" = 1 ]; then
     echo "supervisor: pm2 (${SERVICE})"
     pm2 restart "$SERVICE" --update-env >/dev/null || {
       echo "pm2 restart $SERVICE FAILED:"
@@ -61,13 +97,24 @@ if rig_is_local; then
       done
       kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
     fi
-    echo "supervisor: direct ($ENTRY)"
-    # COMIS_CONFIG_PATHS must be on the command line: an `export` does not survive into a process
-    # backgrounded from a tool/agent shell, and the daemon then boots against a different config
-    # than the one this rig just wired (the silent wrong-config class).
-    COMIS_CONFIG_PATHS="$DATA/config.yaml" nohup node ${NODE_ARGS:-} "$ENTRY" \
-      >>"$DATA/daemon.console.log" 2>&1 &
-    disown 2>/dev/null || true
+    if [ "$use_tmux" = 1 ]; then
+      tmux_session="${LOCAL_TMUX_SESSION:-comis-${SERVICE}}"
+      tmux kill-session -t "$tmux_session" 2>/dev/null || true
+      echo "supervisor: tmux ($tmux_session, $ENTRY)"
+      # Keep COMIS_CONFIG_PATHS on the child command line. The tmux server owns
+      # the child after this shell exits, including under PTY/agent runners that
+      # reap ordinary nohup descendants.
+      tmux new-session -d -s "$tmux_session" \
+        "exec env COMIS_CONFIG_PATHS='$DATA/config.yaml' node ${NODE_ARGS:-} '$ENTRY' >>'$DATA/daemon.console.log' 2>&1"
+    else
+      echo "supervisor: direct ($ENTRY)"
+      # COMIS_CONFIG_PATHS must be on the command line: an `export` does not survive into a process
+      # backgrounded from a tool/agent shell, and the daemon then boots against a different config
+      # than the one this rig just wired (the silent wrong-config class).
+      COMIS_CONFIG_PATHS="$DATA/config.yaml" nohup node ${NODE_ARGS:-} "$ENTRY" \
+        >>"$DATA/daemon.console.log" 2>&1 &
+      disown 2>/dev/null || true
+    fi
   fi
 else
   # ---- REMOTE: systemd owns the lifecycle ---------------------------------------------------------

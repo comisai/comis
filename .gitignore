@@ -87,8 +87,9 @@ packages/comis/package.json.workspace-backup
 
 design/
 
-# Live-test rig per-box secret (kit: test/live/self-driving) — never commit the real gateway token
+# Live-test rig per-box secrets (kit: test/live/self-driving) — never commit the real gateway token
 test/live/self-driving/scripts/.live-env
+test/live/self-driving/scripts/.rig-env
 
 # Python bytecode cache (from comis_tools.py py_compile checks)
 __pycache__/
