@@ -121,6 +121,7 @@ describe("createActivityStream — subagent mapping", () => {
     });
     bus.emit("session:sub_agent_completed", {
       runId: "run-2",
+      parentSessionKey: SESSION,
       agentId: AGENT,
       success: true,
       runtimeMs: 4200,
@@ -153,6 +154,7 @@ describe("createActivityStream — subagent mapping", () => {
     });
     bus.emit("session:sub_agent_completed", {
       runId: "run-fail",
+      parentSessionKey: SESSION,
       agentId: AGENT,
       success: false,
       runtimeMs: 10,

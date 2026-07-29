@@ -30,7 +30,7 @@ import {
 import {
   accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillUsedRecord, accumulateSkillSurfacedRecord, accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
   accumulateToolSchemaRecord, buildLearningSignal, emptyLearningFold,
-  accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord, accumulateSubAgentSpawnedRecord,
+  accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord, accumulateSubAgentSpawnedRecord, accumulateSubAgentCompletedRecord,
   accumulateOrchestrateRunSummaryRecord, accumulateOrchestrateToolCall,
   accumulateBackgroundTaskRecord,
   parseContextBudgetRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
@@ -399,6 +399,9 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       // capability-endpoint audit stream.
       accumulateSubAgentSpawnedRecord(acc.spawnNodesByLease, data);
       return;
+    case "subagent.completed":
+      accumulateSubAgentCompletedRecord(acc, data);
+      return;
     case "capability.audited":
       accumulateCapabilityAuditedRecord(acc.spawnNodesByLease, data, rec.agentId, acc.agentId);
       // ALSO tally the run's tool calls keyed by the PER-RUN child leaseId. The
@@ -712,6 +715,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     voiceOutcomeSeq: -1,
     terminalDrivePromotedCount: 0,
     subagentDeliverySkippedCount: 0,
+    subagentCompletedCount: 0,
+    subagentFailedCount: 0,
     backgroundRecoveryRetryCount: 0,
     backgroundRecoveryByTask: new Map(),
     backgroundPromotionsByTask: new Map(),
@@ -809,6 +814,17 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     // Materialize lease-keyed spawn nodes in first-seen order when present.
     ...(acc.spawnNodesByLease.size > 0
       ? { spawnTree: [...acc.spawnNodesByLease.values()] }
+      : {}),
+    ...(acc.subagentCompletedCount > 0
+      ? {
+          subagentCompletions: {
+            completed: acc.subagentCompletedCount,
+            failed: acc.subagentFailedCount,
+            ...(acc.subagentLastFailedRunId !== undefined
+              ? { lastFailedRunId: acc.subagentLastFailedRunId }
+              : {}),
+          },
+        }
       : {}),
     // Materialize run skeletons and join tool calls through each child lease id.
     ...(acc.orchestrateRunsByRunId.size > 0

@@ -76,6 +76,7 @@ import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-exp
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
 import {
   subagentDeliverySkippedVerdict,
+  subagentFailedVerdict,
   subagentStuckKilledVerdict,
 } from "./obs-explain-subagent-killed-verdict.js";
 import { freshTailOriginLostVerdict } from "./obs-explain-fresh-tail-verdict.js";
@@ -157,6 +158,8 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   subagentStuckKilledVerdict,
 
   subagentDeliverySkippedVerdict,
+
+  subagentFailedVerdict,
 
   backgroundRecoveryVerdict,
 

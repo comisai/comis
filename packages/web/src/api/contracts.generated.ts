@@ -11482,6 +11482,25 @@ export const CONTRACTS = {
               },
               "budgetTokensUsed": {
                 "type": "number"
+              },
+              "terminalOutcome": {
+                "type": "string",
+                "enum": [
+                  "completed",
+                  "failed"
+                ]
+              },
+              "runtimeMs": {
+                "type": "number",
+                "minimum": 0
+              },
+              "tokensUsed": {
+                "type": "number",
+                "minimum": 0
+              },
+              "costUsd": {
+                "type": "number",
+                "minimum": 0
               }
             },
             "required": [

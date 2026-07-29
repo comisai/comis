@@ -132,6 +132,9 @@ export const TRAJECTORY_EVENT_TYPES = [
   // A direct sessions_spawn child admitted under the active root. Content-free:
   // run/root/parent ids, child agent id, and attenuated cap names only.
   "subagent.spawned",
+  // A direct child's terminal outcome routed to the parent trajectory.
+  // Content-free: run/agent ids, success, duration, tokens, and cost only.
+  "subagent.completed",
 
   // The reserved trajectory type for the
   // counts-only subagent:steered event emitted when a running child is

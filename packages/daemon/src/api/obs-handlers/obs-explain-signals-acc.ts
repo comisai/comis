@@ -228,6 +228,9 @@ export interface Acc {
   subagentDeliverySkippedCount: number;
   subagentDeliverySkippedLastRunId?: string;
   subagentDeliverySkippedLastReason?: "no_origin" | "no_channel_params";
+  subagentCompletedCount: number;
+  subagentFailedCount: number;
+  subagentLastFailedRunId?: string;
   backgroundRecoveryRetryCount: number;
   backgroundRecoveryByTask: Map<string, { unresolved: boolean; toolName?: string }>;
   backgroundRecoveryLastTaskId?: string;

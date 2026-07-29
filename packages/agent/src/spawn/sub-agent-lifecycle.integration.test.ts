@@ -415,6 +415,7 @@ describe("sub-agent lifecycle integration", () => {
       expect.objectContaining({
         runId,
         agentId: "researcher",
+        parentSessionKey: "test-tenant:user1:ch1",
         success: true,
         tokensUsed: 200,
         cost: 0.02,

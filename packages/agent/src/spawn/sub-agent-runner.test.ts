@@ -605,6 +605,7 @@ describe("createSubAgentRunner", () => {
       expect.objectContaining({
         runId,
         agentId: "researcher",
+        parentSessionKey: formattedConversation(callerConversation),
         success: true,
         tokensUsed: 200,
         cost: 0.02,

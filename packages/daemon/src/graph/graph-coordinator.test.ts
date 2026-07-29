@@ -263,6 +263,7 @@ function simulateCompletion(
 ): void {
   eventBus.emit("session:sub_agent_completed", {
     runId,
+    parentSessionKey: "parent-session",
     agentId: "test-agent",
     success,
     runtimeMs: 100,
@@ -281,6 +282,7 @@ function simulateCompletionWithBudget(
 ): void {
   eventBus.emit("session:sub_agent_completed", {
     runId,
+    parentSessionKey: "parent-session",
     agentId: "test-agent",
     success,
     runtimeMs: 100,
@@ -2851,7 +2853,7 @@ describe("createGraphCoordinator", () => {
         const runId = runner._getSpawnCalls()[i]!._runId as string;
         runner._completeRun(runId, `Result ${i}`);
         eventBus.emit("session:sub_agent_completed", {
-          runId, agentId: "test-agent", success: true,
+          runId, parentSessionKey: "parent-session", agentId: "test-agent", success: true,
           runtimeMs: 100, tokensUsed: 100, cost: 0.01, timestamp: Date.now(),
         } as any);
       }
@@ -3033,6 +3035,7 @@ describe("createGraphCoordinator", () => {
       // Emit completion with cache data
       eventBus.emit("session:sub_agent_completed", {
         runId,
+        parentSessionKey: "parent-session",
         agentId: "test-agent",
         success: true,
         runtimeMs: 100,
@@ -4115,6 +4118,7 @@ describe("createGraphCoordinator", () => {
       runner._completeRun(runIdA, "Result A");
       eventBus.emit("session:sub_agent_completed", {
         runId: runIdA,
+        parentSessionKey: "parent-session",
         agentId: "test-agent",
         success: true,
         runtimeMs: 100,
@@ -4131,6 +4135,7 @@ describe("createGraphCoordinator", () => {
       runner._completeRun(runIdB, "Result B");
       eventBus.emit("session:sub_agent_completed", {
         runId: runIdB,
+        parentSessionKey: "parent-session",
         agentId: "test-agent",
         success: true,
         runtimeMs: 100,
@@ -4184,6 +4189,7 @@ describe("createGraphCoordinator", () => {
         runner._completeRun(runId, `Result ${i}`);
         eventBus.emit("session:sub_agent_completed", {
           runId,
+          parentSessionKey: "parent-session",
           agentId: "test-agent",
           success: true,
           runtimeMs: 100,
@@ -4227,6 +4233,7 @@ describe("createGraphCoordinator", () => {
       runner._completeRun(runIdA, "Result A");
       eventBus.emit("session:sub_agent_completed", {
         runId: runIdA,
+        parentSessionKey: "parent-session",
         agentId: "test-agent",
         success: true,
         runtimeMs: 100,
@@ -4243,6 +4250,7 @@ describe("createGraphCoordinator", () => {
       runner._completeRun(runIdB, "Result B");
       eventBus.emit("session:sub_agent_completed", {
         runId: runIdB,
+        parentSessionKey: "parent-session",
         agentId: "test-agent",
         success: true,
         runtimeMs: 100,
@@ -4327,6 +4335,7 @@ describe("createGraphCoordinator", () => {
         runner._completeRun(runId, `Result ${i}`);
         eventBus.emit("session:sub_agent_completed", {
           runId,
+          parentSessionKey: "parent-session",
           agentId: "test-agent",
           success: true,
           runtimeMs: 100,

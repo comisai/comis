@@ -147,6 +147,9 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // authoritative spawn-tree leaf. Content-free: run/root/parent ids, child
   // agent id, and attenuated cap names only.
   "session:sub_agent_spawned": "subagent.spawned",
+  // A child's terminal result occurs off-turn. The required parentSessionKey
+  // routes it to the parent recorder; the translator strips that key.
+  "session:sub_agent_completed": "subagent.completed",
 
   // A running sub-agent was steered IN-FLIGHT (a
   // high-priority message injected at the child's next step boundary, transcript
@@ -555,6 +558,8 @@ export interface AttachTrajectoryParams {
 function resolveEventSessionKey(payload: unknown): string | undefined {
   const own = (payload as { sessionKey?: unknown } | undefined)?.sessionKey;
   if (typeof own === "string" && own.length > 0) return own;
+  const parent = (payload as { parentSessionKey?: unknown } | undefined)?.parentSessionKey;
+  if (typeof parent === "string" && parent.length > 0) return parent;
   const ctxKey = tryGetContext()?.sessionKey;
   if (typeof ctxKey === "string" && ctxKey.length > 0) return ctxKey;
   return undefined;

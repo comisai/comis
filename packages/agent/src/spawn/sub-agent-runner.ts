@@ -1772,7 +1772,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       // Emit completion event
       deps.eventBus.emit("session:sub_agent_completed", {
-        runId, agentId: run.agentId, success: false,
+        runId, parentSessionKey: run.callerSessionKey ?? "unknown",
+        agentId: run.agentId, success: false,
         runtimeMs: runningDurationMs, tokensUsed: 0, cost: 0, timestamp: now,
       });
 
@@ -3310,6 +3311,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }
         deps.eventBus.emit("session:sub_agent_completed", {
           runId,
+          parentSessionKey: params.callerSessionKey ?? "unknown",
           agentId: params.agentId,
           success: isSuccess,
           runtimeMs: completedAt - run.startedAt,
@@ -3420,7 +3422,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
         // Emit failure event
         deps.eventBus.emit("session:sub_agent_completed", {
-          runId, agentId: params.agentId, success: false,
+          runId, parentSessionKey: params.callerSessionKey ?? "unknown",
+          agentId: params.agentId, success: false,
           runtimeMs, tokensUsed: 0, cost: 0, timestamp: completedAt,
         });
 
@@ -3559,7 +3562,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       // Emit completion event
       deps.eventBus.emit("session:sub_agent_completed", {
-        runId, agentId: run.agentId, success: false,
+        runId, parentSessionKey: run.callerSessionKey ?? "unknown",
+        agentId: run.agentId, success: false,
         runtimeMs, tokensUsed: 0, cost: 0, timestamp: completedAt,
       });
 
@@ -3819,6 +3823,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       // Non-graph runs: use existing event bus path
       deps.eventBus.emit("session:sub_agent_completed", {
         runId,
+        parentSessionKey: run.callerSessionKey ?? "unknown",
         agentId: run.agentId,
         success: false,
         runtimeMs: killRuntimeMs,
@@ -4000,6 +4005,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             forceTerminalCleanup(run);
             deps.eventBus.emit("session:sub_agent_completed", {
               runId,
+              parentSessionKey: run.callerSessionKey ?? "unknown",
               agentId: run.agentId,
               success: false,
               runtimeMs: Math.max(0, completedAtMs - run.startedAt),

@@ -344,6 +344,7 @@ export function translatePayload(
     case "graph:repaired":
     case "graph:synthesized_from_intent":
     case "session:sub_agent_spawned":
+    case "session:sub_agent_completed":
     case "subagent:steered":
     case "subagent:killed": // Attributed kill — {runId, killedBy, runtimeMs, idleMs?, thresholdMs?}; the free-text reason never crosses the bus.
     case "security:sandbox_downgrade_refused":

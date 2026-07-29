@@ -142,6 +142,12 @@ export interface IncidentSignals {
     lastRunId: string;
     lastReason: "no_origin" | "no_channel_params";
   };
+  /** Direct child terminal outcomes folded from parent-routed completion records. */
+  subagentCompletions?: {
+    completed: number;
+    failed: number;
+    lastFailedRunId?: string;
+  };
   /** Protected background-continuation recovery incidents folded from
    *  `background_task.notified` records whose reason is
    *  `recovery_retry_required`. Counts and stable identifiers only. */

@@ -24,6 +24,7 @@ export type OrchestrationBridgedEventName =
   | "graph:repaired"
   | "graph:synthesized_from_intent"
   | "session:sub_agent_spawned"
+  | "session:sub_agent_completed"
   | "subagent:steered"
   // An attributed sub-agent kill (parent / health_monitor / operator /
   // system) — bridged so a killed child's own trajectory names WHO killed it
@@ -81,6 +82,16 @@ export function translateOrchestrationPayload(
         parentLeaseId: payload.parentLeaseId,
         childAgentId: payload.agentId,
         caps: payload.caps,
+      };
+
+    case "session:sub_agent_completed":
+      return {
+        runId: payload.runId,
+        childAgentId: payload.agentId,
+        success: payload.success,
+        runtimeMs: payload.runtimeMs,
+        tokensUsed: payload.tokensUsed,
+        costUsd: payload.cost,
       };
 
     case "subagent:steered":

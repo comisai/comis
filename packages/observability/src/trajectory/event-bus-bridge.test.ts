@@ -1876,6 +1876,16 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       caps: ["orch:web"],
       timestamp: 0,
     },
+    "session:sub_agent_completed": {
+      runId: "run-child-1",
+      parentSessionKey: "parent-session",
+      agentId: "child-agent",
+      success: false,
+      runtimeMs: 12_000,
+      tokensUsed: 2_500,
+      cost: 0.04,
+      timestamp: 0,
+    },
     // Counts/ids + the closed-union mode only — the correlation
     // invariant must hold (no sessionKey/traceId leak into the record data).
     "subagent:steered": {
@@ -4141,7 +4151,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // 122 = 121 + memory:recall_degraded (the degraded/failed-recall record —
     // makes a dead recall diagnosable from `comis explain` + the system health view
     // instead of a daemon.log grep).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(134);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(135);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

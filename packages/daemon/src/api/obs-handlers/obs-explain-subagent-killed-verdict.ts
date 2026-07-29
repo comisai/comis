@@ -35,6 +35,29 @@ import type { IncidentSignals } from "@comis/core";
 /** Structural twin of `obs-explain-heuristics.RootCause` (kept local — no import cycle). */
 type SubagentKilledVerdict = { code: string; detail: string; suggestedNextSteps: string[] };
 
+/** A direct child terminal failure is acute parent-session degradation. */
+export function subagentFailedVerdict(
+  s: IncidentSignals,
+): SubagentKilledVerdict | null {
+  const completions = s.subagentCompletions;
+  if (
+    completions === undefined
+    || completions.failed === 0
+    || completions.lastFailedRunId === undefined
+  ) return null;
+  const runId = completions.lastFailedRunId;
+  return {
+    code: "subagent_failed",
+    detail:
+      `background child ${runId} failed (${String(completions.failed)} of `
+      + `${String(completions.completed)} completed child runs failed)`,
+    suggestedNextSteps: [
+      `run comis explain ${runId} --depth full, then follow its unique candidate session key`,
+      "inspect the failed child tools and terminal errorKind before retrying",
+    ],
+  };
+}
+
 /** A missing exact-origin completion route is terminal delivery degradation. */
 export function subagentDeliverySkippedVerdict(
   s: IncidentSignals,

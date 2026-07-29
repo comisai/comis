@@ -58,7 +58,7 @@ describe("obs-explain-heuristics", () => {
       code: "subagent_failed",
       detail: "background child run-child failed (1 of 1 completed child runs failed)",
       suggestedNextSteps: [
-        "run comis explain run-child --depth full to inspect the child trajectory",
+        "run comis explain run-child --depth full, then follow its unique candidate session key",
         "inspect the failed child tools and terminal errorKind before retrying",
       ],
     });

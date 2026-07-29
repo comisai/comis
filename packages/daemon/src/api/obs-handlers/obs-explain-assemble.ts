@@ -311,12 +311,14 @@ export function assembleIncidentReport(
   const channelDegraded =
     signals.channelHealth !== undefined && !signals.channelHealth.recovered;
   const subagentDeliveryDegraded = signals.subagentDeliverySkipped !== undefined;
+  const subagentCompletionDegraded = (signals.subagentCompletions?.failed ?? 0) > 0;
   const activityRenderDegraded = signals.turnFinalized?.renderErrorKind !== undefined;
   const degraded =
     deliveryFailed
     || deliveryPartial
     || channelDegraded
     || subagentDeliveryDegraded
+    || subagentCompletionDegraded
     || activityRenderDegraded
     || (explicitDegraded ?? derivedDegraded);
   const severity: "ok" | "degraded" | "failed" = isHardFailure

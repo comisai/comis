@@ -125,6 +125,8 @@ export interface MessagingEvents {
   /** Sub-agent completed */
   "session:sub_agent_completed": {
     runId: string;
+    /** Routes this off-turn terminal record to the owning parent trajectory. */
+    parentSessionKey: string;
     agentId: string;
     success: boolean;
     runtimeMs: number;

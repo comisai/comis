@@ -461,9 +461,12 @@ describe("ActivityStream themed status markers", () => {
     });
     bus.emit("session:sub_agent_completed", {
       runId: "run-complete",
+      parentSessionKey: SESSION,
       agentId: AGENT,
       success: true,
       runtimeMs: 42,
+      tokensUsed: 0,
+      cost: 0,
       timestamp: 2,
     });
     sub.unsubscribe();
