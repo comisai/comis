@@ -35,7 +35,8 @@ export { createLcdBrowseStore } from "./lcd-browse-store.js";
 // LCD per-conversation single-flight ingest serializer.
 // createIngestSerializer + IngestSerializer are NOT re-exported: the store
 // constructs the serializer internally (lcd-store.ts) and exposes its effect via
-// ContextStorePort.runOnConversation. No external consumer constructs one
+// ContextStorePort.runOnConversation. Slow summarization stays outside it; no
+// external consumer constructs one
 // directly, so the symbols stay package-internal (consumed via the relative
 // ./lcd-ingest-serializer.js import only).
 

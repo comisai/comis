@@ -293,8 +293,8 @@ const BENIGN_DAG_DEGRADED_REASONS: ReadonlySet<EventMap["context:dag_degraded"][
  * `conversationId`/`sessionKey` CONFLICT, so the row must keep the divergent
  * identifier (an identifier, not content — bounded-payload holds) rather than
  * rely on the internal LCD `conversationId === sessionKey` invariant and drop it.
- * `traceId` is `undefined`: the payload has NO traceId field — `sessionKey` +
- * `conversationId` correlate the row to a conversation. The system health view
+ * `traceId` is preserved when the signal fired inside a live turn; startup and
+ * maintenance-only signals remain correlated by `sessionKey` + `conversationId`. The system health view
  * reads these rows so the divergence is queryable/joinable cross-session instead
  * of log-file-only.
  */
@@ -314,7 +314,7 @@ export function dagDegradedEventToRow(
       conversationId: payload.conversationId,
       durationMs: payload.durationMs,
     }),
-    traceId: undefined,
+    traceId: payload.traceId,
   };
 }
 

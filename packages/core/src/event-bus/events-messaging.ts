@@ -406,10 +406,10 @@ export interface MessagingEvents {
    *    gap after summary compaction, intentional eviction, and tail trimming
    *    were reconciled (`lcd-coverage.ts`).
    *  - `leaf_window_divergence`: a leaf compaction pass skipped because the chunk
-   *    message ids did not resolve to a `context_items` ordinal window
+   *    message ids did not resolve to, or no longer occupied, its selected ordinal window
    *    (`lcd-compaction-trigger.ts`).
-   *  - `condense_window_divergence`: a condense pass skipped on an inverted
-   *    ordinal window (`lcd-condense-trigger.ts`). */
+   *  - `condense_window_divergence`: a condense pass skipped on an inverted or
+   *    stale ordinal window (`lcd-condense-trigger.ts`). */
   "context:dag_degraded": {
     conversationId: string;
     agentId: string;
@@ -433,6 +433,8 @@ export interface MessagingEvents {
       | "session_rebase";
     durationMs: number;
     timestamp: number;
+    /** Request correlation when the signal is emitted inside a live turn. */
+    traceId?: string;
   };
 
   /** The context-window governor reduced reasoning effort so the assembled

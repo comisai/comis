@@ -1513,27 +1513,26 @@ describe("context-store afterTurn leaf-pass wiring", () => {
 });
 
 // ---------------------------------------------------------------------------
-// LCD afterTurn deferral + serializer interlock.
+// LCD afterTurn deferral + mutation isolation.
 //
 // The leaf + condense passes are DEFERRED by default (deferCompaction):
-// they enqueue onto the per-conversation serializer as a
-// DETACHED unit so afterTurn returns BEFORE the compaction's store write
-// completes. The live ingest write routes through the SAME serializer
-// (runOnConversation) so the next turn's ingest and the prior turn's deferred
-// compaction can never interleave. A fail-closed rollover emits a
+// they enqueue onto a slow per-conversation maintenance queue as a DETACHED unit
+// so afterTurn returns before compaction completes. Live ingest owns a distinct
+// short mutation serializer, which compaction reacquires only for its synchronous
+// range-replace. A fail-closed rollover emits a
 // content-free context:dag_degraded event.
 //
 // Scaffolding all 30+ postExecution deps is impractical (see the markRead block
 // above), so — mirroring the leaf-wiring block — we pair a SOURCE-GREP
-// (locking the inline wiring invariants the criteria require: runOnConversation
-// ×2 inside the `if (deps.contextStore)` block, the deferCompaction gate, the
+// (locking the inline wiring invariants: one live-ingest runOnConversation call,
+// the separate maintenance enqueue, the deferCompaction gate, the
 // suppressError-wrapped detached promise, NO bare empty catch) with a BEHAVIOR
 // probe that reproduces the exact inline detached-enqueue pattern against a
 // store double and proves the observable contract (the caller resolves before
-// the deferred queue slot completes; both writers route through the queue; the
-// degraded event is content-free).
+// the deferred maintenance completes, live mutation proceeds independently, and
+// the degraded event is content-free).
 // ---------------------------------------------------------------------------
-describe("LCD afterTurn deferred compaction + serializer interlock", () => {
+describe("LCD afterTurn deferred compaction + mutation isolation", () => {
   function readPostExec(): { stripped: string } {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const stripped = src
@@ -1551,11 +1550,15 @@ describe("LCD afterTurn deferred compaction + serializer interlock", () => {
     return stripped.slice(blockStart, afterBlock > -1 ? afterBlock : undefined);
   }
 
-  it("source-grep — the ingest AND the deferred compaction both route through runOnConversation (serializer interlock)", () => {
+  it("source-grep — deferred compaction never occupies the live ingest serializer while awaiting a summarizer", () => {
     const block = contextStoreBlock(readPostExec().stripped);
-    // BOTH writers route through the per-conversation serializer → ≥2 calls.
+    // Only the synchronous live-ingest commit owns this serializer at the
+    // post-execution call site. A detached summarizer can take minutes; putting
+    // that whole async pass on the same queue delays the next user-visible reply
+    // even after its model call has completed.
     const calls = block.match(/runOnConversation/g) ?? [];
-    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls).toHaveLength(1);
+    expect(block).toMatch(/enqueueContextMaintenance/);
     // The ingest is still guarded; the passes are still wired.
     expect(block).toMatch(/ingestTurnGuarded/);
     expect(block).toMatch(/runLeafPassAfterTurn/);
@@ -1580,9 +1583,10 @@ describe("LCD afterTurn deferred compaction + serializer interlock", () => {
     expect(emitSlice).not.toMatch(/\bcontent\b|\btext\b|\bmessages\b/);
   });
 
-  it("behavior — the detached enqueue pattern resolves the caller BEFORE the deferred queue slot completes; both writers share the queue", async () => {
-    const [ingestMod, shared, mockLoggerMod] = await Promise.all([
+  it("behavior — a slow detached maintenance pass does not block the live mutation serializer", async () => {
+    const [ingestMod, maintenanceMod, shared, mockLoggerMod] = await Promise.all([
       import("./lcd-ingest.js"),
+      import("./lcd-maintenance-queue.js"),
       import("@comis/shared"),
       import("../../../../test/support/mock-logger.js"),
     ]);
@@ -1592,11 +1596,10 @@ describe("LCD afterTurn deferred compaction + serializer interlock", () => {
     const { suppressError } = shared as unknown as {
       suppressError: (p: Promise<unknown>, reason: string) => void;
     };
+    const { enqueueContextMaintenance } = maintenanceMod;
     const createMockLogger = (mockLoggerMod as { createMockLogger: () => unknown }).createMockLogger;
 
-    // Store double modelling the single-flight queue: the FIRST slot (ingest)
-    // completes promptly; the SECOND slot (deferred compaction) is held on a
-    // latch (the long pole). Records every runOnConversation convId.
+    // Store double modelling only the short synchronous mutation queue.
     const calls: string[] = [];
     let release: (() => void) | undefined;
     const latch = new Promise<void>((r) => {
@@ -1606,14 +1609,7 @@ describe("LCD afterTurn deferred compaction + serializer interlock", () => {
       append: () => {},
       getMessages: () => [],
       runOnConversation: async <T>(convId: string, fn: () => T | Promise<T>): Promise<T> => {
-        const first = calls.length === 0;
         calls.push(convId);
-        // The ingest slot (first) runs its body promptly; the deferred-compaction
-        // slot (later) does NOT run its body until the test releases the latch —
-        // modelling the single-flight queue where the compaction WRITE only fires
-        // once dequeued (AFTER afterTurn returned). So `deferredDone` stays false
-        // until release, proving afterTurn did not block on the compaction write.
-        if (!first) await latch;
         return fn();
       },
     } as unknown as import("@comis/core").ContextStorePort;
@@ -1630,27 +1626,36 @@ describe("LCD afterTurn deferred compaction + serializer interlock", () => {
     await store.runOnConversation(scope.conversationRef, () =>
       ingestTurnGuarded(store, scope, [], 7000, createMockLogger()),
     );
-    // 2. deferred passes enqueued onto the SAME queue, NOT awaited, suppressError-wrapped.
+    // 2. deferred passes use the maintenance queue, NOT the mutation queue.
     let deferredDone = false;
-    const deferred = store.runOnConversation(scope.conversationRef, async () => {
+    const deferred = enqueueContextMaintenance(scope.conversationRef, async () => {
+      await latch;
       deferredDone = true;
     });
     suppressError(deferred, "postExecution deferred LCD compaction");
 
-    // The caller (afterTurn) continues here WITHOUT awaiting `deferred`. The
-    // deferred unit's queue slot is still held by the latch → not yet complete.
+    // A later live ingest can claim and complete the mutation slot while slow
+    // maintenance remains suspended.
+    await store.runOnConversation(scope.conversationRef, () =>
+      ingestTurnGuarded(store, scope, [], 7001, createMockLogger()),
+    );
     await Promise.resolve();
     expect(deferredDone).toBe(false);
-
-    // Both writers (ingest + deferred compaction) routed through the queue for
-    // the SAME conversation (the serializer interlock).
-    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls).toHaveLength(2);
     expect(calls.every((c) => c === scope.conversationRef)).toBe(true);
 
     // Releasing the latch lets the deferred compaction run (eventually).
     release?.();
     await deferred;
     expect(deferredDone).toBe(true);
+  });
+
+  it("source-grep — a material serialized ingest wait emits a trace-correlated WARN and health signal", () => {
+    const block = contextStoreBlock(readPostExec().stripped);
+    expect(block).toMatch(/serialized_wait/);
+    expect(block).toMatch(/errorKind:\s*"resource"/);
+    expect(block).toMatch(/traceId/);
+    expect(block).toMatch(/durationMs/);
   });
 
   it("behavior — a fail-closed rollover (malformed scope) emits a content-free context:dag_degraded with reason fail_closed_rollover", async () => {
