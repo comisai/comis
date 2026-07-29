@@ -919,15 +919,12 @@ describe("Config nesting integration", () => {
 });
 
 // ---------------------------------------------------------------------------
-// context:dag_degraded reason union — the LCD-divergence literals
+// context:dag_degraded reason union — LCD integrity literals
 // ---------------------------------------------------------------------------
 //
-// The closed `reason` union carries the 3 LCD-divergence literals so the
-// lcd-ingest shrink skip + the leaf/condense ordinal-window skips can
-// emit `context:dag_degraded` (persisted as a `health_signal` row). If a
-// literal leaves the union, the corresponding payload value fails to
-// COMPILE (a compile failure is the guard for a closed
-// type contract). The union stays CLOSED (string literals only) — §2.8-compliant.
+// The closed `reason` union lets each LCD integrity path emit
+// `context:dag_degraded`, persisted as a `health_signal` row. If a literal leaves
+// the union, its payload fails to compile. The union stays string-literal-only.
 
 describe("context:dag_degraded reason union (divergence literals)", () => {
   function emitWithReason(reason: EventMap["context:dag_degraded"]["reason"]): EventMap["context:dag_degraded"]["reason"] {
@@ -947,10 +944,9 @@ describe("context:dag_degraded reason union (divergence literals)", () => {
     return received.reason;
   }
 
-  it("accepts the 3 new divergence reasons (live/leaf/condense window divergence)", () => {
-    // RED on pre-patch: these literals are not in the closed union → the typed
-    // payload above fails to type-check for each.
+  it("accepts every LCD divergence reason through the closed event union", () => {
     expect(emitWithReason("live_store_divergence")).toBe("live_store_divergence");
+    expect(emitWithReason("assembly_coverage_shortfall")).toBe("assembly_coverage_shortfall");
     expect(emitWithReason("leaf_window_divergence")).toBe("leaf_window_divergence");
     expect(emitWithReason("condense_window_divergence")).toBe("condense_window_divergence");
   });

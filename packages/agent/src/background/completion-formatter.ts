@@ -24,7 +24,7 @@ import { TRAILING_INSTRUCTION } from "../spawn/narrative-caster.js";
 /** Re-export so consumers (tests, completion runner) can assert byte-identity. */
 export { TRAILING_INSTRUCTION } from "../spawn/narrative-caster.js";
 
-/** NormalizedMessageSchema.text caps at 32768 chars. Reserve headroom for header + trailing instruction. */
+/** Background announcements use a conservative local 32 KiB payload budget. */
 const MAX_ANNOUNCEMENT_CHARS = 32768;
 const TRUNCATION_MARKER = "\n…[truncated]";
 const COMPLETION_FOLLOWUP_INSTRUCTION =
@@ -50,7 +50,7 @@ const RESTART_RECOVERY_ERROR = "Daemon restarted while task was running";
  *   - restart-recovery failure (`task.error === "Daemon restarted while task was running"`):
  *     uses the explicit recovery copy.
  *
- * Total-length cap: NormalizedMessageSchema.text limits at 32768 chars.
+ * Total-length cap: background announcements stay within 32768 chars.
  * If the assembled string would exceed the cap, only the body section is
  * truncated; the header and trailing instruction are NEVER touched.
  */
@@ -80,7 +80,7 @@ export function formatCompletionAnnouncement(task: BackgroundTask): string {
   sections.push(TRAILING_INSTRUCTION);
   let assembled = sections.join("\n");
 
-  // Enforce NormalizedMessageSchema.text.max(32768). Truncate the body section
+  // Enforce the local announcement budget. Truncate the body section
   // ONLY if needed; header and trailing instruction are byte-identical guarantees.
   if (assembled.length > MAX_ANNOUNCEMENT_CHARS) {
     const headerSection = `${header}\n\n`;

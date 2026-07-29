@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
+  driveTextFilePath,
   findAssistantReplyAfterInbound,
   telegramInboundGuid,
+  telegramInjectAddressingError,
   wireContainsAssistantReply,
 } from "../../test/live/self-driving/scripts/drive-session-oracle.mjs";
 
@@ -79,5 +81,27 @@ describe("live driver session correlation", () => {
         "Got it—category: **groceries**. Please resend it.",
       ),
     ).toBe(true);
+  });
+
+  it("rejects a synthetic mention entity when the bot handle is absent", () => {
+    expect(
+      telegramInjectAddressingError(
+        "reply here again",
+        { mention: true, thread: 7 },
+        "test_bot",
+      ),
+    ).toContain("@test_bot");
+    expect(
+      telegramInjectAddressingError(
+        "@test_bot reply here again",
+        { mention: true, thread: 7 },
+        "test_bot",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("distinguishes a literal bot mention from an absolute message file", () => {
+    expect(driveTextFilePath("@test_bot reply here again")).toBeUndefined();
+    expect(driveTextFilePath("@/tmp/live-message.txt")).toBe("/tmp/live-message.txt");
   });
 });

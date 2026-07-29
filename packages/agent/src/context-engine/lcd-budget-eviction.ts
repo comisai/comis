@@ -48,6 +48,12 @@ export interface BudgetItem {
   /** Pre-computed token count for this message (the budget authority). */
   tokens: number;
   /**
+   * Number of lossless-store messages this prompt item represents. Raw message
+   * refs represent one; summary refs carry their durable descendant count.
+   * Optional so synthetic/live items and focused fixtures naturally mean one.
+   */
+  representedMessageCount?: number;
+  /**
    * The durable `lcd_messages.id` of a store-resolved message-ref,
    * carried from `resolveContextItem` so the relevance pass can match a `searchLcd`
    * hit to this band item by the hit's STABLE `refId` (= `lcd_messages.id`) instead of a

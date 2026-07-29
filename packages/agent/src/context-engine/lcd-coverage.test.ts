@@ -59,7 +59,9 @@ describe("warnOnCoverageShortfall", () => {
       ...base,
       liveCount: 73,
       assembledCount: 73,
+      assembledCoverageCount: 73,
       droppedCount: 0,
+      droppedCoverageCount: 0,
     });
     expect(shortfall).toBe(0);
     expect(logger.warn).not.toHaveBeenCalled();
@@ -71,7 +73,9 @@ describe("warnOnCoverageShortfall", () => {
       ...base,
       liveCount: 73,
       assembledCount: 60,
+      assembledCoverageCount: 60,
       droppedCount: 13,
+      droppedCoverageCount: 13,
     });
     expect(shortfall).toBe(0);
     expect(logger.warn).not.toHaveBeenCalled();
@@ -83,7 +87,9 @@ describe("warnOnCoverageShortfall", () => {
       ...base,
       liveCount: 73,
       assembledCount: 69,
+      assembledCoverageCount: 69,
       droppedCount: 0,
+      droppedCoverageCount: 0,
       freshTailTrimmedCount: 4,
     });
     expect(shortfall).toBe(0);
@@ -96,7 +102,9 @@ describe("warnOnCoverageShortfall", () => {
       ...base,
       liveCount: 73,
       assembledCount: 75,
+      assembledCoverageCount: 75,
       droppedCount: 0,
+      droppedCoverageCount: 0,
     });
     expect(shortfall).toBe(0);
     expect(logger.warn).not.toHaveBeenCalled();
@@ -110,7 +118,9 @@ describe("warnOnCoverageShortfall", () => {
       tailStart: 57, // un-clamped — the pre-fix behaviour
       liveCount: 73,
       assembledCount: 72,
+      assembledCoverageCount: 72,
       droppedCount: 0,
+      droppedCoverageCount: 0,
     });
     expect(shortfall).toBe(1);
     expect(logger.warn).toHaveBeenCalledTimes(1);

@@ -62,7 +62,12 @@ function makeDeps(overrides?: Partial<ResolveAndPreprocessDeps>): ResolveAndPrep
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     logger: makeLogger() as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    eventBus: { emit: vi.fn() } as any,
+    eventBus: {
+      emitSafely: vi.fn(() => ({
+        failures: [],
+        pendingFailures: Promise.resolve([]),
+      })),
+    } as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     messageRouter: { resolve: vi.fn(() => "agent-test") } as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -210,6 +215,42 @@ describe("resolveAndPreprocess inbound provenance ownership", () => {
     )).rejects.toThrow("provenance unavailable");
 
     expect(JSON.stringify(deps.logger.error.mock.calls)).not.toContain(credential);
+  });
+
+  it("emits a content-free health signal when inbound provenance validation fails", async () => {
+    const oversized = "x".repeat(70_000);
+    const deps = makeDeps({
+      persistInboundMessage: vi.fn(async () => ({
+        ok: false as const,
+        error: {
+          error: new Error("normalized message text exceeded its bound"),
+          errorKind: "validation" as const,
+        },
+      })) as never,
+    });
+
+    await expect(resolveAndPreprocess(
+      deps,
+      makeAdapter(),
+      makeMsg({
+        id: "11111111-1111-4111-8111-111111111117",
+        text: oversized,
+      }),
+    )).rejects.toThrow("normalized message text exceeded");
+
+    expect(deps.eventBus.emitSafely).toHaveBeenCalledWith(
+      "message:inbound_persistence_failed",
+      {
+        agentId: "agent-test",
+        channelType: "telegram",
+        errorKind: "validation",
+        reason: "message_text_too_large",
+        observedChars: oversized.length,
+        limitChars: 65_536,
+        timestamp: expect.any(Number),
+      },
+    );
+    expect(JSON.stringify(deps.eventBus.emitSafely.mock.calls)).not.toContain(oversized);
   });
 
   it("directs integrity failures to quarantine without asking for a resend", async () => {

@@ -29,6 +29,34 @@
 
 import type { ComisLogger } from "@comis/core";
 
+interface RepresentedCoverageItem {
+  msg: unknown;
+  representedMessageCount?: number;
+}
+
+/**
+ * Count raw-message coverage after history eviction. Summary prompt items use
+ * their descendant count, while raw/synthetic items default to one.
+ */
+export function measureRepresentedCoverage(
+  evictable: readonly RepresentedCoverageItem[],
+  keptMessages: readonly unknown[],
+  freshTailCount: number,
+): { assembledCoverageCount: number; droppedCoverageCount: number } {
+  const kept = new Set(keptMessages);
+  let keptHistoryCoverageCount = 0;
+  let droppedCoverageCount = 0;
+  for (const item of evictable) {
+    const represented = Math.max(0, item.representedMessageCount ?? 1);
+    if (kept.has(item.msg)) keptHistoryCoverageCount += represented;
+    else droppedCoverageCount += represented;
+  }
+  return {
+    assembledCoverageCount: keptHistoryCoverageCount + freshTailCount,
+    droppedCoverageCount,
+  };
+}
+
 /**
  * The fresh tail's slice-start index, clamped so the verbatim tail always reaches
  * back to at least the store's persisted horizon.
@@ -68,11 +96,13 @@ export function resolveFreshTailStart(
  * line carried both sides. This reconciles them at the source.
  *
  * Measured at the CONCAT seam (`budgeted ++ freshTail`), NOT on the repaired
- * output, and with every DELIBERATE removal netted out — otherwise the WARN cries
- * wolf on healthy turns and gets ignored, which is worse than not having it:
- *   - `droppedCount` — budget eviction of the history prefix;
+ * output, in represented-message units, and with every DELIBERATE removal netted
+ * out — otherwise the WARN cries wolf on healthy turns and gets ignored:
+ *   - `droppedCoverageCount` — raw messages represented by evicted history items;
  *   - `freshTailTrimmedCount` — the residual trim dropping oldest tail steps on a
  *     tight window (honest degradation, and the pre-flight reports it);
+ *   - summary compaction is not a removal: one prompt item contributes its
+ *     durable descendant count to `assembledCoverageCount`;
  *   - transcript repair, excluded by measuring before it runs. Repair both ADDS
  *     synthesized results for unpaired calls and DROPS orphan/duplicate ones, so
  *     its output is not a coverage measure of this seam at all.
@@ -84,7 +114,9 @@ export function warnOnCoverageShortfall(
   m: {
     liveCount: number;
     assembledCount: number;
+    assembledCoverageCount: number;
     droppedCount: number;
+    droppedCoverageCount: number;
     freshTailTrimmedCount: number;
     persistedMsgCount: number;
     stepBoundary: number;
@@ -97,7 +129,10 @@ export function warnOnCoverageShortfall(
 ): number {
   const shortfall = Math.max(
     0,
-    m.liveCount - m.droppedCount - m.freshTailTrimmedCount - m.assembledCount,
+    m.liveCount
+      - m.droppedCoverageCount
+      - m.freshTailTrimmedCount
+      - m.assembledCoverageCount,
   );
   if (shortfall === 0) return 0;
   logger.warn(
@@ -111,11 +146,13 @@ export function warnOnCoverageShortfall(
       historyCount: m.historyCount,
       freshTailCount: m.freshTailCount,
       assembledCount: m.assembledCount,
+      assembledCoverageCount: m.assembledCoverageCount,
       droppedCount: m.droppedCount,
+      droppedCoverageCount: m.droppedCoverageCount,
       freshTailTrimmedCount: m.freshTailTrimmedCount,
       coverageShortfall: shortfall,
       hint:
-        "assembled fewer messages than the live array minus deliberate eviction — history and the fresh tail no longer cover the conversation between them. Compare persistedMsgCount (the store horizon) against stepBoundary: when the boundary is larger, live messages in that range belong to neither segment and are silently missing from the prompt.",
+        "represented-message coverage is short after intentional eviction and tail trimming. Inspect lcd_context_items for dangling refs, verify summary descendant counts, and compare persistedMsgCount with stepBoundary to confirm fresh-tail clamping.",
       agentId: m.agentId,
       sessionKey: m.sessionKey,
     },

@@ -9,6 +9,7 @@ import {
   recallDegradedEventToRow,
   prefixUnstableEventToRow,
   healthBudgetExceededEventToRow,
+  inboundPersistenceFailedEventToRow,
   channelInboundSilentEventToRow,
   channelIngressAuthRejectedEventToRow,
   reflectFunnelEventToRow,
@@ -66,6 +67,36 @@ function deliveryAuthorityEventFields(channelType: string, conversationId: strin
     },
   };
 }
+
+describe("inboundPersistenceFailedEventToRow", () => {
+  it("maps a rejected durable inbound to a content-free health signal", () => {
+    const row = inboundPersistenceFailedEventToRow({
+      agentId: "agent-a",
+      channelType: "telegram",
+      errorKind: "validation",
+      reason: "message_text_too_large",
+      observedChars: 70_000,
+      limitChars: 65_536,
+      timestamp: 1_000,
+    });
+
+    expect(row).toMatchObject({
+      timestamp: 1_000,
+      category: "health_signal",
+      severity: "warning",
+      agentId: "agent-a",
+      message: "message:inbound_persistence_failed",
+    });
+    expect(JSON.parse(row.details ?? "{}")).toEqual({
+      signal: "inbound_persistence_failed",
+      channelType: "telegram",
+      errorKind: "validation",
+      reason: "message_text_too_large",
+      observedChars: 70_000,
+      limitChars: 65_536,
+    });
+  });
+});
 
 // ---------------------------------------------------------------------------
 // tokenUsageEventToRow
@@ -1882,6 +1913,7 @@ describe("setupObsPersistence", () => {
     expect(eventBus.on).toHaveBeenCalledWith("health:budget_exceeded", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("mcp:server:reconnect_failed", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("channel:health_changed", expect.any(Function));
+    expect(eventBus.on).toHaveBeenCalledWith("message:inbound_persistence_failed", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("observability:trajectory_degraded", expect.any(Function));
     // The 2 multilingual health_signal subscriptions.
     expect(eventBus.on).toHaveBeenCalledWith("context:script_zero_hit", expect.any(Function));
@@ -1999,16 +2031,25 @@ describe("setupObsPersistence", () => {
       lastMessageAt: null,
       timestamp: 1017,
     });
+    eventBus.emit("message:inbound_persistence_failed", {
+      agentId: "a1",
+      channelType: "telegram",
+      errorKind: "validation",
+      reason: "message_text_too_large",
+      observedChars: 70_000,
+      limitChars: 65_536,
+      timestamp: 1018,
+    });
 
     // Flush the diagnostic buffer.
     vi.advanceTimersByTime(500);
 
-    // Exactly one health_signal row per degraded event (17 total), each with the right message.
+    // Exactly one health_signal row per degraded event (18 total), each with the right message.
     const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
     const healthRows = calls
       .map((c) => c[0] as { category?: string; message?: string; details?: string })
       .filter((r) => r.category === "health_signal");
-    expect(healthRows).toHaveLength(17);
+    expect(healthRows).toHaveLength(18);
     const messages = healthRows.map((r) => r.message).sort();
     expect(messages).toEqual([
       "autonomy:denial_breaker_tripped",
@@ -2022,6 +2063,7 @@ describe("setupObsPersistence", () => {
       "durable:resumed",
       "health:budget_exceeded",
       "mcp:server:reconnect_failed",
+      "message:inbound_persistence_failed",
       "orchestrate:run_summary",
       "pipeline:authored",
       "security:sandbox_downgrade_refused",

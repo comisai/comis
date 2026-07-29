@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
 
+/** Resolve the driver's explicit absolute-file form without consuming @bot mentions. */
+export function driveTextFilePath(textArg) {
+  return typeof textArg === "string" && textArg.startsWith("@/")
+    ? textArg.slice(1)
+    : undefined;
+}
+
 /** Mirror the Telegram adapter's bot-account-scoped normalized message identity. */
 export function telegramInboundGuid(botAccountId, chatId, messageId) {
   const bytes = createHash("sha256")
@@ -11,6 +18,19 @@ export function telegramInboundGuid(botAccountId, chatId, messageId) {
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = bytes.toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** Return a fail-loud reason when synthetic mention metadata cannot address the bot. */
+export function telegramInjectAddressingError(text, opts, botUsername) {
+  if (opts?.mention !== true) return undefined;
+  if (typeof botUsername !== "string" || botUsername.length === 0) {
+    return "INJECT_OPTS.mention=true requires getMe to return the bot username";
+  }
+  const handle = `@${botUsername}`;
+  if (!text.includes(handle)) {
+    return `INJECT_OPTS.mention=true requires the literal bot handle ${handle} in the message text`;
+  }
+  return undefined;
 }
 
 function messageText(message) {

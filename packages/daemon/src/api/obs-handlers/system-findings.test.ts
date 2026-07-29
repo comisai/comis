@@ -925,6 +925,31 @@ describe("buildFindings — node_budget_exceeded finding", () => {
 // severity-independent and must keep firing.
 // ---------------------------------------------------------------------------
 describe("buildFindings — health_signal rollup counts only degraded (warning) rows", () => {
+  it("makes pre-session inbound persistence failures actionable without explain", () => {
+    const finding = buildFindings(
+      [{
+        timestamp: 1_000,
+        category: "health_signal",
+        severity: "warning",
+        message: "message:inbound_persistence_failed",
+        details: JSON.stringify({
+          signal: "inbound_persistence_failed",
+          reason: "message_text_too_large",
+          channelType: "telegram",
+          errorKind: "validation",
+          observedChars: 70_000,
+          limitChars: 65_536,
+        }),
+      }],
+      [],
+      [],
+    ).find((candidate) => candidate.code === "health_signal:inbound_persistence_failed");
+
+    expect(finding?.detail).toContain("message_text_too_large=1");
+    expect(finding?.hint).toMatch(/pre-session|normalized message bound/i);
+    expect(finding?.hint).not.toMatch(/comis explain/i);
+  });
+
   it("keeps protected background recovery incidents aligned with system health", () => {
     const rows: DiagnosticRow[] = [{
       timestamp: 1_000,

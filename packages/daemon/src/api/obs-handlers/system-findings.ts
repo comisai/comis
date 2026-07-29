@@ -184,7 +184,9 @@ export function buildFindings(
       code: `health_signal:${label}`,
       detail: `${count} ${label} health signal(s) in the window${breakdown ? ` (${breakdown})` : ""}`,
       count,
-      hint: "run `comis explain` on an affected session; inspect the recurring health WARNs",
+      hint: label === "inbound_persistence_failed"
+        ? "This failure occurred before session creation; inspect the normalized message bound and channel envelope before retrying."
+        : "run `comis explain` on an affected session; inspect the recurring health WARNs",
     });
   }
 

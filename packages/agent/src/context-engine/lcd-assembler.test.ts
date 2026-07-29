@@ -871,9 +871,20 @@ describe("createLcdContextEngine context_items + eviction", () => {
     // only the trailing assistant("a5") in the fresh tail, so the WHOLE summary
     // sits in the reconstructed-from-store history prefix.
     const live: AgentMessage[] = msgs as AgentMessage[];
-    const { deps } = makeDeps(store);
+    const { deps, logger } = makeDeps(store);
     const engine = createLcdContextEngine(dagConfig(1), deps);
     const out = await engine.transformContext(live);
+
+    // A summary item covers every raw message in its descendant range. The
+    // coverage detector must compare represented-message coverage, not prompt
+    // item cardinality, or every legitimate compaction becomes an internal WARN.
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "lcd-assemble",
+        coverageShortfall: expect.any(Number),
+      }),
+      "lcd assembled context does NOT cover the live conversation",
+    );
 
     // The summary content surfaces as a USER-role text message (the summarizer
     // swap point — NEVER system/assistant; untrusted by role).
@@ -903,6 +914,31 @@ describe("createLcdContextEngine context_items + eviction", () => {
     expect(texts).not.toContain("a0");
     expect(texts).not.toContain("u1");
     expect(texts).not.toContain("a1");
+  });
+
+  it("emits a durable health signal when represented-message coverage is genuinely short", async () => {
+    const msgs = seedTextTurns(2);
+    const missingFirstItemStore: ContextStorePort = {
+      ...store,
+      getContextItems: (scope) => store.getContextItems(scope).slice(1),
+    };
+    const emit = vi.fn();
+    const { deps } = makeDeps(missingFirstItemStore);
+    deps.eventBus = { emit } as unknown as ContextEngineDeps["eventBus"];
+
+    await createLcdContextEngine(dagConfig(1), deps).transformContext(
+      msgs as AgentMessage[],
+    );
+
+    expect(emit).toHaveBeenCalledWith(
+      "context:dag_degraded",
+      expect.objectContaining({
+        conversationId: CONVERSATION_ID,
+        agentId: "agent_a",
+        sessionKey: "sess-a",
+        reason: "assembly_coverage_shortfall",
+      }),
+    );
   });
 
   it("scrubs secrets out of a summary body before it surfaces as a user-role message", async () => {

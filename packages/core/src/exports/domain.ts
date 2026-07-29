@@ -4,6 +4,7 @@
 export {
   // NormalizedMessage
   AttachmentSchema,
+  MAX_NORMALIZED_MESSAGE_TEXT_CHARS,
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
   LinkPrefetchReceiptSchema,
   SttPreprocessReceiptsSchema,
@@ -182,7 +183,6 @@ export type {
   InstructionStability,
   InstructionSection,
   WorkspacePolicySnapshot,
-  ResponseLocaleSource,
   ResponseLocalePolicy,
   DeliveryOrigin,
   DeliveryStatus,
