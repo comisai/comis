@@ -33,11 +33,13 @@ import { ChannelEndpointSchema } from "../../domain/conversation-scope.js";
  * directly without validation, but the enum here documents the
  * intended set + lets the dev-mode response parse catch future drift.
  *
- * Response: `{ success: boolean, entryId?: string, error?: string }`
+ * Response:
+ * `{ success: boolean, entryId?: string, channelType?: string, channelId?: string, error?: string }`
  * — modeled as a union of the success shape and the error shape via
  * separate optional fields so it stays inside the 12-shape allowlist.
  * The handler returns one of:
- *   - `{ success: true, entryId }` on `notifyUser` returning `ok`.
+ *   - `{ success: true, entryId, channelType, channelId }` on `notifyUser`
+ *     returning `ok`; the route is the exact validated destination.
  *   - `{ success: false, error }` on missing `message`, on the
  *     chain-depth guard, or on `notifyUser` returning `err`.
  */
@@ -54,6 +56,8 @@ export const NotificationSendContract = defineContract({
   response: z.object({
     success: z.boolean(),
     entryId: z.string().optional(),
+    channelType: z.string().optional(),
+    channelId: z.string().optional(),
     error: z.string().optional(),
   }),
   scopes: ["rpc"] as const,

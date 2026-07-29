@@ -1,6 +1,6 @@
 {
-  "totalMinified": 188804,
-  "totalGzipped": 19098,
+  "totalMinified": 188858,
+  "totalGzipped": 19106,
   "budget": {
     "minified": 188900,
     "gzipped": 38912
@@ -140,7 +140,7 @@
     "models.list": 281,
     "models.list_providers": 910,
     "models.test": 305,
-    "notification.send": 954,
+    "notification.send": 1016,
     "obs.audit.query": 664,
     "obs.billing.byAgent": 710,
     "obs.billing.byProvider": 404,

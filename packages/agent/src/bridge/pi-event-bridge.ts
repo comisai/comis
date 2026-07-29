@@ -1440,6 +1440,31 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 suppressError(kickoffDrain, "bridge tool_use_complete drainAt kickoff");
               }
             }
+          } else if (endEvent.toolName === "notify_user" && toolSuccess) {
+            const details =
+              endEvent.result !== null && typeof endEvent.result === "object"
+                ? (endEvent.result as Record<string, unknown>).details
+                : undefined;
+            const receipt =
+              details !== null && typeof details === "object"
+                ? details as Record<string, unknown>
+                : undefined;
+            const channelType =
+              receipt?.success === true && typeof receipt.channelType === "string"
+                ? receipt.channelType
+                : "";
+            const channelId =
+              receipt?.success === true && typeof receipt.channelId === "string"
+                ? receipt.channelId
+                : "";
+            if (channelType.length > 0 && channelId.length > 0) {
+              m.outboundLog.push({
+                action: "send",
+                channelType,
+                channelId,
+                timestamp: systemNowMs(),
+              });
+            }
           }
 
           // Look up truncation metadata from stream wrapper registry
