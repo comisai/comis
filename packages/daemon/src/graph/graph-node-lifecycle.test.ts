@@ -693,6 +693,54 @@ describe("handleSubAgentCompleted: per-node budget", () => {
     expect(emit.mock.calls.find((c) => c[0] === "subagent:budget_exceeded")).toBeUndefined();
   });
 
+  it("captures the terminal completion summary as the graph node output", () => {
+    const callOrder: string[] = [];
+    const { gs, markNodeCompleted } = makeBudgetGs({
+      nodes: [{ nodeId: "n1", agentId: "child-a" }],
+      onFailure: "continue",
+      runNodeId: "n1",
+      callOrder,
+    });
+    const deps = makeCompletionDeps();
+    (deps.subAgentRunner.getRunStatus as ReturnType<typeof vi.fn>).mockReturnValue({
+      status: "completed",
+      completion: {
+        endReason: "completed",
+        completedAtMs: 2_000,
+        summary: "The requested operation was denied and no mutation occurred.",
+      },
+      telemetry: {
+        tokensUsedTotal: 500,
+        costTotal: 0.01,
+        finishReason: "stop",
+        stepsExecuted: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      sessionKey: "sk-1",
+      conversationScope: {
+        tenantId: "default",
+        agentId: "child-a",
+        partition: { kind: "principal", principalId: "user_a" },
+      },
+      conversationRef: "conversation-ref",
+    });
+
+    handleSubAgentCompleted(
+      makeState(), deps, makeCompletionConfig(), gs,
+      { runId: "run-1", success: true, tokensUsed: 500, cost: 0.01 },
+      noopCallbacks(vi.fn()),
+    );
+
+    expect(markNodeCompleted).toHaveBeenCalledWith(
+      "n1",
+      "The requested operation was denied and no mutation occurred.",
+    );
+    expect(gs.nodeOutputs.get("n1")).toBe(
+      "The requested operation was denied and no mutation occurred.",
+    );
+  });
+
   it("P0-A-OBS: a budget PRE-CHECK abort (finishReason 'budget_exceeded', spend <= cap) fails the node + emits the breach", () => {
     const callOrder: string[] = [];
     const { gs, markNodeFailed, markNodeCompleted } = makeBudgetGs({

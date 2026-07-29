@@ -175,11 +175,23 @@ describe("handleDriverTurnCompleted captures persistentSessionKey", () => {
     const conversation = createDriverConversation();
     vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
       status: "completed",
-      result: { response: "I argue that..." },
+      completion: {
+        endReason: "completed",
+        completedAtMs: 2_000,
+        summary: "I argue that...",
+      },
+      telemetry: {
+        tokensUsedTotal: 100,
+        costTotal: 0.01,
+        finishReason: "stop",
+        stepsExecuted: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
       sessionKey: "default:debate-node1:debategraph1node1",
       conversationScope: conversation.conversationScope,
       conversationRef: conversation.conversationRef,
-    });
+    } as never);
 
     const state: CoordinatorSharedState = {
       graphs: new Map([["graph-1", gs]]),
@@ -195,6 +207,10 @@ describe("handleDriverTurnCompleted captures persistentSessionKey", () => {
     }, callbacks);
 
     expect(ds.persistentConversation).toEqual(conversation);
+    expect(driver.onTurnComplete).toHaveBeenCalledWith(
+      ds.ctx,
+      "I argue that...",
+    );
 
     // Logger should record the capture
     expect(deps.logger!.debug).toHaveBeenCalledWith(
