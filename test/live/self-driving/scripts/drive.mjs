@@ -31,6 +31,7 @@ import {
   sharedConversationFinished,
   telegramInboundGuid,
   telegramInjectAddressingError,
+  wireContainsAssistantReply,
 } from './drive-session-oracle.mjs';
 const [, , chatIdArg, textArg, quiesceMsArg, maxMsArg, dataArg] = process.argv;
 
