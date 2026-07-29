@@ -160,6 +160,59 @@ export function createVideoHandlers(
         return { success: false, error: "Missing required parameter: prompt" };
       }
 
+      // An honest-unavailable port owns the authoritative resolver diagnosis
+      // (the missing credential or exact provider-selection knob). Do not run
+      // it through the real-provider capability matrix: `unavailable` has no
+      // matrix entry, which replaces the useful binding hint with
+      // "supported modes: none". Fail before cost/rate admission so a request
+      // that cannot render does not consume quota.
+      if (!deps.provider.isAvailable()) {
+        const unavailable = await deps.provider.submit({ prompt });
+        if (!unavailable.ok) {
+          const videoErrorKind = (unavailable.error as { videoErrorKind?: unknown }).videoErrorKind;
+          const domainKind =
+            typeof videoErrorKind === "string"
+              ? (videoErrorKind as keyof typeof VIDEO_ERR_TO_LOG)
+              : "empty_response";
+          const hint = extractVideoHint(unavailable.error);
+          deps.logger.warn(
+            {
+              agentId,
+              videoProvider: deps.provider.id,
+              mainProvider: main.providerId,
+              step: "video_submit",
+              errorKind: VIDEO_ERR_TO_LOG[domainKind] ?? "dependency",
+              videoErrorKind: domainKind,
+              ...(hint ? { hint: sanitizeLogString(hint) } : {}),
+            },
+            "Video generation submit failed",
+          );
+          obs.failed({ errorKind: domainKind, provider: deps.provider.id });
+          return hint
+            ? { success: false, error: unavailable.error.message, hint }
+            : { success: false, error: unavailable.error.message };
+        }
+        const hint =
+          "Restart the daemon and inspect integrations.media.videoGeneration.provider; "
+          + "the provider reported unavailable but accepted a video submission.";
+        deps.logger.error(
+          {
+            agentId,
+            videoProvider: deps.provider.id,
+            step: "video_availability_contract",
+            errorKind: "internal" as const,
+            hint,
+          },
+          "Unavailable video provider accepted a submission",
+        );
+        obs.failed({ errorKind: "empty_response", provider: deps.provider.id });
+        return {
+          success: false,
+          error: "Video provider availability state is inconsistent",
+          hint,
+        };
+      }
+
       // Resolve the config defaults ONCE, here, so the worst-case
       // estimate and the port input AGREE on the duration/resolution/audio. If
       // the input only carried explicitly-supplied fields, the provider would
