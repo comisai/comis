@@ -45,6 +45,7 @@ import type {
   ClockPort,
   RichButton,
   ActivityStatusMarkers,
+  TurnActivityContext,
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createEditPlaceRenderer } from "../shared/strategies/edit-place.js";
@@ -97,6 +98,8 @@ export function classifyTelegramError(e: unknown): ActivityRenderError {
 /** Optional timer used by the local 429 retry buffer. Omit it and a 429 simply propagates. */
 export interface TelegramRenderActionsDeps {
   timer?: TimerPort;
+  threadId?: string;
+  chatType?: TurnActivityContext["chatType"];
 }
 
 /** Latest-text retry cap — a 429 storm coalesces to the latest text; we never replay a backlog. */
@@ -194,6 +197,14 @@ export function makeTelegramRenderActions(
       const r = await adapter.sendMessage(channelId, text, {
         effects: ["silent"],
         ...(opts?.buttons !== undefined ? { buttons: opts.buttons } : {}),
+        ...(deps.threadId !== undefined
+          ? {
+              threadId: deps.threadId,
+              extra: {
+                telegramThreadScope: deps.chatType === "direct" ? "dm" : "forum",
+              },
+            }
+          : {}),
       });
       return r.ok ? ok(r.value) : err(classifyTelegramError(r.error));
     },
@@ -245,11 +256,22 @@ function omitOverBudgetButtons(rows: RichButton[][]): RichButton[][] {
 export function createTelegramActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
-  deps: { timer: TimerPort; clock: ClockPort; signCallbackData?: SignCallbackData; markers?: ActivityStatusMarkers },
+  deps: {
+    timer: TimerPort;
+    clock: ClockPort;
+    signCallbackData?: SignCallbackData;
+    markers?: ActivityStatusMarkers;
+    threadId?: string;
+    chatType?: TurnActivityContext["chatType"];
+  },
 ): ChannelActivityRenderer {
   const { signCallbackData } = deps;
   return createEditPlaceRenderer({
-    actions: makeTelegramRenderActions(adapter, channelId, { timer: deps.timer }),
+    actions: makeTelegramRenderActions(adapter, channelId, {
+      timer: deps.timer,
+      ...(deps.threadId !== undefined ? { threadId: deps.threadId } : {}),
+      ...(deps.chatType !== undefined ? { chatType: deps.chatType } : {}),
+    }),
     timer: deps.timer,
     clock: deps.clock,
     markers: deps.markers,

@@ -52,6 +52,7 @@ import type {
   ClockPort,
   TimerPort,
   ActivityStatusMarkers,
+  TurnActivityContext,
 } from "@comis/core";
 // (ActivityStatusMarkers also used in the per-call factory signature below.)
 import { selectStrategy } from "@comis/core";
@@ -83,7 +84,14 @@ import type { ComisLogger } from "@comis/infra";
 export type ActivityRendererFactory = (
   channelId: string,
   markers?: ActivityStatusMarkers,
+  route?: ActivityRendererRoute,
 ) => ChannelActivityRenderer;
+
+/** Per-turn conversation route that activity messages must remain inside. */
+export interface ActivityRendererRoute {
+  readonly chatType: TurnActivityContext["chatType"];
+  readonly threadId?: string;
+}
 
 /** System clock + timer injected from the daemon composition root. The
  *  EditPlace machine debounces edits (TimerPort) and gates the delete on
@@ -105,6 +113,9 @@ export interface ActivityRendererDeps {
    *  Resolved ONCE at the composition root from the default agent's
    *  `activity.theme`; omitted → default glyphs. */
   markers?: ActivityStatusMarkers;
+  /** Per-turn route fields supplied when the renderer factory is invoked. */
+  chatType?: TurnActivityContext["chatType"];
+  threadId?: string;
 }
 
 /** The uniform per-channelId factory every strategy map stores. A factory that
@@ -192,8 +203,16 @@ function setFromFactoryMap<K extends string>(
   if (!make) return false;
   // Per-call markers (per-agent theme, resolved at turn time) override the
   // boot-time default baked into `deps.markers`; omitted → the boot-time default.
-  out.set(channelType, (channelId: string, markers?: ActivityStatusMarkers) =>
-    make(adapter, channelId, markers ? { ...deps, markers } : deps),
+  out.set(channelType, (
+    channelId: string,
+    markers?: ActivityStatusMarkers,
+    route?: ActivityRendererRoute,
+  ) =>
+    make(adapter, channelId, {
+      ...deps,
+      ...(markers !== undefined ? { markers } : {}),
+      ...(route ?? {}),
+    }),
   );
   return true;
 }
