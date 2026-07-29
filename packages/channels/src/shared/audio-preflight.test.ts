@@ -6,6 +6,7 @@
 import type { NormalizedMessage, Attachment, TranscriptionPort } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { describe, expect, it, vi } from "vitest";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { audioPreflight, type PreflightDeps } from "./audio-preflight.js";
 
 // ---------------------------------------------------------------------------
@@ -14,6 +15,7 @@ import { audioPreflight, type PreflightDeps } from "./audio-preflight.js";
 
 function makeLogger() {
   return {
+    info: vi.fn(),
     debug: vi.fn(),
     warn: vi.fn(),
   };
@@ -58,6 +60,7 @@ function makeDeps(overrides: Partial<PreflightDeps> = {}): PreflightDeps {
     transcriber: makeTranscriber(),
     resolveAttachment: makeResolver(),
     botNames: ["Comis"],
+    clock: createFakeClock(0),
     logger: makeLogger(),
     ...overrides,
   };
@@ -105,31 +108,28 @@ describe("audioPreflight", () => {
   });
 
   it("returns content-free timing and byte evidence for successful preflight STT", async () => {
-    const clock = {
-      now: vi.fn()
-        .mockReturnValueOnce(1_000)
-        .mockReturnValueOnce(1_321),
-      nowDate: vi.fn(() => new Date(1_000)),
+    const clock = createFakeClock(1_000);
+    const transcriber: TranscriptionPort = {
+      transcribe: vi.fn(async () => {
+        clock.advance(321);
+        return ok({ text: "hey comis", language: "en" });
+      }),
     };
-    const deps = Object.assign(
-      makeDeps({ transcriber: makeTranscriber("hey comis") }),
-      {
-        clock,
-        sttSelection: {
-          provider: "local",
-          keyless: true,
-          model: "base",
-          source: "keyless-local",
-        },
+    const deps = makeDeps({
+      clock,
+      transcriber,
+      sttSelection: {
+        provider: "local",
+        keyless: true,
+        model: "base",
+        source: "keyless-local",
       },
-    );
+    });
     const msg = makeMessage({ attachments: [makeAudioAttachment()] });
 
     const result = await audioPreflight(deps, msg);
 
-    expect((result as unknown as {
-      sttReceipt?: Record<string, unknown>;
-    }).sttReceipt).toEqual({
+    expect(result.sttReceipt).toEqual({
       provider: "local",
       keyless: true,
       model: "base",
@@ -138,6 +138,15 @@ describe("audioPreflight", () => {
       durationMs: 321,
       audioBytes: 15,
     });
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "audio-preflight",
+        durationMs: 321,
+        audioBytes: 15,
+        transcriptChars: 9,
+      }),
+      "Audio preflight transcription complete",
+    );
   });
 
   it("enriches message text with transcript appended to original", async () => {
