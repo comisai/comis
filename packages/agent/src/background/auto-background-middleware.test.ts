@@ -430,17 +430,17 @@ describe("wrapToolForAutoBackground", () => {
       );
     });
 
-    it("placeholder directs one blocking result read instead of repeating the original tool", async () => {
+    it("placeholder ends the turn for automatic completion re-entry", async () => {
       const tool = createMockTool({ resolveAfterMs: 200 });
       const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-7" }));
 
       const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);
 
       const text = (result.content[0] as { text: string }).text;
-      expect(text).toContain('Call background_tasks once with action "read_output"');
-      expect(text).toContain('Do not call "test_tool" again or sleep');
+      expect(text).toContain("Automatic completion re-entry will resume this conversation");
+      expect(text).toContain("end this turn now");
+      expect(text).not.toContain('Call background_tasks once with action "read_output"');
       expect(text).toContain("unrelated earlier data");
-      expect(text).not.toContain("Automatic completion re-entry");
       expect(text).not.toContain("user will be notified");
     });
   });

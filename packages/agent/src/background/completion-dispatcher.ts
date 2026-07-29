@@ -103,12 +103,13 @@ export interface CompletionDispatcherDeps {
   sessionStore?: DispatcherSessionStore;
   /**
    * LIVE-TURN oracle: returns true while the given FORMATTED sessionKey has a
-   * turn currently executing. A task promoted mid-turn is consumed by its own
-   * still-running turn through one blocking `background_tasks read_output`
-   * call, so a completion that lands while the origin turn is in flight must
-   * fire no user-visible fallback. The persistent session store does not
-   * represent live execution for JSONL-backed conversations. When this oracle
-   * is absent, the session-store check decides alone.
+   * turn currently executing. A completion that lands while the origin turn is
+   * in flight remains pending until the turn ends, unless an explicit
+   * `background_tasks read_output` call consumes it first. It must not fire a
+   * user-visible fallback while either owner can still handle it. The
+   * persistent session store does not represent live execution for JSONL-backed
+   * conversations. When this oracle is absent, the session-store check decides
+   * alone.
    */
   isTurnInFlight?: (formattedSessionKey: string) => boolean;
   /** Recursion limit for background-task hop counting. When absent, the

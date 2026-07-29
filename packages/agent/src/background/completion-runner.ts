@@ -262,9 +262,9 @@ export function createBackgroundCompletionRunner(
           taskId,
           sessionKey: formatSessionKey(projectedLiveSession.value),
           traceId: origin.traceId ?? undefined,
-          hint: "Origin turn is still in flight; awaiting an explicit result-consumption receipt",
+          hint: "Origin turn is still in flight; delivery will retry after turn-end or explicit consumption",
         },
-        "Background completion runner: live turn has not acknowledged consumption",
+        "Background completion runner deferred delivery while origin turn is active",
       );
       return;
     }
