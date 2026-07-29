@@ -21,7 +21,8 @@ export type LocaleMessageId =
   | "tool_failure_notice"
   | "tool_failure_notice_unnamed"
   | "prompt_timeout"
-  | "background_task_failed_notice";
+  | "background_task_failed_notice"
+  | "delegation_evidence_missing";
 
 export type LocalePack = Readonly<Partial<Record<LocaleMessageId, string>>>;
 
@@ -59,6 +60,8 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "The request took too long to process. Please try again with a simpler message.",
   background_task_failed_notice:
     "⚠️ This background task failed, so its result may be incomplete.",
+  delegation_evidence_missing:
+    "I did not successfully start the requested sub-agent in this turn, so I cannot claim a new independent check. Please retry the request.",
   pipeline_timeout:
     "I stopped this request because it was taking too long and hit the time limit "
       + "for a single turn. Nothing was left half-applied. If it needs many lookups, "
@@ -239,6 +242,14 @@ export function selectBackgroundTaskFailedNotice(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "background_task_failed_notice");
+}
+
+/** Honest replacement when a delegation claim has no current-turn spawn proof. */
+export function selectDelegationEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "delegation_evidence_missing");
 }
 
 export function selectPipelineTimeoutReply(
