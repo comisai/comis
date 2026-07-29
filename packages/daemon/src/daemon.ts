@@ -148,7 +148,7 @@ import { ok, err, suppressError } from "@comis/shared";
 import { exportTrajectoryBundle } from "@comis/observability";
 import { exportSessionBundleFromKey } from "./export-session-bundle.js";
 import { randomUUID } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve as pathResolve } from "node:path";
@@ -172,7 +172,7 @@ import {
   isDirectDaemonRun,
   runDaemonEntrypoint,
 } from "./wiring/daemon-entrypoint.js";
-import { createSubagentActivityTracker, sweepStuckSubAgentRuns } from "./wiring/subagent-stuck-sweep.js"; // idle-based stuck sub-agent sweep (health tick)
+import { wireHealthLogging } from "./health-metrics.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
 import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig, recordCurrentSessionEndpoint } from "./wiring/main-helpers.js";
 import { setupChannelLivenessMonitor } from "./wiring/setup-channel-liveness-monitor.js";
@@ -954,134 +954,6 @@ async function replayContinuationsIfAny(deps: {
       );
     });
   }
-}
-
-// ---------------------------------------------------------------------------
-// Shutdown helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Wire eventBus health subscriptions to structured logger metrics.
- * Reads metrics from the observability event bus, prunes prompt timeouts,
- * computes stuck-sub-agent counters, force-kills sub-agents past threshold,
- * and emits the canonical "Daemon health" DEBUG line. The DB-size metrics
- * and stuck-sub-agent computation are inlined directly into the subscriber
- * body (each was a single-call-site helper).
- */
-function wireHealthLogging(deps: {
-  container: BootContext["container"];
-  daemonLogger: BootContext["daemonLogger"];
-  db: BootContext["db"];
-  maintenanceTick: BootContext["maintenanceTick"];
-  subAgentRunner: NonNullable<BootContext["subAgentRunner"]>;
-  promptTimeoutTimestamps: NonNullable<BootContext["promptTimeoutTimestamps"]>;
-  activeExecutions: NonNullable<BootContext["activeExecutions"]>;
-  getActiveConnectionCount: NonNullable<BootContext["getActiveConnectionCount"]>;
-  deadLetterQueue: BootContext["deadLetterQueue"];
-  providerHealth: NonNullable<BootContext["providerHealth"]>;
-  deliveryQueue: NonNullable<BootContext["deliveryQueue"]>;
-}): void {
-  const {
-    container, daemonLogger, db, maintenanceTick, subAgentRunner,
-    promptTimeoutTimestamps, activeExecutions, getActiveConnectionCount,
-    deadLetterQueue, providerHealth, deliveryQueue,
-  } = deps;
-  // Bus-fed per-session progress clock for the stuck sweep: "stuck" is
-  // idle-time (no tool/LLM boundary event), NOT run age — a healthy
-  // long-running sub-agent must never be killed at the finish line. The
-  // wall-clock budget is the runner's own per-run watchdog.
-  const subagentActivity = createSubagentActivityTracker(
-    container.eventBus,
-    () => Date.now(),
-  );
-  container.eventBus.on("observability:metrics", async (metrics) => {
-    // Prune prompt timeout timestamps to 5-minute window
-    const fiveMinAgo = Date.now() - 5 * 60_000;
-    while (promptTimeoutTimestamps.length > 0 && promptTimeoutTimestamps[0]! < fiveMinAgo) {
-      promptTimeoutTimestamps.shift();
-    }
-    // Inlined readDbSizeMetrics: best-effort DB file + WAL file sizes.
-    let memoryDbSizeBytes: number | undefined;
-    let memoryDbWalSizeBytes: number | undefined;
-    try {
-      const dbFilePath = db.name;
-      if (dbFilePath) {
-        memoryDbSizeBytes = statSync(dbFilePath).size;
-        try { memoryDbWalSizeBytes = statSync(dbFilePath + "-wal").size; }
-        catch { /* WAL file may not exist */ }
-      }
-    } catch { /* stat failure must not crash health check */ }
-    // Best-effort embedding backlog: memories awaiting their vector twin. A
-    // monotonically-growing count while the embedding provider is healthy is
-    // the one-look signal for a silently-dead embedding queue (observed live:
-    // rows stranded unembedded for hours with zero log lines).
-    let unembeddedMemoryCount: number | undefined;
-    try {
-      unembeddedMemoryCount = (db.prepare("SELECT COUNT(*) AS n FROM memories WHERE has_embedding = 0").get() as { n: number } | undefined)?.n;
-    } catch { /* count failure must not crash health check */ }
-    maintenanceTick();
-    // Stuck sub-agent sweep: idle-based (no tool/LLM boundary event for the
-    // threshold window), NOT run-age-based — a healthy long-running sub-agent
-    // with recent progress survives regardless of total runtime (the
-    // wall-clock budget belongs to the runner's per-run watchdog). Graph
-    // sub-agents get a longer threshold since they do multi-step analytical
-    // work. The kill is ATTRIBUTED (killedBy health_monitor) so the status
-    // the parent later polls never reads "Killed by parent agent", and the
-    // runner delivers the LLM-free failure notification to the announce
-    // channel — an autonomous kill must never be silent.
-    const stuckKillThresholdMs = container.config.security.agentToAgent.subagentContext?.stuckKillThresholdMs ?? 180_000;
-    const graphStuckKillThresholdMs = container.config.security.agentToAgent.subagentContext?.graphStuckKillThresholdMs ?? 600_000;
-    const allRuns = subAgentRunner.listRuns();
-    const runningRuns = allRuns.filter((run) => run.status === "running");
-    const now = Date.now();
-    subagentActivity.prune(
-      new Set(runningRuns.map((run) => run.sessionKey)),
-    );
-    const sweep = sweepStuckSubAgentRuns({
-      runs: runningRuns,
-      now,
-      stuckKillThresholdMs,
-      graphStuckKillThresholdMs,
-      lastActivityFor: (key) => subagentActivity.lastActivityFor(key),
-    });
-    const { activeSubAgentRuns, stuckSubAgentRuns } = sweep;
-    let stuckKilledThisTick = 0;
-    for (const kill of sweep.kills) {
-      const knob = kill.isGraphRun
-        ? "security.agentToAgent.subagentContext.graphStuckKillThresholdMs"
-        : "security.agentToAgent.subagentContext.stuckKillThresholdMs";
-      subAgentRunner.killRun(kill.runId, {
-        killedBy: "health_monitor",
-        reason: `Stuck sub-agent: no observed progress for ${kill.idleMs}ms (${knob}=${kill.thresholdMs}); force-killed by the daemon health monitor`,
-        idleMs: kill.idleMs,
-        thresholdMs: kill.thresholdMs,
-      });
-      stuckKilledThisTick++;
-      daemonLogger.warn({
-        runId: kill.runId, agentId: kill.agentId, runtimeMs: kill.runtimeMs,
-        idleMs: kill.idleMs,
-        thresholdMs: kill.thresholdMs, isGraphRun: kill.isGraphRun,
-        hint: `Sub-agent produced no tool/LLM progress event for longer than ${knob}; force-killed by health handler. Raise ${knob} if legitimate work pauses longer.`,
-        errorKind: "timeout" as const,
-      }, "Stuck sub-agent killed by health handler");
-    }
-    daemonLogger.debug({
-      rssBytes: metrics.rssBytes, heapUsedBytes: metrics.heapUsedBytes,
-      heapTotalBytes: metrics.heapTotalBytes, externalBytes: metrics.externalBytes,
-      eventLoopP99Ms: Math.round(metrics.eventLoopDelayMs.p99 * 100) / 100,
-      activeHandles: metrics.activeHandles, activeConnections: getActiveConnectionCount(),
-      activeExecutions: activeExecutions.size, uptimeSeconds: Math.round(metrics.uptimeSeconds),
-      activeSubAgentRuns, stuckSubAgentRuns, stuckKilledThisTick,
-      deadLetterQueueSize: deadLetterQueue?.size() ?? 0,
-      degradedProviders: [...providerHealth.getHealthSummary().entries()]
-        .filter(([, v]) => v.degraded).map(([k]) => k),
-      promptTimeoutsLast5m: promptTimeoutTimestamps.length,
-      ...(memoryDbSizeBytes !== undefined && { memoryDbSizeBytes }),
-      ...(memoryDbWalSizeBytes !== undefined && { memoryDbWalSizeBytes }),
-      ...(unembeddedMemoryCount !== undefined && { unembeddedMemoryCount }),
-      pendingDeliveryCount: await deliveryQueue.pendingEntries().then(r => r.ok ? r.value.length : 0),
-    }, "Daemon health");
-  });
 }
 
 /**
@@ -2840,7 +2712,7 @@ async function bootShutdown(
 
   // 8.5. Health logging
   wireHealthLogging({
-    container, daemonLogger, db, maintenanceTick, subAgentRunner,
+    container, clock: boot.clock, daemonLogger, db, maintenanceTick, subAgentRunner,
     promptTimeoutTimestamps, activeExecutions, getActiveConnectionCount,
     deadLetterQueue, providerHealth, deliveryQueue,
   });
