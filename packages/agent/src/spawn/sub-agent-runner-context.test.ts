@@ -237,6 +237,75 @@ describe("sub-agent request context", () => {
     await runner.shutdown();
   });
 
+  it("admits a nested spawn from a trusted child endpoint with the inherited requester route", async () => {
+    const captured: RequestContext[] = [];
+    const runner = createSubAgentRunner(createDeps(async () => {
+      captured.push(getContext());
+      return successResult();
+    }));
+    const requesterOrigin = createDeliveryOrigin({
+      channelType: "telegram",
+      channelId: "chat_a",
+      userId: "user_a",
+      threadId: "topic_a",
+      tenantId: "tenant_a",
+    });
+    const childEndpoint = {
+      channelType: "sub-agent",
+      channelInstanceId: "runtime",
+      conversationId: "parent-run",
+      conversationKind: "direct" as const,
+    };
+    const child = parentContext("user", {
+      sessionKey: "tenant_a:agent:child-agent:user_a:sub-agent:runtime:parent-run",
+      agentId: "child-agent",
+      deliveryOrigin: requesterOrigin,
+      turnScope: {
+        conversation: {
+          tenantId: "tenant_a",
+          agentId: "child-agent",
+          partition: {
+            kind: "endpoint-conversation-principal",
+            endpoint: childEndpoint,
+            principalId: "user_a",
+          },
+        },
+        principal: { principalId: "user_a" },
+        endpoint: childEndpoint,
+      },
+    });
+
+    const runId = runWithContext(child, () => runner.spawn({
+      task: "independently verify the parent review",
+      agentId: "grandchild-agent",
+      callerType: "agent",
+      callerSessionKey: child.sessionKey,
+      callerConversation: parentConversation(child),
+      callerAgentId: child.agentId,
+      requesterOrigin,
+      announceChannelType: requesterOrigin.channelType,
+      announceChannelId: requesterOrigin.channelId,
+      depth: 1,
+      maxDepth: 3,
+      rootRunId: "root-parent-run",
+    }));
+
+    await flushExecution();
+
+    expect(runner.getRunStatus(runId)).toMatchObject({
+      status: "completed",
+      depth: 1,
+      rootRunId: "root-parent-run",
+    });
+    expect(captured[0]).toMatchObject({
+      agentId: "grandchild-agent",
+      trustLevel: "user",
+      deliveryOrigin: requesterOrigin,
+    });
+
+    await runner.shutdown();
+  });
+
   it("rejects a direct spawn whose caller session differs from the ambient principal", async () => {
     const deps = createDeps(vi.fn(async () => successResult()));
     const runner = createSubAgentRunner(deps);
