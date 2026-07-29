@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
+  driveTextFilePath,
   findAssistantReplyAfterInbound,
   telegramInboundGuid,
   telegramInjectAddressingError,
@@ -97,5 +98,10 @@ describe("live driver session correlation", () => {
         "test_bot",
       ),
     ).toBeUndefined();
+  });
+
+  it("distinguishes a literal bot mention from an absolute message file", () => {
+    expect(driveTextFilePath("@test_bot reply here again")).toBeUndefined();
+    expect(driveTextFilePath("@/tmp/live-message.txt")).toBe("/tmp/live-message.txt");
   });
 });
