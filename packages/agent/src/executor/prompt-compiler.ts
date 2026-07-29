@@ -123,6 +123,10 @@ export function compileExecutionPrompt(input: PromptCompilerInput): CompiledExec
       + " or runs 4+ dependent steps: call `sessions_spawn` FIRST, tell the user it is running and"
       + " that you will send the result when ready, then end the turn. Do not grind it out inline."
       + " Independent parts spawn in parallel in one response."
+      + " An explicit request to delegate or obtain an independent check requires a successful"
+      + " `sessions_spawn` in the current turn or an honest refusal or limitation. Historical memory"
+      + " or context is never current-turn spawn evidence; never say you delegated, consulted, or had"
+      + " others check unless that call succeeded now."
     : "";
   const engineContent = (input.requireFinalTags
     ? `${ENGINE_KERNEL}\n- Put user-visible output inside the provider's required final-output tags.`
