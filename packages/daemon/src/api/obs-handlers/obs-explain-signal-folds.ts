@@ -504,20 +504,23 @@ export function accumulateSubAgentSpawnedRecord(
   } satisfies SpawnNodeFold);
 }
 
-/** Fold one parent-routed direct-child terminal record into topology + counts. */
+/** Fold one parent-routed direct-child terminal record into topology and,
+ * when it belongs to the selected turn, its acute completion counts. */
 export function accumulateSubAgentCompletedRecord(
   acc: Acc,
   data: Record<string, unknown>,
+  countForCurrentTurn: boolean,
 ): void {
   const runId = asString(data.runId);
   if (runId === undefined) return;
-  if (acc.subagentCompletedRunIds.has(runId)) return;
-  acc.subagentCompletedRunIds.add(runId);
   const success = data.success === true;
-  acc.subagentCompletedCount += 1;
-  if (!success) {
-    acc.subagentFailedCount += 1;
-    acc.subagentLastFailedRunId = runId;
+  if (countForCurrentTurn && !acc.subagentCompletedRunIds.has(runId)) {
+    acc.subagentCompletedRunIds.add(runId);
+    acc.subagentCompletedCount += 1;
+    if (!success) {
+      acc.subagentFailedCount += 1;
+      acc.subagentLastFailedRunId = runId;
+    }
   }
   const node = acc.spawnNodesByLease.get(runId);
   if (node === undefined) return;

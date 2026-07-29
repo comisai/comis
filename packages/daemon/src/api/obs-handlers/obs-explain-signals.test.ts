@@ -696,6 +696,49 @@ describe("toIncidentSignals — structured event shape (production)", () => {
 // nodeBudgetBreaches view (nodeId + capSource + the two token numbers) the
 // IncidentReport surfaces, so a breach is diagnosable from the report alone.
 describe("toIncidentSignals — subagent.budget_exceeded fold (nodeBudgetBreaches)", () => {
+  it("keeps acute failure and sub-agent diagnostics scoped to the latest prompt-anchored turn", () => {
+    const s = toIncidentSignals([
+      event("prompt.submitted", 1, { inboundKind: "message" }),
+      event("tool.result", 2, {
+        toolName: "agents_manage",
+        toolCallId: "old-tool-call",
+        success: false,
+        errorKind: "validation",
+        errorMessage: "old turn failure",
+      }),
+      event("subagent.completed", 3, {
+        runId: "old-failed-child",
+        success: false,
+      }),
+      event("subagent.delivery_skipped", 4, {
+        runId: "old-failed-child",
+        reason: "no_origin",
+      }),
+      event("subagent.budget_exceeded", 5, {
+        nodeId: "old-budget-node",
+        capSource: "node",
+        tokenBudget: 1_500,
+        tokensUsed: 0,
+      }),
+      event("prompt.submitted", 6, { inboundKind: "message" }),
+      event("tool.result", 7, {
+        toolName: "cron",
+        toolCallId: "current-tool-call",
+        success: true,
+      }),
+    ]);
+
+    expect(s.toolStats).toEqual({
+      agents_manage: { ok: 0, failed: 1, topErrorKind: "validation" },
+      cron: { ok: 1, failed: 0 },
+    });
+    expect(s.failures).toEqual([]);
+    expect(s.nodeBudgetBreaches).toEqual([]);
+    expect(s.subagentCompletions).toBeUndefined();
+    expect(s.subagentDeliverySkipped).toBeUndefined();
+    expect(rootCause({ ...s, endReason: "success", degraded: false })).toBeNull();
+  });
+
   it("folds a budget breach into nodeBudgetBreaches with the capSource + numbers", () => {
     const s = toIncidentSignals([
       {

@@ -89,6 +89,23 @@ function recordHasTraceId(record: Record<string, unknown>, traceId: string): boo
   return record.traceId === traceId;
 }
 
+/** Select one prompt-anchored execution, including settlement rows whose
+ * request context has ended and therefore carries the session fallback trace. */
+function recordsForExecution(
+  records: ReadonlyArray<Record<string, unknown>>,
+  traceId: string,
+): Array<Record<string, unknown>> {
+  const start = records.findIndex(
+    (record) => record.type === "prompt.submitted" && recordHasTraceId(record, traceId),
+  );
+  if (start < 0) return records.filter((record) => recordHasTraceId(record, traceId));
+  const relativeEnd = records.slice(start + 1).findIndex(
+    (record) => record.type === "prompt.submitted",
+  );
+  const end = relativeEnd < 0 ? records.length : start + 1 + relativeEnd;
+  return records.slice(start, end);
+}
+
 function recordData(record: Record<string, unknown> | undefined): Record<string, unknown> {
   return typeof record?.data === "object" && record.data !== null
     ? record.data as Record<string, unknown>
@@ -327,7 +344,7 @@ export async function assembleIncidentReportFromSources(
     ? taskSessionRecords
     : executionTraceId === undefined
       ? sessionRecords
-      : sessionRecords.filter((record) => recordHasTraceId(record, executionTraceId));
+      : recordsForExecution(sessionRecords, executionTraceId);
   const losslessEvidence =
     taskCheck === null &&
       executionTraceId === undefined &&

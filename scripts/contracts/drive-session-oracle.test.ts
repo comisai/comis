@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
+  directConversationFinished,
   driveTextFilePath,
   findAssistantReplyAfterInbound,
   findTelegramConversationWireAnswer,
@@ -17,6 +18,30 @@ function sessionRecord(value: unknown): string {
 }
 
 describe("live driver session correlation", () => {
+  it("waits for delayed direct-message delivery after the trajectory turn ends", () => {
+    expect(directConversationFinished({
+      sawAnswer: false,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 39_999,
+      deliveryGraceMs: 30_000,
+    })).toBe(false);
+    expect(directConversationFinished({
+      sawAnswer: true,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 10_001,
+      deliveryGraceMs: 30_000,
+    })).toBe(true);
+    expect(directConversationFinished({
+      sawAnswer: false,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 40_000,
+      deliveryGraceMs: 30_000,
+    })).toBe(true);
+  });
+
   it("derives the normalized Telegram identity returned by the channel mapper", () => {
     expect(telegramInboundGuid(12345, -1_001_234_567_890, 134)).toBe(ownInboundId);
   });

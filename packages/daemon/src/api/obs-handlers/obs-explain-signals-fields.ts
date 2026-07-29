@@ -66,6 +66,19 @@ export function asNumber(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
+/** The latest sequenced prompt anchor, or undefined for sparse historical streams. */
+export function latestPromptSequence(
+  records: ReadonlyArray<Record<string, unknown>>,
+): number | undefined {
+  let latestPromptSeq: number | undefined;
+  for (const record of records) {
+    if (record.traceSchema !== "comis-trajectory" || record.type !== "prompt.submitted") continue;
+    const seq = asNumber(record.seq);
+    if (seq !== undefined && (latestPromptSeq === undefined || seq > latestPromptSeq)) latestPromptSeq = seq;
+  }
+  return latestPromptSeq;
+}
+
 /** Select the breaker open that belongs to the latest prompt-anchored turn.
  * Pre-prompt settlement reconciliation stays visible in the timeline but
  * cannot become the selected turn's root-cause discriminator. Streams without
@@ -75,14 +88,7 @@ export function currentTurnBreakerOpenedTool(
   events: IncidentSignals["breakerEvents"],
   fallback: string | undefined,
 ): string | undefined {
-  let latestPromptSeq: number | undefined;
-  for (const record of records) {
-    if (record.traceSchema !== "comis-trajectory" || record.type !== "prompt.submitted") continue;
-    const seq = asNumber(record.seq);
-    if (seq !== undefined && (latestPromptSeq === undefined || seq > latestPromptSeq)) {
-      latestPromptSeq = seq;
-    }
-  }
+  const latestPromptSeq = latestPromptSequence(records);
   if (latestPromptSeq === undefined) return fallback;
   return events.find((event) => event.event === "opened" && event.seq > latestPromptSeq)?.toolName;
 }

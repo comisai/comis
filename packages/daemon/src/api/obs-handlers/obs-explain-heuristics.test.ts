@@ -666,6 +666,10 @@ describe("obs-explain-heuristics", () => {
       makeSignals({
         endReason: "success",
         degraded: false,
+        hasDoNotRetrySignal: true,
+        breakerOpenedTool: undefined,
+        repeatedFailureCount: { read: 15 },
+        mostFailedTool: "read",
         toolStats: { read: { ok: 3, failed: 1, topErrorKind: "dependency" } },
         failures: [
           {

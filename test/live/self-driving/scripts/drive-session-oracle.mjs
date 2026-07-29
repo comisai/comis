@@ -242,3 +242,23 @@ export function sharedConversationFinished({
   }
   return turnEnded && sawAnswer;
 }
+
+/**
+ * Stop a direct-message drive after both the turn and its wire delivery settle.
+ *
+ * Session summary can precede delivery post-processing, so an ended turn with
+ * no visible answer remains open for a bounded drain window. The bound still
+ * lets true empty-final and aborted turns terminate deterministically.
+ */
+export function directConversationFinished({
+  sawAnswer,
+  turnEnded,
+  turnEndedAtMs,
+  nowMs,
+  deliveryGraceMs,
+}) {
+  if (!turnEnded) return false;
+  if (sawAnswer) return true;
+  return typeof turnEndedAtMs === "number"
+    && nowMs - turnEndedAtMs >= deliveryGraceMs;
+}

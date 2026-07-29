@@ -6,8 +6,8 @@
 // DAG, sub-agents) finishes ASYNC past the drive's exit. v2:
 //   1) treats checklists / "(step N of M)" / 🔧✓🤖❌ / "(running" / "reading ~" as PROGRESS (not the answer);
 //   2) keys completion off the TRAJECTORY turn-end (a `session.summary` / `execution.aborted` appended
-//      after inject) — the authoritative "this turn is done" signal — not wire-silence. Falls back to
-//      answer-aware wire quiescence when the trajectory can't be resolved (graceful, byte-identical to v1).
+//      after inject), then drains a bounded post-turn delivery window because channel post-processing
+//      can finish later. Falls back to answer-aware wire quiescence when the trajectory can't be resolved.
 //
 // Usage:  node drive.mjs <chatId> "<text>" [quiesceMs=8000] [maxMs=240000] [DATA=/home/comis/.comis]
 //         printf '<one-line text>\n' | node drive.mjs <chatId> -
@@ -23,6 +23,7 @@ import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { rig } from './_rig.mjs';
 import {
+  directConversationFinished,
   driveTextFilePath,
   findAssistantReplyAfterInbound,
   findTelegramConversationWireAnswer,
@@ -91,6 +92,7 @@ const emu = JSON.parse(readFileSync(rig.emuWiringPath, 'utf8'));
 const base = emu.apiRoot;
 const tenantId = process.env.TENANT_ID || 'default';
 const agentId = process.env.AGENT_ID || 'default';
+const POST_TURN_DELIVERY_GRACE_MS = 30000;
 
 // A parallel drive must watch only its own canonical-principal trajectory. Selecting the globally
 // newest file lets one conversation stop on another conversation's session.summary and fabricates
@@ -146,7 +148,7 @@ const isConversationAnswer = (outbound) => {
     || findTelegramConversationWireAnswer([outbound], injectOpts?.thread) !== null;
 };
 
-// --- trajectory turn-end watch (authoritative completion signal) ---
+// --- trajectory turn-end watch (authoritative execution signal) ---
 const resolveTraj = () => {
   try {
     const dir = `${DATA}/workspace/sessions`;
@@ -215,7 +217,7 @@ const normalizedInboundId = telegramInboundGuid(
 process.stderr.write(`injected inboundId=${inj.messageId}, polling after ${after}; trajectory=${trajPath ? 'watched' : 'NONE (wire-only)'}\n`);
 
 const seen = [];
-let sawAnswer = false, turnEnded = false, lastNew = Date.now();
+let sawAnswer = false, turnEnded = false, turnEndedAtMs = null, lastNew = Date.now();
 let correlatedAnswer = null;
 let correlatedSessionPath = null;
 const start = Date.now();
@@ -271,8 +273,12 @@ while (Date.now() - start < maxMs) {
     const late = resolveTraj();
     if (late) { trajPath = late; trajBase = 0; process.stderr.write(`trajectory resolved late: ${late.split('/').pop()} — switching to authoritative turn-end watch\n`); }
   }
-  // Authoritative stop: the agent TURN ended in the trajectory (work done, incl. empty-final / abort).
-  if (trajPath && turnEndedSince(trajPath, trajBase)) { turnEnded = true; }
+  // The agent turn ended, but channel delivery post-processing can still be in
+  // flight. Record the first observation and keep polling for a bounded drain.
+  if (trajPath && turnEndedSince(trajPath, trajBase)) {
+    turnEnded = true;
+    turnEndedAtMs ??= Date.now();
+  }
   if (sharedConversation) {
     correlatedAnswer = resolveCorrelatedAnswer();
     if (sharedConversationFinished({
@@ -292,8 +298,15 @@ while (Date.now() - start < maxMs) {
     }
     continue;
   }
-  if (turnEnded) {
-    // drain any just-delivered final message, then stop
+  if (directConversationFinished({
+    sawAnswer,
+    turnEnded,
+    turnEndedAtMs,
+    nowMs: Date.now(),
+    deliveryGraceMs: POST_TURN_DELIVERY_GRACE_MS,
+  })) {
+    // Drain any just-delivered final message, then stop. A turn with no answer
+    // reaches this branch only after the bounded post-turn delivery grace.
     const tail = await getOutbound(after, 2500);
     for (const o of tail) {
       seen.push(o);
