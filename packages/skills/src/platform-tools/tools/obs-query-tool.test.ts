@@ -53,6 +53,14 @@ describe("obs_query tool", () => {
     expect(tool.label).toBe("Observability Query");
   });
 
+  it("direct description requires evidence for runtime self-report claims", () => {
+    const tool = createObsQueryTool(mockRpcCall);
+    expect(tool.description).toMatch(/before reporting runtime causes/i);
+    expect(tool.description).toMatch(/latency.*cost/i);
+    expect(tool.description).toMatch(/explain.*system_health.*billing/i);
+    expect(tool.description).toMatch(/do not guess/i);
+  });
+
   // -----------------------------------------------------------------------
   // Trust guard
   // -----------------------------------------------------------------------
