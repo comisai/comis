@@ -39,6 +39,26 @@ function makeSessionManager(appendCustomEntry: ReturnType<typeof vi.fn>): Sessio
 }
 
 describe("persistInboundMessageProvenance", () => {
+  it("plans a 40k physical channel log paste without losing its trailing question", () => {
+    const suffix = "whats the actual error";
+    const text = `${"worker ERROR region mismatch\n".repeat(1_480)}${suffix}`;
+    expect(text.length).toBeGreaterThanOrEqual(40_000);
+    const message = {
+      ...first,
+      text,
+      attachments: [],
+      metadata: {},
+    } satisfies NormalizedMessage;
+
+    const planned = planInboundMessageProvenance(message, RECORDED_AT);
+
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(planned.value.payloads).toHaveLength(1);
+    expect(planned.value.payloads[0]?.messages[0]?.text).toBe(text);
+    expect(planned.value.payloads[0]?.messages[0]?.text.endsWith(suffix)).toBe(true);
+  });
+
   it("persists every original physical message in one exact structured batch", () => {
     const appendCustomEntry = vi.fn().mockReturnValue("entry-id");
     const message = {

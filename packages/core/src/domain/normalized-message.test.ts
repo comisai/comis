@@ -35,6 +35,29 @@ describe("NormalizedMessage", () => {
       }
     });
 
+    it("accepts a 40k channel log paste and its durable physical provenance", () => {
+      const text = `${"worker ERROR region mismatch\n".repeat(1_480)}whats the actual error`;
+      expect(text.length).toBeGreaterThanOrEqual(40_000);
+      const originalMessages = [{
+        id: VALID_UUID_2,
+        channelId: "general",
+        channelType: "telegram",
+        senderId: "user-123",
+        text,
+        timestamp: 1_700_000_000,
+      }];
+
+      expect(parseMessage(validMessage({ text, originalMessages })).ok).toBe(true);
+      expect(parseInboundMessageProvenanceBatch({
+        schemaVersion: 1,
+        batchId: VALID_UUID,
+        chunkIndex: 0,
+        chunkCount: 1,
+        recordedAt: 1_750_000_000_100,
+        messages: originalMessages,
+      }).ok).toBe(true);
+    });
+
     it("applies default values for attachments and metadata", () => {
       const result = parseMessage(validMessage());
       expect(result.ok).toBe(true);
@@ -374,8 +397,8 @@ describe("NormalizedMessage", () => {
       expect(result.ok).toBe(false);
     });
 
-    it("rejects text exceeding max length", () => {
-      const result = parseMessage(validMessage({ text: "x".repeat(32769) }));
+    it("rejects text exceeding the normalized channel-message ceiling", () => {
+      const result = parseMessage(validMessage({ text: "x".repeat(65_537) }));
       expect(result.ok).toBe(false);
     });
 
