@@ -603,6 +603,41 @@ describe("assembleExecutionPrompt", () => {
     expect(result.dynamicPreamble).toContain("rag-section-1");
   });
 
+  it("sub-agent recall excludes agent-shared memories from sibling runs", async () => {
+    const childSession: SessionKey = {
+      tenantId: "tenant-1",
+      agentId: "agent-1",
+      userId: "user-1",
+      channelId: "sub-agent:runtime:child-run",
+    };
+    const memoryPort = {
+      search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+      store: vi.fn(),
+    } as any;
+    mockRecall.mockResolvedValue({ ok: true, value: [] });
+
+    await assembleExecutionPrompt(makeParams({
+      msg: makeMsg({ channelType: "sub-agent", channelId: "child-run" }),
+      sessionKey: childSession,
+      config: makeConfig({
+        rag: {
+          enabled: true,
+          maxResults: 5,
+          minScore: 0.3,
+          includeTrustLevels: ["system"],
+          maxContextChars: 5000,
+        },
+      }),
+      deps: { workspaceDir: "/workspace", memoryPort },
+    }));
+
+    expect(mockRecall).toHaveBeenCalledWith(
+      "Hello",
+      expect.objectContaining({ includeAgentShared: false }),
+      childSession,
+    );
+  });
+
   it("threads deps.tripleStore into createMemoryRecall so the graph-spread lane has its store", async () => {
     // Production-wiring regression guard for the LAST link of the chain:
     // PromptAssemblyParams.deps.tripleStore → createMemoryRecall's deps.tripleStore.
