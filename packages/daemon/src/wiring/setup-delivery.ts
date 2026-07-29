@@ -14,7 +14,14 @@
  * @module setup-delivery — Delivery subsystem wiring (queue + mirror)
  */
 
-import type { AppConfig, TypedEventBus, DeliveryQueuePort, DeliveryMirrorPort, DeliveryAdapter } from "@comis/core";
+import type {
+  AppConfig,
+  DeliveryAdapter,
+  DeliveryMirrorPort,
+  DeliveryQueuePort,
+  HookRunner,
+  TypedEventBus,
+} from "@comis/core";
 import {
   createNoOpDeliveryQueue,
   createNoOpDeliveryMirror,
@@ -66,6 +73,7 @@ export async function setupDeliveryQueue(deps: {
   eventBus: TypedEventBus;
   logger: ComisLogger;
   channelAdapters: Map<string, DeliveryAdapter>;
+  hookRunner: Pick<HookRunner, "runAfterDelivery">;
   /**
    * Verified Learning: OPTIONAL outbound-message → trajectory
    * capture, threaded into every drain pass. `undefined` when learning-outcome is
@@ -76,7 +84,7 @@ export async function setupDeliveryQueue(deps: {
     scope: { traceId: string; tenantId: string; agentId: string; sessionId: string; participantId?: string },
   ) => void;
 }): Promise<DeliveryQueueResult> {
-  const { db, config, eventBus, logger, channelAdapters, recordOutboundMessage } = deps;
+  const { db, config, eventBus, logger, channelAdapters, hookRunner, recordOutboundMessage } = deps;
   const queueConfig = config.deliveryQueue;
 
   // 1. Adapter creation: no-op when disabled
@@ -115,6 +123,7 @@ export async function setupDeliveryQueue(deps: {
       channelAdapters,
       eventBus,
       logger,
+      hookRunner,
       drainBudgetMs: queueConfig.drainBudgetMs,
       defaultMaxAttempts: queueConfig.defaultMaxAttempts,
       recordOutboundMessage,
@@ -212,6 +221,7 @@ export async function drainDeliveryQueue(deps: {
   channelAdapters: Map<string, DeliveryAdapter>;
   eventBus: TypedEventBus;
   logger: ComisLogger;
+  hookRunner?: Pick<HookRunner, "runAfterDelivery">;
   drainBudgetMs: number;
   defaultMaxAttempts: number;
   /**
@@ -226,7 +236,16 @@ export async function drainDeliveryQueue(deps: {
     scope: { traceId: string; tenantId: string; agentId: string; sessionId: string; participantId?: string },
   ) => void;
 }): Promise<{ hadEntries: boolean }> {
-  const { deliveryQueue, channelAdapters, eventBus, logger, drainBudgetMs, defaultMaxAttempts, recordOutboundMessage } = deps;
+  const {
+    deliveryQueue,
+    channelAdapters,
+    eventBus,
+    logger,
+    hookRunner,
+    drainBudgetMs,
+    defaultMaxAttempts,
+    recordOutboundMessage,
+  } = deps;
   const drainStart = systemNowMs();
   const deadline = drainStart + drainBudgetMs;
 
@@ -400,6 +419,36 @@ export async function drainDeliveryQueue(deps: {
           timestamp: systemNowMs(),
       });
       delivered++;
+
+      if (hookRunner !== undefined) {
+        suppressError(
+          hookRunner.runAfterDelivery(
+            {
+              text: entry.text,
+              channelType: entry.channelType,
+              channelId: entry.channelId,
+              result: {
+                status: "accepted",
+                entryId: entry.id,
+                messageId: sendResult.value,
+              },
+              durationMs: systemNowMs() - drainStart,
+              origin: entry.origin,
+            },
+            {
+              agentId: entry.agentId,
+              ...(entry.traceId === null ? {} : { traceId: entry.traceId }),
+              deliveryAuthority: {
+                tenantId: entry.tenantId,
+                agentId: entry.agentId,
+                conversationRef: entry.conversationRef,
+              },
+              destinationEndpoint: entry.destinationEndpoint,
+            },
+          ),
+          "delivery queue after_delivery hook",
+        );
+      }
 
       // Capture (platform messageId → trajectory scope) for
       // inbound-reaction resolution. Agent-authored OUTBOUND only (the delivery

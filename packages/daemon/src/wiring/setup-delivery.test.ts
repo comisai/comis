@@ -194,7 +194,20 @@ vi.mock("@comis/core", async (importOriginal) => {
 });
 
 // Inline import to avoid ESM issues with mock setup
-const { setupDeliveryQueue, setupDeliveryMirror } = await import("./setup-delivery.js");
+const {
+  setupDeliveryQueue: setupDeliveryQueueImpl,
+  setupDeliveryMirror,
+} = await import("./setup-delivery.js");
+type SetupDeliveryQueueDeps = Parameters<typeof setupDeliveryQueueImpl>[0];
+function setupDeliveryQueue(
+  deps: Omit<SetupDeliveryQueueDeps, "hookRunner">
+    & Partial<Pick<SetupDeliveryQueueDeps, "hookRunner">>,
+) {
+  return setupDeliveryQueueImpl({
+    ...deps,
+    hookRunner: deps.hookRunner ?? { runAfterDelivery: vi.fn(async () => undefined) },
+  });
+}
 
 // ===========================================================================
 // Queue tests
@@ -283,6 +296,53 @@ describe("setupDeliveryQueue", () => {
         entriesDelivered: 2,
         entriesFailed: 1,
       }));
+
+      result.shutdown();
+    });
+
+    it("runs after-delivery hooks for an acknowledged queued notification", async () => {
+      const entry = makeEntry({
+        id: "notification-1",
+        text: "Background report is ready",
+        origin: "tool",
+        traceId: "trace-background-completion",
+        optionsJson: JSON.stringify({ origin: "notification" }),
+      });
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValueOnce(ok([entry]));
+      const runAfterDelivery = vi.fn(async () => undefined);
+
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig(),
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        channelAdapters: new Map([["telegram", createMockAdapter("telegram", [
+          { ok: true, value: "platform-message-1" },
+        ])]]),
+        hookRunner: { runAfterDelivery },
+      });
+
+      await result.drainAndStart();
+
+      expect(runAfterDelivery).toHaveBeenCalledTimes(1);
+      expect(runAfterDelivery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: "Background report is ready",
+          channelType: "telegram",
+          channelId: "chat-1",
+          origin: "tool",
+        }),
+        {
+          agentId: "agent-default",
+          traceId: "trace-background-completion",
+          deliveryAuthority: {
+            tenantId: "default",
+            agentId: "agent-default",
+            conversationRef: entry.conversationRef,
+          },
+          destinationEndpoint: entry.destinationEndpoint,
+        },
+      );
 
       result.shutdown();
     });

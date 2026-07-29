@@ -1836,6 +1836,7 @@ async function bootAgents(
   const channelAdaptersRef = new Map<string, import("@comis/core").DeliveryAdapter>();
   const { deliveryQueue, drainAndStart: drainAndStartDeliveryPrune, shutdown: shutdownDeliveryQueue } = await setupDeliveryQueue({
     db, config: container.config, eventBus: container.eventBus, logger: daemonLogger, channelAdapters: channelAdaptersRef,
+    hookRunner: container.hookRunner,
     // Capture agent-authored outbound (messageId → trajectory).
     // `undefined` when learning-outcome is off for all agents (zero extra drain work).
     recordOutboundMessage: foundation.recordOutboundMessage,

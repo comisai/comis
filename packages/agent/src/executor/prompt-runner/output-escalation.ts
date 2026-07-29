@@ -3,7 +3,7 @@
 
 import { formatSessionKey, toSafeErrorLogString } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { err, isSilentResponse, ok, tryCatch, type Result } from "@comis/shared";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { withPromptTimeout } from "../prompt-timeout.js";
 import { runContinuationTurn } from "../continuation-turn.js";
 import {
@@ -21,32 +21,8 @@ import type { TurnBudgetTracker } from "../../budget/turn-budget-tracker.js";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
 import { processFailurePath } from "./failure-path.js";
 import { applyInteractiveSilentRecovery } from "./interactive-silent-recovery.js";
+import { suppressRedundantFinalAfterOutboundDelivery } from "./outbound-delivery-reconciliation.js";
 import { applyResponseLocaleEnforcement } from "./response-locale-enforcement.js";
-
-function suppressRedundantFinalAfterOutboundDelivery(
-  params: RunPromptParams,
-): void {
-  const target = params.executionOverrides
-    ?.suppressFinalResponseAfterOutboundDelivery;
-  if (
-    target === undefined
-    || isSilentResponse(params.result.response)
-    || !params.bridge.hasOutboundDelivery(target)
-  ) {
-    return;
-  }
-
-  params.result.response = "NO_REPLY";
-  params.result.finalResponseSuppressedBy = "outbound_delivery";
-  params.deps.logger.info(
-    {
-      step: "outbound-delivery-reconciliation",
-      channelType: target.channelType,
-      exactRouteMatched: true,
-    },
-    "Redundant final response suppressed after successful outbound delivery",
-  );
-}
 
 /**
  * Compute the final PromptRunResult by running output escalation, success-
