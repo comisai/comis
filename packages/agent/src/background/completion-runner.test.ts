@@ -421,6 +421,61 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
+  it("does not dispatch a second completion after exact-route outbound delivery", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    const outcomes: Array<{ notified: boolean; reason: string }> = [];
+    eventBus.on("background_task:notified", (event) => outcomes.push(event));
+    executor.execute.mockImplementation(async (...args: unknown[]) => {
+      const overrides = args[7] as {
+        suppressFinalResponseAfterOutboundDelivery?: {
+          channelType: string;
+          channelId: string;
+        };
+        onJournalFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+        onFinalizedResult?: (
+          value: Record<string, unknown>,
+          phase: "cleanup_pending" | "ready",
+        ) => Promise<void>;
+      } | undefined;
+      expect(overrides?.suppressFinalResponseAfterOutboundDelivery).toEqual({
+        channelType: task.origin.deliveryOrigin.channelType,
+        channelId: task.origin.deliveryOrigin.channelId,
+      });
+      const result = {
+        response: "NO_REPLY",
+        executionId: "execution-tool-delivered",
+        finishReason: "stop",
+        finalResponseSuppressedBy: "outbound_delivery",
+      };
+      await overrides?.onJournalFinalizedResult?.(result);
+      await overrides?.onFinalizedResult?.(result, "ready");
+      return result;
+    });
+    const deliverCompletion = vi.fn();
+    const runner = build(3, undefined, undefined, deliverCompletion);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(taskManager.persistContinuationOutbox).not.toHaveBeenCalled();
+    expect(deliverCompletion).not.toHaveBeenCalled();
+    expect(task.dispatchState).toBe("delivered");
+    expect(outcomes).toContainEqual(expect.objectContaining({
+      notified: true,
+      reason: "continuation_accepted",
+    }));
+    await runner.shutdown();
+  });
+
   it("completed event triggers executor.execute with synthetic message AND emits background_task:reentered", async () => {
     const reenteredEvents: unknown[] = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data));
