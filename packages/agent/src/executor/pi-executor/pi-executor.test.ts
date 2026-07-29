@@ -402,7 +402,9 @@ const testMessage: NormalizedMessage = {
   channelId: "c1",
   channelType: "test",
   timestamp: Date.now(),
-} as NormalizedMessage;
+  attachments: [],
+  metadata: {},
+};
 
 function makeInboundProvenanceOverrides(
   message: NormalizedMessage,

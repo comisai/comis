@@ -70,16 +70,31 @@ describe("offline observability module boundary", () => {
 describe("resolveOfflineDataDir", () => {
   const prev = process.env.COMIS_DATA_DIR;
   const previousConfigPaths = process.env.COMIS_CONFIG_PATHS;
+  const previousHome = process.env.HOME;
   afterEach(() => {
     if (prev === undefined) delete process.env.COMIS_DATA_DIR;
     else process.env.COMIS_DATA_DIR = prev;
     if (previousConfigPaths === undefined) delete process.env.COMIS_CONFIG_PATHS;
     else process.env.COMIS_CONFIG_PATHS = previousConfigPaths;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
   });
-  it("honors COMIS_DATA_DIR when set (matches the daemon + wizard data-dir resolution)", () => {
+  it("honors COMIS_DATA_DIR ahead of a stale default-home config", () => {
+    const selectedDataDir = tmpDataDir();
+    const alternateHome = tmpDataDir();
+    const staleHomeDataDir = tmpDataDir();
+    const defaultConfigDir = path.join(alternateHome, ".comis");
+    fs.mkdirSync(defaultConfigDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(defaultConfigDir, "config.yaml"),
+      `dataDir: ${staleHomeDataDir}\n`,
+      "utf8",
+    );
+    process.env.HOME = alternateHome;
     delete process.env.COMIS_CONFIG_PATHS;
-    process.env.COMIS_DATA_DIR = "/srv/custom-comis-data";
-    expect(resolveOfflineDataDir()).toBe("/srv/custom-comis-data");
+    process.env.COMIS_DATA_DIR = selectedDataDir;
+
+    expect(resolveOfflineDataDir()).toBe(selectedDataDir);
   });
   it("uses the data directory selected by an explicit config path", () => {
     const configDir = tmpDataDir();

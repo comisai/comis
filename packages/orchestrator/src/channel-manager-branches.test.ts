@@ -81,6 +81,7 @@ function makeRouter(): MessageRouter {
 
 function makeSessionManager(): SessionLifecycle {
   return {
+    ensure: vi.fn(() => ok(undefined)),
     loadOrCreate: vi.fn(() => []),
     save: vi.fn(),
     isExpired: vi.fn(() => false),

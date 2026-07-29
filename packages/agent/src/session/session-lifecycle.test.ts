@@ -28,6 +28,20 @@ function createFakeSessionStore(): SessionStorePort & {
   return {
     _sessions: sessions,
 
+    ensure(scope) {
+      const k = keyStr(scope);
+      if (!sessions.has(k)) {
+        const now = Date.now();
+        sessions.set(k, {
+          messages: [],
+          metadata: {},
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      return ok(undefined);
+    },
+
     save(scope, messages, metadata) {
       const k = keyStr(scope);
       const existing = sessions.get(k);
@@ -100,6 +114,23 @@ describe("createSessionLifecycle", () => {
 
   beforeEach(() => {
     store = createFakeSessionStore();
+  });
+
+  describe("ensure", () => {
+    it("registers a new canonical session without replacing existing data", () => {
+      const mgr = createSessionLifecycle(store);
+      expect(mgr.ensure(testKey())).toEqual(ok(undefined));
+      const empty = store.load(testKey());
+      expect(empty.ok && empty.value?.messages).toEqual([]);
+
+      store.save(testKey(), [{ role: "user", content: "keep" }], { label: "keep" });
+      expect(mgr.ensure(testKey())).toEqual(ok(undefined));
+      const loaded = store.load(testKey());
+      expect(loaded.ok && loaded.value).toEqual(expect.objectContaining({
+        messages: [{ role: "user", content: "keep" }],
+        metadata: { label: "keep" },
+      }));
+    });
   });
 
   // ── loadOrCreate ────────────────────────────────────────────────────

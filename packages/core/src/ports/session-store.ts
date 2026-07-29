@@ -36,6 +36,8 @@ export interface SessionQueryScope {
 }
 
 export interface SessionStorePort {
+  /** Register canonical session authority without changing an existing session. */
+  ensure(scope: ConversationScope): Result<void, SessionStoreError>;
   save(scope: ConversationScope, messages: unknown[], metadata?: Record<string, unknown>): Result<void, SessionStoreError>;
   load(scope: ConversationScope): Result<SessionData | undefined, SessionStoreError>;
   loadByRef(scope: SessionQueryScope, conversationRef: ConversationRef): Result<SessionData | undefined, SessionStoreError>;
