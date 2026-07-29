@@ -129,6 +129,13 @@ export type PlatformToolProvider = () => AgentTool<any>[];
 /**
  * Dependencies for the two-tier tool assembly pipeline.
  */
+// @optional-field-count: composition-root dependency bag, not field bloat. Every
+// optional member is an independently-injected collaborator that a caller either
+// has or does not: the daemon supplies the full set, while the CLI, tests and
+// sub-agent assembly each pass a different subset. Making any of them required
+// would force those callers to fabricate a collaborator they have no use for, and
+// splitting the interface would only move the same optionality behind a nested
+// object without reducing the number of things a caller must decide about.
 export interface ToolPipelineDeps {
   /** Skills configuration with toolPolicy and builtinTools. */
   config: SkillsConfig;
