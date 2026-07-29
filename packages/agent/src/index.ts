@@ -478,6 +478,7 @@ export type {
   SubAgentRun,
   SpawnParams,
   SubAgentRunnerLogger,
+  SpawnCeilingDecision,
 } from "./spawn/index.js";
 export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification } from "./spawn/index.js";
 export { createDeliveryDedup } from "./spawn/index.js";

@@ -42,6 +42,7 @@ export type {
   SubAgentRunnerLogger,
   SubAgentSpawnAdmissionState,
   SubAgentSpawnAdmissionMutation,
+  SpawnCeilingDecision,
 } from "./sub-agent-runner.js";
 
 export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification } from "./sub-agent-result-processor.js";

@@ -27,7 +27,7 @@ import {
 } from "@comis/core";
 import { createResultRefStore } from "@comis/skills/tools";
 import type { ComisLogger } from "@comis/infra";
-import type { ExecutionResult } from "@comis/agent";
+import type { ExecutionResult, SpawnCeilingDecision } from "@comis/agent";
 import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
 import {
   createCrossSessionSender,
@@ -157,7 +157,7 @@ export function setupCrossSession(deps: {
     rootRunId: string,
     depth: number,
     fanout: number,
-  ) => { ok: true } | { ok: false; reason: string };
+  ) => SpawnCeilingDecision;
   /**
    * The symmetric release of a slot reserved by
    * {@link checkSpawnCeiling}, threaded into the runner's `releaseSpawnCeiling`

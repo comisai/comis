@@ -340,6 +340,19 @@ export class SubAgentSpawnPausedError extends Error {
   }
 }
 
+export type SpawnCeilingDecision =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: "concurrency" | "depth" | "fanout";
+      configKey:
+        | "autonomy.spawn.maxConcurrentSelfAgents"
+        | "autonomy.spawn.maxSpawnDepth"
+        | "autonomy.spawn.maxChildrenPerAgent";
+      current: number;
+      limit: number;
+    };
+
 class DurableSubAgentAdmissionError extends Error {
   constructor(message: string, cause?: unknown) {
     super(message, cause === undefined ? undefined : { cause });
@@ -439,7 +452,7 @@ export interface SubAgentRunnerDeps {
     rootRunId: string,
     depth: number,
     fanout: number,
-  ) => { ok: true } | { ok: false; reason: string };
+  ) => SpawnCeilingDecision;
   /**
    * Symmetric release of a slot reserved by {@link checkSpawnCeiling}.
    * Called 1:1 with every successful acquire on EVERY terminal transition
@@ -2409,14 +2422,21 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           agentId: params.agentId,
           parentSessionKey: params.callerSessionKey ?? "unknown",
           reason: ceiling.reason,
+          configKey: ceiling.configKey,
+          current: ceiling.current,
+          limit: ceiling.limit,
           rootRunId,
           currentDepth,
-          hint: "Spawn rejected: tree-wide autonomy ceiling reached; the spawn tree hit its concurrency/depth/fanout bound (autonomy.spawn.*). Wait for sibling sub-agents to finish or raise the bound.",
+          hint:
+            `Spawn rejected at ${ceiling.configKey}=${ceiling.limit}; current=${ceiling.current}. `
+            + "Wait for a running sub-agent to finish or raise that exact bound.",
           errorKind: "resource" as const,
         }, "Subagent spawn rejected");
         // @allow-throw: spawn() consumed exclusively by daemon RPC handlers; @allow-throw boundary — rpc-dispatch.ts converts to a JSON-RPC error.
         throw new Error(
-          `Spawn rejected: tree-wide spawn ceiling reached (reason: ${ceiling.reason}). This spawn tree is at its concurrency/depth/fanout bound.`,
+          `[spawn_ceiling] Sub-agent spawn rejected: ${ceiling.configKey}=${ceiling.limit}; `
+          + `current=${ceiling.current}; reason=${ceiling.reason}. `
+          + "Wait for a running sub-agent to finish before retrying.",
         );
       }
     }

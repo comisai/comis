@@ -2422,7 +2422,13 @@ describe("createSubAgentRunner", () => {
         current: 4,
         limit: 4,
       });
-      const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling });
+      const logger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+      };
+      const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling, logger });
 
       expect(() =>
         runner.spawn({
@@ -2446,7 +2452,7 @@ describe("createSubAgentRunner", () => {
         "session:sub_agent_spawn_rejected",
         expect.objectContaining({ reason: "ceiling_concurrency" }),
       );
-      expect(ceilingDeps.logger.warn).toHaveBeenCalledWith(
+      expect(logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
           configKey: "autonomy.spawn.maxConcurrentSelfAgents",
           current: 4,

@@ -39,16 +39,21 @@ const MAX_ERROR_TEXT_CHARS = 2000;
  */
 export type McpErrorType = "timeout" | "connection" | "transport" | "validation" | "tool_error" | "unknown";
 
-export type RuntimeToolGuard = "step_limit" | "background_task_capacity";
+export type RuntimeToolGuard =
+  | "step_limit"
+  | "background_task_capacity"
+  | "spawn_ceiling";
 
 const STEP_LIMIT_TOOL_GUARD = /\bstep limit reached\b.*\bblocking tool execution\b/i;
 const BACKGROUND_TASK_CAPACITY_GUARD = /\[background_capacity\]\s+background task capacity reached:/i;
+const SPAWN_CEILING_GUARD = /\[spawn_ceiling\]\s+sub-agent spawn rejected:/i;
 
 /** Identify failures produced by the local execution guard before the tool boundary. */
 export function classifyRuntimeToolGuard(errorText: string | undefined): RuntimeToolGuard | undefined {
   if (errorText === undefined) return undefined;
   if (STEP_LIMIT_TOOL_GUARD.test(errorText)) return "step_limit";
   if (BACKGROUND_TASK_CAPACITY_GUARD.test(errorText)) return "background_task_capacity";
+  if (SPAWN_CEILING_GUARD.test(errorText)) return "spawn_ceiling";
   return undefined;
 }
 
