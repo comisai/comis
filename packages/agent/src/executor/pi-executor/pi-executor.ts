@@ -85,8 +85,15 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { CommandDirectives } from "../command-directive-types.js";
 import type { StepCounter } from "../step-counter.js";
-import { createToolRetryBreaker } from "../../safety/tool-retry-breaker.js";
-import { attributeBackgroundFailuresToOriginatingTool } from "../../safety/background-failure-attribution.js";
+import {
+  createToolRetryBreaker,
+  type ToolRetryBreaker,
+} from "../../safety/tool-retry-breaker.js";
+import {
+  attributeBackgroundFailuresToOriginatingTool,
+  createBackgroundTaskSettlementReconciler,
+  type BackgroundTaskSettlementReconciler,
+} from "../../safety/background-failure-attribution.js";
 import { createMessageSendLimiter } from "../../safety/message-send-limiter.js";
 import type { ComisSessionManager } from "../../session/comis-session-manager.js";
 import type { RunHandle } from "../active-run-registry.js";
@@ -327,6 +334,23 @@ export function createPiExecutor(
     get: () => executionMinTokensOverride,
     set: (value) => { executionMinTokensOverride = value; },
   };
+  // Tool health belongs to the executor/agent lifetime, not one foreground
+  // message. A promoted task commonly settles after execute() returns; keeping
+  // both objects here lets the next turn reconcile that durable terminal state
+  // before any new tool call.
+  const toolRetryBreakerConfig = config.toolRetryBreaker;
+  const toolRetryBreaker = toolRetryBreakerConfig?.enabled !== false
+    ? createToolRetryBreaker({
+        maxConsecutiveFailures: toolRetryBreakerConfig?.maxConsecutiveFailures ?? 3,
+        maxToolFailures: toolRetryBreakerConfig?.maxToolFailures ?? 5,
+        suggestAlternatives: toolRetryBreakerConfig?.suggestAlternatives ?? true,
+        maxConsecutiveErrorPatterns:
+          toolRetryBreakerConfig?.maxConsecutiveErrorPatterns ?? 2,
+      })
+    : undefined;
+  const backgroundTaskSettlementReconciler = toolRetryBreaker === undefined
+    ? undefined
+    : createBackgroundTaskSettlementReconciler(toolRetryBreaker);
 
   return {
     async execute(
@@ -700,6 +724,8 @@ export function createPiExecutor(
           minTokensOverrideRef,
           externalAbortState,
           resultJournalFailure,
+          toolRetryBreaker,
+          backgroundTaskSettlementReconciler,
         }),
       );
 
@@ -770,6 +796,10 @@ interface RunSessionLockedContext {
   readonly minTokensOverrideRef: MutableRef<number | undefined>;
   readonly externalAbortState: ExternalAbortState;
   readonly resultJournalFailure: { error?: Error };
+  readonly toolRetryBreaker: ToolRetryBreaker | undefined;
+  readonly backgroundTaskSettlementReconciler:
+    | BackgroundTaskSettlementReconciler
+    | undefined;
 }
 
 async function runSessionLocked(
@@ -787,6 +817,8 @@ async function runSessionLocked(
     cacheRetentionRef, adaptiveRetentionRef, minTokensOverrideRef,
     externalAbortState,
     resultJournalFailure,
+    toolRetryBreaker,
+    backgroundTaskSettlementReconciler,
   } = ctx;
   if (executionOverrides?.signal?.aborted) {
     settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);
@@ -1645,25 +1677,47 @@ async function runSessionLocked(
     }
   }
 
-  // Per-execution tool retry breaker (state resets each message)
-  const toolRetryBreakerConfig = config.toolRetryBreaker;
-  const toolRetryBreaker = toolRetryBreakerConfig?.enabled !== false
-    ? createToolRetryBreaker({
-        maxConsecutiveFailures: toolRetryBreakerConfig?.maxConsecutiveFailures ?? 3,
-        maxToolFailures: toolRetryBreakerConfig?.maxToolFailures ?? 5,
-        suggestAlternatives: toolRetryBreakerConfig?.suggestAlternatives ?? true,
-      })
-    : undefined;
+  // Reconcile settlements that arrived after the previous foreground
+  // execution ended. Completed tasks reset prior failures in terminal
+  // chronology; failed tasks advance the originating tool's persistent breaker.
+  if (backgroundTaskSettlementReconciler !== undefined && deps.backgroundTaskManager !== undefined) {
+    const transitions = backgroundTaskSettlementReconciler.reconcile(
+      deps.backgroundTaskManager.getTasks(deps.agentId),
+    );
+    for (const [seq, transition] of transitions.entries()) {
+      if (transition.transition === "opened") {
+        deps.eventBus.emit("tool:breaker_opened", {
+          toolName: transition.toolName,
+          consecutiveFailures: transition.consecutiveFailures,
+          errorTag: transition.errorTag,
+          reason: transition.reason,
+          seq,
+          timestamp: deps.clock.now(),
+        });
+      } else {
+        deps.eventBus.emit("tool:breaker_reset", {
+          toolName: transition.toolName,
+          reason: transition.reason,
+          seq,
+          timestamp: deps.clock.now(),
+        });
+      }
+    }
+  }
   // Count a BACKGROUND task's failure against the tool that launched it.
   // Auto-backgrounding makes that tool report success on every launch, so
   // without this its breaker never trips and a failing tool can be relaunched
   // until the turn's wall-clock budget expires (see
-  // background-failure-attribution.ts). Same per-execution lifetime as the
-  // breaker it feeds — torn down in the finally below.
+  // background-failure-attribution.ts). The listener is turn-scoped; the
+  // breaker and settlement reconciler are executor-scoped, so a later turn
+  // catches any terminal event that arrived after this listener was removed.
   if (toolRetryBreaker) {
     unsubscribeBackgroundFailures = attributeBackgroundFailuresToOriginatingTool({
       eventBus: deps.eventBus,
       breaker: toolRetryBreaker,
+      ...(backgroundTaskSettlementReconciler === undefined
+        ? {}
+        : { reconciler: backgroundTaskSettlementReconciler }),
       ...(deps.logger === undefined ? {} : { logger: deps.logger }),
       ...(deps.agentId === undefined ? {} : { agentId: deps.agentId }),
       sessionKey: formattedKey,

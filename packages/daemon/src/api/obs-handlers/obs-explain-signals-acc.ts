@@ -211,6 +211,11 @@ export interface Acc {
   backgroundRecoveryByTask: Map<string, { unresolved: boolean; toolName?: string }>;
   backgroundRecoveryLastTaskId?: string;
   backgroundRecoveryLastToolName?: string;
+  /** Promoted task id → originating tool, used to replace the synthetic
+   * handoff success with the later authoritative terminal failure. */
+  backgroundPromotionsByTask: Map<string, string>;
+  /** Terminal task ids already folded; recovery redelivery must not duplicate outcomes. */
+  backgroundTerminalTaskIds: Set<string>;
   /** Session aggregate of direct `link.prefetch` counts-only receipts. */
   linkPrefetch?: NonNullable<IncidentSignals["linkPrefetch"]>;
 }
