@@ -38,6 +38,8 @@ export interface TrajectoryEvents {
     messageCount: number;
     systemDigest: string;
     messagesDigest: string;
+    /** Normalized platform update kind; content-free and provider-neutral. */
+    inboundKind: "message" | "edit";
     /** Content-free locale decision used for this exact model request. */
     responseLocale?: string;
     responseLocaleSource: "request" | "explicit" | "unset";

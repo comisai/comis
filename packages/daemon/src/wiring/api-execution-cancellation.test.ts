@@ -59,6 +59,7 @@ describe("API execution cancellation", () => {
         messageCount: 1,
         systemDigest: "a",
         messagesDigest: "b",
+        inboundKind: "message",
         timestamp: 1,
       });
     });
@@ -81,6 +82,7 @@ describe("API execution cancellation", () => {
         messageCount: 1,
         systemDigest: "a",
         messagesDigest: "b",
+        inboundKind: "message",
         timestamp: 1,
       });
     });

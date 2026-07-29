@@ -164,8 +164,19 @@ describe("toIncidentSignals — response locale decision", () => {
     ]);
 
     expect(
-      (signals as unknown as { inbound?: { kind: string } }).inbound,
-    ).toEqual({ kind: "edit" });
+      (signals as unknown as { inboundEdit?: boolean }).inboundEdit,
+    ).toBe(true);
+  });
+
+  it("clears the edit signal when the latest inbound is a message", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, { inboundKind: "edit" }),
+      event("prompt.submitted", 2, { inboundKind: "message" }),
+    ]);
+
+    expect(
+      (signals as unknown as { inboundEdit?: boolean }).inboundEdit,
+    ).toBe(false);
   });
 });
 

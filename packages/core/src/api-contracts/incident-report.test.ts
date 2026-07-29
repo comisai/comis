@@ -62,12 +62,12 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
   it("retains the normalized inbound edit kind", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),
-      inbound: { kind: "edit" },
+      inboundEdit: true,
     });
 
     expect(
-      (parsed as unknown as { inbound?: { kind: string } }).inbound,
-    ).toEqual({ kind: "edit" });
+      (parsed as unknown as { inboundEdit?: boolean }).inboundEdit,
+    ).toBe(true);
   });
 
   it("retains bounded lossless-context fallback coverage", () => {

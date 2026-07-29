@@ -234,6 +234,7 @@ describe("attachCacheTraceToEventBus multi-event mapping", () => {
       messageCount: 1,
       systemDigest: "sysDigestA",
       messagesDigest: "msgDigestA",
+      inboundKind: "message",
       timestamp: Date.now(),
     });
 
@@ -278,6 +279,7 @@ describe("attachCacheTraceToEventBus multi-event mapping", () => {
       messageCount: 1,
       systemDigest: "sys1",
       messagesDigest: "msg1",
+      inboundKind: "message",
       timestamp: Date.now(),
     });
     recordStageSpy.mockClear();
@@ -293,6 +295,7 @@ describe("attachCacheTraceToEventBus multi-event mapping", () => {
       messageCount: 2,
       systemDigest: "sys2",
       messagesDigest: "msg2",
+      inboundKind: "message",
       timestamp: Date.now(),
     });
 

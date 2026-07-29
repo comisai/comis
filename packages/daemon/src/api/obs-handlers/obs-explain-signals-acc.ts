@@ -34,7 +34,7 @@ export type SpawnNode = NonNullable<IncidentSignals["spawnTree"]>[number];
 
 // @optional-field-count: internal mutable fold accumulator — each optional field
 // is a DISTINCT terminal-record signal (breaker tool, contextBudget, promptTimeout,
-// toolSchemaUnsupported, responseLocale, lastRecall, spend, perRootBudget, the four media turns,
+// toolSchemaUnsupported, inboundEdit, responseLocale, lastRecall, spend, perRootBudget, the four media turns,
 // agentId, channel) that is absent until its trajectory record class is seen. They
 // are not a configuration surface; collapsing or splitting them would only obscure
 // the one-fold-per-record-class structure.
@@ -57,6 +57,8 @@ export interface Acc {
    *  onto each run's `toolCalls` at materialization (EXPLAIN-04: the per-run leaseId
    *  attributes a deny to THE RUN). */
   orchestrateToolCallsByLease: Map<string, Map<string, OrchestrateToolCallFold>>;
+  /** Whether the LAST valid normalized inbound update was an edit. */
+  inboundEdit?: boolean;
   /** The LAST valid `prompt.submitted` locale decision. */
   responseLocale?: NonNullable<IncidentSignals["responseLocale"]>;
   breakerOpenedTool?: string;

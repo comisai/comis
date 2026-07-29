@@ -99,6 +99,8 @@ export const IncidentReportSchema = z.object({
     durationMs: z.number(),
     turnCount: z.number(),
   }),
+  /** Whether the selected turn's normalized inbound update was an edit. */
+  inboundEdit: z.boolean().optional(),
   /** Content-free response-locale decision for the selected turn (exact trace)
    * or latest turn (whole session). */
   responseLocale: z

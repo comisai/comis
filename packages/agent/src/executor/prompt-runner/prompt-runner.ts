@@ -114,6 +114,7 @@ function emitPromptSubmitted(params: RunPromptParams, messageText: string): void
       messageCount: transcriptLen + 1,
       systemDigest,
       messagesDigest,
+      inboundKind: params.msg.metadata?.isEdited === true ? "edit" : "message",
       ...(params.responseLocalePolicy?.locale !== undefined
         ? { responseLocale: params.responseLocalePolicy.locale }
         : {}),

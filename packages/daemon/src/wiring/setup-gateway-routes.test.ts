@@ -1717,6 +1717,7 @@ describe("OpenAI-compatible request context boundaries", () => {
         messageCount: 1,
         systemDigest: "digest-a",
         messagesDigest: "digest-b",
+        inboundKind: "message",
         timestamp: 1,
       });
       await new Promise<void>((resolve) => {

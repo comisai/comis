@@ -1223,6 +1223,7 @@ describe("setupAndRoute command-queue routing", () => {
         messageCount: 1,
         systemDigest: "system-digest",
         messagesDigest: "messages-digest",
+        inboundKind: "message",
         timestamp: 800,
       });
       expect(sessionResolver.resolveActiveSession).toHaveBeenCalledOnce();
@@ -1236,6 +1237,7 @@ describe("setupAndRoute command-queue routing", () => {
         messageCount: 1,
         systemDigest: "system-digest",
         messagesDigest: "messages-digest",
+        inboundKind: "message",
         timestamp: 800,
       });
       resolveExecutor();

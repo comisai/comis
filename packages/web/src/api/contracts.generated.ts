@@ -11197,6 +11197,9 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "inboundEdit": {
+          "type": "boolean"
+        },
         "responseLocale": {
           "anyOf": [
             {

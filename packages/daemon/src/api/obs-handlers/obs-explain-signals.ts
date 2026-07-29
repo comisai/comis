@@ -36,7 +36,6 @@ import {
 } from "./obs-explain-signal-folds.js";
 import type { Acc } from "./obs-explain-signals-acc.js";
 import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
-
 // ---------------------------------------------------------------------------
 // Tunable thresholds (module-top constants per the naming contract).
 // ---------------------------------------------------------------------------
@@ -145,14 +144,14 @@ function handleLogRecord(acc: Acc, rec: Record<string, unknown>): void {
     ensureTool(acc, tool).ok += 1;
   }
 }
-
 function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
   const type = asString(rec.type) ?? "";
   const data = (rec.data ?? {}) as Record<string, unknown>;
   const tool = asString(data.toolName);
-
   switch (type) {
     case "prompt.submitted": {
+      const inboundKind = asString(data.inboundKind);
+      if (inboundKind === "message" || inboundKind === "edit") acc.inboundEdit = inboundKind === "edit";
       const source = asString(data.responseLocaleSource);
       const locale = asString(data.responseLocale);
       const enforced = typeof data.responseLocaleEnforced === "boolean" ? data.responseLocaleEnforced : undefined;
@@ -821,6 +820,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     : acc.toolTraceIds.size;
   return {
     sessionKey: acc.sessionKey,
+    ...(acc.inboundEdit !== undefined ? { inboundEdit: acc.inboundEdit } : {}),
     ...(acc.responseLocale !== undefined ? { responseLocale: acc.responseLocale } : {}),
     toolStats,
     failures: acc.failures,

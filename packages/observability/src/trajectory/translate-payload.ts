@@ -218,6 +218,9 @@ export function translatePayload(
         messageCount: payload.messageCount,
         systemDigest: payload.systemDigest,
         messagesDigest: payload.messagesDigest,
+        ...(payload.inboundKind === "message" || payload.inboundKind === "edit"
+          ? { inboundKind: payload.inboundKind }
+          : {}),
         ...(typeof payload.responseLocale === "string"
           ? { responseLocale: payload.responseLocale }
           : {}),

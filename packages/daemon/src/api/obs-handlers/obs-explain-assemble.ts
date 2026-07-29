@@ -472,6 +472,9 @@ export function assembleIncidentReport(
     outcome: { endReason, degraded, severity },
     cost: { costUsd, totalTokens, tokenBasis: "input+output+cache" as const, cacheReadRatio },
     timing: { durationMs, turnCount },
+    ...(signals.inboundEdit !== undefined
+      ? { inboundEdit: signals.inboundEdit }
+      : {}),
     ...(signals.responseLocale !== undefined
       ? { responseLocale: signals.responseLocale }
       : {}),

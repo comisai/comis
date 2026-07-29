@@ -151,7 +151,7 @@ describe("assembleIncidentReport — response locale decision", () => {
 describe("assembleIncidentReport — inbound message kind", () => {
   it("surfaces the content-free edit kind on the explain report", () => {
     const signals = makeSignals({
-      inbound: { kind: "edit" },
+      inboundEdit: true,
     } as unknown as Partial<IncidentSignals>);
 
     const report = assembleIncidentReport(
@@ -163,11 +163,11 @@ describe("assembleIncidentReport — inbound message kind", () => {
     );
 
     expect(
-      (report as unknown as { inbound?: { kind: string } }).inbound,
-    ).toEqual({ kind: "edit" });
+      (report as unknown as { inboundEdit?: boolean }).inboundEdit,
+    ).toBe(true);
     expect(
-      (IncidentReportSchema.parse(report) as unknown as { inbound?: { kind: string } }).inbound,
-    ).toEqual({ kind: "edit" });
+      (IncidentReportSchema.parse(report) as unknown as { inboundEdit?: boolean }).inboundEdit,
+    ).toBe(true);
   });
 });
 

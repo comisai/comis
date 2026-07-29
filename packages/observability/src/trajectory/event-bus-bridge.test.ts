@@ -1069,6 +1069,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       messageCount: 1,
       systemDigest: "d",
       messagesDigest: "d",
+      inboundKind: "message",
     },
     "session:started": {
       channelType: "telegram",
