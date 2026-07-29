@@ -290,14 +290,21 @@ vi.mock("@comis/core", () => ({
   // resolver does — `coordinator` expands into `coordinatorToolGroups:
   // ["coordinator"]`, `worker` (the default) omits it. The cap set is
   // role-invariant (narrows-only), so the same caps are returned either way.
-  resolveAutonomy: vi.fn((cfg?: { role?: "worker" | "coordinator" }) => {
+  resolveAutonomy: vi.fn((cfg?: {
+    profile?: "assistant" | "standard";
+    role?: "worker" | "coordinator";
+  }) => {
+    const profile = cfg?.profile ?? "standard";
     const role: "worker" | "coordinator" = cfg?.role ?? "worker";
+    const capabilities = profile === "assistant"
+      ? []
+      : ["orch:spawn", "orch:graph", "orch:cron", "orch:skill", "orch:read", "orch:web", "orch:analyze", "orch:write"];
     return {
-      profile: "standard",
+      profile,
       role,
       ...(role === "coordinator" ? { coordinatorToolGroups: ["coordinator"] } : {}),
-      enabled: true,
-      capabilities: ["orch:spawn", "orch:graph", "orch:cron", "orch:skill", "orch:read", "orch:web", "orch:analyze", "orch:write"],
+      enabled: profile !== "assistant",
+      capabilities,
       resolvedCapabilities: [],
       mode: "accept-reversible",
       aggregateBudgetUsd: 200,
@@ -1350,6 +1357,41 @@ describe("setupTools", () => {
       expect(toolNames).toContain("memory_get");
       expect(toolNames).toContain("gateway");
       expect(toolNames).toContain("sessions_spawn");
+    });
+
+    it("assistant profile omits the unavailable spawn surface", async () => {
+      const deps = createMinimalDeps({
+        agents: {
+          "agent-1": {
+            autonomy: { profile: "assistant" },
+          } as any,
+        },
+      });
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+
+      await assembleToolsForAgent("agent-1");
+
+      const pipelineArgs = mockAssembleToolPipeline.mock.calls[0][0];
+      const toolNames = pipelineArgs.platformTools().map((tool: { name: string }) => tool.name);
+      expect(toolNames).not.toContain("sessions_spawn");
+    });
+
+    it("a child capability ceiling omits spawn when the parent did not delegate it", async () => {
+      const deps = createMinimalDeps();
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+
+      await assembleToolsForAgent("agent-1", {
+        autonomyParent: {
+          rootRunId: "root-1",
+          caps: ["orch:read"],
+        },
+      });
+
+      const pipelineArgs = mockAssembleToolPipeline.mock.calls[0][0];
+      const toolNames = pipelineArgs.platformTools().map((tool: { name: string }) => tool.name);
+      expect(toolNames).not.toContain("sessions_spawn");
     });
 
     it("full toolGroups bypasses profile filtering", async () => {
