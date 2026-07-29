@@ -152,6 +152,14 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     case "prompt.submitted": {
       const inboundKind = asString(data.inboundKind);
       if (inboundKind === "message" || inboundKind === "edit") acc.inboundEdit = inboundKind === "edit";
+      const groupHistoryMessageCount = nonnegativeInteger(data.groupHistoryMessageCount);
+      const groupHistoryCharCount = nonnegativeInteger(data.groupHistoryCharCount);
+      if (groupHistoryMessageCount > 0) {
+        acc.groupHistory = {
+          messageCount: groupHistoryMessageCount,
+          charCount: groupHistoryCharCount,
+        };
+      }
       const source = asString(data.responseLocaleSource);
       const locale = asString(data.responseLocale);
       const enforced = typeof data.responseLocaleEnforced === "boolean" ? data.responseLocaleEnforced : undefined;
@@ -821,6 +829,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
   return {
     sessionKey: acc.sessionKey,
     ...(acc.inboundEdit !== undefined ? { inboundEdit: acc.inboundEdit } : {}),
+    ...(acc.groupHistory !== undefined ? { groupHistory: acc.groupHistory } : {}),
     ...(acc.responseLocale !== undefined ? { responseLocale: acc.responseLocale } : {}),
     toolStats,
     failures: acc.failures,

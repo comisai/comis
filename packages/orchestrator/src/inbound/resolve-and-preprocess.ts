@@ -16,6 +16,7 @@ import {
   systemNowMs,
   toSafeErrorLogString,
   type EventMap,
+  type GroupHistoryContextEntry,
   type NormalizedMessage,
   type ResolvedTurnScope,
   type SessionKey,
@@ -27,6 +28,7 @@ import type { AgentExecutor, InboundMessageProvenancePlan } from "@comis/agent";
 import { isBotMentioned, isGroupMessage, compressAttachments } from "@comis/channels";
 
 import type { InboundPipelineDeps } from "./inbound-pipeline.js";
+import { selectStoredGroupHistory } from "./group-history-context.js";
 
 // ---------------------------------------------------------------------------
 // Deps narrowing
@@ -71,6 +73,10 @@ export interface ResolveAndPreprocessReady {
   inboundProvenancePlan: InboundMessageProvenancePlan;
   /** Message with content enrichment projected onto authoritative ingress fields. */
   processedMsg: NormalizedMessage;
+  /** Earlier non-activating group messages selected from durable session state. */
+  groupHistoryContext: GroupHistoryContextEntry[];
+  /** Rendered attributed-character count for content-free observability. */
+  groupHistoryCharCount: number;
 }
 
 /** Closed phase outcome for preprocessing or unavailable executor wiring. */
@@ -323,6 +329,27 @@ export async function resolveAndPreprocess(
     );
     return Promise.reject(sessionLoad.error);
   }
+  const shouldInjectGroupHistory =
+    isGroupMessage(effectiveMsg)
+    && (deps.autoReplyEngineConfig?.historyInjection ?? true);
+  const groupHistorySelection = shouldInjectGroupHistory
+    ? selectStoredGroupHistory(
+      sessionLoad.value,
+      deps.autoReplyEngineConfig?.maxGroupHistoryMessages ?? 20,
+    )
+    : { entries: [], charCount: 0, invalidCount: 0 };
+  if (groupHistorySelection.invalidCount > 0) {
+    deps.logger.warn(
+      {
+        step: "group-history-load",
+        agentId,
+        invalidCount: groupHistorySelection.invalidCount,
+        hint: "Inspect the scoped session store for malformed comis.group-history-context rows.",
+        errorKind: "validation" as const,
+      },
+      "Malformed stored group history rows were omitted",
+    );
+  }
 
   // ===== Phase 1B: Audio preflight + media preprocessing =====
 
@@ -330,6 +357,7 @@ export async function resolveAndPreprocess(
   delete ingressMetadata.linkPrefetch;
   delete ingressMetadata.sttPreprocess;
   delete ingressMetadata.visionPreprocess;
+  delete ingressMetadata.groupHistoryContext;
   let processedMsg: NormalizedMessage = {
     ...effectiveMsg,
     metadata: ingressMetadata,
@@ -436,6 +464,8 @@ export async function resolveAndPreprocess(
     sessionKey,
     turnScope,
     processedMsg,
+    groupHistoryContext: groupHistorySelection.entries,
+    groupHistoryCharCount: groupHistorySelection.charCount,
     inboundProvenancePlan: persisted.value,
   };
 }

@@ -101,6 +101,11 @@ export const IncidentReportSchema = z.object({
   }),
   /** Whether the selected turn's normalized inbound update was an edit. */
   inboundEdit: z.boolean().optional(),
+  /** Counts-only receipt for earlier group messages attached to the selected turn. */
+  groupHistory: z.object({
+    messageCount: z.number().int().positive(),
+    charCount: z.number().int().nonnegative(),
+  }).optional(),
   /** Content-free response-locale decision for the selected turn (exact trace)
    * or latest turn (whole session). */
   responseLocale: z

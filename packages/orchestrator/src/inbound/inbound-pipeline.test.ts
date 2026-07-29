@@ -392,7 +392,15 @@ describe("group history injection", () => {
 
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
-      text: expect.stringContaining("context marker 731"),
+      text: "@agent what was just said",
+      metadata: expect.objectContaining({
+        groupHistoryContext: [
+          {
+            senderId: "user-2",
+            text: "context marker 731",
+          },
+        ],
+      }),
     }));
     expect(deps.eventBus.emit).toHaveBeenCalledWith(
       "grouphistory:injected",

@@ -26,6 +26,7 @@ import {
   type ExecutionPromptResult,
   type PromptAssemblyParams,
 } from "./prompt-assembly-shared.js";
+import { renderGroupHistoryContext } from "./prompt-group-history.js";
 
 export async function assembleParentCachePrompt(
   params: PromptAssemblyParams,
@@ -68,6 +69,14 @@ export async function assembleParentCachePrompt(
     };
     const inboundLines = buildInboundMetadataSection(inboundMeta, false);
     if (inboundLines.length > 0) dynamicPreambleParts.push(inboundLines.join("\n"));
+
+    const groupHistorySection = renderGroupHistoryContext(
+      msg.metadata.groupHistoryContext,
+      deps.onSuspiciousContent,
+    );
+    if (groupHistorySection !== undefined) {
+      dynamicPreambleParts.push(groupHistorySection);
+    }
 
     // Channel section
     if (msg.channelType) {

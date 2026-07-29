@@ -59,6 +59,8 @@ export interface Acc {
   orchestrateToolCallsByLease: Map<string, Map<string, OrchestrateToolCallFold>>;
   /** Whether the LAST valid normalized inbound update was an edit. */
   inboundEdit?: boolean;
+  /** The LAST positive counts-only earlier-group-context receipt. */
+  groupHistory?: NonNullable<IncidentSignals["groupHistory"]>;
   /** The LAST valid `prompt.submitted` locale decision. */
   responseLocale?: NonNullable<IncidentSignals["responseLocale"]>;
   breakerOpenedTool?: string;

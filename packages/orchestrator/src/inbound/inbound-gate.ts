@@ -26,6 +26,7 @@ import type { InboundCallback } from "../approval/index.js";
 import type { SourceTerminalScope } from "../source-message-terminal.js";
 import { renderLocalized } from "../localization/deterministic-localization.js";
 import type { LocalizationKey } from "@comis/core";
+import { appendStoredGroupHistory } from "./group-history-context.js";
 
 // ---------------------------------------------------------------------------
 // Deps narrowing
@@ -236,32 +237,8 @@ export async function evaluateInboundGate(
       });
       // Continue to routing + execution below
     } else if (decision.action === "inject-history") {
-      emitObservationalEventSafely(deps, "autoreply:suppressed", {
-        channelId: msg.channelId,
-        senderId: msg.senderId,
-        reason: decision.reason,
-        injectedAsHistory: true,
-        timestamp: systemNowMs(),
-      });
-      deps.logger.info(
-        {
-          channelType: adapter.channelType,
-          chatId: msg.channelId,
-          senderId: msg.senderId,
-          reason: decision.reason,
-          activationMode: arConfig.groupActivation,
-          isBotMentioned: msg.metadata?.isBotMentioned === true,
-          replyToBot: msg.metadata?.replyToBot === true,
-          action: "inject-history" as const,
-          hint: "Group activation policy did not match — message saved as history context only. Set autoReplyEngine.groupActivation=always to respond to all group messages, or @-mention/reply to the bot to activate it.",
-          errorKind: "config" as const,
-        },
-        "Group message did not activate agent",
-      );
-
-      // Group history injection was disabled in production (groupHistoryBuffer
-      // deps slot was never wired); the slot has been removed.
-
+      let persistedAsHistory = false;
+      const persistenceStartedAt = systemNowMs();
       // Route history injection through command queue for serialization
       if (deps.commandQueue) {
         const historyEnqueueResult = await deps.commandQueue.enqueue(
@@ -272,11 +249,36 @@ export async function evaluateInboundGate(
             // No-op execution: serialized with concurrent executions via queue.
             // Lightweight save to append message as history context.
             const existing = deps.sessionManager.loadOrCreate(turnScope.conversation);
-            if (!existing.ok) return;
-            deps.sessionManager.save(turnScope.conversation, [
-              ...existing.value.slice(-(arConfig.maxHistoryInjections - 1)),
-              { role: "user" as const, content: `[${msg.senderId}]: ${msg.text ?? ""}` },
-            ]);
+            if (!existing.ok) {
+              deps.logger.warn({
+                err: existing.error.message,
+                hint: "Restore scoped session storage before retrying non-activating group messages.",
+                errorKind: existing.error.errorKind,
+                channelType: adapter.channelType,
+              }, "Group history session load failed");
+              return;
+            }
+            const saved = deps.sessionManager.save(
+              turnScope.conversation,
+              appendStoredGroupHistory(
+                existing.value,
+                {
+                  senderId: msg.senderId,
+                  text: msg.text,
+                },
+                arConfig.maxHistoryInjections,
+              ),
+            );
+            if (!saved.ok) {
+              deps.logger.warn({
+                err: saved.error.message,
+                hint: "Restore scoped session storage before retrying non-activating group messages.",
+                errorKind: saved.error.errorKind,
+                channelType: adapter.channelType,
+              }, "Group history persistence failed");
+              return;
+            }
+            persistedAsHistory = true;
           },
           sourceTerminalScope,
         );
@@ -288,6 +290,62 @@ export async function evaluateInboundGate(
             channelType: adapter.channelType,
           }, "History injection enqueue failed");
         }
+      } else {
+        const existing = deps.sessionManager.loadOrCreate(turnScope.conversation);
+        if (!existing.ok) {
+          deps.logger.warn({
+            err: existing.error.message,
+            hint: "Restore scoped session storage before retrying non-activating group messages.",
+            errorKind: existing.error.errorKind,
+            channelType: adapter.channelType,
+          }, "Group history session load failed");
+        } else {
+          const saved = deps.sessionManager.save(
+            turnScope.conversation,
+            appendStoredGroupHistory(
+              existing.value,
+              {
+                senderId: msg.senderId,
+                text: msg.text,
+              },
+              arConfig.maxHistoryInjections,
+            ),
+          );
+          if (!saved.ok) {
+            deps.logger.warn({
+              err: saved.error.message,
+              hint: "Restore scoped session storage before retrying non-activating group messages.",
+              errorKind: saved.error.errorKind,
+              channelType: adapter.channelType,
+            }, "Group history persistence failed");
+          } else {
+            persistedAsHistory = true;
+          }
+        }
+      }
+      emitObservationalEventSafely(deps, "autoreply:suppressed", {
+        channelId: msg.channelId,
+        senderId: msg.senderId,
+        reason: decision.reason,
+        injectedAsHistory: persistedAsHistory,
+        timestamp: systemNowMs(),
+      });
+      if (persistedAsHistory) {
+        deps.logger.info({
+          channelType: adapter.channelType,
+          chatId: msg.channelId,
+          senderId: msg.senderId,
+          reason: decision.reason,
+          activationMode: arConfig.groupActivation,
+          isBotMentioned: msg.metadata?.isBotMentioned === true,
+          replyToBot: msg.metadata?.replyToBot === true,
+          action: "inject-history" as const,
+          durationMs: Math.max(0, systemNowMs() - persistenceStartedAt),
+          hint: "Group activation policy did not match. Set autoReplyEngine.groupActivation=always to respond to all group messages, or @-mention/reply to the bot to activate it.",
+          errorKind: "config" as const,
+        },
+          "Group message persisted as context without activating agent",
+        );
       }
       return { action: "skip" }; // Do not route to agent
     } else {

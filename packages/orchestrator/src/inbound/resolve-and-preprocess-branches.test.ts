@@ -82,7 +82,7 @@ function makeDeps(overrides?: Partial<ResolveAndPreprocessDeps>): ResolveAndPrep
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any,
     sessionManager: {
-      loadOrCreate: vi.fn(() => ok({})),
+      loadOrCreate: vi.fn(() => ok([])),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any,
     principalResolver,
@@ -139,7 +139,7 @@ describe("resolveAndPreprocess (resolve-side branches)", () => {
   });
 
   it("calls sessionManager.loadOrCreate(sessionKey) after resolution", async () => {
-    const loadOrCreate = vi.fn(() => ok({}));
+    const loadOrCreate = vi.fn(() => ok([]));
     const deps = makeDeps({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       sessionManager: { loadOrCreate } as any,

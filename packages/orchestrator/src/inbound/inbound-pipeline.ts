@@ -47,6 +47,7 @@ import {
   createDeliveryOrigin,
   createConversationRef,
   enrichCurrentContext,
+  formatSessionKey,
   systemNowMs,
   tryGetContext,
 } from "@comis/core";
@@ -394,6 +395,8 @@ export async function processInboundMessage(
       executor,
       sessionKey,
       processedMsg,
+      groupHistoryContext,
+      groupHistoryCharCount,
       inboundProvenancePlan,
       turnScope,
     } = resolved;
@@ -460,9 +463,33 @@ export async function processInboundMessage(
       return;
     }
 
+    const executionMsg = groupHistoryContext.length === 0
+      ? gate.processedMsg
+      : {
+          ...gate.processedMsg,
+          metadata: {
+            ...gate.processedMsg.metadata,
+            groupHistoryContext,
+          },
+        };
+    if (groupHistoryContext.length > 0) {
+      emitObservationalEvent(deps, "grouphistory:injected", {
+        sessionKey: formatSessionKey(sessionKey),
+        channelType: adapter.channelType,
+        messageCount: groupHistoryContext.length,
+        charCount: groupHistoryCharCount,
+        timestamp: systemNowMs(),
+      });
+      deps.logger.debug({
+        step: "group-history-inject",
+        itemCount: groupHistoryContext.length,
+        inputLen: groupHistoryCharCount,
+      }, "Durable group history attached to activating turn");
+    }
+
     // Set up execution and route through the configured queue mode.
     const routed = await fromPromise(setupAndRoute(
-      deps, adapter, gate.processedMsg, msg, sessionKey, agentId, turnScope, conversationRef,
+      deps, adapter, executionMsg, msg, sessionKey, agentId, turnScope, conversationRef,
       executor, activePacers, sendOverrides, gate.directives,
       inboundProvenancePlan,
       sourceTerminalScope,

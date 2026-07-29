@@ -221,6 +221,12 @@ export function translatePayload(
         ...(payload.inboundKind === "message" || payload.inboundKind === "edit"
           ? { inboundKind: payload.inboundKind }
           : {}),
+        ...(typeof payload.groupHistoryMessageCount === "number"
+          ? { groupHistoryMessageCount: payload.groupHistoryMessageCount }
+          : {}),
+        ...(typeof payload.groupHistoryCharCount === "number"
+          ? { groupHistoryCharCount: payload.groupHistoryCharCount }
+          : {}),
         ...(typeof payload.responseLocale === "string"
           ? { responseLocale: payload.responseLocale }
           : {}),

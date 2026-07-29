@@ -70,6 +70,11 @@ export interface IncidentSignals {
   sessionKey: string;
   /** Whether the LAST normalized inbound update was an edit. */
   inboundEdit?: boolean;
+  /** Latest positive counts-only receipt for earlier group context. */
+  groupHistory?: {
+    messageCount: number;
+    charCount: number;
+  };
   /** The LAST `prompt.submitted` locale decision in the selected record set.
    * Exact-trace explain reports therefore describe the evaluated turn, while
    * whole-session explain reports describe the latest turn. Content-free. */

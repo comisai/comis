@@ -5,6 +5,8 @@ export {
   // NormalizedMessage
   AttachmentSchema,
   MAX_NORMALIZED_MESSAGE_TEXT_CHARS,
+  MAX_GROUP_HISTORY_CONTEXT_MESSAGES,
+  GroupHistoryContextEntrySchema,
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
   LinkPrefetchReceiptSchema,
   SttPreprocessReceiptsSchema,
@@ -138,6 +140,7 @@ export { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "../provider/ke
 
 export type {
   Attachment,
+  GroupHistoryContextEntry,
   LinkPrefetchReceipt,
   SttPreprocessReceipt,
   SttPreprocessSelection,

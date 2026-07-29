@@ -477,6 +477,9 @@ export function assembleIncidentReport(
     ...(signals.inboundEdit !== undefined
       ? { inboundEdit: signals.inboundEdit }
       : {}),
+    ...(signals.groupHistory !== undefined
+      ? { groupHistory: signals.groupHistory }
+      : {}),
     ...(signals.responseLocale !== undefined
       ? { responseLocale: signals.responseLocale }
       : {}),
