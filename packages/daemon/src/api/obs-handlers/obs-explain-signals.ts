@@ -27,6 +27,7 @@ import {
   previewAndDigest,
   applyMediaRecord,
   currentTurnBreakerOpenedTool,
+  latestPromptSequence,
 } from "./obs-explain-signals-fields.js";
 import {
   accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillUsedRecord, accumulateSkillSurfacedRecord, accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
@@ -136,10 +137,17 @@ function handleLogRecord(acc: Acc, rec: Record<string, unknown>): void {
     ensureTool(acc, tool).ok += 1;
   }
 }
-function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
+function handleEventRecord(
+  acc: Acc,
+  rec: Record<string, unknown>,
+  latestPromptSeq: number | undefined,
+): void {
   const type = asString(rec.type) ?? "";
   const data = (rec.data ?? {}) as Record<string, unknown>;
   const tool = asString(data.toolName);
+  const recordSeq = asNumber(rec.seq);
+  const isCurrentTurn = latestPromptSeq === undefined
+    || (recordSeq !== undefined && recordSeq > latestPromptSeq);
   switch (type) {
     case "prompt.submitted": {
       const inboundKind = asString(data.inboundKind);
@@ -272,6 +280,7 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       return;
     }
     case "subagent.delivery_skipped": {
+      if (!isCurrentTurn) return;
       const runId = asString(data.runId);
       const reason = asString(data.reason);
       if (
@@ -401,7 +410,7 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       return;
     case "subagent.completed":
     case "subagent.wait_completed":
-      accumulateSubAgentCompletedRecord(acc, data);
+      accumulateSubAgentCompletedRecord(acc, data, isCurrentTurn);
       return;
     case "capability.audited":
       accumulateCapabilityAuditedRecord(acc.spawnNodesByLease, data, rec.agentId, acc.agentId);
@@ -686,6 +695,7 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
  * carried a status/200/403 token. No `classifiedFailureBy` is consulted.
  */
 export function toIncidentSignals(records: Array<Record<string, unknown>>): IncidentSignals {
+  const latestPromptSeq = latestPromptSequence(records);
   const acc: Acc = {
     toolStats: new Map(),
     failures: [],
@@ -743,7 +753,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
         if (type === "prompt.submitted") acc.promptTraceIds.add(tid);
         else if (type.startsWith("tool.")) acc.toolTraceIds.add(tid);
       }
-      handleEventRecord(acc, rec);
+      handleEventRecord(acc, rec, latestPromptSeq);
     } else if (rec.traceSchema === "comis-cache-trace") {
       // Cache-layer telemetry — NOT tool evidence. Its tool:before/tool:after
       // stage records carry toolName + success and previously fell into the
@@ -757,6 +767,12 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
 
   // Newest-first failures (highest seq first).
   acc.failures.sort((a, b) => b.seq - a.seq);
+  const currentTurnFailures = latestPromptSeq === undefined
+    ? acc.failures
+    : acc.failures.filter((failure) => failure.seq > latestPromptSeq);
+  const currentTurnNodeBudgetBreaches = latestPromptSeq === undefined
+    ? acc.nodeBudgetBreaches
+    : acc.nodeBudgetBreaches.filter((breach) => breach.seq > latestPromptSeq);
 
   // Collapse toolStats Map → plain record, picking the dominant errorKind.
   const toolStats: IncidentSignals["toolStats"] = {};
@@ -810,10 +826,10 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.groupHistory !== undefined ? { groupHistory: acc.groupHistory } : {}),
     ...(acc.responseLocale !== undefined ? { responseLocale: acc.responseLocale } : {}),
     toolStats,
-    failures: acc.failures,
+    failures: currentTurnFailures,
     breakerEvents: acc.breakerEvents,
     offloads: acc.offloads,
-    nodeBudgetBreaches: acc.nodeBudgetBreaches,
+    nodeBudgetBreaches: currentTurnNodeBudgetBreaches,
     // Materialize lease-keyed spawn nodes in first-seen order when present.
     ...(acc.spawnNodesByLease.size > 0
       ? { spawnTree: [...acc.spawnNodesByLease.values()] }
