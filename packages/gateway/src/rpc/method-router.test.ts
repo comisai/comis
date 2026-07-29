@@ -432,6 +432,30 @@ describe("createDynamicMethodRouter trace logging", () => {
     expect((calls.warn[0]![0] as { errorKind: string }).errorKind).toBe("precondition");
   });
 
+  it("classifies a typed sub-agent spawn ceiling refusal as resource/warn", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    router.registerMethod("session.spawnceiling", "rpc", () => {
+      const error = new Error(
+        "[spawn_ceiling] Sub-agent spawn rejected: " +
+        "autonomy.spawn.maxConcurrentSelfAgents=4; current=4; reason=concurrency.",
+      );
+      error.name = "SubAgentSpawnCeilingError";
+      throw error;
+    });
+
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "session.spawnceiling", params: {}, id: 122 },
+      RPC_CTX,
+    );
+
+    expect(calls.error.length).toBe(0);
+    expect(calls.warn.length).toBe(1);
+    const payload = calls.warn[0]![0] as { errorKind: string; hint: string };
+    expect(payload.errorKind).toBe("resource");
+    expect(payload.hint).toMatch(/autonomy\.spawn/);
+  });
+
   it("does not include a long handler error message in the log hint", async () => {
     const { logger, calls } = makeLogger();
     const router = createDynamicMethodRouter(undefined, logger);

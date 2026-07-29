@@ -2430,15 +2430,22 @@ describe("createSubAgentRunner", () => {
       };
       const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling, logger });
 
-      expect(() =>
+      let thrown: unknown;
+      try {
         runner.spawn({
           task: "fork-bomb child",
           agentId: "agent-a",
           callerSessionKey: "default:user1:ch1",
           depth: 0,
           maxDepth: 3,
-        }),
-      ).toThrow(
+        });
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).name).toBe("SubAgentSpawnCeilingError");
+      expect((thrown as Error).message).toBe(
         "[spawn_ceiling] Sub-agent spawn rejected: " +
         "autonomy.spawn.maxConcurrentSelfAgents=4; current=4; reason=concurrency. " +
         "Wait for a running sub-agent to finish before retrying.",
