@@ -16,7 +16,7 @@ describe("announcement failure locale renderer", () => {
       } as never,
     });
 
-    expect(render("default", "he"))
+    expect(render("default", "und-Hebr"))
       .toBe("⚠️ משימת הרקע נכשלה ולכן התוצאה עלולה להיות חלקית.");
   });
 });
