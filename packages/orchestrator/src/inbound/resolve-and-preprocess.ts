@@ -10,9 +10,12 @@
 
 import {
   LinkPrefetchReceiptSchema,
+  MAX_NORMALIZED_MESSAGE_TEXT_CHARS,
   SttPreprocessReceiptsSchema,
   VisionDirectPreprocessReceiptSchema,
+  systemNowMs,
   toSafeErrorLogString,
+  type EventMap,
   type NormalizedMessage,
   type ResolvedTurnScope,
   type SessionKey,
@@ -92,6 +95,9 @@ type InboundPersistenceErrorKind =
   | "resource"
   | "validation";
 
+type InboundPersistenceFailureReason =
+  EventMap["message:inbound_persistence_failed"]["reason"];
+
 function inboundPersistenceHint(errorKind: InboundPersistenceErrorKind): string {
   switch (errorKind) {
     case "precondition":
@@ -102,6 +108,28 @@ function inboundPersistenceHint(errorKind: InboundPersistenceErrorKind): string 
       return "Repair the resolved agent's session persistence wiring before retrying channel delivery.";
     case "resource":
       return "Restore session storage ownership, free space, and lock health; channel delivery can then retry.";
+    default: {
+      const _exhaustive: never = errorKind;
+      return _exhaustive;
+    }
+  }
+}
+
+function inboundPersistenceFailureReason(
+  errorKind: InboundPersistenceErrorKind,
+  observedChars: number,
+): InboundPersistenceFailureReason {
+  switch (errorKind) {
+    case "validation":
+      return observedChars > MAX_NORMALIZED_MESSAGE_TEXT_CHARS
+        ? "message_text_too_large"
+        : "invalid_envelope";
+    case "precondition":
+      return "ledger_conflict";
+    case "resource":
+      return "storage_unavailable";
+    case "config":
+      return "persistence_unavailable";
     default: {
       const _exhaustive: never = errorKind;
       return _exhaustive;
@@ -242,6 +270,18 @@ export async function resolveAndPreprocess(
   // `originalMessages` payload in this single occurrence.
   const persisted = await deps.persistInboundMessage(agentId, msg, sessionKey);
   if (!persisted.ok) {
+    emitObservationalEvent(deps, "message:inbound_persistence_failed", {
+      agentId,
+      channelType: msg.channelType,
+      errorKind: persisted.error.errorKind,
+      reason: inboundPersistenceFailureReason(
+        persisted.error.errorKind,
+        msg.text.length,
+      ),
+      observedChars: msg.text.length,
+      limitChars: MAX_NORMALIZED_MESSAGE_TEXT_CHARS,
+      timestamp: systemNowMs(),
+    });
     deps.logger.error(
       {
         step: "session-provenance",

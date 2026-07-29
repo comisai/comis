@@ -302,6 +302,28 @@ export function healthBudgetExceededEventToRow(
   };
 }
 
+/** Map a pre-session inbound persistence failure to daemon-wide health. */
+export function inboundPersistenceFailedEventToRow(
+  payload: EventMap["message:inbound_persistence_failed"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: payload.agentId,
+    message: "message:inbound_persistence_failed",
+    details: JSON.stringify({
+      signal: "inbound_persistence_failed",
+      channelType: payload.channelType,
+      errorKind: payload.errorKind,
+      reason: payload.reason,
+      observedChars: payload.observedChars,
+      limitChars: payload.limitChars,
+    }),
+    traceId: undefined,
+  };
+}
+
 const PROBLEMATIC_CHANNEL_STATES = new Set([
   "disconnected",
   "errored",

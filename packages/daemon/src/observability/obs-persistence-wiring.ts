@@ -52,6 +52,7 @@ import {
   backgroundRecoveryEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
+  inboundPersistenceFailedEventToRow,
   channelHealthChangedEventToRow,
   recallDegradedEventToRow,
   prefixUnstableEventToRow,
@@ -239,6 +240,7 @@ export {
   backgroundRecoveryEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
+  inboundPersistenceFailedEventToRow,
   channelHealthChangedEventToRow,
   recallDegradedEventToRow,
   prefixUnstableEventToRow,
@@ -522,6 +524,9 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("health:budget_exceeded", (payload) => {
     diagnosticBuffer.push(healthBudgetExceededEventToRow(payload));
+  });
+  eventBus.on("message:inbound_persistence_failed", (payload) => {
+    diagnosticBuffer.push(inboundPersistenceFailedEventToRow(payload));
   });
   eventBus.on("channel:health_changed", (payload) => {
     const row = channelHealthChangedEventToRow(payload);

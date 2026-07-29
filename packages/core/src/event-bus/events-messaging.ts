@@ -22,6 +22,26 @@ export interface MessagingEvents {
   "message:received": { message: NormalizedMessage; sessionKey: SessionKey };
 
   /**
+   * A physical inbound could not be durably accepted before session creation.
+   * The payload is content-free so daemon-wide health can diagnose failures
+   * that have no session or trajectory.
+   */
+  "message:inbound_persistence_failed": {
+    agentId: string;
+    channelType: string;
+    errorKind: "config" | "precondition" | "resource" | "validation";
+    reason:
+      | "message_text_too_large"
+      | "invalid_envelope"
+      | "ledger_conflict"
+      | "storage_unavailable"
+      | "persistence_unavailable";
+    observedChars: number;
+    limitChars: number;
+    timestamp: number;
+  };
+
+  /**
    * Canonical terminal outcome for one physical inbound channel message.
    * Content-free and identity-complete so lifecycle consumers never guess by
    * newest chat activity or by an outbound receipt that may be untracked.

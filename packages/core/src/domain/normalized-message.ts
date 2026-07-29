@@ -6,6 +6,9 @@ import { STT_ERROR_KINDS } from "../media/voice-error.js";
 
 const MAX_DATE_EPOCH_MS = 8_640_000_000_000_000;
 
+/** Cross-channel ceiling for one normalized physical message. */
+export const MAX_NORMALIZED_MESSAGE_TEXT_CHARS = 65_536;
+
 /**
  * Voice-specific metadata for voice notes and audio messages.
  */
@@ -54,7 +57,7 @@ const OriginalInboundMessageSchema = z.strictObject({
     channelId: z.string().min(1),
     channelType: z.string().min(1),
     senderId: z.string().min(1),
-    text: z.string().max(32768),
+    text: z.string().max(MAX_NORMALIZED_MESSAGE_TEXT_CHARS),
     timestamp: z.number().int().positive().max(MAX_DATE_EPOCH_MS),
   });
 
@@ -182,7 +185,7 @@ export const NormalizedMessageSchema = z.strictObject({
     channelId: z.string().min(1),
     channelType: z.string().min(1),
     senderId: z.string().min(1),
-    text: z.string().max(32768),
+    text: z.string().max(MAX_NORMALIZED_MESSAGE_TEXT_CHARS),
     timestamp: z.number().int().positive(),
     attachments: z.array(AttachmentSchema).default([]),
     replyTo: z.guid().optional(),

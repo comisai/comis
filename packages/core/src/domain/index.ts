@@ -4,6 +4,7 @@
 export {
   AttachmentSchema,
   VoiceMetaSchema,
+  MAX_NORMALIZED_MESSAGE_TEXT_CHARS,
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
   LinkPrefetchReceiptSchema,
   SttPreprocessReceiptsSchema,
