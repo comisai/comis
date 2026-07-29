@@ -11,7 +11,13 @@
 
 import { conversationScopeToSessionKey, scrubSecretsFromText, toSafeErrorLogString, type ChannelEndpoint, type ConversationLocator, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout } from "@comis/core";
 import { err, fromPromise, ok, TimeoutError, withTimeout, type Result } from "@comis/shared";
-import { createDeliveryDedup, type DeliveryDedup } from "@comis/agent";
+import {
+  buildAnnouncementRewriteInput,
+  createDeliveryDedup,
+  enforceAnnouncementTerminalOutcome,
+  type AnnouncementTerminalOutcome,
+  type DeliveryDedup,
+} from "@comis/agent";
 import type { ChannelType } from "./announcement-dead-letter.js";
 import type {
   AnnouncementOperationIdentity,
@@ -43,6 +49,8 @@ export interface QueuedAnnouncement {
   destinationEndpoint: ChannelEndpoint;
   /** Response locale resolved for the originating user turn. */
   resolvedLanguage?: string;
+  /** Runtime-owned terminal truth that a model rewrite cannot weaken. */
+  terminalOutcome: AnnouncementTerminalOutcome;
   runId: string;
   /** Idempotency key `${callerSessionKey}::${runId}`. Built once at the delivery entry; opaque here. Undefined for a top-level spawn (no callerSessionKey). */
   idempotencyKey?: string;
@@ -568,14 +576,22 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         return;
       }
 
+      const failedOutcome = items.find(
+        (item): item is QueuedAnnouncement & {
+          terminalOutcome: Extract<AnnouncementTerminalOutcome, { status: "failed" }>;
+        } => item.terminalOutcome.status === "failed",
+      )?.terminalOutcome;
       const parentInput = items.length === 1
-        ? first.announcementText
+        ? buildAnnouncementRewriteInput(first.announcementText, first.terminalOutcome)
         : (() => {
             const taskSections = items.map((item, idx) => {
               const stripped = stripSystemPrefix(item.announcementText);
               return `### Task ${idx + 1}\n${stripped}`;
             }).join("\n\n");
-            return `[System Message]\n${items.length} background tasks have completed.\n\n---\n\n${taskSections}\n\n---\n\nReview these completed tasks and summarize the results for the user in your own voice. If no user notification is needed, respond with NO_REPLY.`;
+            const base = `[System Message]\n${items.length} background tasks have completed.\n\n---\n\n${taskSections}\n\n---\n\nReview these completed tasks and summarize the results for the user in your own voice. If no user notification is needed, respond with NO_REPLY.`;
+            return failedOutcome
+              ? buildAnnouncementRewriteInput(base, failedOutcome)
+              : base;
           })();
       const parentOptions = first.announceThreadId || first.resolvedLanguage
         ? {
@@ -598,7 +614,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
           systemScheduleTimeout,
           "announceToParent",
         );
-        if (candidate === undefined) {
+        if (candidate === undefined && failedOutcome === undefined) {
           if (items.some((item) => (item.attachments?.length ?? 0) > 0)) {
             await sendFinal(key, items, "");
             return;
@@ -607,7 +623,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
           markItemsDelivered(items);
           return;
         }
-        const scrubbedCandidate = scrubSecretsFromText(candidate);
+        const scrubbedCandidate = scrubSecretsFromText(candidate ?? "");
         if (scrubbedCandidate.redactions > 0) {
           deps.logger?.warn(
             {
@@ -620,7 +636,23 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             "Egress guard: rewritten announcement scrubbed",
           );
         }
-        await sendFinal(key, items, scrubbedCandidate.text);
+        const disclosure = failedOutcome
+          ? enforceAnnouncementTerminalOutcome(scrubbedCandidate.text, failedOutcome)
+          : { text: scrubbedCandidate.text, corrected: false };
+        if (disclosure.corrected) {
+          deps.logger?.warn(
+            {
+              batchKey: key,
+              batchSize: items.length,
+              runId: first.runId,
+              step: "completion-honesty",
+              errorKind: "validation" as const,
+              hint: "Inspect the parent announcement rewrite; the runtime appended the authoritative failed terminal state",
+            },
+            "Failed background-task status omitted by parent rewrite",
+          );
+        }
+        await sendFinal(key, items, disclosure.text ?? "");
       } catch (err) {
         if (items.some((item) => (item.attachments?.length ?? 0) > 0)) {
           deps.logger?.warn(

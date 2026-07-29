@@ -411,6 +411,160 @@ describe("createSubAgentRunner", () => {
     });
   });
 
+  it("an active owner wait claims the child completion instead of double-announcing it", async () => {
+    let resolveExecution!: (
+      value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>,
+    ) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const announceToParent = vi.fn().mockResolvedValue(undefined);
+    deps.announceToParent = announceToParent;
+    const callerConversation = createTestConversation();
+    const callerSessionKey = formattedConversation(callerConversation);
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "wait-owned completion",
+      agentId: "default",
+      callerAgentId: "parent",
+      callerSessionKey,
+      callerConversation,
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+    const waitWithAnnouncementClaim = runner.waitForCompletions as unknown as (
+      runIds: readonly string[],
+      timeoutMs: number,
+      signal: AbortSignal | undefined,
+      announcementConsumerSessionKey: string,
+    ) => ReturnType<typeof runner.waitForCompletions>;
+    const waiting = waitWithAnnouncementClaim(
+      [runId],
+      60_000,
+      undefined,
+      callerSessionKey,
+    );
+
+    resolveExecution({
+      response: "one terminal result",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    await expect(waiting).resolves.toEqual([{
+      runId,
+      status: "completed",
+      completion: expect.objectContaining({
+        endReason: "completed",
+        summary: "one terminal result",
+      }),
+    }]);
+    expect(announceToParent).not.toHaveBeenCalled();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(deps.eventBus.emit).not.toHaveBeenCalledWith(
+      "subagent:delivery_skipped",
+      expect.anything(),
+    );
+  });
+
+  it("a timed-out owner wait releases the child completion announcement", async () => {
+    let resolveExecution!: (
+      value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>,
+    ) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const announceToParent = vi.fn().mockResolvedValue(undefined);
+    deps.announceToParent = announceToParent;
+    const callerConversation = createTestConversation();
+    const callerSessionKey = formattedConversation(callerConversation);
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "complete after wait timeout",
+      agentId: "default",
+      callerAgentId: "parent",
+      callerSessionKey,
+      callerConversation,
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+    const waitWithAnnouncementClaim = runner.waitForCompletions as unknown as (
+      runIds: readonly string[],
+      timeoutMs: number,
+      signal: AbortSignal | undefined,
+      announcementConsumerSessionKey: string,
+    ) => ReturnType<typeof runner.waitForCompletions>;
+    const waiting = waitWithAnnouncementClaim([runId], 100, undefined, callerSessionKey);
+
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(waiting).resolves.toEqual([{ runId, status: "timeout" }]);
+
+    resolveExecution({
+      response: "completed after caller stopped waiting",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(announceToParent).toHaveBeenCalledTimes(1);
+  });
+
+  it("a wait from another session cannot claim the child completion announcement", async () => {
+    let resolveExecution!: (
+      value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>,
+    ) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const announceToParent = vi.fn().mockResolvedValue(undefined);
+    deps.announceToParent = announceToParent;
+    const callerConversation = createTestConversation();
+    const callerSessionKey = formattedConversation(callerConversation);
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "preserve exact session ownership",
+      agentId: "default",
+      callerAgentId: "parent",
+      callerSessionKey,
+      callerConversation,
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+    const waitWithAnnouncementClaim = runner.waitForCompletions as unknown as (
+      runIds: readonly string[],
+      timeoutMs: number,
+      signal: AbortSignal | undefined,
+      announcementConsumerSessionKey: string,
+    ) => ReturnType<typeof runner.waitForCompletions>;
+    const waiting = waitWithAnnouncementClaim(
+      [runId],
+      60_000,
+      undefined,
+      "different-session",
+    );
+
+    resolveExecution({
+      response: "owned by the original caller",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    await expect(waiting).resolves.toEqual([{
+      runId,
+      status: "completed",
+      completion: expect.objectContaining({ endReason: "completed" }),
+    }]);
+    expect(announceToParent).toHaveBeenCalledTimes(1);
+  });
+
   // -----------------------------------------------------------------------
   // Allowlist blocks unauthorized agent
   // -----------------------------------------------------------------------
@@ -605,6 +759,7 @@ describe("createSubAgentRunner", () => {
       expect.objectContaining({
         runId,
         agentId: "researcher",
+        parentSessionKey: formattedConversation(callerConversation),
         success: true,
         tokensUsed: 200,
         cost: 0.02,
@@ -2415,18 +2570,41 @@ describe("createSubAgentRunner", () => {
     // ---------------------------------------------------------------------
     it("rejects spawn when the injected checkSpawnCeiling returns ok:false (tree-wide concurrency)", () => {
       const ceilingDeps = createLimitDeps();
-      const checkSpawnCeiling = vi.fn().mockReturnValue({ ok: false, reason: "concurrency" });
-      const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling });
+      const checkSpawnCeiling = vi.fn().mockReturnValue({
+        ok: false,
+        reason: "concurrency",
+        configKey: "autonomy.spawn.maxConcurrentSelfAgents",
+        current: 4,
+        limit: 4,
+      });
+      const logger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+      };
+      const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling, logger });
 
-      expect(() =>
+      let thrown: unknown;
+      try {
         runner.spawn({
           task: "fork-bomb child",
           agentId: "agent-a",
           callerSessionKey: "default:user1:ch1",
           depth: 0,
           maxDepth: 3,
-        }),
-      ).toThrow(/spawn ceiling|concurrency/i);
+        });
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).name).toBe("SubAgentSpawnCeilingError");
+      expect((thrown as Error).message).toBe(
+        "[spawn_ceiling] Sub-agent spawn rejected: " +
+        "autonomy.spawn.maxConcurrentSelfAgents=4; current=4; reason=concurrency. " +
+        "Wait for a running sub-agent to finish before retrying.",
+      );
 
       // The reject mirrors the depth/children reject: the rejection event fires
       // (the ceiling's "concurrency" reason maps to the closed-union tree-wide
@@ -2435,6 +2613,15 @@ describe("createSubAgentRunner", () => {
       expect(ceilingDeps.eventBus.emit).toHaveBeenCalledWith(
         "session:sub_agent_spawn_rejected",
         expect.objectContaining({ reason: "ceiling_concurrency" }),
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          configKey: "autonomy.spawn.maxConcurrentSelfAgents",
+          current: 4,
+          limit: 4,
+          errorKind: "resource",
+        }),
+        "Subagent spawn rejected",
       );
       expect(ceilingDeps.sessionStore.save).not.toHaveBeenCalled();
     });
@@ -3606,6 +3793,37 @@ describe("abort wiring in spawn", () => {
       },
       telemetry: { finishReason: "max_steps" },
     });
+  });
+
+  it("renders the failed completion notice in the originating response locale", async () => {
+    const failureNotice = "⚠️ משימת הרקע נכשלה ולכן התוצאה עלולה להיות חלקית.";
+    deps.renderAnnouncementFailureNotice = vi.fn().mockReturnValue(failureNotice);
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "partial output",
+      tokensUsed: { total: 3000 },
+      cost: { total: 0.3 },
+      finishReason: "max_steps",
+      stepsExecuted: 50,
+    });
+
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "compare options",
+      agentId: "default",
+      resolvedLanguage: "he",
+      announceChannelType: "telegram",
+      announceChannelId: "chat-1",
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(deps.renderAnnouncementFailureNotice).toHaveBeenCalledWith("default", "he");
+    expect(deps.sendToChannel).toHaveBeenCalledWith(
+      "telegram",
+      "chat-1",
+      expect.stringContaining(failureNotice),
+      undefined,
+    );
   });
 
   // completion with stop does not include abort in announcement

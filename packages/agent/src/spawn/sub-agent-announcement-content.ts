@@ -16,6 +16,42 @@ export interface ValidationResult {
   size?: number;
 }
 
+export type AnnouncementTerminalOutcome =
+  | { status: "completed" }
+  | { status: "failed"; failureNotice: string };
+
+export interface AnnouncementDisclosureResult {
+  text: string | undefined;
+  corrected: boolean;
+}
+
+/**
+ * Add the localized runtime-owned terminal-state sentence when a parent
+ * rewrite omitted it. A failed completion can never become NO_REPLY.
+ */
+export function enforceAnnouncementTerminalOutcome(
+  candidate: string | undefined,
+  outcome: AnnouncementTerminalOutcome,
+): AnnouncementDisclosureResult {
+  if (outcome.status === "completed") return { text: candidate, corrected: false };
+  const notice = outcome.failureNotice.trim();
+  const text = candidate?.trim();
+  if (text?.includes(notice)) return { text, corrected: false };
+  return {
+    text: text ? `${text}\n\n${notice}` : notice,
+    corrected: true,
+  };
+}
+
+/** Tell the parent rewrite to preserve the deterministic failure disclosure. */
+export function buildAnnouncementRewriteInput(
+  announcementText: string,
+  outcome: AnnouncementTerminalOutcome,
+): string {
+  if (outcome.status === "completed") return announcementText;
+  return `${announcementText}\n\nThe final user-facing response must include this exact failure notice verbatim:\n${outcome.failureNotice}`;
+}
+
 export function buildAnnouncementMessage(params: {
   task: string;
   status: "completed" | "failed";

@@ -41,6 +41,16 @@ describe("classifyTypedRpcError", () => {
     });
   });
 
+  it("classifies an exhausted sub-agent spawn ceiling as a resource warning", () => {
+    const classification = classifyTypedRpcError(named("SubAgentSpawnCeilingError"));
+
+    expect(classification).toEqual({
+      errorKind: "resource",
+      hint: expect.stringMatching(/autonomy\.spawn/),
+      level: "warn",
+    });
+  });
+
   it("classifies ValidationError and RequiredToolsUnreachableError as validation/warn", () => {
     expect(classifyTypedRpcError(named("ValidationError"))!.errorKind).toBe("validation");
     expect(classifyTypedRpcError(named("RequiredToolsUnreachableError"))!.errorKind).toBe("validation");

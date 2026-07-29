@@ -1868,6 +1868,30 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       nodeCount: 4,
       timestamp: 0,
     },
+    "session:sub_agent_spawned": {
+      runId: "run-child-1",
+      parentSessionKey: "parent-session",
+      agentId: "child-agent",
+      rootRunId: "root-session-1",
+      caps: ["orch:web"],
+      timestamp: 0,
+    },
+    "session:sub_agent_completed": {
+      runId: "run-child-1",
+      parentSessionKey: "parent-session",
+      agentId: "child-agent",
+      success: false,
+      runtimeMs: 12_000,
+      tokensUsed: 2_500,
+      cost: 0.04,
+      timestamp: 0,
+    },
+    "session:sub_agent_wait_completed": {
+      runId: "run-child-1",
+      parentSessionKey: "parent-session",
+      success: false,
+      timestamp: 0,
+    },
     // Counts/ids + the closed-union mode only — the correlation
     // invariant must hold (no sessionKey/traceId leak into the record data).
     "subagent:steered": {
@@ -2157,6 +2181,109 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- graph:repaired + graph:synthesized_from_i
     for (const forbidden of ["intent", "nodes", "graph", "type_config", "typeConfig", "task", "label", "body"]) {
       expect(data[forbidden], `forbidden body key on trajectory record: ${forbidden}`).toBeUndefined();
     }
+  });
+});
+
+describe("TRAJECTORY_BRIDGE_MAPPING -- direct sub-agent spawn topology", () => {
+  it("records a content-free child leaf with its root and attenuated caps", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("session:sub_agent_spawned", {
+      runId: "run-child-1",
+      parentSessionKey: "parent-session",
+      agentId: "child-agent",
+      rootRunId: "root-session-1",
+      caps: ["orch:web"],
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("subagent.spawned");
+    expect(recorder.calls[0]!.data).toEqual({
+      runId: "run-child-1",
+      rootRunId: "root-session-1",
+      parentLeaseId: undefined,
+      childAgentId: "child-agent",
+      caps: ["orch:web"],
+    });
+    expect(recorder.calls[0]!.data).not.toHaveProperty("parentSessionKey");
+  });
+
+  it("records a failed child completion only on the owning parent trajectory", () => {
+    const bus = makeBus();
+    const parentRecorder = createCaptureRecorder();
+    const siblingRecorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({
+      eventBus: bus,
+      recorder: parentRecorder,
+      ownerSessionKey: "parent-session",
+    });
+    attachTrajectoryToEventBus({
+      eventBus: bus,
+      recorder: siblingRecorder,
+      ownerSessionKey: "sibling-session",
+    });
+
+    (bus.emit as unknown as (name: string, payload: Record<string, unknown>) => void)(
+      "session:sub_agent_completed",
+      {
+        runId: "run-child-1",
+        parentSessionKey: "parent-session",
+        agentId: "child-agent",
+        success: false,
+        runtimeMs: 12_000,
+        tokensUsed: 2_500,
+        cost: 0.04,
+        timestamp: 1000,
+      },
+    );
+
+    expect(parentRecorder.calls).toEqual([
+      {
+        type: "subagent.completed",
+        data: {
+          runId: "run-child-1",
+          childAgentId: "child-agent",
+          success: false,
+          runtimeMs: 12_000,
+          tokensUsed: 2_500,
+          costUsd: 0.04,
+        },
+      },
+    ]);
+    expect(siblingRecorder.calls).toHaveLength(0);
+  });
+
+  it("records a waited child failure on the active parent turn without result content", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({
+      eventBus: bus,
+      recorder,
+      ownerSessionKey: "parent-session",
+    });
+
+    (bus.emit as unknown as (name: string, payload: Record<string, unknown>) => void)(
+      "session:sub_agent_wait_completed",
+      {
+        runId: "run-child-1",
+        parentSessionKey: "parent-session",
+        success: false,
+        timestamp: 1000,
+      },
+    );
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]).toMatchObject({
+      type: "subagent.wait_completed",
+      data: {
+        runId: "run-child-1",
+        success: false,
+      },
+    });
+    expect(recorder.calls[0]!.data).not.toHaveProperty("parentSessionKey");
   });
 });
 
@@ -4057,10 +4184,8 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // This count guards TRAJECTORY_BRIDGE_MAPPING against a silent add or
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
-    // 122 = 121 + memory:recall_degraded (the degraded/failed-recall record —
-    // makes a dead recall diagnosable from `comis explain` + the system health view
-    // instead of a daemon.log grep).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(133);
+    // The exact count keeps every bridge addition or removal deliberate.
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(136);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

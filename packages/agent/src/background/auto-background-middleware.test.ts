@@ -248,7 +248,7 @@ describe("wrapToolForAutoBackground", () => {
 
     const rejectingManager = {
       ...manager,
-      promote: vi.fn().mockReturnValue({ ok: false, error: "limit" }),
+      promote: vi.fn().mockReturnValue({ ok: false, error: new Error("limit") }),
     } as unknown as BackgroundTaskManager;
     const onRejectedPromoted = vi.fn();
     const rejected = wrapToolForAutoBackground(
@@ -258,7 +258,9 @@ describe("wrapToolForAutoBackground", () => {
       () => buildOrigin({ agentId: "agent-1" }),
       onRejectedPromoted,
     );
-    await rejected.execute("call-rejected", {}, undefined, undefined, undefined);
+    await expect(
+      rejected.execute("call-rejected", {}, undefined, undefined, undefined),
+    ).rejects.toThrow("limit");
     expect(onRejectedPromoted).not.toHaveBeenCalled();
   });
 
@@ -338,7 +340,7 @@ describe("wrapToolForAutoBackground", () => {
     expect(details.status).toBe("backgrounded");
   });
 
-  it("falls back to foreground when concurrency limit exceeded", async () => {
+  it("rejects immediately and aborts the tool when background capacity is exhausted", async () => {
     // Create a manager with very low limits
     const limitedManager = createBackgroundTaskManager({
       dataDir,
@@ -354,12 +356,30 @@ describe("wrapToolForAutoBackground", () => {
     // Fill up the limit
     limitedManager.promote("t1", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
 
-    const tool = createMockTool({ resolveAfterMs: 100, result: toolOk("foreground-result") });
+    let receivedSignal: AbortSignal | undefined;
+    const tool: ToolDefinition = {
+      name: "slow_report",
+      description: "test",
+      parameters: {},
+      execute: vi.fn((_toolCallId, _params, signal) => {
+        receivedSignal = signal;
+        return new Promise<AgentToolResult<unknown>>((resolve, reject) => {
+          const timer = setTimeout(() => resolve(toolOk("foreground-result")), 75);
+          signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new Error("underlying tool aborted"));
+          }, { once: true });
+        });
+      }),
+    };
     const wrapped = wrapToolForAutoBackground(tool, limitedManager, config, () => buildOrigin({ agentId: "agent-1" }));
 
-    // Should await normally since promotion will fail
-    const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);
-    expect(result).toEqual(toolOk("foreground-result"));
+    await expect(
+      wrapped.execute("call-1", {}, undefined, undefined, undefined),
+    ).rejects.toThrow(
+      "[background_capacity] Background task capacity reached: agents.agent-1.backgroundTasks.maxPerAgent=1; active=1",
+    );
+    expect(receivedSignal?.aborted).toBe(true);
 
     // Clean up the stuck task
     for (const task of limitedManager.getAllTasks()) {
@@ -509,9 +529,9 @@ describe("wrapToolForAutoBackground", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Never-auto-background tools: the background-task META tool and the
-  // self-delivering media-generation tools must never be promoted (regardless
-  // of excludeTools config), exactly like exec.
+  // Never-auto-background tools: observer/wait tools and the self-delivering
+  // media-generation tools must never be promoted (regardless of excludeTools
+  // config), exactly like exec.
   //
   // Live incident (2026-07-08): a "make me an image" request auto-promoted
   // image_generate at the 10s threshold and returned a "backgrounded"
@@ -534,7 +554,13 @@ describe("wrapToolForAutoBackground", () => {
     // notice leaked to the user. Backgrounding a WAIT is self-defeating — the
     // stub returns instantly (defeating the wait) and the completion notice is
     // pure noise.
-    for (const name of ["background_tasks", "sleep", "image_generate", "video_generate"]) {
+    for (const name of [
+      "background_tasks",
+      "subagents",
+      "sleep",
+      "image_generate",
+      "video_generate",
+    ]) {
       it(`when tool.name === '${name}', wrapToolForAutoBackground returns the original tool unchanged (excludeTools=[])`, () => {
         config.excludeTools = [];
         const tool = createMockTool({ name });

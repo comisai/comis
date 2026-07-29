@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   driveTextFilePath,
   findAssistantReplyAfterInbound,
+  selectMainTrajectoryPath,
   telegramInboundGuid,
   telegramInjectAddressingError,
   wireContainsAssistantReply,
@@ -103,5 +104,27 @@ describe("live driver session correlation", () => {
   it("distinguishes a literal bot mention from an absolute message file", () => {
     expect(driveTextFilePath("@test_bot reply here again")).toBeUndefined();
     expect(driveTextFilePath("@/tmp/live-message.txt")).toBe("/tmp/live-message.txt");
+  });
+
+  it("selects the parent Telegram trajectory when a newer sub-agent shares its principal", () => {
+    const sessionsRoot = "/tmp/comis/workspace/sessions";
+    const principal = "platform_same-principal";
+    const suffix = `${principal}~peer~${principal}.jsonl.trajectory.jsonl`;
+    const parent = `${sessionsRoot}/default/telegram/${suffix}`;
+    const child =
+      `${sessionsRoot}/default/sub-agent@3aruntime@3achild-run/${suffix}`;
+
+    expect(
+      selectMainTrajectoryPath(
+        [
+          { path: parent, mtimeMs: 100 },
+          { path: child, mtimeMs: 200 },
+        ],
+        sessionsRoot,
+        "default",
+        "telegram",
+        suffix,
+      ),
+    ).toBe(parent);
   });
 });

@@ -374,7 +374,7 @@ export interface OrchestratorApiDeps {
   /** The operator deterministic-replay wiring cluster (outputGuard + the sandbox-backed pinned-byte re-spawn seam + an optional replay-socket factory). OPTIONAL — the composition root assembles it from the cap-endpoint handle + the sandbox; absent ⇒ `orchestrate.replay` is not registered. Combined in rpc-dispatch with `durableRuns` (runId validation) + a workspace resolver into the createOrchestrateReplayHandlers session deps. The SEPARATE replay socket + re-spawn are never a mode of the production endpoint (INV-1). */
   orchestrateReplay?: import("../wiring/setup-orchestrate-replay.js").OrchestrateReplayWiring;
   escalate?: import("../autonomy/durable-resume-engine.js").NotifyFn; // Content-free NotifyFn, fired NEVER-awaited.
-  eventBus?: AppContainer["eventBus"]; // graph-mutate.ts emits `pipeline:authored` via eventBus, tier from getProviderCapabilityClass+deps.agents at rpc-dispatch.ts (when-absent: AUDIT-orchestrator.md). Both optional; eventBus shape matches sibling slices (ApiDispatchDeps parity).
+  eventBus?: AppContainer["eventBus"]; // graph-mutate.ts emits authoring telemetry and subagent-handlers.ts emits synchronous wait outcomes for explain. When absent, those diagnostics are unavailable but the handlers still operate (AUDIT-orchestrator.md).
   getProviderCapabilityClass?: (provider: string | undefined) => import("@comis/agent").CapabilityClass | undefined;
 }
 

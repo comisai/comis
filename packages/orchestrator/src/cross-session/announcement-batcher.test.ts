@@ -30,6 +30,7 @@ function makeAnnouncement(overrides: Partial<QueuedAnnouncement> = {}): QueuedAn
       conversationId: "chan-123",
       conversationKind: "direct",
     },
+    terminalOutcome: { status: "completed" },
     runId: "run-1",
     ...overrides,
   };
@@ -122,6 +123,56 @@ describe("AnnouncementBatcher", () => {
     // Single item delivers with original text unmodified
     expect(deps.announceToParent.mock.calls[0]![3]).toContain("[System Message]");
     expect(deps.announceToParent.mock.calls[0]![3]).toContain("A background task has completed.");
+  });
+
+  it("repairs a failed completion rewrite that omits the terminal failure", async () => {
+    const failureNotice = "⚠️ משימת הרקע נכשלה ולכן התוצאה עלולה להיות חלקית.";
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue(
+        "Reviewer finished. Choose the first option.",
+      ),
+      sendToChannel: vi.fn().mockResolvedValue(true),
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({
+      announcementText:
+        "[System Message]\nA background task has failed.\n\nTask: compare options\nStatus: Failed\nResult: Error: one source failed",
+      terminalOutcome: { status: "failed", failureNotice },
+    }));
+    await vi.advanceTimersByTimeAsync(2000);
+    await batcher.flush();
+
+    expect(deps.sendToChannel).toHaveBeenCalledWith(
+      "discord",
+      "chan-123",
+      `Reviewer finished. Choose the first option.\n\n${failureNotice}`,
+      undefined,
+    );
+  });
+
+  it("does not let NO_REPLY suppress a failed completion", async () => {
+    const failureNotice = "⚠️ This background task failed, so its result may be incomplete.";
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue(undefined),
+      sendToChannel: vi.fn().mockResolvedValue(true),
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({
+      announcementText:
+        "[System Message]\nA background task has failed.\n\nTask: compare options\nStatus: Failed\nResult: Error: one source failed",
+      terminalOutcome: { status: "failed", failureNotice },
+    }));
+    await vi.advanceTimersByTimeAsync(2000);
+    await batcher.flush();
+
+    expect(deps.sendToChannel).toHaveBeenCalledWith(
+      "discord",
+      "chan-123",
+      failureNotice,
+      undefined,
+    );
   });
 
   it("persists the explicit thread route across the debounce boundary", async () => {

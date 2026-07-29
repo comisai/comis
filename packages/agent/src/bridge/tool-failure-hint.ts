@@ -29,6 +29,10 @@ const BRACKETED_ERROR_CODE = /\[([a-z]+(?:_[a-z]+)+)\]/;
  * `classifyToolError`). The `:` anchors the errno format and avoids matching prose.
  */
 const NODE_PATH_TYPE_ERRNO = /\b(EISDIR|ENOTDIR):/;
+const BACKGROUND_CAPACITY_BINDING =
+  /(agents\.[^\s";]+\.backgroundTasks\.(?:maxPerAgent|maxTotal)=\d+;\s*active=\d+)/;
+const SPAWN_CEILING_BINDING =
+  /(autonomy\.spawn\.(?:maxConcurrentSelfAgents|maxSpawnDepth|maxChildrenPerAgent)=\d+;\s*current=\d+)/;
 
 /** The generic fallback when no recognizable error code is present. */
 export const GENERIC_TOOL_FAILURE_HINT =
@@ -41,8 +45,21 @@ export const GENERIC_TOOL_FAILURE_HINT =
  */
 export function toolFailureHint(errorText?: string): string {
   if (errorText) {
-    if (classifyRuntimeToolGuard(errorText) === "step_limit") {
+    const runtimeGuard = classifyRuntimeToolGuard(errorText);
+    if (runtimeGuard === "step_limit") {
       return "Execution step budget was exhausted; increase max_steps for the run or simplify the task before retrying";
+    }
+    if (runtimeGuard === "background_task_capacity") {
+      const binding = BACKGROUND_CAPACITY_BINDING.exec(errorText)?.[1];
+      return binding === undefined
+        ? "Background task capacity was exhausted; inspect the owning agent's backgroundTasks limits before retrying"
+        : `Background task capacity was exhausted at ${binding}; wait for a running task to finish before retrying`;
+    }
+    if (runtimeGuard === "spawn_ceiling") {
+      const binding = SPAWN_CEILING_BINDING.exec(errorText)?.[1];
+      return binding === undefined
+        ? "Sub-agent spawn capacity was exhausted; inspect the autonomy.spawn limits before retrying"
+        : `Sub-agent spawn capacity was exhausted at ${binding}; wait for a running sub-agent to finish before retrying`;
     }
     const m = BRACKETED_ERROR_CODE.exec(errorText);
     if (m) {

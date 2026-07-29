@@ -1404,6 +1404,7 @@ async function bootFoundation(
   const { backgroundTaskManager } = setupBackgroundTasks({
     dataDir,
     config: resolveAgentBackgroundTasksConfig(container.config.agents, container.config.routing.defaultAgentId),
+    maxTotalConfigAgentId: container.config.routing.defaultAgentId,
     resolveConfigForAgent: (agentId) => resolveAgentBackgroundTasksConfig(container.config.agents, agentId),
     eventBus: container.eventBus,
     logger: logLevelManager.getLogger("background-tasks"),

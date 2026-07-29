@@ -38,10 +38,10 @@
 import type { ClockPort, TimerPort, ResolvedAutonomy, DurableRootBudget } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { LeaseManager } from "@comis/infra";
-import type { SpendGateOutcome } from "@comis/agent";
+import type { SpawnCeilingDecision, SpendGateOutcome } from "@comis/agent";
 import type { Result } from "@comis/shared";
 
-import { createRootRunSemaphore, type SpawnDenyReason } from "./root-run-semaphore.js";
+import { createRootRunSemaphore } from "./root-run-semaphore.js";
 import { createPerRootBudget, type PerRootBudget } from "./per-root-budget.js";
 import { createCallRateLimiter } from "./call-rate-limiter.js";
 import { createOutwardQuota, type OutwardQuota, type QuotaError } from "./outward-quota.js";
@@ -68,7 +68,7 @@ export interface BoundedAutonomy {
     rootRunId: string,
     depth: number,
     fanout: number,
-  ): { ok: true } | { ok: false; reason: SpawnDenyReason };
+  ): SpawnCeilingDecision;
   /** Release one spawn slot for `rootRunId` (paired with a prior `tryAcquireSpawn`). */
   releaseSpawn(rootRunId: string): void;
   /** Keep budget authority alive while a durable DAG may start a later wave. */
@@ -271,8 +271,37 @@ export function createBoundedAutonomy(deps: {
   };
 
   return {
-    tryAcquireSpawn(rootRunId, depth, fanout): { ok: true } | { ok: false; reason: SpawnDenyReason } {
-      return semaphore.tryAcquireSpawn(rootRunId, depth, fanout);
+    tryAcquireSpawn(rootRunId, depth, fanout): SpawnCeilingDecision {
+      const decision = semaphore.tryAcquireSpawn(rootRunId, depth, fanout);
+      if (decision.ok) return decision;
+
+      switch (decision.reason) {
+        case "concurrency":
+          return {
+            ...decision,
+            configKey: "autonomy.spawn.maxConcurrentSelfAgents",
+            current: semaphore.activeCount(rootRunId),
+            limit: config.spawn.maxConcurrentSelfAgents,
+          };
+        case "depth":
+          return {
+            ...decision,
+            configKey: "autonomy.spawn.maxSpawnDepth",
+            current: depth,
+            limit: config.spawn.maxSpawnDepth,
+          };
+        case "fanout":
+          return {
+            ...decision,
+            configKey: "autonomy.spawn.maxChildrenPerAgent",
+            current: fanout,
+            limit: config.spawn.maxChildrenPerAgent,
+          };
+        default: {
+          const _exhaustive: never = decision.reason;
+          return _exhaustive;
+        }
+      }
     },
 
     releaseSpawn(rootRunId): void {

@@ -34,7 +34,7 @@
  */
 
 /** The non-internal error kinds a typed RPC refusal classifies as. */
-export type TypedRpcErrorKind = "precondition" | "validation" | "auth";
+export type TypedRpcErrorKind = "precondition" | "validation" | "auth" | "resource";
 
 /** Classification of a recognized typed RPC refusal. `level` is always `"warn"`. */
 export interface TypedRpcErrorClassification {
@@ -53,6 +53,8 @@ const TYPED_RPC_ERROR_BY_NAME: ReadonlyMap<string, TypedRpcErrorClassification> 
   // Caller precondition failures (incl. gated-off policy refusals).
   ["PreconditionError", { errorKind: "precondition", hint: "Caller precondition not met; check resource state before retry", level: "warn" } as const],
   ["SubAgentSpawnPausedError", { errorKind: "precondition", hint: "Resume sub-agent admission with the admin subagent.resume operation when new background work is allowed", level: "warn" } as const],
+  // Expected capacity refusal with its active bound preserved in the error message.
+  ["SubAgentSpawnCeilingError", { errorKind: "resource", hint: "Inspect the exact autonomy.spawn.* binding in the error; wait for a running sub-agent to finish or raise that bound", level: "warn" } as const],
   // Fail-closed SECURITY refusal (the sub-agent sandbox no-downgrade gate).
   ["SandboxDowngradeError", { errorKind: "precondition", hint: "Child sandbox posture is less confined than its spawner; align the child's skills sandbox config or set security.agentToAgent.sandboxNoDowngrade:false to allow", level: "warn" } as const],
   // Caller-side validation failures.

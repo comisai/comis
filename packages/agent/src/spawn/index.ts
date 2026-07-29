@@ -42,9 +42,15 @@ export type {
   SubAgentRunnerLogger,
   SubAgentSpawnAdmissionState,
   SubAgentSpawnAdmissionMutation,
+  SpawnCeilingDecision,
 } from "./sub-agent-runner.js";
 
 export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification } from "./sub-agent-result-processor.js";
+export {
+  buildAnnouncementRewriteInput,
+  enforceAnnouncementTerminalOutcome,
+} from "./sub-agent-announcement-content.js";
+export type { AnnouncementTerminalOutcome } from "./sub-agent-announcement-content.js";
 // createDeliveryDedup + DeliveryDedup cross the package boundary (the orchestrator
 // batcher + daemon wiring share one bounded delivered-key store). buildAnnounceKey
 // and MAX_DELIVERED_KEYS stay agent-internal (used only within spawn/ + the agent's

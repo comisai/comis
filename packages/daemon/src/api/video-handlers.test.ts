@@ -308,6 +308,55 @@ describe("createVideoHandlers (inline→submit)", () => {
     expect((w![0] as { errorKind?: string }).errorKind).toBe("dependency"); // VIDEO_ERR_TO_LOG mapping
   });
 
+  it("an unavailable provider preserves its binding hint before consuming rate capacity", async () => {
+    const bindingHint =
+      "Set FAL_KEY or change integrations.media.videoGeneration.provider.";
+    const submit = vi.fn().mockResolvedValue(
+      err(
+        new VideoGenError("The current model cannot generate video", {
+          videoErrorKind: "auth_required",
+          hint: bindingHint,
+        }),
+      ),
+    );
+    const rateLimiter = {
+      tryAcquire: vi.fn().mockReturnValue(true),
+      reset: vi.fn(),
+    };
+    const deps = createMockDeps({
+      provider: {
+        id: "unavailable",
+        isAvailable: () => false,
+        submit,
+        poll: vi.fn(),
+        fetchResult: vi.fn(),
+        execute: vi.fn(),
+      },
+      rateLimiter,
+    });
+    const handlers = createVideoHandlers(deps);
+
+    const result = (await handlers["video.generate"]!({
+      _agentId: "agent-1",
+      prompt: "a blue square moving",
+    })) as { success: boolean; error: string; hint?: string };
+
+    expect(result).toEqual({
+      success: false,
+      error: "The current model cannot generate video",
+      hint: bindingHint,
+    });
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(rateLimiter.tryAcquire).not.toHaveBeenCalled();
+    expect(insertMock(deps)).not.toHaveBeenCalled();
+    expect(trackMock(deps)).not.toHaveBeenCalled();
+    const warning = warnCalls(deps).find(
+      (call) => (call[0] as { step?: string }).step === "video_submit",
+    );
+    expect(warning).toBeTruthy();
+    expect((warning![0] as { hint?: string }).hint).toBe(bindingHint);
+  });
+
   // ─── pre-submit gates PRESERVED (non-regression) ───
   it("returns error when prompt is missing (no submit, no insert)", async () => {
     const deps = createMockDeps();

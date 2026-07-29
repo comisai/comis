@@ -8,11 +8,38 @@
 // result includes the augmented details.
 import { describe, it, expect, vi } from "vitest";
 import {
+  createRpcDispatchTool,
   createMultiActionDispatchTool,
   type MultiActionDispatchConfig,
 } from "./messaging-factory.js";
 import type { RpcCall } from "./tools/cron-tool.js";
 import { Type } from "typebox";
+
+describe("createRpcDispatchTool explicit failure outcomes", () => {
+  it("rejects an RPC result whose structured operation outcome is success false", async () => {
+    const rpcCall: RpcCall = vi.fn(async () => ({
+      success: false,
+      error: "video generation is unavailable",
+      hint: "configure a compatible provider",
+    }));
+    const tool = createRpcDispatchTool(
+      {
+        name: "synthetic_generate",
+        label: "Synthetic Generate",
+        description: "Generate a neutral synthetic artifact.",
+        parameters: Type.Object({ prompt: Type.String() }),
+        rpcMethod: "synthetic.generate",
+      },
+      rpcCall,
+    );
+
+    await expect(
+      tool.execute("call-failed", { prompt: "a blue square" }),
+    ).rejects.toThrow(
+      "video generation is unavailable. Hint: configure a compatible provider",
+    );
+  });
+});
 
 describe("createMultiActionDispatchTool opt-in factory flag for details augmentation", () => {
   it("augmentDetails hook adds visibleDelivery to attach action result", async () => {

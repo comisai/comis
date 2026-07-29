@@ -76,6 +76,7 @@ import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-exp
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
 import {
   subagentDeliverySkippedVerdict,
+  subagentFailedVerdict,
   subagentStuckKilledVerdict,
 } from "./obs-explain-subagent-killed-verdict.js";
 import { freshTailOriginLostVerdict } from "./obs-explain-fresh-tail-verdict.js";
@@ -88,6 +89,7 @@ import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
 import { orchestrateFailedVerdict } from "./obs-explain-orchestrate-verdict.js"; // failed orchestrate run (sibling — subdir cap)
 import { deliveryFailedVerdict } from "./obs-explain-delivery-verdict.js";
+import { spawnCeilingVerdict } from "./obs-explain-spawn-ceiling-verdict.js";
 
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1.
@@ -157,6 +159,8 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
 
   subagentDeliverySkippedVerdict,
 
+  subagentFailedVerdict,
+
   backgroundRecoveryVerdict,
 
   // A terminal channel dispatch is later and more user-visible than the
@@ -206,6 +210,45 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       ],
     };
   },
+
+  // A background-task admission guard is a local capacity decision, not an
+  // MCP/provider failure. Name the exact saturated knob and observed occupancy
+  // from the already-bounded failure preview so one explain call tells the
+  // operator whether to wait, cancel work, or change configuration.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) =>
+        candidate.classifiedFailureBy === "runtime_guard"
+        && candidate.matchedRule === "background_task_capacity",
+    );
+    if (failure === undefined) return null;
+    const capacity = failure.errorPreview.match(
+      /((?:agents\.[A-Za-z0-9_-]+\.backgroundTasks\.maxPerAgent|backgroundTasks\.maxTotal))=(\d+); active=(\d+)/,
+    );
+    const knob = capacity?.[1] ?? "backgroundTasks capacity";
+    const limit = capacity?.[2];
+    const active = capacity?.[3];
+    const occupancy =
+      limit !== undefined && active !== undefined
+        ? `${knob}=${limit}; active=${active}`
+        : knob;
+    return {
+      code: "background_task_capacity",
+      detail:
+        `the local background-task admission guard refused new work because ${occupancy}; `
+        + "no provider request was attempted",
+      suggestedNextSteps: [
+        "wait for a running background task to finish or cancel one that is no longer needed",
+        `if the workload requires more concurrency, raise ${knob} in the config file and restart the daemon`,
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
+  // A direct runtime-guard refusal is the acute cause of this turn's failed
+  // spawn. It must outrank unrelated breaker state retained on a long-running
+  // session.
+  spawnCeilingVerdict,
 
   // 4) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {

@@ -160,6 +160,10 @@ export const SpawnTreeNodeSchema = z.object({
   toolsInvoked: z.array(z.string()),
   denials: z.array(z.string()),
   budgetTokensUsed: z.number().optional(),
+  terminalOutcome: z.enum(["completed", "failed"]).optional(),
+  runtimeMs: z.number().nonnegative().optional(),
+  tokensUsed: z.number().nonnegative().optional(),
+  costUsd: z.number().nonnegative().optional(),
 });
 
 /** One spawn-tree node (see {@link SpawnTreeNodeSchema}). */

@@ -789,6 +789,125 @@ describe("toIncidentSignals — capability.audited fold (spawn-tree nodes)", () 
   });
 });
 
+describe("toIncidentSignals — direct sub-agent spawn-tree leaves", () => {
+  it("folds a failed completion into the matching direct child leaf and failure signal", () => {
+    const s = toIncidentSignals([
+      event("subagent.spawned", 1, {
+        runId: "run-child",
+        rootRunId: "root-session",
+        childAgentId: "worker",
+        caps: ["orch:web"],
+      }),
+      event("subagent.completed", 2, {
+        runId: "run-child",
+        childAgentId: "worker",
+        success: false,
+        runtimeMs: 12_000,
+        tokensUsed: 2_500,
+        costUsd: 0.04,
+      }),
+    ]);
+
+    expect(s.spawnTree).toEqual([
+      expect.objectContaining({
+        leaseId: "run-child",
+        terminalOutcome: "failed",
+        runtimeMs: 12_000,
+        tokensUsed: 2_500,
+        costUsd: 0.04,
+      }),
+    ]);
+    expect((s as unknown as { subagentCompletions?: unknown }).subagentCompletions).toEqual({
+      completed: 1,
+      failed: 1,
+      lastFailedRunId: "run-child",
+    });
+  });
+
+  it("folds a failed child observed by a synchronous parent wait", () => {
+    const s = toIncidentSignals([
+      event("subagent.wait_completed", 1, {
+        runId: "run-waited",
+        success: false,
+      }),
+    ]);
+
+    expect(s.subagentCompletions).toEqual({
+      completed: 1,
+      failed: 1,
+      lastFailedRunId: "run-waited",
+    });
+    expect(rootCause(s)?.code).toBe("subagent_failed");
+  });
+
+  it("counts one child once when lifecycle and wait observations share a run id", () => {
+    const s = toIncidentSignals([
+      event("subagent.completed", 1, {
+        runId: "run-shared",
+        childAgentId: "worker",
+        success: false,
+        runtimeMs: 12_000,
+        tokensUsed: 2_500,
+        costUsd: 0.04,
+      }),
+      event("subagent.wait_completed", 2, {
+        runId: "run-shared",
+        success: false,
+      }),
+    ]);
+
+    expect(s.subagentCompletions).toEqual({
+      completed: 1,
+      failed: 1,
+      lastFailedRunId: "run-shared",
+    });
+  });
+
+  it("keeps parallel sessions_spawn children distinct under their parent root", () => {
+    const s = toIncidentSignals([
+      capAudited(1, {
+        rootRunId: "root-session-a",
+        capability: "orch:spawn",
+        decision: "allow",
+      }, "parent"),
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "subagent.spawned",
+        seq: 2,
+        data: {
+          runId: "child-a",
+          rootRunId: "root-session-a",
+          childAgentId: "researcher",
+          caps: ["orch:web"],
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "subagent.spawned",
+        seq: 3,
+        data: {
+          runId: "child-b",
+          rootRunId: "root-session-a",
+          childAgentId: "researcher",
+          caps: ["orch:web"],
+        },
+      },
+    ]);
+
+    expect(s.spawnTree).toHaveLength(3);
+    const byId = new Map(s.spawnTree!.map((node) => [node.leaseId, node]));
+    expect(byId.get("child-a")).toMatchObject({
+      parentLeaseId: "root-session-a",
+      rootRunId: "root-session-a",
+      agentId: "researcher",
+      caps: ["orch:web"],
+    });
+    expect(byId.has("child-b")).toBe(true);
+  });
+});
+
 // Graph DAG nodes are spawn-tree leaves too.
 // A graph node spawn (in-process via gatedSpawn → subAgentRunner.spawn) emits NO
 // capability.audited (it never crosses the socket chokepoint), and all nodes share

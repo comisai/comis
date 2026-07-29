@@ -165,9 +165,29 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
         }
       }
 
+      const waitOwnerSessionKey =
+        controller.kind === "caller" && typeof rawParams._callerSessionKey === "string"
+          ? rawParams._callerSessionKey
+          : undefined;
       const waited = authorizedRunIds.length > 0
-        ? await deps.subAgentRunner.waitForCompletions(authorizedRunIds, timeoutMs, signal)
+        ? await deps.subAgentRunner.waitForCompletions(
+            authorizedRunIds,
+            timeoutMs,
+            signal,
+            waitOwnerSessionKey,
+          )
         : [];
+      if (waitOwnerSessionKey !== undefined) {
+        for (const entry of waited) {
+          if (entry.status !== "completed") continue;
+          deps.eventBus?.emit("session:sub_agent_wait_completed", {
+            runId: entry.runId,
+            parentSessionKey: waitOwnerSessionKey,
+            success: entry.completion.endReason === "completed",
+            timestamp: systemNowMs(),
+          });
+        }
+      }
       const waitedByRunId = new Map(waited.map((entry) => [entry.runId, entry]));
       const results = requestedRunIds.map((runId) => (
         deniedRunIds.has(runId)

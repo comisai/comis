@@ -59,6 +59,7 @@ import {
   type CoordinatorProgressForkHandle,
 } from "./coordinator-progress-fork.js";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
+import { buildBackgroundTaskFailedNotice } from "../executor/degraded-reply.js";
 import { randomUUID } from "node:crypto";
 import type {
   AnnouncementBatcher,
@@ -340,6 +341,35 @@ export class SubAgentSpawnPausedError extends Error {
   }
 }
 
+export type SpawnCeilingDecision =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: "concurrency" | "depth" | "fanout";
+      configKey:
+        | "autonomy.spawn.maxConcurrentSelfAgents"
+        | "autonomy.spawn.maxSpawnDepth"
+        | "autonomy.spawn.maxChildrenPerAgent";
+      current: number;
+      limit: number;
+    };
+
+/** Typed resource refusal carrying the exact spawn bound that rejected admission. */
+export class SubAgentSpawnCeilingError extends Error {
+  readonly reason = "spawn_ceiling" as const;
+  readonly decision: Extract<SpawnCeilingDecision, { ok: false }>;
+
+  constructor(decision: Extract<SpawnCeilingDecision, { ok: false }>) {
+    super(
+      `[spawn_ceiling] Sub-agent spawn rejected: ${decision.configKey}=${decision.limit}; `
+      + `current=${decision.current}; reason=${decision.reason}. `
+      + "Wait for a running sub-agent to finish before retrying.",
+    );
+    this.name = "SubAgentSpawnCeilingError";
+    this.decision = decision;
+  }
+}
+
 class DurableSubAgentAdmissionError extends Error {
   constructor(message: string, cause?: unknown) {
     super(message, cause === undefined ? undefined : { cause });
@@ -408,6 +438,11 @@ export interface SubAgentRunnerDeps {
     channelId: string,
     options?: { threadId?: string; resolvedLanguage?: string },
   ) => Promise<string | undefined>;
+  /** Render the deterministic failed-completion disclosure for the parent agent. */
+  renderAnnouncementFailureNotice?: (
+    agentId: string,
+    resolvedLanguage?: string,
+  ) => string;
   eventBus: TypedEventBus;
   config: AgentToAgentConfig;
   tenantId: string;
@@ -439,7 +474,7 @@ export interface SubAgentRunnerDeps {
     rootRunId: string,
     depth: number,
     fanout: number,
-  ) => { ok: true } | { ok: false; reason: string };
+  ) => SpawnCeilingDecision;
   /**
    * Symmetric release of a slot reserved by {@link checkSpawnCeiling}.
    * Called 1:1 with every successful acquire on EVERY terminal transition
@@ -835,6 +870,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     retryHandle?: TimerHandle;
   }
   const completionDeferreds = new Map<string, CompletionDeferred>();
+  const completionAnnouncementWaitClaims = new Map<string, number>();
   const startDeferreds = new Map<string, StartDeferred>();
   const durableResumeHandshakeRunIds = new Set<string>();
   const activePromises = new Set<Promise<void>>();
@@ -1000,10 +1036,45 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return completionDeferreds.get(runId)?.promise;
   }
 
+  function claimCompletionAnnouncement(runId: string, consumerSessionKey: string): boolean {
+    const run = runs.get(runId);
+    if (run?.callerSessionKey !== consumerSessionKey) return false;
+    completionAnnouncementWaitClaims.set(
+      runId,
+      (completionAnnouncementWaitClaims.get(runId) ?? 0) + 1,
+    );
+    return true;
+  }
+
+  function releaseCompletionAnnouncementClaim(runId: string): void {
+    const current = completionAnnouncementWaitClaims.get(runId);
+    if (current === undefined) return;
+    if (current <= 1) completionAnnouncementWaitClaims.delete(runId);
+    else completionAnnouncementWaitClaims.set(runId, current - 1);
+  }
+
+  function activeWaitOwnsCompletionAnnouncement(
+    runId: string,
+    callerSessionKey: string | undefined,
+    runtimeMs: number,
+  ): boolean {
+    const owns = callerSessionKey !== undefined
+      && runs.get(runId)?.callerSessionKey === callerSessionKey
+      && (completionAnnouncementWaitClaims.get(runId) ?? 0) > 0;
+    if (owns) {
+      deps.logger?.info(
+        { runId, parentSessionKey: callerSessionKey, durationMs: runtimeMs },
+        "Active parent wait owns sub-agent completion delivery",
+      );
+    }
+    return owns;
+  }
+
   async function waitForCompletions(
     requestedRunIds: readonly string[],
     timeoutMs: number,
     signal?: AbortSignal,
+    announcementConsumerSessionKey?: string,
   ): Promise<SubAgentWaitResult[]> {
     const runIds = [...new Set(requestedRunIds)];
     const immediate = new Map<string, SubAgentWaitResult>();
@@ -1030,44 +1101,56 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     if (pending.length === 0) {
       return runIds.map((runId) => immediate.get(runId)!);
     }
-    if (signal?.aborted) {
-      for (const entry of pending) {
-        immediate.set(entry.runId, { runId: entry.runId, status: "cancelled" });
+    const claimedRunIds = announcementConsumerSessionKey === undefined
+      ? []
+      : pending
+        .filter(({ runId }) => claimCompletionAnnouncement(
+          runId,
+          announcementConsumerSessionKey,
+        ))
+        .map(({ runId }) => runId);
+    try {
+      if (signal?.aborted) {
+        for (const entry of pending) {
+          immediate.set(entry.runId, { runId: entry.runId, status: "cancelled" });
+        }
+        return runIds.map((runId) => immediate.get(runId)!);
       }
-      return runIds.map((runId) => immediate.get(runId)!);
-    }
-    if (timeoutMs <= 0) {
-      for (const entry of pending) {
-        immediate.set(entry.runId, { runId: entry.runId, status: "timeout" });
+      if (timeoutMs <= 0) {
+        for (const entry of pending) {
+          immediate.set(entry.runId, { runId: entry.runId, status: "timeout" });
+        }
+        return runIds.map((runId) => immediate.get(runId)!);
       }
-      return runIds.map((runId) => immediate.get(runId)!);
-    }
 
-    let deadlineHandle: TimerHandle | undefined;
-    let removeAbortListener: (() => void) | undefined;
-    const deadline = new Promise<"timeout" | "cancelled">((resolve) => {
-      deadlineHandle = timers.setTimeout(() => resolve("timeout"), timeoutMs);
-      deadlineHandle.unref();
-      if (signal) {
-        const onAbort = (): void => resolve("cancelled");
-        signal.addEventListener("abort", onAbort, { once: true });
-        removeAbortListener = () => signal.removeEventListener("abort", onAbort);
-      }
-    });
+      let deadlineHandle: TimerHandle | undefined;
+      let removeAbortListener: (() => void) | undefined;
+      const deadline = new Promise<"timeout" | "cancelled">((resolve) => {
+        deadlineHandle = timers.setTimeout(() => resolve("timeout"), timeoutMs);
+        deadlineHandle.unref();
+        if (signal) {
+          const onAbort = (): void => resolve("cancelled");
+          signal.addEventListener("abort", onAbort, { once: true });
+          removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+        }
+      });
 
-    const settled = await Promise.all(pending.map(async ({ runId, promise }) => {
-      const outcome = await Promise.race([
-        promise.then((completion) => ({ status: "completed" as const, completion })),
-        deadline.then((status) => ({ status })),
-      ]);
-      return outcome.status === "completed"
-        ? { runId, status: "completed" as const, completion: outcome.completion }
-        : { runId, status: outcome.status };
-    }));
-    deadlineHandle?.cancel();
-    removeAbortListener?.();
-    for (const result of settled) immediate.set(result.runId, result);
-    return runIds.map((runId) => immediate.get(runId)!);
+      const settled = await Promise.all(pending.map(async ({ runId, promise }) => {
+        const outcome = await Promise.race([
+          promise.then((completion) => ({ status: "completed" as const, completion })),
+          deadline.then((status) => ({ status })),
+        ]);
+        return outcome.status === "completed"
+          ? { runId, status: "completed" as const, completion: outcome.completion }
+          : { runId, status: outcome.status };
+      }));
+      deadlineHandle?.cancel();
+      removeAbortListener?.();
+      for (const result of settled) immediate.set(result.runId, result);
+      return runIds.map((runId) => immediate.get(runId)!);
+    } finally {
+      for (const runId of claimedRunIds) releaseCompletionAnnouncementClaim(runId);
+    }
   }
 
   function trackFailureNotification(promise: Promise<void>): void {
@@ -1702,6 +1785,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       deliverySuppressedRunIds.add(runId);
       const errorMessage = `Ghost run: stuck in 'running' for ${(runningDurationMs / 1000).toFixed(0)}s (grace: ${(ghostGraceMs / 1000).toFixed(0)}s)`;
+      const completionClaimedByWait = activeWaitOwnsCompletionAnnouncement(
+        runId,
+        run.callerSessionKey,
+        runningDurationMs,
+      );
       terminalizeRun(runId, {
         endReason: "ghost_sweep",
         completedAtMs: now,
@@ -1737,7 +1825,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       // Emit completion event
       deps.eventBus.emit("session:sub_agent_completed", {
-        runId, agentId: run.agentId, success: false,
+        runId, parentSessionKey: run.callerSessionKey ?? "unknown",
+        agentId: run.agentId, success: false,
         runtimeMs: runningDurationMs, tokensUsed: 0, cost: 0, timestamp: now,
       });
 
@@ -1745,7 +1834,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       emitProxyStop(run, runId, "ghost_sweep");
 
       // Deliver failure notification using stored announce channel
-      if (run.announceChannelType && run.announceChannelId) {
+      if (!completionClaimedByWait && run.announceChannelType && run.announceChannelId) {
         trackFailureNotification(deliverFailureNotification({
           channelType: run.announceChannelType,
           channelId: run.announceChannelId,
@@ -2409,15 +2498,18 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           agentId: params.agentId,
           parentSessionKey: params.callerSessionKey ?? "unknown",
           reason: ceiling.reason,
+          configKey: ceiling.configKey,
+          current: ceiling.current,
+          limit: ceiling.limit,
           rootRunId,
           currentDepth,
-          hint: "Spawn rejected: tree-wide autonomy ceiling reached; the spawn tree hit its concurrency/depth/fanout bound (autonomy.spawn.*). Wait for sibling sub-agents to finish or raise the bound.",
+          hint:
+            `Spawn rejected at ${ceiling.configKey}=${ceiling.limit}; current=${ceiling.current}. `
+            + "Wait for a running sub-agent to finish or raise that exact bound.",
           errorKind: "resource" as const,
         }, "Subagent spawn rejected");
         // @allow-throw: spawn() consumed exclusively by daemon RPC handlers; @allow-throw boundary — rpc-dispatch.ts converts to a JSON-RPC error.
-        throw new Error(
-          `Spawn rejected: tree-wide spawn ceiling reached (reason: ${ceiling.reason}). This spawn tree is at its concurrency/depth/fanout bound.`,
-        );
+        throw new SubAgentSpawnCeilingError(ceiling);
       }
     }
 
@@ -2712,7 +2804,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
         deps.eventBus.emit("session:sub_agent_spawned", {
           runId, parentSessionKey: params.callerSessionKey ?? "unknown",
-          agentId: params.agentId, timestamp: clock.now(),
+          agentId: params.agentId,
+          rootRunId: run.rootRunId,
+          ...(run.parentLeaseId !== undefined ? { parentLeaseId: run.parentLeaseId } : {}),
+          caps: [...run.caps],
+          timestamp: clock.now(),
         });
 
         deps.logger?.info({
@@ -2870,6 +2966,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }
 
         const runtimeMs = providerCompletedAt - run.startedAt;
+        const completionClaimedByWait = activeWaitOwnsCompletionAnnouncement(
+          runId,
+          params.callerSessionKey,
+          runtimeMs,
+        );
 
         // Compute cache effectiveness before condense() for disk persistence.
         // Formula: cacheRead/(cacheRead+cacheWrite), 0 when no cache activity.
@@ -3126,7 +3227,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // When isDegraded() skips the LLM call, executor returns empty response with
         // finishReason "provider_degraded". Route to deliverFailureNotification instead
         // of deliverAnnouncement to avoid sending an empty/malformed success message.
-        if (result.finishReason === "provider_degraded") {
+        if (completionClaimedByWait) {
+          // The authenticated parent turn is blocked in subagent.wait and owns
+          // the only user-facing response for this terminal result.
+        } else if (result.finishReason === "provider_degraded") {
           if (params.announceChannelType && params.announceChannelId) {
             await deliverFailureNotification({
               channelType: params.announceChannelType,
@@ -3207,6 +3311,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               callerConversation: params.callerConversation,
               destinationEndpoint: run.callerEndpoint,
               resolvedLanguage: params.resolvedLanguage,
+              terminalOutcome: isSuccess
+                ? { status: "completed" }
+                : {
+                    status: "failed",
+                    failureNotice: deps.renderAnnouncementFailureNotice?.(
+                      params.callerAgentId ?? params.agentId,
+                      params.resolvedLanguage,
+                    ) ?? buildBackgroundTaskFailedNotice(params.resolvedLanguage),
+                  },
               runId,
               ...(validationResults?.some((output) => output.exists)
                 ? {
@@ -3259,6 +3372,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }
         deps.eventBus.emit("session:sub_agent_completed", {
           runId,
+          parentSessionKey: params.callerSessionKey ?? "unknown",
           agentId: params.agentId,
           success: isSuccess,
           runtimeMs: completedAt - run.startedAt,
@@ -3308,6 +3422,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         const admissionRejected = error instanceof DurableSubAgentAdmissionError;
         const runtimeMs = completedAt - run.startedAt;
+        const completionClaimedByWait = activeWaitOwnsCompletionAnnouncement(
+          runId,
+          params.callerSessionKey,
+          runtimeMs,
+        );
         terminalizeRun(runId, {
           endReason: "failed",
           completedAtMs: completedAt,
@@ -3369,7 +3488,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
         // Emit failure event
         deps.eventBus.emit("session:sub_agent_completed", {
-          runId, agentId: params.agentId, success: false,
+          runId, parentSessionKey: params.callerSessionKey ?? "unknown",
+          agentId: params.agentId, success: false,
           runtimeMs, tokensUsed: 0, cost: 0, timestamp: completedAt,
         });
 
@@ -3377,7 +3497,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         emitProxyStop(run, runId, "failed");
 
         // Announce failure to channel -- LLM-free direct send
-        if (!admissionRejected && params.announceChannelType && params.announceChannelId) {
+        if (
+          !completionClaimedByWait
+          && !admissionRejected
+          && params.announceChannelType
+          && params.announceChannelId
+        ) {
           await deliverFailureNotification({
             channelType: params.announceChannelType,
             channelId: params.announceChannelId,
@@ -3394,7 +3519,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             callerConversation: params.callerConversation,
             destinationEndpoint: run.callerEndpoint,
           }, deps);
-        } else if (!admissionRejected) {
+        } else if (!completionClaimedByWait && !admissionRejected) {
           // Log explicit reason when failure announcement cannot be routed
           const suppressAnnounceReason = params.requesterOrigin
             ? "no_channel_params" as const
@@ -3462,6 +3587,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       deliverySuppressedRunIds.add(runId);
       const errorMessage = `Execution timeout: exceeded ${runTimeoutMs}ms wall-clock limit`;
+      const completionClaimedByWait = activeWaitOwnsCompletionAnnouncement(
+        runId,
+        run.callerSessionKey,
+        runtimeMs,
+      );
       terminalizeRun(runId, {
         endReason: "watchdog_timeout",
         completedAtMs: completedAt,
@@ -3508,7 +3638,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       // Emit completion event
       deps.eventBus.emit("session:sub_agent_completed", {
-        runId, agentId: run.agentId, success: false,
+        runId, parentSessionKey: run.callerSessionKey ?? "unknown",
+        agentId: run.agentId, success: false,
         runtimeMs, tokensUsed: 0, cost: 0, timestamp: completedAt,
       });
 
@@ -3516,7 +3647,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       emitProxyStop(run, runId, "watchdog_timeout");
 
       // Deliver failure notification (LLM-free)
-      if (params.announceChannelType && params.announceChannelId) {
+      if (
+        !completionClaimedByWait
+        && params.announceChannelType
+        && params.announceChannelId
+      ) {
         trackFailureNotification(deliverFailureNotification({
           channelType: params.announceChannelType,
           channelId: params.announceChannelId,
@@ -3705,6 +3840,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       ?? (killedBy === "parent" ? "Killed by parent agent" : `Killed by ${killedBy}`);
     const runBeganAt = run.status === "queued" ? run.queuedAt : run.startedAt;
     const killRuntimeMs = Math.max(0, killedAt - runBeganAt);
+    const completionClaimedByWait = activeWaitOwnsCompletionAnnouncement(
+      runId,
+      run.callerSessionKey,
+      killRuntimeMs,
+    );
     terminalizeRun(runId, {
       endReason: "killed",
       completedAtMs: killedAt,
@@ -3768,6 +3908,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       // Non-graph runs: use existing event bus path
       deps.eventBus.emit("session:sub_agent_completed", {
         runId,
+        parentSessionKey: run.callerSessionKey ?? "unknown",
         agentId: run.agentId,
         success: false,
         runtimeMs: killRuntimeMs,
@@ -3783,7 +3924,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // Non-parent kills notify the announce channel (LLM-free, dedup-keyed) —
     // the parent only knows about a kill it issued itself; an autonomous
     // health-monitor kill would otherwise be silent until the user asks.
-    if (killedBy !== "parent" && run.announceChannelType && run.announceChannelId) {
+    if (
+      !completionClaimedByWait
+      && killedBy !== "parent"
+      && run.announceChannelType
+      && run.announceChannelId
+    ) {
       trackFailureNotification(deliverFailureNotification({
         channelType: run.announceChannelType,
         channelId: run.announceChannelId,
@@ -3949,6 +4095,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             forceTerminalCleanup(run);
             deps.eventBus.emit("session:sub_agent_completed", {
               runId,
+              parentSessionKey: run.callerSessionKey ?? "unknown",
               agentId: run.agentId,
               success: false,
               runtimeMs: Math.max(0, completedAtMs - run.startedAt),

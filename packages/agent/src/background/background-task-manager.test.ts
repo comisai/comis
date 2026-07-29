@@ -115,6 +115,7 @@ describe("BackgroundTaskManager", () => {
       timers: testTimers,
       maxPerAgent: 2,
       maxTotal: 3,
+      ...({ maxTotalConfigAgentId: "default" } as Record<string, unknown>),
       maxBackgroundDurationMs: 100, // 100ms for testing
     });
   });
@@ -160,8 +161,10 @@ describe("BackgroundTaskManager", () => {
 
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.error.message).toContain("Concurrency limit exceeded");
-      expect(result.error.message).toContain("agent-1");
+      expect(result.error.message).toContain("[background_capacity]");
+      expect(result.error.message).toContain(
+        "agents.agent-1.backgroundTasks.maxPerAgent=2; active=2",
+      );
     });
 
     it("rejects when total limit reached", () => {
@@ -172,7 +175,10 @@ describe("BackgroundTaskManager", () => {
 
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.error.message).toContain("total");
+      expect(result.error.message).toContain("[background_capacity]");
+      expect(result.error.message).toContain(
+        "agents.default.backgroundTasks.maxTotal=3; active=3",
+      );
     });
 
     it("rejects admission when the protected task record cannot commit", () => {

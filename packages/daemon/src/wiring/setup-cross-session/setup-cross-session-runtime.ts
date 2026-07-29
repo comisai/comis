@@ -27,7 +27,7 @@ import {
 } from "@comis/core";
 import { createResultRefStore } from "@comis/skills/tools";
 import type { ComisLogger } from "@comis/infra";
-import type { ExecutionResult } from "@comis/agent";
+import type { ExecutionResult, SpawnCeilingDecision } from "@comis/agent";
 import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
 import {
   createCrossSessionSender,
@@ -41,6 +41,7 @@ import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
 import { createAnnouncementDelivery } from "./governed-announcement-delivery.js";
 import { createCompletionAttachmentPreparer } from "./completion-attachment.js";
+import { createAnnouncementFailureNoticeRenderer } from "./announcement-failure-locale.js";
 /** Silent fallback for test wiring that omits the production logger. */
 const NOOP_LOGGER: ComisLogger = {
   level: "silent",
@@ -74,7 +75,6 @@ function createInternalTurnScope(conversation: ConversationScope): ResolvedTurnS
     : `cross-session:${conversation.agentId}`;
   return { conversation, endpoint, principal: { principalId } };
 }
-
 /** All services produced by the cross-session messaging setup. */
 export interface CrossSessionResult {
   /** Cross-session message sender for agent-to-agent communication. */
@@ -157,7 +157,7 @@ export function setupCrossSession(deps: {
     rootRunId: string,
     depth: number,
     fanout: number,
-  ) => { ok: true } | { ok: false; reason: string };
+  ) => SpawnCeilingDecision;
   /**
    * The symmetric release of a slot reserved by
    * {@link checkSpawnCeiling}, threaded into the runner's `releaseSpawnCeiling`
@@ -500,7 +500,6 @@ export function setupCrossSession(deps: {
     });
   };
 
-  // Create lifecycle hooks for spawn preparation and completion
   const lifecycleHooks = createLifecycleHooks({
     logger: deps.logger
       ? { info: deps.logger.info.bind(deps.logger), warn: deps.logger.warn.bind(deps.logger), debug: deps.logger.debug.bind(deps.logger) }
@@ -514,6 +513,7 @@ export function setupCrossSession(deps: {
     executeAgent: executeSubAgent,
     sendToChannel,
     announceToParent,
+    renderAnnouncementFailureNotice: createAnnouncementFailureNoticeRenderer(container.config.agents),
     eventBus: container.eventBus,
     config: container.config.security.agentToAgent,
     // Sandbox no-downgrade posture resolver. The runner is a

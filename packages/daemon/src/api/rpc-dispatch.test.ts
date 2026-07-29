@@ -312,6 +312,20 @@ describe("classifyRpcError", () => {
     expect(result.hint).toContain("subagent.resume");
   });
 
+  it("classifies an exhausted sub-agent spawn ceiling as a resource warning", () => {
+    const error = new Error(
+      "[spawn_ceiling] Sub-agent spawn rejected: " +
+      "autonomy.spawn.maxConcurrentSelfAgents=4; current=4; reason=concurrency.",
+    );
+    error.name = "SubAgentSpawnCeilingError";
+
+    const result = classifyRpcError(error);
+
+    expect(result.errorKind).toBe("resource");
+    expect(result.level).toBe("warn");
+    expect(result.hint).toMatch(/autonomy\.spawn/);
+  });
+
   it("classifies ValidationError as validation error (warn level)", () => {
     const result = classifyRpcError(new ValidationError("Unknown ID prefix. Expected 'sum_' or 'file_', got: abc-123"));
     expect(result.errorKind).toBe("validation");

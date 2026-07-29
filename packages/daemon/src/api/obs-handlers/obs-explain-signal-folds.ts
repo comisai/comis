@@ -26,7 +26,12 @@ import {
   IncidentPromptTimeoutSchema,
 } from "@comis/core";
 import type { IncidentSignals, IncidentContextBudget, IncidentCronWakeGate, IncidentPromptTimeout } from "@comis/core";
-import type { Acc } from "./obs-explain-signals-acc.js";
+import type {
+  Acc,
+  LearningFoldState,
+  OrchestrateRunFold,
+  OrchestrateToolCallFold,
+} from "./obs-explain-signals-acc.js";
 // The content-free readers live in the sibling fields helper (one source of truth);
 // imported here so the GBNF fold reuses them rather than re-deriving (no cycle —
 // the fields helper does not import this module).
@@ -138,46 +143,6 @@ type LearningSource = IncidentLearningSignal["sources"][number];
 
 const LEARNING_OUTCOMES: readonly LearningOutcome[] = ["success", "failure", "corrected", "unknown"];
 const LEARNING_SOURCES: readonly LearningSource[] = ["tool", "pipeline", "correction", "judge", "reaction", "explicit"];
-
-/**
- * The mutable fold state accumulated across the session's learning records:
- * the `learning.outcome_observed` outcome/source signal PLUS the
- * skill-invocation signal (`skill.prompt_invoked`) and the reflection funnel
- * (`reflect.admitted` / `reflect.funnel` — they contribute the
- * BENIGN abstain flag). `count` gates whether ANY learning-family record was seen
- * (an absent block ⇒ `undefined`), so it bumps for every fold — outcome AND
- * reflection — not just outcome records.
- */
-export interface LearningFoldState {
-  count: number;
-  outcome?: LearningOutcome;
-  /**
-   * Whether ANY record in the session resolved to a non-`unknown` outcome. The
-   * `outcome_unresolved` verdict means "NO signal tier resolved an outcome" — so it
-   * must key on "ever resolved", NOT the LAST record (a trailing no-signal turn, e.g.
-   * a tool-less recall reply, otherwise clobbers an earlier resolved success and the
-   * session is wrongly flagged unresolved — a live-incident regression guard).
-   */
-  everResolved: boolean;
-  sources: Set<LearningSource>;
-  /** Distinct learned-skill ids invoked this session (`skill.prompt_invoked`). IDs only. */
-  skillsUsed: Set<string>;
-  /** A record carried the BENIGN synthesis-abstain signal (Defer ≠ Retry). */
-  synthesisAbstained: boolean;
-  /** Candidate→active promotions summed this session (`learning.skill_promoted`). Counts only. */
-  skillsPromoted: number;
-  /** Skill demotions summed this session (`learning.skill_demoted`). Counts only. */
-  skillsDemoted: number;
-  /** Memories that accrued a corroborated failure this session (`learning.memory_failure_attributed`). Counts only — eviction precursor. */
-  failuresAttributed: number;
-  /** Surfaced-but-uncredited reuse NEAR-MISSES (`memory.skill_surfaced`) — skill name → best
-   *  coverage seen this session. Does NOT bump `count`/`everResolved` (telemetry-only; must not perturb
-   *  the outcome_unresolved verdict), so it surfaces only when a real learning record already built the block. */
-  skillsSurfacedButUncredited: Map<string, number>;
-  /** The NAMES of skills demoted this session (`learning.skill_demoted.demotedSkillNames`) — so
-   *  `explain` answers WHICH skill demoted, not just how many. Ids only. */
-  skillsDemotedNames: Set<string>;
-}
 
 /** A fresh, empty fold state (no learning records seen yet). */
 export function emptyLearningFold(): LearningFoldState {
@@ -512,6 +477,59 @@ export function accumulateCapabilityAuditedRecord(
 }
 
 /**
+ * Fold a direct sessions_spawn admission into one spawn-tree leaf.
+ *
+ * Direct children run in-process and therefore have no capability-endpoint
+ * lease. Their stable runId is the honest node identity, while rootRunId and
+ * optional parentLeaseId preserve the tree edge.
+ */
+export function accumulateSubAgentSpawnedRecord(
+  spawnNodesByLease: Map<string, SpawnNodeFold>,
+  data: Record<string, unknown>,
+): void {
+  const runId = asString(data.runId);
+  const rootRunId = asString(data.rootRunId);
+  const childAgentId = asString(data.childAgentId);
+  if (runId === undefined || rootRunId === undefined || childAgentId === undefined) return;
+  if (spawnNodesByLease.has(runId)) return;
+  spawnNodesByLease.set(runId, {
+    leaseId: runId,
+    parentLeaseId: asString(data.parentLeaseId) ?? rootRunId,
+    rootRunId,
+    agentId: childAgentId,
+    caps: asStringArray(data.caps),
+    toolsInvoked: [],
+    denials: [],
+  } satisfies SpawnNodeFold);
+}
+
+/** Fold one parent-routed direct-child terminal record into topology + counts. */
+export function accumulateSubAgentCompletedRecord(
+  acc: Acc,
+  data: Record<string, unknown>,
+): void {
+  const runId = asString(data.runId);
+  if (runId === undefined) return;
+  if (acc.subagentCompletedRunIds.has(runId)) return;
+  acc.subagentCompletedRunIds.add(runId);
+  const success = data.success === true;
+  acc.subagentCompletedCount += 1;
+  if (!success) {
+    acc.subagentFailedCount += 1;
+    acc.subagentLastFailedRunId = runId;
+  }
+  const node = acc.spawnNodesByLease.get(runId);
+  if (node === undefined) return;
+  node.terminalOutcome = success ? "completed" : "failed";
+  const runtimeMs = asNumber(data.runtimeMs);
+  const tokensUsed = asNumber(data.tokensUsed);
+  const costUsd = asNumber(data.costUsd);
+  if (runtimeMs !== undefined) node.runtimeMs = Math.max(0, runtimeMs);
+  if (tokensUsed !== undefined) node.tokensUsed = Math.max(0, tokensUsed);
+  if (costUsd !== undefined) node.costUsd = Math.max(0, costUsd);
+}
+
+/**
  * Fold one `graph.node_spawned` trajectory record into the
  * spawn-tree working map. A graph DAG node spawns in-process (gatedSpawn →
  * subAgentRunner.spawn), so it never crosses the socket chokepoint that emits
@@ -560,18 +578,6 @@ export function accumulateGraphNodeSpawnedRecord(
 // ---------------------------------------------------------------------------
 // The orchestrate run-summary + per-run tool-call folds (EXPLAIN-03/04, SAVE-02).
 // ---------------------------------------------------------------------------
-
-/** The run skeleton the `orchestrate.run_summary` fold accumulates (one per
- *  runId). Derived from IncidentSignals (already imported) so this fold does NOT
- *  import the internal Acc from obs-explain-signals-acc.ts — that file imports
- *  from HERE, so the reverse would cycle. `toolCalls` is joined at materialization
- *  from the per-run leaseId tally, so the fold state OMITS it (ids + closed enums +
- *  counts + savings only). */
-export type OrchestrateRunFold = Omit<NonNullable<IncidentSignals["orchestrate"]>[number], "toolCalls">;
-
-/** One tallied per-run tool call (tool NAME + capability + the closed decision +
- *  a running count) — the inner-map value of `orchestrateToolCallsByLease`. */
-export type OrchestrateToolCallFold = NonNullable<IncidentSignals["orchestrate"]>[number]["toolCalls"][number];
 
 const ORCHESTRATE_FAILURE_CLASSES = ["timeout", "stdout_cap", "nonzero_exit", "spawn_fail", "lease_absent"] as const;
 

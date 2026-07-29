@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: AgentTool boundary; pi-agent-core converts rejected admission into a failed tool result.
 /**
  * Auto-background middleware: wraps tool execute() with Promise.race timeout.
  *
@@ -53,7 +54,7 @@ export interface ToolDefinition {
  * If the tool is in `config.excludeTools`, returns unchanged.
  * If the tool completes before `config.autoBackgroundMs`, returns the result directly.
  * If the tool exceeds the timeout, promotes to background via manager.promote().
- * If promotion fails (concurrency limit), awaits the tool normally (foreground fallback).
+ * If promotion fails, aborts the unowned execution and surfaces the admission failure.
  */
 /**
  * Tools that must NEVER be auto-background-promoted, regardless of
@@ -63,6 +64,9 @@ export interface ToolDefinition {
  *     tasks. Its `read_output` on a pending task deliberately waits for the
  *     original promise, so promoting that observer would be structurally
  *     self-referential.
+ *   - `subagents` — the lifecycle observer whose `wait` action already blocks
+ *     for child terminal state. Promoting it duplicates the child completion
+ *     route and turns `list` follow-ups into extra user notifications.
  *   - `sleep` — the WAIT tool. The model sleeps to await a backgrounded result;
  *     the sleep itself hits `autoBackgroundMs`, promotes, and its raw
  *     'Background task "sleep" completed.' notice leaked to the user (live
@@ -80,6 +84,7 @@ export interface ToolDefinition {
  */
 const NEVER_AUTO_BACKGROUND_TOOLS: ReadonlySet<string> = new Set([
   "background_tasks",
+  "subagents",
   "sleep",
   "image_generate",
   "video_generate",
@@ -177,8 +182,16 @@ export function wrapToolForAutoBackground(
         ...(turnCtx?.traceId !== undefined ? { traceId: turnCtx.traceId } : {}),
       });
       if (!promoteResult.ok) {
-        // Concurrency limit hit: fall back to foreground (await normally)
-        return await taskPromise;
+        // Admission owns the concurrency contract. Continuing the untracked
+        // execution in the foreground would defeat the configured bound and
+        // eventually misreport a prompt timeout. Attach the rejection handler
+        // before aborting so a cooperative tool cannot create an unhandled
+        // rejection, then fail this AgentTool call with the manager's exact
+        // binding knob and occupancy.
+        onUpdateActive = false;
+        suppressError(taskPromise, "auto-background rejected-admission cleanup");
+        ac.abort();
+        throw promoteResult.error;
       }
 
       onPromoted?.();

@@ -36,6 +36,34 @@ function makeSignals(overrides?: Partial<IncidentSignals>): IncidentSignals {
 }
 
 describe("obs-explain-heuristics", () => {
+  it("prioritizes a failed direct child above unrelated retained breaker state", () => {
+    const signals = makeSignals({
+      breakerOpenedTool: "stale_fixture",
+      hasDoNotRetrySignal: true,
+      repeatedFailureCount: { stale_fixture: 0 },
+    }) as IncidentSignals & {
+      subagentCompletions: {
+        completed: number;
+        failed: number;
+        lastFailedRunId: string;
+      };
+    };
+    signals.subagentCompletions = {
+      completed: 1,
+      failed: 1,
+      lastFailedRunId: "run-child",
+    };
+
+    expect(rootCause(signals)).toEqual({
+      code: "subagent_failed",
+      detail: "background child run-child failed (1 of 1 completed child runs failed)",
+      suggestedNextSteps: [
+        "run comis explain run-child --depth full, then follow its unique candidate session key",
+        "inspect the failed child tools and terminal errorKind before retrying",
+      ],
+    });
+  });
+
   // ------------------------------------------------------------------------
   // Root-cause ordering: misclassification precedes the breaker symptom.
   // ------------------------------------------------------------------------
@@ -168,6 +196,36 @@ describe("obs-explain-heuristics", () => {
     expect(r!.code).toBe("execution_step_limit_reached");
     expect(r!.detail).toMatch(/max_steps|step limit/i);
     expect(r!.suggestedNextSteps.some((step) => /max_steps|simplify/i.test(step))).toBe(true);
+  });
+
+  it("background capacity guards name the exact saturated config knob and occupancy", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "completed_with_tool_errors",
+        degraded: true,
+        failures: [
+          {
+            seq: 91,
+            toolName: "mcp__slow-report--read_report",
+            classifiedFailureBy: "runtime_guard",
+            transportOk: false,
+            errorKind: "resource",
+            resultDigest: "background-capacity",
+            resultBytes: 225,
+            errorPreview:
+              '{"content":[{"type":"text","text":"[background_capacity] Background task capacity reached: agents.default.backgroundTasks.maxPerAgent=5; active=5. Wait for a running background task to finish before r',
+            matchedRule: "background_task_capacity",
+          },
+        ],
+      }),
+    );
+
+    expect(r?.code).toBe("background_task_capacity");
+    expect(r?.detail).toContain("agents.default.backgroundTasks.maxPerAgent=5");
+    expect(r?.detail).toContain("active=5");
+    expect(r?.suggestedNextSteps.join(" ")).toContain(
+      "agents.default.backgroundTasks.maxPerAgent",
+    );
   });
 
   // ------------------------------------------------------------------------

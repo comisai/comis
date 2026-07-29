@@ -142,6 +142,19 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "graph:repaired": "graph.repaired",
   "graph:synthesized_from_intent": "graph.synthesized_from_intent",
 
+  // A direct sessions_spawn child was admitted. Unlike a jailed orchestrate
+  // run it has no capability-endpoint lease, so its lifecycle event is the
+  // authoritative spawn-tree leaf. Content-free: run/root/parent ids, child
+  // agent id, and attenuated cap names only.
+  "session:sub_agent_spawned": "subagent.spawned",
+  // A child's terminal result occurs off-turn. The required parentSessionKey
+  // routes it to the parent recorder; the translator strips that key.
+  "session:sub_agent_completed": "subagent.completed",
+  // A synchronous wait completes in the active parent turn. Keep this
+  // observation distinct from the child's lifecycle transition so downstream
+  // consumers can diagnose the waiting trace without replaying lifecycle work.
+  "session:sub_agent_wait_completed": "subagent.wait_completed",
+
   // A running sub-agent was steered IN-FLIGHT (a
   // high-priority message injected at the child's next step boundary, transcript
   // preserved) instead of kill+respawn. Emitted DAEMON-SIDE at the inject site
@@ -549,6 +562,8 @@ export interface AttachTrajectoryParams {
 function resolveEventSessionKey(payload: unknown): string | undefined {
   const own = (payload as { sessionKey?: unknown } | undefined)?.sessionKey;
   if (typeof own === "string" && own.length > 0) return own;
+  const parent = (payload as { parentSessionKey?: unknown } | undefined)?.parentSessionKey;
+  if (typeof parent === "string" && parent.length > 0) return parent;
   const ctxKey = tryGetContext()?.sessionKey;
   if (typeof ctxKey === "string" && ctxKey.length > 0) return ctxKey;
   return undefined;

@@ -4,7 +4,7 @@
  * orchestration family.
  *
  * Extracted from `translate-payload.ts` (which is at the file-size cap) — the
- * main `translatePayload` switch delegates these four cases here. No behavior
+ * main `translatePayload` switch delegates this family here. No behavior
  * change vs. inlining; this is purely a file-size split (the same rationale the
  * `translate-video-payload.ts` / `translate-vision-payload.ts` /
  * `translate-voice-payload.ts` splits document).
@@ -23,6 +23,9 @@ export type OrchestrationBridgedEventName =
   | "pipeline:authored"
   | "graph:repaired"
   | "graph:synthesized_from_intent"
+  | "session:sub_agent_spawned"
+  | "session:sub_agent_completed"
+  | "session:sub_agent_wait_completed"
   | "subagent:steered"
   // An attributed sub-agent kill (parent / health_monitor / operator /
   // system) — bridged so a killed child's own trajectory names WHO killed it
@@ -70,6 +73,33 @@ export function translateOrchestrationPayload(
     case "graph:synthesized_from_intent":
       // Requested pattern + synthesized-graph nodeCount (no intent text).
       return { pattern: payload.pattern, nodeCount: payload.nodeCount };
+
+    case "session:sub_agent_spawned":
+      // Direct sub-agent topology only. The task, session key, and delivery
+      // route stay out of the trajectory payload.
+      return {
+        runId: payload.runId,
+        rootRunId: payload.rootRunId,
+        parentLeaseId: payload.parentLeaseId,
+        childAgentId: payload.agentId,
+        caps: payload.caps,
+      };
+
+    case "session:sub_agent_completed":
+      return {
+        runId: payload.runId,
+        childAgentId: payload.agentId,
+        success: payload.success,
+        runtimeMs: payload.runtimeMs,
+        tokensUsed: payload.tokensUsed,
+        costUsd: payload.cost,
+      };
+
+    case "session:sub_agent_wait_completed":
+      return {
+        runId: payload.runId,
+        success: payload.success,
+      };
 
     case "subagent:steered":
       // The steered runId + the closed-union mode (steer|followup) ONLY — NEVER the steer message body (the highest-risk leak); agentId/timestamp are envelope-only and stripped (the graph:repaired precedent).

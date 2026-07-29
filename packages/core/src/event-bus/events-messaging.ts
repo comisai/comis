@@ -116,12 +116,17 @@ export interface MessagingEvents {
     runId: string;
     parentSessionKey: string;
     agentId: string;
+    rootRunId: string;
+    parentLeaseId?: string;
+    caps: string[];
     timestamp: number;
   };
 
   /** Sub-agent completed */
   "session:sub_agent_completed": {
     runId: string;
+    /** Routes this off-turn terminal record to the owning parent trajectory. */
+    parentSessionKey: string;
     agentId: string;
     success: boolean;
     runtimeMs: number;
@@ -132,6 +137,15 @@ export interface MessagingEvents {
     cacheReadTokens?: number;
     /** Cache write tokens for this run. */
     cacheWriteTokens?: number;
+  };
+
+  /** A synchronous parent wait observed a child's terminal outcome. */
+  "session:sub_agent_wait_completed": {
+    runId: string;
+    /** Routes the observation to the active waiting parent trajectory. */
+    parentSessionKey: string;
+    success: boolean;
+    timestamp: number;
   };
 
   /** Sub-agent session auto-archived */
