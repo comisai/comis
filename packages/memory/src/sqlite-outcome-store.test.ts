@@ -363,6 +363,31 @@ describe("createSqliteOutcomeStore", () => {
       expect(res.value.confidence).toBe(0.6); // the winning tier's contributing observation
     });
 
+    it("orders the winning deterministic source before attribution-only sources", async () => {
+      await store.observe(
+        makeObs({
+          source: "explicit",
+          outcome: "unknown",
+          confidence: 0,
+          observedAt: 1_000,
+        }),
+      );
+      await store.observe(
+        makeObs({
+          source: "tool",
+          outcome: "failure",
+          confidence: 0.9,
+          observedAt: 1_100,
+        }),
+      );
+
+      const res = await store.resolve(TRAJ, SCOPE_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.outcome).toBe("failure");
+      expect(res.value.sources).toEqual(["tool", "explicit"]);
+    });
+
     // --- spoof-weight + corroboration + cross-tenant ---
     // The fusion ranks tool/pipeline=0 > judge=1 > reaction/correction=2. These
     // cases assert the SPOOF + corroboration properties on top of the precedence
