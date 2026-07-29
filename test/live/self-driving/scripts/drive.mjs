@@ -15,7 +15,7 @@
 //   - DATA: data dir (for the trajectory turn-end watch). env DATA also honored. Empty → wire-only mode.
 //   - INJECT_OPTS: optional JSON object carrying Telegram mention/reply/thread metadata, for example
 //     `{"mention":true,"replyTo":42,"thread":7}`. The control route validates the closed shape.
-//   - Use `-` or `@file` for credential-bearing prompts so values never enter argv/process listings.
+//   - Use `-` or `@/absolute/file` for credential-bearing prompts so values never enter argv/process listings.
 //   - NOTE the DAG caveat: a `pipeline`/`graph.execute` turn ENDS at the agent's "running it now" answer,
 //     then the GRAPH runs separately — poll `graph.status`/the daemon log for the final node, not this.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -23,6 +23,7 @@ import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { rig } from './_rig.mjs';
 import {
+  driveTextFilePath,
   findAssistantReplyAfterInbound,
   telegramInboundGuid,
   telegramInjectAddressingError,
@@ -37,13 +38,14 @@ const readStdinLine = async () => {
   return next.done ? '' : next.value;
 };
 
+const textFilePath = driveTextFilePath(textArg);
 const text = textArg === '-'
   ? await readStdinLine()
-  : textArg?.startsWith('@')
-    ? readFileSync(textArg.slice(1), 'utf8')
+  : textFilePath !== undefined
+    ? readFileSync(textFilePath, 'utf8')
     : textArg;
 if (!text) {
-  console.error('drive.mjs: message text is required; pass text, `-` for one stdin line, or `@file`');
+  console.error('drive.mjs: message text is required; pass text, `-` for one stdin line, or `@/absolute/file`');
   process.exit(2);
 }
 const chatId = chatIdArg || rig.chatId;

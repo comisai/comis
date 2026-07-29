@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
 
+/** Resolve the driver's explicit absolute-file form without consuming @bot mentions. */
+export function driveTextFilePath(textArg) {
+  return typeof textArg === "string" && textArg.startsWith("@/")
+    ? textArg.slice(1)
+    : undefined;
+}
+
 /** Mirror the Telegram adapter's bot-account-scoped normalized message identity. */
 export function telegramInboundGuid(botAccountId, chatId, messageId) {
   const bytes = createHash("sha256")
