@@ -12,6 +12,14 @@ const pipeline = readFileSync(
   resolve(repoRoot, "packages/skills/src/platform-tools/tools/pipeline-tool.ts"),
   "utf8",
 );
+const platformToolRegistry = readFileSync(
+  resolve(repoRoot, "packages/skills/src/platform-tools/registry.ts"),
+  "utf8",
+);
+const daemonToolSetup = readFileSync(
+  resolve(repoRoot, "packages/daemon/src/wiring/setup-tools.ts"),
+  "utf8",
+);
 const deepResearch = readFileSync(
   resolve(repoRoot, "skills/deep-research/SKILL.md"),
   "utf8",
@@ -41,5 +49,16 @@ describe("real-user target source claims", () => {
     expect(target).toContain(
       "`deep-research` is dependency-free; every skill with external requirements declares its own `comis.requires`",
     );
+  });
+
+  it("keeps the platform tool census aligned at the composition root", () => {
+    const registryBlock = platformToolRegistry.match(
+      /export function createPlatformToolRegistry\(\)[\s\S]*?\n\}/,
+    )?.[0];
+
+    expect(registryBlock).toBeDefined();
+    expect(registryBlock?.match(/^\s+name: "/gm)).toHaveLength(46);
+    expect(target).toContain("46 platform tools + the builtin set");
+    expect(daemonToolSetup).toContain("SSOT for the 46 platform tools");
   });
 });
