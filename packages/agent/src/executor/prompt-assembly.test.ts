@@ -3100,7 +3100,7 @@ describe("bootstrap file snapshotting", () => {
       expect(result.responseLocalePolicy).toEqual({
         locale: "und-Latn",
         source: "request",
-        enforceLocale: false,
+        enforceLocale: true,
       });
     });
 
@@ -3128,7 +3128,7 @@ describe("bootstrap file snapshotting", () => {
       expect(result.responseLocalePolicy.source).toBe("unset");
     });
 
-    it("derives the current request script (ADVISORY) when locale metadata is absent", async () => {
+    it("enforces the clear current-request script when locale metadata is absent", async () => {
       const result = await assembleExecutionPrompt(makeParams({
         msg: makeMsg({ text: "أجب عن هذا الطلب بإيجاز" }),
       }));
@@ -3136,7 +3136,7 @@ describe("bootstrap file snapshotting", () => {
       expect(result.responseLocalePolicy).toEqual({
         locale: "und-Arab",
         source: "request",
-        enforceLocale: false,
+        enforceLocale: true,
       });
       expect(result.dynamicPreamble).toContain('locale="und-Arab"');
       expect(result.dynamicPreamble).toContain("same human language as the current user request");
@@ -4266,7 +4266,7 @@ describe("parent prefix reuse", () => {
     expect(result.responseLocalePolicy).toEqual({
       locale: "und-Arab",
       source: "request",
-      enforceLocale: false,
+      enforceLocale: true,
     });
   });
 
