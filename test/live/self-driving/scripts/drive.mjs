@@ -25,6 +25,7 @@ import { rig } from './_rig.mjs';
 import {
   driveTextFilePath,
   findAssistantReplyAfterInbound,
+  selectMainTrajectoryPath,
   telegramInboundGuid,
   telegramInjectAddressingError,
   wireContainsAssistantReply,
@@ -153,11 +154,13 @@ const resolveTraj = () => {
       }
     };
     visit(dir);
-    const f = files
-      .filter((path) => path.endsWith(expectedTrajectorySuffix))
-      .map((path) => ({ path, m: statSync(path).mtimeMs }))
-      .sort((a, b) => b.m - a.m)[0];
-    return f?.path ?? null;
+    return selectMainTrajectoryPath(
+      files.map((path) => ({ path, mtimeMs: statSync(path).mtimeMs })),
+      dir,
+      tenantId,
+      "telegram",
+      expectedTrajectorySuffix,
+    );
   } catch { return null; }
 };
 const trajLineCount = (p) => { try { return readFileSync(p, 'utf8').split('\n').length; } catch { return 0; } };

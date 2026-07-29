@@ -8,6 +8,42 @@ export function driveTextFilePath(textArg) {
     : undefined;
 }
 
+function encodeSessionPathComponent(value) {
+  let encoded = "";
+  for (const character of value) {
+    if (/^[a-zA-Z0-9._-]$/.test(character)) {
+      encoded += character;
+      continue;
+    }
+    for (const byte of Buffer.from(character, "utf8")) {
+      encoded += `@${byte.toString(16).padStart(2, "0")}`;
+    }
+  }
+  return encoded;
+}
+
+/**
+ * Resolve only the parent channel trajectory.
+ *
+ * Parent and sub-agent transcripts deliberately retain the same principal
+ * filename. Their channel directories distinguish them, so a recursive
+ * newest-file selection can watch a child and miss the parent turn end.
+ */
+export function selectMainTrajectoryPath(
+  candidates,
+  sessionsRoot,
+  tenantId,
+  channelId,
+  expectedFilename,
+) {
+  const root = sessionsRoot.endsWith("/") ? sessionsRoot.slice(0, -1) : sessionsRoot;
+  const directory =
+    `${root}/${encodeSessionPathComponent(tenantId)}/${encodeSessionPathComponent(channelId)}/`;
+  return candidates
+    .filter(({ path }) => path === `${directory}${expectedFilename}`)
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)[0]?.path ?? null;
+}
+
 /** Mirror the Telegram adapter's bot-account-scoped normalized message identity. */
 export function telegramInboundGuid(botAccountId, chatId, messageId) {
   const bytes = createHash("sha256")
