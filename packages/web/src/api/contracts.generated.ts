@@ -11200,6 +11200,26 @@ export const CONTRACTS = {
         "inboundEdit": {
           "type": "boolean"
         },
+        "groupHistory": {
+          "type": "object",
+          "properties": {
+            "messageCount": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "charCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "messageCount",
+            "charCount"
+          ],
+          "additionalProperties": false
+        },
         "responseLocale": {
           "anyOf": [
             {
