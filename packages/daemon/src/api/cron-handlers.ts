@@ -71,10 +71,11 @@ function resolveAgentId(
   requestedAgentId?: string,
 ): string {
   const callerAgentId = typeof rawParams._agentId === "string" ? rawParams._agentId : undefined;
-  const selected = requestedAgentId ?? callerAgentId ?? deps.defaultAgentId;
+  const effectiveCallerAgentId = callerAgentId ?? deps.defaultAgentId;
+  const selected = requestedAgentId ?? effectiveCallerAgentId;
   if (
     requestedAgentId !== undefined
-    && requestedAgentId !== callerAgentId
+    && requestedAgentId !== effectiveCallerAgentId
     && rawParams._trustLevel !== "admin"
   ) {
     throw new AuthorizationError("Admin access required for cross-agent cron selection");
