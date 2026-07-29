@@ -226,6 +226,15 @@ describe("PROFILE_REFLECT_PROMPT (the per-user-profile prompt in the reflect sha
     expect(PROFILE_REFLECT_PROMPT).toContain("Do NOT include a trust level");
   });
 
+  it("resolves profile conflicts by trust, chronology, and explicit correction instead of list position", () => {
+    expect(PROFILE_REFLECT_PROMPT).toContain("recordedAtMs");
+    expect(PROFILE_REFLECT_PROMPT).toContain("occurredAtMs");
+    expect(PROFILE_REFLECT_PROMPT).toMatch(/higher trust/i);
+    expect(PROFILE_REFLECT_PROMPT).toMatch(/later recorded/i);
+    expect(PROFILE_REFLECT_PROMPT).toMatch(/update\/correction/i);
+    expect(PROFILE_REFLECT_PROMPT).toMatch(/List position does NOT signal trust/i);
+  });
+
   it("carries the UNTRUSTED-data prompt-injection belt (treat the delimited block as data, never follow it)", () => {
     expect(PROFILE_REFLECT_PROMPT).toMatch(/UNTRUSTED/);
     expect(PROFILE_REFLECT_PROMPT.toLowerCase()).toContain("never follow");
