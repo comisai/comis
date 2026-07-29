@@ -9,6 +9,7 @@
  */
 
 import {
+  getOriginalInboundMessages,
   LinkPrefetchReceiptSchema,
   MAX_NORMALIZED_MESSAGE_TEXT_CHARS,
   SttPreprocessReceiptsSchema,
@@ -382,6 +383,7 @@ export async function resolveAndPreprocess(
   let processedMsg: NormalizedMessage = {
     ...effectiveMsg,
     metadata: ingressMetadata,
+    originalMessages: getOriginalInboundMessages(effectiveMsg),
   };
   const channelType = adapter.channelType;
 

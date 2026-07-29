@@ -386,6 +386,21 @@ function buildPairedMemoryContent(userText: string, agentResponse: string): stri
   return `[user] ${userText}\n[agent] ${truncated}`;
 }
 
+/**
+ * Recover the exact physical user-authored text represented by a turn.
+ *
+ * Prompt preprocessing may enrich `message.text` with fetched pages,
+ * transcriptions, or extracted media context. Durable paired memory must use
+ * the ingress provenance instead of persisting that model-only context as if
+ * the user authored it.
+ */
+export function resolvePairedMemoryUserText(
+  message: Pick<NormalizedMessage, "text" | "originalMessages">,
+): string {
+  return message.originalMessages?.map((original) => original.text).join("\n")
+    ?? message.text;
+}
+
 /** Minimum trimmed user-message chars to qualify for paired memory storage. */
 const PAIRED_MIN_USER_CHARS = 12;
 
@@ -1654,6 +1669,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   const canPersistPairedMemory = learningEligible !== false;
   const skipMemoryForOperation =
     operationType != null && MEMORY_SKIP_OPERATIONS.has(operationType);
+  const pairedUserText = resolvePairedMemoryUserText(msg);
 
   // Layer 0: silent sentinels never enter memory. Idempotent under
   // stripReplyTags + trim per @comis/shared silent-tokens.ts JSDoc
@@ -1678,10 +1694,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     msg.text &&
     pairedTurnScope !== undefined &&
     !skipMemoryForOperation &&
-    shouldStorePairedMemory(msg.text, result.response)
+    shouldStorePairedMemory(pairedUserText, result.response)
   ) {
     const now = deps.clock.now();
-    const pairedContent = buildPairedMemoryContent(msg.text, result.response);
+    const pairedContent = buildPairedMemoryContent(pairedUserText, result.response);
 
     if (isDuplicatePairedMemory(pairedContent, effectiveAgentId, deps.clock)) {
       deps.logger.debug(

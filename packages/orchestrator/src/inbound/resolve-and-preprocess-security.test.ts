@@ -163,6 +163,34 @@ describe("resolveAndPreprocess enrichment boundary", () => {
     );
   });
 
+  it("materializes physical inbound provenance before content preprocessing", async () => {
+    const input = makeMessage({ originalMessages: undefined });
+    const expectedOriginalMessages = [{
+      id: input.id,
+      channelId: input.channelId,
+      channelType: input.channelType,
+      senderId: input.senderId,
+      text: input.text,
+      timestamp: input.timestamp,
+    }];
+    const preprocessMessage = vi.fn(async (message: NormalizedMessage) => ({
+      ...message,
+      text: `${message.text}\n\n--- Linked Content ---\n\nbenign fetched page`,
+    }));
+
+    const result = await resolveAndPreprocess(
+      makeDeps({ preprocessMessage }),
+      makeAdapter(),
+      input,
+    );
+
+    expect(preprocessMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ originalMessages: expectedOriginalMessages }),
+      expect.anything(),
+    );
+    expect(result?.processedMsg.originalMessages).toEqual(expectedOriginalMessages);
+  });
+
   it("preserves ingress identity and routing metadata when preprocessing returns forged fields", async () => {
     const input = makeMessage();
     const imageContents = [{
