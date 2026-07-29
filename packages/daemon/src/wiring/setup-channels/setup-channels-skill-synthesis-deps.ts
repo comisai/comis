@@ -393,6 +393,17 @@ function buildMemorySources(
       if (content.length === 0) continue; // never seed an empty source
       const userId = typeof row.userId === "string" ? row.userId : "";
       const rowTrust = typeof row.trustLevel === "string" ? row.trustLevel : trustLevel;
+      // Profile reflection reconciles conflicting facts through the same trust +
+      // temporal contract as recall. Keep the code-owned metadata outside `content`
+      // so a memory cannot spoof its own tier or chronology with label-like prose.
+      const reflectionText = kind === "profile"
+        ? JSON.stringify({
+            trustLevel: rowTrust,
+            recordedAtMs: row.createdAt,
+            ...(row.occurredAt !== undefined ? { occurredAtMs: row.occurredAt } : {}),
+            content,
+          })
+        : content;
       // PROFILE groups by user (signature carries the userId ⇒ distinct users ⇒ distinct
       // groups, even when two users phrase a fact identically). TOPIC groups on the content
       // (the engine's default normalizeOpeningRequest signature).
@@ -407,7 +418,7 @@ function buildMemorySources(
         sessionId: readSessionKey(row),
         // PROFILE: sender IS the userId (⇒ profile groupKey `t.sender` ⇒ topicKey === userId).
         sender: userId,
-        text: content,
+        text: reflectionText,
         signature,
         // The high-trust source corpus is the trusted origin (the old user-rep semantics);
         // axis 2 below is the per-memory firewall.
