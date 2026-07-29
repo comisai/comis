@@ -831,6 +831,11 @@ describe("setupCrossSession", () => {
       toolGroups: ["coding"],
       includeMcpTools: true,
       sessionKey,
+      workspacePath: "/mock/workspace/agent-2",
+      securityBoundary: {
+        hiddenPaths: ["/mock/workspace/agent-2/sessions"],
+        requireSandboxedExecution: true,
+      },
     }));
   });
 

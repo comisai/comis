@@ -65,6 +65,20 @@ const referenceFor = (agentId: string) => {
   if (!result.ok) throw result.error;
   return result.value;
 };
+const subagentScopeFor = (agentId: string, runId: string): ConversationScope => ({
+  tenantId: "test",
+  agentId,
+  partition: {
+    kind: "endpoint-conversation-principal",
+    principalId: "user-1",
+    endpoint: {
+      channelType: "sub-agent",
+      channelInstanceId: "runtime",
+      conversationId: runId,
+      conversationKind: "direct",
+    },
+  },
+});
 const canonicalSessionKeyFor = (agentId: string) => {
   const result = conversationScopeToSessionKey(scopeFor(agentId));
   if (!result.ok) throw result.error;
@@ -397,6 +411,24 @@ describe("session.history agent-origin self-scoping", () => {
         _callerSessionKey: "test:attacker-user:attacker-channel",
       }),
     ).rejects.toThrow(/does not match the authenticated caller/i);
+  });
+
+  it("session.history denies a sub-agent reading a same-agent sibling conversation", async () => {
+    const deps = makeDeps({ deliveryQueue: makeQueuePort([]) });
+    const handlers = bindSessionReadHandlers(deps);
+
+    await expect(
+      handlers["session.history"]!({
+        session_key: canonicalSessionKeyFor("caller-agent"),
+        tenant_id: "test",
+        agent_id: "caller-agent",
+        conversation_ref: referenceFor("caller-agent"),
+        _agentId: "caller-agent",
+        _tenantId: "test",
+        _callerSessionKey: "test:agent:caller-agent:user-1:sub-agent:runtime:caller-run",
+        _callerConversationScope: subagentScopeFor("caller-agent", "caller-run"),
+      }),
+    ).rejects.toThrow(/sub-agent session access denied/i);
   });
 
   it("session.history still returns the full transcript for an admin/operator call with NO _agentId injected", async () => {
