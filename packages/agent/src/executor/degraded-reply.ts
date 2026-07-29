@@ -28,6 +28,7 @@ import {
   selectToolFailureNoticeUnnamed,
   selectPromptTimeoutReply,
   selectBackgroundTaskFailedNotice,
+  selectDelegationEvidenceMissingReply,
   type LocaleCatalog,
 } from "./degraded-reply-i18n.js";
 
@@ -173,4 +174,12 @@ export function buildBackgroundTaskFailedNotice(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectBackgroundTaskFailedNotice(language, localeCatalog);
+}
+
+/** Honest replacement when requested delegation lacks current-turn spawn proof. */
+export function buildDelegationEvidenceMissingReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectDelegationEvidenceMissingReply(language, localeCatalog);
 }

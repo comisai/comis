@@ -27,6 +27,143 @@ import { stripReasoningTagsFromText } from "../response-filter/reasoning-tags.js
 import { isVisibleTextBlock } from "./phase-filter.js";
 
 // ---------------------------------------------------------------------------
+// Current-turn delegation evidence
+// ---------------------------------------------------------------------------
+
+const EXPLICIT_DELEGATION_REQUEST_PHRASES = [
+  " delegate ",
+  " delegation ",
+  " ask someone",
+  " ask somebody",
+  " ask another agent",
+  " get someone",
+  " get somebody",
+  " get a few people",
+  " have another agent",
+  " use another agent",
+  " consult another",
+  " bring in another",
+];
+
+const DELEGATION_SUCCESS_CLAIM_PHRASES = [
+  " two independent checks",
+  " both independent checks",
+  " multiple independent checks",
+  " two agents",
+  " both agents",
+  " two researchers",
+  " both researchers",
+  " i asked another",
+  " we asked another",
+  " i delegated",
+  " we delegated",
+  " second agent confirmed",
+  " another agent confirmed",
+  " independent reviewer confirmed",
+];
+
+const DELEGATION_LIMITATION_PHRASES = [
+  " i couldn't",
+  " i could not",
+  " i can't",
+  " i cannot",
+  " i wasn't able",
+  " i was not able",
+  " i failed to",
+  " we couldn't",
+  " we could not",
+  " we can't",
+  " we cannot",
+  " we weren't able",
+  " we were not able",
+  " we failed to",
+  " no new agent",
+  " no current-turn agent",
+  " no sub-agent",
+  " delegation failed",
+  " delegation unavailable",
+  " independent check failed",
+  " independent check unavailable",
+];
+
+const DELEGATION_SUBJECT_PHRASES = [
+  " agent",
+  " sub-agent",
+  " delegate",
+  " delegation",
+  " someone",
+  " somebody",
+  " independent check",
+];
+
+function normalizedEvidenceText(value: string): string {
+  return ` ${value.toLocaleLowerCase().replaceAll("’", "'").trim()} `;
+}
+
+function containsEvidencePhrase(text: string, phrases: readonly string[]): boolean {
+  return phrases.some((phrase) => text.includes(phrase));
+}
+
+export interface DelegationEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_current_turn_spawn";
+}
+
+/**
+ * Prevent historical context or unsupported prose from being presented as
+ * delegation performed for the current request.
+ *
+ * The semantic gate is deliberately narrow: it applies only when the current
+ * user text explicitly requests another worker. The proof is structural and
+ * provider-neutral — a terminal, successful `sessions_spawn` receipt from this
+ * execution. A failed call or non-terminal background placeholder is not proof.
+ */
+export function enforceCurrentTurnDelegationEvidence(params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  honestResponse: string;
+}): DelegationEvidenceGuardResult {
+  const request = normalizedEvidenceText(params.request);
+  const requested = containsEvidencePhrase(
+    request,
+    EXPLICIT_DELEGATION_REQUEST_PHRASES,
+  );
+  if (!requested) return { response: params.response, corrected: false };
+
+  const successfulSpawn = (params.toolExecResults ?? []).some(
+    (toolResult) =>
+      toolResult.toolName === "sessions_spawn"
+      && toolResult.success
+      && toolResult.backgrounded !== true,
+  );
+  if (successfulSpawn) return { response: params.response, corrected: false };
+
+  const response = normalizedEvidenceText(params.response);
+  const claimsDelegation = containsEvidencePhrase(
+    response,
+    DELEGATION_SUCCESS_CLAIM_PHRASES,
+  );
+  const admitsLimitation =
+    containsEvidencePhrase(response, DELEGATION_LIMITATION_PHRASES)
+    && containsEvidencePhrase(response, DELEGATION_SUBJECT_PHRASES);
+  if (admitsLimitation && !claimsDelegation) {
+    return { response: params.response, corrected: false };
+  }
+
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "missing_current_turn_spawn",
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Unified OutputGuard scanning (replaces 3 near-identical blocks)
 // ---------------------------------------------------------------------------
 

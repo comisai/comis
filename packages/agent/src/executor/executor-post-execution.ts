@@ -122,7 +122,8 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { enforceCurrentTurnDelegationEvidence } from "./executor-response-filter.js";
 import { BACKGROUND_POLLER_TOOL } from "../safety/background-failure-attribution.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
@@ -1385,6 +1386,38 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       "unknown locale pack message id ignored",
     );
   });
+  const delegationEvidence = enforceCurrentTurnDelegationEvidence({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    honestResponse: buildDelegationEvidenceMissingReply(replyLanguage, localeCatalog),
+  });
+  if (delegationEvidence.corrected) {
+    result.response = delegationEvidence.response;
+    deps.logger.warn(
+      {
+        step: "delegation-evidence",
+        errorKind: "precondition" as const,
+        hint:
+          "The response was replaced because this execution had no successful sessions_spawn "
+          + "receipt; inspect the current tool inventory and sessions_spawn admission in comis explain.",
+      },
+      "Unverified current-turn delegation claim replaced",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.delegation_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "delegation",
+        reason: delegationEvidence.reason,
+        requiredTool: "sessions_spawn",
+      },
+    });
+  }
   const unrecoveredFailed = unrecoveredFailedToolNames(
     bridgeResult.failedTools ?? [],
     bridgeResult.toolExecResults,
