@@ -191,6 +191,9 @@ export function mapGrammyToNormalized(
     : msg.from !== undefined
       ? "user"
       : "unknown";
+  if (updateKind === "edited_message") {
+    metadata.isEdited = true;
+  }
   // The sender's client UI locale — the request-tier response-locale signal
   // consumed by resolveResponseLocalePolicy and the inbound gate's localized
   // replies. Telegram sends lowercase IETF tags ("pt-br");
