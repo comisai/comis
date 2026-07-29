@@ -1551,11 +1551,15 @@ describe("LCD afterTurn deferred compaction + serializer interlock", () => {
     return stripped.slice(blockStart, afterBlock > -1 ? afterBlock : undefined);
   }
 
-  it("source-grep — the ingest AND the deferred compaction both route through runOnConversation (serializer interlock)", () => {
+  it("source-grep — deferred compaction never occupies the live ingest serializer while awaiting a summarizer", () => {
     const block = contextStoreBlock(readPostExec().stripped);
-    // BOTH writers route through the per-conversation serializer → ≥2 calls.
+    // Only the synchronous live-ingest commit owns this serializer at the
+    // post-execution call site. A detached summarizer can take minutes; putting
+    // that whole async pass on the same queue delays the next user-visible reply
+    // even after its model call has completed.
     const calls = block.match(/runOnConversation/g) ?? [];
-    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls).toHaveLength(1);
+    expect(block).toMatch(/enqueueContextMaintenance/);
     // The ingest is still guarded; the passes are still wired.
     expect(block).toMatch(/ingestTurnGuarded/);
     expect(block).toMatch(/runLeafPassAfterTurn/);
