@@ -136,8 +136,9 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   // ----- Memory (confusable pair: memory_search / session_search) -----
   memory_search: "Search stored facts and preferences. Returns empty if no match — not an error. For session history, use session_search.",
   memory_store:
-    "Save stable facts, preferences, decisions, and context for future recall. " +
-    "Not a substitute for a user-requested workspace file or artifact; use file tools for that.",
+    "Save stable facts, preferences, decisions, and context for future recall only. " +
+    "Not for a workspace file or artifact. Do not use to log, record, append to, track, or " +
+    "maintain user-facing records; use workspace file tools.",
   memory_get: "Read workspace files (SOUL.md, TOOLS.md, etc.).",
 
   // ----- Channel (confusable pair: message / sessions_send) -----
