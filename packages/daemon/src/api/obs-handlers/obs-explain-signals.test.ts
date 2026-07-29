@@ -1155,6 +1155,65 @@ describe("toolStats fidelity", () => {
     const s = toIncidentSignals([log678Success(), log678Success()]);
     expect(s.toolStats.web_fetch?.ok).toBe(2);
   });
+
+  it("replaces a promoted tool handoff success with its terminal background failure", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.promoted",
+        seq: 1,
+        data: {
+          taskId: "task-1",
+          toolName: "mcp__reports--slow_lookup",
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 2,
+        data: {
+          toolName: "mcp__reports--slow_lookup",
+          toolCallId: "call-1",
+          success: true,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.failed",
+        seq: 3,
+        data: {
+          taskId: "task-1",
+          toolName: "mcp__reports--slow_lookup",
+          errorKind: "dependency",
+        },
+      },
+      // Recovery can replay the terminal event; one task still represents one
+      // tool outcome.
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.failed",
+        seq: 4,
+        data: {
+          taskId: "task-1",
+          toolName: "mcp__reports--slow_lookup",
+          errorKind: "dependency",
+        },
+      },
+    ]);
+
+    expect(s.toolStats["mcp__reports--slow_lookup"]).toEqual({
+      ok: 0,
+      failed: 1,
+      topErrorKind: "dependency",
+    });
+    expect(s.failures).toEqual([
+      expect.objectContaining({
+        seq: 3,
+        toolName: "mcp__reports--slow_lookup",
+        errorKind: "dependency",
+      }),
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------

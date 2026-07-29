@@ -13,9 +13,11 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   attributeBackgroundFailuresToOriginatingTool,
+  createBackgroundTaskSettlementReconciler,
   isRelayedBackgroundFailure,
   BACKGROUND_POLLER_TOOL,
 } from "./background-failure-attribution.js";
+import { createToolRetryBreaker } from "./tool-retry-breaker.js";
 
 function fakeBus() {
   const handlers = new Map<string, Set<(p: unknown) => void>>();
@@ -131,5 +133,74 @@ describe("attributeBackgroundFailuresToOriginatingTool", () => {
     expect(bus.count("background_task:failed")).toBe(0);
     bus.emit("background_task:failed", { toolName: "t", error: "x" });
     expect(breaker.recordResult).not.toHaveBeenCalled();
+  });
+});
+
+describe("createBackgroundTaskSettlementReconciler", () => {
+  it("carries delayed failures across turns and does not replay a settled task", () => {
+    const breaker = createToolRetryBreaker({
+      maxConsecutiveFailures: 3,
+      maxToolFailures: 2,
+      maxConsecutiveErrorPatterns: 2,
+      suggestAlternatives: false,
+    });
+    const reconciler = createBackgroundTaskSettlementReconciler(breaker);
+    const failed = (id: string) => ({
+      id,
+      toolName: "mcp__reports--slow_lookup",
+      status: "failed" as const,
+      completedAt: 10,
+      error: "source unavailable",
+    });
+
+    expect(reconciler.reconcile([failed("task-1")])).toHaveLength(0);
+    expect(breaker.beforeToolCall("mcp__reports--slow_lookup", { subject: "a" }).block).toBe(false);
+
+    // A later execution scans the same durable task plus one new failure. The
+    // first task must not count twice, while the second must trip the persistent
+    // error-pattern breaker.
+    const transitions = reconciler.reconcile([failed("task-1"), failed("task-2")]);
+    expect(transitions).toHaveLength(1);
+    expect(transitions[0]).toMatchObject({
+      transition: "opened",
+      toolName: "mcp__reports--slow_lookup",
+    });
+    expect(breaker.beforeToolCall("mcp__reports--slow_lookup", { subject: "b" }).block).toBe(true);
+  });
+
+  it("replays terminal chronology so a later completion resets prior failures", () => {
+    const breaker = createToolRetryBreaker({
+      maxConsecutiveFailures: 3,
+      maxToolFailures: 2,
+      maxConsecutiveErrorPatterns: 2,
+      suggestAlternatives: false,
+    });
+    const reconciler = createBackgroundTaskSettlementReconciler(breaker);
+
+    const transitions = reconciler.reconcile([
+      {
+        id: "task-failed-1",
+        toolName: "mcp__reports--slow_lookup",
+        status: "failed",
+        completedAt: 10,
+        error: "source unavailable",
+      },
+      {
+        id: "task-failed-2",
+        toolName: "mcp__reports--slow_lookup",
+        status: "failed",
+        completedAt: 20,
+        error: "source unavailable",
+      },
+      {
+        id: "task-completed",
+        toolName: "mcp__reports--slow_lookup",
+        status: "completed",
+        completedAt: 30,
+      },
+    ]);
+
+    expect(transitions.map((transition) => transition.transition)).toEqual(["opened", "reset"]);
+    expect(breaker.beforeToolCall("mcp__reports--slow_lookup", { subject: "c" }).block).toBe(false);
   });
 });
