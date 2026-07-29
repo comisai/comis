@@ -329,9 +329,14 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         },
       );
       const turnScope = tryGetContext()?.turnScope;
+      const partition = turnScope?.conversation.partition;
+      const isSubagentTurn = (
+        partition?.kind === "endpoint-conversation"
+        || partition?.kind === "endpoint-conversation-principal"
+      ) && partition.endpoint.channelType === "sub-agent";
       const memoryScope = turnScope === undefined
         ? err(new Error("RAG recall requires resolved turn authority"))
-        : createMemoryRecallScope(turnScope, true);
+        : createMemoryRecallScope(turnScope, !isSubagentTurn);
       if (!memoryScope.ok) {
         logger.warn(
           {
