@@ -55,6 +55,29 @@ export function selectMainTrajectoryPath(
     .sort((left, right) => right.mtimeMs - left.mtimeMs)[0]?.path ?? null;
 }
 
+/** Resolve one exact Telegram group/forum conversation trajectory. */
+export function selectTelegramConversationTrajectoryPath(
+  candidates,
+  sessionsRoot,
+  tenantId,
+  botAccountId,
+  chatId,
+  threadId,
+) {
+  const root = sessionsRoot.endsWith("/") ? sessionsRoot.slice(0, -1) : sessionsRoot;
+  const channelInstance = `telegram:telegram-${botAccountId}:${chatId}`;
+  const directory =
+    `${root}/${encodeSessionPathComponent(tenantId)}/${encodeSessionPathComponent(channelInstance)}/`;
+  const filename =
+    threadId === undefined
+      ? "conversation.jsonl.trajectory.jsonl"
+      : `conversation~thread~${threadId}.jsonl.trajectory.jsonl`;
+  const expected = `${directory}${filename}`;
+  return candidates
+    .filter(({ path }) => path === expected)
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)[0]?.path ?? null;
+}
+
 /** Mirror the Telegram adapter's bot-account-scoped normalized message identity. */
 export function telegramInboundGuid(botAccountId, chatId, messageId) {
   const bytes = createHash("sha256")
@@ -151,4 +174,24 @@ export function wireContainsAssistantReply(outbound, assistantReply) {
       typeof item.text === "string" &&
       normalizeWireText(item.text) === expected,
   );
+}
+
+/**
+ * Stop a shared-conversation drive only on evidence tied to that conversation:
+ * either the persisted assistant reply matches the wire, or the exact
+ * conversation trajectory ended after a substantive wire reply became visible.
+ */
+export function sharedConversationFinished({
+  outbound,
+  correlatedAnswer,
+  sawAnswer,
+  turnEnded,
+}) {
+  if (
+    correlatedAnswer !== null
+    && wireContainsAssistantReply(outbound, correlatedAnswer)
+  ) {
+    return true;
+  }
+  return turnEnded && sawAnswer;
 }
