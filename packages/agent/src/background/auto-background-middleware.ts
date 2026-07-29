@@ -10,7 +10,7 @@
  * @module
  */
 import { suppressError } from "@comis/shared";
-import { tryGetContext } from "@comis/core";
+import { BackgroundTaskOriginSchema, tryGetContext } from "@comis/core";
 import type { BackgroundTasksConfig } from "@comis/core";
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -163,11 +163,12 @@ export function wrapToolForAutoBackground(
 
       // Timeout: resolve origin synchronously before yielding to the background.
       // Explicit threading, NOT AsyncLocalStorage.
-      const origin = originResolver();
-      if (!origin) {
-        // No originating session context (e.g., wrap-site is a subagent without
-        // a captured caller session). Treat like a concurrency-limit fallback:
-        // run the tool in the foreground, no background promotion.
+      const origin = BackgroundTaskOriginSchema.safeParse(originResolver());
+      if (!origin.success) {
+        // No bindable originating session context. This includes nested work
+        // whose internal child turn and external delivery route intentionally
+        // differ. Keep the tool foreground rather than creating an unrouteable
+        // task or weakening the structured-origin security invariant.
         return await taskPromise;
       }
 
@@ -176,7 +177,7 @@ export function wrapToolForAutoBackground(
       // toolCallId; without it a backgrounded tool's lifecycle was closed
       // "completed" at hand-off and the real outcome never reached the card).
       const turnCtx = tryGetContext();
-      const promoteResult = manager.promote(tool.name, taskPromise, ac, origin, undefined, {
+      const promoteResult = manager.promote(tool.name, taskPromise, ac, origin.data, undefined, {
         toolCallId,
         ...(turnCtx?.sessionKey !== undefined ? { sessionKey: turnCtx.sessionKey } : {}),
         ...(turnCtx?.traceId !== undefined ? { traceId: turnCtx.traceId } : {}),
