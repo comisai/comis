@@ -201,6 +201,25 @@ function isRealDirectory(path: string): boolean {
 }
 
 /**
+ * Whether a decoded session projection can still contain a requested physical chat.
+ *
+ * Direct projections expose the physical chat as `channelId`. Principal projections
+ * expose the channel type instead, while endpoint projections prefix the channel type.
+ * Without a channel filter the projection shape is ambiguous, so the content-bearing
+ * provenance must decide after the bounded read.
+ */
+function sessionProjectionMayContainChat(
+  sessionChannelId: string,
+  filter: SessionMessagesFilter,
+): boolean {
+  if (filter.chat === undefined || sessionChannelId === filter.chat) return true;
+  if (filter.channel === undefined) return true;
+  if (sessionChannelId === filter.channel) return true;
+  return sessionChannelId.startsWith(`${filter.channel}:`) &&
+    sessionChannelId.endsWith(`:${filter.chat}`);
+}
+
+/**
  * Extract inbound channel messages from every session log under the data dir.
  *
  * Pure offline read — never throws; every degradation is a `coverage` counter.
@@ -315,7 +334,7 @@ export function extractSessionMessages(
             : filePath;
           const key = ledgerKey ?? pathToSessionKey(filePath, sessionsBase, tree.agentId);
           if (key === undefined) continue; // Not a session-log filename shape.
-          if (filter.chat !== undefined && filter.chat !== key.channelId) continue;
+          if (!sessionProjectionMayContainChat(key.channelId, filter)) continue;
           if (coverage.filesScanned >= MAX_SESSION_FILES) {
             coverage.fileCapReached = true;
             coverage.sourceTruncated = true;
@@ -535,6 +554,7 @@ export function extractSessionMessages(
                 if (filter.sinceMs !== undefined && epochMs < filter.sinceMs) continue;
                 if (filter.untilMs !== undefined && epochMs >= filter.untilMs) continue;
                 if (filter.channel !== undefined && filter.channel !== channelType) continue;
+                if (filter.chat !== undefined && filter.chat !== key.channelId) continue;
                 if (filter.sender !== undefined && filter.sender !== candidateSenderId) continue;
                 const origin = classifySessionMessageOrigin(
                   key.channelId,
@@ -611,6 +631,7 @@ export function extractSessionMessages(
             if (filter.untilMs !== undefined && epochMs >= filter.untilMs) continue;
 
             if (filter.channel !== undefined && filter.channel !== env.channelType) continue;
+            if (filter.chat !== undefined && filter.chat !== key.channelId) continue;
             if (filter.sender !== undefined && filter.sender !== env.senderId) continue;
             const origin = classifySessionMessageOrigin(
               key.channelId,
@@ -698,6 +719,10 @@ function finalizeUnparsedEvidence(
     if (
       filter.channel !== undefined && channel.channelType !== undefined &&
       channel.channelType !== filter.channel
+    ) continue;
+    if (
+      filter.chat !== undefined &&
+      evidence.sessionChannelId !== filter.chat
     ) continue;
     if (
       filter.includeInternal !== true &&

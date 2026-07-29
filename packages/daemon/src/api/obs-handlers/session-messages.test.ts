@@ -310,18 +310,25 @@ describe("extractSessionMessages", () => {
     expect(coverage.fileCapReached).toBe(true);
 
     const filtered = extractSessionMessages(dataDir, { chat: "not-telegram" });
-    expect(filtered.coverage.filesScanned).toBe(0);
-    expect(filtered.coverage.fileCapReached).toBe(false);
+    expect(filtered.coverage.filesScanned).toBe(5_000);
+    expect(filtered.coverage.fileCapReached).toBe(true);
+    expect(filtered.completeness).toEqual({
+      complete: false,
+      reasons: ["source_truncated"],
+    });
   });
 
-  it("applies the chat path filter before counting files or enforcing the file ceiling", () => {
+  it("applies the channel-aware chat path filter before counting files", () => {
     const dataDir = tmpDataDir();
     writeSessionFile(dataDir, IRRELEVANT_SESSION_KEY, []);
     writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nmatching chat"),
     ]);
 
-    const { messages, coverage } = extractSessionMessages(dataDir, { chat: "555" });
+    const { messages, coverage } = extractSessionMessages(dataDir, {
+      channel: "telegram",
+      chat: "555",
+    });
 
     expect(messages.map((message) => message.text)).toEqual(["matching chat"]);
     expect(coverage.filesScanned).toBe(1);
