@@ -242,6 +242,75 @@ describe("resolveAndPreprocess audio preflight gate", () => {
     expect(result?.processedMsg.text).toBe("transcribed audio");
   });
 
+  it("preserves complete preflight STT evidence over the duplicate reuse receipt", async () => {
+    const preflightReceipt = {
+      provider: "local",
+      keyless: true,
+      model: "base",
+      source: "keyless-local" as const,
+      outcome: "ok" as const,
+      durationMs: 321,
+      audioBytes: 15,
+    };
+    const transcribed = makeMsg({
+      text: "hey test bot whats the weather tomorrow",
+      attachments: [{
+        type: "audio",
+        mimeType: "audio/ogg",
+        url: "u",
+        transcription: "hey test bot whats the weather tomorrow",
+      }],
+      metadata: {
+        telegramChatType: "group",
+        isBotMentioned: true,
+      },
+    });
+    const audioPreflight = vi.fn(async () => ({
+      transcribed: true,
+      message: transcribed,
+      sttReceipt: preflightReceipt,
+    }));
+    const preprocessMessage = vi.fn(async (message: NormalizedMessage) => ({
+      ...message,
+      metadata: {
+        ...message.metadata,
+        sttPreprocess: [{
+          provider: "local",
+          keyless: true,
+          model: "base",
+          source: "keyless-local",
+          outcome: "ok",
+        }],
+      },
+    }));
+    const deps = makeDeps({
+      audioPreflight: audioPreflight as never,
+      preprocessMessage,
+      autoReplyEngineConfig: {
+        enabled: true,
+        groupActivation: "mention-gated",
+        customPatterns: [],
+        historyInjection: true,
+        maxHistoryInjections: 50,
+        maxGroupHistoryMessages: 20,
+      },
+    });
+    const inputMsg = makeMsg({
+      text: "",
+      attachments: [{
+        type: "audio",
+        mimeType: "audio/ogg",
+        url: "u",
+      }],
+    });
+
+    const result = await resolveAndPreprocess(deps, makeAdapter(), inputMsg);
+
+    expect(result?.processedMsg.metadata.sttPreprocess).toEqual([
+      preflightReceipt,
+    ]);
+  });
+
   it("skips audio preflight when not in group chat (DM)", async () => {
     const audioPreflight = vi.fn();
     const arConfig: AutoReplyEngineConfig = {

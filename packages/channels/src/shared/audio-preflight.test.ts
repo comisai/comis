@@ -104,6 +104,42 @@ describe("audioPreflight", () => {
     expect(enrichedAtt.transcription).toBe("hey everyone");
   });
 
+  it("returns content-free timing and byte evidence for successful preflight STT", async () => {
+    const clock = {
+      now: vi.fn()
+        .mockReturnValueOnce(1_000)
+        .mockReturnValueOnce(1_321),
+      nowDate: vi.fn(() => new Date(1_000)),
+    };
+    const deps = Object.assign(
+      makeDeps({ transcriber: makeTranscriber("hey comis") }),
+      {
+        clock,
+        sttSelection: {
+          provider: "local",
+          keyless: true,
+          model: "base",
+          source: "keyless-local",
+        },
+      },
+    );
+    const msg = makeMessage({ attachments: [makeAudioAttachment()] });
+
+    const result = await audioPreflight(deps, msg);
+
+    expect((result as unknown as {
+      sttReceipt?: Record<string, unknown>;
+    }).sttReceipt).toEqual({
+      provider: "local",
+      keyless: true,
+      model: "base",
+      source: "keyless-local",
+      outcome: "ok",
+      durationMs: 321,
+      audioBytes: 15,
+    });
+  });
+
   it("enriches message text with transcript appended to original", async () => {
     const deps = makeDeps({ transcriber: makeTranscriber("the transcript") });
     const msg = makeMessage({
