@@ -54,10 +54,32 @@ export async function escalateOutput(
 ): Promise<PromptRunResult> {
   let escalationAttempted = false;
   let ghostCost: PromptRunResult["ghostCost"];
+  const bridgeResult = params.bridge.getResult();
+
+  // A bridge abort is already the terminal response for this execution.
+  // Do not let generic success-path recovery mistake the SDK's aborted-empty
+  // assistant turn for a recoverable silent response and start a fresh model
+  // turn after the safety boundary has fired.
+  if (bridgeResult.abortResponse !== undefined) {
+    params.result.response = bridgeResult.abortResponse;
+    params.deps.logger.debug(
+      {
+        step: "abort-recovery-suppressed",
+        finishReason: bridgeResult.finishReason,
+      },
+      "Response recovery skipped after safety abort",
+    );
+    return { promptSucceeded, promptError, escalationAttempted, ghostCost };
+  }
 
   // Output escalation -- retry with higher output budget on max_tokens truncation.
   if (promptSucceeded && !skipPrompt && !escalationAttempted && !budgetTracker) {
-    const escalation = await maybeEscalateOutput(params, messageText, promptImages);
+    const escalation = await maybeEscalateOutput(
+      params,
+      messageText,
+      promptImages,
+      bridgeResult.lastStopReason,
+    );
     if (escalation.ok) {
       escalationAttempted = escalation.value;
     } else {
@@ -96,10 +118,10 @@ async function maybeEscalateOutput(
   params: RunPromptParams,
   messageText: string,
   promptImages: ImageContent[] | undefined,
+  bridgeStopReason: ReturnType<RunPromptParams["bridge"]["getResult"]>["lastStopReason"],
 ): Promise<Result<boolean, Error>> {
-  const { session, sessionKey, agentId, bridge, config, effectiveTimeout, deps } = params;
+  const { session, sessionKey, agentId, config, effectiveTimeout, deps } = params;
 
-  const bridgeStopReason = bridge.getResult().lastStopReason;
   const escalationConfig = config.contextEngine?.outputEscalation;
   const escalationEnabled = escalationConfig?.enabled !== false; // default true
 
