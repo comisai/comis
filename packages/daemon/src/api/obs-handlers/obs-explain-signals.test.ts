@@ -824,6 +824,45 @@ describe("toIncidentSignals — direct sub-agent spawn-tree leaves", () => {
     });
   });
 
+  it("folds a failed child observed by a synchronous parent wait", () => {
+    const s = toIncidentSignals([
+      event("subagent.wait_completed", 1, {
+        runId: "run-waited",
+        success: false,
+      }),
+    ]);
+
+    expect(s.subagentCompletions).toEqual({
+      completed: 1,
+      failed: 1,
+      lastFailedRunId: "run-waited",
+    });
+    expect(rootCause(s)?.code).toBe("subagent_failed");
+  });
+
+  it("counts one child once when lifecycle and wait observations share a run id", () => {
+    const s = toIncidentSignals([
+      event("subagent.completed", 1, {
+        runId: "run-shared",
+        childAgentId: "worker",
+        success: false,
+        runtimeMs: 12_000,
+        tokensUsed: 2_500,
+        costUsd: 0.04,
+      }),
+      event("subagent.wait_completed", 2, {
+        runId: "run-shared",
+        success: false,
+      }),
+    ]);
+
+    expect(s.subagentCompletions).toEqual({
+      completed: 1,
+      failed: 1,
+      lastFailedRunId: "run-shared",
+    });
+  });
+
   it("keeps parallel sessions_spawn children distinct under their parent root", () => {
     const s = toIncidentSignals([
       capAudited(1, {

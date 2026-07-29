@@ -237,6 +237,35 @@ describe("createSubagentHandlers", () => {
     });
   });
 
+  it("agent wait emits the terminal child outcome on the waiting turn", async () => {
+    vi.mocked(deps.subAgentRunner.waitForCompletions).mockResolvedValue([{
+      runId: "run-1",
+      status: "completed",
+      completion: {
+        endReason: "failed",
+        completedAtMs: 123,
+        errorKind: "dependency",
+        summary: "provider unavailable",
+      },
+    }]);
+
+    await handlers["subagent.wait"]!({
+      _agentId: "parent-agent",
+      _callerSessionKey: "default:user1:channel1",
+      _callerConversationScope: CALLER_SCOPE,
+    });
+
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "session:sub_agent_wait_completed",
+      {
+        runId: "run-1",
+        parentSessionKey: "default:user1:channel1",
+        success: false,
+        timestamp: expect.any(Number),
+      },
+    );
+  });
+
   it("agent wait returns indistinguishable denied outcomes without waiting on foreign or missing ids", async () => {
     const callerConversation = makeCallerConversation();
     vi.mocked(deps.subAgentRunner.getRunStatus).mockImplementation((runId) => {

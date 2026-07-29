@@ -2249,6 +2249,36 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- direct sub-agent spawn topology", () => {
     ]);
     expect(siblingRecorder.calls).toHaveLength(0);
   });
+
+  it("records a waited child failure on the active parent turn without result content", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({
+      eventBus: bus,
+      recorder,
+      ownerSessionKey: "parent-session",
+    });
+
+    (bus.emit as unknown as (name: string, payload: Record<string, unknown>) => void)(
+      "session:sub_agent_wait_completed",
+      {
+        runId: "run-child-1",
+        parentSessionKey: "parent-session",
+        success: false,
+        timestamp: 1000,
+      },
+    );
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]).toMatchObject({
+      type: "subagent.wait_completed",
+      data: {
+        runId: "run-child-1",
+        success: false,
+      },
+    });
+    expect(recorder.calls[0]!.data).not.toHaveProperty("parentSessionKey");
+  });
 });
 
 // ---------------------------------------------------------------------------
