@@ -322,7 +322,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
    * daemon startup (detectSandboxProvider runs once). */
   const warnedNoSandboxAgents = new Set<string>();
 
-  // Platform-tool descriptor registry — SSOT for the 45 platform-tools, built once
+  // Platform-tool descriptor registry — SSOT for the 46 platform tools, built once
   // (static set). Per-agent assembly filters by `conditional` predicates + invokes
   // each surviving descriptor's `build(ctx)`. Exec/process/apply-patch tools stay
   // enumerated inline below (`./tools` subpath, built-in non-platform).
