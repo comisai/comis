@@ -11,7 +11,7 @@
 2. **Ground truth, not the reply.** The agent's chat reply is the *least* trustworthy oracle. Read the daemon log / trajectory / `explain` / the dual oracle (`03-OBSERVABILITY.md`).
 3. **One issue fully closed before the next.** Stop at the first failure; fix it; reproduce on a clean slate; confirm; then continue. Don't pivot away from an open issue.
 4. **Every test = works OR fails-honestly.** Security/honesty oracles are **binary HARD**. Classify with the 3-way engine (`02-DISCIPLINE.md` §scoring) — only **COMIS-FAIL** stops the loop.
-5. **Self-improve UNPROMPTED — the observability, the emulator, AND this framework.** Every friction is itself an issue you OWN: a diagnosis that needed a raw-log grep or a hand-join; an error whose `hint` named the wrong knob; a kit script that drifted, errored, or that you hand-wrote a one-off for; a missing/awkward oracle; a stale rig assumption (e.g. a global CLI masking the deployed build). Close it the **moment you realise it (on the fly)**, or in the STEP 6 finalize sweep — **without being asked**: test-first for product code, edit-in-place for kit docs/scripts. The **default is IMPLEMENT**; "document as a finding" is the narrow exception (structural / security-sensitive / the-HARD-oracle-already-passed, per `02-DISCIPLINE.md`). The three loops — observability · emulator · framework — are in `03-OBSERVABILITY.md`. **Litmus: a second run of this exact target must hit measurably LESS friction than this one** (and never re-discover a friction you already hit).
+5. **Self-improve UNPROMPTED — the observability, the emulator, the shipped DEFAULTS, AND this framework.** (The defaults review is STEP 4.6; a run is the only place the out-of-the-box experience gets tested, and it carries two HARD guards — never tune a default toward this run's domain, never relax a security default for UX.) Every friction is itself an issue you OWN: a diagnosis that needed a raw-log grep or a hand-join; an error whose `hint` named the wrong knob; a kit script that drifted, errored, or that you hand-wrote a one-off for; a missing/awkward oracle; a stale rig assumption (e.g. a global CLI masking the deployed build). Close it the **moment you realise it (on the fly)**, or in the STEP 6 finalize sweep — **without being asked**: test-first for product code, edit-in-place for kit docs/scripts. The **default is IMPLEMENT**; "document as a finding" is the narrow exception (structural / security-sensitive / the-HARD-oracle-already-passed, per `02-DISCIPLINE.md`). The three loops — observability · emulator · framework — are in `03-OBSERVABILITY.md`. **Litmus: a second run of this exact target must hit measurably LESS friction than this one** (and never re-discover a friction you already hit).
 6. **Fix EVERY system issue you trip over — even ones unrelated to the target.** A live run exercises the whole daemon, not just the target's surface. Any unexplained ERROR/FATAL, broken agent tool, mis-gated RPC, degraded provider, silent substitution, or obs gap you observe **is in scope** — diagnose it, and fix it test-first under the same loop, target-related or not. The target is the *vehicle*; a healthy, correct system is the *goal*. (This run found+fixed `memory.store` deny-by-origin while testing verified-learning — a bug in a different subsystem entirely. That is the expected pattern, not a digression.) Run the **system-health sweep** (STEP 4.5) deliberately, don't just wait to stumble on issues.
 7. **Plan comprehensively BEFORE you drive — never test ad-hoc.** The very first deliverable, before a single inject, is a written `TEST-PLAN.md` that covers the **whole scenario**: **real-world use cases** (how a user actually exercises it end-to-end, multi-turn, in context — not just one happy call), **edge cases** (empty / huge / malformed / boundary / quota / concurrency / failure-injection), and both axes — **deep** (every requirement + its negative/abuse/security variant + the config-combination polarities) and **broad** (the cross-cutting system flows + the surface sweep). This holds for **any** target shape — a spec, a milestone, a user story, or a bare prompt with test instructions. A thin or improvised plan misses exactly the cases that break in production; STEP 2 is a **gate** — you do not enter STEP 4 (drive) until that comprehensive plan exists.
 
@@ -71,6 +71,43 @@ The target is the vehicle; while the rig is hot, **actively hunt system-wide iss
 - **Drive a basic agent tool turn** (memory_store, web_search, a file write) even if the target doesn't use it — a broken core tool (like a `memory_store` deny-by-origin regression) only shows under a real agent turn, never in a handler unit test.
 - Each real issue → the same fix-verify loop (STEP 4.3). Each one that's nuanced/security-sensitive/out-of-budget → a **documented finding** with the verdict + evidence + fix direction (never silently dropped) + a recommended focused follow-up.
 
+## STEP 4.6 — The DEFAULTS review (the out-of-the-box experience — run it, UNPROMPTED)
+
+A live run is the only place where the **shipped defaults** meet realistic traffic. Unit tests assert that a
+default *is* a value; only a drive shows whether that value gives a new operator a good first day. So for
+every behavior-changing knob the run actually exercised, record a **defaults verdict** — and where the
+evidence supports it, change the default test-first like any other fix.
+
+Classify each knob into exactly one class:
+
+- **DEFAULT-OK** — the default served the realistic path. Record the evidence (the measurement, not "felt
+  fine") so the next run doesn't re-litigate it.
+- **EXPERIENCE-WRONG, VALUE-RIGHT** — the most common and most valuable class. The value is defensible but
+  the experience around it is not: it fires silently, the user can't tell it fired, the error doesn't name
+  the knob, or the operator has no surface showing the posture. **Fix the message/hint/surface, not the
+  value.** This is the same work as the observability loop, pointed at a config knob.
+- **DEFAULT-WRONG** — measured evidence that the value produces a worse outcome *for any deployment*. Fix
+  it: RED test pinning the new value **and the reason**, GREEN, docs updated in the SAME change (config
+  keys and defaults are explicitly in the Docs-Current list), before/after recorded in the results log.
+- **TRADEOFF** — genuinely a product decision (cost vs latency vs safety vs surprise). Do **not** flip it
+  unilaterally. Document the measurement plus a recommendation and settle it with the user.
+- **DEAD / DECOY** — the knob has no consumer, or has one that can never be reached. Remove it or implement
+  it; never leave a decoy that reads as a supported control.
+
+Two guards are HARD, and they are what keep this from becoming default churn:
+
+- **Generic-runtime guard.** Never tune a default toward *this run's* persona, domain, human language, or
+  channel. Litmus: **would a completely unrelated deployment be better off?** If the gain exists only for
+  this campaign, it belongs in operator workspace config or a skill — never in the shipped default
+  (`CLAUDE.md` generic-runtime check).
+- **Security guard.** Never relax a security default to remove friction. Friction on a security default is
+  an EXPERIENCE-WRONG — a better error, hint, or surface — never a weaker value. If a relaxation is
+  genuinely correct, it must **surface** (`config_posture` / WARN), never go quiet.
+
+Evidence bar: a number you measured during the run, reproduced on a clean slate — not a single anecdote and
+not a preference. State what you measured, under what traffic, on which rig. A default change with no
+measurement behind it is a guess wearing a commit message.
+
 ## STEP 5 — Sweep broad (after the deep UCs)
 
 - **Track K — providers × models:** sweep every configured provider × every catalog model, one per restart (`scripts/models-sweep.sh`). Classify each OK/NO-ACCESS/COMIS-FAIL; confirm the actual `modelId` == config (no silent substitution / chimeric pairing). `05-CATALOG.md §Track-K` has the per-provider gotchas.
@@ -83,7 +120,8 @@ Scale these to the target: a single use-case target may need only the K/L/M slic
 
 - **Coverage honesty before verdicts** (`02-DISCIPLINE.md §scoring`): account for EVERY planned row — a never-driven row is **NOT-RUN**, not NO-ACCESS and never an omission (a missing row reads as covered). State the unreached fraction in the summary, label a run over ~20% **PARTIAL in its first line**, diff the matrix against the previous run so a capability cannot silently stop being tested, and check every pass@k against its bar (HARD = k/k). A partial run is a fine outcome; a partial run reported as a pass is how a defect ships.
 - **Stop condition** (`02-DISCIPLINE.md §stop`): every deep test works-or-fails-honestly, **zero false successes**, all HARD oracles green; K matrix complete (0 COMIS-FAIL open); L walked; dual-oracle clean; logs clean (no unexplained ERROR/FATAL, no secret residency); `pnpm validate` green on the fix branch; test-only config mutations restored; the obs + emulator + framework loops closed; the daemon left healthy on the fixed build.
-- **Self-improvement sweep (non-negotiable #5 — UNPROMPTED):** before declaring done, implement every observability / emulator / framework improvement the run surfaced that you didn't already close on the fly — the missing oracle, the kit-script drift, the misleading `hint`, the diagnosis that needed a raw grep, the rig gotcha. Implement them (test-first for product code, edit-in-place for kit docs/scripts); only the structural/security-sensitive ones become a documented finding. **Do NOT wait for the user to ask** — and consider whether the live-test instructions (`00-MISSION`/`02`/`03`/`05`/`scripts/`) themselves need a sharpening so the next run avoids the friction you just hit.
+- **Defaults verdict table (STEP 4.6):** every behavior-changing knob the run exercised gets a row — knob · default value · what you measured · class (DEFAULT-OK / EXPERIENCE-WRONG / DEFAULT-WRONG / TRADEOFF / DEAD) · action taken or recommended. A knob you exercised but never judged is an omission; a class with no measurement behind it is a guess.
+- **Self-improvement sweep (non-negotiable #5 — UNPROMPTED):** before declaring done, implement every observability / emulator / defaults / framework improvement the run surfaced that you didn't already close on the fly — the missing oracle, the kit-script drift, the misleading `hint`, the diagnosis that needed a raw grep, the rig gotcha. Implement them (test-first for product code, edit-in-place for kit docs/scripts); only the structural/security-sensitive ones become a documented finding. **Do NOT wait for the user to ask** — and consider whether the live-test instructions (`00-MISSION`/`02`/`03`/`05`/`scripts/`) themselves need a sharpening so the next run avoids the friction you just hit.
 - **Results log:** fill `runs/<target>-<date>/RESULTS-LOG.md` (copy `templates/RESULTS-LOG.template.md`) — per test: works / fails-honestly / COMIS-FAIL + fix commit; the provider matrix; the obs-gap ledger; the open findings (documented, never silently dropped).
 - **Fixes:** branch-first, test-first, `pnpm validate` green; **commit/push only when the user asks** (per `CLAUDE.md`). Each fix gets a `FIX-VERIFY-LOG.md` entry.
 - **Memory:** record the milestone outcome + any new recurring-defect or obs-gap lesson (so the next run starts ahead).
@@ -106,6 +144,9 @@ Scale these to the target: a single use-case target may need only the K/L/M slic
         │           rebuild+restart → reproduce → confirm →              │
         │           close obs gap → resume   (one issue fully closed)    │
         └───────────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+   [4.5] system-health sweep  ·  [4.6] DEFAULTS review (out-of-the-box UX verdict per knob)
                           │
                           ▼
    [5] sweep K (providers×models) · L (surfaces) · M (config combos)
