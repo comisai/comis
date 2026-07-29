@@ -36,24 +36,71 @@ function containsPath(root: string, candidate: string): boolean {
     || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
 }
 
+function strictlyContainsPath(root: string, candidate: string): boolean {
+  return root !== candidate && containsPath(root, candidate);
+}
+
+/**
+ * Canonical read-only exceptions that are strict descendants of a hidden root.
+ *
+ * An exception is rejected if it equals a hidden root, sits outside every
+ * hidden root, or would cover another hidden root. This keeps a narrowly
+ * readable child artifact from reopening a broader or nested isolation
+ * boundary.
+ */
+export function resolveHiddenReadAllowPaths(
+  hiddenPaths: readonly string[] | undefined,
+  hiddenReadAllowPaths: readonly string[] | undefined,
+): string[] {
+  if (
+    !hiddenPaths
+    || hiddenPaths.length === 0
+    || !hiddenReadAllowPaths
+    || hiddenReadAllowPaths.length === 0
+  ) {
+    return [];
+  }
+  const canonicalHidden = hiddenPaths.map(canonicalPath);
+  const resolved = new Set<string>();
+  for (const requested of hiddenReadAllowPaths) {
+    const allowed = canonicalPath(requested);
+    const hasHiddenAncestor = canonicalHidden.some((hidden) =>
+      strictlyContainsPath(hidden, allowed));
+    const coversHiddenBoundary = canonicalHidden.some((hidden) =>
+      containsPath(allowed, hidden));
+    if (hasHiddenAncestor && !coversHiddenBoundary) {
+      resolved.add(allowed);
+    }
+  }
+  return [...resolved];
+}
+
 /** True when a candidate is a hidden root, descendant, or symlink into one. */
 export function isRestrictedPath(
   candidate: string,
   hiddenPaths: readonly string[] | undefined,
+  hiddenReadAllowPaths?: readonly string[],
 ): boolean {
   if (!hiddenPaths || hiddenPaths.length === 0) return false;
   const canonicalCandidate = canonicalPath(candidate);
-  return hiddenPaths.some((hidden) =>
+  const restricted = hiddenPaths.some((hidden) =>
     containsPath(canonicalPath(hidden), canonicalCandidate),
   );
+  if (!restricted) return false;
+  const allowed = resolveHiddenReadAllowPaths(
+    hiddenPaths,
+    hiddenReadAllowPaths,
+  );
+  return !allowed.some((root) => containsPath(root, canonicalCandidate));
 }
 
 /** Refuse access without echoing the sensitive path. */
 export function requireVisiblePath(
   candidate: string,
   hiddenPaths: readonly string[] | undefined,
+  hiddenReadAllowPaths?: readonly string[],
 ): void {
-  if (isRestrictedPath(candidate, hiddenPaths)) {
+  if (isRestrictedPath(candidate, hiddenPaths, hiddenReadAllowPaths)) {
     throw new Error(
       "[restricted_path] Access to this internal workspace path is denied.",
     );

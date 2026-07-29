@@ -240,6 +240,89 @@ describe("createComisFileTools", () => {
     expect(textOf(lsResult)).not.toContain("sessions/");
   });
 
+  itRg("reads only the current session tool-results exception inside a hidden sessions tree", async () => {
+    const sessionsDir = path.join(tmpDir, "sessions");
+    const ownSessionDir = path.join(sessionsDir, "default", "sub-agent-own");
+    const ownResultsDir = path.join(ownSessionDir, "tool-results");
+    const ownResultFile = path.join(ownResultsDir, "call-own.json");
+    const ownTranscript = path.join(ownSessionDir, "conversation.jsonl");
+    const siblingFile = path.join(
+      sessionsDir,
+      "default",
+      "sub-agent-sibling",
+      "tool-results",
+      "call-sibling.json",
+    );
+    await fs.mkdir(path.dirname(siblingFile), { recursive: true });
+    await fs.mkdir(ownResultsDir, { recursive: true });
+    await fs.writeFile(ownResultFile, "own-offload-marker", "utf-8");
+    await fs.writeFile(ownTranscript, "own-transcript-marker", "utf-8");
+    await fs.writeFile(siblingFile, "sibling-offload-marker", "utf-8");
+
+    const config = makeConfig({
+      read: true,
+      write: true,
+      grep: true,
+      find: true,
+      ls: true,
+    });
+    const createWithBoundary = createComisFileTools as unknown as (
+      ...args: [
+        ...Parameters<typeof createComisFileTools>,
+        hiddenReadAllowPaths: string[],
+      ]
+    ) => ReturnType<typeof createComisFileTools>;
+    const tools = createWithBoundary(
+      config,
+      tmpDir,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [sessionsDir],
+      [ownResultsDir],
+    );
+
+    const readTool = tools.find((tool) => tool.name === "read")!;
+    const writeTool = tools.find((tool) => tool.name === "write")!;
+    const grepTool = tools.find((tool) => tool.name === "grep")!;
+    const findTool = tools.find((tool) => tool.name === "find")!;
+    const lsTool = tools.find((tool) => tool.name === "ls")!;
+
+    expect(textOf(await readTool.execute("own-read", {
+      path: path.relative(tmpDir, ownResultFile),
+    }))).toContain("own-offload-marker");
+    await expect(readTool.execute("transcript-read", {
+      path: path.relative(tmpDir, ownTranscript),
+    })).rejects.toThrow(/\[restricted_path\]/);
+    await expect(readTool.execute("sibling-read", {
+      path: path.relative(tmpDir, siblingFile),
+    })).rejects.toThrow(/\[restricted_path\]/);
+    await expect(writeTool.execute("own-write", {
+      path: path.relative(tmpDir, ownResultFile),
+      content: "tampered",
+    })).rejects.toThrow(/\[restricted_path\]/);
+    expect(await fs.readFile(ownResultFile, "utf-8")).toBe("own-offload-marker");
+
+    expect(textOf(await grepTool.execute("own-grep", {
+      pattern: "own-offload-marker",
+      path: path.relative(tmpDir, ownResultsDir),
+    }))).toContain("own-offload-marker");
+    expect(textOf(await findTool.execute("own-find", {
+      pattern: "*.json",
+      path: path.relative(tmpDir, ownResultsDir),
+    }))).toContain("call-own.json");
+    expect(textOf(await lsTool.execute("own-ls", {
+      path: path.relative(tmpDir, ownResultsDir),
+    }))).toContain("call-own.json");
+
+    const escapePath = path.join(ownResultsDir, "escape.json");
+    await fs.symlink(siblingFile, escapePath);
+    await expect(readTool.execute("symlink-read", {
+      path: escapePath,
+    })).rejects.toThrow(/\[(?:restricted_path|path_traversal)\]/);
+  });
+
   it("each tool preserves its expected name", () => {
     const config = makeConfig({
       read: true,

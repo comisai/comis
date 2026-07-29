@@ -12,7 +12,8 @@
  */
 
 import { dirname } from "node:path";
-import { safePath } from "@comis/core";
+import { sessionKeyToPath } from "@comis/agent";
+import { safePath, type SessionKey } from "@comis/core";
 
 /**
  * Map a session JSONL file path to its sibling `tool-results/` spill directory.
@@ -30,4 +31,24 @@ import { safePath } from "@comis/core";
 export function toolResultsDirFromSessionPath(sessionJsonlPath: string): string {
   const sessionDir = dirname(sessionJsonlPath);
   return safePath(sessionDir, "tool-results");
+}
+
+export function toolResultsReadBoundaryForSession(
+  workspaceDir: string,
+  sessionKey: SessionKey,
+): {
+  hiddenPaths: readonly string[];
+  hiddenReadAllowPaths: readonly string[];
+  requireSandboxedExecution: true;
+} {
+  const hiddenSessionsDir = safePath(workspaceDir, "sessions");
+  const ownToolResultsDir = toolResultsDirFromSessionPath(
+    sessionKeyToPath(sessionKey, hiddenSessionsDir),
+  );
+
+  return {
+    hiddenPaths: [hiddenSessionsDir],
+    hiddenReadAllowPaths: [ownToolResultsDir],
+    requireSandboxedExecution: true,
+  };
 }

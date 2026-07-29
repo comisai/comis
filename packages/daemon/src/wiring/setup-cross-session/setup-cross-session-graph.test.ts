@@ -35,31 +35,35 @@ const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({
   cacheRetention: "short" as const,
 })));
 
-vi.mock("@comis/agent", () => ({
-  createStepCounter: vi.fn(() => ({
-    increment: vi.fn().mockReturnValue(1),
-    shouldHalt: vi.fn().mockReturnValue(false),
-    reset: vi.fn(),
-    getCount: vi.fn().mockReturnValue(0),
-  })),
-  createSpawnPacketBuilder: vi.fn(),
-  generateParentSummary: vi.fn(),
-  createEphemeralComisSessionManager: vi.fn(() => ({
-    withSession: vi.fn(),
-    destroySession: vi.fn(),
-    getSessionStats: vi.fn(),
-    writeSessionMetadata: vi.fn(),
-  })),
-  createComisSessionManager: vi.fn(() => ({
-    withSession: vi.fn(),
-    destroySession: vi.fn(),
-    getSessionStats: vi.fn(),
-    writeSessionMetadata: vi.fn(),
-  })),
-  getCacheSafeParams: vi.fn(() => undefined),
-  resolveOperationModel: mockResolveOperationModel,
-  resolveProviderFamily: vi.fn(() => "anthropic"),
-}));
+vi.mock("@comis/agent", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/agent")>();
+  return {
+    createStepCounter: vi.fn(() => ({
+      increment: vi.fn().mockReturnValue(1),
+      shouldHalt: vi.fn().mockReturnValue(false),
+      reset: vi.fn(),
+      getCount: vi.fn().mockReturnValue(0),
+    })),
+    createSpawnPacketBuilder: vi.fn(),
+    generateParentSummary: vi.fn(),
+    createEphemeralComisSessionManager: vi.fn(() => ({
+      withSession: vi.fn(),
+      destroySession: vi.fn(),
+      getSessionStats: vi.fn(),
+      writeSessionMetadata: vi.fn(),
+    })),
+    createComisSessionManager: vi.fn(() => ({
+      withSession: vi.fn(),
+      destroySession: vi.fn(),
+      getSessionStats: vi.fn(),
+      writeSessionMetadata: vi.fn(),
+    })),
+    getCacheSafeParams: vi.fn(() => undefined),
+    resolveOperationModel: mockResolveOperationModel,
+    resolveProviderFamily: vi.fn(() => "anthropic"),
+    sessionKeyToPath: actual.sessionKeyToPath,
+  };
+});
 
 import {
   buildExecuteSubAgent,

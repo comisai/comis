@@ -295,6 +295,7 @@ export function createComisFindTool(
   readOnlyPaths?: string[],
   sharedPaths?: LazyPaths,
   hiddenPaths?: readonly string[],
+  hiddenReadAllowPaths?: readonly string[],
 ): AgentTool<typeof FindParams> {
   // Comis extension: promptGuidelines (not part of AgentTool type, spread to bypass excess property check)
   const ext = { promptGuidelines: [
@@ -336,7 +337,11 @@ export function createComisFindTool(
         } else {
           searchBase = workspacePath;
         }
-        requireVisiblePath(searchBase, hiddenPaths);
+        requireVisiblePath(
+          searchBase,
+          hiddenPaths,
+          hiddenReadAllowPaths,
+        );
 
         logger?.debug?.("find: searching", pattern, "in", searchBase);
 
@@ -349,7 +354,11 @@ export function createComisFindTool(
         // 5. Filter through .gitignore
         const filtered = rawFiles.filter((f) =>
           !ig.ignores(f)
-          && !isRestrictedPath(nodePath.resolve(searchBase, f), hiddenPaths));
+          && !isRestrictedPath(
+            nodePath.resolve(searchBase, f),
+            hiddenPaths,
+            hiddenReadAllowPaths,
+          ));
 
         // 6. Stat for mtime
         const withMtime = await statFiles(filtered, searchBase);

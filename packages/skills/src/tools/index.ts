@@ -48,6 +48,7 @@ export {
 
 // Built-in tools -- safe-path types (lazy resolution for hot-add)
 export { type LazyPaths, resolvePaths } from "./builtin/file/safe-path-wrapper.js";
+export { resolveHiddenReadAllowPaths } from "./builtin/file/restricted-paths.js";
 
 // Built-in tools -- file state tracking
 export { createFileStateTracker, isDeviceFile } from "./builtin/file/file-state-tracker.js";

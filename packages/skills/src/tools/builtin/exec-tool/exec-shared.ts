@@ -111,6 +111,7 @@ export function buildSpawnCommand(
       network: sandboxConfig.network,
       secureCredentialHome: sandboxConfig.secureCredentialHome,
       hiddenPaths: sandboxConfig.hiddenPaths,
+      hiddenReadAllowPaths: sandboxConfig.hiddenReadAllowPaths,
     });
     // bwrap handles cwd internally via --chdir; sandbox-exec does not.
     const providerHandlesCwd = sandboxConfig.sandbox.name === "bwrap";

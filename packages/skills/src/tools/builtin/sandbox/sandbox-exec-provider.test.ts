@@ -206,6 +206,27 @@ describe("SandboxExecProvider", () => {
       );
     });
 
+    it("permits one hidden descendant for reads without granting writes or unrelated exceptions", () => {
+      const hiddenRoot = "/Users/agent/workspace/sessions";
+      const ownResults = `${hiddenRoot}/default/sub-agent-own/tool-results`;
+      const profile = new SandboxExecProvider().buildArgs(makeOpts({
+        hiddenPaths: [hiddenRoot],
+        hiddenReadAllowPaths: [ownResults, "/Users/agent/workspace/not-hidden"],
+      } as unknown as Partial<SandboxOptions>))[2]!;
+
+      const denyRead = `(deny file-read* (subpath "${hiddenRoot}"))`;
+      const allowOwnRead = `(allow file-read* (subpath "${ownResults}"))`;
+      expect(profile).toContain(denyRead);
+      expect(profile).toContain(allowOwnRead);
+      expect(profile.indexOf(allowOwnRead)).toBeGreaterThan(profile.indexOf(denyRead));
+      expect(profile).not.toContain(
+        `(allow file-write* (subpath "${ownResults}"))`,
+      );
+      expect(profile).not.toContain(
+        '(allow file-read* (subpath "/Users/agent/workspace/not-hidden"))',
+      );
+    });
+
     it("keeps a replay workspace readable but removes its write grant", () => {
       const provider = new SandboxExecProvider();
       const profile = provider.buildArgs(makeOpts({ workspaceReadOnly: true }))[2]!;

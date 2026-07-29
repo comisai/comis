@@ -67,6 +67,8 @@ export function getBuiltinTools(
   fileStateTracker?: FileStateTracker,
   /** Internal workspace subtrees unavailable to this tool assembly. */
   hiddenPaths?: readonly string[],
+  /** Read-only strict descendants that remain visible inside a hidden subtree. */
+  hiddenReadAllowPaths?: readonly string[],
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
 ): AgentTool<any>[] {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
@@ -108,6 +110,7 @@ export function getBuiltinTools(
     sharedPaths,
     fileStateTracker,
     hiddenPaths,
+    hiddenReadAllowPaths,
   );
   tools.push(...fileTools);
 
@@ -171,6 +174,8 @@ export interface ToolPipelineDeps {
   fileStateTracker?: FileStateTracker;
   /** Internal workspace subtrees unavailable to this tool assembly. */
   hiddenPaths?: readonly string[];
+  /** Read-only strict descendants that remain visible inside a hidden subtree. */
+  hiddenReadAllowPaths?: readonly string[];
 }
 
 /**
@@ -203,6 +208,7 @@ export async function assembleToolPipeline(
     deps.sharedPaths,
     deps.fileStateTracker,
     deps.hiddenPaths,
+    deps.hiddenReadAllowPaths,
   );
 
   // Tier 2 - Platform

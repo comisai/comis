@@ -55,6 +55,7 @@ import {
   createApplyPatchTool,
   createSleepTool,
   createFileStateTracker,
+  resolveHiddenReadAllowPaths,
   sanitizeImageForApi,
   createMediaPersistenceService,
   type SandboxProvider,
@@ -254,6 +255,7 @@ export interface AssembleToolsOptions {
   /** Least-authority restrictions for a synthetic child assembly. */
   securityBoundary?: {
     hiddenPaths: readonly string[];
+    hiddenReadAllowPaths?: readonly string[];
     requireSandboxedExecution: boolean;
   };
 }
@@ -483,6 +485,15 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     if (!readOnlyPaths.includes(logsDir)) {
       readOnlyPaths.push(logsDir);
     }
+    const hiddenReadAllowPaths = resolveHiddenReadAllowPaths(
+      securityBoundary?.hiddenPaths,
+      securityBoundary?.hiddenReadAllowPaths,
+    );
+    for (const allowedPath of hiddenReadAllowPaths) {
+      if (!readOnlyPaths.includes(allowedPath)) {
+        readOnlyPaths.push(allowedPath);
+      }
+    }
 
     // Create per-agent rpcCall that injects _agentId.
     const agentRpc = createAgentRpcCall(agentId, options?.autonomyParent?.caps);
@@ -608,6 +619,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
                 : undefined,
               secureCredentialHome: deps.brokerContext ? true : undefined,
               hiddenPaths: securityBoundary?.hiddenPaths,
+              hiddenReadAllowPaths,
             }
           : undefined;
 
@@ -876,6 +888,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       sharedPaths: effectiveSharedPaths,
       fileStateTracker,
       hiddenPaths: securityBoundary?.hiddenPaths,
+      hiddenReadAllowPaths,
     });
   }
 

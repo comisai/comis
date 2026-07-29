@@ -63,6 +63,12 @@ const mockCreateFileStateTracker = vi.hoisted(() => vi.fn(() => ({
   checkStaleness: vi.fn(() => ({ stale: false })),
   clone: vi.fn(),
 })));
+const mockResolveHiddenReadAllowPaths = vi.hoisted(() => vi.fn(
+  (
+    hiddenPaths: readonly string[] | undefined,
+    hiddenReadAllowPaths: readonly string[] | undefined,
+  ) => hiddenPaths?.length ? [...(hiddenReadAllowPaths ?? [])] : [],
+));
 const mockSanitizeLogString = vi.hoisted(() => vi.fn((s: string) => s));
 const mockTryGetContext = vi.hoisted(() => vi.fn(() => undefined));
 const mockSessionKeyToPath = vi.hoisted(() => vi.fn((_key: unknown, baseDir: string) => baseDir + "/tenant/channel/user.jsonl"));
@@ -121,6 +127,7 @@ vi.mock("@comis/skills/tools", () => ({
   // other always-on builtins (createExecTool/createProcessTool/createApplyPatchTool).
   createSleepTool: mockCreateSleepTool,
   createFileStateTracker: mockCreateFileStateTracker,
+  resolveHiddenReadAllowPaths: mockResolveHiddenReadAllowPaths,
   sanitizeImageForApi: mockSanitizeImageForApi,
   createMediaPersistenceService: mockCreateMediaPersistenceService,
   // Terminal-driver wiring deps consumed by setup-terminal-tools.ts.
@@ -1484,6 +1491,44 @@ describe("setupTools", () => {
       // even when discoveryPaths omits ./skills).
       expect(sandboxArg.readOnlyPaths).toEqual(["/workspace/agent-1/skills", "/test/data/skills", "/test/data/logs"]);
       expect(sandboxArg.configReadOnlyPaths).toEqual(["/test/data/logs"]);
+    });
+
+    it("threads the current hidden tool-results exception through file and exec read boundaries", async () => {
+      const hiddenRoot = "/workspace/agent-1/sessions";
+      const ownResults = `${hiddenRoot}/default/sub-agent-own/tool-results`;
+      const deps = createMinimalDeps({
+        sandboxProvider: createMockSandboxProvider() as any,
+        agents: {
+          "agent-1": {
+            skills: {
+              builtinTools: { browser: false, exec: true, process: false },
+              toolPolicy: { profile: "default" },
+              discoveryPaths: [],
+              execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
+            },
+          } as any,
+        },
+      });
+
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+      await assembleToolsForAgent("agent-1", {
+        securityBoundary: {
+          hiddenPaths: [hiddenRoot],
+          hiddenReadAllowPaths: [ownResults],
+          requireSandboxedExecution: true,
+        },
+      } as never);
+
+      const pipelineArgs = mockAssembleToolPipeline.mock.calls[0][0];
+      pipelineArgs.platformTools();
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
+
+      expect(pipelineArgs.readOnlyPaths).toContain(ownResults);
+      expect(pipelineArgs.hiddenPaths).toEqual([hiddenRoot]);
+      expect(pipelineArgs.hiddenReadAllowPaths).toEqual([ownResults]);
+      expect(sandboxArg.hiddenPaths).toEqual([hiddenRoot]);
+      expect(sandboxArg.hiddenReadAllowPaths).toEqual([ownResults]);
     });
 
     it("passes sandboxCfg to exec tool when coding toolGroup used with builtinTools.exec true", async () => {

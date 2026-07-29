@@ -26,6 +26,7 @@ import type { GitExec } from "@comis/skills/tools";
 import type { WorktreeRegistry } from "../setup-worktree-sweep.js";
 import { resolveGraphCacheRetention } from "./graph-cache-retention.js";
 import { maybePrepareWorktreeForSpawn } from "./worktree-spawn-run.js";
+import { toolResultsReadBoundaryForSession } from "../tool-results-dir.js";
 export { resolveGraphCacheRetention } from "./graph-cache-retention.js";
 /** Minimum spawn budget so boot cannot consume every step. */
 export const MIN_SUB_AGENT_STEPS = 30;
@@ -210,7 +211,6 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       },
     });
     const effectiveWorkspaceDir = worktreeHandle?.dir ?? baseWorkspaceDir;
-
     let tools = await assembleToolsForAgent(effectiveAgentId, {
       includePlatformTools: true,
       toolGroups: effectiveToolGroups,
@@ -218,7 +218,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       sharedPaths: graphSharedDir ? [graphSharedDir] : undefined,
       sessionKey,
       workspacePath: effectiveWorkspaceDir,
-      securityBoundary: { hiddenPaths: [safePath(baseWorkspaceDir, "sessions")], requireSandboxedExecution: true },
+      securityBoundary: toolResultsReadBoundaryForSession(baseWorkspaceDir, sessionKey),
       ...(ctx?.deliveryOrigin !== undefined
         ? { requesterOrigin: ctx.deliveryOrigin }
         : {}),

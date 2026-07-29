@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { safePath, systemGetEnv } from "@comis/core";
 
 import type { SandboxOptions, SandboxProvider } from "./types.js";
+import { resolveHiddenReadAllowPaths } from "../file/restricted-paths.js";
 
 /** Escape a path for SBPL string literal. */
 function sbplQuote(p: string): string {
@@ -125,6 +126,12 @@ function buildSbplProfile(opts: SandboxOptions): string {
         `(deny file-write* (subpath ${hidden}))`,
       ];
     }),
+    "",
+    ";; Read-only exceptions inside hidden workspace subtrees",
+    ...resolveHiddenReadAllowPaths(
+      opts.hiddenPaths,
+      opts.hiddenReadAllowPaths,
+    ).map((p) => `(allow file-read* (subpath ${sbplQuote(resolvePath(p))}))`),
   ];
 
   return lines.join("\n");
