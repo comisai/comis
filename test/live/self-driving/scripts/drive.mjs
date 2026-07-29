@@ -25,6 +25,7 @@ import { rig } from './_rig.mjs';
 import {
   driveTextFilePath,
   findAssistantReplyAfterInbound,
+  outboundVisibleText,
   selectMainTrajectoryPath,
   telegramInboundGuid,
   telegramInjectAddressingError,
@@ -242,7 +243,8 @@ while (Date.now() - start < maxMs) {
   if (batch.length) {
     for (const o of batch) {
       seen.push(o); after = Math.max(after, o.messageId || after);
-      if (o.method === 'sendMessage' && !isProgress(o.text)) sawAnswer = true;
+      const visibleText = outboundVisibleText(o);
+      if (visibleText && !isProgress(visibleText)) sawAnswer = true;
     }
     lastNew = Date.now();
   }
@@ -263,7 +265,12 @@ while (Date.now() - start < maxMs) {
   if (turnEnded) {
     // drain any just-delivered final message, then stop
     const tail = await getOutbound(after, 2500);
-    for (const o of tail) { seen.push(o); after = Math.max(after, o.messageId || after); if (o.method === 'sendMessage' && !isProgress(o.text)) sawAnswer = true; }
+    for (const o of tail) {
+      seen.push(o);
+      after = Math.max(after, o.messageId || after);
+      const visibleText = outboundVisibleText(o);
+      if (visibleText && !isProgress(visibleText)) sawAnswer = true;
+    }
     break;
   }
   if (sawAnswer && Date.now() - lastNew >= quiesceMs) break;
@@ -309,13 +316,19 @@ const reason = correlatedWireAnswer
         ? 'BLOCKED(allowFrom)'
         : 'TIMEOUT';
 console.log(`=== ALL OUTBOUND (${seen.length}) in ${Math.round((Date.now() - start) / 1000)}s [${reason}]${hasSubstantiveAnswer ? '' : ' — NO SUBSTANTIVE ANSWER'} ===`);
-for (const o of seen) console.log(`[${o.method} ${o.messageId}] ${JSON.stringify((o.text || '').slice(0, 600))}`);
+for (const o of seen) console.log(`[${o.method} ${o.messageId}] ${JSON.stringify(outboundVisibleText(o).slice(0, 600))}`);
 console.log('=== SUBSTANTIVE ANSWER ===');
 let any = false;
 if (correlatedWireAnswer) {
   console.log(correlatedAnswer);
   any = true;
 } else if (!sharedConversation) {
-  for (const o of seen) if (o.method === 'sendMessage' && !isProgress(o.text)) { console.log(o.text); any = true; }
+  for (const o of seen) {
+    const visibleText = outboundVisibleText(o);
+    if (visibleText && !isProgress(visibleText)) {
+      console.log(visibleText);
+      any = true;
+    }
+  }
 }
 if (!any) console.log(`[NO SUBSTANTIVE ANSWER — ${allowFromBlock ? allowFromBlock : turnEnded ? 'turn ended with no chat delivery (empty-final/abort?) — read the trajectory' : 'timed out'}]`);

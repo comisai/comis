@@ -26,6 +26,7 @@ import {
   relativizeDiskPath,
   previewAndDigest,
   applyMediaRecord,
+  currentTurnBreakerOpenedTool,
 } from "./obs-explain-signals-fields.js";
 import {
   accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillUsedRecord, accumulateSkillSurfacedRecord, accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
@@ -37,7 +38,6 @@ import {
 } from "./obs-explain-signal-folds.js";
 import type { Acc } from "./obs-explain-signals-acc.js";
 import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
-// ---------------------------------------------------------------------------
 // Tunable thresholds (module-top constants per the naming contract).
 // ---------------------------------------------------------------------------
 
@@ -803,6 +803,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
   const turnTraceCount = acc.promptTraceIds.size > 0
     ? acc.promptTraceIds.size
     : acc.toolTraceIds.size;
+  const breakerOpenedTool = currentTurnBreakerOpenedTool(records, acc.breakerEvents, acc.breakerOpenedTool);
   return {
     sessionKey: acc.sessionKey,
     ...(acc.inboundEdit !== undefined ? { inboundEdit: acc.inboundEdit } : {}),
@@ -840,7 +841,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
           })),
         }
       : {}),
-    ...(acc.breakerOpenedTool !== undefined ? { breakerOpenedTool: acc.breakerOpenedTool } : {}),
+    ...(breakerOpenedTool !== undefined
+      ? { breakerOpenedTool }
+      : {}),
     hasDoNotRetrySignal: acc.hasDoNotRetrySignal,
     ...(mostFailedTool !== undefined ? { mostFailedTool } : {}),
     repeatedFailureCount,

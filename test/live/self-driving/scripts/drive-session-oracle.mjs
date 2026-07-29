@@ -8,6 +8,17 @@ export function driveTextFilePath(textArg) {
     : undefined;
 }
 
+/** Return the user-visible prose carried by one outbound wire record.
+ * Telegram attachments carry their only prose in `caption`, so treating only
+ * `text` as an answer fabricates an empty-final failure after a successful
+ * document/photo/video delivery. */
+export function outboundVisibleText(outbound) {
+  if (typeof outbound?.text === "string" && outbound.text.length > 0) {
+    return outbound.text;
+  }
+  return typeof outbound?.caption === "string" ? outbound.caption : "";
+}
+
 function encodeSessionPathComponent(value) {
   let encoded = "";
   for (const character of value) {
