@@ -48,6 +48,12 @@ Latency and cost are mechanical and belong here every run, even when the target 
 |---|---|---|
 | | | |
 
+## Defaults verdict — the out-of-the-box experience (`../00-MISSION.md` STEP 4.6)
+One row per behavior-changing knob the run exercised. A knob exercised but not judged is an omission; a class with no measurement behind it is a guess. Both HARD guards apply: never tune toward this run's domain, never relax a security default for UX.
+| knob | shipped default | what you MEASURED (number · traffic · rig) | class (DEFAULT-OK / EXPERIENCE-WRONG / DEFAULT-WRONG / TRADEOFF / DEAD) | action: new value + RED test + docs, or recommendation |
+|---|---|---|---|---|
+| | | | | |
+
 ## Open findings (documented — NEVER silently dropped)
 | finding | class (built-but-not-wired / masked-4xx / silent-substitution / …) | severity | recommendation |
 |---|---|---|---|
@@ -66,4 +72,5 @@ Latency and cost are mechanical and belong here every run, even when the target 
 - [ ] **Fifth-axis baselines recorded** (`04-DERIVE-TESTS §D2`) — latency and cost diffed against the previous run at minimum; the other four planned or explicitly out of scope
 - [ ] Observability loop closed (every friction fixed test-first or dated TODO)
 - [ ] Track M two-sided (both polarities; relaxed defaults surfaced)
+- [ ] **Defaults verdict table filled** — every exercised knob judged with a measurement; each changed default has a RED test pinning value + reason, docs updated in the same change, and before/after recorded
 - [ ] Emulator loop closed (no `@comis/*`/`bundledDependencies` edge added)
