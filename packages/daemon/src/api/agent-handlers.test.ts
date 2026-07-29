@@ -32,10 +32,15 @@ vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {
     ...actual,
-    resolveWorkspaceDir: vi.fn((_config: unknown, agentId?: string) =>
-      agentId && agentId !== "default"
-        ? `/home/test/.comis/workspace-${agentId}`
-        : "/home/test/.comis/workspace"
+    resolveWorkspaceDir: vi.fn(
+      (_config: unknown, agentId?: string, baseDataDir?: string) => {
+        const base = baseDataDir && baseDataDir.length > 0
+          ? baseDataDir
+          : "/home/test/.comis";
+        return agentId && agentId !== "default"
+          ? `${base}/workspace-${agentId}`
+          : `${base}/workspace`;
+      },
     ),
   };
 });
@@ -473,6 +478,32 @@ describe("createAgentHandlers", () => {
   // side-effects, NOT durable state — they NEVER reach config.yaml.
   // -------------------------------------------------------------------------
   describe("agents.create with inlineContent", () => {
+    it("uses the configured daemon data root for the created workspace and inline writes", async () => {
+      mockWriteInline.mockResolvedValueOnce({
+        ok: true,
+        value: { roleWritten: true, identityWritten: true, bytesWritten: 2 },
+      });
+      const persistDeps = makePersistDeps();
+      persistDeps.container.config.dataDir = "/custom/data";
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.create"]!({
+        agentId: "custom-root",
+        inlineContent: { role: "R", identity: "I" },
+        _trustLevel: "admin",
+      })) as { workspaceDir: string };
+
+      expect(result.workspaceDir).toBe("/custom/data/workspace-custom-root");
+      expect(mockWriteInline).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          workspaceDir: "/custom/data/workspace-custom-root",
+          agentId: "custom-root",
+        }),
+      );
+    });
+
     it("full inlineContent: forwards role+identity to helper, returns inlineWritesResult on RPC payload", async () => {
       mockWriteInline.mockResolvedValueOnce({
         ok: true,
