@@ -50,15 +50,16 @@ export function resolveResponseLocalePolicy(
   }
 
   // Clear prose in the current request is a better conversation-language
-  // signal than a client UI locale. It remains advisory: only an operator pin
-  // enables post-generation repair.
+  // signal than a client UI locale. The prose threshold excludes short
+  // identifier-heavy fragments, so only a high-confidence script signal
+  // enables bounded post-generation repair.
   const requestScriptLocale = scriptLocaleFromRequest(input.requestText);
   if (requestScriptLocale !== undefined) {
     return {
       locale: requestScriptLocale,
       source: "request",
       ...(translationTarget === undefined ? {} : { translationTarget }),
-      enforceLocale: false,
+      enforceLocale: true,
     };
   }
 
@@ -124,6 +125,7 @@ const FOREIGN_SCRIPT_MIN_UNITS = 8;
 const LATIN_PROSE_MIN_SHARE = 0.2;
 const LATIN_PROSE_MIN_WORDS = 4;
 const LATIN_WORD = /\b[A-Za-z][A-Za-z'’]*\b/g;
+const COMMAND_OPTION = /(^|\s)--?[A-Za-z0-9][A-Za-z0-9-]*(?:\s|$)/;
 
 function withoutProtectedResponseSpans(text: string): string {
   const lower = text.toLowerCase();
@@ -179,7 +181,10 @@ function scriptUnits(text: string, scriptClass: ScriptClass): number {
 }
 
 function latinProseWordCount(text: string): number {
-  const proseCandidate = withoutProtectedResponseSpans(text);
+  const proseCandidate = withoutProtectedResponseSpans(text)
+    .split("\n")
+    .filter((line) => !COMMAND_OPTION.test(line))
+    .join("\n");
   const latinWords = proseCandidate.match(LATIN_WORD) ?? [];
   return latinWords.filter((word) => {
     if (word.length < 2) return false;
