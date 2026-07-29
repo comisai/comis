@@ -187,7 +187,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   obs_query: (ctx: ToolDescriptionContext): string => {
-    const base = "Query platform diagnostics, billing data, delivery traces, and channel activity.";
+    const base = "Query platform diagnostics, billing, delivery, channel activity, session incidents, and system health. Before reporting runtime causes, failures, counts, latency, or cost, query explain, system_health, or billing as appropriate. If evidence is unavailable, say so; do not guess.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   // Confusable pair: sessions_manage / sessions_list
