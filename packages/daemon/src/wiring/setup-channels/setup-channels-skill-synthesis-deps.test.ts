@@ -560,6 +560,48 @@ describe("buildReflectionCronDeps", () => {
       expect(u1!.signature).not.toBe(u2!.signature); // distinct users ⇒ distinct groups
     });
 
+    it("a PROFILE build preserves trust and chronology as non-spoofable source metadata for correction resolution", async () => {
+      const bundle = buildReflectionCronDeps(
+        withMemRows([
+          {
+            id: "new-location",
+            userId: "u1",
+            content: "The user moved to the new city. This supersedes the earlier location.",
+            trustLevel: "learned",
+            createdAt: 200,
+            occurredAt: 190,
+            source: { sessionKey: "s1" },
+          },
+          {
+            id: "old-location",
+            userId: "u1",
+            content: "The user lives in the old city.",
+            trustLevel: "learned",
+            createdAt: 100,
+            occurredAt: 90,
+            source: { sessionKey: "s1" },
+          },
+        ]),
+      )!;
+
+      const sources = await bundle.buildSourceTrajectories("profile", "agent-1", "t");
+      const newer = JSON.parse(sources[0].text) as Record<string, unknown>;
+      const older = JSON.parse(sources[1].text) as Record<string, unknown>;
+
+      expect(newer).toEqual({
+        trustLevel: "learned",
+        recordedAtMs: 200,
+        occurredAtMs: 190,
+        content: "The user moved to the new city. This supersedes the earlier location.",
+      });
+      expect(older).toEqual({
+        trustLevel: "learned",
+        recordedAtMs: 100,
+        occurredAtMs: 90,
+        content: "The user lives in the old city.",
+      });
+    });
+
     it("a TOPIC build sets sourceTrustExternal from trustLevel === 'external' (axis 2, like profile)", async () => {
       const bundle = buildReflectionCronDeps(
         withMemRows([
