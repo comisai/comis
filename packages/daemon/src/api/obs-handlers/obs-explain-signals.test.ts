@@ -789,6 +789,52 @@ describe("toIncidentSignals — capability.audited fold (spawn-tree nodes)", () 
   });
 });
 
+describe("toIncidentSignals — direct sub-agent spawn-tree leaves", () => {
+  it("keeps parallel sessions_spawn children distinct under their parent root", () => {
+    const s = toIncidentSignals([
+      capAudited(1, {
+        rootRunId: "root-session-a",
+        capability: "orch:spawn",
+        decision: "allow",
+      }, "parent"),
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "subagent.spawned",
+        seq: 2,
+        data: {
+          runId: "child-a",
+          rootRunId: "root-session-a",
+          childAgentId: "researcher",
+          caps: ["orch:web"],
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "subagent.spawned",
+        seq: 3,
+        data: {
+          runId: "child-b",
+          rootRunId: "root-session-a",
+          childAgentId: "researcher",
+          caps: ["orch:web"],
+        },
+      },
+    ]);
+
+    expect(s.spawnTree).toHaveLength(3);
+    const byId = new Map(s.spawnTree!.map((node) => [node.leaseId, node]));
+    expect(byId.get("child-a")).toMatchObject({
+      parentLeaseId: "root-session-a",
+      rootRunId: "root-session-a",
+      agentId: "researcher",
+      caps: ["orch:web"],
+    });
+    expect(byId.has("child-b")).toBe(true);
+  });
+});
+
 // Graph DAG nodes are spawn-tree leaves too.
 // A graph node spawn (in-process via gatedSpawn → subAgentRunner.spawn) emits NO
 // capability.audited (it never crosses the socket chokepoint), and all nodes share
