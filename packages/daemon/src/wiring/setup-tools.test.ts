@@ -298,7 +298,7 @@ vi.mock("@comis/core", () => ({
     const role: "worker" | "coordinator" = cfg?.role ?? "worker";
     const capabilities = profile === "assistant"
       ? []
-      : ["orch:spawn", "orch:graph", "orch:cron", "orch:skill", "orch:read", "orch:web", "orch:analyze", "orch:write"];
+      : ["orch:spawn", "orch:graph", "orch:cron", "orch:message", "orch:skill", "orch:read", "orch:web", "orch:analyze", "orch:write"];
     return {
       profile,
       role,
@@ -1359,7 +1359,7 @@ describe("setupTools", () => {
       expect(toolNames).toContain("sessions_spawn");
     });
 
-    it("assistant profile omits the unavailable spawn surface", async () => {
+    it("assistant profile omits unavailable capability-gated orchestration surfaces", async () => {
       const deps = createMinimalDeps({
         agents: {
           "agent-1": {
@@ -1374,10 +1374,18 @@ describe("setupTools", () => {
 
       const pipelineArgs = mockAssembleToolPipeline.mock.calls[0][0];
       const toolNames = pipelineArgs.platformTools().map((tool: { name: string }) => tool.name);
-      expect(toolNames).not.toContain("sessions_spawn");
+      for (const unavailableTool of [
+        "sessions_spawn",
+        "pipeline",
+        "cron",
+        "message",
+        "skills_manage",
+      ]) {
+        expect(toolNames).not.toContain(unavailableTool);
+      }
     });
 
-    it("a child capability ceiling omits spawn when the parent did not delegate it", async () => {
+    it("a child capability ceiling omits orchestration surfaces the parent did not delegate", async () => {
       const deps = createMinimalDeps();
       const setupTools = await getSetupTools();
       const { assembleToolsForAgent } = setupTools(deps);
@@ -1391,7 +1399,15 @@ describe("setupTools", () => {
 
       const pipelineArgs = mockAssembleToolPipeline.mock.calls[0][0];
       const toolNames = pipelineArgs.platformTools().map((tool: { name: string }) => tool.name);
-      expect(toolNames).not.toContain("sessions_spawn");
+      for (const unavailableTool of [
+        "sessions_spawn",
+        "pipeline",
+        "cron",
+        "message",
+        "skills_manage",
+      ]) {
+        expect(toolNames).not.toContain(unavailableTool);
+      }
     });
 
     it("full toolGroups bypasses profile filtering", async () => {
