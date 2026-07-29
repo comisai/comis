@@ -25,6 +25,7 @@ import { rig } from './_rig.mjs';
 import {
   findAssistantReplyAfterInbound,
   telegramInboundGuid,
+  telegramInjectAddressingError,
   wireContainsAssistantReply,
 } from './drive-session-oracle.mjs';
 const [, , chatIdArg, textArg, quiesceMsArg, maxMsArg, dataArg] = process.argv;
@@ -91,6 +92,15 @@ const botResponse = await fetch(`${base}/bot${emu.botToken}/getMe`);
 const botBody = await botResponse.json();
 if (!botResponse.ok || botBody?.ok !== true || !botBody?.result?.id) {
   console.error('drive.mjs: emulator getMe did not return a bot id');
+  process.exit(2);
+}
+const addressingError = telegramInjectAddressingError(
+  text,
+  injectOpts,
+  botBody.result.username,
+);
+if (addressingError !== undefined) {
+  console.error(`drive.mjs: ${addressingError}`);
   process.exit(2);
 }
 const assertionFields = [tenantId, agentId, 'telegram', `telegram-${botBody.result.id}`, String(fromUser)];

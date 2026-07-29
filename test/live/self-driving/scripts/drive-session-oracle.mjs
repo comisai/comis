@@ -13,6 +13,19 @@ export function telegramInboundGuid(botAccountId, chatId, messageId) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/** Return a fail-loud reason when synthetic mention metadata cannot address the bot. */
+export function telegramInjectAddressingError(text, opts, botUsername) {
+  if (opts?.mention !== true) return undefined;
+  if (typeof botUsername !== "string" || botUsername.length === 0) {
+    return "INJECT_OPTS.mention=true requires getMe to return the bot username";
+  }
+  const handle = `@${botUsername}`;
+  if (!text.includes(handle)) {
+    return `INJECT_OPTS.mention=true requires the literal bot handle ${handle} in the message text`;
+  }
+  return undefined;
+}
+
 function messageText(message) {
   const content = message?.content;
   if (typeof content === "string") return content;
