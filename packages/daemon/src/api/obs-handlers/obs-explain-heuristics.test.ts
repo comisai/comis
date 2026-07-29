@@ -137,6 +137,35 @@ describe("obs-explain-heuristics", () => {
     expect(r?.suggestedNextSteps.join(" ")).toMatch(/requesterOrigin|announce/i);
   });
 
+  it("a per-node budget breach outranks the expected operator-origin delivery skip", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "budget_exceeded",
+        degraded: true,
+        nodeBudgetBreaches: [
+          {
+            seq: 6,
+            nodeId: "budget-probe",
+            capSource: "node",
+            tokenBudget: 1500,
+            tokensUsed: 0,
+          },
+        ],
+        subagentDeliverySkipped: {
+          count: 1,
+          lastRunId: "run-budget",
+          lastReason: "no_origin",
+        },
+      } as Partial<IncidentSignals>),
+    );
+
+    expect(r?.code).toBe("node_budget_exceeded");
+    expect(r?.detail).toContain("budget-probe");
+    expect(r?.detail).toContain("1500");
+    expect(r?.detail).toContain("0");
+    expect(r?.suggestedNextSteps.join(" ")).toContain("tokenBudget");
+  });
+
   it("repeated-failure BELOW BREAKER_N (and no breaker/DO-NOT-retry) does NOT trip the breaker rule", () => {
     const r = rootCause(
       makeSignals({

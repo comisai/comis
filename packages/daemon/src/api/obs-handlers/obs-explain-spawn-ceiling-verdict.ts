@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-/** Deterministic verdict for a sub-agent admission ceiling refusal. */
+/** Deterministic verdicts for local sub-agent resource guards. */
 import type { IncidentSignals } from "@comis/core";
 
-type SpawnCeilingVerdict = {
+type ResourceGuardVerdict = {
   code: string;
   detail: string;
   suggestedNextSteps: string[];
@@ -13,7 +13,7 @@ const SPAWN_CEILING_BINDING =
 
 export const spawnCeilingVerdict = (
   signals: IncidentSignals,
-): SpawnCeilingVerdict | null => {
+): ResourceGuardVerdict | null => {
   const failure = signals.failures.find(
     (candidate) =>
       candidate.classifiedFailureBy === "runtime_guard"
@@ -52,5 +52,34 @@ export const spawnCeilingVerdict = (
       `the local sub-agent admission guard refused a spawn because ${occupancy}; `
       + `reason=${reason}; no child was created for the rejected call`,
     suggestedNextSteps: [...recovery, "obs.explain depth=full"],
+  };
+};
+
+/** A node's explicit or inherited token ceiling is upstream of terminal delivery symptoms. */
+export const nodeBudgetExceededVerdict = (
+  signals: IncidentSignals,
+): ResourceGuardVerdict | null => {
+  const breach = (signals.nodeBudgetBreaches ?? []).at(-1);
+  if (breach === undefined) return null;
+
+  const binding =
+    breach.capSource === "node"
+      ? `the node's own tokenBudget for ${breach.nodeId}`
+      : breach.capSource === "operator-default"
+        ? "security.agentToAgent.tokenBudget"
+        : breach.capSource === "inherit-share"
+          ? "the graph budget.maxTokens inherit-share"
+          : "an unresolved per-node token budget";
+  return {
+    code: "node_budget_exceeded",
+    detail:
+      `graph node ${breach.nodeId} was stopped by ${binding}: `
+      + `tokensUsed=${String(breach.tokensUsed)}, tokenBudget=${String(breach.tokenBudget)}; `
+      + "tokensUsed=0 is expected when admission rejected the first model call",
+    suggestedNextSteps: [
+      `raise ${binding}, or reduce the node task`,
+      "inspect graph.status to confirm the node is terminal failed rather than still spending",
+      "obs.explain depth=full",
+    ],
   };
 };
