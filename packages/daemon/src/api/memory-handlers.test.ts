@@ -1375,6 +1375,37 @@ describe("createMemoryHandlers - diagnostics", () => {
       expect(result.records.map((r) => r.seq)).toEqual([0, 1]);
     });
 
+    it("requires both the session and trace selectors before applying the result limit", async () => {
+      const dataDir = writeTraceFile([
+        {
+          ts: "2026-07-29T07:48:14.938Z",
+          sessionId: "sess-A",
+          traceId: "trace-old",
+          agentId: "default",
+        },
+        {
+          ts: "2026-07-29T09:50:42.920Z",
+          sessionId: "sess-A",
+          traceId: "trace-replay",
+          agentId: "default",
+        },
+      ]);
+      const { deps } = makeDiagDeps({ dataDir });
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
+
+      const result = (await handlers["memory.recall_trace"]!({
+        _trustLevel: "admin",
+        tenant_id: "default",
+        agent_id: "default",
+        session_key: "sess-A",
+        trace_id: "trace-replay",
+        limit: 1,
+      })) as { records: Array<Record<string, unknown>> };
+
+      expect(result.records).toHaveLength(1);
+      expect(result.records[0]!.traceId).toBe("trace-replay");
+    });
+
     it("scope-filters the artifact read by tenantId/agentId when records carry them", async () => {
       // Real-recorder shape: sessionId always present; sessionKey + tenantId
       // present because the agent wired the envelope. Same session, two

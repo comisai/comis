@@ -658,7 +658,10 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
             // Skip malformed JSONL lines per standard JSONL convention.
             continue;
           }
-          // Selector match: session_key OR trace_id.
+          // Every supplied selector constrains the result. A caller may use
+          // either selector alone; when both are present, require BOTH before
+          // applying the limit so an earlier record from the same session
+          // cannot mask the requested trace.
           // The production recorder ALWAYS writes `sessionId`
           // (= formatSessionKey(...)) and writes `sessionKey` only when an
           // envelope is supplied. `comis memory recall-trace <session>` passes
@@ -667,10 +670,10 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
           // else the always-present `sessionId`. Matching only `rec.sessionKey`
           // returned ZERO records in production.
           const recSession = rec.sessionKey ?? rec.sessionId;
-          const matchesSelector =
-            (params.session_key !== undefined && recSession === params.session_key) ||
-            (params.trace_id !== undefined && rec.traceId === params.trace_id);
-          if (!matchesSelector) continue;
+          const matchesSession =
+            params.session_key === undefined || recSession === params.session_key;
+          const matchesTrace = params.trace_id === undefined || rec.traceId === params.trace_id;
+          if (!matchesSession || !matchesTrace) continue;
           // Defense-in-depth scope filter — only when the record carries the
           // dimension (older/leaner records may omit them).
           if (typeof rec.tenantId === "string" && rec.tenantId !== params.tenant_id) continue;
