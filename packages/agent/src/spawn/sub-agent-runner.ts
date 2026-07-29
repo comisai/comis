@@ -59,6 +59,7 @@ import {
   type CoordinatorProgressForkHandle,
 } from "./coordinator-progress-fork.js";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
+import { buildBackgroundTaskFailedNotice } from "../executor/degraded-reply.js";
 import { randomUUID } from "node:crypto";
 import type {
   AnnouncementBatcher,
@@ -437,6 +438,11 @@ export interface SubAgentRunnerDeps {
     channelId: string,
     options?: { threadId?: string; resolvedLanguage?: string },
   ) => Promise<string | undefined>;
+  /** Render the deterministic failed-completion disclosure for the parent agent. */
+  renderAnnouncementFailureNotice?: (
+    agentId: string,
+    resolvedLanguage?: string,
+  ) => string;
   eventBus: TypedEventBus;
   config: AgentToAgentConfig;
   tenantId: string;
@@ -3243,6 +3249,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               callerConversation: params.callerConversation,
               destinationEndpoint: run.callerEndpoint,
               resolvedLanguage: params.resolvedLanguage,
+              terminalOutcome: isSuccess
+                ? { status: "completed" }
+                : {
+                    status: "failed",
+                    failureNotice: deps.renderAnnouncementFailureNotice?.(
+                      params.callerAgentId ?? params.agentId,
+                      params.resolvedLanguage,
+                    ) ?? buildBackgroundTaskFailedNotice(params.resolvedLanguage),
+                  },
               runId,
               ...(validationResults?.some((output) => output.exists)
                 ? {

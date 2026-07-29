@@ -23,6 +23,7 @@
 
 import type { Result } from "@comis/shared";
 import type { ChannelEndpoint, ConversationLocator } from "@comis/core";
+import type { AnnouncementTerminalOutcome } from "./sub-agent-announcement-content.js";
 
 export interface AnnouncementOperationIdentity {
   agentId: string;
@@ -83,6 +84,8 @@ export interface QueuedAnnouncementShape {
   destinationEndpoint: ChannelEndpoint;
   /** Response locale resolved for the originating user turn. */
   resolvedLanguage?: string;
+  /** Runtime-owned terminal truth that a model rewrite cannot weaken. */
+  terminalOutcome: AnnouncementTerminalOutcome;
   runId: string;
   /** Idempotency key `${callerSessionKey}::${runId}`. Mirrors QueuedAnnouncement.idempotencyKey — keep in lockstep. */
   idempotencyKey?: string;

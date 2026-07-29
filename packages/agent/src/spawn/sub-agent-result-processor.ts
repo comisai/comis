@@ -37,7 +37,13 @@ import type {
 } from "./announcement-ports.js";
 import { buildAnnounceKey, type DeliveryDedup } from "./announce-key.js";
 import { ANNOUNCE_PARENT_TIMEOUT_MS, type SubAgentRunnerDeps, type SubAgentRunnerLogger } from "./sub-agent-runner.js";
-import { stripAnnouncementInstruction, type AbortClassification } from "./sub-agent-announcement-content.js";
+import {
+  buildAnnouncementRewriteInput,
+  enforceAnnouncementTerminalOutcome,
+  stripAnnouncementInstruction,
+  type AbortClassification,
+  type AnnouncementTerminalOutcome,
+} from "./sub-agent-announcement-content.js";
 export {
   buildAnnouncementMessage,
   validateOutputs,
@@ -433,6 +439,7 @@ export async function deliverAnnouncement(params: {
   callerConversation?: ConversationLocator;
   destinationEndpoint?: ChannelEndpoint;
   resolvedLanguage?: string;
+  terminalOutcome: AnnouncementTerminalOutcome;
   runId: string;
   attachments?: CompletionAttachmentShape[];
 }, deps: {
@@ -496,6 +503,7 @@ export async function deliverAnnouncement(params: {
       callerConversation: params.callerConversation,
       destinationEndpoint: params.destinationEndpoint,
       ...(params.resolvedLanguage ? { resolvedLanguage: params.resolvedLanguage } : {}),
+      terminalOutcome: params.terminalOutcome,
       runId,
       idempotencyKey: announceKey,
       ...(params.attachments?.length ? { attachments: params.attachments } : {}),
@@ -586,7 +594,7 @@ export async function deliverAnnouncement(params: {
           callerAgentId,
           parentSk.value,
           params.callerConversation,
-          announcementText,
+          buildAnnouncementRewriteInput(announcementText, params.terminalOutcome),
           announceChannelType,
           announceChannelId,
           parentOptions,
@@ -596,7 +604,7 @@ export async function deliverAnnouncement(params: {
         "announceToParent",
       );
       if (candidate === undefined) {
-        if (!params.attachments?.length) {
+        if (params.terminalOutcome.status === "completed" && !params.attachments?.length) {
           await resolveDecision("no_reply");
           if (announceKey) deps.deliveryDedup?.mark(announceKey);
           deps.logger?.debug(
@@ -630,6 +638,17 @@ export async function deliverAnnouncement(params: {
       }, "Sub-agent parent announcement ended without a safe delivery decision");
       return;
     }
+  }
+
+  const disclosure = enforceAnnouncementTerminalOutcome(finalText, params.terminalOutcome);
+  finalText = disclosure.text ?? "";
+  if (disclosure.corrected && deps.announceToParent) {
+    deps.logger?.warn({
+      runId,
+      step: "completion-honesty",
+      hint: "Inspect the parent announcement rewrite; the runtime appended the authoritative failed terminal state",
+      errorKind: "validation" as const,
+    }, "Failed background-task status omitted by parent rewrite");
   }
 
   const threadId = params.announceThreadId;

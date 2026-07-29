@@ -207,6 +207,10 @@ vi.mock("@comis/agent", async (importOriginal) => {
     resolveProviderFamily: mockResolveProviderFamily,
     createSubAgentRunner: mockCreateSubAgentRunner,
     createSpawnPacketBuilder: mockCreateSpawnPacketBuilder,
+    buildAnnouncementRewriteInput: actual.buildAnnouncementRewriteInput,
+    enforceAnnouncementTerminalOutcome: actual.enforceAnnouncementTerminalOutcome,
+    buildBackgroundTaskFailedNotice: actual.buildBackgroundTaskFailedNotice,
+    catalogFromLocalePacks: actual.catalogFromLocalePacks,
     // Real pure primitive — the injected posture resolver depends on it.
     resolvePostureFromSkills: actual.resolvePostureFromSkills,
     // Shared bounded delivered-key store, constructed eagerly in the
@@ -1023,6 +1027,25 @@ describe("setupCrossSession", () => {
       expect.objectContaining({ callerAgentId: "agent-1", resolvedLanguage: "und-Hebr" }),
       "announceToParent invoked",
     );
+  });
+
+  it("wires the failed-completion notice through the parent agent locale pack", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const deps = createMinimalDeps();
+    deps.container.config.agents["agent-1"].language = "he";
+    deps.container.config.agents["agent-1"].localePacks = {
+      he: {
+        background_task_failed_notice:
+          "⚠️ משימת הרקע נכשלה ולכן התוצאה עלולה להיות חלקית.",
+      },
+    };
+
+    setupCrossSession(deps);
+    const renderNotice = mockCreateSubAgentRunner.mock.calls[0][0]
+      .renderAnnouncementFailureNotice;
+
+    expect(renderNotice("agent-1", "he"))
+      .toBe("⚠️ משימת הרקע נכשלה ולכן התוצאה עלולה להיות חלקית.");
   });
 
   it("announceToParent lets workspace policy loading record its hash in the resolved context", async () => {
@@ -3797,6 +3820,7 @@ describe("setupCrossSession durable-store injection", () => {
 
     result.announcementBatcher.enqueue({
       announcementText: "[System Message]\nResult: completed",
+      terminalOutcome: { status: "completed" },
       announceChannelType: "telegram",
       announceChannelId: "chat-1",
       callerAgentId: "agent-1",
@@ -3896,6 +3920,7 @@ describe("setupCrossSession durable-store injection", () => {
 
     result.announcementBatcher.enqueue({
       announcementText: "[System Message]\nResult: retained",
+      terminalOutcome: { status: "completed" },
       announceChannelType: "telegram",
       announceChannelId: "chat-retained",
       callerAgentId: "agent-1",

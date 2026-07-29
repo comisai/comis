@@ -480,7 +480,14 @@ export type {
   SubAgentRunnerLogger,
   SpawnCeilingDecision,
 } from "./spawn/index.js";
-export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification } from "./spawn/index.js";
+export {
+  sweepResultFiles,
+  buildAnnouncementMessage,
+  deliverFailureNotification,
+  buildAnnouncementRewriteInput,
+  enforceAnnouncementTerminalOutcome,
+} from "./spawn/index.js";
+export type { AnnouncementTerminalOutcome } from "./spawn/index.js";
 export { createDeliveryDedup } from "./spawn/index.js";
 export type { DeliveryDedup } from "./spawn/index.js";
 export { comparePosture, resolvePostureFromSkills } from "./spawn/index.js";
@@ -540,7 +547,11 @@ export type { CodeRegion } from "./response-filter/code-regions.js";
 
 // Thinking tag filter
 export { createThinkingTagFilter } from "./response-filter/thinking-tag-filter.js";
-export { buildPipelineTimeoutReply, catalogFromLocalePacks } from "./executor/degraded-reply.js";
+export {
+  buildPipelineTimeoutReply,
+  buildBackgroundTaskFailedNotice,
+  catalogFromLocalePacks,
+} from "./executor/degraded-reply.js";
 export type { ThinkingTagFilter, ThinkingTagFilterOptions } from "./response-filter/thinking-tag-filter.js";
 
 // Operation model resolver

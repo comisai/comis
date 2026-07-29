@@ -738,6 +738,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
 
     const delivery = deliverAnnouncement({
       announcementText: "[System Message]\nResult: complete",
+      terminalOutcome: { status: "completed" },
       announceChannelType: "telegram",
       announceChannelId: "chat-1",
       callerAgentId: "agent-main",
@@ -773,6 +774,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
 
     await deliverAnnouncement({
       announcementText: "[System Message]\nResult: complete",
+      terminalOutcome: { status: "completed" },
       announceChannelType: "telegram",
       announceChannelId: "chat-1",
       callerAgentId: "agent-main",
@@ -806,6 +808,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     await deliverAnnouncement(
       {
         announcementText: "[System Message]\nResult: ok",
+        terminalOutcome: { status: "completed" },
         announceChannelType: "discord",
         announceChannelId: "chan-1",
         announceThreadId: "topic-42",
@@ -849,6 +852,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     await deliverAnnouncement(
       {
         announcementText: "[System Message]\nResult: ok",
+        terminalOutcome: { status: "completed" },
         announceChannelType: "telegram",
         announceChannelId: "chat-1",
         announceThreadId: "topic-42",
@@ -891,6 +895,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
 
     await deliverAnnouncement({
       announcementText: "[System Message]\nResult: raw",
+      terminalOutcome: { status: "completed" },
       announceChannelType: "telegram",
       announceChannelId: "chat-1",
       callerAgentId: "agent-main",
@@ -925,6 +930,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
 
     await deliverAnnouncement({
       announcementText: "[System Message]\nResult: raw",
+      terminalOutcome: { status: "completed" },
       announceChannelType: "telegram",
       announceChannelId: "chat-1",
       runId: "run-without-owner",
@@ -954,6 +960,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     await deliverAnnouncement(
       {
         announcementText: "[System Message]\nResult: ok",
+        terminalOutcome: { status: "completed" },
         announceChannelType: "telegram",
         announceChannelId: "chat-1",
         callerAgentId: "agent-main",
@@ -1005,6 +1012,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     await deliverAnnouncement(
       {
         announcementText: "[System Message]\nResult: ok",
+        terminalOutcome: { status: "completed" },
         announceChannelType: "discord",
         announceChannelId: "chan-1",
         callerAgentId: "agent-main",
@@ -1027,6 +1035,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     await deliverAnnouncement(
       {
         announcementText: "[System Message]\nResult: not delivered",
+        terminalOutcome: { status: "completed" },
         announceChannelType: "telegram",
         announceChannelId: "chat-false",
         callerAgentId: "agent-main",
@@ -1067,6 +1076,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     await deliverAnnouncement(
       {
         announcementText: "[System Message]\nResult: governed",
+        terminalOutcome: { status: "completed" },
         announceChannelType: "telegram",
         announceChannelId: "chat-governed",
         callerAgentId: "agent-main",
@@ -1266,6 +1276,7 @@ describe("announcement scrub", () => {
     await deliverAnnouncement(
       {
         announcementText: announcement,
+        terminalOutcome: { status: "completed" },
         announceChannelType: "telegram",
         announceChannelId: "chat-123",
         runId: "run-scrub-test",
@@ -1303,6 +1314,7 @@ describe("deliverAnnouncement idempotency-key threading", () => {
 
     await deliverAnnouncement({
       announcementText: "Report ready",
+      terminalOutcome: { status: "completed" },
       announceChannelType: "telegram",
       announceChannelId: "chat-1",
       callerAgentId: "agent-main",
@@ -1332,6 +1344,7 @@ describe("deliverAnnouncement idempotency-key threading", () => {
     await deliverAnnouncement(
       {
         announcementText: "[System Message]\nResult: ok",
+        terminalOutcome: { status: "completed" },
         announceChannelType: "discord",
         announceChannelId: "chan-1",
         announceThreadId: "topic-42",
@@ -1369,6 +1382,7 @@ describe("deliverAnnouncement idempotency-key threading", () => {
     await deliverAnnouncement(
       {
         announcementText: "[System Message]\nResult: ok",
+        terminalOutcome: { status: "completed" },
         announceChannelType: "discord",
         announceChannelId: "chan-1",
         // no callerAgentId / callerSessionKey → top-level spawn
@@ -1395,6 +1409,7 @@ describe("deliverAnnouncement idempotency-key threading", () => {
     await deliverAnnouncement(
       {
         announcementText: "[System Message]\nResult: ok",
+        terminalOutcome: { status: "completed" },
         announceChannelType: "telegram",
         announceChannelId: "chat-1",
         callerAgentId: "agent-main",
@@ -1433,6 +1448,7 @@ describe("deliverAnnouncement idempotency-key threading", () => {
     await deliverAnnouncement(
       {
         announcementText: "[System Message]\nResult: ok",
+        terminalOutcome: { status: "completed" },
         announceChannelType: "telegram",
         announceChannelId: "chat-1",
         runId: "run-nokey",

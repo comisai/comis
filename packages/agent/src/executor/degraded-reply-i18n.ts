@@ -20,7 +20,8 @@ export type LocaleMessageId =
   | "pipeline_timeout"
   | "tool_failure_notice"
   | "tool_failure_notice_unnamed"
-  | "prompt_timeout";
+  | "prompt_timeout"
+  | "background_task_failed_notice";
 
 export type LocalePack = Readonly<Partial<Record<LocaleMessageId, string>>>;
 
@@ -56,6 +57,8 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
       + " incomplete.",
   prompt_timeout:
     "The request took too long to process. Please try again with a simpler message.",
+  background_task_failed_notice:
+    "⚠️ This background task failed, so its result may be incomplete.",
   pipeline_timeout:
     "I stopped this request because it was taking too long and hit the time limit "
       + "for a single turn. Nothing was left half-applied. If it needs many lookups, "
@@ -228,6 +231,14 @@ export function selectPromptTimeoutReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "prompt_timeout");
+}
+
+/** Deterministic terminal-state disclosure for a failed background task. */
+export function selectBackgroundTaskFailedNotice(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "background_task_failed_notice");
 }
 
 export function selectPipelineTimeoutReply(

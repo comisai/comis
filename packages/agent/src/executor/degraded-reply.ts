@@ -27,6 +27,7 @@ import {
   selectToolFailureNotice,
   selectToolFailureNoticeUnnamed,
   selectPromptTimeoutReply,
+  selectBackgroundTaskFailedNotice,
   type LocaleCatalog,
 } from "./degraded-reply-i18n.js";
 
@@ -160,4 +161,16 @@ export function buildPromptTimeoutReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectPromptTimeoutReply(language, localeCatalog);
+}
+
+/**
+ * Localized deterministic disclosure appended after a model rewrites a failed
+ * background-task result. The terminal state is runtime-owned and cannot be
+ * suppressed or softened by the rewrite.
+ */
+export function buildBackgroundTaskFailedNotice(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectBackgroundTaskFailedNotice(language, localeCatalog);
 }
