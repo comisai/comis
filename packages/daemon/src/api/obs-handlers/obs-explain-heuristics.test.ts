@@ -170,6 +170,36 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.some((step) => /max_steps|simplify/i.test(step))).toBe(true);
   });
 
+  it("background capacity guards name the exact saturated config knob and occupancy", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "completed_with_tool_errors",
+        degraded: true,
+        failures: [
+          {
+            seq: 91,
+            toolName: "mcp__slow-report--read_report",
+            classifiedFailureBy: "runtime_guard",
+            transportOk: false,
+            errorKind: "resource",
+            resultDigest: "background-capacity",
+            resultBytes: 225,
+            errorPreview:
+              '{"content":[{"type":"text","text":"[background_capacity] Background task capacity reached: agents.default.backgroundTasks.maxPerAgent=5; active=5. Wait for a running background task to finish before r',
+            matchedRule: "background_task_capacity",
+          },
+        ],
+      }),
+    );
+
+    expect(r?.code).toBe("background_task_capacity");
+    expect(r?.detail).toContain("agents.default.backgroundTasks.maxPerAgent=5");
+    expect(r?.detail).toContain("active=5");
+    expect(r?.suggestedNextSteps.join(" ")).toContain(
+      "agents.default.backgroundTasks.maxPerAgent",
+    );
+  });
+
   // ------------------------------------------------------------------------
   // Insurance codes (low-risk corpus coverage).
   // ------------------------------------------------------------------------
