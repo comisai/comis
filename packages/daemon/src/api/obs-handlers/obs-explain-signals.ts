@@ -18,7 +18,6 @@
  *
  * @module
  */
-
 import { fingerprint } from "@comis/core";
 import type { IncidentSignals } from "@comis/core";
 import {
@@ -152,6 +151,23 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
   const tool = asString(data.toolName);
 
   switch (type) {
+    case "prompt.submitted": {
+      const source = asString(data.responseLocaleSource);
+      const locale = asString(data.responseLocale);
+      const enforced = typeof data.responseLocaleEnforced === "boolean" ? data.responseLocaleEnforced : undefined;
+      if (
+        enforced === undefined
+        || (source !== "request" && source !== "explicit" && source !== "unset")
+      ) return;
+      if (source === "unset") {
+        if (locale !== undefined || enforced) return;
+        acc.responseLocale = { source, enforced };
+        return;
+      }
+      if (locale === undefined || locale.length === 0) return;
+      acc.responseLocale = { locale, source, enforced };
+      return;
+    }
     case "session.started": {
       // Channel identity rides the session.started data (channelType/channelId).
       const channelType = asString(data.channelType);
@@ -806,20 +822,17 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     : acc.toolTraceIds.size;
   return {
     sessionKey: acc.sessionKey,
+    ...(acc.responseLocale !== undefined ? { responseLocale: acc.responseLocale } : {}),
     toolStats,
     failures: acc.failures,
     breakerEvents: acc.breakerEvents,
     offloads: acc.offloads,
     nodeBudgetBreaches: acc.nodeBudgetBreaches,
-    // Materialize the lease-keyed spawn nodes → array (first-seen
-    // order); present ONLY when ≥1 capability.audited record (the presence-conditional mold).
+    // Materialize lease-keyed spawn nodes in first-seen order when present.
     ...(acc.spawnNodesByLease.size > 0
       ? { spawnTree: [...acc.spawnNodesByLease.values()] }
       : {}),
-    // Materialize the run skeletons → array (first-seen order), JOINing each run's
-    // toolCalls from the per-run leaseId tally (EXPLAIN-04: a deny is attributed to
-    // the run via its child leaseId). Present ONLY when ≥1 orchestrate.run_summary
-    // record (the presence-conditional spawnTree mold).
+    // Materialize run skeletons and join tool calls through each child lease id.
     ...(acc.orchestrateRunsByRunId.size > 0
       ? {
           orchestrate: [...acc.orchestrateRunsByRunId.values()].map((run) => ({
@@ -839,8 +852,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(misclassifiedTool !== undefined ? { misclassifiedTool } : {}),
     ...(misclassifiedToken !== undefined ? { misclassifiedToken } : {}),
     ...(acc.contextBudget !== undefined ? { contextBudget: acc.contextBudget } : {}),
-    // Surface the cascade ONLY when ≥2 distinct budget states occurred (a single state adds
-    // nothing over `contextBudget`; the dedup already collapsed a stable session to ≤1).
+    // A single budget state adds nothing beyond `contextBudget`.
     ...(acc.contextBudgetHistory.length >= 2 ? { contextBudgetHistory: acc.contextBudgetHistory } : {}),
     // A woke fire's wake-gate fact (absent when the trajectory carries no
     // scheduler.wake_gate record — a non-gate session or a skip, which opens none).

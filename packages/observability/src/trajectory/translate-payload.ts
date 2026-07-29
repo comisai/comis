@@ -218,6 +218,17 @@ export function translatePayload(
         messageCount: payload.messageCount,
         systemDigest: payload.systemDigest,
         messagesDigest: payload.messagesDigest,
+        ...(typeof payload.responseLocale === "string"
+          ? { responseLocale: payload.responseLocale }
+          : {}),
+        ...(payload.responseLocaleSource === "request"
+          || payload.responseLocaleSource === "explicit"
+          || payload.responseLocaleSource === "unset"
+          ? { responseLocaleSource: payload.responseLocaleSource }
+          : {}),
+        ...(typeof payload.responseLocaleEnforced === "boolean"
+          ? { responseLocaleEnforced: payload.responseLocaleEnforced }
+          : {}),
       };
 
     case "session:started":

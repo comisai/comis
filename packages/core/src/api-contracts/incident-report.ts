@@ -99,6 +99,21 @@ export const IncidentReportSchema = z.object({
     durationMs: z.number(),
     turnCount: z.number(),
   }),
+  /** Content-free response-locale decision for the selected turn (exact trace)
+   * or latest turn (whole session). */
+  responseLocale: z
+    .union([
+      z.object({
+        locale: z.string().min(2).max(128),
+        source: z.enum(["request", "explicit"]),
+        enforced: z.boolean(),
+      }),
+      z.object({
+        source: z.literal("unset"),
+        enforced: z.literal(false),
+      }),
+    ])
+    .optional(),
   toolStats: z.record(
     z.string(),
     z.object({

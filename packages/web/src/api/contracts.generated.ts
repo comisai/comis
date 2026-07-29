@@ -11197,6 +11197,54 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "responseLocale": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "locale": {
+                  "type": "string",
+                  "minLength": 2,
+                  "maxLength": 128
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "request",
+                    "explicit"
+                  ]
+                },
+                "enforced": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "locale",
+                "source",
+                "enforced"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "unset"
+                },
+                "enforced": {
+                  "type": "boolean",
+                  "const": false
+                }
+              },
+              "required": [
+                "source",
+                "enforced"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
         "toolStats": {
           "type": "object",
           "propertyNames": {

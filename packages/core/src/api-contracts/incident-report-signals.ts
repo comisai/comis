@@ -57,7 +57,7 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 21 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 22 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / promptTimeout /
@@ -68,6 +68,19 @@ export interface IncidentFailure {
 // observability signal class.
 export interface IncidentSignals {
   sessionKey: string;
+  /** The LAST `prompt.submitted` locale decision in the selected record set.
+   * Exact-trace explain reports therefore describe the evaluated turn, while
+   * whole-session explain reports describe the latest turn. Content-free. */
+  responseLocale?:
+    | {
+        locale: string;
+        source: "request" | "explicit";
+        enforced: boolean;
+      }
+    | {
+        source: "unset";
+        enforced: false;
+      };
   /** agentId from the trajectory record envelopes (first seen). Fallback for
    *  reports whose metadata rollup carries no agentId. */
   agentId?: string;
