@@ -559,6 +559,47 @@ describe("toIncidentSignals — structured event shape (production)", () => {
     expect(s.breakerOpenedTool).toBe("web_fetch");
   });
 
+  it("keeps pre-prompt breaker reconciliation out of the current-turn root cause", () => {
+    const s = toIncidentSignals([
+      event("tool.breaker_opened", 3, {
+        toolName: "mcp__background_fixture--read_source",
+        consecutiveFailures: 2,
+      }),
+      event("tool.breaker_reset", 5, {
+        toolName: "mcp__background_fixture--read_source",
+      }),
+      event("prompt.submitted", 8, { inboundKind: "message" }),
+      event("tool.result", 19, {
+        toolName: "exec",
+        success: false,
+        errorKind: "internal",
+        errorMessage: "JSONDecodeError: Extra data",
+      }),
+    ]);
+
+    expect(s.breakerEvents).toEqual([
+      expect.objectContaining({
+        seq: 3,
+        event: "opened",
+        toolName: "mcp__background_fixture--read_source",
+      }),
+      expect.objectContaining({
+        seq: 5,
+        event: "reset",
+        toolName: "mcp__background_fixture--read_source",
+      }),
+    ]);
+    expect(s.breakerOpenedTool).toBeUndefined();
+    expect(rootCause({
+      ...s,
+      endReason: "completed_with_tool_errors",
+      degraded: true,
+    })).toMatchObject({
+      code: "completed_with_tool_errors",
+      detail: expect.stringMatching(/exec.*internal/i),
+    });
+  });
+
   it("records an offload from the tool.result_offloaded event with a relative pointer", () => {
     const s = signalsEvent();
     expect(s.offloads.length).toBe(1);
