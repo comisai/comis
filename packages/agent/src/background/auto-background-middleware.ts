@@ -64,6 +64,9 @@ export interface ToolDefinition {
  *     tasks. Its `read_output` on a pending task deliberately waits for the
  *     original promise, so promoting that observer would be structurally
  *     self-referential.
+ *   - `subagents` — the lifecycle observer whose `wait` action already blocks
+ *     for child terminal state. Promoting it duplicates the child completion
+ *     route and turns `list` follow-ups into extra user notifications.
  *   - `sleep` — the WAIT tool. The model sleeps to await a backgrounded result;
  *     the sleep itself hits `autoBackgroundMs`, promotes, and its raw
  *     'Background task "sleep" completed.' notice leaked to the user (live
@@ -81,6 +84,7 @@ export interface ToolDefinition {
  */
 const NEVER_AUTO_BACKGROUND_TOOLS: ReadonlySet<string> = new Set([
   "background_tasks",
+  "subagents",
   "sleep",
   "image_generate",
   "video_generate",
