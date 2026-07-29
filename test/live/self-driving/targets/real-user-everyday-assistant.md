@@ -56,8 +56,8 @@ a row the code contradicts is itself a finding.
 | S7 | Heartbeat is **default-ON**: `scheduler.heartbeat.enabled` true, `intervalMs` 300000, `showOk` false, `alertThreshold` 2, `staleMs` 120000. The empty-`HEARTBEAT.md` gate short-circuits with no LLM call, so **silence on an idle daemon is CORRECT** | `packages/core/src/config/schema-scheduler.ts`, `packages/scheduler/src/heartbeat/` |
 | S8 | `scheduler.tasks` (model-inferred follow-up tasks) is **implemented and wired**, explicit opt-in `enabled:false`; `confidenceThreshold` 0.8, `debounceMs` 15000, `batchMax` 8, `maxPerCheck` 3, `maxPerDayPerConversation` 3, `defaultWindowMs` 12h. It is no longer dead config | `packages/daemon/src/wiring/setup-followup-task-extraction.ts`, `packages/daemon/src/daemon.ts` |
 | S9 | Autonomy is default-ON via `profile: "standard"` (names: `assistant`, `standard`, `unattended`, `max`). Tree bounds default `aggregateUsd` 200, `tokens` 200000000, `wallClockMs` 48h; spawn bounds `maxConcurrentSelfAgents` 4, `maxSpawnDepth` 3, `maxChildrenPerAgent` 5; message posture `originOnly` true, `volumeCap` 4000 | `packages/core/src/config/schema-agent/schema-agent-autonomy*.ts` |
-| S10 | The browser tool is **default-ON** (`builtinTools.browser` true) and stays sandboxed (`noSandbox` false); `orch:browse` gates it. Loopback navigation is its own knob | `packages/core/src/config/schema-browser.ts` |
-| S11 | `memory_ask` (the grounded cited NL answer over the recall pipeline) is **opt-in, default-OFF** behind the per-agent `dialectic.enabled` knob — the daemon filters the tool out before build when off | `packages/skills/src/platform-tools/registry.ts` |
+| S10 | The browser tool is **default-ON** (`agents.*.skills.builtinTools.browser` true and `browser.enabled` true) and stays sandboxed (`noSandbox` false); `orch:browse` gates it. Loopback navigation is its own knob | `packages/core/src/config/schema-skills.ts`, `packages/core/src/config/schema-browser.ts` |
+| S11 | `memory_ask` (the grounded cited NL answer over the recall pipeline) is **default-ON, opt-out** behind the per-agent `dialectic.enabled` knob and the master `memory.enabled` cost-feature gate — the daemon filters the tool out before build when either gate is off | `packages/core/src/config/schema-dialectic.ts`, `packages/daemon/src/wiring/setup-tools.ts` |
 | S12 | `pipeline` has a `from_intent` action: a deterministic intent→`ExecutionGraph` synthesizer that returns a validated graph and dispatches it through the existing `graph.execute` path, so governance applies. Ten actions total: define, execute, status, cancel, save, load, list, delete, outputs, from_intent | `packages/skills/src/platform-tools/tools/pipeline-tool.ts` |
 | S13 | `subagents` has four actions — list, wait, kill, steer — kill gated by the action classifier; `sessions_spawn`/`sessions_send`/`sessions_history` carry the durable-identity contract (`tenant_id`, `agent_id`, `conversation_ref`) | `packages/skills/src/platform-tools/tools/*` |
 | S14 | Emulator addressing opts (`mention`, `command`, `replyTo`, `replyToUser`, `thread`, `spoiler`) DO thread through the HTTP inject route, and the `/control/chats/:id/service` forum-service route DOES exist. Both were gaps in an earlier revision of the prompt and have landed | `test/live/harness/control-api.ts` |
@@ -150,9 +150,12 @@ production read found the fan-out mechanism present but unused, and an agent con
 are absent entirely. If the mechanism is not in the surface, **that** is the finding — not "the model
 chose not to parallelize". Read the trajectory's tool inventory, not the reply.
 
-Three registration facts, verified at HEAD, that decide what this arc can even test:
-- `pipeline`, `subagents`, `sessions_spawn` and the `sessions_*` family are registered
-  **unconditionally** — present in every agent's surface.
+Three registration and assembly facts, verified at HEAD, that decide what this arc can even test:
+- `pipeline`, `subagents`, `sessions_spawn` and the `sessions_*` family have static descriptors, but
+  descriptor registration is not the assembled surface. Assembly omits `sessions_spawn` without
+  `orch:spawn` and `pipeline` without `orch:graph`; the handler gate independently rechecks the same
+  capability. `subagents` and the non-mutating `sessions_*` inspection/control descriptors are not
+  removed by that capability filter.
 - **`orchestrate` is the one genuinely conditional orchestration tool**: it requires a sandbox provider
   (`setup-tools-autonomy.ts` — the source comment reads "REQUIRED for the orchestrate jail; absent ⇒ no
   orchestrate tool"). On a rig with no OS sandbox the tool simply does not exist, which on a local macOS
@@ -533,7 +536,7 @@ chat` (secrets) · then `undo that`. Plus the remaining media and observability 
 (`extract_document`) · `make me a short video of <thing>` (`video_generate` + `video_status`, whose job
 store must survive a restart) · `describe whats in this clip` (`describe_video`) · `turn that report into
 something i can listen to` (`podcast-generation`) · `show me what that page looks like` (the browser tool,
-S10) · `ask my notes what i decided about <X>` (`memory_ask` — opt-in, S11) · `whats in my memory about
+S10) · `ask my notes what i decided about <X>` (`memory_ask` — default-on, opt-out, S11) · `whats in my memory about
 <X>` (`memory_manage browse/stats/export`, and portability export→import with no duplicate explosion).
 
 **Predicate.** Every mutating control-plane action is admin-gated, approval-gated where destructive,
@@ -948,7 +951,7 @@ TRADEOFF (recommend, don't flip) · DEAD.
 | `contextEngine` `softThresholdRatio` · `hardThresholdRatio` · `freshTailTurns` | 0.75 · 0.90 · 8 | B9 — the long thread | Whether compaction fired early enough to avoid a hard failure and late enough to avoid losing usable context, and whether the user could tell it happened. Do NOT propose `freshTailTurns` as a fix for the store-horizon boundary defect — it cannot be. |
 | `queue.followup.maxFollowupRuns` · `queue.maxConcurrentSessions` | 3 · 10 | B4 / A9 — multi-step work; concurrent U1+U2 | Whether a legitimate multi-step chain hits the follow-up cap mid-task, and whether two humans talking at once queue behind each other visibly. |
 | `autonomy.profile` and its tree bounds | `standard`; $200 / 200M tokens / 48h; depth 3, 5 children, 4 concurrent | B2 / B12 | Whether the default envelope is reachable in ordinary use (a bound a real day never approaches is not protecting anyone) and whether hitting one produces a message naming the limit. |
-| `builtinTools.browser` · `dialectic.enabled` (`memory_ask`) | **true** · **false** | B15 | For each: is the default posture the one a first-day operator wants, and when a tool is filtered out by its gate, does the agent explain that honestly instead of improvising? |
+| `builtinTools.browser` · `dialectic.enabled` (`memory_ask`) | **true** · **true** | B15 | For each: is the default posture the one a first-day operator wants, and when the operator opts out and the tool is filtered out by its gate, does the agent explain that honestly instead of improvising? |
 | `integrations.mcp.callToolTimeoutMs` | see S-row; re-confirm at HEAD | B6 — the hanging server | The real elapsed time at abort versus the configured cap. A measured overshoot is a DEFAULT-WRONG-adjacent bug, not a tuning question. |
 
 **Report it in the results log** as STEP 4.6's verdict table, with the before/after value for anything you

@@ -219,15 +219,15 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         }
       }
 
-      // Ensure runtime-created agents get all tools by default (except browser).
-      // The Zod schema defaults all builtinTools to true (browser: false), but
+      // Ensure runtime-created agents get all tools by default.
+      // The Zod schema defaults all builtinTools to true, but
       // LLMs tend to conservatively set tools to false for specialized agents.
       // Apply full defaults as base, then overlay the LLM's explicit choices.
       const raw = config as Record<string, unknown>;
       const DEFAULT_BUILTIN_TOOLS: Record<string, boolean> = {
         read: true, write: true, edit: true, grep: true, find: true,
         ls: true, exec: true, process: true, webSearch: true, webFetch: true,
-        browser: false,
+        browser: true,
       };
       const existingSkills = (raw.skills as Record<string, unknown>) ?? {};
       const existingBt = (existingSkills.builtinTools as Record<string, boolean>) ?? {};

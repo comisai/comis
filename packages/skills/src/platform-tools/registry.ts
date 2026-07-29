@@ -165,8 +165,8 @@ export interface PlatformToolBuildContext {
   /** `browser` tool's conditional predicate. */
   readonly builtinToolsBrowserEnabled?: boolean;
   /** `memory_ask` (the dialectic) tool's conditional predicate. Fed from
-   *  `agentConfig.dialectic.enabled === true` at setup-tools; default-OFF (absent ⇒ the
-   *  tool is filtered out before build — the query-time-LLM cost gate). */
+   *  `agentConfig.dialectic.enabled === true` at setup-tools; parsed agent configs
+   *  default ON, while an explicit false filters out the query-time-LLM cost surface. */
   readonly dialecticEnabled?: boolean;
   /** agents-manage callbacks — passed unconditionally via build context. */
   readonly onConfigMutationStart?: () => void;
@@ -407,11 +407,11 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
     // ---- memory ----
     {
       // The dialectic: a grounded, cited NL answer over
-      // the agent's LLM-free recall pipeline. The ONE query-time LLM surface, OPT-IN
-      // and default-OFF. The `conditional` gate registers it ONLY when the per-agent
+      // the agent's LLM-free recall pipeline. The ONE query-time LLM surface,
+      // default-ON and opt-out. The `conditional` gate registers it ONLY when the per-agent
       // `dialectic.enabled` knob is true (fed to `ctx.dialecticEnabled` at setup-tools);
       // an absent/off knob ⇒ the daemon filters it out BEFORE build (the cost gate, the
-      // default-OFF byte-identity). `build` always constructs the tool (the schema is
+      // explicit opt-out path). `build` always constructs the tool (the schema is
       // static — the parity snapshot captures it regardless of the gate), exactly like
       // `browser` / `background_tasks`.
       name: "memory_ask",
