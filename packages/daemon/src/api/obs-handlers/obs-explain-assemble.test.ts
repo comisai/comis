@@ -148,6 +148,38 @@ describe("assembleIncidentReport — response locale decision", () => {
   });
 });
 
+describe("assembleIncidentReport — group history receipt", () => {
+  it("surfaces the content-free injected-message counts on explain", () => {
+    const signals = makeSignals({
+      groupHistory: {
+        messageCount: 2,
+        charCount: 73,
+      },
+    } as unknown as Partial<IncidentSignals>);
+
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report).toMatchObject({
+      groupHistory: {
+        messageCount: 2,
+        charCount: 73,
+      },
+    });
+    expect(IncidentReportSchema.parse(report)).toMatchObject({
+      groupHistory: {
+        messageCount: 2,
+        charCount: 73,
+      },
+    });
+  });
+});
+
 describe("assembleIncidentReport — inbound message kind", () => {
   it("surfaces the content-free edit kind on the explain report", () => {
     const signals = makeSignals({

@@ -180,6 +180,28 @@ describe("toIncidentSignals — response locale decision", () => {
   });
 });
 
+describe("toIncidentSignals — group history receipt", () => {
+  it("retains the latest positive content-free prompt receipt", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        groupHistoryMessageCount: 1,
+        groupHistoryCharCount: 31,
+      }),
+      event("prompt.submitted", 2, {
+        groupHistoryMessageCount: 2,
+        groupHistoryCharCount: 73,
+      }),
+    ]);
+
+    expect(signals).toMatchObject({
+      groupHistory: {
+        messageCount: 2,
+        charCount: 73,
+      },
+    });
+  });
+});
+
 describe("toIncidentSignals — turnCount (flag cumulative-across-turns toolStats)", () => {
   // The trajectory JSONL is append-only across session.reset_conversation severs, so one
   // file (and the whole-session toolStats) can span many turns. prompt.submitted is the

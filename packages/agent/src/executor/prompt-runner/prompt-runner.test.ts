@@ -115,6 +115,13 @@ describe("prompt-runner.ts — orchestrator structure", () => {
     );
   });
 
+  it("emits content-free group history receipt counts", () => {
+    const helperBlock = source.slice(source.indexOf("function emitPromptSubmitted("));
+    expect(helperBlock).toMatch(/groupHistoryMessageCount/);
+    expect(helperBlock).toMatch(/groupHistoryCharCount/);
+    expect(helperBlock).toMatch(/groupHistoryContext/);
+  });
+
   it("swallows emit errors so dispatch is never aborted by an observability failure", () => {
     // Structural lock: the emit helper body must be wrapped in
     // try/catch with the debug-log on failure.

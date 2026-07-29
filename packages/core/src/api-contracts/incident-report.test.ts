@@ -59,6 +59,21 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     });
   });
 
+  it("retains content-free group history receipt counts", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      groupHistory: {
+        messageCount: 2,
+        charCount: 73,
+      },
+    });
+
+    expect(parsed.groupHistory).toEqual({
+      messageCount: 2,
+      charCount: 73,
+    });
+  });
+
   it("retains the normalized inbound edit kind", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),
