@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { recoverEmptyFinalResponse, surfaceDiscardedPreToolUrl } from "./executor-response-filter.js";
+import * as responseFilter from "./executor-response-filter.js";
 import type { ComisLogger } from "@comis/core";
 
 /** Minimal mock logger satisfying ComisLogger for recovery tests. */
@@ -884,6 +885,121 @@ describe("recoverEmptyFinalResponse — synthesis branch URL/code preservation",
     });
     // Framing prose guard fires: URL must NOT appear in synthesis output
     expect(result).not.toContain("https://api.example.com/data");
+  });
+});
+
+type DelegationEvidenceGuard = (params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_current_turn_spawn";
+};
+
+function delegationEvidenceGuard(): DelegationEvidenceGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceCurrentTurnDelegationEvidence;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as DelegationEvidenceGuard;
+}
+
+describe("current-turn delegation evidence guard", () => {
+  const request =
+    "can u get someone to check if this lasts 7 hrs and make them ask someone else too";
+  const falseClaim =
+    "Two independent checks reached the same conclusion: qualified yes.";
+  const honestResponse =
+    "I did not successfully start the requested sub-agent in this turn.";
+
+  it("replaces the live historical-result false claim when no spawn succeeded", () => {
+    const guarded = delegationEvidenceGuard()({
+      request,
+      response: falseClaim,
+      toolExecResults: [
+        { toolName: "sessions_history", success: false },
+      ],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_current_turn_spawn",
+    });
+  });
+
+  it("preserves a delegation claim backed by a successful current-turn spawn", () => {
+    const guarded = delegationEvidenceGuard()({
+      request,
+      response: falseClaim,
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true },
+      ],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: falseClaim,
+      corrected: false,
+    });
+  });
+
+  it("does not count a failed or background-placeholder spawn as proof", () => {
+    for (const toolExecResults of [
+      [{ toolName: "sessions_spawn", success: false }],
+      [{ toolName: "sessions_spawn", success: true, backgrounded: true }],
+    ]) {
+      const guarded = delegationEvidenceGuard()({
+        request,
+        response: falseClaim,
+        toolExecResults,
+        honestResponse,
+      });
+
+      expect(guarded.corrected).toBe(true);
+      expect(guarded.response).toBe(honestResponse);
+    }
+  });
+
+  it("preserves an explicit honest refusal when no spawn succeeded", () => {
+    const refusal =
+      "I couldn't start another agent in this turn, so this is only historical context.";
+    const guarded = delegationEvidenceGuard()({
+      request,
+      response: refusal,
+      toolExecResults: [],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: refusal,
+      corrected: false,
+    });
+  });
+
+  it("leaves ordinary replies unchanged even when session history was queried", () => {
+    const ordinaryRequest = "what did the earlier reviewer say";
+    const ordinaryResponse = "The earlier review said the battery lasted eight hours.";
+    const guarded = delegationEvidenceGuard()({
+      request: ordinaryRequest,
+      response: ordinaryResponse,
+      toolExecResults: [
+        { toolName: "sessions_history", success: true },
+      ],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: ordinaryResponse,
+      corrected: false,
+    });
   });
 });
 
