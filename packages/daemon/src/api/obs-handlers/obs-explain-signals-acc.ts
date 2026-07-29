@@ -228,6 +228,8 @@ export interface Acc {
   subagentDeliverySkippedCount: number;
   subagentDeliverySkippedLastRunId?: string;
   subagentDeliverySkippedLastReason?: "no_origin" | "no_channel_params";
+  /** Child run ids already folded across lifecycle and synchronous-wait observations. */
+  subagentCompletedRunIds: Set<string>;
   subagentCompletedCount: number;
   subagentFailedCount: number;
   subagentLastFailedRunId?: string;

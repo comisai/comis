@@ -150,6 +150,10 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // A child's terminal result occurs off-turn. The required parentSessionKey
   // routes it to the parent recorder; the translator strips that key.
   "session:sub_agent_completed": "subagent.completed",
+  // A synchronous wait completes in the active parent turn. Keep this
+  // observation distinct from the child's lifecycle transition so downstream
+  // consumers can diagnose the waiting trace without replaying lifecycle work.
+  "session:sub_agent_wait_completed": "subagent.wait_completed",
 
   // A running sub-agent was steered IN-FLIGHT (a
   // high-priority message injected at the child's next step boundary, transcript

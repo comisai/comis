@@ -510,6 +510,8 @@ export function accumulateSubAgentCompletedRecord(
 ): void {
   const runId = asString(data.runId);
   if (runId === undefined) return;
+  if (acc.subagentCompletedRunIds.has(runId)) return;
+  acc.subagentCompletedRunIds.add(runId);
   const success = data.success === true;
   acc.subagentCompletedCount += 1;
   if (!success) {

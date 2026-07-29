@@ -30,7 +30,7 @@ import type { ComisLogger } from "@comis/core";
  */
 
 /**
- * Closed enum of trajectory event types (45 total).
+ * Closed enum of trajectory event types.
  *
  * Order is deliberate (life-cycle: session.* → prompt → model → tool →
  * skill → memory → delivery → lifecycle envelopes → control-plane sentinel).
@@ -135,6 +135,9 @@ export const TRAJECTORY_EVENT_TYPES = [
   // A direct child's terminal outcome routed to the parent trajectory.
   // Content-free: run/agent ids, success, duration, tokens, and cost only.
   "subagent.completed",
+  // A synchronous parent wait observed the child's terminal outcome.
+  // Content-free: run id and success only.
+  "subagent.wait_completed",
 
   // The reserved trajectory type for the
   // counts-only subagent:steered event emitted when a running child is

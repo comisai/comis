@@ -400,6 +400,7 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       accumulateSubAgentSpawnedRecord(acc.spawnNodesByLease, data);
       return;
     case "subagent.completed":
+    case "subagent.wait_completed":
       accumulateSubAgentCompletedRecord(acc, data);
       return;
     case "capability.audited":
@@ -715,6 +716,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     voiceOutcomeSeq: -1,
     terminalDrivePromotedCount: 0,
     subagentDeliverySkippedCount: 0,
+    subagentCompletedRunIds: new Set(),
     subagentCompletedCount: 0,
     subagentFailedCount: 0,
     backgroundRecoveryRetryCount: 0,

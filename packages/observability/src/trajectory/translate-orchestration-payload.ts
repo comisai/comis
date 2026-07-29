@@ -4,7 +4,7 @@
  * orchestration family.
  *
  * Extracted from `translate-payload.ts` (which is at the file-size cap) — the
- * main `translatePayload` switch delegates these four cases here. No behavior
+ * main `translatePayload` switch delegates this family here. No behavior
  * change vs. inlining; this is purely a file-size split (the same rationale the
  * `translate-video-payload.ts` / `translate-vision-payload.ts` /
  * `translate-voice-payload.ts` splits document).
@@ -25,6 +25,7 @@ export type OrchestrationBridgedEventName =
   | "graph:synthesized_from_intent"
   | "session:sub_agent_spawned"
   | "session:sub_agent_completed"
+  | "session:sub_agent_wait_completed"
   | "subagent:steered"
   // An attributed sub-agent kill (parent / health_monitor / operator /
   // system) — bridged so a killed child's own trajectory names WHO killed it
@@ -92,6 +93,12 @@ export function translateOrchestrationPayload(
         runtimeMs: payload.runtimeMs,
         tokensUsed: payload.tokensUsed,
         costUsd: payload.cost,
+      };
+
+    case "session:sub_agent_wait_completed":
+      return {
+        runId: payload.runId,
+        success: payload.success,
       };
 
     case "subagent:steered":

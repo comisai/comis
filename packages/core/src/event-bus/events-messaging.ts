@@ -139,6 +139,15 @@ export interface MessagingEvents {
     cacheWriteTokens?: number;
   };
 
+  /** A synchronous parent wait observed a child's terminal outcome. */
+  "session:sub_agent_wait_completed": {
+    runId: string;
+    /** Routes the observation to the active waiting parent trajectory. */
+    parentSessionKey: string;
+    success: boolean;
+    timestamp: number;
+  };
+
   /** Sub-agent session auto-archived */
   "session:sub_agent_archived": {
     runId: string;
