@@ -600,6 +600,18 @@ describe("toIncidentSignals — structured event shape (production)", () => {
     });
   });
 
+  it("still attributes a breaker that opens after the latest prompt", () => {
+    const s = toIncidentSignals([
+      event("prompt.submitted", 2, { inboundKind: "message" }),
+      event("tool.breaker_opened", 4, {
+        toolName: "web_fetch",
+        consecutiveFailures: 5,
+      }),
+    ]);
+
+    expect(s.breakerOpenedTool).toBe("web_fetch");
+  });
+
   it("records an offload from the tool.result_offloaded event with a relative pointer", () => {
     const s = signalsEvent();
     expect(s.offloads.length).toBe(1);

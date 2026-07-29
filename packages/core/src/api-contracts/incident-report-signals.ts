@@ -209,7 +209,11 @@ export interface IncidentSignals {
    *  report section. Run shape: {@link OrchestrateRun}. */
   orchestrate?: OrchestrateRun[];
   // derived booleans/strings for the heuristic registry:
-  breakerOpenedTool?: string; // from a tool.breaker_opened event OR a "DO NOT retry" log line's toolName
+  /** Current-turn breaker open. When sequenced `prompt.submitted` evidence is
+   * available, pre-prompt settlement reconciliation remains in breakerEvents
+   * but cannot populate this root-cause discriminator. Sparse historical and
+   * log-only streams retain the first explicit/synthesized open. */
+  breakerOpenedTool?: string;
   hasDoNotRetrySignal: boolean; // any errorText contains "DO NOT retry"
   mostFailedTool?: string;
   repeatedFailureCount: Record<string, number>;

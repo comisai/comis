@@ -66,6 +66,27 @@ export function asNumber(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
+/** Select the breaker open that belongs to the latest prompt-anchored turn.
+ * Pre-prompt settlement reconciliation stays visible in the timeline but
+ * cannot become the selected turn's root-cause discriminator. Streams without
+ * sequenced prompt anchors retain their historical first-open behavior. */
+export function currentTurnBreakerOpenedTool(
+  records: ReadonlyArray<Record<string, unknown>>,
+  events: IncidentSignals["breakerEvents"],
+  fallback: string | undefined,
+): string | undefined {
+  let latestPromptSeq: number | undefined;
+  for (const record of records) {
+    if (record.traceSchema !== "comis-trajectory" || record.type !== "prompt.submitted") continue;
+    const seq = asNumber(record.seq);
+    if (seq !== undefined && (latestPromptSeq === undefined || seq > latestPromptSeq)) {
+      latestPromptSeq = seq;
+    }
+  }
+  if (latestPromptSeq === undefined) return fallback;
+  return events.find((event) => event.event === "opened" && event.seq > latestPromptSeq)?.toolName;
+}
+
 /** Keep only string entries of an array payload field (non-array → empty).
  * Defensive read for record fields that cross the provider/MCP-influenced
  * trust boundary into admin-facing verdict text. */
