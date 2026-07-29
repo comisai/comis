@@ -399,6 +399,18 @@ describe("buildMediaPipeline", () => {
     expect(result.audioPreflight).toBeUndefined();
   });
 
+  it("audioPreflight is undefined when transcription preflight is disabled", async () => {
+    const container = makeContainer();
+    container.config.integrations.media.transcription.preflight = false;
+    const deps = makeDeps({
+      container,
+      transcriber: { transcribe: vi.fn() } as any,
+    });
+    const result = await buildMediaPipeline(deps);
+
+    expect(result.audioPreflight).toBeUndefined();
+  });
+
   it("creates Telegram resolver from tgPlugin handle", async () => {
     const mockTgResolver = { resolve: vi.fn(), schemes: ["tg://"] };
     const tgPlugin = { createResolver: vi.fn(() => mockTgResolver) } as any;
