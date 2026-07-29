@@ -57,10 +57,10 @@ a row the code contradicts is itself a finding.
 | S9 | Autonomy is default-ON via `profile: "standard"` (names: `assistant`, `standard`, `unattended`, `max`). Tree bounds default `aggregateUsd` 200, `tokens` 200000000, `wallClockMs` 48h; spawn bounds `maxConcurrentSelfAgents` 4, `maxSpawnDepth` 3, `maxChildrenPerAgent` 5; message posture `originOnly` true, `volumeCap` 4000 | `packages/core/src/config/schema-agent/schema-agent-autonomy*.ts` |
 | S10 | The browser tool is **default-ON** (`builtinTools.browser` true) and stays sandboxed (`noSandbox` false); `orch:browse` gates it. Loopback navigation is its own knob | `packages/core/src/config/schema-browser.ts` |
 | S11 | `memory_ask` (the grounded cited NL answer over the recall pipeline) is **opt-in, default-OFF** behind the per-agent `dialectic.enabled` knob — the daemon filters the tool out before build when off | `packages/skills/src/platform-tools/registry.ts` |
-| S12 | `pipeline` has a `from_intent` action: a deterministic intent→`ExecutionGraph` synthesizer that returns a validated graph and dispatches it through the existing `graph.execute` path, so governance applies. Nine actions total: define, execute, status, cancel, save, load, list, delete, outputs | `packages/skills/src/platform-tools/tools/pipeline-tool.ts` |
+| S12 | `pipeline` has a `from_intent` action: a deterministic intent→`ExecutionGraph` synthesizer that returns a validated graph and dispatches it through the existing `graph.execute` path, so governance applies. Ten actions total: define, execute, status, cancel, save, load, list, delete, outputs, from_intent | `packages/skills/src/platform-tools/tools/pipeline-tool.ts` |
 | S13 | `subagents` has four actions — list, wait, kill, steer — kill gated by the action classifier; `sessions_spawn`/`sessions_send`/`sessions_history` carry the durable-identity contract (`tenant_id`, `agent_id`, `conversation_ref`) | `packages/skills/src/platform-tools/tools/*` |
 | S14 | Emulator addressing opts (`mention`, `command`, `replyTo`, `replyToUser`, `thread`, `spoiler`) DO thread through the HTTP inject route, and the `/control/chats/:id/service` forum-service route DOES exist. Both were gaps in an earlier revision of the prompt and have landed | `test/live/harness/control-api.ts` |
-| S15 | Repository-shipped skills at `skills/<name>/SKILL.md`: `chart-visualization`, `deep-research`, `find-skills`, `image-generation`, `log-troubleshooting`, `podcast-generation`, `video-generation`. Each declares its own `comis.requires` bins/env — an unmet requirement must fail honestly naming the knob | `skills/` |
+| S15 | Repository-shipped skills at `skills/<name>/SKILL.md`: `chart-visualization`, `deep-research`, `find-skills`, `image-generation`, `log-troubleshooting`, `podcast-generation`, `video-generation`. `deep-research` is dependency-free; every skill with external requirements declares its own `comis.requires` bins/env, and an unmet requirement must fail honestly naming the knob | `skills/` |
 | S16 | 46 platform tools + the builtin set (incl. `ctx_search`/`ctx_inspect`/`ctx_expand`, the nine `terminal_session_*`, `orchestrate`, `apply_patch`, `notebook_edit`, `bwrap`, `web_fetch`, `web_search`, `process`, `sleep`) | `packages/skills/src/platform-tools/registry.ts`, `packages/skills/src/tools/builtin/` |
 | S17 | Context engine: soft flush at `softThresholdRatio` 0.75 (memory extraction only), HARD compaction at `hardThresholdRatio` 0.90 (flush + trim); auto-compaction reserves `reserveTokens` 16384 and keeps `keepRecentTokens` 32768; `postCompactionSections` re-injects the named workspace sections after a compaction. The durable-assembly side keeps `freshTailTurns` 8 verbatim STEPS (assistant + its tool results, never user-turns) and summarizes the oldest out-of-tail chunk once `contextThreshold` 0.75 of the window is used. Small/nano capability classes are routed to caps `effectiveContextCapSmall` 32000 / `effectiveContextCapNano` 16000 | `packages/core/src/config/schema-agent/schema-agent-context.ts` |
 
@@ -190,8 +190,8 @@ run is reported LOST honestly, not silently resumed-or-forgotten.
 
 **Trap.** The graph runs async well past the drive's exit (T4). The agent's "running it now, graph <id>"
 IS a substantive reply, so the drive quiesces there — poll the graph's own oracle. Also: a `pipeline`
-turn's *announcement* is not evidence the graph ran; `from_intent` returns a validated graph without
-executing it (S12), so confirm the dispatch, not the synthesis.
+turn's *announcement* is not evidence the graph ran; `from_intent` synthesizes a validated graph and dispatches it through `graph.execute`
+(S12), so confirm the dispatch reached a terminal state rather than scoring the synthesis alone.
 
 ### B4 — "make me a little thing" · coding an application end to end
 
@@ -544,7 +544,7 @@ failure.** Re-enumerate the tool surface live before filling it in — the count
 | Learning loop | `outcome_events`, `mental_models`, reflection cron, reuse/promote, drift, INV-1..6 | B8 |
 | Context engine | compaction, budget, offload, `ctx_search`/`ctx_inspect`/`ctx_expand`, `session_search`, oversized honesty, long-horizon guardrail | B9, A12 |
 | Sub-agents | `sessions_spawn`, `subagents` list/wait/kill/steer, `sessions_history`, attenuation, caps | B2 |
-| DAG pipeline | `pipeline` (9 actions incl. `from_intent`), `graph.*`, node budget, cancel, durable resume | B3 |
+| DAG pipeline | `pipeline` (10 actions incl. `from_intent`), `graph.*`, node budget, cancel, durable resume | B3 |
 | Background work | auto-background, `background_tasks`, completion re-entry, hops, saturation | B1 |
 | Orchestrate (PTC) | `orchestrate`, cap-mapped tool access, jail egress | B2, B4 |
 | Autonomy envelope | profiles, tree bounds, lease/revoke, off-session spend, governor | B12, A10 |
