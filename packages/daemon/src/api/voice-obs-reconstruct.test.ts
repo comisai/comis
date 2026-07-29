@@ -63,6 +63,8 @@ function makeVoiceFixtureReader(records: Array<Record<string, unknown>>): Incide
     readCacheTraceRecords: async () => [],
     readSessionMetadata: async () => null,
     readDiagnosticsRollup: async () => null,
+    resolveTraceSessionKey: async (traceId) =>
+      traceId === "trace-voice-1" ? SESSION_KEY : "",
   };
 }
 
@@ -73,7 +75,65 @@ async function assemble(records: Array<Record<string, unknown>>): Promise<Incide
   })) as IncidentReport;
 }
 
+async function assembleByTrace(
+  records: Array<Record<string, unknown>>,
+): Promise<IncidentReport> {
+  return (await assembleIncidentReportFromSources(
+    makeVoiceFixtureReader(records),
+    DATA_DIR,
+    {
+      traceId: "trace-voice-1",
+      depth: "summary",
+    },
+  )) as IncidentReport;
+}
+
 describe("offline reconstruction — comis explain surfaces a voice turn", () => {
+  it("exact-trace assembly retains same-trace STT preparation emitted before prompt submission", async () => {
+    const report = await assembleByTrace([
+      trajectoryRecord(
+        "media.stt.requested",
+        { provider: "local", mainProvider: "openai-codex", source: "keyless-local" },
+        1,
+      ),
+      trajectoryRecord(
+        "media.stt.completed",
+        {
+          provider: "local",
+          keyless: true,
+          model: "base",
+          durationMs: 669,
+          costUsd: 0,
+          outcome: "ok",
+          source: "keyless-local",
+        },
+        2,
+      ),
+      trajectoryRecord("prompt.submitted", {}, 3),
+      trajectoryRecord(
+        "model.completed",
+        { stopReason: "stop", durationMs: 800, inputTokens: 20, outputTokens: 5 },
+        4,
+      ),
+      trajectoryRecord(
+        "session.summary",
+        { endReason: "success", degraded: false, turnCount: 1, costUsd: 0.01 },
+        5,
+      ),
+    ]);
+
+    expect(report.voice).toMatchObject({
+      provider: "local",
+      keyless: true,
+      model: "base",
+      durationMs: 669,
+      costUsd: 0,
+      source: "keyless-local",
+      outcome: "ok",
+    });
+    expect(report.coverage?.trajectory.records).toBe(5);
+  });
+
   it("keyless STT: reconstructs provider/keyless/model/durationMs/costUsd:0/source/outcome (keyless $0 visible)", async () => {
     const report = await assemble([
       trajectoryRecord(
