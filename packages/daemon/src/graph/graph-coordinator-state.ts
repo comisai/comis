@@ -21,6 +21,7 @@ import type {
   DeliveryOrigin,
   ChannelEndpoint,
   ConversationLocator,
+  ErrorKind,
 } from "@comis/core";
 import type {
   AnnouncementBatcher,
@@ -216,8 +217,19 @@ export interface GraphCoordinatorDeps {
     killRun(runId: string): { killed: boolean; error?: string };
     getRunStatus(runId: string): {
       status: string;
-      result?: { response: string; finishReason?: string };
-      error?: string;
+      completion?:
+        | {
+            endReason: "completed";
+            completedAtMs: number;
+            summary?: string;
+          }
+        | {
+            endReason: "failed" | "killed" | "watchdog_timeout" | "ghost_sweep";
+            completedAtMs: number;
+            errorKind: ErrorKind;
+            summary?: string;
+          };
+      telemetry?: { finishReason: string };
       sessionKey: string;
       conversationScope: ConversationLocator["conversationScope"];
       conversationRef: ConversationLocator["conversationRef"];

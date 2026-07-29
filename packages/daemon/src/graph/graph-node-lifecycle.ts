@@ -664,7 +664,10 @@ export function handleSubAgentCompleted(
 
   // 5. Capture result immediately (capture before sweep)
   const run = deps.subAgentRunner.getRunStatus(event.runId);
-  let output = run?.result?.response;
+  const completion = run?.completion;
+  let output = completion?.summary;
+  const completionError = completion?.summary
+    ?? (completion ? `Sub-agent ended: ${completion.endReason}` : "Unknown error");
 
   // 5a. Resolve degenerate file-reference outputs
   if (gs.sharedDir && output) {
@@ -699,7 +702,7 @@ export function handleSubAgentCompleted(
     nodeId,
     event.tokensUsed ?? 0,
     run ? { conversationScope: run.conversationScope, conversationRef: run.conversationRef } : undefined,
-    run?.result?.finishReason,
+    run?.telemetry?.finishReason,
   );
 
   // 6. Synchronous state machine update
@@ -731,13 +734,12 @@ export function handleSubAgentCompleted(
     }
   } else {
     // Original failure path -- no partial completion detected
-    const errorText = run?.error ?? "Unknown error";
     // Pass the failed run's sessionKey so retry spawns can reuse it
     // (see resolveGraphCacheRetention / reuseConversation — lets Anthropic cache
     // amortize across a retry instead of cold-starting on every attempt).
     const result = gs.stateMachine.markNodeFailed(
       nodeId,
-      errorText,
+      completionError,
       run ? { conversationScope: run.conversationScope, conversationRef: run.conversationRef } : undefined,
     );
     if (!result.ok) {
@@ -814,9 +816,9 @@ export function handleSubAgentCompleted(
       status: nodeCompleted ? "completed" as const : "failed" as const,
       durationMs: finalNodeState?.startedAt ? systemNowMs() - finalNodeState.startedAt : undefined,
       // Prefer the node STATE error (markNodeFailed's authoritative
-      // reason — e.g. the budget-breach attribution) over the raw run.error, which
-      // is empty for an agent-layer budget pre-check abort.
-      error: nodeCompleted ? undefined : (finalNodeState?.error || run?.error || "Unknown error"),
+      // reason — e.g. the budget-breach attribution) over the terminal
+      // completion summary or end reason.
+      error: nodeCompleted ? undefined : (finalNodeState?.error || completionError),
       // Per-node spend on the transition event (additive; undefined when
       // the completion omits them — the event shape is unchanged otherwise).
       tokensUsed: event.tokensUsed,

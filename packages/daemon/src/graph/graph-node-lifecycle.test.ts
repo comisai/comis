@@ -568,7 +568,19 @@ describe("handleSubAgentCompleted: per-node budget", () => {
       subAgentRunner: {
         spawn: vi.fn().mockReturnValue("run-1"),
         killRun: vi.fn(),
-        getRunStatus: vi.fn().mockReturnValue({ status: "completed", result: { response: "ok" }, sessionKey: "sk-1" }),
+        getRunStatus: vi.fn().mockReturnValue({
+          status: "completed",
+          completion: { endReason: "completed", completedAtMs: 2_000, summary: "ok" },
+          telemetry: {
+            tokensUsedTotal: 1,
+            costTotal: 0,
+            finishReason: "stop",
+            stepsExecuted: 1,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
+          sessionKey: "sk-1",
+        }),
       },
       eventBus: { emit: vi.fn(), on: vi.fn(), off: vi.fn() } as any,
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -756,8 +768,19 @@ describe("handleSubAgentCompleted: per-node budget", () => {
     const deps = makeCompletionDeps();
     (deps.subAgentRunner.getRunStatus as ReturnType<typeof vi.fn>).mockReturnValue({
       status: "failed",
-      result: { response: "", finishReason: "budget_exceeded" },
-      error: "",
+      completion: {
+        endReason: "failed",
+        completedAtMs: 2_000,
+        errorKind: "resource",
+      },
+      telemetry: {
+        tokensUsedTotal: 800,
+        costTotal: 0.01,
+        finishReason: "budget_exceeded",
+        stepsExecuted: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
       sessionKey: "sk-1",
     });
     const handleBudgetExceeded = vi.fn();
@@ -915,7 +938,19 @@ describe("per-node cumulative corrected-$ ledger (gs.nodeCost)", () => {
       subAgentRunner: {
         spawn: vi.fn().mockReturnValue("run-x"),
         killRun: vi.fn(),
-        getRunStatus: vi.fn().mockReturnValue({ status: "completed", result: { response: "ok" }, sessionKey: "sk" }),
+        getRunStatus: vi.fn().mockReturnValue({
+          status: "completed",
+          completion: { endReason: "completed", completedAtMs: 2_000, summary: "ok" },
+          telemetry: {
+            tokensUsedTotal: 1,
+            costTotal: 0,
+            finishReason: "stop",
+            stepsExecuted: 1,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
+          sessionKey: "sk",
+        }),
       },
       eventBus: { emit: vi.fn(), on: vi.fn(), off: vi.fn() } as any,
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },

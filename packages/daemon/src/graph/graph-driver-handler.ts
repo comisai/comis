@@ -116,7 +116,7 @@ export function handleDriverTurnCompleted(
   }
 
   // Determine the output text
-  let output = syntheticReply ?? run?.result?.response ?? "";
+  let output = syntheticReply ?? run?.completion?.summary ?? "";
 
   // Resolve degenerate file-reference outputs
   if (gs.sharedDir && output) {
@@ -190,7 +190,12 @@ export function handleDriverTurnCompleted(
     const timer = gs.nodeTimers.get(nodeId);
     if (timer) { systemClearTimeout(timer); gs.nodeTimers.delete(nodeId); }
     gs.nodeOutputs.set(nodeId, output || undefined);
-    callbacks.markNodeFailed(gs, nodeId, run?.error ?? "Driver turn failed");
+    callbacks.markNodeFailed(
+      gs,
+      nodeId,
+      run?.completion?.summary
+        ?? (run?.completion ? `Sub-agent ended: ${run.completion.endReason}` : "Driver turn failed"),
+    );
     return;
   }
 

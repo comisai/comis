@@ -232,12 +232,27 @@ describe("handleDriverTurnCompleted captures persistentSessionKey", () => {
     const gs = createMinimalGraphRunState();
     gs.driverStates.set("debate-node", ds);
     gs.driverRunIdMap.set("run-2", { nodeId: "debate-node", agentId: "bull" });
+    const laterConversation = createDriverConversation();
 
     vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
       status: "completed",
-      result: { response: "Counter argument..." },
+      completion: {
+        endReason: "completed",
+        completedAtMs: 3_000,
+        summary: "Counter argument...",
+      },
+      telemetry: {
+        tokensUsedTotal: 50,
+        costTotal: 0.005,
+        finishReason: "stop",
+        stepsExecuted: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
       sessionKey: "default:different-key:debategraph1node2",
-    });
+      conversationScope: laterConversation.conversationScope,
+      conversationRef: laterConversation.conversationRef,
+    } as never);
 
     const state: CoordinatorSharedState = {
       graphs: new Map([["graph-1", gs]]),
