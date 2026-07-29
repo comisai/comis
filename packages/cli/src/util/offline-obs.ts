@@ -66,9 +66,10 @@ import {
  * Resolve the CLI's offline data dir with the same precedence as bootstrap:
  * explicit config `dataDir` > `COMIS_DATA_DIR` > `<homedir>/.comis`.
  * `COMIS_CONFIG_PATHS` selects the same layered config the gateway client uses;
- * otherwise the standard user config layers are inspected. Without the config
- * read, a CLI pointed at a non-default daemon config connects to the right
- * gateway, then its offline fallback silently reads the wrong session store.
+ * otherwise config layers under the selected data root are inspected. Without
+ * the config read, a CLI pointed at a non-default daemon config connects to the
+ * right gateway, then its offline fallback silently reads the wrong session
+ * store.
  */
 export function resolveOfflineDataDir(): string {
   const homeDataDir = safePath(os.homedir(), ".comis");
@@ -78,8 +79,8 @@ export function resolveOfflineDataDir(): string {
   const configPaths = configuredPaths.length > 0
     ? configuredPaths
     : [
-        safePath(homeDataDir, "config.yaml"),
-        safePath(homeDataDir, "config.local.yaml"),
+        safePath(fallbackDataDir, "config.yaml"),
+        safePath(fallbackDataDir, "config.local.yaml"),
       ].filter((candidate) => fs.existsSync(candidate));
   const resolution = resolveDoctorConfig(configPaths, {
     defaultDataDir: fallbackDataDir,
