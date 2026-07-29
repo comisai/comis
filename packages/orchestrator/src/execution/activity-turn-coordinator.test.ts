@@ -651,6 +651,33 @@ describe("createActivityTurnCoordinator — error mapping + counters", () => {
     coord.dispose();
   });
 
+  it("records the final renderer degradation on the turn-finalized event", async () => {
+    const clock = createFakeClock(0);
+    const renderer = makeRenderer(clock, {
+      finalizeError: { kind: "not_supported", capability: "edit" },
+    });
+    const emit = vi.fn((_event: string, _payload: unknown) => true);
+    const emitSafely = vi.fn((event: string, payload: unknown) => ({
+      hadListeners: emit(event, payload),
+      failures: [],
+    }));
+    const { deps } = makeCoordinatorDeps({ clock, renderer });
+    const coord = createActivityTurnCoordinator({
+      ...deps,
+      eventBus: { emit, emitSafely } as never,
+    });
+    coord.start(makeCtx());
+
+    await coord.finalize({ kind: "success", trivial: false, delivery: makeReceipt(0) });
+
+    const calls = emit.mock.calls.filter((call) => call[0] === "activity:turn_finalized");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![1]).toMatchObject({
+      outcome: "success",
+      renderErrorKind: "not_supported",
+    });
+  });
+
   it("contains a rejected renderer finalization as an internal render error", async () => {
     const clock = createFakeClock(0);
     const renderer = makeRenderer(clock);

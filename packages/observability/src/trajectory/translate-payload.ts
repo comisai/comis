@@ -218,6 +218,15 @@ export function translatePayload(
         messageCount: payload.messageCount,
         systemDigest: payload.systemDigest,
         messagesDigest: payload.messagesDigest,
+        ...(payload.inboundKind === "message" || payload.inboundKind === "edit"
+          ? { inboundKind: payload.inboundKind }
+          : {}),
+        ...(typeof payload.groupHistoryMessageCount === "number"
+          ? { groupHistoryMessageCount: payload.groupHistoryMessageCount }
+          : {}),
+        ...(typeof payload.groupHistoryCharCount === "number"
+          ? { groupHistoryCharCount: payload.groupHistoryCharCount }
+          : {}),
         ...(typeof payload.responseLocale === "string"
           ? { responseLocale: payload.responseLocale }
           : {}),
@@ -448,6 +457,7 @@ export function translatePayload(
         outcome: payload.outcome,
         ...(payload.errorKind !== undefined ? { errorKind: payload.errorKind } : {}),
         ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+        ...(payload.renderErrorKind !== undefined ? { renderErrorKind: payload.renderErrorKind } : {}),
         reclassified: payload.reclassified,
         failedEventCount: payload.failedEventCount,
       };

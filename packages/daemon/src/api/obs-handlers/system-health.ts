@@ -6,11 +6,12 @@
  * ONE session; this rolls up a WINDOW of sessions into a bounded, deterministic,
  * digest-only system triage.
  *
- * The assembler is a READ FAN-IN over four EXISTING, bounded, soft-fail sources
- * (the `assembleIncidentReportFromSources` shape — that reads 4 sources too):
+ * The assembler is a READ FAN-IN over five existing, bounded, soft-fail sources:
  *
  *   session rollup — `ObservabilityStore.aggregateSessionsInWindow(sinceMs)` ->
  *             `reduceSystemWindow` (pure cross-session reduce; synthetic excluded).
+ *   billing ledger — persisted provider usage reconciled with the current
+ *             process's live estimator so buffered rows count exactly once.
  *   activity index — `readSessionIndexWindow(dataDir, sinceMs, nowMs)` (multi-day
  *             activity aggregate; `daysRead`/`daysMissing` feed the coverage
  *             honesty block). `nowMs` is the SAME injected instant as `sinceMs`,
@@ -18,6 +19,8 @@
  *   diagnostics — `queryDiagnostics({ category })` over the
  *             `health_signal` / `model_health` / `config_posture` rows (counts +
  *             labels only — those rows already dropped raw bodies at write time).
+ *   durable runs — `DurableRunPort.countByStatus(sinceMs)` for the optional
+ *             autonomy lifecycle slice.
  *
  * Determinism: the report root carries NO wall-clock field — there is ONE
  * clock read (the injected `ClockPort.now()`), captured once and threaded as
@@ -64,6 +67,8 @@ import { readSessionIndexWindow } from "./system-session-index.js";
 import { buildFindings, pipelineAuthoringAggregateFromRows, type Finding } from "./system-findings.js";
 import { computeAutonomySlice } from "./system-autonomy.js";
 import { computeCronWakeGateSlice } from "./system-cron-wake-gate.js";
+import { reconcileBillingTotal } from "./obs-metrics.js";
+import type { BillingEstimator } from "../../observability/billing-estimator.js";
 
 /** Default data directory (lazy). Mirrors obs-explain.ts / system-session-index.ts. */
 function defaultDataDir(): string {
@@ -184,7 +189,7 @@ const SYSTEM_HEURISTICS: ReadonlyArray<(s: SystemSignals) => SystemRootCause | n
           ? `${s.autonomyDegradedCount} autonomy run(s) degraded (orphaned/revoked/killed) over the window — worst: ${s.worstRootRunId}`
           : `${s.autonomyDegradedCount} autonomy run(s) degraded (orphaned/revoked/killed) over the window`,
       suggestedNextSteps: [
-        `run \`${explainRef}\` on the worst autonomy run to see its spawn-tree + why it did not survive`,
+        `run \`${explainRef}\` to inspect the worst run's associated session, tool failures, and spawn-tree`,
         "check the durable checkpoint + lease heartbeat (autonomy.durability.heartbeatStaleMs) for orphaned runs; confirm intent for revoked/killed runs",
       ],
     };
@@ -350,7 +355,14 @@ function boundFindings(findings: readonly Finding[], truncations: TruncationEntr
  *   a `-Infinity`/`NaN` window bound.
  */
 export async function assembleSystemHealthReport(
-  deps: { obsStore?: ObservabilityStore; dataDir: string; clock: ClockPort; durableRuns?: DurableRunPort },
+  deps: {
+    obsStore?: ObservabilityStore;
+    dataDir: string;
+    clock: ClockPort;
+    durableRuns?: DurableRunPort;
+    billingEstimator?: Pick<BillingEstimator, "total">;
+    startupTimestamp?: number;
+  },
   sinceHours: number,
 ): Promise<SystemHealthReport> {
   // Defense-in-depth guard: the contract rejects a non-finite/non-positive
@@ -397,11 +409,19 @@ export async function assembleSystemHealthReport(
   // reader's own default excludes synthetic rows (no opt-in plumbed).
   const activity = readSessionIndexWindow(deps.dataDir, sinceMs, nowMs);
 
-  // Off-session (background-job) LLM spend — reflection cron runs et al. key
-  // their token usage to a synthetic `__PREFIX__` session with NO
-  // session_summary, so their cost is absent from `system.costUsd` (the
-  // session-summary rollup). Surface it as a DISTINCT figure so the operator's
-  // full provider bill = costUsd + offSessionUsd, without double-counting.
+  // Provider billing comes from the durable token-usage ledger plus any
+  // current-process rows that have not reached its bounded writer yet. The
+  // reconciler subtracts already-persisted current rows before adding live
+  // usage, so interrupted runs and background jobs count without overlap.
+  const billing = reconcileBillingTotal(
+    {
+      obsStore: deps.obsStore,
+      billingEstimator: deps.billingEstimator,
+      startupTimestamp: deps.startupTimestamp,
+    },
+    { nowMs, windowMs: windowHours * MS_PER_HOUR },
+  );
+  // Synthetic-key spend is a subset/breakdown of the provider total above.
   const offSessionUsd = deps.obsStore?.offSessionCostSince(sinceMs) ?? 0;
   // Diagnostics — windowed health_signal; latest model_health / config_posture.
   const healthSignals = deps.obsStore?.queryDiagnostics({ category: "health_signal", sinceMs }) ?? [];
@@ -469,9 +489,8 @@ export async function assembleSystemHealthReport(
     // is always 0. breakerTripTotal is the real, populated source; breaker trips are an
     // autonomy-only mechanism, so the window total IS the autonomy-scoped count.
     breakerTrips: system.breakerTripTotal ?? 0,
-    // The window's autonomy-inclusive operator cost (the synthetic-excluded
-    // read-back — documented in the schema; a stricter autonomy-only cost is a follow-up).
-    costUsd: system.costUsd,
+    // The same reconciled operator cost exposed on report.cost.
+    costUsd: billing.totalCost,
   });
 
   // The cross-session wake-gate efficiency slice (per-agent skip-rate /
@@ -556,16 +575,15 @@ export async function assembleSystemHealthReport(
     degradedByCause: system.degradedByCause,
     breakerTripTotal: system.breakerTripTotal,
     toolStats: system.toolStats,
-    // Cost is CROSS-SOURCE and degrades asymmetrically: `costUsd` is
-    // store-sourced (the session-summary rollup) while `totalTokens` is
-    // index-sourced
-    // (`activity.tokenTotal`, the session-index files). So `totalTokens` may be
-    // 0 even when `costUsd` is non-zero whenever the session-index reads degrade
-    // (`coverage.sessionIndex.daysMissing > 0`). `cost.totalTokens` is the SAME
-    // figure as `activity.tokenTotal` (a single source of truth — no second
-    // aggregate); consumers cross-reference `coverage` before trusting a 0. The
-    // `comis system-health` table render drops the misleading "· 0 tok" in that case.
-    cost: { costUsd: system.costUsd, totalTokens: activity.tokenTotal, tokenBasis: "input+output" as const, offSessionUsd },
+    // Cost, tokens, and calls are one reconciled provider-ledger tuple.
+    // activity.tokenTotal remains the separate session-boundary activity count.
+    cost: {
+      costUsd: billing.totalCost,
+      totalTokens: billing.totalTokens,
+      callCount: billing.callCount,
+      tokenBasis: "input+output+cache" as const,
+      offSessionUsd,
+    },
     activity: {
       activeAgents: activity.activeAgents,
       activeChannels: activity.activeChannels,
@@ -594,7 +612,7 @@ export async function assembleSystemHealthReport(
     coverage: {
       sessionSummary: { found: rows.length > 0, rows: rows.length },
       sessionIndex: { daysRead: activity.daysRead, daysMissing: activity.daysMissing },
-      billing: { present: rows.length > 0 },
+      billing: { present: billing.callCount > 0 },
     },
   };
 }
@@ -627,7 +645,14 @@ export function bindSystemHealthHandlers(deps: ObsHandlerDeps): Record<string, R
         // buildRpcDispatchDeps (daemon.ts:893, `durableRuns: c.durableRunStore`) on
         // the SAME ObservabilityApiDeps object as obsStore/clock; absent ⇒ honest
         // degradation (the block is omitted).
-        { obsStore: deps.obsStore, dataDir, clock: deps.clock!, durableRuns: deps.durableRuns },
+        {
+          obsStore: deps.obsStore,
+          dataDir,
+          clock: deps.clock!,
+          durableRuns: deps.durableRuns,
+          billingEstimator: deps.billingEstimator,
+          startupTimestamp: deps.startupTimestamp,
+        },
         params.sinceHours ?? DEFAULT_WINDOW_HOURS,
       );
 

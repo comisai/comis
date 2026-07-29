@@ -59,7 +59,7 @@ const ObsQueryToolParams = Type.Object({
     Type.String({ description: "Agent identifier (for billing.byAgent)" }),
   ),
   session_key: Type.Optional(
-    Type.String({ description: "Session key (for billing.bySession)" }),
+    Type.String({ description: "Session key (for billing.bySession, explain, session_report). Explain/report default to the current session when neither this nor trace_id is supplied." }),
   ),
   channel_id: Type.Optional(
     Type.String({ description: "Channel identifier (for channels.get, delivery.recent)" }),
@@ -142,7 +142,7 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
     name: "obs_query",
     label: "Observability Query",
     description:
-      "Query platform diagnostics, billing, delivery traces, channel activity.",
+      "MANDATORY evidence for runtime self-reports. Asked what Comis did, what failed, why it was slow, counts, or cost? Call explain, system_health, or billing before answering. Never infer runtime cause from chat memory. If the query cannot establish it, say unknown.",
     parameters: ObsQueryToolParams,
 
     async execute(
@@ -265,10 +265,11 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
         }
 
         if (action === "explain") {
-          const sessionKey = readStringParam(p, "session_key", false);
+          const requestedSessionKey = readStringParam(p, "session_key", false);
           const traceId = readStringParam(p, "trace_id", false);
           const depth = readStringParam(p, "depth", false);
           const ctx = tryGetContext();
+          const sessionKey = requestedSessionKey ?? (traceId === undefined ? ctx?.sessionKey : undefined);
           const result = await rpcCall("obs.explain", {
             sessionKey,
             traceId,
@@ -332,10 +333,11 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
         // action === "session_report"
         // session_report reuses obs.explain -- the IncidentReport IS the session
         // rollup (cost/toolStats/outcome/timing/degraded). No new contract.
-        const sessionKey = readStringParam(p, "session_key", false);
+        const requestedSessionKey = readStringParam(p, "session_key", false);
         const traceId = readStringParam(p, "trace_id", false);
         const depth = readStringParam(p, "depth", false) ?? "summary";
         const ctx = tryGetContext();
+        const sessionKey = requestedSessionKey ?? (traceId === undefined ? ctx?.sessionKey : undefined);
         const result = await rpcCall("obs.explain", {
           sessionKey,
           traceId,

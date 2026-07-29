@@ -35,6 +35,8 @@ export function buildObsMcpClientClosures(deps: {
   obsStore: SystemAssemblerDeps["obsStore"];
   clock: SystemAssemblerDeps["clock"];
   durableRuns: SystemAssemblerDeps["durableRuns"];
+  billingEstimator: SystemAssemblerDeps["billingEstimator"];
+  startupTimestamp: SystemAssemblerDeps["startupTimestamp"];
   workspaceDirs: ReadonlyMap<string, string>;
   contextBrowse: Parameters<typeof makeRealReader>[3];
 }): {
@@ -54,7 +56,14 @@ export function buildObsMcpClientClosures(deps: {
   const obsSystemHealthForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
     const parsed = ObsSystemHealthContract.request.parse(params);
     return assembleSystemHealthReport(
-      { obsStore: deps.obsStore, dataDir: deps.dataDir, clock: deps.clock, durableRuns: deps.durableRuns },
+      {
+        obsStore: deps.obsStore,
+        dataDir: deps.dataDir,
+        clock: deps.clock,
+        durableRuns: deps.durableRuns,
+        billingEstimator: deps.billingEstimator,
+        startupTimestamp: deps.startupTimestamp,
+      },
       parsed.sinceHours ?? 24,
     );
   };

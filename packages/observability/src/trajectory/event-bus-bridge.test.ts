@@ -1069,6 +1069,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       messageCount: 1,
       systemDigest: "d",
       messagesDigest: "d",
+      inboundKind: "message",
     },
     "session:started": {
       channelType: "telegram",
@@ -1359,6 +1360,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       outcome: "failure",
       errorKind: "resource",
       reason: "stopped — spend limit reached",
+      renderErrorKind: "not_supported",
       reclassified: false,
       failedEventCount: 1,
       timestamp: 0,
@@ -2655,6 +2657,7 @@ describe("queue + execution + sender bridge", () => {
       outcome: "failure",
       errorKind: "resource",
       reason: "stopped — spend limit reached",
+      renderErrorKind: "not_supported",
       reclassified: false,
       failedEventCount: 1,
       timestamp: Date.now(),
@@ -2667,6 +2670,7 @@ describe("queue + execution + sender bridge", () => {
     expect(data.outcome).toBe("failure");
     expect(data.errorKind).toBe("resource");
     expect(data.reason).toBe("stopped — spend limit reached");
+    expect(data.renderErrorKind).toBe("not_supported");
     expect(data.reclassified).toBe(false);
   });
 

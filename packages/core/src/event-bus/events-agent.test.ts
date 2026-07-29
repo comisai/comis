@@ -512,6 +512,7 @@ describe("Trajectory observability events", () => {
       messageCount: 7,
       systemDigest: "a".repeat(64),
       messagesDigest: "b".repeat(64),
+      inboundKind: "edit",
       timestamp: Date.now(),
     };
 
@@ -526,6 +527,7 @@ describe("Trajectory observability events", () => {
     expect(received.messagesDigest.length).toBe(64);
     expect(received.provider).toBe("anthropic");
     expect(received.modelId).toBe("claude-sonnet-4-20250514");
+    expect(received.inboundKind).toBe("edit");
   });
 
   it("session:started delivers channelType, channelId, optional accountId", () => {

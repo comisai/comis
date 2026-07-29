@@ -26,6 +26,7 @@ describe("translatePayload — response locale decision", () => {
       responseLocale: "und-Latn",
       responseLocaleSource: "request",
       responseLocaleEnforced: true,
+      inboundKind: "edit",
       requestText: "must never cross the content-free trajectory boundary",
       timestamp: 1717171717,
     } as Record<string, unknown>);
@@ -40,6 +41,7 @@ describe("translatePayload — response locale decision", () => {
       responseLocale: "und-Latn",
       responseLocaleSource: "request",
       responseLocaleEnforced: true,
+      inboundKind: "edit",
     });
     expect("requestText" in data).toBe(false);
     expect("agentId" in data).toBe(false);

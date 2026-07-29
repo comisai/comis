@@ -22,6 +22,7 @@
 
 import { readFileSync } from "node:fs";
 import * as os from "node:os";
+import { isAbsolute } from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
   AppConfigSchema,
@@ -46,6 +47,36 @@ export interface ResolveDoctorConfigDeps {
 }
 
 /**
+ * Read the last explicit absolute dataDir from the same layered YAML inputs.
+ * Secret references cannot be resolved until the active store is located, so
+ * this boot path is intentionally limited to a non-secret scalar.
+ */
+function preReadConfiguredDataDir(
+  configPaths: readonly string[],
+  readFile: (path: string) => string,
+): string | undefined {
+  let configuredDataDir: string | undefined;
+
+  for (const candidate of configPaths) {
+    let parsed: unknown;
+    try {
+      parsed = parseYaml(readFile(candidate));
+    } catch {
+      continue;
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      continue;
+    }
+    const rawDataDir = (parsed as Record<string, unknown>).dataDir;
+    if (typeof rawDataDir === "string" && isAbsolute(rawDataDir)) {
+      configuredDataDir = rawDataDir;
+    }
+  }
+
+  return configuredDataDir;
+}
+
+/**
  * Build the effective secret lookup used by daemon boot. The selected file or
  * encrypted store wins over a shadowed process/.env value; process env wins
  * over `.env` because `loadEnvFile` never overwrites an existing value. Store
@@ -55,12 +86,16 @@ export interface ResolveDoctorConfigDeps {
 function buildSecretChain(
   deps: ResolveDoctorConfigDeps,
   storageMode: "encrypted" | "file" | "env",
+  configuredDataDir?: string,
 ): (key: string) => string | undefined {
   const getEnv = deps.getEnv ?? systemGetEnv;
 
   let dotEnv: Record<string, string | undefined> | undefined;
   const dataDir =
-    getEnv("COMIS_DATA_DIR") ?? deps.defaultDataDir ?? safePath(os.homedir(), ".comis");
+    configuredDataDir ??
+    getEnv("COMIS_DATA_DIR") ??
+    deps.defaultDataDir ??
+    safePath(os.homedir(), ".comis");
   const envFilePath = safePath(dataDir, ".env");
 
   const loadDotEnv = (): Record<string, string | undefined> => {
@@ -108,7 +143,8 @@ export function resolveDoctorSecretPresence(
 ): boolean {
   const readFile = deps.readFile ?? ((path: string) => readFileSync(path, "utf-8"));
   const storageMode = preReadStorageMode(configPaths, { readFile });
-  return buildSecretChain(deps, storageMode)(name) !== undefined;
+  const configuredDataDir = preReadConfiguredDataDir(configPaths, readFile);
+  return buildSecretChain(deps, storageMode, configuredDataDir)(name) !== undefined;
 }
 
 /**
@@ -126,7 +162,8 @@ export function resolveDoctorConfig(
   const readFile = deps.readFile ?? ((path: string) => readFileSync(path, "utf-8"));
 
   const storageMode = preReadStorageMode(configPaths, { readFile });
-  const getSecret = buildSecretChain(deps, storageMode);
+  const configuredDataDir = preReadConfiguredDataDir(configPaths, readFile);
+  const getSecret = buildSecretChain(deps, storageMode, configuredDataDir);
   const operationalGetEnv =
     deps.getEnv ?? (deps.getStoreSecret !== undefined ? () => undefined : systemGetEnv);
   let merged = buildGatewayEnvLayer({

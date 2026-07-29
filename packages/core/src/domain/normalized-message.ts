@@ -9,6 +9,21 @@ const MAX_DATE_EPOCH_MS = 8_640_000_000_000_000;
 /** Cross-channel ceiling for one normalized physical message. */
 export const MAX_NORMALIZED_MESSAGE_TEXT_CHARS = 65_536;
 
+/** Defensive ceiling for earlier group messages attached to one activating turn. */
+export const MAX_GROUP_HISTORY_CONTEXT_MESSAGES = 10_000;
+
+/**
+ * One earlier group message supplied as attributed, untrusted turn context.
+ *
+ * This is runtime context, not conversation identity or operator policy.
+ */
+export const GroupHistoryContextEntrySchema = z.strictObject({
+  senderId: z.string().min(1),
+  text: z.string().max(MAX_NORMALIZED_MESSAGE_TEXT_CHARS),
+});
+
+export type GroupHistoryContextEntry = z.infer<typeof GroupHistoryContextEntrySchema>;
+
 /**
  * Voice-specific metadata for voice notes and audio messages.
  */
@@ -214,6 +229,11 @@ export const NormalizedMessageSchema = z.strictObject({
       sttPreprocess: SttPreprocessReceiptsSchema.optional(),
       /** Trusted, content-free direct model-vision preprocessing receipt. */
       visionPreprocess: VisionDirectPreprocessReceiptSchema.optional(),
+      /** Trusted projection of earlier group chatter, rendered as untrusted prompt context. */
+      groupHistoryContext: z
+        .array(GroupHistoryContextEntrySchema)
+        .max(MAX_GROUP_HISTORY_CONTEXT_MESSAGES)
+        .optional(),
     }).default({}),
     /** Exact physical messages represented by a synthetic coalesced turn. */
     originalMessages: z.array(OriginalInboundMessageSchema).min(1).max(10_000).optional(),

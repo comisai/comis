@@ -147,36 +147,16 @@ export function registerSystemHealthCommand(program: Command): void {
             info(`  → worst run: comis explain ${a.worstRootRunId}`);
           }
         }
-        // cost.costUsd is sourced from the session-summary store; the token
-        // total is sourced from the session-index files and degrades independently.
-        // When the token read degraded (coverage.sessionIndex.daysMissing > 0) the token
-        // figure is an unreliable 0 — printing "$X · 0 tok" alongside a real
-        // cost reads as a data bug. Drop the contradictory "0 tok" and surface
-        // the honest degraded-coverage signal instead; otherwise the normal line.
-        const tokensDegraded =
-          report.cost.totalTokens === 0 &&
-          report.cost.costUsd > 0 &&
-          (report.coverage?.sessionIndex.daysMissing ?? 0) > 0;
-        // Off-session (reflection/background) spend — a DISTINCT figure the
-        // operator adds to costUsd for the full provider bill (it is absent from
-        // costUsd because those runs have no session_summary). Shown only when
-        // non-zero so the common case stays uncluttered.
+        // Cost, tokens, and calls share the corrected provider-billing ledger.
+        // Session-index tokens remain a separate activity metric.
         const offSession = report.cost.offSessionUsd ?? 0;
         const offSessionSuffix =
-          offSession > 0 ? ` + $${offSession} off-session (reflection/background)` : "";
-        if (tokensDegraded) {
-          info(
-            `Cost:       $${report.cost.costUsd} (tokens unavailable: ${report.coverage?.sessionIndex.daysMissing ?? 0} day(s) of session-index missing)${offSessionSuffix}`,
-          );
-        } else {
-          info(
-            // Name the token basis: system's total is the session-index
-            // input+output sum (NO cache), so it is far smaller than explain's
-            // cache-inclusive per-call ledger — labeling both keeps the two
-            // lenses from reading as the same "tok" (comis-daniel 2026-07-09).
-            `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok (input+output, excl cache)${offSessionSuffix}`,
-          );
-        }
+          offSession > 0 ? ` (includes $${offSession} synthetic off-session)` : "";
+        const callSuffix =
+          report.cost.callCount === undefined ? "" : ` · ${report.cost.callCount} call(s)`;
+        info(
+          `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok (input+output+cache)${callSuffix}${offSessionSuffix}`,
+        );
         for (const f of report.findings) {
           info(`  [${f.code}] ${f.detail} (×${f.count}) → ${f.hint}`);
         }

@@ -174,16 +174,25 @@ describe("resolveTraceToSession", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolveRootRunToSession", () => {
-  it("resolves a SYNTHETIC in-process root by pure prefix-strip (no I/O, no index needed)", async () => {
-    // `root-session-<formattedKey>` → the formattedKey IS the canonical sessionKey
-    // for the in-process leg. A pure string op — pass a dataDir with NO index at
-    // all to prove no file access is required.
+  it("resolves the current synthetic in-process root shape without reading the session index", async () => {
+    // `root-session-<agentId>-<formattedKey>` repeats agentId before the
+    // canonical session key. A pure string op — pass a dataDir with NO index
+    // at all to prove no file access is required.
     const emptyDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-rootrun-synthetic-"));
     const resolved = await resolveRootRunToSession(
       emptyDataDir,
-      "root-session-default:user:telegram:1717000000",
+      "root-session-default-default:agent:default:user:telegram:1717000000",
     );
-    expect(resolved).toBe("default:user:telegram:1717000000");
+    expect(resolved).toBe("default:agent:default:user:telegram:1717000000");
+  });
+
+  it("resolves a synthetic in-process root when the agent identifier contains hyphens", async () => {
+    const emptyDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-rootrun-hyphenated-"));
+    const resolved = await resolveRootRunToSession(
+      emptyDataDir,
+      "root-session-release-agent-default:agent:release-agent:user:telegram:1717000000",
+    );
+    expect(resolved).toBe("default:agent:release-agent:user:telegram:1717000000");
   });
 
   it("resolves a REAL rootRunId by scanning a real nested session-index layout (AGENTS §2.10)", async () => {
@@ -249,16 +258,22 @@ describe("resolveRootRunToSession", () => {
     expect(resolved).toBe("default:u:c:9");
   });
 
-  it("a synthetic-prefixed id wins by strip even if a same-named index row exists (the pure arm is first)", async () => {
-    // The `root-session-` prefix is the disambiguator: a synthetic root strips to
-    // its formattedKey WITHOUT consulting the index, so the index row is never read.
+  it("a synthetic-prefixed id wins by parsing even if a same-named index row exists", async () => {
+    // The `root-session-` prefix is the disambiguator: a synthetic root parses
+    // its embedded formatted key WITHOUT consulting the index.
     const dataDir = makeDataDirWithIndex([
       JSON.stringify({
         type: "capability.audited",
-        data: { rootRunId: "root-session-default:a:b:1", runId: "WRONG-FROM-INDEX" },
+        data: {
+          rootRunId: "root-session-a1-default:agent:a1:u:c",
+          runId: "WRONG-FROM-INDEX",
+        },
       }),
     ]);
-    const resolved = await resolveRootRunToSession(dataDir, "root-session-default:a:b:1");
-    expect(resolved).toBe("default:a:b:1");
+    const resolved = await resolveRootRunToSession(
+      dataDir,
+      "root-session-a1-default:agent:a1:u:c",
+    );
+    expect(resolved).toBe("default:agent:a1:u:c");
   });
 });

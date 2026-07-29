@@ -103,6 +103,11 @@ function emitPromptSubmitted(params: RunPromptParams, messageText: string): void
     const transcriptLen =
       (params.session as { agent?: { state?: { messages?: { length?: number } } } })
         .agent?.state?.messages?.length ?? 0;
+    const groupHistoryContext = params.msg.metadata.groupHistoryContext;
+    const groupHistoryCharCount = groupHistoryContext?.reduce(
+      (total, entry) => total + entry.senderId.length + entry.text.length + 4,
+      Math.max(0, (groupHistoryContext?.length ?? 0) - 1),
+    );
 
     params.deps.eventBus.emit("prompt:submitted", {
       agentId: params.agentId ?? params.config.name,
@@ -114,6 +119,13 @@ function emitPromptSubmitted(params: RunPromptParams, messageText: string): void
       messageCount: transcriptLen + 1,
       systemDigest,
       messagesDigest,
+      inboundKind: params.msg.metadata?.isEdited === true ? "edit" : "message",
+      ...(groupHistoryContext !== undefined && groupHistoryContext.length > 0
+        ? {
+            groupHistoryMessageCount: groupHistoryContext.length,
+            groupHistoryCharCount: groupHistoryCharCount ?? 0,
+          }
+        : {}),
       ...(params.responseLocalePolicy?.locale !== undefined
         ? { responseLocale: params.responseLocalePolicy.locale }
         : {}),

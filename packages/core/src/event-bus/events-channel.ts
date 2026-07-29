@@ -3,6 +3,7 @@ import type { SessionKey } from "../domain/session-key.js";
 import type { ChannelCapability } from "../domain/channel-capability.js";
 import type { DeliveryQueueTransition } from "../delivery/types.js";
 import type { ErrorKind } from "../logging/log-fields.js";
+import type { ActivityRenderError } from "../activity/channel-activity-renderer.js";
 
 /**
  * ChannelEvents: Channel, queue, streaming, typing, autoreply, sendpolicy,
@@ -389,6 +390,8 @@ export interface ChannelEvents {
     /** True when an observed failed event flipped a delivered success to
      *  success_with_recovered_failures. */
     reclassified: boolean;
+    /** Final renderer error after the turn outcome was known, when rendering degraded. */
+    renderErrorKind?: ActivityRenderError["kind"];
     /** How many observed events had status "failed" during the turn. */
     failedEventCount: number;
     timestamp: number;

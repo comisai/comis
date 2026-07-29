@@ -5,6 +5,8 @@ export {
   AttachmentSchema,
   VoiceMetaSchema,
   MAX_NORMALIZED_MESSAGE_TEXT_CHARS,
+  MAX_GROUP_HISTORY_CONTEXT_MESSAGES,
+  GroupHistoryContextEntrySchema,
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
   LinkPrefetchReceiptSchema,
   SttPreprocessReceiptsSchema,
@@ -18,6 +20,7 @@ export {
 export type {
   Attachment,
   VoiceMeta,
+  GroupHistoryContextEntry,
   LinkPrefetchReceipt,
   SttPreprocessReceipt,
   SttPreprocessSelection,

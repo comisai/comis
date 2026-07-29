@@ -311,11 +311,13 @@ export function assembleIncidentReport(
   const channelDegraded =
     signals.channelHealth !== undefined && !signals.channelHealth.recovered;
   const subagentDeliveryDegraded = signals.subagentDeliverySkipped !== undefined;
+  const activityRenderDegraded = signals.turnFinalized?.renderErrorKind !== undefined;
   const degraded =
     deliveryFailed
     || deliveryPartial
     || channelDegraded
     || subagentDeliveryDegraded
+    || activityRenderDegraded
     || (explicitDegraded ?? derivedDegraded);
   const severity: "ok" | "degraded" | "failed" = isHardFailure
     ? "failed"
@@ -472,6 +474,12 @@ export function assembleIncidentReport(
     outcome: { endReason, degraded, severity },
     cost: { costUsd, totalTokens, tokenBasis: "input+output+cache" as const, cacheReadRatio },
     timing: { durationMs, turnCount },
+    ...(signals.inboundEdit !== undefined
+      ? { inboundEdit: signals.inboundEdit }
+      : {}),
+    ...(signals.groupHistory !== undefined
+      ? { groupHistory: signals.groupHistory }
+      : {}),
     ...(signals.responseLocale !== undefined
       ? { responseLocale: signals.responseLocale }
       : {}),

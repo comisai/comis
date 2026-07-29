@@ -99,6 +99,13 @@ export const IncidentReportSchema = z.object({
     durationMs: z.number(),
     turnCount: z.number(),
   }),
+  /** Whether the selected turn's normalized inbound update was an edit. */
+  inboundEdit: z.boolean().optional(),
+  /** Counts-only receipt for earlier group messages attached to the selected turn. */
+  groupHistory: z.object({
+    messageCount: z.number().int().positive(),
+    charCount: z.number().int().nonnegative(),
+  }).optional(),
   /** Content-free response-locale decision for the selected turn (exact trace)
    * or latest turn (whole session). */
   responseLocale: z
@@ -573,6 +580,8 @@ export const IncidentReportSchema = z.object({
       errorKind: z.string().optional(),
       /** The fixed one-line resource-abort reason, when present. */
       reason: z.string().optional(),
+      /** The final activity renderer error, when reply delivery still completed. */
+      renderErrorKind: z.string().optional(),
       /** True when a failed event flipped a delivered success to
        *  success_with_recovered_failures. */
       reclassified: z.boolean(),

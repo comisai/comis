@@ -88,7 +88,7 @@ function makeDeps(
       }),
     } as never,
     messageRouter: { resolve: vi.fn(() => "ordinary-agent") } as never,
-    sessionManager: { loadOrCreate: vi.fn(() => ok({})) } as never,
+    sessionManager: { loadOrCreate: vi.fn(() => ok([])) } as never,
     principalResolver,
     getDmScope: () => ({ mode: "per-account-channel-peer", threadIsolation: true }),
     createExecutor: vi.fn(() => ({ execute: vi.fn() }) as never),

@@ -11197,6 +11197,9 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "inboundEdit": {
+          "type": "boolean"
+        },
         "responseLocale": {
           "anyOf": [
             {
@@ -12268,6 +12271,9 @@ export const CONTRACTS = {
             "reason": {
               "type": "string"
             },
+            "renderErrorKind": {
+              "type": "string"
+            },
             "reclassified": {
               "type": "boolean"
             },
@@ -12900,9 +12906,12 @@ export const CONTRACTS = {
             "totalTokens": {
               "type": "number"
             },
+            "callCount": {
+              "type": "number"
+            },
             "tokenBasis": {
               "type": "string",
-              "const": "input+output"
+              "const": "input+output+cache"
             },
             "offSessionUsd": {
               "type": "number"

@@ -730,6 +730,9 @@ export function buildMessageFlags(msg: NormalizedMessage): Record<string, boolea
   if (msg.replyTo) {
     flags.isReply = true;
   }
+  if (meta.isEdited === true) {
+    flags.isEdited = true;
+  }
   if (meta.isScheduled === true) {
     flags.isScheduled = true;
   }

@@ -5,6 +5,8 @@
  * Drives the REAL read fan-in (`assembleSystemHealthReport`) over:
  *   - the session rollup: a seeded `:memory:` ObservabilityStore (real
  *     `aggregateSessionsInWindow` + the pure `reduceSystemWindow`),
+ *   - the billing ledger: seeded token-usage rows reconciled with optional live
+ *     current-process usage,
  *   - the activity index: a REAL on-disk
  *     `<tmpDataDir>/logs/session-index.<date>.jsonl` layout
  *     (AGENTS §2.10 — a fixture-only reader proves the LOGIC, not the path
@@ -21,7 +23,7 @@
  * the real-today key; the clock-independence is proven by the dedicated case.
  *
  * Cases pinned:
- *   1. ASSEMBLY — the 4 sources merge onto SystemHealthReport (sessions/topErrorKinds/
+ *   1. ASSEMBLY — the sources merge onto SystemHealthReport (sessions/topErrorKinds/
  *      breakerTripTotal/toolStats/cost/activity/findings/coverage), digest-only.
  *   2. DETERMINISM — same data + same fakeClock -> byte-identical reports.
  *   3. BOUNDING — > SYSTEM_FINDINGS_CAP findings -> capped + a truncations[] entry.
@@ -210,6 +212,40 @@ function seedStore(store: ObservabilityStore, now: number): void {
     message: "gateway TLS disabled",
     details: JSON.stringify({ tlsEnabled: false }),
   });
+  const usage = {
+    timestamp: now - 1_000,
+    traceId: "trace-s1",
+    agentId: "default",
+    channelId: "telegram",
+    sessionKey: "s1",
+    provider: "openai",
+    model: "gpt",
+    promptTokens: 80,
+    completionTokens: 20,
+    totalTokens: 100,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costInput: 0.05,
+    costOutput: 0.05,
+    costTotal: 0.1,
+    costCacheRead: 0,
+    costCacheWrite: 0,
+    cacheSaved: 0,
+    latencyMs: 100,
+  };
+  store.insertTokenUsage(usage);
+  store.insertTokenUsage({
+    ...usage,
+    timestamp: now - 500,
+    traceId: "trace-s2",
+    sessionKey: "s2",
+    promptTokens: 40,
+    completionTokens: 10,
+    totalTokens: 50,
+    costInput: 0.2,
+    costOutput: 0.2,
+    costTotal: 0.4,
+  });
 }
 
 /** Minimal handler deps (mirror obs-explain.test.ts makeDeps). */
@@ -217,7 +253,7 @@ function makeDeps(overrides?: Partial<ObsHandlerDeps>): ObsHandlerDeps {
   return { agents: {}, ...overrides } as unknown as ObsHandlerDeps;
 }
 
-describe("assembleSystemHealthReport (4-source read fan-in)", () => {
+describe("assembleSystemHealthReport (bounded read fan-in)", () => {
   // WIRING GUARD: assembleSystemHealthReport must QUERY each learning
   // diagnostic category AND thread it into buildFindings. The buildFindings unit tests prove the finding
   // is BUILT from rows; these prove system-health actually QUERIES the category + passes it (the wiring
@@ -258,11 +294,7 @@ describe("assembleSystemHealthReport (4-source read fan-in)", () => {
     expect(report.likelyRootCause?.code).not.toBe("system_recurring_health_signal");
   });
 
-  it("surfaces off-session (reflection/background) spend as cost.offSessionUsd, distinct from per-session costUsd", async () => {
-    // The system cost sums session_summary rows; a reflection cron run spends
-    // real tokens under the synthetic __REFLECT__ session key with NO
-    // session_summary, so its spend was invisible — an operator reconciling
-    // against the provider bill saw unexplained drift (comis-harel 2026-07-12).
+  it("surfaces synthetic off-session spend as a subset of the complete provider cost", async () => {
     const now = systemNowMs();
     const store = makeStore();
     // One real user session: $0.10.
@@ -286,11 +318,66 @@ describe("assembleSystemHealthReport (4-source read fan-in)", () => {
 
     const report = await assembleSystemHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
 
-    // Per-session cost unchanged (session_summary rollup).
-    expect(report.cost.costUsd).toBeCloseTo(0.1, 5);
-    // Off-session cost = the reflection spend only (the real-session token_usage
-    // row is NOT counted here — it is already in costUsd via session_summary).
+    // The provider total includes both ledger rows.
+    expect(report.cost.costUsd).toBeCloseTo(0.15, 5);
+    // The synthetic-key amount remains visible as a subset/breakdown.
     expect(report.cost.offSessionUsd).toBeCloseTo(0.05, 5);
+  });
+
+  it("uses the billing ledger for cost, token, and call totals even when a call has no session summary", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    store.insertDiagnostic({
+      timestamp: now - 1_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "default:user_a:telegram:peer:user_a",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.1, turnCount: 1 }),
+    });
+    const usage = {
+      timestamp: now - 500,
+      traceId: "trace-a",
+      agentId: "default",
+      channelId: "telegram",
+      sessionKey: "default:user_a:telegram:peer:user_a",
+      provider: "openai",
+      model: "gpt",
+      promptTokens: 400,
+      completionTokens: 100,
+      totalTokens: 900,
+      cacheReadTokens: 400,
+      cacheWriteTokens: 0,
+      costInput: 0.2,
+      costOutput: 0.1,
+      costTotal: 0.3,
+      costCacheRead: 0,
+      costCacheWrite: 0,
+      cacheSaved: 0,
+      latencyMs: 100,
+    };
+    store.insertTokenUsage(usage);
+    store.insertTokenUsage({
+      ...usage,
+      timestamp: now - 250,
+      traceId: "trace-interrupted",
+      costTotal: 0.2,
+      totalTokens: 600,
+    });
+
+    const report = await assembleSystemHealthReport({
+      obsStore: store,
+      dataDir: makeDataDirWithActivity(),
+      clock: createFakeClock(now),
+    }, 24);
+
+    expect(report.cost).toMatchObject({
+      costUsd: 0.5,
+      totalTokens: 1_500,
+      callCount: 2,
+      tokenBasis: "input+output+cache",
+    });
+    expect(report.coverage?.billing).toEqual({ present: true });
   });
 
   it("reports offSessionUsd = 0 when there is no synthetic/background spend", async () => {
@@ -498,6 +585,7 @@ describe("assembleSystemHealthReport (4-source read fan-in)", () => {
     expect(report.activity.turnTotal).toBe(5);
     expect(report.activity.tokenTotal).toBe(150);
     expect(report.cost.totalTokens).toBe(150);
+    expect(report.cost.callCount).toBe(2);
     expect(report.activity.exitReasons).toEqual({ error: 1, success: 1 });
     // Findings carry counts + codes + hints ONLY — no raw message bodies.
     expect(report.findings.length).toBeGreaterThan(0);
@@ -629,7 +717,9 @@ describe("assembleSystemHealthReport (4-source read fan-in)", () => {
     expect(report.activity.activeAgents).toEqual(["agent-h"]);
     expect(report.activity.turnTotal).toBe(4);
     expect(report.activity.tokenTotal).toBe(321);
-    expect(report.cost.totalTokens).toBe(321);
+    expect(report.cost.totalTokens).toBe(0);
+    expect(report.activity.tokenTotal).toBe(321);
+    expect(report.coverage?.billing).toEqual({ present: false });
   });
 
   it("BOUNDS findings to the cap and records the drop in truncations[]", async () => {
@@ -1545,6 +1635,8 @@ describe("assembleSystemHealthReport — autonomy block", () => {
       ...report.findings.flatMap((f) => [f.detail, f.hint]),
     ].join(" | ");
     expect(verdictText).toMatch(/comis explain/);
+    expect(verdictText).toContain("associated session");
+    expect(verdictText).not.toContain("why it did not survive");
     expect(report.likelyRootCause?.code).toBe("system_autonomy_degradation");
     expect(report.likelyRootCause?.detail).toContain("root-worst-abc");
   });

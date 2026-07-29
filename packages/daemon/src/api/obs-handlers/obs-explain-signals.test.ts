@@ -156,6 +156,50 @@ describe("toIncidentSignals — response locale decision", () => {
       (signals as unknown as { responseLocale?: { locale?: string } }).responseLocale?.locale,
     ).toBeUndefined();
   });
+
+  it("retains the latest normalized inbound kind", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, { inboundKind: "message" }),
+      event("prompt.submitted", 2, { inboundKind: "edit" }),
+    ]);
+
+    expect(
+      (signals as unknown as { inboundEdit?: boolean }).inboundEdit,
+    ).toBe(true);
+  });
+
+  it("clears the edit signal when the latest inbound is a message", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, { inboundKind: "edit" }),
+      event("prompt.submitted", 2, { inboundKind: "message" }),
+    ]);
+
+    expect(
+      (signals as unknown as { inboundEdit?: boolean }).inboundEdit,
+    ).toBe(false);
+  });
+});
+
+describe("toIncidentSignals — group history receipt", () => {
+  it("retains the latest positive content-free prompt receipt", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        groupHistoryMessageCount: 1,
+        groupHistoryCharCount: 31,
+      }),
+      event("prompt.submitted", 2, {
+        groupHistoryMessageCount: 2,
+        groupHistoryCharCount: 73,
+      }),
+    ]);
+
+    expect(signals).toMatchObject({
+      groupHistory: {
+        messageCount: 2,
+        charCount: 73,
+      },
+    });
+  });
 });
 
 describe("toIncidentSignals — turnCount (flag cumulative-across-turns toolStats)", () => {

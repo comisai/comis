@@ -36,7 +36,6 @@ import {
 } from "./obs-explain-signal-folds.js";
 import type { Acc } from "./obs-explain-signals-acc.js";
 import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
-
 // ---------------------------------------------------------------------------
 // Tunable thresholds (module-top constants per the naming contract).
 // ---------------------------------------------------------------------------
@@ -145,14 +144,22 @@ function handleLogRecord(acc: Acc, rec: Record<string, unknown>): void {
     ensureTool(acc, tool).ok += 1;
   }
 }
-
 function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
   const type = asString(rec.type) ?? "";
   const data = (rec.data ?? {}) as Record<string, unknown>;
   const tool = asString(data.toolName);
-
   switch (type) {
     case "prompt.submitted": {
+      const inboundKind = asString(data.inboundKind);
+      if (inboundKind === "message" || inboundKind === "edit") acc.inboundEdit = inboundKind === "edit";
+      const groupHistoryMessageCount = nonnegativeInteger(data.groupHistoryMessageCount);
+      const groupHistoryCharCount = nonnegativeInteger(data.groupHistoryCharCount);
+      if (groupHistoryMessageCount > 0) {
+        acc.groupHistory = {
+          messageCount: groupHistoryMessageCount,
+          charCount: groupHistoryCharCount,
+        };
+      }
       const source = asString(data.responseLocaleSource);
       const locale = asString(data.responseLocale);
       const enforced = typeof data.responseLocaleEnforced === "boolean" ? data.responseLocaleEnforced : undefined;
@@ -531,7 +538,6 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     }
     case "delivery.dispatched": accumulateDeliveryDispatch(acc, data); return;
     case "activity.turn_finalized": {
-      // The terminal user-surface state (LAST wins). Closed labels only.
       const strategy = asString(data.strategy);
       const outcome = asString(data.outcome);
       if (strategy !== undefined && outcome !== undefined) {
@@ -540,6 +546,7 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
           outcome,
           ...(asString(data.errorKind) !== undefined ? { errorKind: asString(data.errorKind) } : {}),
           ...(asString(data.reason) !== undefined ? { reason: asString(data.reason) } : {}),
+          ...(asString(data.renderErrorKind) !== undefined ? { renderErrorKind: asString(data.renderErrorKind) } : {}),
           reclassified: data.reclassified === true,
         };
         // Session-wide tally retains failures hidden by a later success.
@@ -821,6 +828,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     : acc.toolTraceIds.size;
   return {
     sessionKey: acc.sessionKey,
+    ...(acc.inboundEdit !== undefined ? { inboundEdit: acc.inboundEdit } : {}),
+    ...(acc.groupHistory !== undefined ? { groupHistory: acc.groupHistory } : {}),
     ...(acc.responseLocale !== undefined ? { responseLocale: acc.responseLocale } : {}),
     toolStats,
     failures: acc.failures,

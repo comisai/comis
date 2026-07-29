@@ -30,6 +30,7 @@ import {
   type PromptAssemblyParams,
 } from "./prompt-assembly-shared.js";
 import type { PromptCompileReport } from "./prompt-compiler.js";
+import { renderGroupHistoryContext } from "./prompt-group-history.js";
 
 export interface DynamicPreambleInput {
   readonly params: PromptAssemblyParams;
@@ -112,6 +113,13 @@ export async function buildDynamicPreamble(input: DynamicPreambleInput): Promise
   const inboundLines = buildInboundMetadataSection(inboundMeta, promptMode === "minimal");
   if (inboundLines.length > 0) {
     dynamicPreambleParts.push(inboundLines.join("\n"));
+  }
+  const groupHistorySection = renderGroupHistoryContext(
+    msg.metadata.groupHistoryContext,
+    deps.onSuspiciousContent,
+  );
+  if (groupHistorySection !== undefined) {
+    dynamicPreambleParts.push(groupHistorySection);
   }
   // channel relocated to dynamic preamble (changes on cross-session relay)
   if (msg.channelType) {

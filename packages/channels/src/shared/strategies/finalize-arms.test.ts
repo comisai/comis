@@ -338,6 +338,32 @@ describe("error propagation + guard arms", () => {
     expect(res.ok).toBe(false);
   });
 
+  it("EditPlace removes a successful turn's scaffold when the final edit is unsupported", async () => {
+    const calls: Array<"send" | "edit" | "delete"> = [];
+    const notSupported: ActivityRenderError = { kind: "not_supported", capability: "edit" };
+    const actions: ActivityRenderActions = {
+      async send(): Promise<Result<string, ActivityRenderError>> {
+        calls.push("send");
+        return ok("msg-0");
+      },
+      async edit(): Promise<Result<void, ActivityRenderError>> {
+        calls.push("edit");
+        return { ok: false, error: notSupported };
+      },
+      async delete(): Promise<Result<void, ActivityRenderError>> {
+        calls.push("delete");
+        return ok(undefined);
+      },
+    };
+    const r = createEditPlaceRenderer({ actions, timer: createFakeTimers(), clock: createFakeClock(0) });
+    await r.apply(makeFrame([makeEvent()]));
+
+    const res = await r.finalize({ kind: "success", trivial: false, delivery: RECEIPT });
+
+    expect(calls).toEqual(["send", "edit", "delete"]);
+    expect(res).toEqual({ ok: false, error: notSupported });
+  });
+
   it("EditPlace propagates a failing edit out of finalize(failure)", async () => {
     let sent = false;
     const actions: ActivityRenderActions = {

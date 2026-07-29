@@ -148,6 +148,61 @@ describe("assembleIncidentReport — response locale decision", () => {
   });
 });
 
+describe("assembleIncidentReport — group history receipt", () => {
+  it("surfaces the content-free injected-message counts on explain", () => {
+    const signals = makeSignals({
+      groupHistory: {
+        messageCount: 2,
+        charCount: 73,
+      },
+    } as unknown as Partial<IncidentSignals>);
+
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report).toMatchObject({
+      groupHistory: {
+        messageCount: 2,
+        charCount: 73,
+      },
+    });
+    expect(IncidentReportSchema.parse(report)).toMatchObject({
+      groupHistory: {
+        messageCount: 2,
+        charCount: 73,
+      },
+    });
+  });
+});
+
+describe("assembleIncidentReport — inbound message kind", () => {
+  it("surfaces the content-free edit kind on the explain report", () => {
+    const signals = makeSignals({
+      inboundEdit: true,
+    } as unknown as Partial<IncidentSignals>);
+
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(
+      (report as unknown as { inboundEdit?: boolean }).inboundEdit,
+    ).toBe(true);
+    expect(
+      (IncidentReportSchema.parse(report) as unknown as { inboundEdit?: boolean }).inboundEdit,
+    ).toBe(true);
+  });
+});
+
 describe("assembleIncidentReport — channel health outcome", () => {
   const cleanSignals = (recovered: boolean): IncidentSignals => makeSignals({
     toolStats: {},
@@ -1347,6 +1402,38 @@ describe("assembleIncidentReport — user surface (activity finalize + skipped d
       recoveredTurnCount: 0,
     });
     expect(report.deliverySkipped).toEqual({ events: 1, chunksNotSent: 2 });
+  });
+
+  it("marks a successful delivery as degraded when final activity rendering failed", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "activity.turn_finalized",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: {
+          strategy: "EditPlace",
+          outcome: "success",
+          renderErrorKind: "not_supported",
+          reclassified: false,
+          failedEventCount: 0,
+        },
+      },
+    ]);
+
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata({ sessionEnd: { endReason: "success", degraded: false } }),
+      null,
+      SESSION_KEY,
+      1,
+    );
+
+    expect(report.activityFinalize).toMatchObject({
+      outcome: "success",
+      renderErrorKind: "not_supported",
+    });
+    expect(report.outcome).toMatchObject({ degraded: true, severity: "degraded" });
   });
 
   it("tallies mid-session failure paints so a later success finalize cannot hide the pill turn (session-wide counts)", () => {

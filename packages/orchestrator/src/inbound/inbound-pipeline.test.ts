@@ -312,6 +312,106 @@ describe("allowFrom sender filtering", () => {
   });
 });
 
+describe("group history injection", () => {
+  it("injects saved context-only chatter into the next activated group turn", async () => {
+    let storedMessages: unknown[] = [];
+    const execute = vi.fn(async () => ({
+      response: "ok",
+      sessionKey: { tenantId: "default", userId: "conversation", channelId: "group-1" },
+      tokensUsed: { input: 10, output: 5, total: 15 },
+      cost: { total: 0.001 },
+      stepsExecuted: 0,
+      finishReason: "stop" as const,
+    }));
+    const deps = makeMinimalDeps({
+      autoReplyEngineConfig: {
+        enabled: true,
+        groupActivation: "mention-gated",
+        customPatterns: [],
+        historyInjection: true,
+        maxHistoryInjections: 50,
+        maxGroupHistoryMessages: 20,
+      },
+      commandQueue: {
+        enqueue: vi.fn(async (_key, message, _channelType, handler) => {
+          await handler([message]);
+          return ok(undefined);
+        }),
+      } as never,
+      sessionManager: {
+        loadOrCreate: vi.fn(() => ok(storedMessages)),
+        save: vi.fn((_scope, messages) => {
+          storedMessages = messages;
+          return ok(undefined);
+        }),
+        isExpired: vi.fn(() => ok(false)),
+        expire: vi.fn(() => ok(true)),
+        cleanStale: vi.fn(() => ok(0)),
+      },
+      createExecutor: vi.fn(() => ({ execute })),
+    });
+    const adapter = makeAdapterForTest();
+    const sendOverrides = new Map() as never;
+
+    await processInboundMessage(
+      deps,
+      adapter,
+      makeMsg({
+        id: "group-context-1",
+        channelId: "group-1",
+        senderId: "user-2",
+        text: "context marker 731",
+        metadata: {
+          telegramMessageId: "51",
+          telegramChatType: "group",
+          isBotMentioned: false,
+          replyToBot: false,
+        },
+      }),
+      new Set(),
+      sendOverrides,
+    );
+    deps.commandQueue = undefined;
+    await processInboundMessage(
+      deps,
+      adapter,
+      makeMsg({
+        id: "group-activation-1",
+        channelId: "group-1",
+        text: "@agent what was just said",
+        metadata: {
+          telegramMessageId: "52",
+          telegramChatType: "group",
+          isBotMentioned: true,
+          replyToBot: false,
+        },
+      }),
+      new Set(),
+      sendOverrides,
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      text: "@agent what was just said",
+      metadata: expect.objectContaining({
+        groupHistoryContext: [
+          {
+            senderId: "user-2",
+            text: "context marker 731",
+          },
+        ],
+      }),
+    }));
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "grouphistory:injected",
+      expect.objectContaining({
+        channelType: "telegram",
+        messageCount: 1,
+      }),
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Ack reaction bypass when lifecycle reactions enabled
 // ---------------------------------------------------------------------------

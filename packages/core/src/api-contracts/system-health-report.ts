@@ -78,31 +78,24 @@ export const SystemHealthReportSchema = z.object({
   /** Bounded key set (per-tool ok/failed rollup) — mirrors `IncidentReport.toolStats`. */
   toolStats: z.record(z.string(), z.object({ ok: z.number(), failed: z.number() })),
   cost: z.object({
+    /** Corrected provider-billing total across every in-window model call. */
     costUsd: z.number(),
     /**
-     * Billable tokens in the window: input + output ONLY — cache reads and cache
-     * writes are EXCLUDED.
-     *
-     * ⚠ This is NOT the same quantity as `IncidentReport.cost.totalTokens`, which
-     * INCLUDES cache. One 27-minute session legitimately reported 18,637 here and
-     * 6,043,245 there; with both fields named `totalTokens` and neither stating
-     * its convention, a reader comparing the two lenses concludes one is broken.
-     * The `tokenBasis` discriminator states which convention this number follows.
+     * Provider-reported tokens in the window, including cache reads and writes.
+     * This shares the same persisted usage ledger and counting convention as
+     * `IncidentReport.cost.totalTokens`.
      */
     totalTokens: z.number(),
+    /** Model-call count from the same ledger as `costUsd` and `totalTokens`. */
+    callCount: z.number().optional(),
     /**
      * The counting convention `totalTokens` follows. Closed union so a consumer
      * can reconcile lenses programmatically. Optional (additive).
      */
-    tokenBasis: z.literal("input+output").optional(),
+    tokenBasis: z.literal("input+output+cache").optional(),
     /**
-     * Off-session (background-job) LLM spend in the window — reflection cron
-     * runs et al. that key their token usage to a synthetic `__PREFIX__`
-     * session with NO session_summary, so it is ABSENT from `costUsd` (the
-     * session-summary rollup). The operator's full provider bill is
-     * `costUsd + offSessionUsd`; the two never double-count. The assembler
-     * always sets it (0 when no background spend); `optional` so a report from
-     * an older producer without the field still parses. Consumers read `?? 0`.
+     * The synthetic `__PREFIX__`-session subset of `costUsd`. This is a
+     * diagnostic breakdown, not an amount to add to the provider total.
      */
     offSessionUsd: z.number().optional(),
   }),
@@ -194,13 +187,12 @@ export const SystemHealthReportSchema = z.object({
    *
    * Sourced from `DurableRunPort.countByStatus` (autonomy runs are durable checkpoints
    * by construction — no synthetic notion, no session-rollup schema change) +
-   * the synthetic-excluded `reduceSystemWindow` breaker/cost read-back. The block
+   * the synthetic-excluded `reduceSystemWindow` breaker read-back. The block
    * is ABSENT when the durable store is unwired (e.g. the daemon-less offline
    * CLI) — honest degradation, not a divergence.
    *
-   * `costUsd` is the window's autonomy-inclusive operator cost (the
-   * synthetic-excluded `system.costUsd` read-back — NOT a separate re-derivation
-   * over raw rows, which could diverge from the system read). A stricter
+   * `costUsd` is the window's autonomy-inclusive operator cost (the same
+   * reconciled provider-billing total as `report.cost.costUsd`). A stricter
    * autonomy-only cost is a possible follow-up; an aggregate cost suffices here.
    */
   autonomy: z

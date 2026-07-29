@@ -38,6 +38,12 @@ export interface TrajectoryEvents {
     messageCount: number;
     systemDigest: string;
     messagesDigest: string;
+    /** Normalized platform update kind; content-free and provider-neutral. */
+    inboundKind: "message" | "edit";
+    /** Earlier group-message count attached to this exact model request. */
+    groupHistoryMessageCount?: number;
+    /** Character count of the attributed earlier-group context. */
+    groupHistoryCharCount?: number;
     /** Content-free locale decision used for this exact model request. */
     responseLocale?: string;
     responseLocaleSource: "request" | "explicit" | "unset";

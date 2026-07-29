@@ -462,6 +462,19 @@ describe("resolveDescription", () => {
     expect(result).toContain("Admin required");
   });
 
+  it("obs_query requires evidence before reporting runtime cause or cost", () => {
+    const result = resolveDescription(
+      { name: "obs_query" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { trustLevel: "admin", modelTier: "large" },
+    );
+    expect(result).toMatch(/^mandatory evidence for runtime self-reports/i);
+    expect(result).toMatch(/what failed.*why it was slow.*counts.*cost/i);
+    expect(result).toMatch(/call explain.*system_health.*billing before answering/i);
+    expect(result).toMatch(/never infer runtime cause from chat memory/i);
+    expect(result).toMatch(/say unknown/i);
+  });
+
   it("all privileged tool dynamic builders follow admin suffix pattern", () => {
     const privileged = [
       "agents_manage", "obs_query", "sessions_manage", "memory_manage",

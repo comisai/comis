@@ -90,6 +90,11 @@ describe("classifyTelegramError (structural fields, never the message string)", 
     expect(classifyTelegramError(e)).toEqual({ kind: "not_supported", capability: "edit" });
   });
 
+  it("maps a 400 unchanged-message rejection to not_supported:edit", () => {
+    const e = { error_code: 400, description: "Bad Request: message is not modified" };
+    expect(classifyTelegramError(e)).toEqual({ kind: "not_supported", capability: "edit" });
+  });
+
   it("maps a 403 to permission carrying the description detail", () => {
     const e = { error_code: 403, description: "Forbidden: bot was blocked by the user" };
     expect(classifyTelegramError(e)).toEqual({ kind: "permission", detail: "Forbidden: bot was blocked by the user" });

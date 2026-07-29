@@ -34,7 +34,7 @@ export type SpawnNode = NonNullable<IncidentSignals["spawnTree"]>[number];
 
 // @optional-field-count: internal mutable fold accumulator — each optional field
 // is a DISTINCT terminal-record signal (breaker tool, contextBudget, promptTimeout,
-// toolSchemaUnsupported, responseLocale, lastRecall, spend, perRootBudget, the four media turns,
+// toolSchemaUnsupported, inboundEdit, responseLocale, lastRecall, spend, perRootBudget, the four media turns,
 // agentId, channel) that is absent until its trajectory record class is seen. They
 // are not a configuration surface; collapsing or splitting them would only obscure
 // the one-fold-per-record-class structure.
@@ -57,6 +57,10 @@ export interface Acc {
    *  onto each run's `toolCalls` at materialization (EXPLAIN-04: the per-run leaseId
    *  attributes a deny to THE RUN). */
   orchestrateToolCallsByLease: Map<string, Map<string, OrchestrateToolCallFold>>;
+  /** Whether the LAST valid normalized inbound update was an edit. */
+  inboundEdit?: boolean;
+  /** The LAST positive counts-only earlier-group-context receipt. */
+  groupHistory?: NonNullable<IncidentSignals["groupHistory"]>;
   /** The LAST valid `prompt.submitted` locale decision. */
   responseLocale?: NonNullable<IncidentSignals["responseLocale"]>;
   breakerOpenedTool?: string;
@@ -109,7 +113,14 @@ export interface Acc {
   perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
   /** The LAST `activity.turn_finalized` record — the terminal user-surface
    *  state (strategy + effective outcome + reclassified flag). Content-free. */
-  turnFinalized?: { strategy: string; outcome: string; errorKind?: string; reason?: string; reclassified: boolean };
+  turnFinalized?: {
+    strategy: string;
+    outcome: string;
+    errorKind?: string;
+    reason?: string;
+    renderErrorKind?: string;
+    reclassified: boolean;
+  };
   /** Session-wide finalize tally: how many turns painted a kept failure pill
    *  and how many finalized as recovered successes — the last-wins snapshot
    *  above cannot answer "which turn wore the pill" mid-session. */

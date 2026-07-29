@@ -72,7 +72,12 @@ const FAKE_REPORT = {
   topErrorKinds: [{ kind: "dependency", count: 18 }],
   breakerTripTotal: 3,
   toolStats: { web_fetch: { ok: 2, failed: 8 } },
-  cost: { costUsd: 1.32, totalTokens: 735800 },
+  cost: {
+    costUsd: 1.32,
+    totalTokens: 735800,
+    callCount: 12,
+    tokenBasis: "input+output+cache" as const,
+  },
   activity: {
     activeAgents: ["default"],
     activeChannels: ["telegram"],
@@ -191,9 +196,9 @@ describe("comis system-health (defaults) uses --since 24 --format table", () => 
     expect(output).toContain("Sessions");
     expect(output).toContain("Breaker");
     expect(output).toContain("Cost");
-    // The token figure names its basis (session-index input+output, no cache) so
-    // it doesn't read as the same "tok" as explain's cache-inclusive ledger.
-    expect(output).toContain("735800 tok (input+output, excl cache)");
+    // Billing tokens share explain's provider-ledger convention and include the
+    // model-call count from that same ledger.
+    expect(output).toContain("735800 tok (input+output+cache) · 12 call(s)");
     // findings + root-cause + next-steps lines.
     expect(output).toContain("system_recurring_health_signal");
     expect(output).toContain("system_high_degraded_rate");
@@ -279,7 +284,7 @@ describe("comis system-health with an RPC error prints error and exits with code
   });
 });
 
-describe("comis system-health table view does not render a misleading '$X · 0 tok' line when the token read degrades", () => {
+describe("comis system-health table view keeps billing independent from a degraded activity index", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -294,17 +299,15 @@ describe("comis system-health table view does not render a misleading '$X · 0 t
     exitSpy.restore();
   });
 
-  it("omits the contradictory '· 0 tok' when costUsd is non-zero but the token read degraded", async () => {
-    // cost.costUsd is sourced from the session-summary store; cost.totalTokens
-    // comes from the session-index files. When the session-index read degrades
-    // (daysMissing > 0) but the session-summary store survives, the report
-    // carries a real costUsd alongside totalTokens: 0 —
-    // the prior render printed "$4.2 · 0 tok", which reads as a data bug. The
-    // coverage block is the honest signal. After the fix the render must NOT emit
-    // the "· 0 tok" contradiction and must surface the degraded-coverage note.
+  it("renders the complete billing tuple when session-index activity coverage is missing", async () => {
     const degradedReport = {
       ...FAKE_REPORT,
-      cost: { costUsd: 4.2, totalTokens: 0 },
+      cost: {
+        costUsd: 4.2,
+        totalTokens: 5_000,
+        callCount: 7,
+        tokenBasis: "input+output+cache" as const,
+      },
       activity: { ...FAKE_REPORT.activity, tokenTotal: 0 },
       coverage: {
         sessionSummary: { found: true, rows: 9 },
@@ -324,16 +327,11 @@ describe("comis system-health table view does not render a misleading '$X · 0 t
     await program.parseAsync(["node", "test", "system-health"]);
 
     const output = getSpyOutput(consoleSpy.log);
-    // The surviving session-summary cost is still shown.
-    expect(output).toContain("$4.2");
-    // The misleading "0 tok" contradiction must NOT be rendered.
-    expect(output).not.toContain("0 tok");
-    // The honest degraded-coverage signal is surfaced instead.
-    expect(output.toLowerCase()).toContain("tokens unavailable");
+    expect(output).toContain("$4.2 · 5000 tok (input+output+cache) · 7 call(s)");
+    expect(output).not.toContain("tokens unavailable");
   });
 
-  it("still renders the normal '$X · N tok' line when the session-index token read is healthy", async () => {
-    // Coverage clean (or absent) + a real token total → the normal combined line.
+  it("renders the same billing tuple when session-index activity coverage is healthy", async () => {
     const client: RpcClient = {
       call: () => Promise.resolve(FAKE_REPORT), // totalTokens 735800, no coverage
       close: () => {},
@@ -346,7 +344,7 @@ describe("comis system-health table view does not render a misleading '$X · 0 t
     await program.parseAsync(["node", "test", "system-health"]);
 
     const output = getSpyOutput(consoleSpy.log);
-    expect(output).toContain("735800 tok");
+    expect(output).toContain("$1.32 · 735800 tok (input+output+cache) · 12 call(s)");
     expect(output.toLowerCase()).not.toContain("tokens unavailable");
   });
 });
