@@ -84,7 +84,7 @@ function makeContainer(overrides: Record<string, any> = {}): AppContainer {
       integrations: {
         media: {
           persistence: { enabled: false, maxFileBytes: 10_000_000 },
-          transcription: { autoTranscribe: false },
+          transcription: { autoTranscribe: false, preflight: true },
           tts: {},
           vision: { enabled: false, videoTimeoutMs: 30000, videoMaxDescriptionChars: 500 },
         },

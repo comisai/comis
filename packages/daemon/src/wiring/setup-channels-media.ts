@@ -545,7 +545,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
     .map((a) => a.name)
     .filter((n): n is string => typeof n === "string" && n.length > 0);
 
-  const preflightFn = transcriber
+  const preflightFn = transcriber && transcriptionConfig.preflight
     ? async (msg: NormalizedMessage) => {
         const botNames = [
           ...configuredBotNames,
