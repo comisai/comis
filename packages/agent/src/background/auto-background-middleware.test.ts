@@ -258,7 +258,9 @@ describe("wrapToolForAutoBackground", () => {
       () => buildOrigin({ agentId: "agent-1" }),
       onRejectedPromoted,
     );
-    await rejected.execute("call-rejected", {}, undefined, undefined, undefined);
+    await expect(
+      rejected.execute("call-rejected", {}, undefined, undefined, undefined),
+    ).rejects.toThrow("limit");
     expect(onRejectedPromoted).not.toHaveBeenCalled();
   });
 

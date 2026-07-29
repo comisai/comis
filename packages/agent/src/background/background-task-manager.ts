@@ -60,6 +60,8 @@ export interface BackgroundTaskManagerOpts {
   timers: TimerPort;
   maxPerAgent?: number | ((agentId: string) => number);
   maxTotal?: number;
+  /** Agent whose configured maxTotal supplies the shared daemon-wide cap. */
+  maxTotalConfigAgentId?: string;
   maxBackgroundDurationMs?: number | ((agentId: string) => number);
   persistenceOps?: AtomicTaskPersistenceOps;
   recoveryOps?: TaskRecoveryOps;
@@ -137,6 +139,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     timers,
     maxPerAgent = 5,
     maxTotal = 20,
+    maxTotalConfigAgentId = "<routing.defaultAgentId>",
     maxBackgroundDurationMs = 300_000,
     persistenceOps,
     recoveryOps,
@@ -312,10 +315,18 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       const agentCurrent = perAgentCount.get(agentId) ?? 0;
       const agentLimit = resolveMaxPerAgent(agentId);
       if (agentCurrent >= agentLimit) {
-        return err(new Error(`Concurrency limit exceeded: agent ${agentId} has ${agentCurrent}/${agentLimit} tasks`));
+        return err(new Error(
+          `[background_capacity] Background task capacity reached: ` +
+          `agents.${agentId}.backgroundTasks.maxPerAgent=${agentLimit}; active=${agentCurrent}. ` +
+          "Wait for a running background task to finish before retrying.",
+        ));
       }
       if (totalCount >= maxTotal) {
-        return err(new Error(`Concurrency limit exceeded: total ${totalCount}/${maxTotal} tasks`));
+        return err(new Error(
+          `[background_capacity] Background task capacity reached: ` +
+          `agents.${maxTotalConfigAgentId}.backgroundTasks.maxTotal=${maxTotal}; active=${totalCount}. ` +
+          "Wait for a running background task to finish before retrying.",
+        ));
       }
 
       const taskId = randomUUID();

@@ -39,13 +39,17 @@ const MAX_ERROR_TEXT_CHARS = 2000;
  */
 export type McpErrorType = "timeout" | "connection" | "transport" | "validation" | "tool_error" | "unknown";
 
-export type RuntimeToolGuard = "step_limit";
+export type RuntimeToolGuard = "step_limit" | "background_task_capacity";
 
 const STEP_LIMIT_TOOL_GUARD = /\bstep limit reached\b.*\bblocking tool execution\b/i;
+const BACKGROUND_TASK_CAPACITY_GUARD = /\[background_capacity\]\s+background task capacity reached:/i;
 
 /** Identify failures produced by the local execution guard before the tool boundary. */
 export function classifyRuntimeToolGuard(errorText: string | undefined): RuntimeToolGuard | undefined {
-  return errorText !== undefined && STEP_LIMIT_TOOL_GUARD.test(errorText) ? "step_limit" : undefined;
+  if (errorText === undefined) return undefined;
+  if (STEP_LIMIT_TOOL_GUARD.test(errorText)) return "step_limit";
+  if (BACKGROUND_TASK_CAPACITY_GUARD.test(errorText)) return "background_task_capacity";
+  return undefined;
 }
 
 const MCP_VALIDATION_ERROR =

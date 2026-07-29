@@ -20,6 +20,8 @@ export interface BackgroundTasksContext {
 export interface SetupBackgroundTasksDeps {
   dataDir: string;
   config: BackgroundTasksConfig;
+  /** Agent whose maxTotal config supplies the daemon-wide shared cap. */
+  maxTotalConfigAgentId?: string;
   resolveConfigForAgent(agentId: string): BackgroundTasksConfig;
   eventBus: TypedEventBus;
   logger: ComisLogger;
@@ -53,6 +55,7 @@ export function setupBackgroundTasks(deps: SetupBackgroundTasksDeps): Background
     timers: deps.timers,
     maxPerAgent: (agentId) => deps.resolveConfigForAgent(agentId).maxPerAgent,
     maxTotal: deps.config.maxTotal,
+    maxTotalConfigAgentId: deps.maxTotalConfigAgentId,
     maxBackgroundDurationMs: (agentId) => deps.resolveConfigForAgent(agentId).maxBackgroundDurationMs,
   });
 
