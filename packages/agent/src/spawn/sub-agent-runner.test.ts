@@ -470,6 +470,101 @@ describe("createSubAgentRunner", () => {
     );
   });
 
+  it("a timed-out owner wait releases the child completion announcement", async () => {
+    let resolveExecution!: (
+      value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>,
+    ) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const announceToParent = vi.fn().mockResolvedValue(undefined);
+    deps.announceToParent = announceToParent;
+    const callerConversation = createTestConversation();
+    const callerSessionKey = formattedConversation(callerConversation);
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "complete after wait timeout",
+      agentId: "default",
+      callerAgentId: "parent",
+      callerSessionKey,
+      callerConversation,
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+    const waitWithAnnouncementClaim = runner.waitForCompletions as unknown as (
+      runIds: readonly string[],
+      timeoutMs: number,
+      signal: AbortSignal | undefined,
+      announcementConsumerSessionKey: string,
+    ) => ReturnType<typeof runner.waitForCompletions>;
+    const waiting = waitWithAnnouncementClaim([runId], 100, undefined, callerSessionKey);
+
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(waiting).resolves.toEqual([{ runId, status: "timeout" }]);
+
+    resolveExecution({
+      response: "completed after caller stopped waiting",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(announceToParent).toHaveBeenCalledTimes(1);
+  });
+
+  it("a wait from another session cannot claim the child completion announcement", async () => {
+    let resolveExecution!: (
+      value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>,
+    ) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const announceToParent = vi.fn().mockResolvedValue(undefined);
+    deps.announceToParent = announceToParent;
+    const callerConversation = createTestConversation();
+    const callerSessionKey = formattedConversation(callerConversation);
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "preserve exact session ownership",
+      agentId: "default",
+      callerAgentId: "parent",
+      callerSessionKey,
+      callerConversation,
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+    const waitWithAnnouncementClaim = runner.waitForCompletions as unknown as (
+      runIds: readonly string[],
+      timeoutMs: number,
+      signal: AbortSignal | undefined,
+      announcementConsumerSessionKey: string,
+    ) => ReturnType<typeof runner.waitForCompletions>;
+    const waiting = waitWithAnnouncementClaim(
+      [runId],
+      60_000,
+      undefined,
+      "different-session",
+    );
+
+    resolveExecution({
+      response: "owned by the original caller",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    await expect(waiting).resolves.toEqual([{
+      runId,
+      status: "completed",
+      completion: expect.objectContaining({ endReason: "completed" }),
+    }]);
+    expect(announceToParent).toHaveBeenCalledTimes(1);
+  });
+
   // -----------------------------------------------------------------------
   // Allowlist blocks unauthorized agent
   // -----------------------------------------------------------------------

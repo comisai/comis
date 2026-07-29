@@ -166,7 +166,14 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
       }
 
       const waited = authorizedRunIds.length > 0
-        ? await deps.subAgentRunner.waitForCompletions(authorizedRunIds, timeoutMs, signal)
+        ? await deps.subAgentRunner.waitForCompletions(
+            authorizedRunIds,
+            timeoutMs,
+            signal,
+            controller.kind === "caller" && typeof rawParams._callerSessionKey === "string"
+              ? rawParams._callerSessionKey
+              : undefined,
+          )
         : [];
       const waitedByRunId = new Map(waited.map((entry) => [entry.runId, entry]));
       const results = requestedRunIds.map((runId) => (

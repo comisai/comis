@@ -870,6 +870,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     retryHandle?: TimerHandle;
   }
   const completionDeferreds = new Map<string, CompletionDeferred>();
+  const completionAnnouncementWaitClaims = new Map<string, number>();
   const startDeferreds = new Map<string, StartDeferred>();
   const durableResumeHandshakeRunIds = new Set<string>();
   const activePromises = new Set<Promise<void>>();
@@ -1035,10 +1036,45 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return completionDeferreds.get(runId)?.promise;
   }
 
+  function claimCompletionAnnouncement(runId: string, consumerSessionKey: string): boolean {
+    const run = runs.get(runId);
+    if (run?.callerSessionKey !== consumerSessionKey) return false;
+    completionAnnouncementWaitClaims.set(
+      runId,
+      (completionAnnouncementWaitClaims.get(runId) ?? 0) + 1,
+    );
+    return true;
+  }
+
+  function releaseCompletionAnnouncementClaim(runId: string): void {
+    const current = completionAnnouncementWaitClaims.get(runId);
+    if (current === undefined) return;
+    if (current <= 1) completionAnnouncementWaitClaims.delete(runId);
+    else completionAnnouncementWaitClaims.set(runId, current - 1);
+  }
+
+  function activeWaitOwnsCompletionAnnouncement(
+    runId: string,
+    callerSessionKey: string | undefined,
+    runtimeMs: number,
+  ): boolean {
+    const owns = callerSessionKey !== undefined
+      && runs.get(runId)?.callerSessionKey === callerSessionKey
+      && (completionAnnouncementWaitClaims.get(runId) ?? 0) > 0;
+    if (owns) {
+      deps.logger?.info(
+        { runId, parentSessionKey: callerSessionKey, durationMs: runtimeMs },
+        "Active parent wait owns sub-agent completion delivery",
+      );
+    }
+    return owns;
+  }
+
   async function waitForCompletions(
     requestedRunIds: readonly string[],
     timeoutMs: number,
     signal?: AbortSignal,
+    announcementConsumerSessionKey?: string,
   ): Promise<SubAgentWaitResult[]> {
     const runIds = [...new Set(requestedRunIds)];
     const immediate = new Map<string, SubAgentWaitResult>();
@@ -1065,44 +1101,56 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     if (pending.length === 0) {
       return runIds.map((runId) => immediate.get(runId)!);
     }
-    if (signal?.aborted) {
-      for (const entry of pending) {
-        immediate.set(entry.runId, { runId: entry.runId, status: "cancelled" });
+    const claimedRunIds = announcementConsumerSessionKey === undefined
+      ? []
+      : pending
+        .filter(({ runId }) => claimCompletionAnnouncement(
+          runId,
+          announcementConsumerSessionKey,
+        ))
+        .map(({ runId }) => runId);
+    try {
+      if (signal?.aborted) {
+        for (const entry of pending) {
+          immediate.set(entry.runId, { runId: entry.runId, status: "cancelled" });
+        }
+        return runIds.map((runId) => immediate.get(runId)!);
       }
-      return runIds.map((runId) => immediate.get(runId)!);
-    }
-    if (timeoutMs <= 0) {
-      for (const entry of pending) {
-        immediate.set(entry.runId, { runId: entry.runId, status: "timeout" });
+      if (timeoutMs <= 0) {
+        for (const entry of pending) {
+          immediate.set(entry.runId, { runId: entry.runId, status: "timeout" });
+        }
+        return runIds.map((runId) => immediate.get(runId)!);
       }
-      return runIds.map((runId) => immediate.get(runId)!);
-    }
 
-    let deadlineHandle: TimerHandle | undefined;
-    let removeAbortListener: (() => void) | undefined;
-    const deadline = new Promise<"timeout" | "cancelled">((resolve) => {
-      deadlineHandle = timers.setTimeout(() => resolve("timeout"), timeoutMs);
-      deadlineHandle.unref();
-      if (signal) {
-        const onAbort = (): void => resolve("cancelled");
-        signal.addEventListener("abort", onAbort, { once: true });
-        removeAbortListener = () => signal.removeEventListener("abort", onAbort);
-      }
-    });
+      let deadlineHandle: TimerHandle | undefined;
+      let removeAbortListener: (() => void) | undefined;
+      const deadline = new Promise<"timeout" | "cancelled">((resolve) => {
+        deadlineHandle = timers.setTimeout(() => resolve("timeout"), timeoutMs);
+        deadlineHandle.unref();
+        if (signal) {
+          const onAbort = (): void => resolve("cancelled");
+          signal.addEventListener("abort", onAbort, { once: true });
+          removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+        }
+      });
 
-    const settled = await Promise.all(pending.map(async ({ runId, promise }) => {
-      const outcome = await Promise.race([
-        promise.then((completion) => ({ status: "completed" as const, completion })),
-        deadline.then((status) => ({ status })),
-      ]);
-      return outcome.status === "completed"
-        ? { runId, status: "completed" as const, completion: outcome.completion }
-        : { runId, status: outcome.status };
-    }));
-    deadlineHandle?.cancel();
-    removeAbortListener?.();
-    for (const result of settled) immediate.set(result.runId, result);
-    return runIds.map((runId) => immediate.get(runId)!);
+      const settled = await Promise.all(pending.map(async ({ runId, promise }) => {
+        const outcome = await Promise.race([
+          promise.then((completion) => ({ status: "completed" as const, completion })),
+          deadline.then((status) => ({ status })),
+        ]);
+        return outcome.status === "completed"
+          ? { runId, status: "completed" as const, completion: outcome.completion }
+          : { runId, status: outcome.status };
+      }));
+      deadlineHandle?.cancel();
+      removeAbortListener?.();
+      for (const result of settled) immediate.set(result.runId, result);
+      return runIds.map((runId) => immediate.get(runId)!);
+    } finally {
+      for (const runId of claimedRunIds) releaseCompletionAnnouncementClaim(runId);
+    }
   }
 
   function trackFailureNotification(promise: Promise<void>): void {
@@ -1737,6 +1785,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       deliverySuppressedRunIds.add(runId);
       const errorMessage = `Ghost run: stuck in 'running' for ${(runningDurationMs / 1000).toFixed(0)}s (grace: ${(ghostGraceMs / 1000).toFixed(0)}s)`;
+      const completionClaimedByWait = activeWaitOwnsCompletionAnnouncement(
+        runId,
+        run.callerSessionKey,
+        runningDurationMs,
+      );
       terminalizeRun(runId, {
         endReason: "ghost_sweep",
         completedAtMs: now,
@@ -1781,7 +1834,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       emitProxyStop(run, runId, "ghost_sweep");
 
       // Deliver failure notification using stored announce channel
-      if (run.announceChannelType && run.announceChannelId) {
+      if (!completionClaimedByWait && run.announceChannelType && run.announceChannelId) {
         trackFailureNotification(deliverFailureNotification({
           channelType: run.announceChannelType,
           channelId: run.announceChannelId,
@@ -2913,6 +2966,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }
 
         const runtimeMs = providerCompletedAt - run.startedAt;
+        const completionClaimedByWait = activeWaitOwnsCompletionAnnouncement(
+          runId,
+          params.callerSessionKey,
+          runtimeMs,
+        );
 
         // Compute cache effectiveness before condense() for disk persistence.
         // Formula: cacheRead/(cacheRead+cacheWrite), 0 when no cache activity.
@@ -3169,7 +3227,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // When isDegraded() skips the LLM call, executor returns empty response with
         // finishReason "provider_degraded". Route to deliverFailureNotification instead
         // of deliverAnnouncement to avoid sending an empty/malformed success message.
-        if (result.finishReason === "provider_degraded") {
+        if (completionClaimedByWait) {
+          // The authenticated parent turn is blocked in subagent.wait and owns
+          // the only user-facing response for this terminal result.
+        } else if (result.finishReason === "provider_degraded") {
           if (params.announceChannelType && params.announceChannelId) {
             await deliverFailureNotification({
               channelType: params.announceChannelType,
@@ -3361,6 +3422,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         const admissionRejected = error instanceof DurableSubAgentAdmissionError;
         const runtimeMs = completedAt - run.startedAt;
+        const completionClaimedByWait = activeWaitOwnsCompletionAnnouncement(
+          runId,
+          params.callerSessionKey,
+          runtimeMs,
+        );
         terminalizeRun(runId, {
           endReason: "failed",
           completedAtMs: completedAt,
@@ -3431,7 +3497,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         emitProxyStop(run, runId, "failed");
 
         // Announce failure to channel -- LLM-free direct send
-        if (!admissionRejected && params.announceChannelType && params.announceChannelId) {
+        if (
+          !completionClaimedByWait
+          && !admissionRejected
+          && params.announceChannelType
+          && params.announceChannelId
+        ) {
           await deliverFailureNotification({
             channelType: params.announceChannelType,
             channelId: params.announceChannelId,
@@ -3448,7 +3519,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             callerConversation: params.callerConversation,
             destinationEndpoint: run.callerEndpoint,
           }, deps);
-        } else if (!admissionRejected) {
+        } else if (!completionClaimedByWait && !admissionRejected) {
           // Log explicit reason when failure announcement cannot be routed
           const suppressAnnounceReason = params.requesterOrigin
             ? "no_channel_params" as const
@@ -3516,6 +3587,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       deliverySuppressedRunIds.add(runId);
       const errorMessage = `Execution timeout: exceeded ${runTimeoutMs}ms wall-clock limit`;
+      const completionClaimedByWait = activeWaitOwnsCompletionAnnouncement(
+        runId,
+        run.callerSessionKey,
+        runtimeMs,
+      );
       terminalizeRun(runId, {
         endReason: "watchdog_timeout",
         completedAtMs: completedAt,
@@ -3571,7 +3647,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       emitProxyStop(run, runId, "watchdog_timeout");
 
       // Deliver failure notification (LLM-free)
-      if (params.announceChannelType && params.announceChannelId) {
+      if (
+        !completionClaimedByWait
+        && params.announceChannelType
+        && params.announceChannelId
+      ) {
         trackFailureNotification(deliverFailureNotification({
           channelType: params.announceChannelType,
           channelId: params.announceChannelId,
@@ -3760,6 +3840,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       ?? (killedBy === "parent" ? "Killed by parent agent" : `Killed by ${killedBy}`);
     const runBeganAt = run.status === "queued" ? run.queuedAt : run.startedAt;
     const killRuntimeMs = Math.max(0, killedAt - runBeganAt);
+    const completionClaimedByWait = activeWaitOwnsCompletionAnnouncement(
+      runId,
+      run.callerSessionKey,
+      killRuntimeMs,
+    );
     terminalizeRun(runId, {
       endReason: "killed",
       completedAtMs: killedAt,
@@ -3839,7 +3924,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // Non-parent kills notify the announce channel (LLM-free, dedup-keyed) —
     // the parent only knows about a kill it issued itself; an autonomous
     // health-monitor kill would otherwise be silent until the user asks.
-    if (killedBy !== "parent" && run.announceChannelType && run.announceChannelId) {
+    if (
+      !completionClaimedByWait
+      && killedBy !== "parent"
+      && run.announceChannelType
+      && run.announceChannelId
+    ) {
       trackFailureNotification(deliverFailureNotification({
         channelType: run.announceChannelType,
         channelId: run.announceChannelId,

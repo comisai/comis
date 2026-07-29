@@ -275,6 +275,7 @@ describe("createSubagentHandlers", () => {
       ["owned"],
       25,
       undefined,
+      undefined,
     );
     expect(result).toEqual({
       results: [
@@ -303,6 +304,7 @@ describe("createSubagentHandlers", () => {
       ["run-1"],
       30_000,
       controller.signal,
+      undefined,
     );
   });
 
