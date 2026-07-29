@@ -63,6 +63,12 @@ const mockCreateFileStateTracker = vi.hoisted(() => vi.fn(() => ({
   checkStaleness: vi.fn(() => ({ stale: false })),
   clone: vi.fn(),
 })));
+const mockResolveHiddenReadAllowPaths = vi.hoisted(() => vi.fn(
+  (
+    hiddenPaths: readonly string[] | undefined,
+    hiddenReadAllowPaths: readonly string[] | undefined,
+  ) => hiddenPaths?.length ? [...(hiddenReadAllowPaths ?? [])] : [],
+));
 const mockSanitizeLogString = vi.hoisted(() => vi.fn((s: string) => s));
 const mockTryGetContext = vi.hoisted(() => vi.fn(() => undefined));
 const mockSessionKeyToPath = vi.hoisted(() => vi.fn((_key: unknown, baseDir: string) => baseDir + "/tenant/channel/user.jsonl"));
@@ -121,6 +127,7 @@ vi.mock("@comis/skills/tools", () => ({
   // other always-on builtins (createExecTool/createProcessTool/createApplyPatchTool).
   createSleepTool: mockCreateSleepTool,
   createFileStateTracker: mockCreateFileStateTracker,
+  resolveHiddenReadAllowPaths: mockResolveHiddenReadAllowPaths,
   sanitizeImageForApi: mockSanitizeImageForApi,
   createMediaPersistenceService: mockCreateMediaPersistenceService,
   // Terminal-driver wiring deps consumed by setup-terminal-tools.ts.

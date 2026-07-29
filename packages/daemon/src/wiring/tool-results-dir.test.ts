@@ -18,7 +18,10 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { toolResultsDirFromSessionPath } from "./tool-results-dir.js";
+import {
+  toolResultsDirFromSessionPath,
+  toolResultsReadBoundaryForSession,
+} from "./tool-results-dir.js";
 
 const tempDirs: string[] = [];
 
@@ -58,5 +61,35 @@ describe("toolResultsDirFromSessionPath — derives the spill dir from the sessi
     expect(() => mkdirSync(spillDir, { recursive: true })).not.toThrow();
     expect(existsSync(spillDir)).toBe(true);
     expect(statSync(spillDir).isDirectory()).toBe(true);
+  });
+});
+
+describe("toolResultsReadBoundaryForSession", () => {
+  it("allows only the child-owned tool results directory in the real nested session layout", () => {
+    const root = mkdtempSync(join(tmpdir(), "comis-tool-results-boundary-"));
+    tempDirs.push(root);
+    const workspaceDir = join(root, "workspace");
+    const ownToolResultsDir = join(
+      workspaceDir,
+      "sessions",
+      "tenant_a",
+      "sub-agent@3aruntime@3arun_a",
+      "tool-results",
+    );
+    mkdirSync(ownToolResultsDir, { recursive: true });
+    writeFileSync(join(ownToolResultsDir, "call_a.txt"), "bounded tool output");
+
+    const boundary = toolResultsReadBoundaryForSession(workspaceDir, {
+      tenantId: "tenant_a",
+      channelId: "sub-agent:runtime:run_a",
+      userId: "conversation",
+      peerId: "conversation",
+    });
+
+    expect(boundary).toEqual({
+      hiddenPaths: [join(workspaceDir, "sessions")],
+      hiddenReadAllowPaths: [ownToolResultsDir],
+      requireSandboxedExecution: true,
+    });
   });
 });

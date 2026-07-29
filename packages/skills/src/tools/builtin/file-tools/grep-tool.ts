@@ -403,6 +403,7 @@ export function createComisGrepTool(
   readOnlyPaths?: string[],
   sharedPaths?: LazyPaths,
   hiddenPaths?: readonly string[],
+  hiddenReadAllowPaths?: readonly string[],
 ): AgentTool<typeof GrepParams> {
   // Comis extension: promptGuidelines (not part of AgentTool type, spread to bypass excess property check)
   const ext = { promptGuidelines: [
@@ -470,7 +471,11 @@ export function createComisGrepTool(
         } else {
           searchPath = workspacePath;
         }
-        requireVisiblePath(searchPath, hiddenPaths);
+        requireVisiblePath(
+          searchPath,
+          hiddenPaths,
+          hiddenReadAllowPaths,
+        );
 
         // 3. Build rg arguments
         const args = buildRipgrepArgs(pattern, outputMode, {

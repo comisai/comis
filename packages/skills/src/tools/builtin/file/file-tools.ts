@@ -20,6 +20,7 @@ import { createComisFindTool } from "../file-tools/find-tool.js";
 import { createComisLsTool } from "../file-tools/ls-tool.js";
 import { type SafePathLogger, type LazyPaths } from "./safe-path-wrapper.js";
 import type { FileStateTracker } from "./file-state-tracker.js";
+import { resolveHiddenReadAllowPaths } from "./restricted-paths.js";
 
 /**
  * Create Comis file tools based on config toggles.
@@ -46,6 +47,7 @@ export function createComisFileTools(
   sharedPaths?: LazyPaths,
   tracker?: FileStateTracker,
   hiddenPaths?: readonly string[],
+  hiddenReadAllowPaths?: readonly string[],
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
 ): AgentTool<any>[] {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
@@ -60,8 +62,27 @@ export function createComisFileTools(
     ? { debug: (msg: string, ...args: unknown[]) => logger.debug!({ args }, msg) }
     : undefined;
 
+  const resolvedHiddenReadAllowPaths = resolveHiddenReadAllowPaths(
+    hiddenPaths,
+    hiddenReadAllowPaths,
+  );
+  const effectiveReadOnlyPaths = [
+    ...new Set([
+      ...(readOnlyPaths ?? []),
+      ...resolvedHiddenReadAllowPaths,
+    ]),
+  ];
+
   if (bt.read) {
-    tools.push(createComisReadTool(workspacePath, toolLogger, tracker, readOnlyPaths, sharedPaths, hiddenPaths));
+    tools.push(createComisReadTool(
+      workspacePath,
+      toolLogger,
+      tracker,
+      effectiveReadOnlyPaths,
+      sharedPaths,
+      hiddenPaths,
+      resolvedHiddenReadAllowPaths,
+    ));
   }
 
   if (bt.edit) {
@@ -77,15 +98,36 @@ export function createComisFileTools(
   }
 
   if (bt.grep) {
-    tools.push(createComisGrepTool(workspacePath, simpleLogger, readOnlyPaths, sharedPaths, hiddenPaths));
+    tools.push(createComisGrepTool(
+      workspacePath,
+      simpleLogger,
+      effectiveReadOnlyPaths,
+      sharedPaths,
+      hiddenPaths,
+      resolvedHiddenReadAllowPaths,
+    ));
   }
 
   if (bt.find) {
-    tools.push(createComisFindTool(workspacePath, simpleLogger, readOnlyPaths, sharedPaths, hiddenPaths));
+    tools.push(createComisFindTool(
+      workspacePath,
+      simpleLogger,
+      effectiveReadOnlyPaths,
+      sharedPaths,
+      hiddenPaths,
+      resolvedHiddenReadAllowPaths,
+    ));
   }
 
   if (bt.ls) {
-    tools.push(createComisLsTool(workspacePath, simpleLogger, readOnlyPaths, sharedPaths, hiddenPaths));
+    tools.push(createComisLsTool(
+      workspacePath,
+      simpleLogger,
+      effectiveReadOnlyPaths,
+      sharedPaths,
+      hiddenPaths,
+      resolvedHiddenReadAllowPaths,
+    ));
   }
 
   return tools;

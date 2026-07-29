@@ -211,6 +211,7 @@ vi.mock("@comis/agent", async (importOriginal) => {
     enforceAnnouncementTerminalOutcome: actual.enforceAnnouncementTerminalOutcome,
     buildBackgroundTaskFailedNotice: actual.buildBackgroundTaskFailedNotice,
     catalogFromLocalePacks: actual.catalogFromLocalePacks,
+    sessionKeyToPath: actual.sessionKeyToPath,
     // Real pure primitive — the injected posture resolver depends on it.
     resolvePostureFromSkills: actual.resolvePostureFromSkills,
     // Shared bounded delivered-key store, constructed eagerly in the

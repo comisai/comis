@@ -17,6 +17,7 @@ import os from "node:os";
 import { join } from "node:path";
 
 import { safePath, validateBindMount } from "@comis/core";
+import { resolveHiddenReadAllowPaths } from "../file/restricted-paths.js";
 
 import type {
   JailAgentCliResolution,
@@ -435,6 +436,17 @@ export class BwrapProvider implements SandboxProvider {
     // read-only mount cannot remount an internal subtree into visibility.
     for (const hiddenPath of opts.hiddenPaths ?? []) {
       args.push("--tmpfs", hiddenPath);
+    }
+    // Bubblewrap resolves bind sources through the preserved host root, so a
+    // read-only bind after the parent tmpfs mask can expose exactly one
+    // daemon-minted descendant without reopening the hidden session tree.
+    for (const allowedPath of resolveHiddenReadAllowPaths(
+      opts.hiddenPaths,
+      opts.hiddenReadAllowPaths,
+    )) {
+      if (existsSync(allowedPath)) {
+        args.push("--ro-bind", allowedPath, allowedPath);
+      }
     }
 
     // -- Node runtime --

@@ -363,6 +363,7 @@ export function createComisReadTool(
   readOnlyPaths?: string[],
   sharedPaths?: LazyPaths,
   hiddenPaths?: readonly string[],
+  hiddenReadAllowPaths?: readonly string[],
 ): AgentTool<typeof ReadParams> {
   // Comis extension: promptGuidelines (not part of AgentTool type, spread to bypass excess property check)
   const ext = { promptGuidelines: [
@@ -398,7 +399,11 @@ export function createComisReadTool(
         readOnlyPaths,
         sharedPaths,
       );
-      requireVisiblePath(resolvedPath, hiddenPaths);
+      requireVisiblePath(
+        resolvedPath,
+        hiddenPaths,
+        hiddenReadAllowPaths,
+      );
 
       // V3: Device file blocking
       if (isDeviceFile(resolvedPath)) {

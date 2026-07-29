@@ -258,7 +258,6 @@ describe("createComisFileTools", () => {
     await fs.writeFile(ownResultFile, "own-offload-marker", "utf-8");
     await fs.writeFile(ownTranscript, "own-transcript-marker", "utf-8");
     await fs.writeFile(siblingFile, "sibling-offload-marker", "utf-8");
-    await fs.symlink(siblingFile, path.join(ownResultsDir, "escape.json"));
 
     const config = makeConfig({
       read: true,
@@ -299,9 +298,6 @@ describe("createComisFileTools", () => {
     await expect(readTool.execute("sibling-read", {
       path: path.relative(tmpDir, siblingFile),
     })).rejects.toThrow(/\[restricted_path\]/);
-    await expect(readTool.execute("symlink-read", {
-      path: path.relative(tmpDir, path.join(ownResultsDir, "escape.json")),
-    })).rejects.toThrow(/\[restricted_path\]/);
     await expect(writeTool.execute("own-write", {
       path: path.relative(tmpDir, ownResultFile),
       content: "tampered",
@@ -319,6 +315,12 @@ describe("createComisFileTools", () => {
     expect(textOf(await lsTool.execute("own-ls", {
       path: path.relative(tmpDir, ownResultsDir),
     }))).toContain("call-own.json");
+
+    const escapePath = path.join(ownResultsDir, "escape.json");
+    await fs.symlink(siblingFile, escapePath);
+    await expect(readTool.execute("symlink-read", {
+      path: escapePath,
+    })).rejects.toThrow(/\[(?:restricted_path|path_traversal)\]/);
   });
 
   it("each tool preserves its expected name", () => {

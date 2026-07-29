@@ -126,6 +126,7 @@ export function createComisLsTool(
   readOnlyPaths?: string[],
   sharedPaths?: LazyPaths,
   hiddenPaths?: readonly string[],
+  hiddenReadAllowPaths?: readonly string[],
 ): AgentTool<typeof LsParams> {
   // Comis extension: promptGuidelines (not part of AgentTool type, spread to bypass excess property check)
   const ext = { promptGuidelines: [
@@ -153,7 +154,11 @@ export function createComisLsTool(
 
         // 2. Resolve path through safePath chain
         const absolutePath = resolveSearchPath(workspacePath, filePath, readOnlyPaths, sharedPaths);
-        requireVisiblePath(absolutePath, hiddenPaths);
+        requireVisiblePath(
+          absolutePath,
+          hiddenPaths,
+          hiddenReadAllowPaths,
+        );
 
         logger?.debug?.("ls: listing", absolutePath);
 
@@ -180,7 +185,11 @@ export function createComisLsTool(
         // 4. Read directory with type information
         const entries = (await fsp.readdir(absolutePath, { withFileTypes: true }))
           .filter((entry) =>
-            !isRestrictedPath(safePath(absolutePath, entry.name), hiddenPaths));
+            !isRestrictedPath(
+              safePath(absolutePath, entry.name),
+              hiddenPaths,
+              hiddenReadAllowPaths,
+            ));
 
         // 5. Sort alphabetically (case-insensitive)
         entries.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));

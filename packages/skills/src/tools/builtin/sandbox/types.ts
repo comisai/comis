@@ -28,6 +28,8 @@ export interface SandboxOptions {
   tempDir: string;
   /** Workspace subtrees masked from the sandboxed process. */
   hiddenPaths?: readonly string[];
+  /** Strict hidden descendants re-exposed read-only after the parent mask. */
+  hiddenReadAllowPaths?: readonly string[];
   /**
    * Network isolation mode for the sandbox.
    * Default undefined/"open" = existing --share-net behaviour (no regression).
@@ -185,4 +187,6 @@ export interface ExecSandboxConfig {
   secureCredentialHome?: boolean;
   /** Workspace subtrees masked from the sandboxed process. */
   hiddenPaths?: readonly string[];
+  /** Strict hidden descendants re-exposed read-only after the parent mask. */
+  hiddenReadAllowPaths?: readonly string[];
 }
