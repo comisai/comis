@@ -52,4 +52,14 @@ describe("toolFailureHint", () => {
     expect(hint).toContain("arguments");
     expect(hint).not.toBe(GENERIC_TOOL_FAILURE_HINT);
   });
+
+  it("preserves the exact background capacity knob and current occupancy", () => {
+    const hint = toolFailureHint(
+      "[background_capacity] Background task capacity reached: " +
+      "agents.worker.backgroundTasks.maxPerAgent=5; active=5.",
+    );
+    expect(hint).toContain("agents.worker.backgroundTasks.maxPerAgent=5");
+    expect(hint).toContain("active=5");
+    expect(hint).not.toBe(GENERIC_TOOL_FAILURE_HINT);
+  });
 });
