@@ -32,6 +32,7 @@ import type {
   ExecGitFn,
   MutableSecretManager,
   DeliveryMirrorPort,
+  SttErrorKind,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi, SqliteMemoryAdapter, createEmbeddingQueue } from "@comis/memory";
@@ -564,6 +565,13 @@ export interface ResolvedVoiceSelection {
   onSkip?: string[];
 }
 
+/** Honest-unavailable STT selection retained from the boot resolver. */
+export interface ResolvedVoiceState {
+  stt?: ResolvedVoiceSelection;
+  tts?: ResolvedVoiceSelection;
+  sttUnavailable?: { errorKind: SttErrorKind; hint: string };
+}
+
 // @optional-field-count: MediaApiDeps is the daemon media-RPC deps aggregate — every media handler family (vision, image-gen, video-gen+status, transcription/TTS, voice obs+selection) threads its deps through this one interface, and each is OPTIONAL because the corresponding handler is feature-gated (constructed only when its provider/registry is configured). Splitting would fragment the single dispatch-deps seam the RPC router resolves; the count grows with the media feature set, not with bloat.
 export interface MediaApiDeps {
   visionRegistry?: Map<string, VisionProvider>;
@@ -713,7 +721,7 @@ export interface MediaApiDeps {
   /** The boot-resolved voice selections the daemon voice handlers
    *  thread onto the `media.stt.*`/`media.tts.*` trajectory via `wireVoiceObs`.
    *  Optional — undefined on a selector-less boot (handler derives from config). */
-  voiceSelection?: { stt?: ResolvedVoiceSelection; tts?: ResolvedVoiceSelection };
+  voiceSelection?: ResolvedVoiceState;
   /** The obs store the voice obs inserts a `voice_degraded`
    *  health_signal row into on a STT/TTS failure (feeds the `comis system-health`
    *  voice_health finding). Same instance as `ObservabilityApiDeps.obsStore`;
