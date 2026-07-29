@@ -2,12 +2,9 @@
 /**
  * Cross-lens gate: `totalTokens` must declare which convention it counts.
  *
- * The drift this pins: `IncidentReport.cost.totalTokens` counts input + output +
- * CACHE, while `SystemHealthReport.cost.totalTokens` counts input + output only.
- * One 27-minute session legitimately reported 6,043,245 on one lens and 18,637 on
- * the other, and neither JSON said which convention it followed — so a reader
- * comparing them concludes a lens is broken. The `tokenBasis` discriminator makes
- * the two reconcilable programmatically.
+ * Incident and system-health reports both expose the reconciled provider billing
+ * ledger. They therefore use the same cache-inclusive convention so cost, tokens,
+ * and calls reconcile programmatically across the two lenses.
  */
 import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
@@ -26,23 +23,22 @@ describe("totalTokens declares its counting convention on every lens", () => {
     expect(src).toContain('tokenBasis: z.literal("input+output+cache")');
   });
 
-  it("the SystemHealthReport schema declares the cache-exclusive basis", () => {
+  it("the SystemHealthReport schema declares the cache-inclusive basis", () => {
     const src = read("packages/core/src/api-contracts/system-health-report.ts");
-    expect(src).toContain('tokenBasis: z.literal("input+output")');
+    expect(src).toContain('tokenBasis: z.literal("input+output+cache")');
   });
 
-  it("the two lenses declare DIFFERENT bases (the whole point of the field)", () => {
+  it("both provider-ledger lenses declare the same counting basis", () => {
     const incident = read("packages/core/src/api-contracts/incident-report.ts");
     const system = read("packages/core/src/api-contracts/system-health-report.ts");
-    expect(incident).toContain("input+output+cache");
-    // …and the system lens must NOT claim the cache-inclusive basis.
-    expect(system).not.toContain('z.literal("input+output+cache")');
+    expect(incident).toContain('z.literal("input+output+cache")');
+    expect(system).toContain('z.literal("input+output+cache")');
   });
 
   it("each assembler STAMPS its basis (a schema field nothing populates is dead)", () => {
     expect(read("packages/daemon/src/api/obs-handlers/obs-explain-assemble.ts"))
       .toContain('tokenBasis: "input+output+cache"');
     expect(read("packages/daemon/src/api/obs-handlers/system-health.ts"))
-      .toContain('tokenBasis: "input+output"');
+      .toContain('tokenBasis: "input+output+cache"');
   });
 });
