@@ -429,6 +429,70 @@ describe("wrapToolForAutoBackground", () => {
       expect((result.content[0] as { text: string }).text).toBe("foreground-result");
     });
 
+    it("keeps nested work foreground when its delivery origin cannot bind to the child turn", async () => {
+      const endpoint = {
+        channelType: "sub-agent",
+        channelInstanceId: "runtime",
+        conversationId: "child-run",
+        conversationKind: "direct" as const,
+      };
+      const turnScope = {
+        conversation: {
+          tenantId: "default",
+          agentId: "default",
+          partition: {
+            kind: "endpoint-conversation-principal" as const,
+            endpoint,
+            principalId: "conversation",
+          },
+        },
+        principal: { principalId: "conversation" },
+        endpoint,
+      };
+      const conversationRef = createConversationRef(turnScope.conversation);
+      if (!conversationRef.ok) throw conversationRef.error;
+      const nestedOrigin: BackgroundTaskOrigin = {
+        turnScope,
+        conversationRef: conversationRef.value,
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "-1001234567890",
+          userId: "conversation",
+          threadId: "3",
+          tenantId: "default",
+        },
+        traceId: "child-trace",
+        responseLocalePolicy: { source: "unset", enforceLocale: false },
+        backgroundHopCount: 0,
+      };
+      const promoteSpy = vi.spyOn(manager, "promote");
+      const tool = createMockTool({
+        name: "web_search",
+        resolveAfterMs: 200,
+        result: toolOk("foreground-search-result"),
+      });
+      const wrapped = wrapToolForAutoBackground(
+        tool,
+        manager,
+        config,
+        () => nestedOrigin,
+      );
+
+      const result = await wrapped.execute(
+        "call-nested-search",
+        {},
+        undefined,
+        undefined,
+        undefined,
+      );
+
+      expect(promoteSpy).not.toHaveBeenCalled();
+      expect((result.content[0] as { text: string }).text).toBe(
+        "foreground-search-result",
+      );
+      expect(manager.getAllTasks()).toHaveLength(0);
+    });
+
     it("when originResolver returns valid origin, promote is called with (tool.name, taskPromise, ac, origin)", async () => {
       const expectedOrigin = buildOrigin({ agentId: "origin-agent" });
       const originResolver = vi.fn().mockReturnValue(expectedOrigin);
