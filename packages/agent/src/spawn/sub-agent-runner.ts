@@ -353,6 +353,22 @@ export type SpawnCeilingDecision =
       limit: number;
     };
 
+/** Typed resource refusal carrying the exact spawn bound that rejected admission. */
+export class SubAgentSpawnCeilingError extends Error {
+  readonly reason = "spawn_ceiling" as const;
+  readonly decision: Extract<SpawnCeilingDecision, { ok: false }>;
+
+  constructor(decision: Extract<SpawnCeilingDecision, { ok: false }>) {
+    super(
+      `[spawn_ceiling] Sub-agent spawn rejected: ${decision.configKey}=${decision.limit}; `
+      + `current=${decision.current}; reason=${decision.reason}. `
+      + "Wait for a running sub-agent to finish before retrying.",
+    );
+    this.name = "SubAgentSpawnCeilingError";
+    this.decision = decision;
+  }
+}
+
 class DurableSubAgentAdmissionError extends Error {
   constructor(message: string, cause?: unknown) {
     super(message, cause === undefined ? undefined : { cause });
@@ -2433,11 +2449,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           errorKind: "resource" as const,
         }, "Subagent spawn rejected");
         // @allow-throw: spawn() consumed exclusively by daemon RPC handlers; @allow-throw boundary — rpc-dispatch.ts converts to a JSON-RPC error.
-        throw new Error(
-          `[spawn_ceiling] Sub-agent spawn rejected: ${ceiling.configKey}=${ceiling.limit}; `
-          + `current=${ceiling.current}; reason=${ceiling.reason}. `
-          + "Wait for a running sub-agent to finish before retrying.",
-        );
+        throw new SubAgentSpawnCeilingError(ceiling);
       }
     }
 

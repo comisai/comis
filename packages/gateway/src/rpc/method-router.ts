@@ -112,7 +112,7 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
    * Classify an RPC method error for structured logging.
    */
   function classifyRpcMethodError(err: unknown): {
-    errorKind: "config" | "auth" | "validation" | "precondition" | "internal";
+    errorKind: "config" | "auth" | "validation" | "precondition" | "resource" | "internal";
     hint: string;
   } {
     // Typed policy/security/validation refusals → non-internal (warn) via the
