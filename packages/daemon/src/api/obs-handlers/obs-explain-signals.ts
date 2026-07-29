@@ -40,8 +40,7 @@ import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
 // Tunable thresholds (module-top constants per the naming contract).
 // ---------------------------------------------------------------------------
 
-/** Minimum same-tool failures (co-existing with ≥1 success) for the content-
- * heuristic misclassification signal to fire. */
+/** Minimum same-tool failures with a success for content-heuristic misclassification. */
 const MISCLASS_N = 2;
 
 /** Minimum same-tool failures for a breaker/repeated-failure signal. Used by
@@ -51,13 +50,7 @@ export const BREAKER_N = 5;
 /** Token literals the misclassification heuristic looks for in a failure body. */
 const MISCLASS_TOKEN_RE = /"?status"?\s*:?\s*(200|403)|\b(200|403)\b|status/i;
 const DO_NOT_RETRY_RE = /DO NOT retry/i;
-const PROBLEMATIC_CHANNEL_STATES = new Set([
-  "disconnected",
-  "errored",
-  "stale",
-  "stuck",
-  "unknown",
-]);
+const PROBLEMATIC_CHANNEL_STATES = new Set(["disconnected", "errored", "stale", "stuck", "unknown"]);
 
 function ensureTool(acc: Acc, tool: string): { ok: number; failed: number; errorKinds: Map<string, number> } {
   let entry = acc.toolStats.get(tool);
@@ -70,9 +63,7 @@ function ensureTool(acc: Acc, tool: string): { ok: number; failed: number; error
 
 function nonnegativeInteger(value: unknown): number {
   const parsed = asNumber(value);
-  return parsed !== undefined && Number.isSafeInteger(parsed) && parsed >= 0
-    ? parsed
-    : 0;
+  return parsed !== undefined && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
 
 // ---------------------------------------------------------------------------
