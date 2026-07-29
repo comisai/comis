@@ -1161,7 +1161,7 @@ describe("setupTools", () => {
 
     const pipelineArgs = mockAssembleToolPipeline.mock.calls[0][0];
     pipelineArgs.platformTools();
-    const agentRpc = mockCreateCronTool.mock.calls[0][0];
+    const agentRpc = mockCreateAgentsManageTool.mock.calls[0][0];
     await agentRpc("session.spawn", { task: "must stay bounded" });
 
     const [, forwarded] = rpcCall.mock.calls.at(-1)!;

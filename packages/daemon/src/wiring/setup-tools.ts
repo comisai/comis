@@ -101,6 +101,18 @@ import type { CapabilityLayerHandle } from "./setup-capability-endpoint-boot.js"
 import { buildAutonomyToolWiring } from "./setup-tools-autonomy.js";
 import { selectEffectiveToolGroups, expandToolGroupsToNames } from "./setup-tools-coordinator.js"; // role:coordinator narrowing
 
+/**
+ * Platform tools whose schemas expose capability-gated orchestration actions.
+ * Omitting the whole schema is the honest posture when the agent does not hold
+ * the capability; handler gates remain the defense-in-depth execution boundary.
+ */
+const PLATFORM_TOOL_CAPABILITY_REQUIREMENTS = new Map<string, AgentCapability>([
+  ["sessions_spawn", "orch:spawn"],
+  ["pipeline", "orch:graph"],
+  ["cron", "orch:cron"],
+  ["message", "orch:message"],
+  ["skills_manage", "orch:skill"],
+]);
 
 // Deps / Result types
 
@@ -590,7 +602,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       type PlatformTool = ReturnType<PlatformToolProvider>[number];
       let tools: ReturnType<PlatformToolProvider> = PLATFORM_TOOL_REGISTRY
         .filter((d) => !d.conditional || d.conditional(ctx))
-        .filter((d) => d.name !== "sessions_spawn" || heldCapabilities.includes("orch:spawn"))
+        .filter((d) => {
+          const requiredCapability = PLATFORM_TOOL_CAPABILITY_REQUIREMENTS.get(d.name);
+          return requiredCapability === undefined || heldCapabilities.includes(requiredCapability);
+        })
         .map((d) => d.build(ctx))
         .filter((t): t is PlatformTool => t !== undefined);
       if (securityBoundary !== undefined) {
