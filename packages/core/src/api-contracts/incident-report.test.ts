@@ -42,6 +42,23 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     expect(parsed.cacheBreaks).toBeUndefined();
   });
 
+  it("retains the content-free response locale decision", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      responseLocale: {
+        locale: "und-Latn",
+        source: "request",
+        enforced: true,
+      },
+    });
+
+    expect(parsed.responseLocale).toEqual({
+      locale: "und-Latn",
+      source: "request",
+      enforced: true,
+    });
+  });
+
   it("retains bounded lossless-context fallback coverage", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),

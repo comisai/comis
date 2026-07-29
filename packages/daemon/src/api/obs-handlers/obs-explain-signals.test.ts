@@ -114,6 +114,50 @@ function event(
   return { traceSchema: "comis-trajectory", schemaVersion: 1, type, seq, data };
 }
 
+describe("toIncidentSignals — response locale decision", () => {
+  it("retains the latest content-free prompt locale decision", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        responseLocale: "he",
+        responseLocaleSource: "explicit",
+        responseLocaleEnforced: true,
+      }),
+      event("prompt.submitted", 2, {
+        responseLocale: "und-Latn",
+        responseLocaleSource: "request",
+        responseLocaleEnforced: true,
+      }),
+    ]);
+
+    expect(signals).toMatchObject({
+      responseLocale: {
+        locale: "und-Latn",
+        source: "request",
+        enforced: true,
+      },
+    });
+  });
+
+  it("retains an unset advisory decision without inventing a locale", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        responseLocaleSource: "unset",
+        responseLocaleEnforced: false,
+      }),
+    ]);
+
+    expect(signals).toMatchObject({
+      responseLocale: {
+        source: "unset",
+        enforced: false,
+      },
+    });
+    expect(
+      (signals as unknown as { responseLocale?: { locale?: string } }).responseLocale?.locale,
+    ).toBeUndefined();
+  });
+});
+
 describe("toIncidentSignals — turnCount (flag cumulative-across-turns toolStats)", () => {
   // The trajectory JSONL is append-only across session.reset_conversation severs, so one
   // file (and the whole-session toolStats) can span many turns. prompt.submitted is the

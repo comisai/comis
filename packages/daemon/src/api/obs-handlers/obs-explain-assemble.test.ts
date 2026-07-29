@@ -113,6 +113,41 @@ function makeMetadata(overrides: Record<string, unknown> = {}): Record<string, u
   };
 }
 
+describe("assembleIncidentReport — response locale decision", () => {
+  it("surfaces the content-free locale decision on the explain report", () => {
+    const signals = makeSignals({
+      responseLocale: {
+        locale: "und-Latn",
+        source: "request",
+        enforced: true,
+      },
+    } as unknown as Partial<IncidentSignals>);
+
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report).toMatchObject({
+      responseLocale: {
+        locale: "und-Latn",
+        source: "request",
+        enforced: true,
+      },
+    });
+    expect(IncidentReportSchema.parse(report)).toMatchObject({
+      responseLocale: {
+        locale: "und-Latn",
+        source: "request",
+        enforced: true,
+      },
+    });
+  });
+});
+
 describe("assembleIncidentReport — channel health outcome", () => {
   const cleanSignals = (recovered: boolean): IncidentSignals => makeSignals({
     toolStats: {},
