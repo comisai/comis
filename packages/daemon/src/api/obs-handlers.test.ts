@@ -364,7 +364,9 @@ describe("createObsHandlers - dual-source merge", () => {
     ];
 
     const obsStore = makeObsStore({
-      aggregateByProvider: vi.fn().mockReturnValue(sqliteAggs),
+      aggregateByProvider: vi.fn()
+        .mockReturnValueOnce(sqliteAggs)
+        .mockReturnValueOnce([]),
     });
 
     const deps = makeDeps({
@@ -402,7 +404,9 @@ describe("createObsHandlers - dual-source merge", () => {
     ];
 
     const obsStore = makeObsStore({
-      aggregateByProvider: vi.fn().mockReturnValue(sqliteAggs),
+      aggregateByProvider: vi.fn()
+        .mockReturnValueOnce(sqliteAggs)
+        .mockReturnValueOnce([]),
     });
 
     const deps = makeDeps({
@@ -1664,7 +1668,9 @@ describe("createObsHandlers - obs.billing.total includes totalCacheSaved", () =>
     ];
 
     const obsStore = makeObsStore({
-      aggregateByProvider: vi.fn().mockReturnValue(sqliteAggs),
+      aggregateByProvider: vi.fn()
+        .mockReturnValueOnce(sqliteAggs)
+        .mockReturnValueOnce([]),
     });
 
     const deps = makeDeps({
@@ -1699,7 +1705,9 @@ describe("createObsHandlers - obs.billing.total includes totalCacheSaved", () =>
     ];
 
     const obsStore = makeObsStore({
-      aggregateByProvider: vi.fn().mockReturnValue(sqliteAggs),
+      aggregateByProvider: vi.fn()
+        .mockReturnValueOnce(sqliteAggs)
+        .mockReturnValueOnce([]),
     });
 
     const deps = makeDeps({

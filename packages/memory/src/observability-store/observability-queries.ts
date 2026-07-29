@@ -377,7 +377,7 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     return rows.map(diagnosticFromRow);
   }
 
-  /** Total USD cost of off-session (`__PREFIX__`-keyed background-job) LLM spend since `sinceMs`. Distinct from the per-session cost the system rollup sums (no double-count). */
+  /** Synthetic `__PREFIX__`-session subset of provider-ledger cost since `sinceMs`. */
   function offSessionCostSince(sinceMs: number): number {
     const parsed = offSessionCostMapper.parseOptionalRow(offSessionCostSinceStmt.get(sinceMs));
     return parsed.ok ? (parsed.value?.total_cost ?? 0) : 0;

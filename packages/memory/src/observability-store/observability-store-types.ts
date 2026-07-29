@@ -416,7 +416,7 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice, CacheBreakQu
   // Diagnostics
   insertDiagnostic(entry: DiagnosticRow): void;
   queryDiagnostics(params?: DiagnosticQueryParams): DiagnosticRow[];
-  /** Total USD cost of off-session (background-job, `__PREFIX__`-keyed) LLM spend since `sinceMs`. */
+  /** Synthetic `__PREFIX__`-session subset of the provider-ledger cost since `sinceMs`. */
   offSessionCostSince(sinceMs: number): number;
 
   // Security audit. Insert/query the dedicated obs_audit_events

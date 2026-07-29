@@ -1,6 +1,6 @@
 {
-  "totalMinified": 188532,
-  "totalGzipped": 19067,
+  "totalMinified": 188564,
+  "totalGzipped": 19071,
   "budget": {
     "minified": 188600,
     "gzipped": 38912
@@ -162,7 +162,7 @@
     "obs.reset": 571,
     "obs.reset.table": 483,
     "obs.spend.snapshot": 350,
-    "obs.system.health": 5307,
+    "obs.system.health": 5343,
     "obs.systemPromptReport.latest": 520,
     "obs.systemPromptReport.list": 503,
     "obs.trace.export": 362,

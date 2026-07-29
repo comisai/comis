@@ -35,7 +35,12 @@ function validReport(): SystemHealthReport {
       web_search: { ok: 30, failed: 5 },
       shell: { ok: 12, failed: 1 },
     },
-    cost: { costUsd: 1.23, totalTokens: 456_789 },
+    cost: {
+      costUsd: 1.23,
+      totalTokens: 456_789,
+      callCount: 73,
+      tokenBasis: "input+output+cache",
+    },
     activity: {
       activeAgents: ["agent-a", "agent-b"],
       activeChannels: ["discord:123", "telegram:456"],

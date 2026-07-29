@@ -29,11 +29,170 @@ import {
   systemNowMs,
   systemDateFrom,
 } from "@comis/core";
-import { isVecAvailable } from "@comis/memory";
-import type { ProviderBilling } from "../../observability/billing-estimator.js";
+import { isVecAvailable, type ObservabilityStore } from "@comis/memory";
+import type { BillingEstimator, BillingSnapshot, ProviderBilling } from "../../observability/billing-estimator.js";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
 import { AuthorizationError, ValidationError } from "../errors.js";
+
+type ProviderAggregation = ReturnType<ObservabilityStore["aggregateByProvider"]>[number];
+
+function subtractNonnegative(total: number, overlap: number): number {
+  return Math.max(0, total - overlap);
+}
+
+function sumProviderAggregations(rows: readonly ProviderAggregation[]): Required<BillingSnapshot> {
+  return rows.reduce<Required<BillingSnapshot>>(
+    (sum, row) => ({
+      totalCost: sum.totalCost + row.totalCost,
+      totalTokens: sum.totalTokens + row.totalTokens,
+      callCount: sum.callCount + row.callCount,
+      totalCacheSaved: sum.totalCacheSaved + (row.totalCacheSaved ?? 0),
+    }),
+    { totalCost: 0, totalTokens: 0, callCount: 0, totalCacheSaved: 0 },
+  );
+}
+
+function providerAggregationKey(row: Pick<ProviderAggregation, "provider" | "model">): string {
+  return `${row.provider}\u0000${row.model}`;
+}
+
+function historicalProviderAggregations(
+  allRows: readonly ProviderAggregation[],
+  currentRows: readonly ProviderAggregation[],
+): ProviderAggregation[] {
+  const currentByKey = new Map(
+    currentRows.map((row) => [providerAggregationKey(row), row] as const),
+  );
+  return allRows.flatMap((row) => {
+    const current = currentByKey.get(providerAggregationKey(row));
+    const historical = {
+      ...row,
+      totalCost: subtractNonnegative(row.totalCost, current?.totalCost ?? 0),
+      totalTokens: subtractNonnegative(row.totalTokens, current?.totalTokens ?? 0),
+      callCount: subtractNonnegative(row.callCount, current?.callCount ?? 0),
+      totalCacheSaved: subtractNonnegative(
+        row.totalCacheSaved ?? 0,
+        current?.totalCacheSaved ?? 0,
+      ),
+    };
+    return historical.totalCost > 0 ||
+      historical.totalTokens > 0 ||
+      historical.callCount > 0 ||
+      historical.totalCacheSaved > 0
+      ? [historical]
+      : [];
+  });
+}
+
+function mergeProviderBilling(
+  liveRows: readonly ProviderBilling[],
+  historicalRows: readonly ProviderAggregation[],
+  allPersistedRows: readonly ProviderAggregation[],
+): ProviderBilling[] {
+  const merged = new Map<string, ProviderBilling>();
+  for (const live of liveRows) {
+    merged.set(live.provider, {
+      ...live,
+      models: live.models.map((model) => ({ ...model })),
+    });
+  }
+  for (const row of historicalRows) {
+    const existing = merged.get(row.provider);
+    if (existing) {
+      existing.totalCost += row.totalCost;
+      existing.totalTokens += row.totalTokens;
+      existing.callCount += row.callCount;
+      if (existing.totalCacheSaved !== undefined) {
+        existing.totalCacheSaved += row.totalCacheSaved ?? 0;
+      }
+      const model = existing.models.find((candidate) => candidate.model === row.model);
+      if (model) {
+        model.cost += row.totalCost;
+        model.tokens += row.totalTokens;
+        model.calls += row.callCount;
+      } else {
+        existing.models.push({
+          model: row.model,
+          cost: row.totalCost,
+          tokens: row.totalTokens,
+          calls: row.callCount,
+        });
+      }
+    } else {
+      merged.set(row.provider, {
+        provider: row.provider,
+        totalCost: row.totalCost,
+        totalTokens: row.totalTokens,
+        callCount: row.callCount,
+        totalCacheSaved: row.totalCacheSaved ?? 0,
+        models: [{
+          model: row.model,
+          cost: row.totalCost,
+          tokens: row.totalTokens,
+          calls: row.callCount,
+        }],
+      });
+    }
+  }
+
+  const persistedCacheByProvider = new Map<string, number>();
+  for (const row of allPersistedRows) {
+    persistedCacheByProvider.set(
+      row.provider,
+      (persistedCacheByProvider.get(row.provider) ?? 0) + (row.totalCacheSaved ?? 0),
+    );
+  }
+  for (const provider of merged.values()) {
+    if (liveRows.find((row) => row.provider === provider.provider)?.totalCacheSaved === undefined) {
+      provider.totalCacheSaved = persistedCacheByProvider.get(provider.provider) ?? provider.totalCacheSaved;
+    }
+  }
+  return [...merged.values()].sort((a, b) => b.totalCost - a.totalCost);
+}
+
+/**
+ * Reconcile durable history with the current daemon's live usage without
+ * double-counting rows already flushed by the observability writer.
+ */
+export function reconcileBillingTotal(
+  sources: {
+    obsStore?: ObservabilityStore;
+    billingEstimator?: Pick<BillingEstimator, "total">;
+    startupTimestamp?: number;
+  },
+  options: { nowMs: number; windowMs?: number },
+): BillingSnapshot {
+  const live = sources.billingEstimator?.total(
+    options.windowMs === undefined ? undefined : { sinceMs: options.windowMs },
+  );
+  const sinceTimestamp =
+    options.windowMs === undefined ? undefined : options.nowMs - options.windowMs;
+  const allPersistedRows = sources.obsStore?.aggregateByProvider(sinceTimestamp) ?? [];
+  const allPersisted = sumProviderAggregations(allPersistedRows);
+  if (live === undefined) return allPersisted;
+  if (sources.obsStore === undefined || sources.startupTimestamp === undefined) return live;
+  if (sinceTimestamp !== undefined && sinceTimestamp >= sources.startupTimestamp) return live;
+
+  const currentPersisted = sumProviderAggregations(
+    sources.obsStore.aggregateByProvider(sources.startupTimestamp),
+  );
+  return {
+    totalCost: live.totalCost +
+      subtractNonnegative(allPersisted.totalCost, currentPersisted.totalCost),
+    totalTokens: live.totalTokens +
+      subtractNonnegative(allPersisted.totalTokens, currentPersisted.totalTokens),
+    callCount: live.callCount +
+      subtractNonnegative(allPersisted.callCount, currentPersisted.callCount),
+    totalCacheSaved: live.totalCacheSaved === undefined
+      ? allPersisted.totalCacheSaved
+      : live.totalCacheSaved +
+        subtractNonnegative(
+          allPersisted.totalCacheSaved,
+          currentPersisted.totalCacheSaved,
+        ),
+  };
+}
 
 /**
  * Bind the observability metrics RPC handlers. Object-spread compatible
@@ -60,66 +219,23 @@ export function bindObsMetricsHandlers(deps: ObsHandlerDeps): Record<string, Rpc
       if (!obsStore || startupTimestamp == null) {
         result = { providers: inMemoryProviders };
       } else {
+        const nowMs = systemNowMs();
         // If sinceMs is within current session, in-memory is sufficient
-        const sinceCutoff = sinceMs != null ? systemNowMs() - sinceMs : 0;
+        const sinceCutoff = sinceMs != null ? nowMs - sinceMs : 0;
         if (sinceCutoff >= startupTimestamp) {
           result = { providers: inMemoryProviders };
         } else {
-          // SQLite aggregation for the full range
-          const sqliteAggs = obsStore.aggregateByProvider(
-            sinceMs != null ? systemNowMs() - sinceMs : undefined,
+          const allPersisted = obsStore.aggregateByProvider(
+            sinceMs != null ? nowMs - sinceMs : undefined,
           );
-
-          // Merge: combine by provider+model key
-          const mergeMap = new Map<string, ProviderBilling>();
-
-          // Add in-memory providers first (authoritative for current session)
-          for (const p of inMemoryProviders) {
-            mergeMap.set(p.provider, { ...p });
-          }
-
-          // Add SQLite aggregations
-          for (const row of sqliteAggs) {
-            const key = row.provider;
-            const existing = mergeMap.get(key);
-            if (existing) {
-              existing.totalCost += row.totalCost;
-              existing.totalTokens += row.totalTokens;
-              existing.callCount += row.callCount;
-              existing.totalCacheSaved = (existing.totalCacheSaved ?? 0) + row.totalCacheSaved;
-              // Merge model-level: add or update
-              const modelEntry = existing.models.find((m) => m.model === row.model);
-              if (modelEntry) {
-                modelEntry.cost += row.totalCost;
-                modelEntry.tokens += row.totalTokens;
-                modelEntry.calls += row.callCount;
-              } else {
-                existing.models.push({
-                  model: row.model,
-                  cost: row.totalCost,
-                  tokens: row.totalTokens,
-                  calls: row.callCount,
-                });
-              }
-            } else {
-              mergeMap.set(key, {
-                provider: row.provider,
-                totalCost: row.totalCost,
-                totalTokens: row.totalTokens,
-                callCount: row.callCount,
-                totalCacheSaved: row.totalCacheSaved,
-                models: [{
-                  model: row.model,
-                  cost: row.totalCost,
-                  tokens: row.totalTokens,
-                  calls: row.callCount,
-                }],
-              });
-            }
-          }
-
-          const merged = [...mergeMap.values()].sort((a, b) => b.totalCost - a.totalCost);
-          result = { providers: merged };
+          const currentPersisted = obsStore.aggregateByProvider(startupTimestamp);
+          result = {
+            providers: mergeProviderBilling(
+              inMemoryProviders,
+              historicalProviderAggregations(allPersisted, currentPersisted),
+              allPersisted,
+            ),
+          };
         }
       }
 
@@ -231,13 +347,29 @@ export function bindObsMetricsHandlers(deps: ObsHandlerDeps): Record<string, Rpc
       if (!obsStore || startupTimestamp == null) {
         result = inMemory;
       } else {
-        const sqliteAgg = obsStore.aggregateBySession(sessionKey, sinceMs != null ? systemNowMs() - sinceMs : undefined);
-        result = {
-          totalCost: inMemory.totalCost + sqliteAgg.totalCost,
-          totalTokens: inMemory.totalTokens + sqliteAgg.totalTokens,
-          callCount: inMemory.callCount + sqliteAgg.callCount,
-          totalCacheSaved: (inMemory.totalCacheSaved ?? 0) + sqliteAgg.totalCacheSaved,
-        };
+        const nowMs = systemNowMs();
+        const sinceTimestamp = sinceMs != null ? nowMs - sinceMs : undefined;
+        if (sinceTimestamp !== undefined && sinceTimestamp >= startupTimestamp) {
+          result = inMemory;
+        } else {
+          const allPersisted = obsStore.aggregateBySession(sessionKey, sinceTimestamp);
+          const currentPersisted = obsStore.aggregateBySession(sessionKey, startupTimestamp);
+          result = {
+            totalCost: inMemory.totalCost +
+              subtractNonnegative(allPersisted.totalCost, currentPersisted.totalCost),
+            totalTokens: inMemory.totalTokens +
+              subtractNonnegative(allPersisted.totalTokens, currentPersisted.totalTokens),
+            callCount: inMemory.callCount +
+              subtractNonnegative(allPersisted.callCount, currentPersisted.callCount),
+            totalCacheSaved: inMemory.totalCacheSaved === undefined
+              ? allPersisted.totalCacheSaved
+              : inMemory.totalCacheSaved +
+                subtractNonnegative(
+                  allPersisted.totalCacheSaved,
+                  currentPersisted.totalCacheSaved,
+                ),
+          };
+        }
       }
 
       if (IS_DEV) ObsBillingBySessionContract.response.parse(result);
@@ -254,46 +386,10 @@ export function bindObsMetricsHandlers(deps: ObsHandlerDeps): Record<string, Rpc
       const userParams = stripInternalFields(rawParams);
       const params = ObsBillingTotalContract.request.parse(userParams);
       const sinceMs = params.sinceMs;
-
-      const inMemory = deps.billingEstimator.total({ sinceMs });
-
-      let result: { totalCost: number; totalTokens: number; callCount: number; totalCacheSaved?: number };
-      if (!obsStore || startupTimestamp == null) {
-        result = inMemory;
-      } else {
-        const sinceCutoff = sinceMs != null ? systemNowMs() - sinceMs : 0;
-        if (sinceCutoff >= startupTimestamp) {
-          result = inMemory;
-        } else {
-          // Sum across all providers from SQLite
-          const sqliteAggs = obsStore.aggregateByProvider(sinceMs != null ? systemNowMs() - sinceMs : undefined);
-          let sqliteTotalCost = 0;
-          let sqliteTotalTokens = 0;
-          let sqliteCallCount = 0;
-          let sqliteTotalCacheSaved = 0;
-          for (const agg of sqliteAggs) {
-            sqliteTotalCost += agg.totalCost;
-            sqliteTotalTokens += agg.totalTokens;
-            sqliteCallCount += agg.callCount;
-            // ObservabilityStore.aggregateByProvider typing declares
-            // `totalCacheSaved: number`, but some test mocks omit it.
-            // Coerce `undefined` to 0 — preserves the pre-refactor
-            // observable behavior (the original code accumulated NaN
-            // silently into a field test assertions ignored; the
-            // dev-mode response.parse() now catches it, so the
-            // coercion is required to keep both code paths producing
-            // a valid number).
-            sqliteTotalCacheSaved += agg.totalCacheSaved ?? 0;
-          }
-
-          result = {
-            totalCost: inMemory.totalCost + sqliteTotalCost,
-            totalTokens: inMemory.totalTokens + sqliteTotalTokens,
-            callCount: inMemory.callCount + sqliteCallCount,
-            totalCacheSaved: (inMemory.totalCacheSaved ?? 0) + sqliteTotalCacheSaved,
-          };
-        }
-      }
+      const result = reconcileBillingTotal(
+        { obsStore, billingEstimator: deps.billingEstimator, startupTimestamp },
+        { nowMs: systemNowMs(), ...(sinceMs !== undefined ? { windowMs: sinceMs } : {}) },
+      );
 
       if (IS_DEV) ObsBillingTotalContract.response.parse(result);
       return result;
@@ -316,16 +412,34 @@ export function bindObsMetricsHandlers(deps: ObsHandlerDeps): Record<string, Rpc
       if (!obsStore || startupTimestamp == null) {
         result = inMemory;
       } else {
-        const sqliteHourly = obsStore.aggregateHourly(systemNowMs() - 86400000);
-
-        // Merge by hour bucket: in-memory uses hour-of-day (0-23),
-        // SQLite uses epoch-aligned hour timestamps. Convert SQLite to hour-of-day.
-        const merged = [...inMemory];
-        for (const bucket of sqliteHourly) {
+        const nowMs = systemNowMs();
+        const allPersisted = obsStore.aggregateHourly(nowMs - 86400000);
+        const currentPersisted = obsStore.aggregateHourly(startupTimestamp);
+        const currentByHour = new Map<number, number>();
+        for (const bucket of currentPersisted) {
           const hourOfDay = systemDateFrom(bucket.hour).getHours();
-          const existing = merged.find((m) => m.hour === hourOfDay);
+          currentByHour.set(
+            hourOfDay,
+            (currentByHour.get(hourOfDay) ?? 0) + bucket.totalTokens,
+          );
+        }
+        const historicalByHour = new Map<number, number>();
+        for (const bucket of allPersisted) {
+          const hourOfDay = systemDateFrom(bucket.hour).getHours();
+          historicalByHour.set(
+            hourOfDay,
+            (historicalByHour.get(hourOfDay) ?? 0) + bucket.totalTokens,
+          );
+        }
+        const merged = inMemory.map((point) => ({ ...point }));
+        for (const [hourOfDay, persistedTokens] of historicalByHour) {
+          const historicalTokens = subtractNonnegative(
+            persistedTokens,
+            currentByHour.get(hourOfDay) ?? 0,
+          );
+          const existing = merged.find((point) => point.hour === hourOfDay);
           if (existing) {
-            existing.tokens += bucket.totalTokens;
+            existing.tokens += historicalTokens;
           }
         }
 

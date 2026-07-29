@@ -12906,9 +12906,12 @@ export const CONTRACTS = {
             "totalTokens": {
               "type": "number"
             },
+            "callCount": {
+              "type": "number"
+            },
             "tokenBasis": {
               "type": "string",
-              "const": "input+output"
+              "const": "input+output+cache"
             },
             "offSessionUsd": {
               "type": "number"

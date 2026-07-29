@@ -2415,7 +2415,7 @@ async function bootGateway(
     suspendedAgents, gatewaySendRef,
     interactiveCallbackWiring,
     msTeamsIngress,
-    obsStore, contextBrowse, // diagnostics rollup + lossless tool-outcome fallback
+    obsStore, billingEstimator, contextBrowse, // diagnostics rollup + lossless tool-outcome fallback
     dataDir: bootDataDir, // absolute fallback data dir (always abs; ~/.comis or $COMIS_DATA_DIR)
   } = channels;
   const _createGatewayServer = overrides.createGatewayServer ?? createGatewayServer;
@@ -2461,6 +2461,8 @@ async function bootGateway(
     obsStore,
     clock: boot.clock,
     durableRuns: boot.durableRunStore,
+    billingEstimator,
+    startupTimestamp: startupStartMs,
     workspaceDirs, contextBrowse,
   });
   const { gatewayHandle, activeExecutions, getActiveConnectionCount, wsConnections } = await setupGateway({
