@@ -410,6 +410,81 @@ describe("group history injection", () => {
       }),
     );
   });
+
+  it("registers canonical shared-topic authority only when the group turn activates", async () => {
+    const ensureCanonicalSession = vi.fn(() => ok(undefined));
+    const deps = makeMinimalDeps({
+      autoReplyEngineConfig: {
+        enabled: true,
+        groupActivation: "mention-gated",
+        customPatterns: [],
+        historyInjection: false,
+        maxHistoryInjections: 50,
+        maxGroupHistoryMessages: 20,
+      },
+    });
+    Object.assign(deps.sessionManager, { ensure: ensureCanonicalSession });
+    const adapter = makeAdapterForTest();
+    const sendOverrides = new Map() as never;
+    const sharedTopicMetadata = {
+      telegramMessageId: "95",
+      telegramChatType: "group",
+      threadId: "95",
+      replyToBot: false,
+    };
+
+    await processInboundMessage(
+      deps,
+      adapter,
+      makeMsg({
+        id: "group-topic-ignored",
+        channelId: "group-1",
+        senderId: "user-2",
+        text: "background chatter",
+        metadata: {
+          ...sharedTopicMetadata,
+          isBotMentioned: false,
+        },
+      }),
+      new Set(),
+      sendOverrides,
+    );
+
+    expect(ensureCanonicalSession).not.toHaveBeenCalled();
+
+    await processInboundMessage(
+      deps,
+      adapter,
+      makeMsg({
+        id: "group-topic-activated",
+        channelId: "group-1",
+        text: "@agent what was that",
+        metadata: {
+          ...sharedTopicMetadata,
+          telegramMessageId: "96",
+          isBotMentioned: true,
+        },
+      }),
+      new Set(),
+      sendOverrides,
+    );
+
+    expect(ensureCanonicalSession).toHaveBeenCalledOnce();
+    expect(ensureCanonicalSession).toHaveBeenCalledWith({
+      tenantId: "default",
+      agentId: "agent-default",
+      partition: {
+        kind: "endpoint-conversation",
+        endpoint: {
+          channelType: "telegram",
+          channelInstanceId: "adapter-1",
+          conversationId: "group-1",
+          threadId: "95",
+          conversationKind: "shared",
+        },
+      },
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
