@@ -352,9 +352,16 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
           if (better) winner = row;
         }
 
-        // sources = the distinct set of source strings present (deduped). Cast to
-        // the closed-union element type — the DDL CHECK guarantees in-set values.
-        const sources = [...new Set(rows.map((r) => r.source))] as ResolvedOutcome["sources"];
+        // Keep the WINNING source first, followed by the remaining distinct
+        // corroborating sources in observation order. Consumers that expose a
+        // single provenance label read sources[0], so an earlier attribution
+        // carrier must not masquerade as the source of a later tool verdict.
+        // Cast to the closed-union element type — the DDL CHECK guarantees
+        // in-set values.
+        const sources = [
+          winner.source,
+          ...new Set(rows.map((r) => r.source).filter((source) => source !== winner.source)),
+        ] as ResolvedOutcome["sources"];
 
         // Attribution: union+dedup recalledIds AND usedSkillIds across ALL rows (any
         // source may carry either). The used_skill_ids column is written at observe()
