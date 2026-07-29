@@ -35,6 +35,7 @@ import {
   parseContextBudgetRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
 } from "./obs-explain-signal-folds.js";
 import type { Acc } from "./obs-explain-signals-acc.js";
+import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
 
 // ---------------------------------------------------------------------------
 // Tunable thresholds (module-top constants per the naming contract).
@@ -528,9 +529,9 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       });
       return;
     }
+    case "delivery.dispatched": accumulateDeliveryDispatch(acc, data); return;
     case "activity.turn_finalized": {
-      // The terminal user-surface state (LAST wins — the final turn's
-      // finalize explains what the chat shows now). Closed labels only.
+      // The terminal user-surface state (LAST wins). Closed labels only.
       const strategy = asString(data.strategy);
       const outcome = asString(data.outcome);
       if (strategy !== undefined && outcome !== undefined) {
@@ -541,9 +542,7 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
           ...(asString(data.reason) !== undefined ? { reason: asString(data.reason) } : {}),
           reclassified: data.reclassified === true,
         };
-        // Session-wide finalize tally (the last-wins snapshot above hid a
-        // mid-session failure paint behind a later success — reading the raw
-        // trajectory was the only way to find which turn wore the pill).
+        // Session-wide tally retains failures hidden by a later success.
         const counts = acc.turnFinalizeCounts ?? { failure: 0, recovered: 0 };
         if (outcome === "failure") counts.failure += 1;
         if (outcome === "success_with_recovered_failures") counts.recovered += 1;
@@ -913,6 +912,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.modelTokens !== undefined ? { modelTokens: acc.modelTokens } : {}),
     ...(acc.turnFinalized !== undefined ? { turnFinalized: acc.turnFinalized } : {}),
     ...(acc.turnFinalizeCounts !== undefined ? { turnFinalizeCounts: acc.turnFinalizeCounts } : {}),
+    ...(acc.deliveryDispatch !== undefined ? { deliveryDispatch: acc.deliveryDispatch } : {}),
     ...(acc.deliveryAborts !== undefined ? { deliveryAborts: acc.deliveryAborts } : {}),
     ...(acc.recoveries !== undefined ? { recoveries: acc.recoveries } : {}),
     ...(acc.abortReason !== undefined ? { abortReason: acc.abortReason } : {}),

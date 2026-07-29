@@ -120,6 +120,8 @@ export interface Acc {
   recallDegraded?: { count: number; lastScope: string; lastErrorKind: string };
   /** Σ over `delivery.aborted` records: events + blocks never sent. */
   deliveryAborts?: { events: number; chunksNotSent: number };
+  /** The LAST valid `delivery.dispatched` terminal outcome. */
+  deliveryDispatch?: IncidentSignals["deliveryDispatch"];
   /** Recovery-attempt fold from `execution.recovery_attempted` records:
    *  total + succeeded tally + per-reason counts. */
   recoveries?: { total: number; succeeded: number; byReason: Record<string, number> };

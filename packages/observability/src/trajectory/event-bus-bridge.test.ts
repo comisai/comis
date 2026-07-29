@@ -669,6 +669,7 @@ describe("attachTrajectoryToEventBus -- delivery events", () => {
       totalChunks: 3,
       deliveredChunks: 1,
       failedChunks: 2,
+      errorKind: "platform",
       totalChars: 1500,
       durationMs: 320,
       timestamp: Date.now(),
@@ -676,6 +677,7 @@ describe("attachTrajectoryToEventBus -- delivery events", () => {
     expect(recorder.calls).toHaveLength(2);
     const data2 = recorder.calls[1].data as Record<string, unknown>;
     expect(data2.status).toBe("partial");
+    expect(data2.errorKind).toBe("platform");
   });
 });
 

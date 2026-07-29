@@ -62,7 +62,7 @@ export interface IncidentFailure {
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / promptTimeout /
 // toolSchemaUnsupported / recall / cacheBreaks / spend / image / vision /
-// videoGenerated / voice / learning / channel / agentId / spawnTree / orchestrate / …) — absent
+// videoGenerated / voice / learning / deliveryDispatch / channel / agentId / spawnTree / orchestrate / …) — absent
 // when that record class did not occur. Clustering them would couple unrelated
 // heuristics; the read sites already key on each independently. Grows by one per
 // observability signal class.
@@ -339,6 +339,20 @@ export interface IncidentSignals {
    * Absent ⇒ no finalize records.
    */
   turnFinalizeCounts?: { failure: number; recovered: number };
+  /**
+   * The LAST `delivery.dispatched` record. This is the terminal user-delivery
+   * truth, independent of the earlier model/execution summary. A later
+   * successful dispatch replaces an earlier failure in whole-session reports;
+   * exact-trace reports contain only that turn's dispatch.
+   */
+  deliveryDispatch?: {
+    status: "success" | "partial" | "failure";
+    channelType: string;
+    totalChunks: number;
+    deliveredChunks: number;
+    failedChunks: number;
+    errorKind?: string;
+  };
   /**
    * Σ over the session's `delivery.aborted` records — aborted-delivery events
    * and the blocks they left unsent (chunksNotSent = Σ(totalChunks −

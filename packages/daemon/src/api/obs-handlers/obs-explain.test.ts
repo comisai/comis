@@ -268,7 +268,7 @@ describe("bindObsExplainHandlers", () => {
     expect(report.likelyRootCause?.code).toBe("delivery_failed");
     expect(report.likelyRootCause?.detail).toContain("0 of 1");
     expect(report.likelyRootCause?.detail).toContain("telegram");
-    expect(report.suggestedNextSteps.join(" ")).toContain("destination access");
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" ")).toContain("destination access");
   });
 
   // ------------------------------------------------------------------------

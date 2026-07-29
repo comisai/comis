@@ -476,6 +476,7 @@ export function translatePayload(
         totalChars: payload.totalChars,
         durationMs: payload.durationMs,
         status,
+        ...(payload.errorKind !== undefined ? { errorKind: payload.errorKind } : {}),
       };
     }
 

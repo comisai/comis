@@ -87,6 +87,7 @@ import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // recall_m
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
 import { orchestrateFailedVerdict } from "./obs-explain-orchestrate-verdict.js"; // failed orchestrate run (sibling — subdir cap)
+import { deliveryFailedVerdict } from "./obs-explain-delivery-verdict.js";
 
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1.
@@ -157,6 +158,10 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   subagentDeliverySkippedVerdict,
 
   backgroundRecoveryVerdict,
+
+  // A terminal channel dispatch is later and more user-visible than the
+  // execution summary. It must not be hidden by an earlier clean model stop.
+  deliveryFailedVerdict,
 
   // An unrecovered channel transition means the transport stopped accepting
   // inbound work even when the last completed agent turn itself was clean.
