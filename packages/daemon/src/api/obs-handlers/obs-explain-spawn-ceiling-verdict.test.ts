@@ -53,4 +53,33 @@ describe("spawn ceiling incident verdict", () => {
       "autonomy.spawn.maxConcurrentSelfAgents",
     );
   });
+
+  it("does not tell a depth-bound execution to wait for capacity", () => {
+    const verdict = rootCause(
+      makeSignals({
+        endReason: "completed_with_tool_errors",
+        degraded: true,
+        failures: [
+          {
+            seq: 6,
+            toolName: "sessions_spawn",
+            classifiedFailureBy: "runtime_guard",
+            transportOk: false,
+            errorKind: "resource",
+            matchedRule: "spawn_ceiling",
+            resultDigest: "spawn-depth",
+            resultBytes: 206,
+            errorPreview:
+              '{"content":[{"type":"text","text":"[spawn_ceiling] Sub-agent spawn rejected: autonomy.spawn.maxSpawnDepth=1; current=1; reason=depth."}]}',
+          },
+        ],
+      }),
+    );
+
+    const steps = verdict?.suggestedNextSteps.join(" ") ?? "";
+    expect(verdict?.code).toBe("spawn_ceiling");
+    expect(steps).toContain("autonomy.spawn.maxSpawnDepth");
+    expect(steps).toContain("restart");
+    expect(steps.toLowerCase()).not.toContain("wait for a running sub-agent");
+  });
 });
