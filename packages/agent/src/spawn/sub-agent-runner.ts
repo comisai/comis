@@ -354,6 +354,29 @@ export type SpawnCeilingDecision =
       limit: number;
     };
 
+function spawnCeilingRecoveryGuidance(
+  decision: Extract<SpawnCeilingDecision, { ok: false }>,
+): string {
+  switch (decision.reason) {
+    case "depth":
+      return (
+        `Increase ${decision.configKey} in the config file and restart the daemon, `
+        + "or continue without another nested spawn; waiting for running work cannot change this call's depth."
+      );
+    case "fanout":
+      return (
+        "Wait for one of this caller's children to finish or stop one that is no longer needed, "
+        + `or raise ${decision.configKey}.`
+      );
+    case "concurrency":
+      return "Wait for a running sub-agent to finish before retrying.";
+    default: {
+      const _exhaustive: never = decision.reason;
+      return _exhaustive;
+    }
+  }
+}
+
 /** Typed resource refusal carrying the exact spawn bound that rejected admission. */
 export class SubAgentSpawnCeilingError extends Error {
   readonly reason = "spawn_ceiling" as const;
@@ -363,7 +386,7 @@ export class SubAgentSpawnCeilingError extends Error {
     super(
       `[spawn_ceiling] Sub-agent spawn rejected: ${decision.configKey}=${decision.limit}; `
       + `current=${decision.current}; reason=${decision.reason}. `
-      + "Wait for a running sub-agent to finish before retrying.",
+      + spawnCeilingRecoveryGuidance(decision),
     );
     this.name = "SubAgentSpawnCeilingError";
     this.decision = decision;
@@ -2513,7 +2536,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           currentDepth,
           hint:
             `Spawn rejected at ${ceiling.configKey}=${ceiling.limit}; current=${ceiling.current}. `
-            + "Wait for a running sub-agent to finish or raise that exact bound.",
+            + spawnCeilingRecoveryGuidance(ceiling),
           errorKind: "resource" as const,
         }, "Subagent spawn rejected");
         // @allow-throw: spawn() consumed exclusively by daemon RPC handlers; @allow-throw boundary — rpc-dispatch.ts converts to a JSON-RPC error.
