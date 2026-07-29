@@ -347,7 +347,6 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "session:sub_agent_spawn_prepared",
   "session:sub_agent_spawn_queued",
   "session:sub_agent_spawn_rejected",
-  "session:sub_agent_spawned",
 
   // -------------------------------------------------------------------
   // Steering injection - orchestrator-driven mid-execution control.

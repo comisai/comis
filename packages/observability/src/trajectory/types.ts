@@ -129,6 +129,10 @@ export const TRAJECTORY_EVENT_TYPES = [
   "graph.repaired",
   "graph.synthesized_from_intent",
 
+  // A direct sessions_spawn child admitted under the active root. Content-free:
+  // run/root/parent ids, child agent id, and attenuated cap names only.
+  "subagent.spawned",
+
   // The reserved trajectory type for the
   // counts-only subagent:steered event emitted when a running child is
   // steered in-flight (transcript preserved) instead of kill+respawn. APPEND-ONLY

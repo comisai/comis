@@ -30,7 +30,7 @@ import {
 import {
   accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillUsedRecord, accumulateSkillSurfacedRecord, accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
   accumulateToolSchemaRecord, buildLearningSignal, emptyLearningFold,
-  accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord,
+  accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord, accumulateSubAgentSpawnedRecord,
   accumulateOrchestrateRunSummaryRecord, accumulateOrchestrateToolCall,
   accumulateBackgroundTaskRecord,
   parseContextBudgetRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
@@ -392,6 +392,12 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       // A graph DAG node is a spawn-tree leaf too (it never
       // crosses the socket chokepoint that emits capability.audited).
       accumulateGraphNodeSpawnedRecord(acc.spawnNodesByLease, data);
+      return;
+    case "subagent.spawned":
+      // A direct sessions_spawn child also runs in-process. Its admission
+      // lifecycle record supplies the distinct child leaf missing from the
+      // capability-endpoint audit stream.
+      accumulateSubAgentSpawnedRecord(acc.spawnNodesByLease, data);
       return;
     case "capability.audited":
       accumulateCapabilityAuditedRecord(acc.spawnNodesByLease, data, rec.agentId, acc.agentId);

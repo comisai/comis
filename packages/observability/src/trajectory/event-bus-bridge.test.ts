@@ -1868,6 +1868,14 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       nodeCount: 4,
       timestamp: 0,
     },
+    "session:sub_agent_spawned": {
+      runId: "run-child-1",
+      parentSessionKey: "parent-session",
+      agentId: "child-agent",
+      rootRunId: "root-session-1",
+      caps: ["orch:web"],
+      timestamp: 0,
+    },
     // Counts/ids + the closed-union mode only — the correlation
     // invariant must hold (no sessionKey/traceId leak into the record data).
     "subagent:steered": {
@@ -2157,6 +2165,34 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- graph:repaired + graph:synthesized_from_i
     for (const forbidden of ["intent", "nodes", "graph", "type_config", "typeConfig", "task", "label", "body"]) {
       expect(data[forbidden], `forbidden body key on trajectory record: ${forbidden}`).toBeUndefined();
     }
+  });
+});
+
+describe("TRAJECTORY_BRIDGE_MAPPING -- direct sub-agent spawn topology", () => {
+  it("records a content-free child leaf with its root and attenuated caps", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("session:sub_agent_spawned", {
+      runId: "run-child-1",
+      parentSessionKey: "parent-session",
+      agentId: "child-agent",
+      rootRunId: "root-session-1",
+      caps: ["orch:web"],
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("subagent.spawned");
+    expect(recorder.calls[0]!.data).toEqual({
+      runId: "run-child-1",
+      rootRunId: "root-session-1",
+      parentLeaseId: undefined,
+      childAgentId: "child-agent",
+      caps: ["orch:web"],
+    });
+    expect(recorder.calls[0]!.data).not.toHaveProperty("parentSessionKey");
   });
 });
 
@@ -4060,7 +4096,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // 122 = 121 + memory:recall_degraded (the degraded/failed-recall record —
     // makes a dead recall diagnosable from `comis explain` + the system health view
     // instead of a daemon.log grep).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(133);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(134);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

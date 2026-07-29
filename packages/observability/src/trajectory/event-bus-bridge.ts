@@ -142,6 +142,12 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "graph:repaired": "graph.repaired",
   "graph:synthesized_from_intent": "graph.synthesized_from_intent",
 
+  // A direct sessions_spawn child was admitted. Unlike a jailed orchestrate
+  // run it has no capability-endpoint lease, so its lifecycle event is the
+  // authoritative spawn-tree leaf. Content-free: run/root/parent ids, child
+  // agent id, and attenuated cap names only.
+  "session:sub_agent_spawned": "subagent.spawned",
+
   // A running sub-agent was steered IN-FLIGHT (a
   // high-priority message injected at the child's next step boundary, transcript
   // preserved) instead of kill+respawn. Emitted DAEMON-SIDE at the inject site

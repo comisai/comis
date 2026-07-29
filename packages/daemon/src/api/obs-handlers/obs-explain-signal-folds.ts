@@ -512,6 +512,33 @@ export function accumulateCapabilityAuditedRecord(
 }
 
 /**
+ * Fold a direct sessions_spawn admission into one spawn-tree leaf.
+ *
+ * Direct children run in-process and therefore have no capability-endpoint
+ * lease. Their stable runId is the honest node identity, while rootRunId and
+ * optional parentLeaseId preserve the tree edge.
+ */
+export function accumulateSubAgentSpawnedRecord(
+  spawnNodesByLease: Map<string, SpawnNodeFold>,
+  data: Record<string, unknown>,
+): void {
+  const runId = asString(data.runId);
+  const rootRunId = asString(data.rootRunId);
+  const childAgentId = asString(data.childAgentId);
+  if (runId === undefined || rootRunId === undefined || childAgentId === undefined) return;
+  if (spawnNodesByLease.has(runId)) return;
+  spawnNodesByLease.set(runId, {
+    leaseId: runId,
+    parentLeaseId: asString(data.parentLeaseId) ?? rootRunId,
+    rootRunId,
+    agentId: childAgentId,
+    caps: asStringArray(data.caps),
+    toolsInvoked: [],
+    denials: [],
+  } satisfies SpawnNodeFold);
+}
+
+/**
  * Fold one `graph.node_spawned` trajectory record into the
  * spawn-tree working map. A graph DAG node spawns in-process (gatedSpawn →
  * subAgentRunner.spawn), so it never crosses the socket chokepoint that emits

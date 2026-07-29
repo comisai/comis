@@ -116,6 +116,9 @@ export interface MessagingEvents {
     runId: string;
     parentSessionKey: string;
     agentId: string;
+    rootRunId: string;
+    parentLeaseId?: string;
+    caps: string[];
     timestamp: number;
   };
 

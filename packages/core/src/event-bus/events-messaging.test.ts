@@ -181,6 +181,8 @@ describe("MessagingEvents payload structure", () => {
       runId: "run-001",
       parentSessionKey: "parent-session",
       agentId: "sub-agent-1",
+      rootRunId: "root-001",
+      caps: ["orch:web"],
       timestamp: Date.now(),
     };
 
@@ -192,6 +194,8 @@ describe("MessagingEvents payload structure", () => {
     expect(received.runId).toBe("run-001");
     expect(received.parentSessionKey).toBe("parent-session");
     expect(received.agentId).toBe("sub-agent-1");
+    expect(received.rootRunId).toBe("root-001");
+    expect(received.caps).toEqual(["orch:web"]);
     expect(received).not.toHaveProperty("task");
   });
 
@@ -800,6 +804,8 @@ describe("Subagent context lifecycle events", () => {
       runId: "run-001",
       parentSessionKey: "parent-session",
       agentId: "sub-agent-1",
+      rootRunId: "root-001",
+      caps: ["orch:web"],
       timestamp: Date.now(),
     };
 

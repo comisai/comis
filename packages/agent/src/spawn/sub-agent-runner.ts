@@ -2712,7 +2712,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
         deps.eventBus.emit("session:sub_agent_spawned", {
           runId, parentSessionKey: params.callerSessionKey ?? "unknown",
-          agentId: params.agentId, timestamp: clock.now(),
+          agentId: params.agentId,
+          rootRunId: run.rootRunId,
+          ...(run.parentLeaseId !== undefined ? { parentLeaseId: run.parentLeaseId } : {}),
+          caps: [...run.caps],
+          timestamp: clock.now(),
         });
 
         deps.logger?.info({
