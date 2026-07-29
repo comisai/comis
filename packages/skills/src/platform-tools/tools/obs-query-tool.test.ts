@@ -495,6 +495,46 @@ describe("obs_query tool", () => {
         _trustLevel: "admin",
       });
     });
+
+    it("defaults an unqualified explain request to the current session", async () => {
+      mockRpcCall.mockResolvedValue({ sessionKey: "test-session" });
+
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-ex2", {
+          action: "explain",
+          depth: "summary",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.explain", {
+        sessionKey: "test-session",
+        traceId: undefined,
+        depth: "summary",
+        _trustLevel: "admin",
+      });
+    });
+
+    it("does not add the current session when an explicit trace is provided", async () => {
+      mockRpcCall.mockResolvedValue({ traceId: "trace-a" });
+
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-ex3", {
+          action: "explain",
+          trace_id: "trace-a",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.explain", {
+        sessionKey: undefined,
+        traceId: "trace-a",
+        depth: undefined,
+        _trustLevel: "admin",
+      });
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -542,6 +582,25 @@ describe("obs_query tool", () => {
 
       expect(mockRpcCall).toHaveBeenCalledWith("obs.explain", {
         sessionKey: "tenant:user:ch:ts",
+        traceId: undefined,
+        depth: "summary",
+        _trustLevel: "admin",
+      });
+    });
+
+    it("defaults an unqualified session report to the current session", async () => {
+      mockRpcCall.mockResolvedValue({ sessionKey: "test-session" });
+
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-sr2", {
+          action: "session_report",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.explain", {
+        sessionKey: "test-session",
         traceId: undefined,
         depth: "summary",
         _trustLevel: "admin",
