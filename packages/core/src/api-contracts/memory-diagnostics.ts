@@ -28,7 +28,8 @@ import { defineContract } from "./types.js";
 
 /**
  * `memory.recall_trace` — read recall-trace JSONL records for one recall,
- * keyed by `session_key` OR `trace_id` (admin-only). Models the obs-trace
+ * keyed by `session_key` or `trace_id` (admin-only). At least one selector is
+ * required; when both are supplied, both constrain the result. Models the obs-trace
  * file-reading handler (`bindObsTraceHandlers`): the handler reads
  * the `diagnostics.recallTrace` artifact (LRU + day-bounded scan) and returns
  * the matching records.

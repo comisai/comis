@@ -319,7 +319,7 @@ export function registerMemoryCommand(program: Command): void {
   memory
     .command("recall-trace <session>")
     .description("Inspect a session's hybrid-recall trace (admin)")
-    .option("--trace-id <id>", "Filter by trace id instead of / alongside the session")
+    .option("--trace-id <id>", "Constrain the session records to this trace id")
     .requiredOption("--tenant <tenantId>", "Tenant authority for the recall trace")
     .requiredOption("--agent <agentId>", "Agent authority for the recall trace")
     .option("--limit <n>", "Maximum records to return", "200")
