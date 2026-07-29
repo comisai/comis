@@ -293,6 +293,62 @@ describe("assembleSystemHealthReport (4-source read fan-in)", () => {
     expect(report.cost.offSessionUsd).toBeCloseTo(0.05, 5);
   });
 
+  it("uses the billing ledger for cost, token, and call totals even when a call has no session summary", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    store.insertDiagnostic({
+      timestamp: now - 1_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "default:user_a:telegram:peer:user_a",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.1, turnCount: 1 }),
+    });
+    const usage = {
+      timestamp: now - 500,
+      traceId: "trace-a",
+      agentId: "default",
+      channelId: "telegram",
+      sessionKey: "default:user_a:telegram:peer:user_a",
+      provider: "openai",
+      model: "gpt",
+      promptTokens: 400,
+      completionTokens: 100,
+      totalTokens: 900,
+      cacheReadTokens: 400,
+      cacheWriteTokens: 0,
+      costInput: 0.2,
+      costOutput: 0.1,
+      costTotal: 0.3,
+      costCacheRead: 0,
+      costCacheWrite: 0,
+      cacheSaved: 0,
+      latencyMs: 100,
+    };
+    store.insertTokenUsage(usage);
+    store.insertTokenUsage({
+      ...usage,
+      timestamp: now - 250,
+      traceId: "trace-interrupted",
+      costTotal: 0.2,
+      totalTokens: 600,
+    });
+
+    const report = await assembleSystemHealthReport({
+      obsStore: store,
+      dataDir: makeDataDirWithActivity(),
+      clock: createFakeClock(now),
+    }, 24);
+
+    expect(report.cost).toMatchObject({
+      costUsd: 0.5,
+      totalTokens: 1_500,
+      callCount: 2,
+      tokenBasis: "input+output+cache",
+    });
+    expect(report.coverage?.billing).toEqual({ present: true });
+  });
+
   it("reports offSessionUsd = 0 when there is no synthetic/background spend", async () => {
     const now = systemNowMs();
     const store = makeStore();

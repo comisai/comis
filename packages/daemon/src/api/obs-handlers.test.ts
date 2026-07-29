@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
 import { err, ok } from "@comis/shared";
+import { systemDateFrom } from "@comis/core";
 import { createObsHandlers } from "./obs-handlers/index.js";
 import type { ObsHandlerDeps } from "./obs-handlers/index.js";
 
@@ -422,6 +423,148 @@ describe("createObsHandlers - dual-source merge", () => {
     expect(result.totalCost).toBeCloseTo(1.5);
     expect(result.totalTokens).toBe(3000);
     expect(result.callCount).toBe(15);
+  });
+
+  it("obs.billing.byProvider excludes persisted current-process rows before adding live usage", async () => {
+    const startupTs = 1_000;
+    const inMemoryProviders = [{
+      provider: "anthropic",
+      totalCost: 0.5,
+      totalTokens: 1_000,
+      callCount: 5,
+      totalCacheSaved: 0.05,
+      models: [{ model: "claude", cost: 0.5, tokens: 1_000, calls: 5 }],
+    }];
+    const allPersisted = [
+      { provider: "anthropic", model: "claude", totalCost: 1, totalTokens: 2_000, callCount: 10, totalCacheSaved: 0.1 },
+      { provider: "openai", model: "gpt", totalCost: 0.3, totalTokens: 500, callCount: 3, totalCacheSaved: 0.02 },
+    ];
+    const currentPersisted = [
+      { provider: "anthropic", model: "claude", totalCost: 0.5, totalTokens: 1_000, callCount: 5, totalCacheSaved: 0.05 },
+    ];
+    const aggregateByProvider = vi.fn()
+      .mockReturnValueOnce(allPersisted)
+      .mockReturnValueOnce(currentPersisted);
+    const deps = makeDeps({
+      billingEstimator: {
+        byProvider: vi.fn().mockReturnValue(inMemoryProviders),
+        byAgent: vi.fn().mockReturnValue({ totalCost: 0, totalTokens: 0, callCount: 0 }),
+        bySession: vi.fn().mockReturnValue({ totalCost: 0, totalTokens: 0, callCount: 0 }),
+        total: vi.fn().mockReturnValue({ totalCost: 0, totalTokens: 0, callCount: 0 }),
+        usage24h: vi.fn().mockReturnValue([]),
+      },
+      obsStore: makeObsStore({ aggregateByProvider }) as unknown as ObsHandlerDeps["obsStore"],
+      startupTimestamp: startupTs,
+    });
+
+    const result = await createObsHandlers(deps)["obs.billing.byProvider"]!({
+      _trustLevel: "admin",
+    }) as { providers: Array<{ provider: string; totalCost: number; totalTokens: number; callCount: number }> };
+
+    expect(result.providers).toEqual([
+      expect.objectContaining({ provider: "anthropic", totalCost: 1, totalTokens: 2_000, callCount: 10 }),
+      expect.objectContaining({ provider: "openai", totalCost: 0.3, totalTokens: 500, callCount: 3 }),
+    ]);
+    expect(aggregateByProvider).toHaveBeenNthCalledWith(1, undefined);
+    expect(aggregateByProvider).toHaveBeenNthCalledWith(2, startupTs);
+  });
+
+  it("obs.billing.bySession excludes persisted current-process rows before adding live usage", async () => {
+    const startupTs = 1_000;
+    const aggregateBySession = vi.fn()
+      .mockReturnValueOnce({ sessionKey: "session-a", totalCost: 1, totalTokens: 2_000, callCount: 10, totalCacheSaved: 0.1 })
+      .mockReturnValueOnce({ sessionKey: "session-a", totalCost: 0.5, totalTokens: 1_000, callCount: 5, totalCacheSaved: 0.05 });
+    const deps = makeDeps({
+      billingEstimator: {
+        byProvider: vi.fn().mockReturnValue([]),
+        byAgent: vi.fn().mockReturnValue({ totalCost: 0, totalTokens: 0, callCount: 0 }),
+        bySession: vi.fn().mockReturnValue({ totalCost: 0.5, totalTokens: 1_000, callCount: 5, totalCacheSaved: 0.05 }),
+        total: vi.fn().mockReturnValue({ totalCost: 0, totalTokens: 0, callCount: 0 }),
+        usage24h: vi.fn().mockReturnValue([]),
+      },
+      obsStore: makeObsStore({ aggregateBySession }) as unknown as ObsHandlerDeps["obsStore"],
+      startupTimestamp: startupTs,
+    });
+
+    const result = await createObsHandlers(deps)["obs.billing.bySession"]!({
+      _trustLevel: "admin",
+      sessionKey: "session-a",
+    }) as { totalCost: number; totalTokens: number; callCount: number; totalCacheSaved: number };
+
+    expect(result).toMatchObject({
+      totalCost: 1,
+      totalTokens: 2_000,
+      callCount: 10,
+      totalCacheSaved: 0.1,
+    });
+    expect(aggregateBySession).toHaveBeenNthCalledWith(1, "session-a", undefined);
+    expect(aggregateBySession).toHaveBeenNthCalledWith(2, "session-a", startupTs);
+  });
+
+  it("obs.billing.total excludes persisted current-process rows before adding live usage", async () => {
+    const startupTs = 1_000;
+    const aggregateByProvider = vi.fn()
+      .mockReturnValueOnce([
+        { provider: "anthropic", model: "claude", totalCost: 1, totalTokens: 2_000, callCount: 10, totalCacheSaved: 0.1 },
+      ])
+      .mockReturnValueOnce([
+        { provider: "anthropic", model: "claude", totalCost: 0.5, totalTokens: 1_000, callCount: 5, totalCacheSaved: 0.05 },
+      ]);
+    const deps = makeDeps({
+      billingEstimator: {
+        byProvider: vi.fn().mockReturnValue([]),
+        byAgent: vi.fn().mockReturnValue({ totalCost: 0, totalTokens: 0, callCount: 0 }),
+        bySession: vi.fn().mockReturnValue({ totalCost: 0, totalTokens: 0, callCount: 0 }),
+        total: vi.fn().mockReturnValue({ totalCost: 0.5, totalTokens: 1_000, callCount: 5, totalCacheSaved: 0.05 }),
+        usage24h: vi.fn().mockReturnValue([]),
+      },
+      obsStore: makeObsStore({ aggregateByProvider }) as unknown as ObsHandlerDeps["obsStore"],
+      startupTimestamp: startupTs,
+    });
+
+    const result = await createObsHandlers(deps)["obs.billing.total"]!({
+      _trustLevel: "admin",
+    }) as { totalCost: number; totalTokens: number; callCount: number; totalCacheSaved: number };
+
+    expect(result).toEqual({
+      totalCost: 1,
+      totalTokens: 2_000,
+      callCount: 10,
+      totalCacheSaved: 0.1,
+    });
+    expect(aggregateByProvider).toHaveBeenNthCalledWith(1, undefined);
+    expect(aggregateByProvider).toHaveBeenNthCalledWith(2, startupTs);
+  });
+
+  it("obs.billing.usage24h excludes persisted current-process rows before adding live usage", async () => {
+    const startupTs = 1_000;
+    const hour = systemDateFrom(0).getHours();
+    const aggregateHourly = vi.fn()
+      .mockReturnValueOnce([{ hour: 0, totalCost: 1, totalTokens: 300, callCount: 3, totalCacheSaved: 0 }])
+      .mockReturnValueOnce([{ hour: 0, totalCost: 0.4, totalTokens: 100, callCount: 1, totalCacheSaved: 0 }]);
+    const live = Array.from({ length: 24 }, (_, candidate) => ({
+      hour: candidate,
+      tokens: candidate === hour ? 100 : 0,
+    }));
+    const deps = makeDeps({
+      billingEstimator: {
+        byProvider: vi.fn().mockReturnValue([]),
+        byAgent: vi.fn().mockReturnValue({ totalCost: 0, totalTokens: 0, callCount: 0 }),
+        bySession: vi.fn().mockReturnValue({ totalCost: 0, totalTokens: 0, callCount: 0 }),
+        total: vi.fn().mockReturnValue({ totalCost: 0, totalTokens: 0, callCount: 0 }),
+        usage24h: vi.fn().mockReturnValue(live),
+      },
+      obsStore: makeObsStore({ aggregateHourly }) as unknown as ObsHandlerDeps["obsStore"],
+      startupTimestamp: startupTs,
+    });
+
+    const result = await createObsHandlers(deps)["obs.billing.usage24h"]!({
+      _trustLevel: "admin",
+    }) as Array<{ hour: number; tokens: number }>;
+
+    expect(result.find((point) => point.hour === hour)?.tokens).toBe(300);
+    expect(aggregateHourly).toHaveBeenCalledTimes(2);
+    expect(aggregateHourly).toHaveBeenNthCalledWith(2, startupTs);
   });
 
   it("obs.delivery.recent merges historical SQLite + in-memory, sorted by deliveredAt desc", async () => {
