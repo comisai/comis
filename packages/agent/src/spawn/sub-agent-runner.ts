@@ -2048,7 +2048,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         || (reuseConversation !== undefined && (
           reuseConversation.conversationScope.tenantId !== requesterOrigin.tenantId
         ))
-        || (callerEndpoint !== undefined && (
+        // An agent-origin nested spawn has two independently authenticated
+        // routes: the current internal sub-agent endpoint and the inherited
+        // external requester origin. They are intentionally different. The
+        // principal checks above bind both to the live RequestContext, so only
+        // context-independent callers need this cross-field equality check.
+        || (isContextIndependentSpawn && callerEndpoint !== undefined && (
           callerEndpoint.channelType !== requesterOrigin.channelType
           || callerEndpoint.conversationId !== requesterOrigin.channelId
           || callerEndpoint.threadId !== requesterOrigin.threadId

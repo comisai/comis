@@ -306,6 +306,34 @@ describe("sub-agent request context", () => {
     await runner.shutdown();
   });
 
+  it("keeps a context-independent endpoint bound to its requester origin", async () => {
+    const runner = createSubAgentRunner(createDeps(async () => successResult()));
+    const requesterOrigin = createDeliveryOrigin({
+      channelType: "telegram",
+      channelId: "chat_a",
+      userId: "user_a",
+      tenantId: "tenant_a",
+    });
+
+    expect(() => runner.spawn({
+      task: "use an independently authenticated route",
+      agentId: "child-agent",
+      callerType: "control-plane",
+      requesterOrigin,
+      announceChannelType: requesterOrigin.channelType,
+      announceChannelId: requesterOrigin.channelId,
+      callerEndpoint: {
+        channelType: "telegram",
+        channelInstanceId: "test-instance",
+        conversationId: "other_chat",
+        conversationKind: "direct",
+      },
+    })).toThrow(/announcement route/i);
+
+    expect(runner.listRuns()).toHaveLength(0);
+    await runner.shutdown();
+  });
+
   it("rejects a direct spawn whose caller session differs from the ambient principal", async () => {
     const deps = createDeps(vi.fn(async () => successResult()));
     const runner = createSubAgentRunner(deps);
