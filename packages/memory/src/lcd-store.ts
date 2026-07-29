@@ -745,8 +745,8 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     },
 
     runOnConversation<T>(conversationRef: string, fn: () => T | Promise<T>): Promise<T> {
-      // Serialize the live ingest write and the deferred
-      // compaction write per conversation so they cannot interleave on the
+      // Serialize live ingest and the short deferred-compaction commit per
+      // conversation so they cannot interleave on the
       // (conversation_ref, agent_id, tenant_id, seq) unique index / context_items
       // ordinals. Different conversations run concurrently (the
       // queue is per-conversation). The store does not log here — observability

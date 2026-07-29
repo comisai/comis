@@ -613,6 +613,21 @@ describe("dagDegradedEventToRow", () => {
     });
   });
 
+  it("preserves live-turn trace correlation on a serialized LCD wait", () => {
+    const row = dagDegradedEventToRow({
+      conversationId: "conversation_a",
+      agentId: "agent_a",
+      sessionKey: "session_a",
+      reason: "serialized_wait",
+      durationMs: 12_000,
+      timestamp: 50_000,
+      traceId: "trace_a",
+    });
+
+    expect(row.traceId).toBe("trace_a");
+    expect(row.severity).toBe("info");
+  });
+
   it("carries each divergence reason through verbatim (closed union — safe)", () => {
     for (const reason of ["leaf_window_divergence", "condense_window_divergence"] as const) {
       const row = dagDegradedEventToRow({

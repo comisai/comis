@@ -585,6 +585,7 @@ describe("maybeRunCondensePass — single resolved snapshot is the source of tru
         if (calls === 1) return rows.map((s) => ({ ...s, taint: true }));
         return rows.map((s) => ({ ...s, taint: false }));
       },
+      runOnConversation: (id, fn) => store.runOnConversation(id, fn),
     };
     return { wrapped, getSummariesCalls: () => calls };
   }

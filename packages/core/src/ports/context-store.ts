@@ -161,15 +161,17 @@ export interface ContextStorePort {
     opts: { limit: number; scope?: "messages" | "summaries" | "both" },
   ): LcdSearchResult;
   /**
-   * Per-conversation single-flight: run `fn` on the queue
-   * dedicated to `conversationRef`. Serializes the live ingest write and the
-   * deferred compaction write so they cannot interleave on
+   * Per-conversation mutation single-flight: run `fn` on the queue
+   * dedicated to `conversationRef`. Serializes live ingest and the synchronous
+   * commit section of deferred compaction so they cannot interleave on
    * (conversation_ref, agent_id, tenant_id, seq) / the lcd_context_items ordinals
    * — the integrity boundary the deferred second writer requires.
    * Operations on the same conversation are strictly one-at-a-time; operations
    * on different conversations run concurrently (the queue is per-conversation,
-   * never a global lock). Accepts a synchronous OR async `fn` (the live ingest's
-   * better-sqlite3 append is synchronous; the deferred compaction is async). The
+   * never a global lock). Callers must not hold this queue across external I/O;
+   * slow summarization runs on a separate maintenance queue and reacquires this
+   * port only for its synchronous, revalidated range-replace. Accepts a
+   * synchronous OR async `fn`. The
    * agent has no p-queue dependency, so it reaches the memory-owned per-
    * conversation queue ONLY through this port method (the agent↛memory cut holds).
    */

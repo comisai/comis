@@ -96,6 +96,7 @@ import { runLeafPassAfterTurn } from "./lcd-compaction-trigger.js";
 // call here is a single non-fatal invocation. The agent↛memory cut: the condense
 // trigger imports only core types + the agent-side condense summarizer.
 import { runCondensePassAfterTurn } from "./lcd-condense-trigger.js";
+import { enqueueContextMaintenance } from "./lcd-maintenance-queue.js";
 // LCD→LTM distillation runner. Fires via the
 // onCondensed callback on runCondensePassAfterTurn — non-fatal, fire-and-forget
 // (mirrors the condense pass's own non-fatal wrapping). The agent↛memory cut:
@@ -1761,16 +1762,17 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         []) as Parameters<typeof ingestTurnGuarded>[2];
     const store = deps.contextStore;
 
-    // Route the live ingest write through the per-conversation
-    // single-flight serializer so it shares the queue with the (prior turn's)
-    // deferred compaction and can never interleave on (conversation_id, agent_id,
-    // tenant_id, seq) / the context_items ordinals. ingestTurnGuarded
+    // Route the live ingest write through the per-conversation short mutation
+    // serializer. Slow summarization uses its own maintenance queue and
+    // reacquires this serializer only for its synchronous range-replace.
+    // ingestTurnGuarded
     // is NON-FATAL (skip+WARN); on a fail-closed rollover (an ambiguous/malformed
     // scope) it invokes onFailClosed → we emit a content-free context:dag_degraded
     // (reason fail_closed_rollover) so the refusal is observable on the bus. We
     // AWAIT this slot so the ingest's seq slot is claimed in order before the turn
-    // returns (the ingest write is a fast synchronous append — it does not block
-    // on the deferred compaction, which rides the same queue BEHIND it).
+    // returns. If this short critical section ever waits materially, emit a
+    // trace-correlated signal: the symptom otherwise looks like a successful
+    // model execution whose channel reply arrived minutes late.
     const ingestStart = deps.clock.now();
     await store.runOnConversation(conversationRef, () =>
       ingestTurnGuarded(
@@ -1818,6 +1820,31 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         },
       ),
     );
+    const ingestDurationMs = Math.max(0, deps.clock.now() - ingestStart);
+    if (ingestDurationMs >= 1_000) {
+      const traceId = tryGetContext()?.traceId;
+      deps.logger.warn(
+        {
+          conversationRef,
+          agentId: scope.agentId,
+          sessionKey: scope.sessionKey,
+          traceId,
+          durationMs: ingestDurationMs,
+          hint: "Inspect LCD maintenance and summarizer latency; live ingest should hold the mutation serializer only for its synchronous commit",
+          errorKind: "resource" as const,
+        },
+        "LCD live ingest waited on the mutation serializer",
+      );
+      deps.eventBus.emit("context:dag_degraded", {
+        conversationId: scope.conversationRef,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        reason: "serialized_wait",
+        durationMs: ingestDurationMs,
+        timestamp: deps.clock.now(),
+        traceId,
+      });
+    }
 
     // The two NON-FATAL afterTurn passes (never reject):
     // the leaf threshold sweep, then the condense fold (AFTER the
@@ -1899,10 +1926,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
 
     // Deferral gate: config.contextEngine.deferCompaction (default true).
     if (config.contextEngine?.deferCompaction ?? true) {
-      // DEFERRED: enqueue the passes onto the SAME per-conversation serializer as
-      // a DETACHED unit and do NOT await it — afterTurn returns once the ingest
-      // slot is claimed + the compaction is enqueued, BEFORE the compaction write
-      // runs (compaction never blocks the turn). The detached promise is wrapped
+      // DEFERRED: enqueue the passes onto the slow per-conversation maintenance
+      // queue as a DETACHED unit and do NOT await it. The summarizer never owns
+      // the live-ingest mutation serializer; each pass reacquires that serializer
+      // only for its synchronous, stale-snapshot-guarded range-replace. The
+      // detached promise is wrapped
       // in suppressError so a rejection is logged, NEVER swallowed by a bare empty
       // catch (AGENTS.md §2.2).
       //
@@ -1914,8 +1942,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       // outlive the session. (Lifetime contract, documented on
       // snapshotSummarizerDepsForDefer.)
       const deferredSummarizerGetter = snapshotSummarizerDepsForDefer(deps.getSummarizerDeps);
-      const deferred = store.runOnConversation(conversationRef, () =>
-        runDeferredPasses(deferredSummarizerGetter),
+      const deferred = enqueueContextMaintenance(
+        conversationRef,
+        () => runDeferredPasses(deferredSummarizerGetter),
       );
       suppressError(deferred, "postExecution deferred LCD compaction");
     } else {

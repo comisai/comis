@@ -70,6 +70,10 @@ import {
 import { LCD_MAX_LEAF_PASSES_PER_TURN, SUMMARIZER_PROMPT_OVERHEAD_TOKENS } from "../context-engine/constants.js";
 import { clampFactorText, emitSummaryLanguageMismatch } from "../context-engine/compaction-zone-helpers.js";
 import { previousSummaryContent, chunkOrdinalWindow } from "./lcd-compaction-helpers.js";
+import {
+  commitLeafSummaryIfCurrent,
+  reportStaleCompactionCommit,
+} from "./lcd-compaction-commit.js";
 import type {
   CondenseChildSummary,
   SummaryRefRun,
@@ -289,7 +293,7 @@ interface LeafPassResult {
  * `context:dag_compacted` emit → completion INFO. Shared by the
  * capability-eviction branch and the over-cap chunk branch.
  */
-function persistDeterministicLeafFloor(
+async function persistDeterministicLeafFloor(
   store: ContextStorePort,
   scope: ContextStoreScope,
   chunkItems: LeafChunkItem[],
@@ -301,12 +305,12 @@ function persistDeterministicLeafFloor(
   logger: ComisLogger,
   eventBus: TypedEventBus | undefined,
   completionMessage: string,
-): LeafPassResult {
+): Promise<LeafPassResult> {
   const nanoExtraction = buildNanoStructuredExtraction(
     chunkItems.map((it) => it.msg),
     chunkTokens,
   );
-  store.appendLeafSummary({
+  const committed = await commitLeafSummaryIfCurrent(store, scope, chunkItems.map((item) => item.id), {
     scope,
     content: nanoExtraction.content,
     descendantCount: chunkItems.length,
@@ -320,6 +324,13 @@ function persistDeterministicLeafFloor(
     startOrdinal: window.startOrdinal,
     endOrdinal: window.endOrdinal,
   });
+  if (!committed) {
+    reportStaleCompactionCommit({
+      kind: "leaf", scope, durationMs: Math.max(0, (nowFn?.() ?? now) - passStart),
+      timestamp: nowFn?.() ?? now, logger, eventBus,
+    });
+    return { made: false, reason: "divergence" };
+  }
   // Pass timing + dag_compacted event (counts only — never content).
   const durationMs = Math.max(0, (nowFn?.() ?? now) - passStart);
   eventBus?.emit("context:dag_compacted", {
@@ -550,7 +561,7 @@ async function runOneLeafPass(
   // one atomic store transaction. The store recomputes the covered-run
   // descendantCount/time-range; we pass the chunk values as advisory + the exact
   // window the summary-ref replaces.
-  store.appendLeafSummary({
+  const committed = await commitLeafSummaryIfCurrent(store, scope, chunk.messageIds, {
     scope,
     content: result.content,
     descendantCount: result.descendantCount,
@@ -564,6 +575,15 @@ async function runOneLeafPass(
     startOrdinal: window.startOrdinal,
     endOrdinal: window.endOrdinal,
   });
+  if (!committed) {
+    reportStaleCompactionCommit({
+      kind: "leaf", scope,
+      durationMs: Math.max(0, (nowFn?.() ?? now) - passStart),
+      timestamp: nowFn?.() ?? now,
+      logger, eventBus,
+    });
+    return { made: false, reason: "divergence" };
+  }
 
   // The small-model language-mismatch detector — a non-Latin chunk whose
   // leaf summary came back Latin emits context:summary_language_mismatch (depth

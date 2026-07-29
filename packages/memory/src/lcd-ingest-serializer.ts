@@ -2,15 +2,11 @@
 /**
  * Per-conversation single-flight ingest serializer.
  *
- * The afterTurn leaf + condense compaction passes run DEFERRED — detached off the
- * turn, so afterTurn returns before the compaction's store write
- * completes. That introduces a SECOND writer to a conversation's lossless store
- * (the deferred compaction) which can race the NEXT turn's synchronous ingest on
- * the `(conversation_ref, agent_id, tenant_id, seq)` unique index and the
- * `lcd_context_items` ordinals. This serializer is the integrity
- * boundary between them: BOTH the live ingest write AND the deferred compaction
- * write enqueue onto a per-conversation `PQueue({ concurrency: 1 })`, so on one
- * conversation they are strictly one-at-a-time and can never interleave.
+ * Live ingest and the synchronous commit section of deferred compaction are both
+ * writers to a conversation's lossless store. This serializer is the integrity
+ * boundary between those short mutations. Slow summarization must stay outside
+ * this queue; after it resolves, the caller reacquires the queue, revalidates its
+ * selected ordinal window, and performs one atomic range-replace.
  *
  * Per-conversation (NOT a single global lock): each conversationRef lazily gets
  * its OWN queue, so operations on DIFFERENT conversations run concurrently — a
@@ -46,8 +42,8 @@ export interface IngestSerializer {
   /**
    * Run `fn` on `conversationRef`'s single-flight queue. Operations on the same
    * conversation are strictly serialized; operations on different conversations
-   * run concurrently. Accepts a synchronous OR async `fn` (the live ingest's
-   * better-sqlite3 `append` is synchronous; the deferred compaction is async).
+   * run concurrently. Accepts a synchronous OR async `fn`; callers keep the
+   * critical section bounded to store work and never await external I/O.
    */
   runOnConversation<T>(conversationRef: string, fn: () => T | Promise<T>): Promise<T>;
 }
@@ -57,9 +53,7 @@ export interface IngestSerializer {
  *
  * Backed by a `Map<conversationRef, PQueue>` where each queue has
  * `concurrency: 1` (single-flight). Queues are lazily created on first use for a
- * conversation and retained for the process lifetime (the conversation set is
- * bounded by the active sessions; an unbounded-growth eviction policy is a
- * deferred concern, not a correctness issue here).
+ * conversation and retained for the process lifetime.
  */
 export function createIngestSerializer(): IngestSerializer {
   // One single-flight queue per conversationRef. Lazily created; never a single

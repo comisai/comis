@@ -71,6 +71,10 @@ import { resolveSummarizerWindowTokens } from "../context-engine/summarizer-wind
 import { SUMMARIZER_PROMPT_OVERHEAD_TOKENS } from "../context-engine/constants.js";
 import { emitSummaryLanguageMismatch } from "../context-engine/compaction-zone-helpers.js";
 import { resolveContext } from "./lcd-compaction-trigger.js";
+import {
+  commitCondensedSummaryIfCurrent,
+  reportStaleCompactionCommit,
+} from "./lcd-compaction-commit.js";
 
 /**
  * The gating + sizing knobs for one condense pass, sourced from
@@ -312,7 +316,7 @@ export async function maybeRunCondensePass(
     // fallback/tokenCount/content come from here (the agent-side authority).
     // Capture the summaryId returned by appendCondensedSummary for the onCondensed
     // callback (the distillation hook seam).
-    const summaryId = store.appendCondensedSummary({
+    const summaryId = await commitCondensedSummaryIfCurrent(store, scope, childSummaryIds, {
       scope,
       content: result.content,
       tokenCount: result.tokenCount,
@@ -332,6 +336,15 @@ export async function maybeRunCondensePass(
       childSummaryIds,
       depth,
     });
+    if (summaryId === undefined) {
+      reportStaleCompactionCommit({
+        kind: "condense", scope,
+        durationMs: Math.max(0, (nowFn?.() ?? now) - passStart),
+        timestamp: nowFn?.() ?? now,
+        logger, eventBus,
+      });
+      return;
+    }
 
     // Fire the optional distillation hook immediately after the
     // condensed summary is persisted. Non-fatal — errors from the hook MUST NOT
