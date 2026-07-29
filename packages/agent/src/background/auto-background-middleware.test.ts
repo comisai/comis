@@ -529,9 +529,9 @@ describe("wrapToolForAutoBackground", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Never-auto-background tools: the background-task META tool and the
-  // self-delivering media-generation tools must never be promoted (regardless
-  // of excludeTools config), exactly like exec.
+  // Never-auto-background tools: observer/wait tools and the self-delivering
+  // media-generation tools must never be promoted (regardless of excludeTools
+  // config), exactly like exec.
   //
   // Live incident (2026-07-08): a "make me an image" request auto-promoted
   // image_generate at the 10s threshold and returned a "backgrounded"
@@ -554,7 +554,13 @@ describe("wrapToolForAutoBackground", () => {
     // notice leaked to the user. Backgrounding a WAIT is self-defeating — the
     // stub returns instantly (defeating the wait) and the completion notice is
     // pure noise.
-    for (const name of ["background_tasks", "sleep", "image_generate", "video_generate"]) {
+    for (const name of [
+      "background_tasks",
+      "subagents",
+      "sleep",
+      "image_generate",
+      "video_generate",
+    ]) {
       it(`when tool.name === '${name}', wrapToolForAutoBackground returns the original tool unchanged (excludeTools=[])`, () => {
         config.excludeTools = [];
         const tool = createMockTool({ name });
