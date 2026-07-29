@@ -481,7 +481,8 @@ export function accumulateCapabilityAuditedRecord(
  *
  * Direct children run in-process and therefore have no capability-endpoint
  * lease. Their stable runId is the honest node identity, while rootRunId and
- * optional parentLeaseId preserve the tree edge.
+ * the immediate parentRunId preserve nested tree edges. A real parentLeaseId
+ * remains the fallback for lease-backed callers.
  */
 export function accumulateSubAgentSpawnedRecord(
   spawnNodesByLease: Map<string, SpawnNodeFold>,
@@ -494,7 +495,7 @@ export function accumulateSubAgentSpawnedRecord(
   if (spawnNodesByLease.has(runId)) return;
   spawnNodesByLease.set(runId, {
     leaseId: runId,
-    parentLeaseId: asString(data.parentLeaseId) ?? rootRunId,
+    parentLeaseId: asString(data.parentRunId) ?? asString(data.parentLeaseId) ?? rootRunId,
     rootRunId,
     agentId: childAgentId,
     caps: asStringArray(data.caps),
