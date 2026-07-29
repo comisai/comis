@@ -1486,6 +1486,44 @@ describe("setupTools", () => {
       expect(sandboxArg.configReadOnlyPaths).toEqual(["/test/data/logs"]);
     });
 
+    it("threads the current hidden tool-results exception through file and exec read boundaries", async () => {
+      const hiddenRoot = "/workspace/agent-1/sessions";
+      const ownResults = `${hiddenRoot}/default/sub-agent-own/tool-results`;
+      const deps = createMinimalDeps({
+        sandboxProvider: createMockSandboxProvider() as any,
+        agents: {
+          "agent-1": {
+            skills: {
+              builtinTools: { browser: false, exec: true, process: false },
+              toolPolicy: { profile: "default" },
+              discoveryPaths: [],
+              execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
+            },
+          } as any,
+        },
+      });
+
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+      await assembleToolsForAgent("agent-1", {
+        securityBoundary: {
+          hiddenPaths: [hiddenRoot],
+          hiddenReadAllowPaths: [ownResults],
+          requireSandboxedExecution: true,
+        },
+      } as never);
+
+      const pipelineArgs = mockAssembleToolPipeline.mock.calls[0][0];
+      pipelineArgs.platformTools();
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
+
+      expect(pipelineArgs.readOnlyPaths).toContain(ownResults);
+      expect(pipelineArgs.hiddenPaths).toEqual([hiddenRoot]);
+      expect(pipelineArgs.hiddenReadAllowPaths).toEqual([ownResults]);
+      expect(sandboxArg.hiddenPaths).toEqual([hiddenRoot]);
+      expect(sandboxArg.hiddenReadAllowPaths).toEqual([ownResults]);
+    });
+
     it("passes sandboxCfg to exec tool when coding toolGroup used with builtinTools.exec true", async () => {
       const deps = createMinimalDeps({
         sandboxProvider: createMockSandboxProvider() as any,

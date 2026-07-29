@@ -834,6 +834,9 @@ describe("setupCrossSession", () => {
       workspacePath: "/mock/workspace/agent-2",
       securityBoundary: {
         hiddenPaths: ["/mock/workspace/agent-2/sessions"],
+        hiddenReadAllowPaths: [
+          "/mock/workspace/agent-2/sessions/t-1/chan-1/tool-results",
+        ],
         requireSandboxedExecution: true,
       },
     }));

@@ -173,6 +173,32 @@ describe("BwrapProvider", () => {
       expect(hiddenMask).toBeGreaterThan(workspaceBind);
     });
 
+    it("re-exposes only an allowlisted hidden descendant read-only after the parent mask", () => {
+      const hiddenRoot = "/home/agent/workspace/sessions";
+      const ownResults = `${hiddenRoot}/default/sub-agent-own/tool-results`;
+      const siblingResults = `${hiddenRoot}/default/sub-agent-sibling/tool-results`;
+      vi.mocked(existsSync).mockImplementation((candidate) =>
+        String(candidate) === ownResults
+        || String(candidate) === siblingResults);
+
+      const provider = createAvailableProvider();
+      const args = provider.buildArgs(makeOpts({
+        hiddenPaths: [hiddenRoot],
+        hiddenReadAllowPaths: [ownResults, "/home/agent/workspace/not-hidden"],
+      } as unknown as Partial<SandboxOptions>));
+      const hiddenMask = args.findIndex((value, index) =>
+        value === "--tmpfs" && args[index + 1] === hiddenRoot);
+      const ownReadBind = args.findIndex((value, index) =>
+        value === "--ro-bind"
+        && args[index + 1] === ownResults
+        && args[index + 2] === ownResults);
+
+      expect(hiddenMask).toBeGreaterThan(0);
+      expect(ownReadBind).toBeGreaterThan(hiddenMask);
+      expect(args).not.toContain(siblingResults);
+      expect(args).not.toContain("/home/agent/workspace/not-hidden");
+    });
+
     it("includes --ro-bind for system paths that exist and skips those that do not", () => {
       vi.mocked(existsSync).mockImplementation((p) => {
         return String(p) === "/usr" || String(p) === "/bin";
