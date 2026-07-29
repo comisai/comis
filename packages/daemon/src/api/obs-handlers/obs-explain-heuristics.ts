@@ -88,6 +88,7 @@ import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
 import { orchestrateFailedVerdict } from "./obs-explain-orchestrate-verdict.js"; // failed orchestrate run (sibling — subdir cap)
 import { deliveryFailedVerdict } from "./obs-explain-delivery-verdict.js";
+import { spawnCeilingVerdict } from "./obs-explain-spawn-ceiling-verdict.js";
 
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1.
@@ -240,6 +241,11 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       ],
     };
   },
+
+  // A direct runtime-guard refusal is the acute cause of this turn's failed
+  // spawn. It must outrank unrelated breaker state retained on a long-running
+  // session.
+  spawnCeilingVerdict,
 
   // 4) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {
