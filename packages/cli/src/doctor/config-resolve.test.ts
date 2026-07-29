@@ -22,7 +22,11 @@ import { resolve } from "node:path";
 import { generateMasterKey } from "@comis/core";
 import { describe, it, expect } from "vitest";
 import { offlineSecretSet } from "../util/offline-secrets-store.js";
-import { resolveDoctorConfig, describeConfigUnavailable } from "./config-resolve.js";
+import {
+  resolveDoctorConfig,
+  resolveDoctorSecretPresence,
+  describeConfigUnavailable,
+} from "./config-resolve.js";
 
 const TOKEN_48 = "t".repeat(48);
 
@@ -73,6 +77,61 @@ describe("resolveDoctorConfig", () => {
     expect(r.config?.gateway?.port).toBe(4766);
     expect(r.config?.channels?.telegram?.enabled).toBe(true);
     expect(r.foundPath).toBe("/cfg/config.yaml");
+  });
+
+  it("uses the configured data directory for secret resolution without requiring COMIS_DATA_DIR", () => {
+    const configuredDataDir = mkdtempSync(resolve(tmpdir(), "comis-doctor-configured-data-"));
+    const fallbackDataDir = mkdtempSync(resolve(tmpdir(), "comis-doctor-fallback-data-"));
+    const configDir = mkdtempSync(resolve(tmpdir(), "comis-doctor-config-location-"));
+    const configPath = resolve(configDir, "config.yaml");
+    const envFilePath = resolve(configuredDataDir, ".env");
+
+    try {
+      const masterKey = generateMasterKey();
+      writeFileSync(envFilePath, `SECRETS_MASTER_KEY=${masterKey}\n`, { mode: 0o600 });
+      const gatewayWrite = offlineSecretSet({
+        name: "COMIS_GATEWAY_TOKEN",
+        value: TOKEN_48,
+        dataDir: configuredDataDir,
+        envFilePath,
+      });
+      const canaryWrite = offlineSecretSet({
+        name: "CANARY_SECRET",
+        value: "c".repeat(48),
+        dataDir: configuredDataDir,
+        envFilePath,
+      });
+      expect(gatewayWrite.ok).toBe(true);
+      expect(canaryWrite.ok).toBe(true);
+
+      writeFileSync(
+        configPath,
+        [
+          `dataDir: ${configuredDataDir}`,
+          "security:",
+          "  storage: encrypted",
+          "gateway:",
+          "  tokens:",
+          "    - id: admin",
+          "      secret: ${COMIS_GATEWAY_TOKEN}",
+          '      scopes: ["*"]',
+        ].join("\n"),
+        { mode: 0o600 },
+      );
+
+      const deps = { defaultDataDir: fallbackDataDir };
+      const resolution = resolveDoctorConfig([configPath], deps);
+
+      expect(resolution.validationIssues).toBeUndefined();
+      expect(resolution.config?.gateway.tokens[0]?.secret).toBe(TOKEN_48);
+      expect(
+        resolveDoctorSecretPresence([configPath], "CANARY_SECRET", deps),
+      ).toBe(true);
+    } finally {
+      rmSync(configuredDataDir, { recursive: true, force: true });
+      rmSync(fallbackDataDir, { recursive: true, force: true });
+      rmSync(configDir, { recursive: true, force: true });
+    }
   });
 
   it("prefers the encrypted-store value over a shadowed environment value like daemon boot", () => {
