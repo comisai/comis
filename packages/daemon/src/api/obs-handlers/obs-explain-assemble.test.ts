@@ -1372,6 +1372,32 @@ describe("assembleIncidentReport — user surface (activity finalize + skipped d
     expect(report.deliverySkipped).toEqual({ events: 1, chunksNotSent: 2 });
   });
 
+  it("marks a successful delivery as degraded when final activity rendering failed", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "activity.turn_finalized",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: {
+          strategy: "EditPlace",
+          outcome: "success",
+          renderErrorKind: "not_supported",
+          reclassified: false,
+          failedEventCount: 0,
+        },
+      },
+    ]);
+
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 1);
+
+    expect(report.activityFinalize).toMatchObject({
+      outcome: "success",
+      renderErrorKind: "not_supported",
+    });
+    expect(report.outcome).toMatchObject({ degraded: true, severity: "degraded" });
+  });
+
   it("tallies mid-session failure paints so a later success finalize cannot hide the pill turn (session-wide counts)", () => {
     // Live investigation friction: the last-wins activityFinalize showed the
     // final turn's success while turn 2's kept failure pill was findable only

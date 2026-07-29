@@ -123,6 +123,25 @@ describe("obs-explain-heuristics", () => {
     expect(r?.code).not.toBe("breaker_opened_repeated_failure");
   });
 
+  it("names a final activity-rendering degradation on an otherwise clean turn", () => {
+    const signals = makeSignals({
+      endReason: "success",
+      degraded: true,
+      turnFinalized: {
+        strategy: "EditPlace",
+        outcome: "success",
+        reclassified: false,
+        renderErrorKind: "not_supported",
+      },
+    } as unknown as Partial<IncidentSignals>);
+
+    const result = rootCause(signals);
+
+    expect(result?.code).toBe("activity_render_degraded");
+    expect(result?.detail).toContain("not_supported");
+    expect(result?.suggestedNextSteps.join(" ")).toContain("activity renderer");
+  });
+
   it("local step-limit guards outrank repeated-failure breaker inference", () => {
     const r = rootCause(
       makeSignals({
