@@ -4,7 +4,7 @@ import type { AgentExecutor, SessionLifecycle } from "@comis/agent";
 // because orchestrator cannot import its own published name.
 import type { MessageRouter } from "./routing/message-router.js";
 import type { CommandQueue } from "./queue/command-queue.js";
-import { type ChannelPort, type NormalizedMessage, type MessageHandler, type DeliveryService, tryGetContext } from "@comis/core";
+import { getOriginalInboundMessages, type ChannelPort, type NormalizedMessage, type MessageHandler, type DeliveryService, tryGetContext } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockLogger } from "../../../test/support/mock-logger.js";
@@ -382,7 +382,10 @@ describe("createChannelManager", () => {
       await adapter._handlers[0](msg);
 
       expect(executor.execute).toHaveBeenCalledWith(
-        msg,
+        {
+          ...msg,
+          originalMessages: getOriginalInboundMessages(msg),
+        },
         expect.objectContaining({
           tenantId: "default",
           agentId: "agent-default",
@@ -673,7 +676,10 @@ describe("createChannelManager", () => {
 
       // Preprocessing receives the original message plus the resolved turn authority.
       expect(mockPreprocess).toHaveBeenCalledWith(
-        msg,
+        {
+          ...msg,
+          originalMessages: getOriginalInboundMessages(msg),
+        },
         expect.objectContaining({
           conversation: expect.objectContaining({ tenantId: "default", agentId: "agent-default" }),
         }),
