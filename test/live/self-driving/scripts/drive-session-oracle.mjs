@@ -92,13 +92,21 @@ export function telegramInboundGuid(botAccountId, chatId, messageId) {
 
 /** Return a fail-loud reason when synthetic mention metadata cannot address the bot. */
 export function telegramInjectAddressingError(text, opts, botUsername) {
-  if (opts?.mention !== true) return undefined;
+  const handle =
+    typeof botUsername === "string" && botUsername.length > 0
+      ? `@${botUsername}`
+      : undefined;
+  if (opts?.mention !== true) {
+    return handle !== undefined && text.includes(handle)
+      ? `message text contains ${handle}; set INJECT_OPTS.mention=true so the emulator emits Telegram mention metadata`
+      : undefined;
+  }
   if (typeof botUsername !== "string" || botUsername.length === 0) {
     return "INJECT_OPTS.mention=true requires getMe to return the bot username";
   }
-  const handle = `@${botUsername}`;
-  if (!text.includes(handle)) {
-    return `INJECT_OPTS.mention=true requires the literal bot handle ${handle} in the message text`;
+  const requiredHandle = `@${botUsername}`;
+  if (!text.includes(requiredHandle)) {
+    return `INJECT_OPTS.mention=true requires the literal bot handle ${requiredHandle} in the message text`;
   }
   return undefined;
 }

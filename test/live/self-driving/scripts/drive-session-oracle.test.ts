@@ -4,6 +4,7 @@ import {
   outboundVisibleText,
   selectTelegramConversationTrajectoryPath,
   sharedConversationFinished,
+  telegramInjectAddressingError,
 } from "./drive-session-oracle.mjs";
 
 describe("drive outbound visibility", () => {
@@ -31,6 +32,19 @@ describe("drive outbound visibility", () => {
 });
 
 describe("drive group conversation correlation", () => {
+  it("fails loudly when literal bot text lacks Telegram mention metadata", () => {
+    expect(telegramInjectAddressingError(
+      "@test_bot can u check this",
+      { thread: 9 },
+      "test_bot",
+    )).toContain("INJECT_OPTS.mention=true");
+    expect(telegramInjectAddressingError(
+      "@test_bot can u check this",
+      { mention: true, thread: 9 },
+      "test_bot",
+    )).toBeUndefined();
+  });
+
   it("selects the exact Telegram forum-thread trajectory", () => {
     const sessionsRoot = "/data/workspace/sessions";
     const expected =
