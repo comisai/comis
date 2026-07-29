@@ -44,6 +44,32 @@ export interface RpcDispatchToolConfig<T extends TSchema> {
 }
 
 /**
+ * Convert an explicit RPC operation failure into the error text the AgentTool
+ * boundary throws. An incidental `error` field is not enough: only the closed
+ * `success:false` outcome marks the operation failed.
+ */
+function explicitRpcFailureMessage(result: unknown): string | undefined {
+  if (
+    result === null
+    || typeof result !== "object"
+    || Array.isArray(result)
+    || (result as { success?: unknown }).success !== false
+  ) return undefined;
+  const failure = result as { error?: unknown; hint?: unknown };
+  const error =
+    typeof failure.error === "string" && failure.error.trim().length > 0
+      ? failure.error.trim()
+      : "RPC operation failed";
+  const hint =
+    typeof failure.hint === "string" && failure.hint.trim().length > 0
+      ? failure.hint.trim()
+      : undefined;
+  if (hint === undefined) return error;
+  const separator = /[.!?]$/.test(error) ? " " : ". ";
+  return `${error}${separator}Hint: ${hint}`;
+}
+
+/**
  * Create a tool that dispatches to a single RPC method.
  *
  * Handles the common pattern: schema + optional pre-execute + optional
@@ -81,6 +107,8 @@ export function createRpcDispatchTool<T extends TSchema>(
         const result = config.useToolCallIdAsOperationId
           ? await rpcCall(config.rpcMethod, rpcParams, { outwardOperationId: toolCallId })
           : await rpcCall(config.rpcMethod, rpcParams);
+        const failureMessage = explicitRpcFailureMessage(result);
+        if (failureMessage !== undefined) throw new Error(failureMessage);
         return jsonResult(result);
       } catch (err) {
         if (err instanceof Error && err.message.startsWith("[")) throw err;
