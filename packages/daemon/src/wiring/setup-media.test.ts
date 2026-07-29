@@ -880,6 +880,28 @@ describe("setupMedia — construction follows the resolver's chosen provider", (
     );
   });
 
+  it("retains resolver STT unavailability for downstream user-facing errors", async () => {
+    const setupMedia = await getSetupMedia();
+    const hint =
+      'STT provider "deepgram" is configured but its audio key is unavailable. '
+      + "Change integrations.media.transcription.provider.";
+    const result = await setupMedia({
+      container: createMinimalMediaConfig({
+        transcription: { provider: "deepgram", fallbackProviders: [] },
+      }),
+      skillsLogger: createMockLogger() as any,
+      audioSelector: fakeSelector(
+        { ok: false, errorKind: "auth_required", hint },
+        { ok: true, provider: "edge", keyless: true, source: "keyless-local" },
+      ),
+    });
+
+    expect((result.voiceSelection as any)?.sttUnavailable).toEqual({
+      errorKind: "auth_required",
+      hint,
+    });
+  });
+
   it("constructs the TTS adapter from the resolved provider when edge is disabled and follow-main wins (config 'auto' → resolved 'openai')", async () => {
     const setupMedia = await getSetupMedia();
     const result = await setupMedia({

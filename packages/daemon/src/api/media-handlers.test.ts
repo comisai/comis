@@ -1029,6 +1029,56 @@ describe("createMediaHandlers", () => {
       await expect(pending).rejects.toThrow(/not configured/i);
     });
 
+    it("media.transcribe preserves the boot resolver hint and records unavailable STT evidence", async () => {
+      const hint =
+        'STT provider "deepgram" is configured but its audio key is unavailable. '
+        + "Set the provider's API key, choose a keyless provider (local), or change "
+        + "integrations.media.transcription.provider.";
+      const records: Array<{ type: string; data: Record<string, unknown> }> = [];
+      const deps = makeDeps({
+        transcriber: undefined,
+        mediaConfig: {
+          imageAnalysis: { maxFileSizeMb: 10 },
+          vision: { scopeRules: [], defaultScopeAction: "allow" },
+          transcription: { provider: "deepgram" },
+          tts: { autoMode: "off" as const, tagPattern: "\\[\\[tts\\]\\]" },
+        },
+        voiceSelection: {
+          sttUnavailable: { errorKind: "auth_required", hint },
+        } as never,
+        trajectoryRegistry: {
+          getRecorder: vi.fn(() => ({
+            recordEvent: vi.fn((type: string, data: Record<string, unknown>) => {
+              records.push({ type, data });
+            }),
+          })),
+        } as never,
+      });
+      const handlers = createMediaHandlers(deps);
+
+      await expect(
+        handlers["media.transcribe"]!({
+          attachment_url: "tg-file://voice",
+          _callerSessionKey: "default:u1:telegram:c1",
+        }),
+      ).rejects.toThrow(hint);
+      expect(records).toEqual([
+        expect.objectContaining({
+          type: "media.stt.requested",
+          data: expect.objectContaining({ provider: "deepgram", source: "explicit" }),
+        }),
+        expect.objectContaining({
+          type: "media.stt.failed",
+          data: expect.objectContaining({
+            provider: "deepgram",
+            source: "explicit",
+            errorKind: "auth_required",
+            outcome: "failed",
+          }),
+        }),
+      ]);
+    });
+
     it("tts.synthesize on an unconfigured adapter rejects with a structured Error, never an unhandled crash", async () => {
       // The TTS twin of the transcribe pin above: an honest-unavailable TTS resolution leaves
       // ttsAdapter undefined; the on-demand handler throw is converted to a
