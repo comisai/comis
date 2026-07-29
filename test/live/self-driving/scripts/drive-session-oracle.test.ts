@@ -1,11 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
+  normalizedInboundTextError,
   outboundVisibleText,
   selectTelegramConversationTrajectoryPath,
   sharedConversationFinished,
   telegramInjectAddressingError,
 } from "./drive-session-oracle.mjs";
+
+describe("drive inbound validation", () => {
+  it("rejects text beyond the deployed normalized-message limit before injection", () => {
+    expect(normalizedInboundTextError("x".repeat(65_536), 65_536)).toBeUndefined();
+    expect(normalizedInboundTextError("x".repeat(65_537), 65_536)).toBe(
+      "message text is 65537 characters; the deployed normalized-message limit is 65536",
+    );
+  });
+});
 
 describe("drive outbound visibility", () => {
   it("treats an attachment caption as substantive user-visible text", () => {
