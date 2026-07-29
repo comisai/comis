@@ -34,6 +34,7 @@ describe("LEAN_TOOL_DESCRIPTIONS", () => {
 
     expect(description).toEqual(expect.any(String));
     expect(description).toMatch(/not.*workspace (file|artifact)/isu);
+    expect(description).toMatch(/log.*track.*file tools/isu);
   });
 });
 
