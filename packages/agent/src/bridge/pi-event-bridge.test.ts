@@ -1335,6 +1335,57 @@ describe("createPiEventBridge", () => {
         expect(recordResult).not.toHaveBeenCalled();
       });
 
+      it("classifies rejected spawn admission as a resource guard with the binding limit", () => {
+        const recordResult = vi.fn();
+        deps = createMockDeps({
+          toolRetryBreaker: {
+            beforeToolCall: vi.fn().mockReturnValue({ block: false }),
+            recordResult,
+            getBlockedTools: vi.fn().mockReturnValue([]),
+            reset: vi.fn(),
+          } as any,
+        });
+        const { listener } = createPiEventBridge(deps);
+        const result = {
+          content: [{
+            type: "text",
+            text:
+              "[spawn_ceiling] Sub-agent spawn rejected: " +
+              "autonomy.spawn.maxConcurrentSelfAgents=4; current=4; reason=concurrency. " +
+              "Wait for a running sub-agent to finish before retrying.",
+          }],
+          details: {},
+        };
+
+        listener(makeToolExecutionEndEvent(
+          "sessions_spawn",
+          "tc-spawn-ceiling",
+          true,
+          result,
+        ) as any);
+
+        const { endEmit, warn } = findEmitAndWarn("sessions_spawn");
+        expect(endEmit?.[1]).toMatchObject({
+          success: false,
+          errorKind: "resource",
+          classifiedFailureBy: "runtime_guard",
+          matchedRule: "spawn_ceiling",
+          transportOk: false,
+        });
+        expect(endEmit?.[1].errorMessage).toContain(
+          "autonomy.spawn.maxConcurrentSelfAgents=4; current=4",
+        );
+        expect(warn?.[0]).toMatchObject({
+          errorKind: "resource",
+          classifiedFailureBy: "runtime_guard",
+          matchedRule: "spawn_ceiling",
+        });
+        expect(warn?.[0].hint).toContain(
+          "autonomy.spawn.maxConcurrentSelfAgents=4",
+        );
+        expect(recordResult).not.toHaveBeenCalled();
+      });
+
       // A tool can self-grade a logical
       // FAILURE via the explicit { graded:true, outcome:"failure" } envelope while returning
       // cleanly (no SDK isError) — e.g. an MCP delivery to a non-existent recipient. The

@@ -2415,7 +2415,13 @@ describe("createSubAgentRunner", () => {
     // ---------------------------------------------------------------------
     it("rejects spawn when the injected checkSpawnCeiling returns ok:false (tree-wide concurrency)", () => {
       const ceilingDeps = createLimitDeps();
-      const checkSpawnCeiling = vi.fn().mockReturnValue({ ok: false, reason: "concurrency" });
+      const checkSpawnCeiling = vi.fn().mockReturnValue({
+        ok: false,
+        reason: "concurrency",
+        configKey: "autonomy.spawn.maxConcurrentSelfAgents",
+        current: 4,
+        limit: 4,
+      });
       const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling });
 
       expect(() =>
@@ -2426,7 +2432,11 @@ describe("createSubAgentRunner", () => {
           depth: 0,
           maxDepth: 3,
         }),
-      ).toThrow(/spawn ceiling|concurrency/i);
+      ).toThrow(
+        "[spawn_ceiling] Sub-agent spawn rejected: " +
+        "autonomy.spawn.maxConcurrentSelfAgents=4; current=4; reason=concurrency. " +
+        "Wait for a running sub-agent to finish before retrying.",
+      );
 
       // The reject mirrors the depth/children reject: the rejection event fires
       // (the ceiling's "concurrency" reason maps to the closed-union tree-wide
@@ -2435,6 +2445,15 @@ describe("createSubAgentRunner", () => {
       expect(ceilingDeps.eventBus.emit).toHaveBeenCalledWith(
         "session:sub_agent_spawn_rejected",
         expect.objectContaining({ reason: "ceiling_concurrency" }),
+      );
+      expect(ceilingDeps.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          configKey: "autonomy.spawn.maxConcurrentSelfAgents",
+          current: 4,
+          limit: 4,
+          errorKind: "resource",
+        }),
+        "Subagent spawn rejected",
       );
       expect(ceilingDeps.sessionStore.save).not.toHaveBeenCalled();
     });

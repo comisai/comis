@@ -62,4 +62,14 @@ describe("toolFailureHint", () => {
     expect(hint).toContain("active=5");
     expect(hint).not.toBe(GENERIC_TOOL_FAILURE_HINT);
   });
+
+  it("preserves the exact spawn ceiling knob and current occupancy", () => {
+    const hint = toolFailureHint(
+      "[spawn_ceiling] Sub-agent spawn rejected: " +
+      "autonomy.spawn.maxConcurrentSelfAgents=4; current=4; reason=concurrency.",
+    );
+    expect(hint).toContain("autonomy.spawn.maxConcurrentSelfAgents=4");
+    expect(hint).toContain("current=4");
+    expect(hint).not.toBe(GENERIC_TOOL_FAILURE_HINT);
+  });
 });

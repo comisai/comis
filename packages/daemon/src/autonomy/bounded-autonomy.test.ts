@@ -120,7 +120,13 @@ describe("createBoundedAutonomy — the single composite chokepoint", () => {
     // The semaphore limb: admit up to maxConcurrentSelfAgents then deny on concurrency.
     expect(service.tryAcquireSpawn("root-1", 0, 0)).toEqual({ ok: true });
     expect(service.tryAcquireSpawn("root-1", 0, 0)).toEqual({ ok: true });
-    expect(service.tryAcquireSpawn("root-1", 0, 0)).toEqual({ ok: false, reason: "concurrency" });
+    expect(service.tryAcquireSpawn("root-1", 0, 0)).toEqual({
+      ok: false,
+      reason: "concurrency",
+      configKey: "autonomy.spawn.maxConcurrentSelfAgents",
+      current: 2,
+      limit: 2,
+    });
 
     // The budget token limb: 600 + 600 > 1000 → the second reserve is exceeded.
     service.registerRoot("root-1", "lease-1");
@@ -178,9 +184,21 @@ describe("createBoundedAutonomy — the single composite chokepoint", () => {
     const { service } = makeService({ config });
 
     // spawn.maxSpawnDepth = 2 → a spawn at depth 2 is denied "depth".
-    expect(service.tryAcquireSpawn("root-D", 2, 0)).toEqual({ ok: false, reason: "depth" });
+    expect(service.tryAcquireSpawn("root-D", 2, 0)).toEqual({
+      ok: false,
+      reason: "depth",
+      configKey: "autonomy.spawn.maxSpawnDepth",
+      current: 2,
+      limit: 2,
+    });
     // spawn.maxChildrenPerAgent = 3 → fanout 3 is denied "fanout".
-    expect(service.tryAcquireSpawn("root-D", 0, 3)).toEqual({ ok: false, reason: "fanout" });
+    expect(service.tryAcquireSpawn("root-D", 0, 3)).toEqual({
+      ok: false,
+      reason: "fanout",
+      configKey: "autonomy.spawn.maxChildrenPerAgent",
+      current: 3,
+      limit: 3,
+    });
 
     // rate.perRootCallsPerSec = 2 → the 3rd call in the window denies "rate".
     expect(service.tryCall("root-R", "socket-1")).toEqual({ ok: true });
