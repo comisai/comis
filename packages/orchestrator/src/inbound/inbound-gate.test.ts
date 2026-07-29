@@ -171,8 +171,8 @@ function makeDeps(overrides?: Partial<GateDeps>): GateDeps {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     logger: logger as any,
     sessionManager: {
-      loadOrCreate: vi.fn(() => []),
-      save: vi.fn(),
+      loadOrCreate: vi.fn(() => ok([])),
+      save: vi.fn(() => ok(undefined)),
       isExpired: vi.fn(() => false),
       expire: vi.fn(() => true),
       cleanStale: vi.fn(() => 0),
@@ -231,6 +231,69 @@ describe("evaluateInboundGate history serialization", () => {
       "telegram",
       expect.any(Function),
       sourceTerminalScope,
+    );
+  });
+
+  it("keeps one stored row when maxHistoryInjections is one", async () => {
+    const save = vi.fn(() => ok(undefined));
+    const enqueue = vi.fn(async (
+      _sessionKey,
+      _message,
+      _channelType,
+      handler: () => Promise<void>,
+    ) => {
+      await handler();
+      return ok(undefined);
+    });
+    const deps = makeDeps({
+      sessionManager: {
+        loadOrCreate: vi.fn(() => ok([
+          {
+            kind: "comis.group-history-context",
+            senderId: "user-2",
+            text: "older context",
+          },
+        ])),
+        save,
+      } as never,
+      commandQueue: { enqueue } as never,
+      autoReplyEngineConfig: {
+        enabled: true,
+        groupActivation: "mention-gated",
+        customPatterns: [],
+        historyInjection: true,
+        maxHistoryInjections: 1,
+        maxGroupHistoryMessages: 20,
+      },
+    });
+    const msg = makeMsg({
+      text: "new context",
+      metadata: {
+        telegramMessageId: "43",
+        telegramChatType: "group",
+        isBotMentioned: false,
+        replyToBot: false,
+      },
+    });
+
+    await evaluateInboundGate(
+      deps,
+      makeAdapter(),
+      msg,
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      SEND_OVERRIDES as never,
+    );
+
+    expect(save).toHaveBeenCalledWith(
+      TURN_SCOPE.conversation,
+      [{
+        kind: "comis.group-history-context",
+        senderId: "user-1",
+        text: "new context",
+      }],
     );
   });
 });
