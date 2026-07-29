@@ -32,7 +32,7 @@ const NODE_PATH_TYPE_ERRNO = /\b(EISDIR|ENOTDIR):/;
 const BACKGROUND_CAPACITY_BINDING =
   /(agents\.[^\s";]+\.backgroundTasks\.(?:maxPerAgent|maxTotal)=\d+;\s*active=\d+)/;
 const SPAWN_CEILING_BINDING =
-  /(autonomy\.spawn\.(?:maxConcurrentSelfAgents|maxSpawnDepth|maxChildrenPerAgent)=\d+;\s*current=\d+)/;
+  /((autonomy\.spawn\.(?:maxConcurrentSelfAgents|maxSpawnDepth|maxChildrenPerAgent))=\d+;\s*current=\d+)/;
 
 /** The generic fallback when no recognizable error code is present. */
 export const GENERIC_TOOL_FAILURE_HINT =
@@ -56,10 +56,27 @@ export function toolFailureHint(errorText?: string): string {
         : `Background task capacity was exhausted at ${binding}; wait for a running task to finish before retrying`;
     }
     if (runtimeGuard === "spawn_ceiling") {
-      const binding = SPAWN_CEILING_BINDING.exec(errorText)?.[1];
-      return binding === undefined
-        ? "Sub-agent spawn capacity was exhausted; inspect the autonomy.spawn limits before retrying"
-        : `Sub-agent spawn capacity was exhausted at ${binding}; wait for a running sub-agent to finish before retrying`;
+      const match = SPAWN_CEILING_BINDING.exec(errorText);
+      const binding = match?.[1];
+      const configKey = match?.[2];
+      if (binding === undefined || configKey === undefined) {
+        return "Sub-agent spawn capacity was exhausted; inspect the autonomy.spawn limits before retrying";
+      }
+      if (errorText.includes("reason=depth")) {
+        return (
+          `Sub-agent spawn depth was exhausted at ${binding}; increase ${configKey} `
+          + "in the config file and restart the daemon, or continue without another nested spawn"
+        );
+      }
+      return errorText.includes("reason=fanout")
+        ? (
+            `Sub-agent child fanout was exhausted at ${binding}; wait for one of this caller's `
+            + `children to finish or stop one, or raise ${configKey}`
+          )
+        : (
+            `Sub-agent spawn capacity was exhausted at ${binding}; wait for a running sub-agent `
+            + `to finish or stop one, or raise ${configKey}`
+          );
     }
     const m = BRACKETED_ERROR_CODE.exec(errorText);
     if (m) {

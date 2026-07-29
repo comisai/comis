@@ -30,16 +30,27 @@ export const spawnCeilingVerdict = (
     limit !== undefined && current !== undefined
       ? `${configKey}=${limit}; current=${current}`
       : configKey;
+  const recovery =
+    reason === "depth"
+      ? [
+          `raise ${configKey} in the config file and restart the daemon, or continue without another nested spawn`,
+          "retrying at the same depth cannot create a child",
+        ]
+      : reason === "fanout"
+        ? [
+            "wait for one of this caller's children to finish or stop one that is no longer needed",
+            `if this caller needs more simultaneous children, raise ${configKey} in the config file and restart the daemon`,
+          ]
+        : [
+            "wait for a running sub-agent to finish or stop one that is no longer needed",
+            `if the workload needs more simultaneous agents, raise ${configKey} in the config file and restart the daemon`,
+          ];
 
   return {
     code: "spawn_ceiling",
     detail:
       `the local sub-agent admission guard refused a spawn because ${occupancy}; `
       + `reason=${reason}; no child was created for the rejected call`,
-    suggestedNextSteps: [
-      "wait for a running sub-agent to finish or stop one that is no longer needed",
-      `if the workload requires a wider tree, raise ${configKey} in the config file and restart the daemon`,
-      "obs.explain depth=full",
-    ],
+    suggestedNextSteps: [...recovery, "obs.explain depth=full"],
   };
 };

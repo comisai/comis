@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
-import { outboundVisibleText } from "./drive-session-oracle.mjs";
+import {
+  outboundVisibleText,
+  selectTelegramConversationTrajectoryPath,
+  sharedConversationFinished,
+} from "./drive-session-oracle.mjs";
 
 describe("drive outbound visibility", () => {
   it("treats an attachment caption as substantive user-visible text", () => {
@@ -23,5 +27,58 @@ describe("drive outbound visibility", () => {
       messageId: 44,
       caption: "",
     })).toBe("");
+  });
+});
+
+describe("drive group conversation correlation", () => {
+  it("selects the exact Telegram forum-thread trajectory", () => {
+    const sessionsRoot = "/data/workspace/sessions";
+    const expected =
+      `${sessionsRoot}/default/telegram@3atelegram-12345@3a-1001234567890/`
+      + "conversation~thread~6.jsonl.trajectory.jsonl";
+    const candidates = [
+      {
+        path:
+          `${sessionsRoot}/default/telegram/`
+          + "platform_sender~peer~platform_sender.jsonl.trajectory.jsonl",
+        mtimeMs: 30,
+      },
+      { path: expected, mtimeMs: 20 },
+      {
+        path:
+          `${sessionsRoot}/default/telegram@3atelegram-12345@3a-1001234567890/`
+          + "conversation~thread~5.jsonl.trajectory.jsonl",
+        mtimeMs: 40,
+      },
+    ];
+
+    expect(selectTelegramConversationTrajectoryPath(
+      candidates,
+      sessionsRoot,
+      "default",
+      12345,
+      -1001234567890,
+      6,
+    )).toBe(expected);
+  });
+
+  it("accepts a visible corrected reply after the exact group turn ends", () => {
+    const outbound = [{
+      method: "sendMessage",
+      text: "I could not complete that delegation.",
+    }];
+
+    expect(sharedConversationFinished({
+      outbound,
+      correlatedAnswer: "The pre-guard model draft claimed success.",
+      sawAnswer: true,
+      turnEnded: true,
+    })).toBe(true);
+    expect(sharedConversationFinished({
+      outbound,
+      correlatedAnswer: "The pre-guard model draft claimed success.",
+      sawAnswer: true,
+      turnEnded: false,
+    })).toBe(false);
   });
 });

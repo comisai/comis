@@ -28,6 +28,7 @@ vi.mock("@comis/agent", () => ({
 import {
   createSubAgentRunner,
   ANNOUNCE_PARENT_TIMEOUT_MS,
+  SubAgentSpawnCeilingError,
   SubAgentSpawnPausedError,
   type SubAgentRunnerDeps,
 } from "./sub-agent-runner.js";
@@ -2626,6 +2627,23 @@ describe("createSubAgentRunner", () => {
         "Subagent spawn rejected",
       );
       expect(ceilingDeps.sessionStore.save).not.toHaveBeenCalled();
+    });
+
+    it("directs a depth ceiling to the exact restart-bound instead of waiting", () => {
+      const error = new SubAgentSpawnCeilingError({
+        ok: false,
+        reason: "depth",
+        configKey: "autonomy.spawn.maxSpawnDepth",
+        current: 1,
+        limit: 1,
+      });
+
+      expect(error.message).toContain("autonomy.spawn.maxSpawnDepth=1");
+      expect(error.message).toContain("current=1");
+      expect(error.message).toContain("restart");
+      expect(error.message.toLowerCase()).not.toContain(
+        "wait for a running sub-agent",
+      );
     });
 
     it("proceeds with the spawn when checkSpawnCeiling returns ok:true (or is absent)", () => {

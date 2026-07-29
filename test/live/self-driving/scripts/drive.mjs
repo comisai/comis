@@ -27,6 +27,8 @@ import {
   findAssistantReplyAfterInbound,
   outboundVisibleText,
   selectMainTrajectoryPath,
+  selectTelegramConversationTrajectoryPath,
+  sharedConversationFinished,
   telegramInboundGuid,
   telegramInjectAddressingError,
   wireContainsAssistantReply,
@@ -155,13 +157,26 @@ const resolveTraj = () => {
       }
     };
     visit(dir);
-    return selectMainTrajectoryPath(
-      files.map((path) => ({ path, mtimeMs: statSync(path).mtimeMs })),
-      dir,
-      tenantId,
-      "telegram",
-      expectedTrajectorySuffix,
-    );
+    const candidates = files.map((path) => ({
+      path,
+      mtimeMs: statSync(path).mtimeMs,
+    }));
+    return sharedConversation
+      ? selectTelegramConversationTrajectoryPath(
+          candidates,
+          dir,
+          tenantId,
+          Number(botBody.result.id),
+          Number(chatId),
+          injectOpts?.thread,
+        )
+      : selectMainTrajectoryPath(
+          candidates,
+          dir,
+          tenantId,
+          "telegram",
+          expectedTrajectorySuffix,
+        );
   } catch { return null; }
 };
 const trajLineCount = (p) => { try { return readFileSync(p, 'utf8').split('\n').length; } catch { return 0; } };
@@ -248,11 +263,6 @@ while (Date.now() - start < maxMs) {
     }
     lastNew = Date.now();
   }
-  if (sharedConversation) {
-    correlatedAnswer = resolveCorrelatedAnswer();
-    if (correlatedAnswer && wireContainsAssistantReply(seen, correlatedAnswer)) break;
-    continue;
-  }
   // Lazily pick up the trajectory once the turn creates it (fresh-session first turn — see the
   // `let trajPath` note). base=0 is correct here: we only land here when the pre-inject resolve
   // found nothing, i.e. a brand-new session with no prior turn's session.summary to false-match.
@@ -262,6 +272,25 @@ while (Date.now() - start < maxMs) {
   }
   // Authoritative stop: the agent TURN ended in the trajectory (work done, incl. empty-final / abort).
   if (trajPath && turnEndedSince(trajPath, trajBase)) { turnEnded = true; }
+  if (sharedConversation) {
+    correlatedAnswer = resolveCorrelatedAnswer();
+    if (sharedConversationFinished({
+      outbound: seen,
+      correlatedAnswer,
+      sawAnswer,
+      turnEnded,
+    })) {
+      const tail = await getOutbound(after, 2500);
+      for (const o of tail) {
+        seen.push(o);
+        after = Math.max(after, o.messageId || after);
+        const visibleText = outboundVisibleText(o);
+        if (visibleText && !isProgress(visibleText)) sawAnswer = true;
+      }
+      break;
+    }
+    continue;
+  }
   if (turnEnded) {
     // drain any just-delivered final message, then stop
     const tail = await getOutbound(after, 2500);

@@ -1802,6 +1802,31 @@ function auditRow(kind: string, traceId: string | null, extra: Record<string, un
 }
 
 describe("assembleIncidentReportFromSources — audit?", () => {
+  it("ranks a delegation-evidence correction above generic session noise", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.delegation_evidence_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "delegation_evidence_missing",
+      detail:
+        "the response honesty guard replaced an unsupported delegation claim "
+        + "because this execution had no successful current-turn sessions_spawn receipt",
+      suggestedNextSteps: [
+        "inspect sessions_spawn admission and the tool inventory for this turn",
+        "if a spawn was refused, inspect the bound-naming tool failure in this report",
+        "retry the request after correcting the spawn precondition",
+      ],
+    });
+  });
+
   it("populates audit { total, byKind } from the session's audit events scoped to the resolved traceId", async () => {
     const reader = makeAuditReader([
       auditRow("secret_access", TRACE_ID),

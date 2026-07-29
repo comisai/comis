@@ -42,13 +42,21 @@ describe("classifyTypedRpcError", () => {
   });
 
   it("classifies an exhausted sub-agent spawn ceiling as a resource warning", () => {
-    const classification = classifyTypedRpcError(named("SubAgentSpawnCeilingError"));
+    const classification = classifyTypedRpcError(named(
+      "SubAgentSpawnCeilingError",
+      "[spawn_ceiling] Sub-agent spawn rejected: "
+      + "autonomy.spawn.maxSpawnDepth=1; current=1; reason=depth.",
+    ));
 
     expect(classification).toEqual({
       errorKind: "resource",
       hint: expect.stringMatching(/autonomy\.spawn/),
       level: "warn",
     });
+    expect(classification?.hint).toContain("reason-specific");
+    expect(classification?.hint.toLowerCase()).not.toContain(
+      "wait for a running sub-agent",
+    );
   });
 
   it("classifies ValidationError and RequiredToolsUnreachableError as validation/warn", () => {

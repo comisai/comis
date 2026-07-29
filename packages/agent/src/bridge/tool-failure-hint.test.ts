@@ -72,4 +72,16 @@ describe("toolFailureHint", () => {
     expect(hint).toContain("current=4");
     expect(hint).not.toBe(GENERIC_TOOL_FAILURE_HINT);
   });
+
+  it("does not suggest waiting when the spawn ceiling reason is depth", () => {
+    const hint = toolFailureHint(
+      "[spawn_ceiling] Sub-agent spawn rejected: "
+      + "autonomy.spawn.maxSpawnDepth=1; current=1; reason=depth.",
+    );
+
+    expect(hint).toContain("autonomy.spawn.maxSpawnDepth=1");
+    expect(hint).toContain("current=1");
+    expect(hint).toContain("restart");
+    expect(hint.toLowerCase()).not.toContain("wait for a running sub-agent");
+  });
 });
