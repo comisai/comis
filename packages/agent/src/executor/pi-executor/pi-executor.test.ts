@@ -6899,6 +6899,7 @@ describe("ExcludeDeferralResult wiring", () => {
         llmCalls: 1,
         finishReason: "stop",
       });
+      setMockAssistantText("completed response");
 
       const result = await executor.execute(
         testMessage, testSessionKey, undefined, undefined, undefined,
@@ -6950,6 +6951,7 @@ describe("ExcludeDeferralResult wiring", () => {
         llmCalls: 1,
         finishReason: "stop",
       });
+      setMockAssistantText("completed response");
 
       const result = await executor.execute(
         testMessage, testSessionKey, undefined, undefined, undefined,
@@ -6964,12 +6966,11 @@ describe("ExcludeDeferralResult wiring", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
-      // First 3 calls return low output (under budget), 4th+ returns high output (budget_reached).
-      // getResult() is called by internal checks before the budget continuation loop.
-      let callCount = 0;
+      // Keep usage low until the continuation prompt actually runs. This
+      // avoids coupling the behavior fixture to unrelated getResult() reads.
+      let continuationRan = false;
       mockGetResult.mockImplementation(() => {
-        callCount++;
-        if (callCount <= 3) {
+        if (!continuationRan) {
           return {
             tokensUsed: { input: 100, output: 100_000, total: 100_100, cacheRead: 0, cacheWrite: 0 },
             cost: { total: 0.01 },
@@ -6987,7 +6988,9 @@ describe("ExcludeDeferralResult wiring", () => {
         };
       });
 
-      mockFollowUp.mockResolvedValue(undefined);
+      mockPrompt.mockImplementation(async (text: string) => {
+        if (text.includes("[budget:nudge]")) continuationRan = true;
+      });
       setMockAssistantText("extended response after budget nudge");
 
       const result = await executor.execute(
@@ -7006,11 +7009,11 @@ describe("ExcludeDeferralResult wiring", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
-      // First 3 calls return low output (continue), 4th+ returns high output (stop).
-      let callCount = 0;
+      // Transition usage when the continuation prompt runs rather than after
+      // an implementation-specific number of bridge reads.
+      let continuationRan = false;
       mockGetResult.mockImplementation(() => {
-        callCount++;
-        if (callCount <= 3) {
+        if (!continuationRan) {
           return {
             tokensUsed: { input: 100, output: 50_000, total: 50_100, cacheRead: 0, cacheWrite: 0 },
             cost: { total: 0.01 },
@@ -7028,7 +7031,9 @@ describe("ExcludeDeferralResult wiring", () => {
         };
       });
 
-      mockFollowUp.mockResolvedValue(undefined);
+      mockPrompt.mockImplementation(async (text: string) => {
+        if (text.includes("[budget:nudge]")) continuationRan = true;
+      });
 
       const result = await executor.execute(
         testMessage, testSessionKey, undefined, undefined, undefined,
