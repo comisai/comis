@@ -30,12 +30,15 @@
  */
 
 import {
+  ChannelEndpointSchema,
+  ConversationLocatorSchema,
   NotificationSendContract,
   stripInternalFields,
   systemGetEnv,
 } from "@comis/core";
 
 import type { RpcHandler } from "./types.js";
+import type { NotificationDestination } from "../notification/notification-service.js";
 
 // Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: WorkspaceApiDeps (shared with workspace, browser,
@@ -59,6 +62,31 @@ export type NotificationHandlerDeps = WorkspaceApiDeps & {
  */
 const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 
+function parseAgentNotificationDestination(
+  value: unknown,
+  agentId: string,
+): NotificationDestination | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const candidate = value as { conversation?: unknown; destinationEndpoint?: unknown };
+  const conversation = ConversationLocatorSchema.safeParse(candidate.conversation);
+  const destinationEndpoint = ChannelEndpointSchema.safeParse(candidate.destinationEndpoint);
+  if (
+    !conversation.success
+    || !destinationEndpoint.success
+    || conversation.data.conversationScope.agentId !== agentId
+  ) {
+    return undefined;
+  }
+  return {
+    authority: {
+      tenantId: conversation.data.conversationScope.tenantId,
+      agentId,
+      conversationRef: conversation.data.conversationRef,
+    },
+    destinationEndpoint: destinationEndpoint.data,
+  };
+}
+
 /**
  * Create notification RPC handlers.
  * @param deps - Notification service dependency
@@ -70,7 +98,10 @@ export function createNotificationHandlers(
   return {
     [NotificationSendContract.method]: async (rawParams) => {
       // Resolve agent identity from RAW params BEFORE stripping internals.
-      const agentId = (rawParams._agentId as string) ?? "default";
+      const callerAgentId = typeof rawParams._agentId === "string"
+        ? rawParams._agentId
+        : undefined;
+      const agentId = callerAgentId ?? "default";
 
       const userParams = stripInternalFields(rawParams);
       const params = NotificationSendContract.request.parse(userParams);
@@ -97,20 +128,29 @@ export function createNotificationHandlers(
         return result;
       }
 
-      // Internal boundary: mint the delivery authority + destination endpoint the
-      // notifyUser guard requires, from this agent's tenant + the requested (or
-      // resolved) channel. notifyUser re-runs the same resolution and cross-checks
-      // the minted endpoint against it, so a mismatch is still rejected there.
-      const destination = deps.notificationService.resolveDestination({
-        agentId,
-        channelType: params.channel_type,
-        channelId: params.channel_id,
-        ...(params.destination_endpoint === undefined
-          ? {}
-          : { destinationEndpoint: params.destination_endpoint }),
-      });
-      if (!destination.ok) {
-        const result = { success: false, error: destination.error.message };
+      const agentDestination = callerAgentId === undefined
+        ? undefined
+        : parseAgentNotificationDestination(rawParams._deliveryTarget, agentId);
+      if (callerAgentId !== undefined && agentDestination === undefined) {
+        const result = {
+          success: false,
+          error: "Agent notification requires the trusted originating delivery target",
+        };
+        if (IS_DEV) NotificationSendContract.response.parse(result);
+        return result;
+      }
+      const resolvedDestination = agentDestination === undefined
+        ? deps.notificationService.resolveDestination({
+            agentId,
+            channelType: params.channel_type,
+            channelId: params.channel_id,
+            ...(params.destination_endpoint === undefined
+              ? {}
+              : { destinationEndpoint: params.destination_endpoint }),
+          })
+        : { ok: true as const, value: agentDestination };
+      if (!resolvedDestination.ok) {
+        const result = { success: false, error: resolvedDestination.error.message };
         if (IS_DEV) NotificationSendContract.response.parse(result);
         return result;
       }
@@ -121,9 +161,9 @@ export function createNotificationHandlers(
         priority: params.priority ?? "normal",
         channelType: params.channel_type,
         channelId: params.channel_id,
-        destinationEndpoint: destination.value.destinationEndpoint,
+        destinationEndpoint: resolvedDestination.value.destinationEndpoint,
         origin: params.origin ?? "tool",
-        authority: destination.value.authority,
+        authority: resolvedDestination.value.authority,
       });
 
       if (!sendResult.ok) {
@@ -135,8 +175,8 @@ export function createNotificationHandlers(
       const result = {
         success: true,
         entryId: sendResult.value,
-        channelType: destination.value.destinationEndpoint.channelType,
-        channelId: destination.value.destinationEndpoint.conversationId,
+        channelType: resolvedDestination.value.destinationEndpoint.channelType,
+        channelId: resolvedDestination.value.destinationEndpoint.conversationId,
       };
       if (IS_DEV) NotificationSendContract.response.parse(result);
       return result;

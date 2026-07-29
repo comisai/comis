@@ -19,7 +19,8 @@ import { ChannelEndpointSchema } from "../../domain/conversation-scope.js";
 /**
  * `notification.send` — bridge from the agent tool to the
  * NotificationService. RPC scope. The handler resolves `_agentId`
- * from internals, validates the chain-depth guard (rejects calls
+ * from internals, retains the trusted `_deliveryTarget` on agent-origin calls,
+ * validates the chain-depth guard (rejects calls
  * where `origin === "notification"` to prevent recursive notification
  * chains), and maps tool-param names (`channel_type`, `channel_id`)
  * to NotifyUserOptions (`channelType`, `channelId`).
@@ -41,7 +42,7 @@ import { ChannelEndpointSchema } from "../../domain/conversation-scope.js";
  *   - `{ success: true, entryId, channelType, channelId }` on `notifyUser`
  *     returning `ok`; the route is the exact validated destination.
  *   - `{ success: false, error }` on missing `message`, on the
- *     chain-depth guard, or on `notifyUser` returning `err`.
+ *     chain-depth guard, missing trusted agent route, or `notifyUser` returning `err`.
  */
 export const NotificationSendContract = defineContract({
   method: "notification.send",

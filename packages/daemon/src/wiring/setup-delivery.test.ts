@@ -194,7 +194,20 @@ vi.mock("@comis/core", async (importOriginal) => {
 });
 
 // Inline import to avoid ESM issues with mock setup
-const { setupDeliveryQueue, setupDeliveryMirror } = await import("./setup-delivery.js");
+const {
+  setupDeliveryQueue: setupDeliveryQueueImpl,
+  setupDeliveryMirror,
+} = await import("./setup-delivery.js");
+type SetupDeliveryQueueDeps = Parameters<typeof setupDeliveryQueueImpl>[0];
+function setupDeliveryQueue(
+  deps: Omit<SetupDeliveryQueueDeps, "hookRunner">
+    & Partial<Pick<SetupDeliveryQueueDeps, "hookRunner">>,
+) {
+  return setupDeliveryQueueImpl({
+    ...deps,
+    hookRunner: deps.hookRunner ?? { runAfterDelivery: vi.fn(async () => undefined) },
+  });
+}
 
 // ===========================================================================
 // Queue tests
@@ -307,7 +320,7 @@ describe("setupDeliveryQueue", () => {
           { ok: true, value: "platform-message-1" },
         ])]]),
         hookRunner: { runAfterDelivery },
-      } as unknown as Parameters<typeof setupDeliveryQueue>[0]);
+      });
 
       await result.drainAndStart();
 

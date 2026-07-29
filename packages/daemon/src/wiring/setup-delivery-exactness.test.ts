@@ -101,6 +101,7 @@ describe("delivery queue conservative replay safety", () => {
       eventBus: createMockEventBus() as unknown as TypedEventBus,
       logger: createMockLogger(),
       channelAdapters: new Map([["telegram", adapter]]),
+      hookRunner: { runAfterDelivery: vi.fn(async () => undefined) },
     });
 
     await setup.drainAndStart();
