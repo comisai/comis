@@ -1635,6 +1635,8 @@ describe("assembleSystemHealthReport — autonomy block", () => {
       ...report.findings.flatMap((f) => [f.detail, f.hint]),
     ].join(" | ");
     expect(verdictText).toMatch(/comis explain/);
+    expect(verdictText).toContain("associated session");
+    expect(verdictText).not.toContain("why it did not survive");
     expect(report.likelyRootCause?.code).toBe("system_autonomy_degradation");
     expect(report.likelyRootCause?.detail).toContain("root-worst-abc");
   });
