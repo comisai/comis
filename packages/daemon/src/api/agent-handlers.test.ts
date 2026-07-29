@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { createAgentHandlers } from "./agent-handlers.js";
 import type { AgentHandlerDeps } from "./agent-handlers.js";
 import type { PersistToConfigDeps } from "./shared/persist-to-config.js";
-import type { ProviderEntry, OAuthCredentialStorePort } from "@comis/core";
+import { safePath, type ProviderEntry, type OAuthCredentialStorePort } from "@comis/core";
 import { err, ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
@@ -1066,6 +1068,37 @@ describe("createAgentHandlers", () => {
       expect(result.agentId).toBe("temp-bot");
       expect(result.deleted).toBe(true);
       expect(deps.agents["temp-bot"]).toBeUndefined();
+    });
+
+    it("removes the managed workspace tree when deleting an agent", async () => {
+      const dataDir = await mkdtemp(safePath(tmpdir(), "comis-agent-delete-"));
+      const workspaceDir = safePath(dataDir, "workspace-temp-bot");
+      const sessionDir = safePath(
+        safePath(safePath(workspaceDir, "sessions"), "tenant"),
+        "telegram",
+      );
+      await mkdir(sessionDir, { recursive: true });
+      await writeFile(safePath(sessionDir, "session.jsonl"), "{}\n");
+
+      try {
+        const deps = makeDeps({
+          ...({
+            dataDir,
+            workspaceDirs: new Map([["temp-bot", workspaceDir]]),
+          } as unknown as Partial<AgentHandlerDeps>),
+        });
+        deps.agents["temp-bot"] = deps.agents["default"]!;
+        const handlers = createAgentHandlers(deps);
+
+        await handlers["agents.delete"]!({
+          agentId: "temp-bot",
+          _trustLevel: "admin",
+        });
+
+        await expect(access(workspaceDir)).rejects.toThrow();
+      } finally {
+        await rm(dataDir, { recursive: true, force: true });
+      }
     });
 
     it("removes agent from suspendedAgents set if suspended", async () => {
