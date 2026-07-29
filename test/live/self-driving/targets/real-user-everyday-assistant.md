@@ -115,9 +115,15 @@ mid-flight `hows that going` reads the real task state via `background_tasks lis
 cancels. The 6th concurrent ask is refused or queued honestly, never silently dropped. A failing
 background tool's breaker is recorded against the **originating** tool, not against the poller.
 
-**Oracle.** `background_task:*` events in the trajectory; the fresh-turn re-entry (a new turn whose
-initiator is the completion, not an inbound message); `background_tasks` tool receipts; `delivery_mirror`
-for the unprompted send (exactly one row); `explain` per-tool `{ok,failed}`.
+**Oracle.** ⚠ Only FOUR background events reach the trajectory. `event-bus-bridge.ts` maps
+`background_task:promoted|completed|failed|notified`; the emitted `background_task:cancelled` and
+`background_task:reentered` are **NOT bridged**, so a cancel and the fresh-turn re-entry are invisible to
+`comis explain`. Verified at HEAD — do not read their absence as "it didn't happen". So: use the four
+bridged events for promote/finish; read the CANCEL from the `background_tasks` tool receipt plus the task's
+terminal state; read the RE-ENTRY from the new turn's own record in the session (a turn with no inbound
+message initiating it). Then `delivery_mirror` for the unprompted send (exactly one row) and `explain`
+per-tool `{ok,failed}`. **The bridge gap is itself an obs-loop finding** — two emitted events that
+`explain` cannot see, on the default-ON path that produces unprompted user-visible messages.
 
 **HARD.** The unprompted completion is bound to the ORIGINATING conversation only (a completion must
 never land in another chat). No false "done" — a failed background task reports as failed. `exec`,
@@ -143,6 +149,24 @@ production read found the fan-out mechanism present but unused, and an agent con
 are absent entirely. If the mechanism is not in the surface, **that** is the finding — not "the model
 chose not to parallelize". Read the trajectory's tool inventory, not the reply.
 
+Three registration facts, verified at HEAD, that decide what this arc can even test:
+- `pipeline`, `subagents`, `sessions_spawn` and the `sessions_*` family are registered
+  **unconditionally** — present in every agent's surface.
+- **`orchestrate` is the one genuinely conditional orchestration tool**: it requires a sandbox provider
+  (`setup-tools-autonomy.ts` — the source comment reads "REQUIRED for the orchestrate jail; absent ⇒ no
+  orchestrate tool"). On a rig with no OS sandbox the tool simply does not exist, which on a local macOS
+  rig is a **NO-ACCESS, not a defect** — and is another reason the remote rig stays canonical.
+- Spawning and DAGs are reachable out of the box, non-admin, with no approval: the default `standard`
+  autonomy profile's floor caps include `orch:spawn` and `orch:graph`. So a refusal here is a finding.
+
+**Two narrowing layers that make a "the caps are wrong" verdict wrong.** Confirm which applies before
+scoring: an agent with `autonomy.role: "coordinator"` resolves a profile that includes `sessions_spawn` and
+`pipeline` but **omits `subagents` and `background_tasks`** — it can launch children and graphs yet has no
+in-surface way to wait, kill, steer or poll them. And a CHILD receives
+`security.agentToAgent.subAgentToolGroups` (default `["coding"]`), which does not include the group holding
+the spawn tools — so **a grandchild spawn is unreachable by default** regardless of `maxSpawnDepth: 3`.
+Verify both against the assembled surface rather than inferring from the numeric caps.
+
 **Predicate.** ≥2 real child sessions exist with real per-child content; the merge cites each child; a
 failed child is reported honestly rather than silently absorbed or invented; the caps hold
 (`maxChildrenPerAgent` 5, `maxSpawnDepth` 3, `maxConcurrentSelfAgents` 4 — S9) and the refusal names the
@@ -157,8 +181,15 @@ isolation: a child cannot read another child's session. Per-node budget breach s
 (`explain.nodeBudgetBreaches` with `{nodeId, capSource, tokenBudget, tokensUsed}`) — `tokensUsed:0` is
 CORRECT for a pre-check abort.
 
-**Config polarity.** `maxSpawnDepth` 1 → a grandchild spawn is refused with a bound-naming error;
-`autonomy.profile: assistant` → the spawn surface is absent and the agent says so honestly.
+**Config polarity.** `autonomy.profile: assistant` → the spawn surface is absent and the agent says so
+honestly. Do NOT plan "`maxSpawnDepth` 1 → a grandchild spawn is refused" as written: a grandchild spawn is
+already unreachable at the DEFAULT because the child's tool groups exclude the spawn tools, so the numeric
+bound is not what refuses it and the test would pass for the wrong reason. To exercise the depth bound at
+all you must first widen the child's `tool_groups`; otherwise record the bound as covered-by-unit-test.
+
+**Steer semantics.** `security.agentToAgent.steerInject` defaults **false**, so `subagents steer` is
+**kill-and-respawn, not mid-flight injection**. Assert the child restarted with the new instruction; a
+predicate written as "the running child received the message" fails against correct default behaviour.
 
 **Trap.** An operator RPC has `_agentId` stripped, so the no-downgrade gate and deny-by-origin chokepoint
 never fire on it. To drive an agent-origin spawn refusal you MUST drive a channel turn that calls
@@ -645,3 +676,19 @@ T1–T7 in the prompt still apply. These are the ones the B arcs add:
   does. Both are drive-mechanics, not product failures.
 - **T13** The agent's reply PARAPHRASES tool errors. Read the trajectory's `errorText`/`hint`/`errorKind`;
   diagnosing off the paraphrase sends you the wrong way.
+- **T14** (A9, B1, B3) **An external cancellation is reported as a timeout.** The caller-cancel path
+  hardcodes `execution:aborted {reason:"pipeline_timeout"}` alongside `finishReason:"prompt_timeout"` and
+  `errorType:"PipelineTimeout"`; only `originalError` tells the truth ("Caller cancelled the agent
+  execution"). So "wait stop" and a real execution-timeout are indistinguishable on every headline field.
+  Read `originalError` or the `step:"external-abort"` log line, never `reason`. Verified at HEAD — this is a
+  live observability defect, not merely a driving trap: the honest signal exists but sits under three
+  misleading fields, so a driver scoring the cancel legs off `reason` reports the wrong root cause.
+- **T15** (A9) `queue.defaultMode: steer+followup` is resolved BEFORE the command queue, and the queue's own
+  dispatch has no branch for that literal — a message that reaches the queue lands on its "unknown mode —
+  treat as followup for safety" fallback. That IS the correct semantic (nothing live to steer ⇒ follow up),
+  so it is not a defect, but it emits no mode-specific signal: you cannot score "did it steer" from the
+  queue. Prove steering from the live-run path (a mid-turn inject while streaming) or record it unproven.
+- **T16** (B3) The DAG never returns results to the parent turn — `graph.execute` returns
+  `{graphId, async:true}` immediately and synthesis is just another node — and there is no
+  `subagent:spawned`/`completed` bus event to assert on. A chat-only read cannot tell a completed graph from
+  a dead one: poll `pipeline` `status`/`outputs`, and use `explain`'s spawn tree for the children.

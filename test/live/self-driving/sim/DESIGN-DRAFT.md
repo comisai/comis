@@ -138,7 +138,7 @@ integrations:
       th-sim:                       # only the workload under test is enabled
         transport: stdio
         command: node
-        args: ["<repo>/test/live/self-driving/sim/threat-hunting/mcp-server.mjs"]
+        args: ["<repo>/test/live/self-driving/sim/bin/mcp-server.mjs threat-hunting"]
         env: { SIM_SEED: "42", SIM_VARIANT: "A" }
         enabled: true
 agents:

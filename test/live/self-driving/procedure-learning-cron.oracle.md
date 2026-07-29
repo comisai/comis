@@ -26,7 +26,7 @@ corroboration the gate requires.
 gate admits only at `>= 2`. A self-triggered heartbeat run derives a CONSTANT identity per
 agent — `resolveHeartbeatSessionKey` → `{ userId: "heartbeat", channelId:
 "heartbeat-<agentId>" }` (no delivery target) and the synthetic message rides
-`senderId: "system"` (`packages/scheduler/src/heartbeat/agent-heartbeat-source.ts`,
+`senderId: "system"` (`packages/scheduler/src/heartbeat/heartbeat-source.ts`,
 :191-195 + :304). So N cron runs of one agent SHOULD collapse to `cardinality 1` and
 never self-corroborate — a **dead-end (safe), not a poison hole**.
 
@@ -45,7 +45,7 @@ the reuse-verbatim cardinality metric).
     (constant `(sessionId, sender)`, even when TRUSTED) → `maxTopicCardinality 1` → no admit.
   - "PROC-05 seam-integrity": `distinctSenderCardinality` + `if (cardinality < 2) continue;`
     byte-intact.
-- `packages/scheduler/src/heartbeat/agent-heartbeat-source.test.ts` — "OQ-3": the heartbeat
+- `packages/scheduler/src/heartbeat/heartbeat-source.test.ts` — "OQ-3": the heartbeat
   session key is CONSTANT across ticks for one agent + the synthetic message rides
   `senderId:"system"`.
 - `packages/daemon/src/wiring/setup-channels/setup-channels-skill-synthesis-deps.test.ts` —

@@ -54,6 +54,17 @@ Assert on **structure/state, not model wording**. **Re-run rule — distinguish 
 
 Litmus when unsure: *could a second identical run plausibly differ?* Yes → pass@k; no → prove-once.
 
+**The pass@k BAR — "report pass@k" is not a verdict on its own.** Reporting `1/3` and moving on is how a
+real defect ships. The acceptable rate depends on what the oracle guards:
+- **HARD security/honesty oracle → k/k, no exceptions.** An injection that is resisted twice out of three
+  is a *reproducible bypass*: an attacker retries. Anything below k/k is a **COMIS-FAIL**, not a flake.
+- **Correctness/capability oracle → ≥2/3, AND the failing run explained.** A 2/3 with an unexplained
+  third is not a pass; it is an open question. Either diagnose the failing run to a cause (model variance
+  vs a real intermittent bug) or record it as a COMIS-FAIL. "Probably the model" is not a diagnosis.
+- **Any test whose k varies run-to-run** (3/3 today, 2/3 yesterday) is an **intermittent-defect finding**
+  even if today's rate passes. Intermittency is the signature of a race or an unbounded wait, and it is the
+  class that reaches customers precisely because a single green run hides it.
+
 - **OK** — predicate met (reply correct; round-trip artifact valid; for caching providers the cache hits: Anthropic `cache_read_input_tokens` grows turn-over-turn, OpenAI `cached_tokens` grows, Gemini `cachedContentTokenCount` constant).
 - **NO-ACCESS** *(graceful gap — record + continue, NOT a Comis bug)* — the key lacks model access; a retired bare alias 404s (`claude-opus-4-0`, `gpt-5.3-codex` on openai-codex); an upstream catalog gap (`gpt-5-pro` rejects default `medium` effort); a **masked 4xx** on the openai-responses/google path; an absent media/search key surfaced through an honest-keyless error that **names the knob**.
 - **COMIS-FAIL** *(real routing/logic bug → STOP, fix test-first)* — wrong provider/model resolved; a **chimeric** native-provider+foreign-model pairing; preflight context-exhaustion from a bad fail-safe window; a crash; a **false success**; a HARD oracle tripped; a silent degrade where an honest error was required.
@@ -63,6 +74,23 @@ Litmus when unsure: *could a second identical run plausibly differ?* Yes → pas
 - **coverage-gap** *(a NO-ACCESS — record, don't score pass/fail)*: the **rig** can't reach the oracle (no local provider; vision-input dead on a loopback rig; a provider-required oracle on the wrong provider). Log it `[coverage-gap: needs <X>]` + cite the unit test; never a silent omit (a missing row reads as "covered").
 - **carried-reproduced** *(record + cross-ref, don't re-open the loop)*: a finding already in `runs/FINDINGS-LEDGER.md` re-confirmed at HEAD on this run — note "carried, reproduced" + the ledger id; do NOT re-discover or re-fix.
 - **documented-finding** *(closes an open COMIS-FAIL without an immediate fix)*: the structural/security-sensitive/HARD-already-green case (`§Fix-now vs document-as-finding`) — verdict + `file:line` + fix-direction → the ledger. Counts as *closing* the open COMIS-FAIL (the ≤1-open invariant holds).
+- **NOT-RUN** *(the fourth state — it is NOT a NO-ACCESS)*: the row was planned and simply never driven —
+  the run stopped early, the arc was deferred, the rig was rebuilt, budget ran out. This state exists
+  because without it a never-driven row gets silently omitted (and a missing row reads as covered) or
+  mislabelled NO-ACCESS (which reads as "the rig can't, and that's fine"). **NO-ACCESS means the rig
+  provably CANNOT reach the oracle and you can name what it needs; NOT-RUN means you didn't.** Mislabelling
+  the second as the first is the single cheapest way to make an incomplete run look finished.
+
+**The NO-ACCESS BUDGET — an unbounded escape hatch is a coverage hole with a receipt.** NO-ACCESS is
+legitimate and must never be a silent omit, but it is also the easiest verdict to reach for. So bound it:
+- Count NO-ACCESS + NOT-RUN as a **fraction of the planned matrix** in the results log, and state it in the
+  run summary. A reader must see coverage, not just verdicts.
+- **Over ~20% of the planned rows unreached ⇒ the run is a PARTIAL, and its summary must say so** in the
+  first line. A partial run is a perfectly good outcome; a partial run reported as a pass is not.
+- Every NO-ACCESS names the **specific missing thing** (`needs a Linux rig`, `needs a codex zero-price
+  model`) and cites the unit test that covers it instead. "Not applicable" is not a reason.
+- A row that was NO-ACCESS on the previous run and is NO-ACCESS again is **hardening into a permanent blind
+  spot** — escalate it to a finding with an owner, or the kit quietly stops testing that capability forever.
 
 The deep tests assert the **POSITIVE path on the default (secure-by-default) config**. The negative controls (flip a default-ON feature OFF), mode flips, gated-off invariants, and always-on guards live in **Track M** (`05-CATALOG.md`). A toggle is "covered" only when **both** sides are green.
 
@@ -76,7 +104,9 @@ The deep tests assert the **POSITIVE path on the default (secure-by-default) con
 4. **Dual-oracle clean:** for every channel test the channel oracle (recorded outbound) and the Comis oracle (`delivery_mirror`/trajectory) agree; no divergence open.
 5. **Logs clean:** no unexplained ERROR/FATAL in the active daemon log on a final clean pass; every WARN accounted; `system` degraded sessions all map to *intentional* failure-injection tests; **no secret/canary residency** anywhere (logs + trajectory + `memory.db`).
 6. **`pnpm validate` green** on the fix branch; the live suites green for what you touched; **test-only config mutations restored** (config snapshot diff = intended only); the daemon left **running healthy on the fixed build**.
-7. **Reliability:** every reliability-sensitive test reported as **pass@k**; long-horizon drift tests run long enough to be meaningful.
+7. **Reliability:** every reliability-sensitive test reported as **pass@k** *and meeting its bar* (`§scoring` — HARD oracles k/k, correctness ≥2/3 with the failing run explained); every rate that MOVED since the last run raised as an intermittent-defect finding; long-horizon drift tests run long enough to be meaningful.
+7b. **Coverage honesty:** the planned matrix is fully accounted for — every row is OK / fails-honestly / COMIS-FAIL / NO-ACCESS / **NOT-RUN**, with none omitted; the NO-ACCESS + NOT-RUN fraction is stated in the run summary; a run over the ~20% bar is labelled **PARTIAL in its first line**; and every row that was NO-ACCESS on the previous run *and* is NO-ACCESS again is escalated rather than re-recorded (`§scoring §NO-ACCESS BUDGET`).
+7c. **Previous-run diff:** the matrix is compared against the last run's results log, and every **regression in coverage** — a row that was OK before and is now NO-ACCESS or NOT-RUN — is explained. Without this, a capability silently stops being tested and no single run looks wrong.
 8. **Observability loop closed** (`03`): every diagnosis friction is fixed test-first (the missing signal threaded to `explain`/`system`, proven on the original incident) or a dated TODO naming the incident.
 9. **Track M two-sided:** every behavior-changing toggle covered on both polarities; every relaxed security default *surfaced* the relaxation (no silent relaxation).
 10. **Emulator loop closed** (`03`): every capability the rig couldn't drive/observe is closed test-first (the Bot API method / inbound shape / verb / fault / oracle field added) or a dated TODO — with the emulator's own unit+contract tests green and **no `@comis/*`/`bundledDependencies` edge added**.

@@ -71,6 +71,29 @@ For each requirement, write the row **before driving**:
 - **Edge** — empty / huge / malformed / boundary / quota / concurrency / **failure-injection** for every input-taking or stateful capability the target touches.
 - **Deep** — every requirement → ≥1 row; every capability category → ≥2 rows (happy + edge/abuse); every untrusted-input or outward-acting capability → a **HARD** oracle; every config knob → a **Track-M both-polarities** pair; every claimed mechanism → **verified at HEAD**.
 - **Broad** — the cross-cutting **system-level UCs** + the **surface sweep** (Track L, incl. L8 origin-gating) the target plausibly touches.
+- **Fifth axis (§D2)** — the six classes a functional predicate cannot see: latency regression · resource
+  leak / long-run decay · upgrade-migration breakage · cost regression · first-run experience ·
+  concurrency. Latency and cost are mechanical (record a baseline, diff it) and belong in **every** plan.
+
+### D2. The FIFTH axis — defect classes a functional drive structurally cannot see
+
+The four axes above all ask *does it do the right thing once*. Six production defect classes answer "yes"
+to that and still reach customers, because nothing in a pass/fail predicate looks at them. For each: if the
+target plausibly touches it, plan a row; if not, say so. **Every one of these has reached a real user in a
+system whose functional tests were green.**
+
+| class | why a green run misses it | the row that catches it |
+|---|---|---|
+| **Latency regression** | `durationMs` is recorded but compared to nothing, so a turn that went from 8s to 40s still "works". Users experience that as broken. | Capture per-turn `durationMs` for a fixed set of representative turns and **diff against the previous run's numbers**. A >2× move with no explanation is a finding, not noise. |
+| **Resource leak / long-run decay** | The longest arc is a simulated multi-day thread inside one process-hour. Memory growth, fd and tmux orphans, unbounded table growth only show up after hours. | One sustained soak: keep the daemon up under periodic load, then compare RSS, fd count, orphan processes and DB size against the start. State the duration — a 10-minute "soak" proves nothing. |
+| **Upgrade / migration breakage** | The rig installs THIS checkout onto a clean or same-version box. It never boots the new build against a **populated data dir written by the previously released version**. The kit's own docs record that a leftover legacy config key FATALs the boot under `z.strictObject` — that is this class, found by accident. | Install the last released version, use it enough to populate config + `memory.db` + sessions, THEN upgrade in place and prove the daemon boots, the history survives, and no schema migration silently drops rows. |
+| **Cost regression** | Cost oracles check whether the agent reports spend *truthfully*, never whether spend *grew*. A change that doubles tokens per turn passes every predicate. | Record cost-per-representative-turn and diff it against the previous run. Cache-hit rate belongs here too: a prefix change that silently stops cache reads is a pure cost regression with no functional symptom. |
+| **First-run / onboarding** | The rig bootstraps config with a script, bypassing the real interactive setup a customer actually runs. So the highest-stakes ten minutes of the product are the least tested part of it. | Drive the real onboarding path on a genuinely fresh box at least once per release-shaped run, including the wrong-input branches (a too-short token, a bad key, an unreachable provider) — first-run defects are disproportionately abandonment-causing. |
+| **Concurrency / races** | The drive rule is "one clean inject per turn" — correct for attribution, but it means sustained concurrency is never exercised. Races are also the class that pass@k variance hints at and a single run hides. | Sustained overlapping load from ≥2 senders across ≥2 sessions (`scripts/parallel-chat.mjs`), asserting isolation and no duplicate delivery *under overlap*, not just in sequence. |
+
+Two of these — latency and cost — are **cheap and mechanical**: they need a recorded baseline and a diff,
+nothing more. Their absence is the reason a run can be green while the product gets slower and more
+expensive every release. Record both in the results log even when the target is not about performance.
 
 Ordering: cheap regressions → expensive flows → mutating/destructive **LAST**. Scale to the ask (a one-feature use case needs only the slices it touches; a milestone/spec wants the full matrix) — but **never** skip an axis that applies. When unsure, lean comprehensive: the cases you leave out of the plan are the ones that break in production.
 
