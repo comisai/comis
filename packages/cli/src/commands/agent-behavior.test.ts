@@ -577,4 +577,33 @@ describe("extractAgents field normalization", () => {
     expect(parsed[0]!.provider).toBe("google");
     expect(parsed[0]!.model).toBe("gemini-pro");
   });
+
+  it("lists agents from the flat agents section returned by config read", async () => {
+    vi.mocked(withClient).mockImplementation(async (fn) => {
+      const mockClient = createMockRpcClient()
+        .onCall("config.read", {
+          default: {
+            provider: "openai-codex",
+            model: "gpt-5.6-sol",
+          },
+          "live-test-helper": {
+            provider: "openai-codex",
+            model: "gpt-5.6-sol",
+          },
+        })
+        .build();
+      return fn(mockClient);
+    });
+
+    const program = createTestProgram();
+    registerAgentCommand(program);
+
+    await program.parseAsync(["node", "test", "agent", "list", "--format", "json"]);
+
+    const parsed = JSON.parse(getSpyOutput(consoleSpy.log)) as Array<{ name: string }>;
+    expect(parsed.map((agent) => agent.name)).toEqual([
+      "default",
+      "live-test-helper",
+    ]);
+  });
 });
