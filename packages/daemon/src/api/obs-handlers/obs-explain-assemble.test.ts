@@ -1827,6 +1827,58 @@ describe("assembleIncidentReportFromSources — audit?", () => {
     });
   });
 
+  it("keeps an acute spawn ceiling refusal above its downstream delegation correction", async () => {
+    const reader: IncidentSourceReader = {
+      ...makeAuditReader([
+        auditRow("audit", TRACE_ID, {
+          action: "response.delegation_evidence_guard",
+          outcome: "denied",
+        }),
+      ]),
+      async readSessionRecords() {
+        return [
+          {
+            traceSchema: "comis-trajectory",
+            schemaVersion: 1,
+            source: "runtime",
+            type: "tool.result",
+            ts: "2026-07-29T19:38:25.732Z",
+            seq: 6,
+            agentId: "default",
+            sessionId: SESSION_KEY,
+            traceId: TRACE_ID,
+            sessionKey: SESSION_KEY,
+            data: {
+              toolName: "sessions_spawn",
+              durationMs: 6,
+              success: false,
+              errorKind: "resource",
+              errorMessage:
+                '{"content":[{"type":"text","text":"[spawn_ceiling] Sub-agent spawn rejected: autonomy.spawn.maxSpawnDepth=1; current=1; reason=depth. Increase autonomy.spawn.maxSpawnDepth in the config file and restart the daemon, or continue without another nested spawn; waiting for running work cannot change this call\'s depth."}],"details":{}}',
+              classifiedFailureBy: "runtime_guard",
+              transportOk: false,
+              matchedRule: "spawn_ceiling",
+              resultBytes: 331,
+              resultDigest: "6c0d7b2dd66c",
+            },
+          },
+        ];
+      },
+    };
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause?.code).toBe("spawn_ceiling");
+    expect(report.likelyRootCause?.detail).toContain(
+      "autonomy.spawn.maxSpawnDepth=1; current=1",
+    );
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" ")).toContain(
+      "restart the daemon",
+    );
+  });
+
   it("populates audit { total, byKind } from the session's audit events scoped to the resolved traceId", async () => {
     const reader = makeAuditReader([
       auditRow("secret_access", TRACE_ID),

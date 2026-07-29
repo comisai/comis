@@ -506,6 +506,7 @@ export async function assembleIncidentReportFromSources(
   const delegationEvidenceVerdict = delegationEvidenceGuardVerdict(
     auditRows,
     report.traceId,
+    report.failures,
   );
   if (delegationEvidenceVerdict !== null) {
     // A deterministic response correction is the acute terminal event. Rank it
@@ -531,9 +532,13 @@ export async function assembleIncidentReportFromSources(
 function delegationEvidenceGuardVerdict(
   rows: ReadonlyArray<Record<string, unknown>>,
   traceId: string,
+  failures: IncidentReport["failures"],
 ): IncidentReport["likelyRootCause"] {
   if (
     traceId.length === 0
+    // The guard corrected the response because this concrete spawn failed.
+    // Preserve that causal refusal; the response correction is downstream.
+    || failures.some((failure) => failure.toolName === "sessions_spawn")
     || !rows.some(
       (row) =>
         row.traceId === traceId
