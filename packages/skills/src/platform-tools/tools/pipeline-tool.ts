@@ -5,7 +5,8 @@
  * executing, monitoring, canceling, saving, loading, listing, deleting,
  * and retrieving outputs from execution graphs (DAG pipelines).
  *
- * Supports 9 actions: define, execute (default), status, cancel, save, load, list, delete, outputs.
+ * Supports 10 actions: define, execute (default), status, cancel, save, load, list, delete, outputs,
+ * and from_intent.
  * Cancel and delete actions are gated via action classifier.
  * Save/load/list/delete delegate to named graph persistence RPCs.
  * All actions delegate to the graph backend via rpcCall indirection.

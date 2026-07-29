@@ -53,16 +53,14 @@ const { ensureWorkspace, resolveWorkspaceDir } = await import("@comis/core");
  * Agent data matching what config.get returns for the agents section.
  */
 const AGENTS_DATA = {
-  agents: {
-    assistant: {
-      defaultProvider: "anthropic",
-      defaultModel: "claude-sonnet-4-5-20250929",
-      bindings: ["channel:discord-main"],
-    },
-    moderator: {
-      defaultProvider: "openai",
-      defaultModel: "gpt-4o",
-    },
+  assistant: {
+    defaultProvider: "anthropic",
+    defaultModel: "claude-sonnet-4-5-20250929",
+    bindings: ["channel:discord-main"],
+  },
+  moderator: {
+    defaultProvider: "openai",
+    defaultModel: "gpt-4o",
   },
 };
 
@@ -75,8 +73,7 @@ describe("agent list table output", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    // Mock withClient: agent list calls withClient(async (client) => { ... })
-    // Inside, it calls config.get for "agents" then "routing" and merges results.
+    // Mock the flat agents section returned by config.read.
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("config.read", AGENTS_DATA)
@@ -166,7 +163,7 @@ describe("agent list empty", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.read", { agents: {} })
+        .onCall("config.read", {})
         .build();
       return fn(mockClient);
     });
@@ -553,11 +550,9 @@ describe("extractAgents field normalization", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("config.read", {
-          agents: {
-            "alt-agent": {
-              provider: "google",
-              model: "gemini-pro",
-            },
+          "alt-agent": {
+            provider: "google",
+            model: "gemini-pro",
           },
         })
         .build();
@@ -576,5 +571,34 @@ describe("extractAgents field normalization", () => {
     expect(parsed[0]!.name).toBe("alt-agent");
     expect(parsed[0]!.provider).toBe("google");
     expect(parsed[0]!.model).toBe("gemini-pro");
+  });
+
+  it("lists agents from the flat agents section returned by config read", async () => {
+    vi.mocked(withClient).mockImplementation(async (fn) => {
+      const mockClient = createMockRpcClient()
+        .onCall("config.read", {
+          default: {
+            provider: "openai-codex",
+            model: "gpt-5.6-sol",
+          },
+          "live-test-helper": {
+            provider: "openai-codex",
+            model: "gpt-5.6-sol",
+          },
+        })
+        .build();
+      return fn(mockClient);
+    });
+
+    const program = createTestProgram();
+    registerAgentCommand(program);
+
+    await program.parseAsync(["node", "test", "agent", "list", "--format", "json"]);
+
+    const parsed = JSON.parse(getSpyOutput(consoleSpy.log)) as Array<{ name: string }>;
+    expect(parsed.map((agent) => agent.name)).toEqual([
+      "default",
+      "live-test-helper",
+    ]);
   });
 });

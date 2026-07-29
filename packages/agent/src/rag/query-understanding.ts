@@ -152,6 +152,16 @@ export function intentMultiplier(intent: Intent, lane: ReweightLane): number {
 const SYNONYM_FANOUT_CAP = 3;
 
 /**
+ * Personal residence questions need concept expansion rather than a token-level mapping:
+ * `live` alone is ambiguous (a live service, stream, or status), while the whole phrase identifies
+ * a location lookup. Keeping this phrase-bounded prevents operational queries from pulling in
+ * unrelated personal-location memories.
+ */
+const PERSONAL_LOCATION_PHRASE_RE =
+  /\b(?:where\s+(?:do\s+)?(?:i|we)\s+live|my\s+(?:location|residence|home|address|city))\b/i;
+const PERSONAL_LOCATION_EXPANSIONS = ["location", "residence", "address"] as const;
+
+/**
  * A SMALL, BOUNDED static synonym/acronym table (project/domain acronyms + a few common
  * synonyms) — deliberately a bounded static map, NOT a generated thesaurus. Keyed by a
  * lowercase token; the value is the expansion phrase(s) appended to the query. Expansions are
@@ -211,6 +221,14 @@ export function expandSynonyms(query: string): string {
           if (seen.size > before) expanded = true; // a genuinely new token was added
         }
       }
+    }
+  }
+
+  if (PERSONAL_LOCATION_PHRASE_RE.test(sanitized)) {
+    for (const word of PERSONAL_LOCATION_EXPANSIONS.slice(0, SYNONYM_FANOUT_CAP)) {
+      const before = seen.size;
+      push(word);
+      if (seen.size > before) expanded = true;
     }
   }
 

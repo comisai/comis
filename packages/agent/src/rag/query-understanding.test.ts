@@ -124,6 +124,17 @@ describe("expandSynonyms", () => {
     expect(expandSynonyms(q)).toBe(q);
   });
 
+  it("expands a personal residence question with location vocabulary", () => {
+    const out = expandSynonyms("whats the weather where i live").toLowerCase();
+    expect(out).toContain("where i live");
+    expect(out).toContain("location");
+  });
+
+  it("does not treat an operational live-status query as a residence question", () => {
+    const q = "check the live status endpoint";
+    expect(expandSynonyms(q)).toBe(q);
+  });
+
   it("caps the per-term fan-out (a heavily-mapped term does not blow up the query)", () => {
     // "db" maps to several synonyms; the expansion is capped at the documented per-term N.
     const out = expandSynonyms("db");

@@ -2894,6 +2894,57 @@ describe("createMemoryRecall — query understanding", () => {
     expect(seenQuery).toContain("virtual"); // the mapped expansion is present
   });
 
+  it("SYNONYM-ON: a personal residence question surfaces the current location correction", async () => {
+    const priorLocation = makeResult("prior_location", {
+      base: 0.8,
+      content: "The user lived in Haifa.",
+      createdAt: NOW - 86_400_000,
+    });
+    const currentLocation = makeResult("current_location", {
+      base: 0.9,
+      content: "The user is now based in Jerusalem. This supersedes the earlier location.",
+      createdAt: NOW,
+    });
+    const locationAwarePort = {
+      async search() {
+        return ok([priorLocation]);
+      },
+      async searchLanes(_key: SessionKey, query: string) {
+        return ok({
+          fts: query.toLowerCase().includes("location")
+            ? [currentLocation, priorLocation]
+            : [priorLocation],
+          vector: [],
+        });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      {
+        memoryPort: locationAwarePort,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        queryUnderstanding: { intentReweight: false, synonyms: true, temporalParse: false },
+      } as Partial<MemoryRecallConfig>),
+    );
+
+    const got = await recall.recall(
+      "whats the weather where i live",
+      memoryScope("agent_y", "tenant_x"),
+      SESSION_KEY_OBJ,
+    );
+
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((result) => result.entry.id)).toEqual([
+      "current_location",
+      "prior_location",
+    ]);
+  });
+
   it("RANGE-ON: temporalParse=true + 'last week' → the search options carry the parsed occurredAtRange (from the fixedClock)", async () => {
     const fts = [makeResult("a", { base: 0.9 })];
     const capture: { laneOpts?: MemorySearchOptions } = {};

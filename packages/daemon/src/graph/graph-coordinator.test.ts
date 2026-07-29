@@ -182,15 +182,25 @@ function createMockSubAgentRunner(): MockSubAgentRunner {
   let counter = 0;
   const spawnCalls: Array<Record<string, unknown>> = [];
   const killCalls: string[] = [];
-  const runData = new Map<string, { status: string; result?: { response: string }; error?: string }>();
+  type MockRunData = NonNullable<
+    ReturnType<GraphCoordinatorDeps["subAgentRunner"]["getRunStatus"]>
+  >;
+  const runData = new Map<string, MockRunData>();
 
   const runner: MockSubAgentRunner = {
     spawn: vi.fn((params: Record<string, unknown>) => {
       const runId = typeof params.reservedRunId === "string"
         ? params.reservedRunId
         : `run-${counter++}`;
+      const agentId = typeof params.agentId === "string" ? params.agentId : "test-agent";
+      const locator = makeCallerLocator("internal", runId, agentId);
       spawnCalls.push({ ...params, _runId: runId });
-      runData.set(runId, { status: "running" });
+      runData.set(runId, {
+        status: "running",
+        sessionKey: `test:${agentId}:${runId}`,
+        conversationScope: locator.conversationScope,
+        conversationRef: locator.conversationRef,
+      });
       return runId;
     }),
     killRun: vi.fn((runId: string) => {
@@ -198,7 +208,12 @@ function createMockSubAgentRunner(): MockSubAgentRunner {
       const run = runData.get(runId);
       if (run) {
         run.status = "failed";
-        run.error = "Killed by parent agent";
+        run.completion = {
+          endReason: "killed",
+          completedAtMs: Date.now(),
+          errorKind: "precondition",
+          summary: "Killed by parent agent",
+        };
       }
       return { killed: true };
     }),
@@ -209,14 +224,25 @@ function createMockSubAgentRunner(): MockSubAgentRunner {
       const run = runData.get(runId);
       if (run) {
         run.status = "completed";
-        run.result = { response };
+        run.completion = {
+          endReason: "completed",
+          completedAtMs: Date.now(),
+          summary: response,
+        };
+        run.telemetry = { finishReason: "stop" };
       }
     },
     _failRun(runId: string, error: string) {
       const run = runData.get(runId);
       if (run) {
         run.status = "failed";
-        run.error = error;
+        run.completion = {
+          endReason: "failed",
+          completedAtMs: Date.now(),
+          errorKind: "internal",
+          summary: error,
+        };
+        run.telemetry = { finishReason: "error" };
       }
     },
     _getSpawnCalls() {

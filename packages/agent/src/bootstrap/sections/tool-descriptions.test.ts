@@ -28,6 +28,14 @@ describe("LEAN_TOOL_DESCRIPTIONS", () => {
   it("has entries for all 42 tools (excludes 6 native file tools)", () => {
     expect(Object.keys(LEAN_TOOL_DESCRIPTIONS).length).toBe(42);
   });
+
+  it("distinguishes recall storage from requested workspace artifacts", () => {
+    const description = LEAN_TOOL_DESCRIPTIONS.memory_store;
+
+    expect(description).toEqual(expect.any(String));
+    expect(description).toMatch(/not.*workspace (file|artifact)/isu);
+    expect(description).toMatch(/log.*track.*file tools/isu);
+  });
 });
 
 describe("TOOL_SUMMARIES", () => {
