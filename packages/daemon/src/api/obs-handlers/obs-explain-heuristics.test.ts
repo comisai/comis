@@ -36,6 +36,34 @@ function makeSignals(overrides?: Partial<IncidentSignals>): IncidentSignals {
 }
 
 describe("obs-explain-heuristics", () => {
+  it("prioritizes a failed direct child above unrelated retained breaker state", () => {
+    const signals = makeSignals({
+      breakerOpenedTool: "stale_fixture",
+      hasDoNotRetrySignal: true,
+      repeatedFailureCount: { stale_fixture: 0 },
+    }) as IncidentSignals & {
+      subagentCompletions: {
+        completed: number;
+        failed: number;
+        lastFailedRunId: string;
+      };
+    };
+    signals.subagentCompletions = {
+      completed: 1,
+      failed: 1,
+      lastFailedRunId: "run-child",
+    };
+
+    expect(rootCause(signals)).toEqual({
+      code: "subagent_failed",
+      detail: "background child run-child failed (1 of 1 completed child runs failed)",
+      suggestedNextSteps: [
+        "run comis explain run-child --depth full to inspect the child trajectory",
+        "inspect the failed child tools and terminal errorKind before retrying",
+      ],
+    });
+  });
+
   // ------------------------------------------------------------------------
   // Root-cause ordering: misclassification precedes the breaker symptom.
   // ------------------------------------------------------------------------

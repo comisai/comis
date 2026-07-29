@@ -2194,6 +2194,51 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- direct sub-agent spawn topology", () => {
     });
     expect(recorder.calls[0]!.data).not.toHaveProperty("parentSessionKey");
   });
+
+  it("records a failed child completion only on the owning parent trajectory", () => {
+    const bus = makeBus();
+    const parentRecorder = createCaptureRecorder();
+    const siblingRecorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({
+      eventBus: bus,
+      recorder: parentRecorder,
+      ownerSessionKey: "parent-session",
+    });
+    attachTrajectoryToEventBus({
+      eventBus: bus,
+      recorder: siblingRecorder,
+      ownerSessionKey: "sibling-session",
+    });
+
+    (bus.emit as unknown as (name: string, payload: Record<string, unknown>) => void)(
+      "session:sub_agent_completed",
+      {
+        runId: "run-child-1",
+        parentSessionKey: "parent-session",
+        agentId: "child-agent",
+        success: false,
+        runtimeMs: 12_000,
+        tokensUsed: 2_500,
+        cost: 0.04,
+        timestamp: 1000,
+      },
+    );
+
+    expect(parentRecorder.calls).toEqual([
+      {
+        type: "subagent.completed",
+        data: {
+          runId: "run-child-1",
+          childAgentId: "child-agent",
+          success: false,
+          runtimeMs: 12_000,
+          tokensUsed: 2_500,
+          costUsd: 0.04,
+        },
+      },
+    ]);
+    expect(siblingRecorder.calls).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

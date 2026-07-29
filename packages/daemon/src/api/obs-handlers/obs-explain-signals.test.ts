@@ -790,6 +790,40 @@ describe("toIncidentSignals — capability.audited fold (spawn-tree nodes)", () 
 });
 
 describe("toIncidentSignals — direct sub-agent spawn-tree leaves", () => {
+  it("folds a failed completion into the matching direct child leaf and failure signal", () => {
+    const s = toIncidentSignals([
+      event("subagent.spawned", 1, {
+        runId: "run-child",
+        rootRunId: "root-session",
+        childAgentId: "worker",
+        caps: ["orch:web"],
+      }),
+      event("subagent.completed", 2, {
+        runId: "run-child",
+        childAgentId: "worker",
+        success: false,
+        runtimeMs: 12_000,
+        tokensUsed: 2_500,
+        costUsd: 0.04,
+      }),
+    ]);
+
+    expect(s.spawnTree).toEqual([
+      expect.objectContaining({
+        leaseId: "run-child",
+        terminalOutcome: "failed",
+        runtimeMs: 12_000,
+        tokensUsed: 2_500,
+        costUsd: 0.04,
+      }),
+    ]);
+    expect((s as unknown as { subagentCompletions?: unknown }).subagentCompletions).toEqual({
+      completed: 1,
+      failed: 1,
+      lastFailedRunId: "run-child",
+    });
+  });
+
   it("keeps parallel sessions_spawn children distinct under their parent root", () => {
     const s = toIncidentSignals([
       capAudited(1, {

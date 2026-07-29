@@ -572,6 +572,45 @@ describe("assembleIncidentReport — cost", () => {
 // ---------------------------------------------------------------------------
 
 describe("assembleIncidentReport — outcome", () => {
+  it("marks an otherwise successful parent degraded when a direct child failed", () => {
+    const signals = makeSignals({
+      toolStats: {},
+      failures: [],
+      hasMisclassificationSignal: false,
+      repeatedFailureCount: {},
+    }) as IncidentSignals & {
+      subagentCompletions: {
+        completed: number;
+        failed: number;
+        lastFailedRunId: string;
+      };
+    };
+    signals.subagentCompletions = {
+      completed: 1,
+      failed: 1,
+      lastFailedRunId: "run-child",
+    };
+
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata({
+        sessionEnd: {
+          endReason: "success",
+          degraded: false,
+        },
+      }),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.outcome).toEqual({
+      endReason: "success",
+      degraded: true,
+      severity: "degraded",
+    });
+  });
+
   it("honors an explicit degraded:true flag with a tool-error endReason as severity degraded", () => {
     const report = assembleIncidentReport(
       makeSignals(),
