@@ -183,7 +183,6 @@ export type {
   InstructionStability,
   InstructionSection,
   WorkspacePolicySnapshot,
-  ResponseLocaleSource,
   ResponseLocalePolicy,
   DeliveryOrigin,
   DeliveryStatus,
