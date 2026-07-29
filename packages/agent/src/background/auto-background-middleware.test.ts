@@ -192,9 +192,15 @@ describe("wrapToolForAutoBackground", () => {
     const firstBlock = result.content[0]!;
     expect(firstBlock.type).toBe("text");
     expect((firstBlock as { text: string }).text).toContain("moved to the background");
-    expect((firstBlock as { text: string }).text).toContain('Call background_tasks once with action "read_output"');
-    expect((firstBlock as { text: string }).text).toContain('Do not call "test_tool" again or sleep');
-    expect((firstBlock as { text: string }).text).not.toContain("Use background_tasks");
+    expect((firstBlock as { text: string }).text).toContain(
+      "Automatic completion re-entry will resume this conversation with the result",
+    );
+    expect((firstBlock as { text: string }).text).toContain(
+      "Do not call background_tasks or sleep to poll it",
+    );
+    expect((firstBlock as { text: string }).text).not.toContain(
+      'Call background_tasks once with action "read_output"',
+    );
 
     const details = result.details as {
       status: string;
