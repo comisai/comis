@@ -86,7 +86,11 @@ import type { Message } from "@earendil-works/pi-ai";
 import { estimateMessageTokens } from "../safety/token-estimator.js";
 import { sanitizeToolUseResultPairing } from "./transcript-repair.js";
 import { resolveClampedFreshTailTurns } from "../model/fresh-tail-clamp.js";
-import { resolveFreshTailStart, warnOnCoverageShortfall } from "./lcd-coverage.js";
+import {
+  measureRepresentedCoverage,
+  resolveFreshTailStart,
+  warnOnCoverageShortfall,
+} from "./lcd-coverage.js";
 import { computeTokenBudgetForProfile } from "./budget-capacity-cap.js";
 import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
 import { runPreflightFitCheck } from "./lcd-preflight.js";
@@ -564,13 +568,20 @@ export function createLcdContextEngine(
 
       // The fresh tail is concatenated UNCONDITIONALLY — never evicted.
       const assembled = [...budgeted, ...freshTail];
+      const representedCoverage = measureRepresentedCoverage(
+        evictable,
+        budgeted,
+        freshTail.length,
+      );
 
       // Reconcile THIS seam against the live conversation — the check that would have
       // made the silent hole self-reporting (lcd-coverage.ts owns the why).
       const coverageShortfall = warnOnCoverageShortfall(deps.logger, {
         liveCount: liveMessages.length,
         assembledCount: assembled.length,
+        assembledCoverageCount: representedCoverage.assembledCoverageCount,
         droppedCount,
+        droppedCoverageCount: representedCoverage.droppedCoverageCount,
         freshTailTrimmedCount: rawFreshTail.length - freshTail.length,
         persistedMsgCount,
         stepBoundary,
@@ -580,6 +591,17 @@ export function createLcdContextEngine(
         agentId: deps.agentId,
         sessionKey: deps.sessionKey,
       });
+      if (coverageShortfall > 0) {
+        const timestamp = now();
+        deps.eventBus?.emit("context:dag_degraded", {
+          conversationId: conversationRef,
+          agentId: deps.agentId ?? "",
+          sessionKey: deps.sessionKey ?? "",
+          reason: "assembly_coverage_shortfall",
+          durationMs: Math.max(0, timestamp - startMs),
+          timestamp,
+        });
+      }
 
       // 5. NORMALIZE assistant string content to array blocks.
       const normalized = assembled.map(normalizeAssistantContent);
@@ -633,6 +655,8 @@ export function createLcdContextEngine(
           // failed to (0 on every healthy call).
           liveCount: liveMessages.length,
           coverageShortfall,
+          assembledCoverageCount: representedCoverage.assembledCoverageCount,
+          droppedCoverageCount: representedCoverage.droppedCoverageCount,
           // The budget equation at INFO: diagnosability must not depend on
           // logLevel having been debug before an incident
           // (the lcd-evict budget fields are DEBUG). One line per LLM call.
@@ -727,9 +751,14 @@ function coalesceConsecutiveSummaryRefs(
       // sum tokens. The role stays "user" (the untrusted-by-role ceiling).
       const joinedText = run.map((it) => summaryItemText(it)).join("\n\n");
       const tokens = run.reduce((sum, it) => sum + it.tokens, 0);
+      const representedMessageCount = run.reduce(
+        (sum, it) => sum + (it.representedMessageCount ?? 1),
+        0,
+      );
       outItems.push({
         msg: { role: "user", content: [{ type: "text", text: joinedText }] } as unknown as AgentMessage,
         tokens,
+        representedMessageCount,
       });
     }
     outKinds.push("summary");
@@ -789,6 +818,7 @@ function resolveContextItem(
       return {
         msg,
         tokens: Math.max(row.tokenCount, estimateMessageTokens(msg as unknown as Message)),
+        representedMessageCount: 1,
         lcdId: row.id,
       };
     }
@@ -804,6 +834,7 @@ function resolveContextItem(
           summary.tokenCount,
           estimateMessageTokens({ role: "user", content: summary.content } as Message),
         ),
+        representedMessageCount: summary.descendantCount,
       };
     }
     default: {

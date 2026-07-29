@@ -386,6 +386,9 @@ export interface MessagingEvents {
    *  - `live_store_divergence`: the afterTurn ingest skipped because the
    *    live message array is SHORTER than the LCD store high-water mark
    *    (`lcd-ingest.ts` divergence branch).
+   *  - `assembly_coverage_shortfall`: represented-message accounting found a
+   *    gap after summary compaction, intentional eviction, and tail trimming
+   *    were reconciled (`lcd-coverage.ts`).
    *  - `leaf_window_divergence`: a leaf compaction pass skipped because the chunk
    *    message ids did not resolve to a `context_items` ordinal window
    *    (`lcd-compaction-trigger.ts`).
@@ -395,16 +398,15 @@ export interface MessagingEvents {
     conversationId: string;
     agentId: string;
     sessionKey: string;
-    /** Closed union — never an open string (AGENTS.md §2.8). The three
-     *  `*_divergence` members are closed
-     *  literals (the sanctioned §2.8 extension) so the LCD-divergence WARN sites
-     *  emit this event for `health_signal` persistence. */
+    /** Closed union — never an open string (AGENTS.md §2.8). Each LCD integrity
+     *  WARN uses one literal so it can be persisted as a `health_signal`. */
     reason:
       | "fail_closed_rollover"
       | "serialized_wait"
       | "breaker_open"
       | "spend_cap"
       | "live_store_divergence"
+      | "assembly_coverage_shortfall"
       | "leaf_window_divergence"
       | "condense_window_divergence"
       /** A fresh/disjoint live transcript was detected (JSONL
