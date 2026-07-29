@@ -191,6 +191,8 @@ function makeDeps(overrides?: Partial<AgentHandlerDeps>): AgentHandlerDeps {
     },
     defaultAgentId: "default",
     suspendedAgents: new Set<string>(),
+    dataDir: "/home/test/.comis",
+    workspaceDirs: new Map<string, string>(),
     providerEntries: defaultProviderEntries,
     secretManager: { has: () => true, get: () => "test-key" },
     ...overrides,
@@ -1082,10 +1084,8 @@ describe("createAgentHandlers", () => {
 
       try {
         const deps = makeDeps({
-          ...({
-            dataDir,
-            workspaceDirs: new Map([["temp-bot", workspaceDir]]),
-          } as unknown as Partial<AgentHandlerDeps>),
+          dataDir,
+          workspaceDirs: new Map([["temp-bot", workspaceDir]]),
         });
         deps.agents["temp-bot"] = deps.agents["default"]!;
         const handlers = createAgentHandlers(deps);

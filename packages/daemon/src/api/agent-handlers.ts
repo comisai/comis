@@ -60,6 +60,7 @@ import {
   type AgentInlineWorkspaceResult,
   type AgentInlineWorkspaceError,
 } from "./agent-inline-workspace.js";
+import { removeManagedAgentWorkspace } from "./agent-workspace-cleanup.js";
 import { probeProviderAuth } from "./shared/probe-provider-auth.js";
 import { resolveProviderCredentialWithStore } from "./shared/credential-resolver.js";
 
@@ -69,11 +70,12 @@ import type { RpcHandler } from "./types.js";
 // Types
 // ---------------------------------------------------------------------------
 
-// Re-aliased from the cluster slice in api/types.ts.
-// Single source of truth: AgentsApiDeps (shared with model-handlers,
-// provider-handlers).
-import type { AgentsApiDeps as AgentHandlerDeps } from "./types.js";
-export type { AgentHandlerDeps };
+// Re-aliased from the cluster slices in api/types.ts. The workspace fields are
+// owned by MemoryApiDeps in the aggregate dispatch shape; this handler consumes
+// them to clean up the daemon-managed workspace after an agent deletion.
+import type { AgentsApiDeps, MemoryApiDeps } from "./types.js";
+type AgentHandlerWorkspaceDeps = Pick<MemoryApiDeps, "workspaceDirs" | "dataDir">;
+export type AgentHandlerDeps = AgentsApiDeps & AgentHandlerWorkspaceDeps;
 
 // ---------------------------------------------------------------------------
 // Operator-only security-posture guard
@@ -601,10 +603,18 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       const userParams = stripInternalFields(rawParams);
       AgentsDeleteContract.request.parse(userParams);
 
+      const agentConfig = deps.agents[agentId];
+      const workspaceDir =
+        deps.workspaceDirs.get(agentId) ??
+        resolveWorkspaceDir(agentConfig, agentId, deps.dataDir);
+
       delete deps.agents[agentId];
       deps.suspendedAgents.delete(agentId);
 
-      // Best-effort persistence to config.yaml
+      // Only remove workspace data after durable config persistence succeeds.
+      // A failed best-effort save preserves the workspace so a restart cannot
+      // resurrect a configured agent whose data was already destroyed.
+      let configPersisted = true;
       if (deps.persistDeps) {
         const ctx = rawParams._context as { agentId?: string; userId?: string; traceId?: string } | undefined;
         const persistResult = await persistToConfig(deps.persistDeps, {
@@ -617,6 +627,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
           skipRestart: !!deps.hotRemove,  // skip SIGUSR2 when hot-remove handles it in-process
         });
         if (!persistResult.ok) {
+          configPersisted = false;
           deps.persistDeps.logger.warn(
             { method: "agents.delete", agentId, err: persistResult.error, hint: "Agent deleted in memory but config persistence failed", errorKind: "config" as const },
             "Agent config persistence failed",
@@ -625,10 +636,12 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       }
 
       // Hot-remove agent from running daemon without restart
+      let runtimeRemoved = true;
       if (deps.hotRemove) {
         try {
           await deps.hotRemove(agentId);
         } catch (hotRemoveErr) {
+          runtimeRemoved = false;
           deps.persistDeps?.logger.warn(
             { method: "agents.delete", agentId, err: hotRemoveErr,
               hint: "Agent removed from config but hot-remove failed; will be gone after restart",
@@ -636,6 +649,44 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
             "Agent hot-remove failed",
           );
         }
+      }
+
+      if (configPersisted && runtimeRemoved && deps.dataDir) {
+        const cleanupStartMs = systemNowMs();
+        const cleanup = await removeManagedAgentWorkspace({
+          agentId,
+          workspaceDir,
+          dataDir: deps.dataDir,
+        });
+        if (!cleanup.ok) {
+          deps.persistDeps?.logger.error(
+            {
+              method: "agents.delete",
+              agentId,
+              step: "agent-workspace-delete",
+              durationMs: systemNowMs() - cleanupStartMs,
+              errorKind: "resource" as const,
+              hint: `Remove the managed workspace for agent "${agentId}" and retry after restoring filesystem access`,
+            },
+            "Deleted agent workspace cleanup failed",
+          );
+          throw new PreconditionError(
+            `Agent "${agentId}" was removed, but its managed workspace could not be deleted`,
+          );
+        }
+        deps.workspaceDirs.delete(agentId);
+        deps.persistDeps?.logger.info(
+          {
+            method: "agents.delete",
+            agentId,
+            step: "agent-workspace-delete",
+            disposition: cleanup.value.disposition,
+            durationMs: systemNowMs() - cleanupStartMs,
+          },
+          cleanup.value.disposition === "removed"
+            ? "Deleted agent managed workspace"
+            : "Preserved operator-supplied agent workspace",
+        );
       }
 
       const result = { agentId, deleted: true as const };
