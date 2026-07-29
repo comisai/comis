@@ -24,7 +24,7 @@
  * Cancellation uses `handle.cancel()`, never `clearTimeout` (TimerHandle is
  * opaque). Implements the core `ChannelActivityRenderer` port.
  */
-import { ok, type Result } from "@comis/shared";
+import { err, ok, type Result } from "@comis/shared";
 import type {
   ChannelActivityRenderer,
   ActivityRenderFrame,
@@ -176,15 +176,25 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
           // Edit to the final form, then delete AFTER deliveredAt. The success
           // closing line follows the resolved theme markers; omitting
           // them yields the byte-identical default check-done line.
+          let unsupportedEdit: ActivityRenderError | undefined;
           if (messageId !== undefined) {
             const edited = await actions.edit(messageId, successLabel(markers));
-            if (!edited.ok) return edited;
+            if (!edited.ok) {
+              if (edited.error.kind !== "not_supported") return edited;
+              // The final answer already has its own delivered message. If the
+              // platform cannot update the transient scaffold, continue to its
+              // delivery-gated removal while preserving the degradation result
+              // for the coordinator's operator signal.
+              unsupportedEdit = edited.error;
+            }
           }
           const deliveredAtMs = outcome.delivery.deliveredAtMs;
           const now = clock?.now();
           if (now === undefined || now >= deliveredAtMs) {
             // Receipt already in the past (or no clock injected) → delete now.
-            return deletePlaceholder();
+            const deleted = await deletePlaceholder();
+            if (!deleted.ok) return deleted;
+            return unsupportedEdit === undefined ? ok(undefined) : err(unsupportedEdit);
           }
           // Wait until the assistant message has landed, then delete.
           pendingDelete = timer.setTimeout(() => {
@@ -193,7 +203,7 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
           // unref so the deliveredAt-gated delete never holds the event loop
           // open at shutdown.
           pendingDelete.unref();
-          return ok(undefined);
+          return unsupportedEdit === undefined ? ok(undefined) : err(unsupportedEdit);
         }
 
         case "failure": {

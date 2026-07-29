@@ -62,15 +62,16 @@ interface GrammyErrorFields {
   cause?: unknown;
 }
 
-/** Telegram "this message can no longer be edited" descriptions (400 family). */
-const MESSAGE_NOT_EDITABLE = /message (to edit )?not found|message can.?t be edited/i;
+/** Telegram "this edit cannot change the message" descriptions (400 family). */
+const MESSAGE_NOT_EDITABLE =
+  /message (?:to edit )?not found|message can.?t be edited|message is not modified/i;
 
 /**
  * Classify a raw Telegram platform error into the closed {@link ActivityRenderError}
  * union by its STRUCTURAL fields. Reads `error_code`/`parameters` off the error
  * itself and, when the live adapter wrapped the `GrammyError` in
  * `new Error(msg, { cause })`, off `error.cause`. The `description` is consulted
- * ONLY to pick the message-not-found variant — never rendered or logged.
+ * ONLY to identify an unavailable or unchanged edit — never rendered or logged.
  */
 export function classifyTelegramError(e: unknown): ActivityRenderError {
   const direct = (e ?? {}) as GrammyErrorFields;
@@ -123,7 +124,7 @@ export function makeTelegramRenderActions(
   let retryHandle: TimerHandle | undefined;
   /** Consecutive retry attempts; caps the backoff so a sustained 429 cannot loop forever. */
   let retryAttempts = 0;
-  /** Set once a message-not-found is seen — all further edits are dropped (drop-on-not_supported policy). */
+  /** Set once Telegram rejects the edit capability — all further edits are dropped. */
   let editsDropped = false;
 
   function cancelRetry(): void {
