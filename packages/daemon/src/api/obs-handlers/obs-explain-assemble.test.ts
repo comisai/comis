@@ -1389,7 +1389,13 @@ describe("assembleIncidentReport — user surface (activity finalize + skipped d
       },
     ]);
 
-    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 1);
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata({ sessionEnd: { endReason: "success", degraded: false } }),
+      null,
+      SESSION_KEY,
+      1,
+    );
 
     expect(report.activityFinalize).toMatchObject({
       outcome: "success",
