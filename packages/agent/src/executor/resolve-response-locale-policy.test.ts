@@ -35,11 +35,7 @@ describe("resolveResponseLocalePolicy", () => {
     });
   });
 
-  // The script-derived tier still INFERS the locale (it rides the prompt as a hint),
-  // but it no longer ENFORCES it: inferring from the current message alone let a
-  // single message switch a whole conversation's language and then burn a repair
-  // round-trip fighting the model. Only an operator pin enforces.
-  it("derives an open undetermined-language script tag from the current request text, ADVISORY only", () => {
+  it("derives an advisory open script tag from clear current-request prose", () => {
     expect(resolveResponseLocalePolicy({ requestText: "اكتب ملخصًا قصيرًا" })).toEqual({
       locale: "und-Arab",
       source: "request",
@@ -155,23 +151,20 @@ describe("request-locale vs conversation-script precedence", () => {
     });
     expect(policy.locale).toBe("und-Hebr");
     expect(policy.source).toBe("request");
-    // Advisory — the script-derived tier informs but never enforces.
     expect(policy.enforceLocale).toBe(false);
   });
 
-  it("keeps the request locale when it agrees with the message script", () => {
+  it("uses clear current prose instead of a matching device locale", () => {
     const policy = resolveResponseLocalePolicy({
       requestLocale: "he",
       requestText: "מה מזג האוויר מחר בתל אביב?",
     });
-    expect(policy.locale).toBe("he");
+    expect(policy.locale).toBe("und-Hebr");
     expect(policy.source).toBe("request");
-    // Agreeing with the message script makes the hint more likely RIGHT, not
-    // more authoritative — it is still a device setting.
     expect(policy.enforceLocale).toBe(false);
   });
 
-  it("prefers the current Latin prose script over a contradicting non-Latin transport locale (advisory)", () => {
+  it("prefers clear current Latin prose over a contradicting device locale", () => {
     const policy = resolveResponseLocalePolicy({
       requestLocale: "he",
       requestText: "What is the weather tomorrow in Tel Aviv?",
@@ -179,6 +172,17 @@ describe("request-locale vs conversation-script precedence", () => {
     expect(policy.locale).toBe("und-Latn");
     expect(policy.source).toBe("request");
     expect(policy.enforceLocale).toBe(false);
+  });
+
+  it("switches back to Latin prose immediately after a non-Latin conversation turn", () => {
+    expect(resolveResponseLocalePolicy({
+      requestLocale: "en",
+      requestText: "ok and the weather?",
+    })).toEqual({
+      locale: "und-Latn",
+      source: "request",
+      enforceLocale: false,
+    });
   });
 
   it("does not treat a short Latin identifier as a conversation-language override", () => {

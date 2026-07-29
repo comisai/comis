@@ -3075,7 +3075,7 @@ describe("bootstrap file snapshotting", () => {
   // dynamic preamble relocation
   // -----------------------------------------------------------------
   describe("dynamic preamble relocation", () => {
-    it("carries a typed request locale without script inference from prose", async () => {
+    it("prefers clear current prose over the typed device locale", async () => {
       mockBuildBootstrapContextFiles.mockReturnValue([
         { path: "USER.md", content: "- **Preferred language:** fr-CA" },
       ]);
@@ -3092,15 +3092,14 @@ describe("bootstrap file snapshotting", () => {
         }),
       }));
 
-      expect(result.dynamicPreamble).toContain('<response-locale locale="fr-CA" source="request"');
+      expect(result.dynamicPreamble).toContain('<response-locale locale="und-Latn" source="request"');
       expect(result.dynamicPreamble).toContain("Translation target is separate from response locale");
       expect(result.dynamicPreamble.lastIndexOf("<response-locale")).toBeGreaterThan(
         result.dynamicPreamble.lastIndexOf("## MCP Server Instructions"),
       );
       expect(result.responseLocalePolicy).toEqual({
-        locale: "fr-CA",
+        locale: "und-Latn",
         source: "request",
-        // Transport tier is advisory — only an operator pin enforces.
         enforceLocale: false,
       });
     });
@@ -4253,9 +4252,8 @@ describe("parent prefix reuse", () => {
         workspaceDir: "/workspace",
         spawnPacket: makeSpawnPacketWithCache(),
       },
-      // Arabic text so the ar-EG request locale agrees with the message
-      // script (a contradicting transport locale now yields to the
-      // conversation instead of resolving).
+      // Clear Arabic prose outranks the matching device locale and stays
+      // script-only instead of guessing a human language.
       msg: makeMsg({ text: "ما حالة النظام اليوم؟", metadata: { locale: "ar-EG" } }),
       resolvedModelId: "claude-3-opus",
       resolvedModelProvider: "anthropic",
@@ -4266,7 +4264,7 @@ describe("parent prefix reuse", () => {
     expect(result.systemPrompt).toBe("parent-frozen-prompt");
     expect(mockAssembleRichSystemPrompt).not.toHaveBeenCalled();
     expect(result.responseLocalePolicy).toEqual({
-      locale: "ar-EG",
+      locale: "und-Arab",
       source: "request",
       enforceLocale: false,
     });
