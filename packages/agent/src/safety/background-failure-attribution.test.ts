@@ -134,6 +134,39 @@ describe("attributeBackgroundFailuresToOriginatingTool", () => {
     bus.emit("background_task:failed", { toolName: "t", error: "x" });
     expect(breaker.recordResult).not.toHaveBeenCalled();
   });
+
+  it("shares task-id deduplication with the later durable settlement scan", () => {
+    const bus = fakeBus();
+    const breaker = { recordResult: vi.fn() };
+    const reconciler = createBackgroundTaskSettlementReconciler(breaker);
+    attributeBackgroundFailuresToOriginatingTool({
+      eventBus: bus as never,
+      breaker,
+      reconciler,
+      agentId: "a",
+      sessionKey: "session-a",
+    });
+
+    bus.emit("background_task:failed", {
+      taskId: "task-1",
+      toolName: "mcp__reports--slow_lookup",
+      error: "source unavailable",
+      agentId: "a",
+      sessionKey: "session-a",
+      timestamp: 10,
+    });
+    reconciler.reconcile([
+      {
+        id: "task-1",
+        toolName: "mcp__reports--slow_lookup",
+        status: "failed",
+        completedAt: 10,
+        error: "source unavailable",
+      },
+    ]);
+
+    expect(breaker.recordResult).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("createBackgroundTaskSettlementReconciler", () => {
@@ -141,7 +174,7 @@ describe("createBackgroundTaskSettlementReconciler", () => {
     const breaker = createToolRetryBreaker({
       maxConsecutiveFailures: 3,
       maxToolFailures: 2,
-      maxConsecutiveErrorPatterns: 2,
+      maxConsecutiveErrorPatterns: 10,
       suggestAlternatives: false,
     });
     const reconciler = createBackgroundTaskSettlementReconciler(breaker);
@@ -171,7 +204,7 @@ describe("createBackgroundTaskSettlementReconciler", () => {
   it("replays terminal chronology so a later completion resets prior failures", () => {
     const breaker = createToolRetryBreaker({
       maxConsecutiveFailures: 3,
-      maxToolFailures: 2,
+      maxToolFailures: 5,
       maxConsecutiveErrorPatterns: 2,
       suggestAlternatives: false,
     });

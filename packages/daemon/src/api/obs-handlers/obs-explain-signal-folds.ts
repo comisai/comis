@@ -19,8 +19,14 @@
  * @module
  */
 
-import { IncidentContextBudgetSchema, IncidentCronWakeGateSchema, IncidentPromptTimeoutSchema } from "@comis/core";
+import {
+  fingerprint,
+  IncidentContextBudgetSchema,
+  IncidentCronWakeGateSchema,
+  IncidentPromptTimeoutSchema,
+} from "@comis/core";
 import type { IncidentSignals, IncidentContextBudget, IncidentCronWakeGate, IncidentPromptTimeout } from "@comis/core";
+import type { Acc } from "./obs-explain-signals-acc.js";
 // The content-free readers live in the sibling fields helper (one source of truth);
 // imported here so the GBNF fold reuses them rather than re-deriving (no cycle —
 // the fields helper does not import this module).
@@ -29,6 +35,95 @@ import { asStringArray, asString, asNumber } from "./obs-explain-signals-fields.
 /** Return `v` typed as a `T` iff it is a member of the closed vocabulary, else undefined. */
 function narrow<T extends string>(vocab: readonly T[], v: unknown): T | undefined {
   return typeof v === "string" && (vocab as readonly string[]).includes(v) ? (v as T) : undefined;
+}
+
+function ensureBackgroundTool(
+  acc: Acc,
+  toolName: string,
+): { ok: number; failed: number; errorKinds: Map<string, number> } {
+  const current = acc.toolStats.get(toolName);
+  if (current !== undefined) return current;
+  const created = { ok: 0, failed: 0, errorKinds: new Map<string, number>() };
+  acc.toolStats.set(toolName, created);
+  return created;
+}
+
+/**
+ * Fold the background lifecycle into both recovery diagnostics and the
+ * originating tool outcome. Promotion produces a synthetic successful
+ * `tool.result` so the model can end the foreground turn; a later failed
+ * terminal event is authoritative and replaces that handoff success.
+ */
+export function accumulateBackgroundTaskRecord(
+  acc: Acc,
+  type: string,
+  data: Record<string, unknown>,
+  seq: number,
+): void {
+  const taskId = asString(data.taskId);
+  const toolName = asString(data.toolName);
+  if (taskId === undefined) return;
+
+  if (type === "background_task.promoted") {
+    if (toolName !== undefined) acc.backgroundPromotionsByTask.set(taskId, toolName);
+    return;
+  }
+  if (type === "background_task.completed") {
+    acc.backgroundTerminalTaskIds.add(taskId);
+    return;
+  }
+  if (type === "background_task.failed") {
+    if (toolName === undefined || acc.backgroundTerminalTaskIds.has(taskId)) return;
+    acc.backgroundTerminalTaskIds.add(taskId);
+    const entry = ensureBackgroundTool(acc, toolName);
+    if (acc.backgroundPromotionsByTask.get(taskId) === toolName && entry.ok > 0) {
+      entry.ok -= 1;
+    }
+    entry.failed += 1;
+    const errorKind = asString(data.errorKind) ?? "internal";
+    entry.errorKinds.set(errorKind, (entry.errorKinds.get(errorKind) ?? 0) + 1);
+    acc.failures.push({
+      seq,
+      toolName,
+      classifiedFailureBy: "background_task",
+      transportOk: false,
+      errorKind,
+      resultDigest: fingerprint(`${taskId}:${toolName}:${errorKind}`),
+      resultBytes: 0,
+      errorPreview: "",
+    });
+    return;
+  }
+  if (type !== "background_task.notified") return;
+
+  const reason = asString(data.reason);
+  if (reason === "recovery_retry_required") {
+    acc.backgroundRecoveryRetryCount += 1;
+    acc.backgroundRecoveryByTask.set(taskId, {
+      unresolved: true,
+      ...(toolName === undefined ? {} : { toolName }),
+    });
+    acc.backgroundRecoveryLastTaskId = taskId;
+    acc.backgroundRecoveryLastToolName = toolName;
+    return;
+  }
+  if (
+    reason !== "live_turn_consumed"
+    && reason !== "silent_consumed"
+    && reason !== "continuation_accepted"
+    && reason !== "fallback_accepted"
+    && reason !== "permanent_parked"
+    && reason !== "uncertain_parked"
+    && reason !== "recovery_resolved"
+  ) return;
+  const existing = acc.backgroundRecoveryByTask.get(taskId);
+  if (existing === undefined) return;
+  acc.backgroundRecoveryByTask.set(taskId, { ...existing, unresolved: false });
+  const unresolved = [...acc.backgroundRecoveryByTask.entries()]
+    .filter(([, entry]) => entry.unresolved);
+  const last = unresolved[unresolved.length - 1];
+  acc.backgroundRecoveryLastTaskId = last?.[0];
+  acc.backgroundRecoveryLastToolName = last?.[1].toolName;
 }
 
 // ---------------------------------------------------------------------------

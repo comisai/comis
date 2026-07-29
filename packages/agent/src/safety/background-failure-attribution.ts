@@ -28,6 +28,7 @@
  */
 
 import type { ComisLogger, TypedEventBus } from "@comis/core";
+import type { ToolBreakerTransition } from "./tool-retry-breaker.js";
 
 /** The polling tool that reports background task outcomes. Never the culprit. */
 export const BACKGROUND_POLLER_TOOL = "background_tasks";
@@ -60,12 +61,72 @@ export interface BackgroundFailureBreaker {
     args: Record<string, unknown>,
     success: boolean,
     errorText?: string,
-  ): unknown;
+  ): ToolBreakerTransition | undefined;
+}
+
+export interface BackgroundTaskSettlement {
+  readonly id: string;
+  readonly toolName: string;
+  readonly status: "running" | "completed" | "failed" | "cancelled";
+  readonly startedAt?: number;
+  readonly completedAt?: number;
+  readonly error?: string;
+}
+
+export interface BackgroundTaskSettlementReconciler {
+  reconcile(tasks: readonly BackgroundTaskSettlement[]): ToolBreakerTransition[];
+  recordFailure(task: BackgroundTaskSettlement): ToolBreakerTransition | undefined;
+}
+
+/**
+ * Reconcile durable task settlements into one executor-owned breaker.
+ *
+ * The reconciler outlives each `execute()` call, so a task that settles after
+ * its foreground turn is gone still affects the next turn. Task ids make the
+ * fold idempotent, and chronological replay preserves a later successful
+ * settlement as the breaker's recovery signal after daemon restart.
+ */
+export function createBackgroundTaskSettlementReconciler(
+  breaker: BackgroundFailureBreaker,
+): BackgroundTaskSettlementReconciler {
+  const seenTaskIds = new Set<string>();
+
+  function record(task: BackgroundTaskSettlement): ToolBreakerTransition | undefined {
+    if (seenTaskIds.has(task.id)) return undefined;
+    if (task.status !== "completed" && task.status !== "failed") return undefined;
+    seenTaskIds.add(task.id);
+    if (task.toolName.length === 0 || task.toolName === BACKGROUND_POLLER_TOOL) return undefined;
+    return breaker.recordResult(
+      task.toolName,
+      {},
+      task.status === "completed",
+      task.status === "failed" ? task.error : undefined,
+    );
+  }
+
+  return {
+    reconcile(tasks) {
+      return [...tasks]
+        .filter((task) => task.status === "completed" || task.status === "failed")
+        .sort((a, b) =>
+          (a.completedAt ?? a.startedAt ?? 0) - (b.completedAt ?? b.startedAt ?? 0)
+          || a.id.localeCompare(b.id)
+        )
+        .flatMap((task) => {
+          const transition = record(task);
+          return transition === undefined ? [] : [transition];
+        });
+    },
+    recordFailure(task) {
+      return task.status === "failed" ? record(task) : undefined;
+    },
+  };
 }
 
 export interface BackgroundFailureAttributionDeps {
   readonly eventBus: TypedEventBus;
   readonly breaker: BackgroundFailureBreaker;
+  readonly reconciler?: BackgroundTaskSettlementReconciler;
   readonly logger?: ComisLogger;
   /** Scope to one agent; undefined attributes every agent's failures. */
   readonly agentId?: string;
@@ -92,6 +153,7 @@ export function attributeBackgroundFailuresToOriginatingTool(
     taskId?: string;
     sessionKey?: string;
     dispatchRedelivery?: boolean;
+    timestamp?: number;
   }): void => {
     if (p.dispatchRedelivery === true) return;
     const toolName = p.toolName;
@@ -101,7 +163,25 @@ export function attributeBackgroundFailuresToOriginatingTool(
     // A poller task failing is not the poller's fault either — and it is never
     // the originating tool, so it would be meaningless to count.
     if (toolName === BACKGROUND_POLLER_TOOL) return;
-    deps.breaker.recordResult(toolName, {}, false, p.error);
+    const transition = deps.reconciler !== undefined
+      ? deps.reconciler.recordFailure({
+          id: p.taskId ?? "",
+          toolName,
+          status: "failed",
+          error: p.error,
+          completedAt: p.timestamp,
+        })
+      : deps.breaker.recordResult(toolName, {}, false, p.error);
+    if (transition?.transition === "opened" && p.timestamp !== undefined) {
+      deps.eventBus.emit("tool:breaker_opened", {
+        toolName: transition.toolName,
+        consecutiveFailures: transition.consecutiveFailures,
+        errorTag: transition.errorTag,
+        reason: transition.reason,
+        seq: 0,
+        timestamp: p.timestamp,
+      });
+    }
     deps.logger?.debug(
       {
         step: "background-failure-attribution",
