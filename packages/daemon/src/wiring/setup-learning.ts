@@ -35,6 +35,7 @@ import {
   type ComisLogger,
   type AppConfig,
   type ConversationRef,
+  type EventMap,
 } from "@comis/core";
 
 import { createSkillTrendTracker } from "./setup-learning-skill-trend.js";
@@ -388,6 +389,13 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   const terminalToolGrades = new Map<string, "success" | "failure">();
   const terminalGradeKey = (scope: OutcomeScope): string =>
     `${scope.tenantId}\u0000${scope.agentId}\u0000${scope.trajectoryId}`;
+  // Auto-background handoffs are neutral until every promoted task settles.
+  // These maps coordinate the foreground completion seam with terminal task
+  // events without carrying tool output or user content.
+  const pendingBackgroundTasks = new Map<string, number>();
+  const backgroundTrajectories = new Set<string>();
+  const completedBackgroundOrigins = new Set<string>();
+  const backgroundObservationChains = new Map<string, Promise<void>>();
 
   /**
    * The SHARED resolve→consume chain called by BOTH the `graph:completed` (DAG)
@@ -536,6 +544,51 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
       });
   }
 
+  function maybeResolveBackground(scope: OutcomeScope): void {
+    const trajectoryId = scope.trajectoryId;
+    if ((pendingBackgroundTasks.get(trajectoryId) ?? 0) > 0) return;
+    if (
+      backgroundTrajectories.has(trajectoryId)
+      && !completedBackgroundOrigins.has(trajectoryId)
+    ) return;
+
+    const observationChain = backgroundObservationChains.get(trajectoryId) ?? Promise.resolve();
+    void observationChain.then(() => {
+      if (
+        backgroundObservationChains.get(trajectoryId) !== undefined
+        && backgroundObservationChains.get(trajectoryId) !== observationChain
+      ) return;
+      if ((pendingBackgroundTasks.get(trajectoryId) ?? 0) > 0) return;
+      if (
+        backgroundTrajectories.has(trajectoryId)
+        && !completedBackgroundOrigins.has(trajectoryId)
+      ) return;
+      backgroundObservationChains.delete(trajectoryId);
+      pendingBackgroundTasks.delete(trajectoryId);
+      backgroundTrajectories.delete(trajectoryId);
+      completedBackgroundOrigins.delete(trajectoryId);
+      resolveAndConsume(scope, deps.clock.now());
+    });
+  }
+
+  function observeBackgroundSettlement(
+    payload: EventMap["background_task:completed"] | EventMap["background_task:failed"],
+    outcome: "success" | "failure",
+  ): void {
+    if (payload.dispatchRedelivery === true) return;
+    const scope = resolveScope(payload, deps.tenantId);
+    if (scope === undefined) return;
+    const trajectoryId = scope.trajectoryId;
+    const remaining = Math.max(0, (pendingBackgroundTasks.get(trajectoryId) ?? 1) - 1);
+    pendingBackgroundTasks.set(trajectoryId, remaining);
+    const prior = backgroundObservationChains.get(trajectoryId) ?? Promise.resolve();
+    const observationChain = prior.then(() =>
+      observeNonFatal(deps, scope, outcome, "tool", DETERMINISTIC_CONFIDENCE),
+    );
+    backgroundObservationChains.set(trajectoryId, observationChain);
+    maybeResolveBackground(scope);
+  }
+
   // ---- Deterministic tool signal (the only source that ships ACTIVE) ----
   deps.eventBus.on("tool:executed", (p) => {
     // Byte-identity short-circuit (default OFF) — observe NOTHING.
@@ -544,6 +597,15 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
 
     const scope = resolveScope(p, deps.tenantId);
     if (scope === undefined) return;
+
+    if (p.backgrounded === true) {
+      backgroundTrajectories.add(scope.trajectoryId);
+      pendingBackgroundTasks.set(
+        scope.trajectoryId,
+        (pendingBackgroundTasks.get(scope.trajectoryId) ?? 0) + 1,
+      );
+      return;
+    }
 
     if (p.selfGradedOutcome !== undefined) {
       terminalToolGrades.set(terminalGradeKey(scope), p.selfGradedOutcome);
@@ -560,6 +622,16 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
         : DETERMINISTIC_CONFIDENCE;
 
     void observeNonFatal(deps, scope, outcome, "tool", confidence);
+  });
+
+  deps.eventBus.on("background_task:completed", (p) => {
+    if (!deps.learningOutcomeEnabled(p.agentId)) return;
+    observeBackgroundSettlement(p, "success");
+  });
+
+  deps.eventBus.on("background_task:failed", (p) => {
+    if (!deps.learningOutcomeEnabled(p.agentId)) return;
+    observeBackgroundSettlement(p, "failure");
   });
 
   // ---- Skill-use attribution write-back ----
@@ -650,6 +722,12 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     const scope = resolveScope({}, deps.tenantId);
     if (scope === undefined) return;
 
+    if (backgroundTrajectories.has(scope.trajectoryId)) {
+      completedBackgroundOrigins.add(scope.trajectoryId);
+      maybeResolveBackground(scope);
+      return;
+    }
+
     // The last explicit tool grade is the terminal task state even when generic
     // cleanup/read calls followed it. A later explicit grade still recovers it.
     const gradeKey = terminalGradeKey(scope);
@@ -684,6 +762,11 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
       workspacePolicyHash: p.workspacePolicyHash,
     }, deps.tenantId);
     if (scope === undefined) return; // no trajectory identity (absent traceId) → skip
+    if (backgroundTrajectories.has(scope.trajectoryId)) {
+      completedBackgroundOrigins.add(scope.trajectoryId);
+      maybeResolveBackground(scope);
+      return;
+    }
     const resolveStart = deps.clock.now();
     const gradeKey = terminalGradeKey(scope);
     const terminalGrade = terminalToolGrades.get(gradeKey);

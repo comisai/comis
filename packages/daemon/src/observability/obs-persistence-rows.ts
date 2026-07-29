@@ -172,6 +172,49 @@ export function sessionSummaryEventToRow(
 }
 
 /**
+ * Persist the terminal outcome of an auto-backgrounded tool as a session
+ * health row. The foreground handoff is deliberately neutral; this row is the
+ * authoritative success/failure accounting consumed by explain and
+ * system-health. Redelivery ticks and unattributed settlements produce no row.
+ */
+export function backgroundTaskSettlementEventToRow(
+  payload: EventMap["background_task:completed"] | EventMap["background_task:failed"],
+): DiagnosticRow | undefined {
+  if (
+    payload.dispatchRedelivery === true
+    || payload.sessionKey === undefined
+    || payload.sessionKey.length === 0
+  ) return undefined;
+
+  const failed = "errorKind" in payload;
+  const toolStats = Object.fromEntries([
+    [payload.toolName, failed ? { ok: 0, failed: 1 } : { ok: 1, failed: 0 }],
+  ]);
+  const topErrorKinds = failed
+    ? Object.fromEntries([[payload.errorKind, 1]])
+    : {};
+  return {
+    timestamp: payload.timestamp,
+    category: "session_summary",
+    severity: failed ? "warning" : "info",
+    agentId: payload.agentId,
+    sessionKey: payload.sessionKey,
+    message: "session:summary",
+    details: JSON.stringify({
+      degraded: failed,
+      costUsd: 0,
+      toolStats,
+      breakerTripCount: 0,
+      turnCount: 0,
+      topErrorKinds,
+      source: "runtime",
+      endReason: failed ? "completed_with_tool_errors" : "success",
+    }),
+    traceId: payload.traceId ?? payload.taskId,
+  };
+}
+
+/**
  * Map a trajectory-recorder resume failure to an attributed warning row. The
  * row carries only correlation identifiers and closed labels; filesystem paths,
  * error messages, and trajectory content remain outside the persistence event.

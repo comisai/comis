@@ -48,6 +48,7 @@ import {
   deliveryEventToRow,
   diagnosticEventToRow,
   sessionSummaryEventToRow,
+  backgroundTaskSettlementEventToRow,
   trajectoryDegradedEventToRow,
   backgroundRecoveryEventToRow,
   dagDegradedEventToRow,
@@ -236,6 +237,7 @@ export {
   deliveryEventToRow,
   diagnosticEventToRow,
   sessionSummaryEventToRow,
+  backgroundTaskSettlementEventToRow,
   trajectoryDegradedEventToRow,
   backgroundRecoveryEventToRow,
   dagDegradedEventToRow,
@@ -499,6 +501,14 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   // (no new table/buffer/transaction) — written under category:"session_summary".
   eventBus.on("session:summary", (payload) => {
     diagnosticBuffer.push(sessionSummaryEventToRow(payload));
+  });
+  eventBus.on("background_task:completed", (payload) => {
+    const row = backgroundTaskSettlementEventToRow(payload);
+    if (row !== undefined) diagnosticBuffer.push(row);
+  });
+  eventBus.on("background_task:failed", (payload) => {
+    const row = backgroundTaskSettlementEventToRow(payload);
+    if (row !== undefined) diagnosticBuffer.push(row);
   });
 
   // A recorder that cannot safely resume its existing JSONL must surface in
