@@ -142,7 +142,7 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
     name: "obs_query",
     label: "Observability Query",
     description:
-      "Query platform diagnostics, billing, delivery, channel activity, session incidents, and system health. Before reporting runtime causes, failures, counts, latency, or cost, query explain, system_health, or billing as appropriate. If evidence is unavailable, say so; do not guess.",
+      "MANDATORY evidence for runtime self-reports. Asked what Comis did, what failed, why it was slow, counts, or cost? Call explain, system_health, or billing before answering. Never infer runtime cause from chat memory. If the query cannot establish it, say unknown.",
     parameters: ObsQueryToolParams,
 
     async execute(
