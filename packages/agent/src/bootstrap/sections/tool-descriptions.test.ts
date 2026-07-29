@@ -468,10 +468,11 @@ describe("resolveDescription", () => {
       LEAN_TOOL_DESCRIPTIONS,
       { trustLevel: "admin", modelTier: "large" },
     );
-    expect(result).toMatch(/before reporting runtime causes/i);
-    expect(result).toMatch(/latency.*cost/i);
-    expect(result).toMatch(/explain.*system_health.*billing/i);
-    expect(result).toMatch(/do not guess/i);
+    expect(result).toMatch(/^mandatory evidence for runtime self-reports/i);
+    expect(result).toMatch(/what failed.*why it was slow.*counts.*cost/i);
+    expect(result).toMatch(/call explain.*system_health.*billing before answering/i);
+    expect(result).toMatch(/never infer runtime cause from chat memory/i);
+    expect(result).toMatch(/say unknown/i);
   });
 
   it("all privileged tool dynamic builders follow admin suffix pattern", () => {

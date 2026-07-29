@@ -55,10 +55,11 @@ describe("obs_query tool", () => {
 
   it("direct description requires evidence for runtime self-report claims", () => {
     const tool = createObsQueryTool(mockRpcCall);
-    expect(tool.description).toMatch(/before reporting runtime causes/i);
-    expect(tool.description).toMatch(/latency.*cost/i);
-    expect(tool.description).toMatch(/explain.*system_health.*billing/i);
-    expect(tool.description).toMatch(/do not guess/i);
+    expect(tool.description).toMatch(/^mandatory evidence for runtime self-reports/i);
+    expect(tool.description).toMatch(/what failed.*why it was slow.*counts.*cost/i);
+    expect(tool.description).toMatch(/call explain.*system_health.*billing before answering/i);
+    expect(tool.description).toMatch(/never infer runtime cause from chat memory/i);
+    expect(tool.description).toMatch(/say unknown/i);
   });
 
   // -----------------------------------------------------------------------
