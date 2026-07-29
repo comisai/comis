@@ -91,6 +91,60 @@ describe("createSessionStore", () => {
     });
   });
 
+  it("ensure rejects an invalid canonical conversation scope", () => {
+    const invalidScope = {
+      tenantId: "",
+      agentId: "agent-1",
+      partition: { kind: "principal", principalId: "user-1" },
+    } as unknown as ConversationScope;
+
+    const result = store.ensure(invalidScope);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.errorKind).toBe("validation");
+  });
+
+  it("ensure rejects a malformed existing session row", () => {
+    resultValue(store.save(testScope, []));
+    const reference = resultValue(createConversationRef(testScope));
+    db.prepare(
+      "UPDATE sessions SET updated_at = 'not-a-number' WHERE tenant_id = ? AND agent_id = ? AND conversation_ref = ?",
+    ).run(testScope.tenantId, testScope.agentId, reference);
+
+    const result = store.ensure(testScope);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.errorKind).toBe("internal");
+  });
+
+  it("ensure rejects a canonical-scope collision without overwriting it", () => {
+    resultValue(store.save(testScope, [{ role: "user", content: "preserve" }]));
+    const reference = resultValue(createConversationRef(testScope));
+    const collidingScope = makeScope("default", "agent-1", "different-user");
+    db.prepare(
+      "UPDATE sessions SET canonical_scope = ? WHERE tenant_id = ? AND agent_id = ? AND conversation_ref = ?",
+    ).run(JSON.stringify(collidingScope), testScope.tenantId, testScope.agentId, reference);
+
+    const result = store.ensure(testScope);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.errorKind).toBe("internal");
+    expect(
+      db.prepare(
+        "SELECT canonical_scope FROM sessions WHERE tenant_id = ? AND agent_id = ? AND conversation_ref = ?",
+      ).get(testScope.tenantId, testScope.agentId, reference),
+    ).toEqual({ canonical_scope: JSON.stringify(collidingScope) });
+  });
+
+  it("ensure returns a resource error when the database is closed", () => {
+    db.close();
+
+    const result = store.ensure(testScope);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.errorKind).toBe("resource");
+  });
+
   it("save updates messages while preserving the original creation timestamp", () => {
     resultValue(store.save(testScope, [{ content: "first" }]));
     const reference = resultValue(createConversationRef(testScope));

@@ -1319,7 +1319,8 @@ describe("discover_tools -- searchHint BM25 enrichment", () => {
 
     // Description shows clean lean text, NOT searchHint keywords
     expect(entry.description).not.toContain("monitoring");
-    expect(entry.description).toContain("diagnostics");
+    expect(entry.description).toContain("runtime self-reports");
+    expect(entry.description).toContain("explain");
   });
 
   it("existing no-match behavior preserved with searchHint registered", async () => {
