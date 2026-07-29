@@ -307,16 +307,17 @@ export function assembleIncidentReport(
     isHardFailure ||
     deliveryPartial ||
     DEGRADED_END_REASONS.has(endReason) ||
-    signals.failures.length > 0 ||
-    signals.turnFinalized?.renderErrorKind !== undefined;
+    signals.failures.length > 0;
   const channelDegraded =
     signals.channelHealth !== undefined && !signals.channelHealth.recovered;
   const subagentDeliveryDegraded = signals.subagentDeliverySkipped !== undefined;
+  const activityRenderDegraded = signals.turnFinalized?.renderErrorKind !== undefined;
   const degraded =
     deliveryFailed
     || deliveryPartial
     || channelDegraded
     || subagentDeliveryDegraded
+    || activityRenderDegraded
     || (explicitDegraded ?? derivedDegraded);
   const severity: "ok" | "degraded" | "failed" = isHardFailure
     ? "failed"
