@@ -59,6 +59,38 @@ describe("createSessionStore", () => {
     expect(resultValue(store.load(makeScope("default", "agent-1", "nobody")))).toBeUndefined();
   });
 
+  it("ensure registers an empty canonical session when none exists", () => {
+    resultValue(store.ensure(testScope));
+
+    const loaded = resultValue(store.load(testScope));
+    expect(loaded).toEqual(expect.objectContaining({
+      conversationScope: testScope,
+      messages: [],
+      metadata: {},
+    }));
+  });
+
+  it("ensure preserves an existing session without refreshing or overwriting it", () => {
+    const messages = [{ role: "user", content: "preserve" }];
+    const metadata = { label: "keep" };
+    resultValue(store.save(testScope, messages, metadata));
+    const reference = resultValue(createConversationRef(testScope));
+    db.prepare(
+      "UPDATE sessions SET created_at = 1000, updated_at = 2000 WHERE tenant_id = ? AND agent_id = ? AND conversation_ref = ?",
+    ).run(testScope.tenantId, testScope.agentId, reference);
+
+    resultValue(store.ensure(testScope));
+
+    expect(resultValue(store.load(testScope))).toEqual({
+      conversationRef: reference,
+      conversationScope: testScope,
+      messages,
+      metadata,
+      createdAt: 1000,
+      updatedAt: 2000,
+    });
+  });
+
   it("save updates messages while preserving the original creation timestamp", () => {
     resultValue(store.save(testScope, [{ content: "first" }]));
     const reference = resultValue(createConversationRef(testScope));

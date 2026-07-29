@@ -95,6 +95,20 @@ function createFakeSessionStore(): SessionStorePort & {
   return {
     _sessions: sessions,
 
+    ensure(key) {
+      const k = keyStr(key);
+      if (!sessions.has(k)) {
+        const now = Date.now();
+        sessions.set(k, {
+          messages: [],
+          metadata: {},
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      return ok(undefined);
+    },
+
     save(key, messages, metadata) {
       const k = keyStr(key);
       const existing = sessions.get(k);

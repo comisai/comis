@@ -339,6 +339,7 @@ describe("group history injection", () => {
         }),
       } as never,
       sessionManager: {
+        ensure: vi.fn(() => ok(undefined)),
         loadOrCreate: vi.fn(() => ok(storedMessages)),
         save: vi.fn((_scope, messages) => {
           storedMessages = messages;
@@ -429,7 +430,7 @@ describe("group history injection", () => {
     const sharedTopicMetadata = {
       telegramMessageId: "95",
       telegramChatType: "group",
-      threadId: "95",
+      telegramThreadId: 95,
       replyToBot: false,
     };
 
@@ -485,6 +486,48 @@ describe("group history injection", () => {
       },
     });
   });
+
+  it("rejects an activated turn when canonical session registration fails", async () => {
+    const registrationError = Object.assign(
+      new Error("session database unavailable"),
+      { errorKind: "resource" as const },
+    );
+    const execute = vi.fn();
+    const deps = makeMinimalDeps({
+      createExecutor: vi.fn(() => ({ execute })),
+    });
+    vi.mocked(deps.sessionManager.ensure).mockReturnValue({
+      ok: false,
+      error: registrationError,
+    });
+    const msg = makeMsg({ id: "session-registration-failure" });
+
+    await expect(processInboundMessage(
+      deps,
+      makeAdapterForTest(),
+      msg,
+      new Set(),
+      new Map() as never,
+    )).rejects.toBe(registrationError);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(deps.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "session-register",
+        errorKind: "resource",
+        hint: expect.stringContaining("session database"),
+      }),
+      "Activated session authority registration failed",
+    );
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "message:terminal",
+      expect.objectContaining({
+        sourceMessageId: msg.id,
+        outcome: "error",
+        reason: "inbound_rejected",
+      }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -523,6 +566,7 @@ function makeMinimalDeps(overrides?: Partial<InboundPipelineDeps>): InboundPipel
       updateConfig: vi.fn(),
     },
     sessionManager: {
+      ensure: vi.fn(() => ok(undefined)),
       loadOrCreate: vi.fn(() => ok([])),
       save: vi.fn(() => ok(undefined)),
       isExpired: vi.fn(() => ok(false)),

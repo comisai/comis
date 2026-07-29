@@ -147,6 +147,13 @@ function rowToSessionData(
 
 /** Create a SessionStorePort bound to an initialized database. */
 export function createSessionStore(db: Database.Database): SessionStorePort {
+  const ensureStmt = db.prepare(`
+    INSERT INTO sessions (
+      tenant_id, agent_id, conversation_ref, canonical_scope,
+      messages, created_at, updated_at, metadata
+    ) VALUES (?, ?, ?, ?, '[]', ?, ?, '{}')
+    ON CONFLICT(tenant_id, agent_id, conversation_ref) DO NOTHING
+  `);
   const upsertStmt = db.prepare(`
     INSERT INTO sessions (
       tenant_id, agent_id, conversation_ref, canonical_scope,
@@ -200,6 +207,38 @@ export function createSessionStore(db: Database.Database): SessionStorePort {
   }
 
   return {
+    ensure(scope) {
+      const identity = resolveIdentity(scope);
+      if (!identity.ok) return identity;
+      const operation = databaseResult(() => db.transaction(() => {
+        const existing = sessionRowMapper.parseOptionalRow(loadStmt.get(
+          identity.value.scope.tenantId,
+          identity.value.scope.agentId,
+          identity.value.conversationRef,
+        ));
+        if (!existing.ok) return err(storeError("Stored session row failed validation", "internal"));
+        if (
+          existing.value !== undefined
+          && existing.value.canonical_scope !== identity.value.canonicalScope
+        ) {
+          return err(storeError("Conversation reference collides with a different canonical scope", "internal"));
+        }
+        if (existing.value !== undefined) return ok(undefined);
+        const now = systemNowMs();
+        ensureStmt.run(
+          identity.value.scope.tenantId,
+          identity.value.scope.agentId,
+          identity.value.conversationRef,
+          identity.value.canonicalScope,
+          now,
+          now,
+        );
+        return ok(undefined);
+      })());
+      if (!operation.ok) return operation;
+      return operation.value;
+    },
+
     save(scope, messages, metadata) {
       const identity = resolveIdentity(scope);
       if (!identity.ok) return identity;

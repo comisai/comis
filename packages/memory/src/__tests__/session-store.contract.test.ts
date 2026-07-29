@@ -52,6 +52,7 @@ describe("createSessionStore — SessionStorePort contract", () => {
     // Runtime structural check — guards against a future refactor that
     // deletes a method from the impl without a corresponding port change.
     const expectedMethods: ReadonlyArray<keyof SessionStorePort> = [
+      "ensure",
       "save",
       "load",
       "loadByRef",

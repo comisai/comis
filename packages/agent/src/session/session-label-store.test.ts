@@ -52,6 +52,21 @@ function createMockSessionStore(): SessionStorePort & {
   const sessions = new Map<ConversationRef, StoredSession>();
   return {
     _sessions: sessions,
+    ensure(scope) {
+      const conversationRef = refFor(scope);
+      if (!sessions.has(conversationRef)) {
+        const now = Date.now();
+        sessions.set(conversationRef, {
+          conversationRef,
+          conversationScope: scope,
+          messages: [],
+          metadata: {},
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      return ok(undefined);
+    },
     save(scope, messages, metadata) {
       const conversationRef = refFor(scope);
       const existing = sessions.get(conversationRef);

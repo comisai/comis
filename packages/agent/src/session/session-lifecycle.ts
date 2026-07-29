@@ -19,6 +19,7 @@ export interface SessionLifecycleOptions {
 }
 
 export interface SessionLifecycle {
+  ensure(scope: ConversationScope): Result<void, SessionStoreError>;
   loadOrCreate(scope: ConversationScope): Result<unknown[], SessionStoreError>;
   save(scope: ConversationScope, messages: unknown[], metadata?: Record<string, unknown>): Result<void, SessionStoreError>;
   isExpired(scope: ConversationScope, idleTimeoutMs?: number): Result<boolean, SessionStoreError>;
@@ -43,6 +44,10 @@ export function createSessionLifecycle(
   }
 
   return {
+    ensure(scope) {
+      return store.ensure(scope);
+    },
+
     loadOrCreate(scope) {
       const loaded = store.load(scope);
       if (!loaded.ok) return loaded;

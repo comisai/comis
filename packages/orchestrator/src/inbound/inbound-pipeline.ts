@@ -463,6 +463,20 @@ export async function processInboundMessage(
       return;
     }
 
+    const registered = deps.sessionManager.ensure(turnScope.conversation);
+    if (!registered.ok) {
+      dedupReservation?.rollback();
+      void tryCatch(() => deps.logger.error({
+        step: "session-register",
+        agentId,
+        channelType: adapter.channelType,
+        hint: "Restore the session database and verify canonical session storage before retrying the activated turn.",
+        errorKind: registered.error.errorKind,
+      }, "Activated session authority registration failed"));
+      emitInboundTerminal("error", "inbound_rejected");
+      return Promise.reject(registered.error);
+    }
+
     const executionMsg = groupHistoryContext.length === 0
       ? gate.processedMsg
       : {
