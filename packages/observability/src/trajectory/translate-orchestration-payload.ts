@@ -80,6 +80,7 @@ export function translateOrchestrationPayload(
       return {
         runId: payload.runId,
         rootRunId: payload.rootRunId,
+        parentRunId: payload.parentRunId,
         parentLeaseId: payload.parentLeaseId,
         childAgentId: payload.agentId,
         caps: payload.caps,

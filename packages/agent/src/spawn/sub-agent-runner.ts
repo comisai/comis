@@ -702,6 +702,9 @@ export interface SpawnParams {
    *  one (the root); a child MUST pass its parent's id down — a fresh id per child would
    *  escape the parent's ceiling (a silent under-count). */
   rootRunId?: string;
+  /** Immediate in-process parent run identity used only for topology reporting.
+   *  This is distinct from the authority-bearing parent lease. */
+  parentRunId?: string;
   /** Lease that authorized this spawn (revocation-cascade correlation). Recorded on the
    *  run so a future revoke-by-root can map runs to leases; omitted for the root. */
   parentLeaseId?: string;
@@ -2811,6 +2814,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           runId, parentSessionKey: params.callerSessionKey ?? "unknown",
           agentId: params.agentId,
           rootRunId: run.rootRunId,
+          ...(params.parentRunId !== undefined ? { parentRunId: params.parentRunId } : {}),
           ...(run.parentLeaseId !== undefined ? { parentLeaseId: run.parentLeaseId } : {}),
           caps: [...run.caps],
           timestamp: clock.now(),

@@ -416,6 +416,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         expected_outputs: expectedOutputs,
         depth: callerDepth,
         maxDepth: maxSpawnDepth,
+        ...(parentRun !== undefined ? { parentRunId: parentRun.runId } : {}),
         artifactRefs,
         objective,
         domainKnowledge,

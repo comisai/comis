@@ -345,6 +345,7 @@ describe("session.spawn caller context", () => {
   it("inherits the live parent run's own lease and attenuated capabilities for a descendant", async () => {
     const { deps, spawn, getRunBySessionKey } = createDeps();
     getRunBySessionKey.mockReturnValue({
+      runId: "run-live-parent",
       rootRunId: "root-live-parent",
       parentLeaseId: "lease-grandparent",
       leaseId: "lease-live-parent",
@@ -367,6 +368,7 @@ describe("session.spawn caller context", () => {
     expect(spawn).toHaveBeenCalledWith(expect.objectContaining({
       rootRunId: "root-live-parent",
       parentLeaseId: "lease-live-parent",
+      parentRunId: "run-live-parent",
       caps: ["orch:spawn", "orch:read"],
     }));
   });

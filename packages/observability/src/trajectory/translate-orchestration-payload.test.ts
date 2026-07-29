@@ -18,6 +18,35 @@ import {
   type OrchestrationBridgedEventName,
 } from "./translate-orchestration-payload.js";
 
+describe("translateOrchestrationPayload — direct sub-agent topology", () => {
+  it("forwards the immediate parent run identity without leaking the parent session key", () => {
+    const data = translateOrchestrationPayload(
+      "session:sub_agent_spawned",
+      {
+        runId: "run-grandchild",
+        rootRunId: "root-channel",
+        parentRunId: "run-child",
+        parentLeaseId: "lease-child",
+        parentSessionKey: "default:agent:child-session",
+        agentId: "worker",
+        caps: ["orch:web"],
+        timestamp: 1_717_171_717,
+      },
+    );
+
+    expect(data).toEqual({
+      runId: "run-grandchild",
+      rootRunId: "root-channel",
+      parentRunId: "run-child",
+      parentLeaseId: "lease-child",
+      childAgentId: "worker",
+      caps: ["orch:web"],
+    });
+    expect(data.parentSessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+});
+
 describe("translateOrchestrationPayload — capability:audited (content-free)", () => {
   it("forwards ONLY {capability, tool, decision, leaseId, parentLeaseId, rootRunId} for an allow record (socket full tuple)", () => {
     const data = translateOrchestrationPayload(

@@ -734,7 +734,8 @@ describe("createSubAgentRunner", () => {
       agentId: "researcher",
       callerSessionKey: formattedConversation(callerConversation),
       callerConversation,
-    });
+      parentRunId: "run-parent-1",
+    } as Parameters<typeof runner.spawn>[0]);
 
     await vi.advanceTimersByTimeAsync(0);
     // Spawn event emitted immediately
@@ -744,6 +745,7 @@ describe("createSubAgentRunner", () => {
         runId,
         agentId: "researcher",
         parentSessionKey: formattedConversation(callerConversation),
+        parentRunId: "run-parent-1",
       }),
     );
     const spawnEvent = vi.mocked(deps.eventBus.emit).mock.calls.find(

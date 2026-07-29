@@ -117,6 +117,8 @@ export interface MessagingEvents {
     parentSessionKey: string;
     agentId: string;
     rootRunId: string;
+    /** Immediate in-process parent node identity for nested direct spawns. */
+    parentRunId?: string;
     parentLeaseId?: string;
     caps: string[];
     timestamp: number;
