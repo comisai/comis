@@ -22,7 +22,12 @@
 
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { safePath, systemDateFrom, systemNowMs } from "@comis/core";
+import {
+  parseFormattedSessionKey,
+  safePath,
+  systemDateFrom,
+  systemNowMs,
+} from "@comis/core";
 
 /** Minimal structural evidence needed to resolve a task root. The diagnostics
  * reader owns validation and content filtering before constructing this value. */
@@ -116,8 +121,9 @@ export async function resolveTraceToSession(
  * Resolve a governed `rootRunId` to its canonical `sessionKey`, so every
  * `obs.explain` identity enters one assembler path. Four honest sources, in order:
  *
- *   1. **Session root (pure, no I/O):** `root-session-<canonicalKey>` embeds the
- *      canonical session key directly, so stripping only that prefix resolves it.
+ *   1. **Session root (pure, no I/O):**
+ *      `root-session-<agentId>-<canonicalKey>` embeds the agent and canonical
+ *      session key. The resolver validates that both agent identities agree.
  *
  *   2. **Cron root:** the scheduler mints `root-cron-<executionId>` and the model
  *      bridge indexes that occurrence with `traceId === executionId`. Strip only
@@ -151,12 +157,24 @@ export async function resolveRootRunToSession(
   rootRunId: string,
   taskEvidence?: TaskRootResolutionEvidence | null,
 ): Promise<string> {
-  // Source 1 (PURE, common case): a synthetic in-process root is
-  // `root-session-<formattedKey>` — strip the prefix to recover the formattedKey,
-  // which IS the canonical sessionKey for the in-process leg. No I/O.
+  // Source 1 (PURE, common case): a synthetic in-process root repeats the
+  // agent identity before the formatted session key. Agent ids may contain
+  // hyphens, so test each delimiter and accept only the split whose parsed
+  // session key carries the same agent id.
   const SESSION_ROOT_PREFIX = "root-session-";
   if (rootRunId.startsWith(SESSION_ROOT_PREFIX)) {
-    return rootRunId.slice(SESSION_ROOT_PREFIX.length);
+    const encoded = rootRunId.slice(SESSION_ROOT_PREFIX.length);
+    let delimiter = encoded.indexOf("-");
+    while (delimiter >= 0) {
+      const rootAgentId = encoded.slice(0, delimiter);
+      const formattedKey = encoded.slice(delimiter + 1);
+      const sessionKey = parseFormattedSessionKey(formattedKey);
+      if (sessionKey?.agentId === rootAgentId) {
+        return formattedKey;
+      }
+      delimiter = encoded.indexOf("-", delimiter + 1);
+    }
+    return "";
   }
 
   // Source 2 (cron root): the execution id is the indexed model trace id. Reuse
