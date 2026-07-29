@@ -156,6 +156,17 @@ describe("toIncidentSignals — response locale decision", () => {
       (signals as unknown as { responseLocale?: { locale?: string } }).responseLocale?.locale,
     ).toBeUndefined();
   });
+
+  it("retains the latest normalized inbound kind", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, { inboundKind: "message" }),
+      event("prompt.submitted", 2, { inboundKind: "edit" }),
+    ]);
+
+    expect(
+      (signals as unknown as { inbound?: { kind: string } }).inbound,
+    ).toEqual({ kind: "edit" });
+  });
 });
 
 describe("toIncidentSignals — turnCount (flag cumulative-across-turns toolStats)", () => {

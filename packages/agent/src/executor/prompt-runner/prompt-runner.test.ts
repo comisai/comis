@@ -109,6 +109,12 @@ describe("prompt-runner.ts — orchestrator structure", () => {
     expect(source).toMatch(/promptChars:\s*systemPrompt\.length\s*\+\s*messageText\.length/);
   });
 
+  it("emits the normalized inbound kind without platform-specific fields", () => {
+    expect(source).toMatch(
+      /inboundKind:\s*params\.msg\.metadata\?\.isEdited\s*===\s*true\s*\?\s*"edit"\s*:\s*"message"/,
+    );
+  });
+
   it("swallows emit errors so dispatch is never aborted by an observability failure", () => {
     // Structural lock: the emit helper body must be wrapped in
     // try/catch with the debug-log on failure.

@@ -148,6 +148,29 @@ describe("assembleIncidentReport — response locale decision", () => {
   });
 });
 
+describe("assembleIncidentReport — inbound message kind", () => {
+  it("surfaces the content-free edit kind on the explain report", () => {
+    const signals = makeSignals({
+      inbound: { kind: "edit" },
+    } as unknown as Partial<IncidentSignals>);
+
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(
+      (report as unknown as { inbound?: { kind: string } }).inbound,
+    ).toEqual({ kind: "edit" });
+    expect(
+      (IncidentReportSchema.parse(report) as unknown as { inbound?: { kind: string } }).inbound,
+    ).toEqual({ kind: "edit" });
+  });
+});
+
 describe("assembleIncidentReport — channel health outcome", () => {
   const cleanSignals = (recovered: boolean): IncidentSignals => makeSignals({
     toolStats: {},
