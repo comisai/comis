@@ -293,7 +293,11 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         }
       }
 
-      const workspaceDir = resolveWorkspaceDir(parsedConfig, agentId);
+      const workspaceDir = resolveWorkspaceDir(
+        parsedConfig,
+        agentId,
+        deps.persistDeps?.container.config.dataDir || undefined,
+      );
 
       // Best-effort inline ROLE.md / IDENTITY.md write.
       // Only invoke when inlineContent has at least one populated field
@@ -368,7 +372,11 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         config,
         suspended: deps.suspendedAgents.has(agentId),
         isDefault: agentId === deps.defaultAgentId,
-        workspaceDir: resolveWorkspaceDir(config, agentId),
+        workspaceDir: resolveWorkspaceDir(
+          config,
+          agentId,
+          deps.persistDeps?.container.config.dataDir || undefined,
+        ),
       };
       if (IS_DEV) AgentsGetContract.response.parse(result);
       return result;
