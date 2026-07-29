@@ -12271,6 +12271,9 @@ export const CONTRACTS = {
             "reason": {
               "type": "string"
             },
+            "renderErrorKind": {
+              "type": "string"
+            },
             "reclassified": {
               "type": "boolean"
             },

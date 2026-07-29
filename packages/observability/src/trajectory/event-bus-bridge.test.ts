@@ -2657,6 +2657,7 @@ describe("queue + execution + sender bridge", () => {
       outcome: "failure",
       errorKind: "resource",
       reason: "stopped — spend limit reached",
+      renderErrorKind: "not_supported",
       reclassified: false,
       failedEventCount: 1,
       timestamp: Date.now(),

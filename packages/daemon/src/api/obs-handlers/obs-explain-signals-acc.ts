@@ -111,7 +111,14 @@ export interface Acc {
   perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
   /** The LAST `activity.turn_finalized` record — the terminal user-surface
    *  state (strategy + effective outcome + reclassified flag). Content-free. */
-  turnFinalized?: { strategy: string; outcome: string; errorKind?: string; reason?: string; reclassified: boolean };
+  turnFinalized?: {
+    strategy: string;
+    outcome: string;
+    errorKind?: string;
+    reason?: string;
+    renderErrorKind?: string;
+    reclassified: boolean;
+  };
   /** Session-wide finalize tally: how many turns painted a kept failure pill
    *  and how many finalized as recovered successes — the last-wins snapshot
    *  above cannot answer "which turn wore the pill" mid-session. */

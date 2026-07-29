@@ -575,6 +575,8 @@ export const IncidentReportSchema = z.object({
       errorKind: z.string().optional(),
       /** The fixed one-line resource-abort reason, when present. */
       reason: z.string().optional(),
+      /** The final activity renderer error, when reply delivery still completed. */
+      renderErrorKind: z.string().optional(),
       /** True when a failed event flipped a delivered success to
        *  success_with_recovered_failures. */
       reclassified: z.boolean(),

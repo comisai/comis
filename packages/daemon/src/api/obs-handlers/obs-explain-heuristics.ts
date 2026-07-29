@@ -586,6 +586,22 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
+  // A delivered answer can still leave its transient activity surface
+  // degraded. Keep this below tool failures (which may be upstream) and above
+  // advisory learning verdicts.
+  (s) => {
+    const kind = s.turnFinalized?.renderErrorKind;
+    if (kind === undefined) return null;
+    return {
+      code: "activity_render_degraded",
+      detail: `the ${s.turnFinalized?.strategy ?? "channel"} activity renderer finalized with ${kind}`,
+      suggestedNextSteps: [
+        "inspect the activity renderer boundary and its channel capability",
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
   // 11/12) the BENIGN learning verdicts (sibling): after the acute tier, before #13
   // (specific-over-generic, yet Defer ≠ Retry — never masks an acute error).
   learnedSkillFailingVerdict,

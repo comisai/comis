@@ -451,6 +451,7 @@ export function translatePayload(
         outcome: payload.outcome,
         ...(payload.errorKind !== undefined ? { errorKind: payload.errorKind } : {}),
         ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+        ...(payload.renderErrorKind !== undefined ? { renderErrorKind: payload.renderErrorKind } : {}),
         reclassified: payload.reclassified,
         failedEventCount: payload.failedEventCount,
       };

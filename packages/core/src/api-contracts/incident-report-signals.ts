@@ -332,6 +332,7 @@ export interface IncidentSignals {
     outcome: string;
     errorKind?: string;
     reason?: string;
+    renderErrorKind?: string;
     reclassified: boolean;
   };
   /**

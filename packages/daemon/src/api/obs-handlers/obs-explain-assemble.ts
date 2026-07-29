@@ -307,7 +307,8 @@ export function assembleIncidentReport(
     isHardFailure ||
     deliveryPartial ||
     DEGRADED_END_REASONS.has(endReason) ||
-    signals.failures.length > 0;
+    signals.failures.length > 0 ||
+    signals.turnFinalized?.renderErrorKind !== undefined;
   const channelDegraded =
     signals.channelHealth !== undefined && !signals.channelHealth.recovered;
   const subagentDeliveryDegraded = signals.subagentDeliverySkipped !== undefined;

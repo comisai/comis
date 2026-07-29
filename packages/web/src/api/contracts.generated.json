@@ -12095,6 +12095,9 @@
             "reason": {
               "type": "string"
             },
+            "renderErrorKind": {
+              "type": "string"
+            },
             "reclassified": {
               "type": "boolean"
             },

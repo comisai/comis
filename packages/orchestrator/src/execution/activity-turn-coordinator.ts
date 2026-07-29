@@ -618,31 +618,6 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
       effective = { ...effective, reason: UNATTRIBUTED_FAILURE_REASON };
     }
 
-    // Announce the EFFECTIVE terminal surface state (the user-visible pill's
-    // fate is a pure function of this outcome + the strategy) so `explain` can
-    // answer "what did the user's chat show this turn" from the trajectory —
-    // the reclassify above used to be reconstructable only from source.
-    // Content-free: closed outcome kind + closed ErrorKind + a fixed
-    // named-constant reason + counts.
-    if (deps.eventBus && turnCtx !== undefined) {
-      emitObservationalEvent({ eventBus: deps.eventBus, logger: deps.logger }, "activity:turn_finalized", {
-        sessionKey: turnCtx.sessionKey,
-        agentId: turnCtx.agentId,
-        channelType: turnCtx.channelType,
-        strategy: deps.renderer.strategy,
-        outcome: effective.kind,
-        ...(effective.kind === "failure" && effective.errorKind !== undefined
-          ? { errorKind: effective.errorKind }
-          : {}),
-        ...(effective.kind === "failure" && effective.reason !== undefined
-          ? { reason: effective.reason }
-          : {}),
-        reclassified: effective !== outcome,
-        failedEventCount: events.filter((e) => e.status === "failed").length,
-        timestamp: deps.clock.now(),
-      });
-    }
-
     // (2) Success path: the delete (owned by renderer.finalize) must
     // NOT precede the assistant message landing. Gate on deliveredAtMs.
     if (effective.kind === "success" || effective.kind === "success_with_recovered_failures") {
@@ -658,29 +633,54 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
           pendingGate.unref();
         });
       }
-      await dispatchFinalize(effective);
-      return;
     }
 
-    // (3) failure / silent / aborted — the renderer owns keep/delete; no gate.
-    await dispatchFinalize(effective);
+    // (3) The renderer owns keep/delete. Capture its result before announcing
+    // the terminal surface state so an edit/delete degradation cannot be
+    // reported as a fully successful paint.
+    const renderError = await dispatchFinalize(effective);
+    if (deps.eventBus && turnCtx !== undefined) {
+      emitObservationalEvent({ eventBus: deps.eventBus, logger: deps.logger }, "activity:turn_finalized", {
+        sessionKey: turnCtx.sessionKey,
+        agentId: turnCtx.agentId,
+        channelType: turnCtx.channelType,
+        strategy: deps.renderer.strategy,
+        outcome: effective.kind,
+        ...(effective.kind === "failure" && effective.errorKind !== undefined
+          ? { errorKind: effective.errorKind }
+          : {}),
+        ...(effective.kind === "failure" && effective.reason !== undefined
+          ? { reason: effective.reason }
+          : {}),
+        ...(renderError !== undefined ? { renderErrorKind: renderError.kind } : {}),
+        reclassified: effective !== outcome,
+        failedEventCount: events.filter((e) => e.status === "failed").length,
+        timestamp: deps.clock.now(),
+      });
+    }
   }
 
   /** Call renderer.finalize and surface any render error as WARN. */
-  async function dispatchFinalize(outcome: TurnOutcome): Promise<void> {
+  async function dispatchFinalize(outcome: TurnOutcome): Promise<ActivityRenderError | undefined> {
     counters.deleteApplied++;
     const invoked = tryCatch(() => deps.renderer.finalize(outcome));
     if (!invoked.ok) {
-      warnRenderError("finalize", { kind: "internal", cause: invoked.error });
-      return;
+      const renderError: ActivityRenderError = { kind: "internal", cause: invoked.error };
+      warnRenderError("finalize", renderError);
+      return renderError;
     }
     const settled = await fromPromise(invoked.value);
     if (!settled.ok) {
-      warnRenderError("finalize", { kind: "internal", cause: settled.error });
-      return;
+      const renderError: ActivityRenderError = { kind: "internal", cause: settled.error };
+      warnRenderError("finalize", renderError);
+      return renderError;
     }
     const result: Result<void, ActivityRenderError> = settled.value;
-    if (!result.ok) warnRenderError("finalize", result.error);
+    if (!result.ok) {
+      warnRenderError("finalize", result.error);
+      return result.error;
+    }
+    return undefined;
   }
 
   return {

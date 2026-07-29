@@ -530,7 +530,6 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     }
     case "delivery.dispatched": accumulateDeliveryDispatch(acc, data); return;
     case "activity.turn_finalized": {
-      // The terminal user-surface state (LAST wins). Closed labels only.
       const strategy = asString(data.strategy);
       const outcome = asString(data.outcome);
       if (strategy !== undefined && outcome !== undefined) {
@@ -539,6 +538,7 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
           outcome,
           ...(asString(data.errorKind) !== undefined ? { errorKind: asString(data.errorKind) } : {}),
           ...(asString(data.reason) !== undefined ? { reason: asString(data.reason) } : {}),
+          ...(asString(data.renderErrorKind) !== undefined ? { renderErrorKind: asString(data.renderErrorKind) } : {}),
           reclassified: data.reclassified === true,
         };
         // Session-wide tally retains failures hidden by a later success.
