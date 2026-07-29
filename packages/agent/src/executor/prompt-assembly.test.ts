@@ -1780,6 +1780,11 @@ describe("assembleExecutionPrompt", () => {
       expect(flags.isReply).toBe(true);
     });
 
+    it("marks normalized message edits in current-message context", async () => {
+      const flags = await getFlags({ metadata: { isEdited: true } });
+      expect(flags.isEdited).toBe(true);
+    });
+
     it("sets isScheduled when metadata.isScheduled is true", async () => {
       const flags = await getFlags({ metadata: { isScheduled: true } });
       expect(flags.isScheduled).toBe(true);

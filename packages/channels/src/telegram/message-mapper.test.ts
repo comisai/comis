@@ -224,6 +224,8 @@ describe("message-mapper / mapGrammyToNormalized", () => {
     expect(mappedFirstEdit.timestamp).toBe(1700000001 * 1000);
     expect(mappedFirstEdit.metadata.telegramUpdateKind).toBe("edited_message");
     expect(mappedFirstEdit.metadata.telegramEditDate).toBe(1700000001);
+    expect(mappedFirstEdit.metadata.isEdited).toBe(true);
+    expect(mappedOriginal.metadata.isEdited).toBeUndefined();
   });
 
   it("includes telegramChatType in metadata", () => {
