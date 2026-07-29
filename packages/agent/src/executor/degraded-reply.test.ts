@@ -15,6 +15,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildOutputStarvedAnnotation,
+  buildBackgroundTaskFailedNotice,
   buildToolFailureNotice,
   buildPromptTimeoutReply,
   buildToolFailureNoticeUnnamed,
@@ -363,5 +364,20 @@ describe("buildPromptTimeoutReply", () => {
   it("falls back to English for a locale with no pack", () => {
     const catalog = catalogFromLocalePacks({ he: { prompt_timeout: "x" } });
     expect(buildPromptTimeoutReply("fr", catalog)).toContain("took too long");
+  });
+});
+
+describe("buildBackgroundTaskFailedNotice", () => {
+  it("is a member of the operator-localizable platform reply set", () => {
+    expect(LOCALE_MESSAGE_IDS).toContain("background_task_failed_notice");
+  });
+
+  it("uses the resolved locale pack instead of hard-coding English", () => {
+    const catalog = catalogFromLocalePacks({
+      he: { background_task_failed_notice: "⚠️ משימת הרקע נכשלה ולכן התוצאה עלולה להיות חלקית." },
+    });
+
+    expect(buildBackgroundTaskFailedNotice("he", catalog))
+      .toBe("⚠️ משימת הרקע נכשלה ולכן התוצאה עלולה להיות חלקית.");
   });
 });

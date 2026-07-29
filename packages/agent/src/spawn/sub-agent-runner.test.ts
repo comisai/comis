@@ -3640,6 +3640,37 @@ describe("abort wiring in spawn", () => {
     });
   });
 
+  it("renders the failed completion notice in the originating response locale", async () => {
+    const failureNotice = "⚠️ משימת הרקע נכשלה ולכן התוצאה עלולה להיות חלקית.";
+    deps.renderAnnouncementFailureNotice = vi.fn().mockReturnValue(failureNotice);
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "partial output",
+      tokensUsed: { total: 3000 },
+      cost: { total: 0.3 },
+      finishReason: "max_steps",
+      stepsExecuted: 50,
+    });
+
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "compare options",
+      agentId: "default",
+      resolvedLanguage: "he",
+      announceChannelType: "telegram",
+      announceChannelId: "chat-1",
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(deps.renderAnnouncementFailureNotice).toHaveBeenCalledWith("default", "he");
+    expect(deps.sendToChannel).toHaveBeenCalledWith(
+      "telegram",
+      "chat-1",
+      expect.stringContaining(failureNotice),
+      undefined,
+    );
+  });
+
   // completion with stop does not include abort in announcement
   it("completion with stop does not include abort in announcement", async () => {
     vi.mocked(deps.executeAgent).mockResolvedValue({
