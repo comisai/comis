@@ -207,6 +207,40 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
+  // A background-task admission guard is a local capacity decision, not an
+  // MCP/provider failure. Name the exact saturated knob and observed occupancy
+  // from the already-bounded failure preview so one explain call tells the
+  // operator whether to wait, cancel work, or change configuration.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) =>
+        candidate.classifiedFailureBy === "runtime_guard"
+        && candidate.matchedRule === "background_task_capacity",
+    );
+    if (failure === undefined) return null;
+    const capacity = failure.errorPreview.match(
+      /((?:agents\.[A-Za-z0-9_-]+\.backgroundTasks\.maxPerAgent|backgroundTasks\.maxTotal))=(\d+); active=(\d+)/,
+    );
+    const knob = capacity?.[1] ?? "backgroundTasks capacity";
+    const limit = capacity?.[2];
+    const active = capacity?.[3];
+    const occupancy =
+      limit !== undefined && active !== undefined
+        ? `${knob}=${limit}; active=${active}`
+        : knob;
+    return {
+      code: "background_task_capacity",
+      detail:
+        `the local background-task admission guard refused new work because ${occupancy}; `
+        + "no provider request was attempted",
+      suggestedNextSteps: [
+        "wait for a running background task to finish or cancel one that is no longer needed",
+        `if the workload requires more concurrency, raise ${knob} in the config file and restart the daemon`,
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
   // 4) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {
     const trippedByEvent = s.breakerOpenedTool !== undefined || s.hasDoNotRetrySignal;
