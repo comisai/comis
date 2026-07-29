@@ -199,6 +199,78 @@ describe("bindObsExplainHandlers", () => {
     expect(r.likelyRootCause?.code).toBe("output_starved");
   });
 
+  it("a rejected final delivery overrides a clean execution summary with an honest delivery failure", async () => {
+    const traceId = "trace-delivery-rejected";
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => [
+        {
+          traceSchema: "comis-trajectory",
+          type: "model.completed",
+          traceId,
+          seq: 1,
+          data: { stopReason: "stop", durationMs: 5, inputTokens: 10, outputTokens: 2 },
+        },
+        {
+          traceSchema: "comis-trajectory",
+          type: "session.summary",
+          traceId,
+          seq: 2,
+          data: { endReason: "success", degraded: false, turnCount: 1, costUsd: 0.01 },
+        },
+        {
+          traceSchema: "comis-trajectory",
+          type: "delivery.dispatched",
+          traceId,
+          seq: 3,
+          data: {
+            channelType: "telegram",
+            status: "failure",
+            totalChunks: 1,
+            deliveredChunks: 0,
+            failedChunks: 1,
+          },
+        },
+        {
+          traceSchema: "comis-trajectory",
+          type: "activity.turn_finalized",
+          traceId,
+          seq: 4,
+          data: {
+            channelType: "telegram",
+            strategy: "EditPlace",
+            outcome: "failure",
+            errorKind: "platform",
+            reason: "a step failed outside the tool timeline",
+            reclassified: true,
+          },
+        },
+      ],
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({
+        traceId,
+        agentId: "agent_a",
+        channel: { type: "telegram", id: "chat_a" },
+        sessionEnd: { endReason: "success", degraded: false, turnCount: 1 },
+      }),
+      readDiagnosticsRollup: async () => null,
+    };
+    const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: reader }));
+    const report = (await handlers["obs.explain"]!({
+      sessionKey: "tenant_a:agent_a:telegram:chat_a",
+      _trustLevel: "admin",
+    })) as IncidentReport;
+
+    expect(report.outcome).toEqual({
+      endReason: "delivery_failed",
+      degraded: true,
+      severity: "failed",
+    });
+    expect(report.likelyRootCause?.code).toBe("delivery_failed");
+    expect(report.likelyRootCause?.detail).toContain("0 of 1");
+    expect(report.likelyRootCause?.detail).toContain("telegram");
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" ")).toContain("destination access");
+  });
+
   // ------------------------------------------------------------------------
   // Both traceIds resolve to one session while retaining execution isolation.
   // ------------------------------------------------------------------------

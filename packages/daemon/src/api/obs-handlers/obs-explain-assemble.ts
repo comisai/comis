@@ -280,7 +280,7 @@ export function assembleIncidentReport(
   // totalTokens / executionCostUsd / degraded). Live sessions nest them under
   // `sessionEnd`. Read `sessionEnd.<field>` first, then the metadata top-level
   // field of the same name — so BOTH on-disk shapes resolve.
-  const endReason =
+  const executionEndReason =
     (sessionEnd !== undefined ? asString(sessionEnd.endReason) : undefined) ??
     (metadata !== null ? asString(metadata.endReason) : undefined) ??
     // A HARD abort (per-root budget / loop) skips the clean
@@ -290,20 +290,31 @@ export function assembleIncidentReport(
     // (gated on "spend_exceeded") never fired + perRootBudget stayed off the verdict.
     signals.abortReason ??
     "unknown";
-  const isHardFailure = HARD_FAILURE_END_REASONS.has(endReason);
+  const deliveryStatus = signals.deliveryDispatch?.status;
+  const deliveryFailed = deliveryStatus === "failure";
+  const deliveryPartial = deliveryStatus === "partial";
+  const endReason = deliveryFailed
+    ? "delivery_failed"
+    : deliveryPartial
+      ? "delivery_partial"
+      : executionEndReason;
+  const isHardFailure = deliveryFailed || HARD_FAILURE_END_REASONS.has(endReason);
   const explicitDegraded =
     (sessionEnd !== undefined ? asBoolean(sessionEnd.degraded) : undefined) ??
     (metadata !== null ? asBoolean(metadata.degraded) : undefined) ??
     asBoolean(rollupPayload.degraded);
   const derivedDegraded =
     isHardFailure ||
+    deliveryPartial ||
     DEGRADED_END_REASONS.has(endReason) ||
     signals.failures.length > 0;
   const channelDegraded =
     signals.channelHealth !== undefined && !signals.channelHealth.recovered;
   const subagentDeliveryDegraded = signals.subagentDeliverySkipped !== undefined;
   const degraded =
-    channelDegraded
+    deliveryFailed
+    || deliveryPartial
+    || channelDegraded
     || subagentDeliveryDegraded
     || (explicitDegraded ?? derivedDegraded);
   const severity: "ok" | "degraded" | "failed" = isHardFailure
