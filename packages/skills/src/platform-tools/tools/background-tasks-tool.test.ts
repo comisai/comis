@@ -99,6 +99,14 @@ describe("background_tasks tool", () => {
     manager = createMockManager();
   });
 
+  it("does not tell the model to block on a newly promoted task", () => {
+    const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
+
+    expect(tool.description).toContain("check status or cancel");
+    expect(tool.description).toContain("explicitly wants to wait");
+    expect(tool.description).not.toContain("Use read_output once to wait");
+  });
+
   describe("list action", () => {
     it("returns all tasks for the agent as JSON array", async () => {
       const tasks = [

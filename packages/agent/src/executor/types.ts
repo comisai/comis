@@ -44,6 +44,10 @@ export interface ExecutionResultBase {
   responseLocalePolicy: ResponseLocalePolicy;
   /** Runtime-owned monotonic facts about attempted side-effect capabilities. */
   sideEffectSummary: ExecutionSideEffectSummary;
+  /** Set when an exact-route successful outbound delivery made the model's
+   *  terminal response redundant and the executor replaced it with a silent
+   *  control response before durable finalization. */
+  finalResponseSuppressedBy?: "outbound_delivery";
   /** Content-free finding recorded when the initial model output required locale repair. */
   localeQualityFinding?: ResponseLocaleQualityFinding;
   /** PER-EXECUTION token totals (the bridge's accumulation for THIS execute()
@@ -141,12 +145,13 @@ export type ExecutionResult = ExecutionResultBase & (
 );
 
 /** Optional overrides for per-execution behavior (e.g., sub-agent isolation). */
-// @optional-field-count: 22 — ExecutionOverrides is the per-EXECUTION override bag;
+// @optional-field-count: 23 — ExecutionOverrides is the per-EXECUTION override bag;
 // every `?` field is an independent per-run knob the caller MAY set (stepCounter/
 // tokenBudget for sub-agent isolation, spawnPacket/model/cacheRetention/skipRag/
 // graphId/nodeId/activeToolGroups for graph nodes, ephemeralSessionAdapter/skipSep/
 // promptTimeout, workspacePolicySnapshot/responseLocalePolicy for immutable background work,
-// finalizedResultJournalKey/onProviderStart for durable provider execution,
+// finalizedResultJournalKey/onProviderStart/suppressFinalResponseAfterOutboundDelivery
+// for durable provider execution,
 // capabilityAccess for isolated model-only runs, and workspaceDir for an
 // isolated worktree run). They are
 // not a cluster-split candidate — each describes ONE execution's override surface,
@@ -204,6 +209,13 @@ export interface ExecutionOverrides {
   workspacePolicySnapshot?: WorkspacePolicySnapshot;
   /** Immutable locale decision captured with delayed or background work. */
   responseLocalePolicy?: ResponseLocalePolicy;
+  /** Exact route whose successful message-tool delivery consumes this
+   *  execution's otherwise redundant visible final response. Failed delivery
+   *  and delivery to any other route preserve the final response. */
+  suppressFinalResponseAfterOutboundDelivery?: {
+    channelType: string;
+    channelId: string;
+  };
   /** Awaited after the exact terminal result is finalized and before execute resolves. */
   onFinalizedResult?: (
     result: ExecutionResult,

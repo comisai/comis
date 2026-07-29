@@ -132,7 +132,12 @@ export function createNotificationHandlers(
         return result;
       }
 
-      const result = { success: true, entryId: sendResult.value };
+      const result = {
+        success: true,
+        entryId: sendResult.value,
+        channelType: destination.value.destinationEndpoint.channelType,
+        channelId: destination.value.destinationEndpoint.conversationId,
+      };
       if (IS_DEV) NotificationSendContract.response.parse(result);
       return result;
     },

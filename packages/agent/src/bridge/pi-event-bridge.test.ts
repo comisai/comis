@@ -661,6 +661,73 @@ describe("createPiEventBridge", () => {
       })).toBe(false);
     });
 
+    it("records the exact resolved route from a successful notify_user receipt", () => {
+      const bridge = createPiEventBridge(deps);
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "notify_user",
+        toolCallId: "tc-notify-1",
+        args: {
+          message: "private delivered body",
+          priority: "normal",
+        },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent(
+        "notify_user",
+        "tc-notify-1",
+        false,
+        {
+          content: [{ type: "text", text: "private tool response" }],
+          details: {
+            success: true,
+            entryId: "entry-1",
+            channelType: "telegram",
+            channelId: "chat-1",
+          },
+        },
+      ) as any);
+
+      expect(bridge.hasOutboundDelivery({
+        channelType: "telegram",
+        channelId: "chat-1",
+      })).toBe(true);
+      expect(bridge.hasOutboundDelivery({
+        channelType: "telegram",
+        channelId: "another-chat",
+      })).toBe(false);
+    });
+
+    it("does not record notify_user without a successful exact-route receipt", () => {
+      const bridge = createPiEventBridge(deps);
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "notify_user",
+        toolCallId: "tc-notify-failed",
+        args: {
+          message: "private failed body",
+          channel_type: "telegram",
+          channel_id: "chat-1",
+        },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent(
+        "notify_user",
+        "tc-notify-failed",
+        false,
+        {
+          content: [{ type: "text", text: "private tool response" }],
+          details: {
+            success: false,
+            error: "delivery refused",
+          },
+        },
+      ) as any);
+
+      expect(bridge.hasOutboundDelivery({
+        channelType: "telegram",
+        channelId: "chat-1",
+      })).toBe(false);
+    });
+
     it("increments step counter", () => {
       const { listener } = createPiEventBridge(deps);
 

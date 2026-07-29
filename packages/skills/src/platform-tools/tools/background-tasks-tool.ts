@@ -139,7 +139,8 @@ export function createBackgroundTasksTool(deps: {
     label: "Background Tasks",
     description:
       "Manage background tasks. Long-running tool executions are automatically promoted " +
-      "to background. Use read_output once to wait for and consume a promoted task result; use the other actions to check status or cancel tasks.",
+      "to background and resume the originating conversation automatically when complete. " +
+      "Use list, get, or cancel to check status or cancel work. Use read_output only when the user explicitly wants to wait in the current turn.",
     parameters: BackgroundTasksToolParams,
 
     async execute(

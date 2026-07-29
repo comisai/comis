@@ -90,7 +90,7 @@ describe("createNotificationHandlers", () => {
     );
   });
 
-  it("notifyUser returning ok produces success response", async () => {
+  it("notifyUser returning ok produces an exact-route success receipt", async () => {
     const service = makeMockService({
       notifyUser: vi.fn().mockResolvedValue(ok("entry-42")),
     });
@@ -100,7 +100,12 @@ describe("createNotificationHandlers", () => {
       message: "hello",
     });
 
-    expect(result).toEqual({ success: true, entryId: "entry-42" });
+    expect(result).toEqual({
+      success: true,
+      entryId: "entry-42",
+      channelType: "telegram",
+      channelId: "chat-42",
+    });
   });
 
   it("notifyUser returning err produces error response with message", async () => {

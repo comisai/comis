@@ -10154,6 +10154,12 @@ export const CONTRACTS = {
         "entryId": {
           "type": "string"
         },
+        "channelType": {
+          "type": "string"
+        },
+        "channelId": {
+          "type": "string"
+        },
         "error": {
           "type": "string"
         }

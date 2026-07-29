@@ -870,6 +870,73 @@ describe("PiExecutor", () => {
       expect(result.responseLocalePolicy).toEqual(responseLocalePolicy);
     });
 
+    it("journals a silent final after successful delivery to the configured exact route", async () => {
+      setMockAssistantText("Redundant delivery confirmation");
+      const deliveryTarget = {
+        channelType: "telegram",
+        channelId: "chat-final",
+      };
+      mockHasOutboundDelivery.mockImplementation(
+        (target: { channelType: string; channelId: string }) =>
+          target.channelType === deliveryTarget.channelType
+          && target.channelId === deliveryTarget.channelId,
+      );
+      const onJournalFinalizedResult = vi.fn(async () => undefined);
+      const executor = createPiExecutor(testConfig, createMockDeps());
+
+      const result = await executor.execute(
+        testMessage,
+        testSessionKey,
+        [],
+        undefined,
+        "agent-1",
+        undefined,
+        undefined,
+        {
+          operationType: "interactive",
+          suppressFinalResponseAfterOutboundDelivery: deliveryTarget,
+          onJournalFinalizedResult,
+        } as unknown as ExecutionOverrides,
+      );
+
+      expect(mockHasOutboundDelivery).toHaveBeenCalledWith(deliveryTarget);
+      expect(result.response).toBe("NO_REPLY");
+      expect(result.finalResponseSuppressedBy).toBe("outbound_delivery");
+      expect(onJournalFinalizedResult).toHaveBeenCalledWith(expect.objectContaining({
+        response: "NO_REPLY",
+        finalResponseSuppressedBy: "outbound_delivery",
+      }));
+    });
+
+    it("preserves the final when delivery succeeded only on a different route", async () => {
+      setMockAssistantText("Required final response");
+      mockHasOutboundDelivery.mockImplementation(
+        (target: { channelType: string; channelId: string }) =>
+          target.channelType === "telegram" && target.channelId === "other-chat",
+      );
+      const executor = createPiExecutor(testConfig, createMockDeps());
+
+      const result = await executor.execute(
+        testMessage,
+        testSessionKey,
+        [],
+        undefined,
+        "agent-1",
+        undefined,
+        undefined,
+        {
+          operationType: "interactive",
+          suppressFinalResponseAfterOutboundDelivery: {
+            channelType: "telegram",
+            channelId: "chat-final",
+          },
+        } as unknown as ExecutionOverrides,
+      );
+
+      expect(result.response).toBe("Required final response");
+      expect(result.finalResponseSuppressedBy).toBeUndefined();
+    });
+
     it("rejects an invalid captured response locale policy before model dispatch", async () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);

@@ -262,9 +262,9 @@ export function createBackgroundCompletionRunner(
           taskId,
           sessionKey: formatSessionKey(projectedLiveSession.value),
           traceId: origin.traceId ?? undefined,
-          hint: "Origin turn is still in flight; awaiting an explicit result-consumption receipt",
+          hint: "Origin turn is still in flight; delivery will retry after turn-end or explicit consumption",
         },
-        "Background completion runner: live turn has not acknowledged consumption",
+        "Background completion runner deferred delivery while origin turn is active",
       );
       return;
     }
@@ -363,6 +363,7 @@ export function createBackgroundCompletionRunner(
 
     // Format the announcement (byte-identical trailing instruction).
     const announcement = formatCompletionAnnouncement(task);
+    const reentryStartedAt = systemNowMs();
 
     // Construct the synthetic NormalizedMessage (hop counter in metadata).
     const syntheticMsg: NormalizedMessage = {
@@ -427,6 +428,10 @@ export function createBackgroundCompletionRunner(
           {
             operationType: "interactive",
             responseLocalePolicy: origin.responseLocalePolicy,
+            suppressFinalResponseAfterOutboundDelivery: {
+              channelType: origin.deliveryOrigin.channelType,
+              channelId: origin.deliveryOrigin.channelId,
+            },
             finalizedResultJournalKey: task.continuationExecutionId,
             onJournalFinalizedResult: async (finalized) => {
               const persisted = deps.taskManager.persistFinalizedResult(
@@ -549,14 +554,25 @@ export function createBackgroundCompletionRunner(
 
     const result = executionResult.value.result;
     if (isSilentResponse(result.response)) {
+      const deliveredInline = result.finalResponseSuppressedBy === "outbound_delivery";
+      emitRoutingOutcome(
+        taskId,
+        origin,
+        task.toolName,
+        deliveredInline,
+        deliveredInline ? "continuation_accepted" : "silent_consumed",
+      );
       log.info(
         {
           taskId,
           agentId,
-          durationMs: 0,
+          durationMs: Math.max(0, systemNowMs() - reentryStartedAt),
           traceId: reentryContext.value.traceId,
+          deliveredInline,
         },
-        "Background completion intentionally suppressed",
+        deliveredInline
+          ? "Background completion consumed by exact-route outbound delivery"
+          : "Background completion intentionally suppressed",
       );
       return;
     }

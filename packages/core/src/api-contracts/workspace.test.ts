@@ -535,13 +535,18 @@ describe("workspace-umbrella domain contracts", () => {
       ).toThrow();
     });
 
-    it("response accepts { success: true, entryId }", () => {
-      expect(() =>
-        NotificationSendContract.response.parse({
-          success: true,
-          entryId: "entry-42",
-        }),
-      ).not.toThrow();
+    it("response accepts a successful exact-route delivery receipt", () => {
+      expect(NotificationSendContract.response.parse({
+        success: true,
+        entryId: "entry-42",
+        channelType: "telegram",
+        channelId: "chat-42",
+      })).toEqual({
+        success: true,
+        entryId: "entry-42",
+        channelType: "telegram",
+        channelId: "chat-42",
+      });
     });
 
     it("response accepts { success: false, error }", () => {
