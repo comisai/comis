@@ -28,7 +28,7 @@ import {
   accumulateOrchestrateToolCall,
   parseWakeGateRecord,
 } from "./obs-explain-signal-folds.js";
-import type { OrchestrateRunFold, OrchestrateToolCallFold } from "./obs-explain-signal-folds.js";
+import type { OrchestrateRunFold, OrchestrateToolCallFold } from "./obs-explain-signals-acc.js";
 
 describe("obs-explain-signal-folds — EXTENDED learning fold", () => {
   it("an absent learning block (no records at all) ⇒ undefined (no regression)", () => {

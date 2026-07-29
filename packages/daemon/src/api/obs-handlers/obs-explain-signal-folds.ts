@@ -26,7 +26,12 @@ import {
   IncidentPromptTimeoutSchema,
 } from "@comis/core";
 import type { IncidentSignals, IncidentContextBudget, IncidentCronWakeGate, IncidentPromptTimeout } from "@comis/core";
-import type { Acc } from "./obs-explain-signals-acc.js";
+import type {
+  Acc,
+  LearningFoldState,
+  OrchestrateRunFold,
+  OrchestrateToolCallFold,
+} from "./obs-explain-signals-acc.js";
 // The content-free readers live in the sibling fields helper (one source of truth);
 // imported here so the GBNF fold reuses them rather than re-deriving (no cycle —
 // the fields helper does not import this module).
@@ -138,46 +143,6 @@ type LearningSource = IncidentLearningSignal["sources"][number];
 
 const LEARNING_OUTCOMES: readonly LearningOutcome[] = ["success", "failure", "corrected", "unknown"];
 const LEARNING_SOURCES: readonly LearningSource[] = ["tool", "pipeline", "correction", "judge", "reaction", "explicit"];
-
-/**
- * The mutable fold state accumulated across the session's learning records:
- * the `learning.outcome_observed` outcome/source signal PLUS the
- * skill-invocation signal (`skill.prompt_invoked`) and the reflection funnel
- * (`reflect.admitted` / `reflect.funnel` — they contribute the
- * BENIGN abstain flag). `count` gates whether ANY learning-family record was seen
- * (an absent block ⇒ `undefined`), so it bumps for every fold — outcome AND
- * reflection — not just outcome records.
- */
-export interface LearningFoldState {
-  count: number;
-  outcome?: LearningOutcome;
-  /**
-   * Whether ANY record in the session resolved to a non-`unknown` outcome. The
-   * `outcome_unresolved` verdict means "NO signal tier resolved an outcome" — so it
-   * must key on "ever resolved", NOT the LAST record (a trailing no-signal turn, e.g.
-   * a tool-less recall reply, otherwise clobbers an earlier resolved success and the
-   * session is wrongly flagged unresolved — a live-incident regression guard).
-   */
-  everResolved: boolean;
-  sources: Set<LearningSource>;
-  /** Distinct learned-skill ids invoked this session (`skill.prompt_invoked`). IDs only. */
-  skillsUsed: Set<string>;
-  /** A record carried the BENIGN synthesis-abstain signal (Defer ≠ Retry). */
-  synthesisAbstained: boolean;
-  /** Candidate→active promotions summed this session (`learning.skill_promoted`). Counts only. */
-  skillsPromoted: number;
-  /** Skill demotions summed this session (`learning.skill_demoted`). Counts only. */
-  skillsDemoted: number;
-  /** Memories that accrued a corroborated failure this session (`learning.memory_failure_attributed`). Counts only — eviction precursor. */
-  failuresAttributed: number;
-  /** Surfaced-but-uncredited reuse NEAR-MISSES (`memory.skill_surfaced`) — skill name → best
-   *  coverage seen this session. Does NOT bump `count`/`everResolved` (telemetry-only; must not perturb
-   *  the outcome_unresolved verdict), so it surfaces only when a real learning record already built the block. */
-  skillsSurfacedButUncredited: Map<string, number>;
-  /** The NAMES of skills demoted this session (`learning.skill_demoted.demotedSkillNames`) — so
-   *  `explain` answers WHICH skill demoted, not just how many. Ids only. */
-  skillsDemotedNames: Set<string>;
-}
 
 /** A fresh, empty fold state (no learning records seen yet). */
 export function emptyLearningFold(): LearningFoldState {
@@ -587,18 +552,6 @@ export function accumulateGraphNodeSpawnedRecord(
 // ---------------------------------------------------------------------------
 // The orchestrate run-summary + per-run tool-call folds (EXPLAIN-03/04, SAVE-02).
 // ---------------------------------------------------------------------------
-
-/** The run skeleton the `orchestrate.run_summary` fold accumulates (one per
- *  runId). Derived from IncidentSignals (already imported) so this fold does NOT
- *  import the internal Acc from obs-explain-signals-acc.ts — that file imports
- *  from HERE, so the reverse would cycle. `toolCalls` is joined at materialization
- *  from the per-run leaseId tally, so the fold state OMITS it (ids + closed enums +
- *  counts + savings only). */
-export type OrchestrateRunFold = Omit<NonNullable<IncidentSignals["orchestrate"]>[number], "toolCalls">;
-
-/** One tallied per-run tool call (tool NAME + capability + the closed decision +
- *  a running count) — the inner-map value of `orchestrateToolCallsByLease`. */
-export type OrchestrateToolCallFold = NonNullable<IncidentSignals["orchestrate"]>[number]["toolCalls"][number];
 
 const ORCHESTRATE_FAILURE_CLASSES = ["timeout", "stdout_cap", "nonzero_exit", "spawn_fail", "lease_absent"] as const;
 

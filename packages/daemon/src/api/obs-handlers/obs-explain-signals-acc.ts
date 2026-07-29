@@ -21,11 +21,32 @@ import type {
   IncidentVideoSignal,
   IncidentVoiceSignal,
 } from "./obs-explain-signals-fields.js";
-import type {
-  LearningFoldState,
-  OrchestrateRunFold,
-  OrchestrateToolCallFold,
-} from "./obs-explain-signal-folds.js";
+type IncidentLearningSignal = NonNullable<IncidentSignals["learning"]>;
+type LearningOutcome = NonNullable<IncidentLearningSignal["outcome"]>;
+type LearningSource = IncidentLearningSignal["sources"][number];
+
+/** Mutable state shared by the learning-record folds and the incident accumulator. */
+export interface LearningFoldState {
+  count: number;
+  outcome?: LearningOutcome;
+  everResolved: boolean;
+  sources: Set<LearningSource>;
+  skillsUsed: Set<string>;
+  synthesisAbstained: boolean;
+  skillsPromoted: number;
+  skillsDemoted: number;
+  failuresAttributed: number;
+  skillsSurfacedButUncredited: Map<string, number>;
+  skillsDemotedNames: Set<string>;
+}
+
+/** The content-free orchestrate run skeleton accumulated before tool-call joining. */
+export type OrchestrateRunFold =
+  Omit<NonNullable<IncidentSignals["orchestrate"]>[number], "toolCalls">;
+
+/** One tallied, content-free tool authorization decision for an orchestrate run. */
+export type OrchestrateToolCallFold =
+  NonNullable<IncidentSignals["orchestrate"]>[number]["toolCalls"][number];
 
 /** The per-node working shape the `capability.audited` fold
  *  accumulates into (one per leaseId). Materialized into
@@ -155,7 +176,7 @@ export interface Acc {
    *  endReason==="spend_exceeded") never fires; this lets the assembler use the
    *  abort reason as the endReason fallback. Content-free (a closed reason enum). */
   abortReason?: string;
-  learning: LearningFoldState; // see obs-explain-signal-folds.ts
+  learning: LearningFoldState;
   /** The image / vision / video / voice turns reconstructed
    *  from the session's image.* / media.vision.* / video.* / media.stt / media.tts
    *  records (folded by `applyMediaRecord`). Each is undefined until its record class
