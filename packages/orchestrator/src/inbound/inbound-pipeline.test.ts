@@ -183,6 +183,53 @@ describe("allowFrom sender filtering", () => {
     });
   });
 
+  it("consumes a permanently invalid inbound before processing the next polling update", async () => {
+    const persistInboundMessage = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false as const,
+        error: {
+          error: new Error("normalized message text exceeded its bound"),
+          errorKind: "validation" as const,
+        },
+      })
+      .mockResolvedValue({
+        ok: true as const,
+        value: { payloads: [], ledgerContent: "" },
+      });
+    const deps = makeMinimalDeps({ persistInboundMessage });
+    const adapter = makeAdapterForTest();
+    const oversized = makeMsg({
+      id: "permanently-invalid-inbound",
+      text: "x".repeat(70_000),
+    });
+
+    await expect(processInboundMessage(
+      deps,
+      adapter,
+      oversized,
+      new Set(),
+      new Map() as never,
+    )).resolves.toBeUndefined();
+    await processInboundMessage(
+      deps,
+      adapter,
+      makeMsg({ id: "next-valid-inbound", text: "still there" }),
+      new Set(),
+      new Map() as never,
+    );
+
+    expect(persistInboundMessage).toHaveBeenCalledTimes(2);
+    expect(deps.createExecutor).toHaveBeenCalledTimes(1);
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "message:terminal",
+      expect.objectContaining({
+        sourceMessageId: oversized.id,
+        outcome: "error",
+        reason: "inbound_rejected",
+      }),
+    );
+  });
+
   it("terminalizes the source when the sender filter dependency throws", async () => {
     const primary = new Error("allowFrom lookup failed");
     const deps = makeMinimalDeps({

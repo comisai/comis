@@ -21,13 +21,14 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
-import { rig } from './_rig.mjs';
+import { comisDist, rig } from './_rig.mjs';
 import {
   directConversationFinished,
   driveTextFilePath,
   findAssistantReplyAfterInbound,
   findTelegramConversationWireAnswer,
   isDriveProgressText,
+  normalizedInboundTextError,
   outboundVisibleText,
   selectMainTrajectoryPath,
   selectTelegramConversationTrajectoryPath,
@@ -53,6 +54,18 @@ const text = textArg === '-'
     : textArg;
 if (!text) {
   console.error('drive.mjs: message text is required; pass text, `-` for one stdin line, or `@/absolute/file`');
+  process.exit(2);
+}
+const { MAX_NORMALIZED_MESSAGE_TEXT_CHARS } =
+  await import(comisDist("core", "dist/index.js"));
+const inboundTextError = normalizedInboundTextError(
+  text,
+  MAX_NORMALIZED_MESSAGE_TEXT_CHARS,
+);
+if (inboundTextError !== undefined) {
+  console.error(
+    `drive.mjs: ${inboundTextError}; split the text or send it as a document with media-drive.mjs`,
+  );
   process.exit(2);
 }
 const chatId = chatIdArg || rig.chatId;

@@ -229,15 +229,21 @@ describe("resolveAndPreprocess inbound provenance ownership", () => {
       })) as never,
     });
 
-    await expect(resolveAndPreprocess(
+    const result = await resolveAndPreprocess(
       deps,
       makeAdapter(),
       makeMsg({
         id: "11111111-1111-4111-8111-111111111117",
         text: oversized,
       }),
-    )).rejects.toThrow("normalized message text exceeded");
+    );
 
+    expect(result).toEqual({
+      kind: "rejected",
+      agentId: "agent-test",
+      errorKind: "validation",
+      reason: "message_text_too_large",
+    });
     expect(deps.eventBus.emitSafely).toHaveBeenCalledWith(
       "message:inbound_persistence_failed",
       {
@@ -251,6 +257,13 @@ describe("resolveAndPreprocess inbound provenance ownership", () => {
       },
     );
     expect(JSON.stringify(deps.eventBus.emitSafely.mock.calls)).not.toContain(oversized);
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "validation",
+        hint: expect.stringContaining("terminally rejected"),
+      }),
+      "Invalid inbound message was terminally rejected",
+    );
   });
 
   it("directs integrity failures to quarantine without asking for a resend", async () => {

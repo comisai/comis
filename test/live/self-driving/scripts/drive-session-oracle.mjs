@@ -145,6 +145,13 @@ export function telegramInjectAddressingError(text, opts, botUsername) {
   return undefined;
 }
 
+/** Mirror the deployed normalized-message text bound before an async channel inject. */
+export function normalizedInboundTextError(text, limitChars) {
+  return text.length > limitChars
+    ? `message text is ${text.length} characters; the deployed normalized-message limit is ${limitChars}`
+    : undefined;
+}
+
 function messageText(message) {
   const content = message?.content;
   if (typeof content === "string") return content;
