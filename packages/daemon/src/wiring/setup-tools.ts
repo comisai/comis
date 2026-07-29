@@ -555,9 +555,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         ),
         toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
         builtinToolsBrowserEnabled: skillsConfig.builtinTools.browser,
-        // Opt-in gate for the memory_ask (dialectic) tool. `=== true` so an
-        // absent/typo'd `dialectic` block is OFF (default-OFF byte-identity — the tool
-        // is filtered out before build, no query-time-LLM surface registered).
+        // Opt-out gate for the memory_ask (dialectic) tool. Parsed agent configs
+        // default this field ON; an explicit false filters the query-time LLM
+        // surface out before build.
         dialecticEnabled: agentConfig?.dialectic?.enabled === true,
         onConfigMutationStart: enterConfigMutationFence,
         onConfigMutationEnd: leaveConfigMutationFence,

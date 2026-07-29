@@ -89,7 +89,10 @@ import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
 import { orchestrateFailedVerdict } from "./obs-explain-orchestrate-verdict.js"; // failed orchestrate run (sibling — subdir cap)
 import { deliveryFailedVerdict } from "./obs-explain-delivery-verdict.js";
-import { spawnCeilingVerdict } from "./obs-explain-spawn-ceiling-verdict.js";
+import {
+  nodeBudgetExceededVerdict,
+  spawnCeilingVerdict,
+} from "./obs-explain-spawn-ceiling-verdict.js";
 
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1.
@@ -147,6 +150,11 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //    stays BELOW #1, the frozen misclassification verdict. Keyed strictly on
   //    endReason "spend_exceeded" (the established fixtures do not carry it).
   spendExceededVerdict,
+
+  // A per-node token ceiling is the acute execution cause. Operator-origin
+  // graphs intentionally have no requester route, so their downstream
+  // no_origin completion skip must never hide the budget breach.
+  nodeBudgetExceededVerdict,
 
   // 2b) subagent_stuck_killed (the health monitor's ADMINISTRATIVE
   //     pre-emption of a sub-agent run — the spend_exceeded rationale: an acute

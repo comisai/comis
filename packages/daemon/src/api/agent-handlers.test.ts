@@ -386,7 +386,7 @@ describe("createAgentHandlers", () => {
       expect(deps.agents["ws-bot"]!.workspacePath).toBeUndefined();
     });
 
-    it("defaults all builtinTools to true (except browser) for runtime-created agents", async () => {
+    it("defaults every builtin tool to true for runtime-created agents", async () => {
       const deps = makeDeps();
       const handlers = createAgentHandlers(deps);
 
@@ -408,8 +408,7 @@ describe("createAgentHandlers", () => {
       expect(agent.skills.builtinTools.process).toBe(true);
       expect(agent.skills.builtinTools.webSearch).toBe(true);
       expect(agent.skills.builtinTools.webFetch).toBe(true);
-      // Browser is the only one disabled by default
-      expect(agent.skills.builtinTools.browser).toBe(false);
+      expect(agent.skills.builtinTools.browser).toBe(true);
     });
 
     it("returns workspaceDir in create response", async () => {
@@ -451,8 +450,7 @@ describe("createAgentHandlers", () => {
       expect(agent.skills.builtinTools.ls).toBe(true);
       expect(agent.skills.builtinTools.exec).toBe(true);
       expect(agent.skills.builtinTools.process).toBe(true);
-      // Browser still defaults to false
-      expect(agent.skills.builtinTools.browser).toBe(false);
+      expect(agent.skills.builtinTools.browser).toBe(true);
     });
 
     it("persisted config does not contain workspacePath", async () => {
