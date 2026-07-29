@@ -223,7 +223,14 @@ export async function buildAndStartChannelManager(
         // once at boot); verbosity is already per-agent (config below); markers now match.
         const turnMarkers = themeForName(agents[ctx.agentId]?.activity?.theme ?? "default").markers;
         const make = activityRenderers.get(ctx.channelType);
-        const renderer = make?.(ctx.channelKey, turnMarkers) ?? deps.activityRendererFactory?.(ctx.channelType) ?? createTestSink();
+        const renderer = make?.(
+          ctx.channelKey,
+          turnMarkers,
+          {
+            chatType: ctx.chatType,
+            ...(ctx.threadId !== undefined ? { threadId: ctx.threadId } : {}),
+          },
+        ) ?? deps.activityRendererFactory?.(ctx.channelType) ?? createTestSink();
         return createActivityTurnCoordinator({
           activityStreamPort: activityStream,
           renderer,

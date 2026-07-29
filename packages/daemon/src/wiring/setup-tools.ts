@@ -18,6 +18,7 @@ import {
   formatSessionKey,
   systemNowMs,
   resolveAutonomy,
+  attenuateCaps,
 } from "@comis/core";
 import { sessionKeyToPath, resolveEffectiveCapabilityClass } from "@comis/agent";
 import type { SessionTrackerRegistry, CapabilityClass, OrchestrateRepairSeam } from "@comis/agent";
@@ -100,6 +101,18 @@ import type { CapabilityLayerHandle } from "./setup-capability-endpoint-boot.js"
 import { buildAutonomyToolWiring } from "./setup-tools-autonomy.js";
 import { selectEffectiveToolGroups, expandToolGroupsToNames } from "./setup-tools-coordinator.js"; // role:coordinator narrowing
 
+/**
+ * Platform tools whose schemas expose capability-gated orchestration actions.
+ * Omitting the whole schema is the honest posture when the agent does not hold
+ * the capability; handler gates remain the defense-in-depth execution boundary.
+ */
+const PLATFORM_TOOL_CAPABILITY_REQUIREMENTS = new Map<string, AgentCapability>([
+  ["sessions_spawn", "orch:spawn"],
+  ["pipeline", "orch:graph"],
+  ["cron", "orch:cron"],
+  ["message", "orch:message"],
+  ["skills_manage", "orch:skill"],
+]);
 
 // Deps / Result types
 
@@ -454,6 +467,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       : [...(sharedPaths ?? [])]; // Non-admin: static empty array (no change)
 
     const agentConfig = agents[agentId] ?? agents[defaultAgentId];
+    const resolvedAutonomy = resolveAutonomy(agentConfig?.autonomy);
+    const heldCapabilities = options?.autonomyParent === undefined
+      ? resolvedAutonomy.capabilities
+      : attenuateCaps(options.autonomyParent.caps, resolvedAutonomy.capabilities);
 
     // Use the agent's own skills config (SkillsConfigSchema defaults apply if not specified).
     const skillsConfig: SkillsConfig = agentConfig?.skills ?? SkillsConfigSchema.parse({});
@@ -580,12 +597,15 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // Registry-driven platform tools, in registry.ts declaration order
       // (alphabetical by category then name); conditional gates filter out a
       // descriptor when its predicate fails. The double `.filter` is intentional:
-      // the first drops descriptors whose `conditional` fails; the second drops
-      // `undefined` build-returns (defensive -- every passing conditional returns
-      // a non-undefined AgentTool in practice).
+      // the first pair drops descriptors whose runtime predicate or capability
+      // requirement fails; the final filter drops `undefined` build-returns.
       type PlatformTool = ReturnType<PlatformToolProvider>[number];
       let tools: ReturnType<PlatformToolProvider> = PLATFORM_TOOL_REGISTRY
         .filter((d) => !d.conditional || d.conditional(ctx))
+        .filter((d) => {
+          const requiredCapability = PLATFORM_TOOL_CAPABILITY_REQUIREMENTS.get(d.name);
+          return requiredCapability === undefined || heldCapabilities.includes(requiredCapability);
+        })
         .map((d) => d.build(ctx))
         .filter((t): t is PlatformTool => t !== undefined);
       if (securityBoundary !== undefined) {
@@ -796,7 +816,6 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
     // Narrow a role:coordinator lead (selector + rationale in
     // setup-tools-coordinator.ts). Narrows the TOOL SURFACE only — caps unchanged.
-    const resolvedAutonomy = resolveAutonomy(agentConfig?.autonomy);
     const { effectiveGroups, narrowed: coordinatorNarrowed } = selectEffectiveToolGroups(resolvedAutonomy, toolGroups);
     if (coordinatorNarrowed) {
       skillsLogger.debug(

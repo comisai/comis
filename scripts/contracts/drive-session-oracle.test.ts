@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   driveTextFilePath,
   findAssistantReplyAfterInbound,
+  findTelegramConversationWireAnswer,
   selectMainTrajectoryPath,
   telegramInboundGuid,
   telegramInjectAddressingError,
@@ -82,6 +83,32 @@ describe("live driver session correlation", () => {
         "Got it—category: **groceries**. Please resend it.",
       ),
     ).toBe(true);
+  });
+
+  it("selects a corrected wire reply only from the injected forum topic", () => {
+    const outbound = [
+      {
+        method: "sendMessage",
+        messageThreadId: 13,
+        text: "A reply from a parallel topic.",
+      },
+      {
+        method: "sendMessage",
+        messageThreadId: 14,
+        text: "🔧 researching",
+      },
+      {
+        method: "sendMessage",
+        messageThreadId: 14,
+        text: "I could not complete that delegation.",
+      },
+    ];
+
+    expect(findTelegramConversationWireAnswer(outbound, 14))
+      .toBe("I could not complete that delegation.");
+    expect(findTelegramConversationWireAnswer(outbound, 13))
+      .toBe("A reply from a parallel topic.");
+    expect(findTelegramConversationWireAnswer(outbound, 15)).toBeNull();
   });
 
   it("rejects a synthetic mention entity when the bot handle is absent", () => {

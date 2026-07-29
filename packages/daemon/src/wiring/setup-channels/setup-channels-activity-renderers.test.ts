@@ -19,7 +19,15 @@
  * @module
  */
 import { describe, it, expect, vi } from "vitest";
-import type { ChannelPort, ChannelPluginPort, ChannelCapability, TurnOutcome, ActivityStatusMarkers } from "@comis/core";
+import type {
+  ActivityRenderFrame,
+  ActivityStatusMarkers,
+  ChannelCapability,
+  ChannelPluginPort,
+  ChannelPort,
+  SendMessageOptions,
+  TurnOutcome,
+} from "@comis/core";
 import { themeForName } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
@@ -122,6 +130,55 @@ describe("buildActivityRenderers", () => {
     expect(renderer.strategy).toBe("EditPlace");
     expect(typeof renderer.apply).toBe("function");
     expect(typeof renderer.finalize).toBe("function");
+  });
+
+  it("routes Telegram activity placeholders into the originating forum topic", async () => {
+    let sentOptions: SendMessageOptions | undefined;
+    const recordingAdapter: ChannelPort = {
+      ...makeStubAdapter("telegram"),
+      async sendMessage(_channelId, _text, options) {
+        sentOptions = options;
+        return { ok: true, value: "activity-message-id" };
+      },
+    };
+    const adapters = new Map<string, ChannelPort>([["telegram", recordingAdapter]]);
+    const plugins = new Map<string, ChannelPluginPort>([
+      ["telegram", makeStubPlugin("telegram", makeCaps({ editMessages: true }))],
+    ]);
+
+    const { timer, clock } = makeTime();
+    const renderers = buildActivityRenderers(adapters, plugins, makeLogger(), { timer, clock });
+    const renderer = renderers.get("telegram")!(
+      "-1001234567890",
+      undefined,
+      { chatType: "group", threadId: "14" },
+    );
+    const frame: ActivityRenderFrame = {
+      frameSeq: 0,
+      visibleEvents: [{
+        schemaVersion: 1,
+        activityId: "00000000-0000-0000-0000-000000000014",
+        sessionKey: "telegram:group:-1001234567890:thread:14",
+        agentId: "main",
+        traceId: "trace-topic-14",
+        ts: "2026-07-29T00:00:00.000Z",
+        phase: "progress",
+        status: "running",
+        kind: "tool",
+        semanticPhase: "tool",
+        defaultLabel: "working",
+      }],
+      groupedActivityIds: {},
+      planSnapshot: undefined,
+      changeSet: { added: [], edited: [], removed: [] },
+    };
+
+    await renderer.apply(frame);
+
+    expect(sentOptions).toMatchObject({
+      threadId: "14",
+      extra: { telegramThreadScope: "forum" },
+    });
   });
 
   it("constructs an EditPlace renderer factory for Microsoft Teams and marks it live in the map", () => {
