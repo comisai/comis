@@ -25,8 +25,15 @@ describe("real-user target source claims", () => {
 
     expect(actionBlock).toBeDefined();
     expect(actionBlock?.match(/Type\.Literal\("/g)).toHaveLength(10);
+    expect(pipeline).toContain("Supports 10 actions:");
     expect(target).toContain("Ten actions total:");
     expect(target).toContain("`pipeline` (10 actions incl. `from_intent`)");
+    expect(target).not.toContain(
+      "`from_intent` returns a validated graph without\nexecuting it",
+    );
+    expect(target).toContain(
+      "`from_intent` synthesizes a validated graph and dispatches it through `graph.execute`",
+    );
   });
 
   it("does not claim a requirements block for the dependency-free research skill", () => {
