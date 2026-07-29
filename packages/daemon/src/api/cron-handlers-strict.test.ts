@@ -307,6 +307,25 @@ describe("strict cron RPC mutations", () => {
     expect(controller.status).toHaveBeenCalledOnce();
   });
 
+  it("accepts an explicit default-agent selector without granting cross-agent access", async () => {
+    const defaultController = maintenance();
+    const otherController = maintenance();
+    const bound = handlers(deps(scheduler([]), {
+      cronMaintenanceControllers: new Map([
+        ["agent-a", defaultController],
+        ["agent-b", otherController],
+      ]) as never,
+    }));
+
+    await expect(bound["cron.status"]!({ agentId: "agent-a" })).resolves.toMatchObject({
+      resolvedAgentId: "agent-a",
+    });
+    await expect(bound["cron.status"]!({ agentId: "agent-b" }))
+      .rejects.toThrow(/admin access required for cross-agent cron selection/i);
+    expect(defaultController.status).toHaveBeenCalledOnce();
+    expect(otherController.status).not.toHaveBeenCalled();
+  });
+
   it("keeps cron.reset admin-only and forwards its exact digest CAS to one controller", async () => {
     const controller = maintenance();
     const bound = handlers(deps(scheduler([]), {
