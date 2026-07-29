@@ -147,8 +147,16 @@ function multiExecutionTrajectoryLines(): string {
     {
       traceSchema: "comis-trajectory",
       schemaVersion: 1,
-      type: "session.summary",
+      type: "prompt.submitted",
       seq: 2,
+      traceId: "trace-failed",
+      data: { inboundKind: "message" },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.summary",
+      seq: 3,
       traceId: "trace-failed",
       data: {
         degraded: true,
@@ -164,8 +172,29 @@ function multiExecutionTrajectoryLines(): string {
     {
       traceSchema: "comis-trajectory",
       schemaVersion: 1,
+      type: "subagent.budget_exceeded",
+      seq: 4,
+      traceId: SESSION_KEY,
+      data: {
+        nodeId: "failed-turn-node",
+        capSource: "node",
+        tokenBudget: 1_500,
+        tokensUsed: 0,
+      },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "prompt.submitted",
+      seq: 5,
+      traceId: "trace-healthy",
+      data: { inboundKind: "message" },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
       type: "model.completed",
-      seq: 3,
+      seq: 6,
       traceId: "trace-healthy",
       data: {
         inputTokens: 100,
@@ -177,7 +206,7 @@ function multiExecutionTrajectoryLines(): string {
       traceSchema: "comis-trajectory",
       schemaVersion: 1,
       type: "delivery.dispatched",
-      seq: 4,
+      seq: 7,
       traceId: "trace-healthy",
       data: { status: "success" },
     },
@@ -185,7 +214,7 @@ function multiExecutionTrajectoryLines(): string {
       traceSchema: "comis-trajectory",
       schemaVersion: 1,
       type: "session.summary",
-      seq: 5,
+      seq: 8,
       traceId: "trace-healthy",
       data: {
         degraded: false,
@@ -446,7 +475,14 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     });
     expect(report.cost.costUsd).toBe(0);
     expect(report.summary).toContain("endReason=error");
-    expect(report.likelyRootCause?.code).not.toBe("session_not_found");
+    expect(report.likelyRootCause?.code).toBe("node_budget_exceeded");
+    expect(report.nodeBudgetBreaches).toEqual([
+      expect.objectContaining({
+        nodeId: "failed-turn-node",
+        tokenBudget: 1_500,
+        tokensUsed: 0,
+      }),
+    ]);
     db.close();
   });
 
