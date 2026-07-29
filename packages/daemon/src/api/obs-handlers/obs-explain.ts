@@ -48,6 +48,9 @@ import { assembleIncidentReport } from "./obs-explain-assemble.js";
 import { rootCause } from "./obs-explain-heuristics.js";
 import { boundIncidentReport } from "./obs-explain-bound.js";
 
+const DELEGATION_EVIDENCE_GUARD_ACTION =
+  "response.delegation_evidence_guard";
+
 /** Default data directory (lazy). Mirrors obs-trace.ts / obs-explain-readers.ts. */
 function defaultDataDir(): string {
   return safePath(os.homedir(), ".comis");
@@ -500,6 +503,16 @@ export async function assembleIncidentReportFromSources(
       degraded: report.outcome.degraded,
     });
   }
+  const delegationEvidenceVerdict = delegationEvidenceGuardVerdict(
+    auditRows,
+    report.traceId,
+  );
+  if (delegationEvidenceVerdict !== null) {
+    // A deterministic response correction is the acute terminal event. Rank it
+    // above chronic tool noise so one explain call names the honesty failure
+    // that changed the user-visible outcome.
+    report.likelyRootCause = delegationEvidenceVerdict;
+  }
   const bounded = boundIncidentReport(report, params.depth ?? "summary");
 
   // Attach the audit? section AFTER the bound pass (it is
@@ -513,6 +526,35 @@ export async function assembleIncidentReportFromSources(
   // Step 5: dev-mode response validation (catches field type regressions).
   if (IS_DEV) ObsExplainContract.response.parse(bounded);
   return bounded;
+}
+
+function delegationEvidenceGuardVerdict(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  traceId: string,
+): IncidentReport["likelyRootCause"] {
+  if (
+    traceId.length === 0
+    || !rows.some(
+      (row) =>
+        row.traceId === traceId
+        && row.action === DELEGATION_EVIDENCE_GUARD_ACTION
+        && row.outcome === "denied",
+    )
+  ) {
+    return null;
+  }
+
+  return {
+    code: "delegation_evidence_missing",
+    detail:
+      "the response honesty guard replaced an unsupported delegation claim "
+      + "because this execution had no successful current-turn sessions_spawn receipt",
+    suggestedNextSteps: [
+      "inspect sessions_spawn admission and the tool inventory for this turn",
+      "if a spawn was refused, inspect the bound-naming tool failure in this report",
+      "retry the request after correcting the spawn precondition",
+    ],
+  };
 }
 
 /**
