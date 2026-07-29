@@ -249,6 +249,7 @@ export function acceptProvenanceOccurrence(context: ProvenanceAcceptanceContext)
     if (filter.sinceMs !== undefined && epochMs < filter.sinceMs) matched = false;
     if (filter.untilMs !== undefined && epochMs >= filter.untilMs) matched = false;
     if (filter.channel !== undefined && filter.channel !== original.channelType) matched = false;
+    if (filter.chat !== undefined && filter.chat !== original.channelId) matched = false;
     if (filter.sender !== undefined && filter.sender !== original.senderId) matched = false;
     const origin = classifySessionMessageOrigin(
       sessionChannelId,

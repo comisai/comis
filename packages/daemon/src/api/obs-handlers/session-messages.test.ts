@@ -310,18 +310,25 @@ describe("extractSessionMessages", () => {
     expect(coverage.fileCapReached).toBe(true);
 
     const filtered = extractSessionMessages(dataDir, { chat: "not-telegram" });
-    expect(filtered.coverage.filesScanned).toBe(0);
-    expect(filtered.coverage.fileCapReached).toBe(false);
+    expect(filtered.coverage.filesScanned).toBe(5_000);
+    expect(filtered.coverage.fileCapReached).toBe(true);
+    expect(filtered.completeness).toEqual({
+      complete: false,
+      reasons: ["source_truncated"],
+    });
   });
 
-  it("applies the chat path filter before counting files or enforcing the file ceiling", () => {
+  it("applies the channel-aware chat path filter before counting files", () => {
     const dataDir = tmpDataDir();
     writeSessionFile(dataDir, IRRELEVANT_SESSION_KEY, []);
     writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nmatching chat"),
     ]);
 
-    const { messages, coverage } = extractSessionMessages(dataDir, { chat: "555" });
+    const { messages, coverage } = extractSessionMessages(dataDir, {
+      channel: "telegram",
+      chat: "555",
+    });
 
     expect(messages.map((message) => message.text)).toEqual(["matching chat"]);
     expect(coverage.filesScanned).toBe(1);
@@ -497,7 +504,7 @@ describe("extractSessionMessages", () => {
     expect(coverage.unparsedUserRecords).toBe(0);
   });
 
-  it("accepts Telegram provenance from the current principal-scoped session layout", () => {
+  it("filters Telegram provenance by physical chat in the principal-scoped session layout", () => {
     const dataDir = tmpDataDir();
     const principalId = "platform_b5jwOgRRncaj9XuyyAyp-HS4OxLpRnuetXeX9QqNZw8";
     const key = fixtureSessionKey(principalId, "telegram", { peerId: principalId });
@@ -509,17 +516,33 @@ describe("extractSessionMessages", () => {
       text: "current routed session message",
       timestamp: Date.parse("2026-07-19T14:54:00.000Z"),
     };
-    writeSessionFile(dataDir, key, [provenanceRecord([message])]);
+    const otherChatMessage = {
+      id: "22222222-2222-4222-8222-222222222222",
+      channelId: "another-chat",
+      channelType: "telegram",
+      senderId: "678314278",
+      text: "different physical chat in the same principal projection",
+      timestamp: Date.parse("2026-07-19T14:55:00.000Z"),
+    };
+    const sessionFile = writeSessionFile(dataDir, key, [
+      provenanceRecord([message]),
+      provenanceRecord([otherChatMessage]),
+    ]);
 
-    const { messages, coverage } = extractSessionMessages(dataDir, { channel: "telegram" });
+    expect(sessionFile).not.toContain(message.channelId);
+    const { messages, coverage } = extractSessionMessages(dataDir, {
+      channel: "telegram",
+      chat: message.channelId,
+    });
 
     expect(messages.map(({ messageId, chatId, text }) => ({ messageId, chatId, text }))).toEqual([{
       messageId: message.id,
       chatId: message.channelId,
       text: message.text,
     }]);
+    expect(coverage.filesScanned).toBe(1);
     expect(coverage.invalidProvenanceRecords).toBe(0);
-    expect(coverage.structuredProvenanceRecordsSeen).toBe(1);
+    expect(coverage.structuredProvenanceRecordsSeen).toBe(2);
   });
 
   it("reports malformed structured provenance and fail-closes its synthetic prompt", () => {
