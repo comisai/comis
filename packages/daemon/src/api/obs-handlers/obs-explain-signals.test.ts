@@ -843,6 +843,29 @@ describe("toIncidentSignals — capability.audited fold (spawn-tree nodes)", () 
 });
 
 describe("toIncidentSignals — direct sub-agent spawn-tree leaves", () => {
+  it("nests a direct grandchild under its immediate parent run instead of flattening it under the root", () => {
+    const s = toIncidentSignals([
+      event("subagent.spawned", 1, {
+        runId: "run-parent",
+        rootRunId: "root-session",
+        childAgentId: "lead",
+        caps: ["orch:spawn"],
+      }),
+      event("subagent.spawned", 2, {
+        runId: "run-grandchild",
+        rootRunId: "root-session",
+        parentRunId: "run-parent",
+        parentLeaseId: "lease-parent",
+        childAgentId: "worker",
+        caps: ["orch:web"],
+      }),
+    ]);
+
+    const byRun = new Map(s.spawnTree!.map((node) => [node.leaseId, node]));
+    expect(byRun.get("run-parent")?.parentLeaseId).toBe("root-session");
+    expect(byRun.get("run-grandchild")?.parentLeaseId).toBe("run-parent");
+  });
+
   it("folds a failed completion into the matching direct child leaf and failure signal", () => {
     const s = toIncidentSignals([
       event("subagent.spawned", 1, {
