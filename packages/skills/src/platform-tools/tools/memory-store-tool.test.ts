@@ -3,6 +3,14 @@ import { describe, it, expect, vi } from "vitest";
 import { createMemoryStoreTool } from "./memory-store-tool.js";
 
 describe("memory_store tool", () => {
+  it("distinguishes recall facts from workspace artifacts", () => {
+    const tool = createMemoryStoreTool(vi.fn());
+
+    expect(tool.description).toContain("workspace file");
+    expect(tool.description).toContain("journal");
+    expect(tool.description).toContain("ledger");
+  });
+
   it("calls rpcCall with content and tags on success", async () => {
     const rpcCall = vi.fn(async () => ({ stored: true, id: "mem-001" }));
     const tool = createMemoryStoreTool(rpcCall);
