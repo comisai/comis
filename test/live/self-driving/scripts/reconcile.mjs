@@ -12,22 +12,24 @@
 // Usage (on the VPS):  node /root/reconcile.mjs <chatId> [dataDir=/home/comis/.comis]
 //   Prints a compact digest; digits are ASCII-safe to grep, Hebrew is \u-escaped (do not grep prose).
 //   Exit 0 always (a read-only oracle) — the CALLER decides pass/fail by reconciling the printed sets.
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { rig } from "./_rig.mjs";
+import { resolveChatSessionArtifacts } from "./session-artifact-ref.mjs";
 
 const chatId = process.argv[2] || rig.chatId;
 const DATA = process.argv[3] || rig.dataDir;
 const decimals = (s) => [...new Set((s.match(/-?\d[\d,]*\.\d{1,6}/g) || []).map((x) => x.replace(/,/g, "")))];
 
-// Resolve newest trajectory for this chat.
-const sessDir = `${DATA}/workspace/sessions/default/${chatId}`;
-let trajFile = null, sessFile = null;
-if (existsSync(sessDir)) {
-  const trajs = readdirSync(sessDir).filter((f) => f.endsWith("trajectory.jsonl"))
-    .map((f) => ({ f, m: statSync(`${sessDir}/${f}`).mtimeMs })).sort((a, b) => b.m - a.m);
-  if (trajs[0]) { trajFile = `${sessDir}/${trajs[0].f}`; sessFile = trajFile.replace(".trajectory.jsonl", ""); }
+// Resolve through structured provenance. Privacy-principal session directories
+// do not contain the physical Telegram chat id, so a guessed legacy path is not
+// an authority-bearing lookup.
+const artifacts = resolveChatSessionArtifacts(DATA, String(chatId));
+const trajFile = artifacts?.trajectoryFile;
+const sessFile = artifacts?.sessionFile;
+if (!trajFile) {
+  console.log(`NO trajectory for Telegram chat ${chatId} under ${DATA}/workspace/sessions`);
+  process.exit(0);
 }
-if (!trajFile) { console.log(`NO trajectory for chat ${chatId} under ${sessDir}`); process.exit(0); }
 
 // --- trajectory: provenance (scoped to the LAST turn — a session file accumulates turns) ---
 const tlinesAll = readFileSync(trajFile, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);

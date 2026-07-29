@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
 import { paramsForExplainRef } from "../../test/live/self-driving/scripts/explain-ref.mjs";
 
 describe("explain helper reference routing", () => {
@@ -19,6 +21,18 @@ describe("explain helper reference routing", () => {
   it("routes root-prefixed identifiers before checking for colons", () => {
     expect(paramsForExplainRef("root-session-default:user:telegram", "full")).toEqual({
       rootRunId: "root-session-default:user:telegram",
+      depth: "full",
+    });
+  });
+
+  it("prints the routed parameters when invoked as a command", () => {
+    const script = resolve("test/live/self-driving/scripts/explain-ref.mjs");
+    const stdout = execFileSync(process.execPath, [script, "default:user:telegram:peer", "full"], {
+      encoding: "utf8",
+    });
+
+    expect(JSON.parse(stdout)).toEqual({
+      sessionKey: "default:user:telegram:peer",
       depth: "full",
     });
   });
