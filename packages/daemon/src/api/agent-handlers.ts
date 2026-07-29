@@ -176,6 +176,47 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       // an LLM-guessed relative path that nests inside the default workspace.
       delete config.workspacePath;
 
+      // A channel user can naturally create an agent without choosing a model
+      // binding. Inherit the trusted invoking agent's working binding in that
+      // case; operator-origin RPC calls inherit from the configured default
+      // agent. Persist these resolved fields below so a daemon restart cannot
+      // reinterpret the omission through a different global catalog default.
+      if (config.provider === undefined) {
+        const requestedSourceAgentId =
+          typeof rawParams._agentId === "string"
+            ? rawParams._agentId
+            : deps.defaultAgentId;
+        const sourceAgentId =
+          deps.agents[requestedSourceAgentId] !== undefined
+            ? requestedSourceAgentId
+            : deps.defaultAgentId;
+        const sourceConfig = deps.agents[sourceAgentId];
+        if (sourceConfig !== undefined) {
+          config.provider = sourceConfig.provider;
+          if (config.model === undefined) {
+            config.model = sourceConfig.model;
+          }
+          if (
+            config.oauthProfiles === undefined
+            && sourceConfig.oauthProfiles !== undefined
+          ) {
+            config.oauthProfiles = { ...sourceConfig.oauthProfiles };
+          }
+          deps.persistDeps?.logger.info(
+            {
+              method: "agents.create",
+              step: "agent-create-model-binding",
+              agentId,
+              sourceAgentId,
+              provider: config.provider,
+              model: config.model,
+              oauthProfileProviders: Object.keys(config.oauthProfiles ?? {}),
+            },
+            "Agent creation inherited the invoking agent model binding",
+          );
+        }
+      }
+
       // Ensure runtime-created agents get all tools by default (except browser).
       // The Zod schema defaults all builtinTools to true (browser: false), but
       // LLMs tend to conservatively set tools to false for specialized agents.
