@@ -47,7 +47,9 @@ export function createMemoryStoreTool(rpcCall: RpcCall): AgentTool<typeof Memory
     name: "memory_store",
     label: "Memory Store",
     description:
-      "Store information in long-term memory for future recall. Use this to save facts, preferences, or important context that should persist across conversations.",
+      "Store stable facts, preferences, or important context in long-term memory for future recall. " +
+      "Do not use memory as a substitute for a user-requested workspace file, journal, log, list, " +
+      "table, or ledger; create or update the workspace artifact instead.",
     parameters: MemoryStoreParams,
 
     async execute(
