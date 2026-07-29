@@ -12,6 +12,28 @@
 import { describe, it, expect } from "vitest";
 import { translatePayload } from "./translate-payload.js";
 
+describe("translatePayload — background handoff provenance", () => {
+  it("preserves the backgrounded marker without forwarding result content", () => {
+    const data = translatePayload("tool:executed", {
+      toolName: "mcp__reports--read_slow_report",
+      toolCallId: "call-bg",
+      durationMs: 10_001,
+      success: true,
+      backgrounded: true,
+      resultBody: "must not cross the trajectory boundary",
+      timestamp: 1717171717,
+    });
+
+    expect(data).toEqual({
+      toolName: "mcp__reports--read_slow_report",
+      toolCallId: "call-bg",
+      durationMs: 10_001,
+      success: true,
+      backgrounded: true,
+    });
+  });
+});
+
 describe("translatePayload — response locale decision", () => {
   it("forwards only the content-free prompt locale decision fields", () => {
     const data = translatePayload("prompt:submitted", {

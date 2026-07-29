@@ -103,6 +103,23 @@ describe("buildSessionHealthRollup", () => {
     expect(rollup.degraded).toBe(false);
   });
 
+  it("does not count an auto-background handoff as a successful terminal tool outcome", () => {
+    const rollup = buildSessionHealthRollup(
+      {
+        toolExecResults: [
+          {
+            toolName: "mcp__reports--read_slow_report",
+            success: true,
+            backgrounded: true,
+          },
+        ] as never,
+      },
+      "background_pending",
+    );
+
+    expect(rollup.toolStats).toEqual({});
+  });
+
   it("topErrorKinds is bounded to the ErrorKind union and capped at the top 3 by count", () => {
     // Four distinct kinds with counts 5, 4, 3, 1 — the size-1 kind must drop.
     const toolExecResults: Array<{
