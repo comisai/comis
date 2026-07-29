@@ -3269,6 +3269,27 @@ describe("bootstrap file snapshotting", () => {
       expect(result.dynamicPreamble).toMatch(/<<<UNTRUSTED_\w+>>>/);
       expect(result.dynamicPreamble).toMatch(/<<<END_UNTRUSTED_\w+>>>/);
     });
+
+    it("wraps attributed group history as external context without changing the request", async () => {
+      const params = makeParams({
+        msg: makeMsg({
+          text: "what did they say",
+          metadata: {
+            groupHistoryContext: [
+              { senderId: "user-2", text: "the deploy moved to friday" },
+            ],
+          },
+        }),
+      });
+
+      const result = await assembleExecutionPrompt(params);
+
+      expect(params.msg.text).toBe("what did they say");
+      expect(result.dynamicPreamble).toContain("Earlier Group Messages");
+      expect(result.dynamicPreamble).toContain("[user-2]: the deploy moved to friday");
+      expect(result.dynamicPreamble).toMatch(/<<<UNTRUSTED_\w+>>>/);
+      expect(result.dynamicPreamble).toMatch(/<<<END_UNTRUSTED_\w+>>>/);
+    });
   });
 
   // -----------------------------------------------------------------
@@ -3924,6 +3945,33 @@ describe("parent prefix reuse", () => {
     expect(result.dynamicPreamble).toContain("Current channel: telegram (ID: current_chat)");
     expect(result.dynamicPreamble).not.toContain("announce_channel_type");
     expect(result.dynamicPreamble).not.toContain("announce_channel_id");
+  });
+
+  it("keeps attributed group history on the parent-cache reuse path", async () => {
+    const params = makeParams({
+      config: makeConfig({ model: "claude-3-opus", provider: "anthropic" }),
+      deps: {
+        workspaceDir: "/workspace",
+        spawnPacket: makeSpawnPacketWithCache(),
+      },
+      msg: makeMsg({
+        text: "what did they say",
+        metadata: {
+          groupHistoryContext: [
+            { senderId: "user-2", text: "the deploy moved to friday" },
+          ],
+        },
+      }),
+      resolvedModelId: "claude-3-opus",
+      resolvedModelProvider: "anthropic",
+    });
+
+    const result = await assembleExecutionPrompt(params);
+
+    expect(params.msg.text).toBe("what did they say");
+    expect(result.dynamicPreamble).toContain("Earlier Group Messages");
+    expect(result.dynamicPreamble).toContain("[user-2]: the deploy moved to friday");
+    expect(result.dynamicPreamble).toMatch(/<<<UNTRUSTED_\w+>>>/);
   });
 
   it("falls through to full assembly when model mismatches", async () => {

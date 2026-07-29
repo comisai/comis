@@ -67,6 +67,35 @@ describe("NormalizedMessage", () => {
       }
     });
 
+    it("accepts bounded attributed group history context", () => {
+      const result = parseMessage(validMessage({
+        metadata: {
+          groupHistoryContext: [
+            { senderId: "user-2", text: "the deploy moved to friday" },
+          ],
+        },
+      }));
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.metadata.groupHistoryContext).toEqual([
+          { senderId: "user-2", text: "the deploy moved to friday" },
+        ]);
+      }
+    });
+
+    it("rejects malformed attributed group history context", () => {
+      const result = parseMessage(validMessage({
+        metadata: {
+          groupHistoryContext: [
+            { senderId: "", text: 42 },
+          ],
+        },
+      }));
+
+      expect(result.ok).toBe(false);
+    });
+
     it("accepts all valid channel types", () => {
       const channelTypes = [
         "telegram",
