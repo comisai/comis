@@ -45,6 +45,7 @@ export function createComisFileTools(
   readOnlyPaths?: string[],
   sharedPaths?: LazyPaths,
   tracker?: FileStateTracker,
+  hiddenPaths?: readonly string[],
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
 ): AgentTool<any>[] {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
@@ -60,31 +61,31 @@ export function createComisFileTools(
     : undefined;
 
   if (bt.read) {
-    tools.push(createComisReadTool(workspacePath, toolLogger, tracker, readOnlyPaths, sharedPaths));
+    tools.push(createComisReadTool(workspacePath, toolLogger, tracker, readOnlyPaths, sharedPaths, hiddenPaths));
   }
 
   if (bt.edit) {
-    tools.push(createComisEditTool(workspacePath, toolLogger, tracker, sharedPaths));
+    tools.push(createComisEditTool(workspacePath, toolLogger, tracker, sharedPaths, undefined, hiddenPaths));
   }
 
   if (bt.notebookEdit) {
-    tools.push(createComisNotebookEditTool(workspacePath, toolLogger, tracker));
+    tools.push(createComisNotebookEditTool(workspacePath, toolLogger, tracker, hiddenPaths));
   }
 
   if (bt.write) {
-    tools.push(createComisWriteTool(workspacePath, simpleLogger, tracker, sharedPaths));
+    tools.push(createComisWriteTool(workspacePath, simpleLogger, tracker, sharedPaths, undefined, hiddenPaths));
   }
 
   if (bt.grep) {
-    tools.push(createComisGrepTool(workspacePath, simpleLogger, readOnlyPaths, sharedPaths));
+    tools.push(createComisGrepTool(workspacePath, simpleLogger, readOnlyPaths, sharedPaths, hiddenPaths));
   }
 
   if (bt.find) {
-    tools.push(createComisFindTool(workspacePath, simpleLogger, readOnlyPaths, sharedPaths));
+    tools.push(createComisFindTool(workspacePath, simpleLogger, readOnlyPaths, sharedPaths, hiddenPaths));
   }
 
   if (bt.ls) {
-    tools.push(createComisLsTool(workspacePath, simpleLogger, readOnlyPaths, sharedPaths));
+    tools.push(createComisLsTool(workspacePath, simpleLogger, readOnlyPaths, sharedPaths, hiddenPaths));
   }
 
   return tools;

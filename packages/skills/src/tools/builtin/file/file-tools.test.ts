@@ -183,6 +183,63 @@ describe("createComisFileTools", () => {
     expect(text).not.toContain("Path traversal blocked");
   });
 
+  itRg("hides a blocked runtime-session subtree from every file tool path", async () => {
+    const sessionsDir = path.join(tmpDir, "sessions");
+    const siblingFile = path.join(sessionsDir, "default", "sibling", "chat.jsonl");
+    await fs.mkdir(path.dirname(siblingFile), { recursive: true });
+    await fs.writeFile(siblingFile, "sibling-private-marker", "utf-8");
+    await fs.writeFile(path.join(tmpDir, "visible.txt"), "visible-marker", "utf-8");
+
+    const config = makeConfig({
+      read: true,
+      write: true,
+      grep: true,
+      find: true,
+      ls: true,
+    });
+    const createWithHiddenPaths = createComisFileTools as unknown as (
+      ...args: [...Parameters<typeof createComisFileTools>, hiddenPaths: string[]]
+    ) => ReturnType<typeof createComisFileTools>;
+    const tools = createWithHiddenPaths(
+      config,
+      tmpDir,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [sessionsDir],
+    );
+
+    const readTool = tools.find((tool) => tool.name === "read")!;
+    const writeTool = tools.find((tool) => tool.name === "write")!;
+    const grepTool = tools.find((tool) => tool.name === "grep")!;
+    const findTool = tools.find((tool) => tool.name === "find")!;
+    const lsTool = tools.find((tool) => tool.name === "ls")!;
+
+    await expect(readTool.execute("blocked-read", {
+      path: "sessions/default/sibling/chat.jsonl",
+    })).rejects.toThrow(/\[restricted_path\]/);
+    await expect(writeTool.execute("blocked-write", {
+      path: "sessions/default/sibling/chat.jsonl",
+      content: "overwritten",
+    })).rejects.toThrow(/\[restricted_path\]/);
+    expect(await fs.readFile(siblingFile, "utf-8")).toBe("sibling-private-marker");
+
+    const grepResult = await grepTool.execute("blocked-grep", {
+      pattern: "sibling-private-marker",
+    });
+    const findResult = await findTool.execute("blocked-find", {
+      pattern: "**/*.jsonl",
+      include_hidden: true,
+    });
+    const lsResult = await lsTool.execute("blocked-ls", { path: "." });
+
+    expect(textOf(grepResult)).not.toContain("sibling-private-marker");
+    expect(textOf(grepResult)).not.toContain("sessions");
+    expect(textOf(findResult)).not.toContain("sessions");
+    expect(textOf(lsResult)).not.toContain("sessions/");
+  });
+
   it("each tool preserves its expected name", () => {
     const config = makeConfig({
       read: true,

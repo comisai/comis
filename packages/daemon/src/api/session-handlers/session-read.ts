@@ -37,6 +37,7 @@ import {
   resolveSubagentController,
   subagentControllerOwnsRun,
 } from "../subagent-controller.js";
+import { requireSubagentConversationAccess } from "./session-subagent-authority.js";
 
 /**
  * Bind the session read handlers. Object-spread compatible with
@@ -103,6 +104,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       }
       const parsedRef = ConversationRefSchema.safeParse(params.conversation_ref);
       if (!parsedRef.success) throw new PreconditionError("Invalid conversation reference");
+      requireSubagentConversationAccess(rawParams, parsedRef.data);
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 20;
 

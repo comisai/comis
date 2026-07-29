@@ -17,6 +17,7 @@ import { safePath, PathTraversalError, registerActivityLabelSpec } from "@comis/
 import { type LazyPaths, resolvePaths } from "../file/safe-path-wrapper.js";
 import { readStringParam, readNumberParam } from "../../../platform-tools/tool-helpers.js";
 import { pathOutsideWorkspaceMessage } from "./path-error.js";
+import { isRestrictedPath, requireVisiblePath } from "../file/restricted-paths.js";
 
 // Activity label spec (SPEC §6.1). Descriptor name == emitted name for
 // builtins (ls-tool.ts:126 → `name: "ls"`).
@@ -124,6 +125,7 @@ export function createComisLsTool(
   logger?: ToolLogger,
   readOnlyPaths?: string[],
   sharedPaths?: LazyPaths,
+  hiddenPaths?: readonly string[],
 ): AgentTool<typeof LsParams> {
   // Comis extension: promptGuidelines (not part of AgentTool type, spread to bypass excess property check)
   const ext = { promptGuidelines: [
@@ -151,6 +153,7 @@ export function createComisLsTool(
 
         // 2. Resolve path through safePath chain
         const absolutePath = resolveSearchPath(workspacePath, filePath, readOnlyPaths, sharedPaths);
+        requireVisiblePath(absolutePath, hiddenPaths);
 
         logger?.debug?.("ls: listing", absolutePath);
 
@@ -175,7 +178,9 @@ export function createComisLsTool(
         }
 
         // 4. Read directory with type information
-        const entries = await fsp.readdir(absolutePath, { withFileTypes: true });
+        const entries = (await fsp.readdir(absolutePath, { withFileTypes: true }))
+          .filter((entry) =>
+            !isRestrictedPath(safePath(absolutePath, entry.name), hiddenPaths));
 
         // 5. Sort alphabetically (case-insensitive)
         entries.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));

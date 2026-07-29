@@ -192,6 +192,20 @@ describe("SandboxExecProvider", () => {
       );
     });
 
+    it("denies reads and writes beneath hidden workspace subtrees", () => {
+      const provider = new SandboxExecProvider();
+      const profile = provider.buildArgs(makeOpts({
+        hiddenPaths: ["/Users/agent/workspace/sessions"],
+      } as unknown as Partial<SandboxOptions>))[2]!;
+
+      expect(profile).toContain(
+        '(deny file-read* (subpath "/Users/agent/workspace/sessions"))',
+      );
+      expect(profile).toContain(
+        '(deny file-write* (subpath "/Users/agent/workspace/sessions"))',
+      );
+    });
+
     it("keeps a replay workspace readable but removes its write grant", () => {
       const provider = new SandboxExecProvider();
       const profile = provider.buildArgs(makeOpts({ workspaceReadOnly: true }))[2]!;

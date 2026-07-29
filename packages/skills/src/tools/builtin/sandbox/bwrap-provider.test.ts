@@ -156,6 +156,23 @@ describe("BwrapProvider", () => {
       expect(args[args.length - 1]).toBe("/home/agent/workspace");
     });
 
+    it("masks hidden workspace subtrees after binding the workspace", () => {
+      const provider = createAvailableProvider();
+      const args = provider.buildArgs(makeOpts({
+        hiddenPaths: ["/home/agent/workspace/sessions"],
+      } as unknown as Partial<SandboxOptions>));
+      const workspaceBind = args.findIndex((value, index) =>
+        value === "--bind"
+        && args[index + 1] === "/home/agent/workspace"
+        && args[index + 2] === "/home/agent/workspace");
+      const hiddenMask = args.findIndex((value, index) =>
+        value === "--tmpfs"
+        && args[index + 1] === "/home/agent/workspace/sessions");
+
+      expect(workspaceBind).toBeGreaterThan(0);
+      expect(hiddenMask).toBeGreaterThan(workspaceBind);
+    });
+
     it("includes --ro-bind for system paths that exist and skips those that do not", () => {
       vi.mocked(existsSync).mockImplementation((p) => {
         return String(p) === "/usr" || String(p) === "/bin";

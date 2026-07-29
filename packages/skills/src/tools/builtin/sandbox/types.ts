@@ -26,6 +26,8 @@ export interface SandboxOptions {
   cwd: string;
   /** Temp directory inside workspace for spillover files. */
   tempDir: string;
+  /** Workspace subtrees masked from the sandboxed process. */
+  hiddenPaths?: readonly string[];
   /**
    * Network isolation mode for the sandbox.
    * Default undefined/"open" = existing --share-net behaviour (no regression).
@@ -181,4 +183,6 @@ export interface ExecSandboxConfig {
    * The daemon wiring activates this; making the path reachable comes first.
    */
   secureCredentialHome?: boolean;
+  /** Workspace subtrees masked from the sandboxed process. */
+  hiddenPaths?: readonly string[];
 }

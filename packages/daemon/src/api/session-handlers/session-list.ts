@@ -17,6 +17,7 @@ import {
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type SessionHandlerDeps } from "./session-helpers.js";
 import { AuthorizationError } from "../errors.js";
+import { subagentCallerConversationRef } from "./session-subagent-authority.js";
 
 function requireQueryAuthority(
   params: { tenant_id: string; agent_id: string },
@@ -200,6 +201,10 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
       );
       const kind = params.kind ?? "all";
       let sessions = listSessions(deps, scope);
+      const callerRef = subagentCallerConversationRef(rawParams);
+      if (callerRef !== undefined) {
+        sessions = sessions.filter((session) => session.conversationRef === callerRef);
+      }
       if (params.since_minutes !== undefined) {
         const cutoff = systemNowMs() - params.since_minutes * 60_000;
         sessions = sessions.filter((session) => session.updatedAt >= cutoff);
@@ -228,7 +233,11 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
         { tenant_id: params.tenant_id, agent_id: params.agent_id },
         rawParams,
       );
-      const sessions = listSessions(deps, authority);
+      let sessions = listSessions(deps, authority);
+      const callerRef = subagentCallerConversationRef(rawParams);
+      if (callerRef !== undefined) {
+        sessions = sessions.filter((session) => session.conversationRef === callerRef);
+      }
       if (!params.query) {
         const limit = Math.min(Math.max(params.limit ?? 10, 1), 30);
         const recent = sessions.slice(0, limit).map((session) => ({

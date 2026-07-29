@@ -23,6 +23,23 @@ function scope(agentId: string): ConversationScope {
   };
 }
 
+function subagentScope(agentId: string, runId: string): ConversationScope {
+  return {
+    tenantId: "tenant_a",
+    agentId,
+    partition: {
+      kind: "endpoint-conversation-principal",
+      principalId: "principal-agent_a",
+      endpoint: {
+        channelType: "sub-agent",
+        channelInstanceId: "runtime",
+        conversationId: runId,
+        conversationKind: "direct",
+      },
+    },
+  };
+}
+
 function reference(conversationScope: ConversationScope) {
   const result = createConversationRef(conversationScope);
   if (!result.ok) throw result.error;
@@ -171,6 +188,72 @@ describe("session list explicit authority", () => {
       _agentId: "agent_a",
       _tenantId: "tenant_a",
     })).rejects.toThrow(/does not match the authenticated caller/i);
+  });
+
+  it("filters same-agent sibling sessions from a sub-agent list and content search", async () => {
+    const callerScope = subagentScope("agent_a", "caller-run");
+    const siblingScope = subagentScope("agent_a", "sibling-run");
+    const entries: SessionDetailedEntry[] = [
+      {
+        ...entry("agent_a"),
+        conversationRef: reference(callerScope),
+        conversationScope: callerScope,
+        metadata: { runId: "caller-run" },
+      },
+      {
+        ...entry("agent_a"),
+        conversationRef: reference(siblingScope),
+        conversationScope: siblingScope,
+        metadata: { runId: "sibling-run" },
+      },
+    ];
+    const deps = {
+      ...makeDeps(),
+      sessionStore: {
+        listDetailed: vi.fn().mockReturnValue(ok(entries)),
+        loadByRef: vi.fn((
+          _query: { tenantId: string; agentId: string },
+          conversationRef: string,
+        ) => ok({
+          conversationRef,
+          conversationScope: conversationRef === reference(callerScope) ? callerScope : siblingScope,
+          messages: [{
+            role: "user",
+            content: conversationRef === reference(callerScope)
+              ? "caller-visible-marker"
+              : "sibling-private-marker",
+            timestamp: 10,
+          }],
+          metadata: {},
+          createdAt: 1,
+          updatedAt: 2,
+        })),
+      },
+    } as unknown as SessionHandlerDeps;
+    const handlers = bindSessionListHandlers(deps);
+    const authority = {
+      tenant_id: "tenant_a",
+      agent_id: "agent_a",
+      _agentId: "agent_a",
+      _tenantId: "tenant_a",
+      _callerConversationScope: callerScope,
+    };
+
+    const listed = await handlers["session.list"]!(authority) as {
+      sessions: Array<{ conversationRef: string }>;
+      total: number;
+    };
+    const searched = await handlers["session.search"]!({
+      ...authority,
+      query: "sibling-private-marker",
+      summarize: false,
+    }) as { results: unknown[]; total: number };
+
+    expect(listed.sessions.map((session) => session.conversationRef)).toEqual([
+      reference(callerScope),
+    ]);
+    expect(listed.total).toBe(1);
+    expect(searched).toEqual({ mode: "search", results: [], total: 0 });
   });
 
   it("lets the authenticated control plane select an explicit agent scope", async () => {

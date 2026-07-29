@@ -32,6 +32,7 @@ import {
   deleteCell,
   serializeNotebook,
 } from "./shared/notebook-edit-ops.js";
+import { requireVisiblePath } from "../file/restricted-paths.js";
 
 // Activity label spec (SPEC §6.1). The EMITTED name uses an UNDERSCORE —
 // `notebook-edit-tool.ts:120 → name: "notebook_edit"` — while the file
@@ -127,6 +128,7 @@ export function createComisNotebookEditTool(
   workspacePath: string,
   logger?: ToolLogger,
   tracker?: FileStateTracker,
+  hiddenPaths?: readonly string[],
 ): AgentTool<typeof NotebookEditParams> {
   return {
     name: "notebook_edit",
@@ -201,6 +203,7 @@ export function createComisNotebookEditTool(
           { cause: error },
         );
       }
+      requireVisiblePath(resolvedPath, hiddenPaths);
 
       // V5 -- File existence + stat
       const statResult = await fromPromise(fs.stat(resolvedPath));

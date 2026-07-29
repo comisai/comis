@@ -1565,6 +1565,40 @@ describe("setupTools", () => {
       expect(sandboxArg).toBeUndefined();
     });
 
+    it("removes process surfaces when an isolated assembly has no sandbox provider", async () => {
+      const deps = createMinimalDeps({
+        sandboxProvider: undefined,
+        agents: {
+          "agent-1": {
+            skills: {
+              builtinTools: { browser: false, exec: true, process: true },
+              toolPolicy: { profile: "default" },
+              discoveryPaths: [],
+              execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
+            },
+          } as any,
+        },
+      });
+
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+      await assembleToolsForAgent("agent-1", {
+        securityBoundary: {
+          hiddenPaths: ["/workspace/agent-1/sessions"],
+          requireSandboxedExecution: true,
+        },
+      } as never);
+
+      const pipelineArgs = mockAssembleToolPipeline.mock.calls[0][0];
+      const toolNames = pipelineArgs.platformTools().map((tool: { name: string }) => tool.name);
+
+      expect(toolNames).not.toContain("exec");
+      expect(toolNames).not.toContain("process");
+      expect(mockCreateExecTool).not.toHaveBeenCalled();
+      expect(mockCreateProcessTool).not.toHaveBeenCalled();
+      expect(pipelineArgs.hiddenPaths).toEqual(["/workspace/agent-1/sessions"]);
+    });
+
     it("logs WARN when sandbox enabled but no provider", async () => {
       const deps = createMinimalDeps({
         sandboxProvider: undefined,

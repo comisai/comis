@@ -115,6 +115,27 @@ describe("createApplyPatchTool", () => {
     expect(await fileExists("src/delete-me.ts")).toBe(false);
   });
 
+  it("refuses to patch a blocked runtime-session file", async () => {
+    await writeFile("sessions/default/sibling/chat.jsonl", "sibling-private-marker");
+    const hiddenPaths = [path.join(tmpDir, "sessions")];
+    const createWithHiddenPaths = createApplyPatchTool as unknown as (
+      ...args: [...Parameters<typeof createApplyPatchTool>, hiddenPaths: string[]]
+    ) => ReturnType<typeof createApplyPatchTool>;
+    const tool = createWithHiddenPaths(tmpDir, undefined, undefined, hiddenPaths);
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: sessions/default/sibling/chat.jsonl",
+      "-sibling-private-marker",
+      "+overwritten",
+      "*** End Patch",
+    ].join("\n");
+
+    await expect(tool.execute("blocked-patch", { patch }))
+      .rejects.toThrow(/\[restricted_path\]/);
+    expect(await readFile("sessions/default/sibling/chat.jsonl"))
+      .toBe("sibling-private-marker");
+  });
+
   it("applies Update File with matching context", async () => {
     await writeFile(
       "src/config.ts",

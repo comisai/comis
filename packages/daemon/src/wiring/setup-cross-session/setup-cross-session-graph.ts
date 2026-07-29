@@ -209,7 +209,6 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
         ...(deps.logger ? { logger: deps.logger } : {}),
       },
     });
-    // The run's effective working tree: the worktree when created, else the shared base.
     const effectiveWorkspaceDir = worktreeHandle?.dir ?? baseWorkspaceDir;
 
     let tools = await assembleToolsForAgent(effectiveAgentId, {
@@ -218,6 +217,8 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       includeMcpTools: mcpPolicy === "inherit",
       sharedPaths: graphSharedDir ? [graphSharedDir] : undefined,
       sessionKey,
+      workspacePath: effectiveWorkspaceDir,
+      securityBoundary: { hiddenPaths: [safePath(baseWorkspaceDir, "sessions")], requireSandboxedExecution: true },
       ...(ctx?.deliveryOrigin !== undefined
         ? { requesterOrigin: ctx.deliveryOrigin }
         : {}),
@@ -235,7 +236,6 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
         : {}),
     });
 
-    // Intersect sub-agent tools with parent's resolved tool set.
     // Sub-agent tools = intersection(parent resolved tools, ceiling-filtered tools).
     // Prevents privilege escalation: sub-agent can never have a tool the parent doesn't have.
     if (callerAgentId) {

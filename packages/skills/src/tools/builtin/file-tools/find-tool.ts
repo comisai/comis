@@ -19,6 +19,7 @@ import { type LazyPaths, resolvePaths } from "../file/safe-path-wrapper.js";
 import { readStringParam, readNumberParam, readBooleanParam } from "../../../platform-tools/tool-helpers.js";
 import ignore from "ignore";
 import { pathOutsideWorkspaceMessage } from "./path-error.js";
+import { isRestrictedPath, requireVisiblePath } from "../file/restricted-paths.js";
 
 // Activity label spec (SPEC §6.1). Descriptor name == emitted name for
 // builtins (find-tool.ts:295 → `name: "find"`).
@@ -293,6 +294,7 @@ export function createComisFindTool(
   logger?: ToolLogger,
   readOnlyPaths?: string[],
   sharedPaths?: LazyPaths,
+  hiddenPaths?: readonly string[],
 ): AgentTool<typeof FindParams> {
   // Comis extension: promptGuidelines (not part of AgentTool type, spread to bypass excess property check)
   const ext = { promptGuidelines: [
@@ -334,6 +336,7 @@ export function createComisFindTool(
         } else {
           searchBase = workspacePath;
         }
+        requireVisiblePath(searchBase, hiddenPaths);
 
         logger?.debug?.("find: searching", pattern, "in", searchBase);
 
@@ -344,7 +347,9 @@ export function createComisFindTool(
         const rawFiles = await collectFiles(pattern, searchBase, includeHidden);
 
         // 5. Filter through .gitignore
-        const filtered = rawFiles.filter((f) => !ig.ignores(f));
+        const filtered = rawFiles.filter((f) =>
+          !ig.ignores(f)
+          && !isRestrictedPath(nodePath.resolve(searchBase, f), hiddenPaths));
 
         // 6. Stat for mtime
         const withMtime = await statFiles(filtered, searchBase);
