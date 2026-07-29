@@ -189,7 +189,7 @@ const SYSTEM_HEURISTICS: ReadonlyArray<(s: SystemSignals) => SystemRootCause | n
           ? `${s.autonomyDegradedCount} autonomy run(s) degraded (orphaned/revoked/killed) over the window — worst: ${s.worstRootRunId}`
           : `${s.autonomyDegradedCount} autonomy run(s) degraded (orphaned/revoked/killed) over the window`,
       suggestedNextSteps: [
-        `run \`${explainRef}\` on the worst autonomy run to see its spawn-tree + why it did not survive`,
+        `run \`${explainRef}\` to inspect the worst run's associated session, tool failures, and spawn-tree`,
         "check the durable checkpoint + lease heartbeat (autonomy.durability.heartbeatStaleMs) for orphaned runs; confirm intent for revoked/killed runs",
       ],
     };
