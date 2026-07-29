@@ -37,7 +37,7 @@ import {
   accumulateBackgroundTaskRecord,
   parseContextBudgetRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
 } from "./obs-explain-signal-folds.js";
-import type { Acc } from "./obs-explain-signals-acc.js";
+import { summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
 import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
 // Tunable thresholds (module-top constants per the naming contract).
 // ---------------------------------------------------------------------------
@@ -774,31 +774,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ? acc.nodeBudgetBreaches
     : acc.nodeBudgetBreaches.filter((breach) => breach.seq > latestPromptSeq);
 
-  // Collapse toolStats Map → plain record, picking the dominant errorKind.
-  const toolStats: IncidentSignals["toolStats"] = {};
-  const repeatedFailureCount: Record<string, number> = {};
-  let mostFailedTool: string | undefined;
-  let mostFailedCount = 0;
-  for (const [tool, entry] of acc.toolStats) {
-    let topErrorKind: string | undefined;
-    let topCount = 0;
-    for (const [kind, count] of entry.errorKinds) {
-      if (count > topCount) {
-        topCount = count;
-        topErrorKind = kind;
-      }
-    }
-    toolStats[tool] = {
-      ok: entry.ok,
-      failed: entry.failed,
-      ...(topErrorKind !== undefined ? { topErrorKind } : {}),
-    };
-    if (entry.failed > 0) repeatedFailureCount[tool] = entry.failed;
-    if (entry.failed > mostFailedCount) {
-      mostFailedCount = entry.failed;
-      mostFailedTool = tool;
-    }
-  }
+  const { toolStats, repeatedFailureCount, mostFailedTool } = summarizeToolStats(acc);
 
   // Misclassification derivation (log-evidence only): a tool with BOTH a
   // success and ≥MISCLASS_N failures AND a status/200/403 token in a body.

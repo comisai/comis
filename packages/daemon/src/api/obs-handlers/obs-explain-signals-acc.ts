@@ -53,6 +53,45 @@ export type OrchestrateToolCallFold =
  *  `IncidentSignals["spawnTree"]` at the end of `toIncidentSignals`. */
 export type SpawnNode = NonNullable<IncidentSignals["spawnTree"]>[number];
 
+/** Collapse mutable per-tool counters into the public incident-report shape. */
+export function summarizeToolStats(
+  acc: Pick<Acc, "toolStats">,
+): {
+  toolStats: IncidentSignals["toolStats"];
+  repeatedFailureCount: Record<string, number>;
+  mostFailedTool?: string;
+} {
+  const toolStats: IncidentSignals["toolStats"] = {};
+  const repeatedFailureCount: Record<string, number> = {};
+  let mostFailedTool: string | undefined;
+  let mostFailedCount = 0;
+  for (const [tool, entry] of acc.toolStats) {
+    let topErrorKind: string | undefined;
+    let topCount = 0;
+    for (const [kind, count] of entry.errorKinds) {
+      if (count > topCount) {
+        topCount = count;
+        topErrorKind = kind;
+      }
+    }
+    toolStats[tool] = {
+      ok: entry.ok,
+      failed: entry.failed,
+      ...(topErrorKind !== undefined ? { topErrorKind } : {}),
+    };
+    if (entry.failed > 0) repeatedFailureCount[tool] = entry.failed;
+    if (entry.failed > mostFailedCount) {
+      mostFailedCount = entry.failed;
+      mostFailedTool = tool;
+    }
+  }
+  return {
+    toolStats,
+    repeatedFailureCount,
+    ...(mostFailedTool !== undefined ? { mostFailedTool } : {}),
+  };
+}
+
 // @optional-field-count: internal mutable fold accumulator — each optional field
 // is a DISTINCT terminal-record signal (breaker tool, contextBudget, promptTimeout,
 // toolSchemaUnsupported, inboundEdit, responseLocale, lastRecall, spend, perRootBudget, the four media turns,
