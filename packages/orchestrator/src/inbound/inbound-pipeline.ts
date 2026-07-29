@@ -385,6 +385,11 @@ export async function processInboundMessage(
       return Promise.reject(resolvedResult.error);
     }
     const resolved = resolvedResult.value;
+    if (resolved.kind === "rejected") {
+      dedupReservation?.commit();
+      emitInboundTerminal("error", "inbound_rejected");
+      return;
+    }
     if (resolved.kind === "no_executor") {
       dedupReservation?.rollback();
       emitInboundTerminal("error", "inbound_rejected");

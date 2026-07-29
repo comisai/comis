@@ -87,6 +87,18 @@ export type ResolveAndPreprocessResult =
       agentId: string;
       sessionKey: SessionKey;
       turnScope: ResolvedTurnScope;
+    }
+  | {
+      /**
+       * A permanently invalid physical update was observed but cannot enter
+       * the content-bearing ledger. The channel may consume this one update
+       * so it cannot poison every later polling offset.
+       */
+      kind: "rejected";
+      agentId: string;
+      errorKind: "validation";
+      reason: Extract<InboundPersistenceFailureReason,
+        "message_text_too_large" | "invalid_envelope">;
     };
 
 interface VisionImageContent {
@@ -109,7 +121,7 @@ function inboundPersistenceHint(errorKind: InboundPersistenceErrorKind): string 
     case "precondition":
       return "Quarantine the affected inbound provenance sidecar, then inspect and repair its malformed or conflicting batch before retrying delivery.";
     case "validation":
-      return "Inspect the rejected channel envelope and correct invalid source fields before retrying delivery.";
+      return "Inspect the rejected channel envelope and correct invalid source fields before sending a new message; this invalid update was terminally rejected.";
     case "config":
       return "Repair the resolved agent's session persistence wiring before retrying channel delivery.";
     case "resource":
@@ -224,10 +236,10 @@ function projectContentEnrichment(
  * Resolve the agent + session key, then run audio preflight + media
  * preprocessing on the inbound message.
  *
- * Returns a closed outcome after durable acceptance. A durable-write failure rejects at
- * this phase boundary; `processInboundMessage` immediately translates that
- * rejection with `fromPromise` and propagates it to the channel middleware so
- * the platform cannot acknowledge an unrecorded message.
+ * Returns a closed outcome after durable acceptance. Retryable durable-write
+ * failures reject at this phase boundary so the platform cannot acknowledge an
+ * unrecorded message. A permanently invalid envelope returns `rejected` so one
+ * poison update cannot stop every later polling offset.
  */
 export async function resolveAndPreprocess(
   deps: ResolveAndPreprocessDeps,
@@ -276,29 +288,38 @@ export async function resolveAndPreprocess(
   // `originalMessages` payload in this single occurrence.
   const persisted = await deps.persistInboundMessage(agentId, msg, sessionKey);
   if (!persisted.ok) {
+    const failureReason = inboundPersistenceFailureReason(
+      persisted.error.errorKind,
+      msg.text.length,
+    );
     emitObservationalEvent(deps, "message:inbound_persistence_failed", {
       agentId,
       channelType: msg.channelType,
       errorKind: persisted.error.errorKind,
-      reason: inboundPersistenceFailureReason(
-        persisted.error.errorKind,
-        msg.text.length,
-      ),
+      reason: failureReason,
       observedChars: msg.text.length,
       limitChars: MAX_NORMALIZED_MESSAGE_TEXT_CHARS,
       timestamp: systemNowMs(),
     });
-    deps.logger.error(
-      {
-        step: "session-provenance",
+    const logFields = {
+      step: "session-provenance",
+      agentId,
+      channelType: msg.channelType,
+      err: toSafeErrorLogString(persisted.error.error),
+      hint: inboundPersistenceHint(persisted.error.errorKind),
+      errorKind: persisted.error.errorKind,
+    };
+    if (persisted.error.errorKind === "validation") {
+      deps.logger.warn(logFields, "Invalid inbound message was terminally rejected");
+      return {
+        kind: "rejected",
         agentId,
-        channelType: msg.channelType,
-        err: toSafeErrorLogString(persisted.error.error),
-        hint: inboundPersistenceHint(persisted.error.errorKind),
-        errorKind: persisted.error.errorKind,
-      },
-      "Inbound message provenance persistence failed",
-    );
+        errorKind: "validation",
+        reason: failureReason as Extract<InboundPersistenceFailureReason,
+          "message_text_too_large" | "invalid_envelope">,
+      };
+    }
+    deps.logger.error(logFields, "Inbound message provenance persistence failed");
     return Promise.reject(persisted.error.error);
   }
 
