@@ -18,6 +18,7 @@ import {
   formatSessionKey,
   systemNowMs,
   resolveAutonomy,
+  attenuateCaps,
 } from "@comis/core";
 import { sessionKeyToPath, resolveEffectiveCapabilityClass } from "@comis/agent";
 import type { SessionTrackerRegistry, CapabilityClass, OrchestrateRepairSeam } from "@comis/agent";
@@ -454,6 +455,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       : [...(sharedPaths ?? [])]; // Non-admin: static empty array (no change)
 
     const agentConfig = agents[agentId] ?? agents[defaultAgentId];
+    const resolvedAutonomy = resolveAutonomy(agentConfig?.autonomy);
+    const heldCapabilities = options?.autonomyParent === undefined
+      ? resolvedAutonomy.capabilities
+      : attenuateCaps(options.autonomyParent.caps, resolvedAutonomy.capabilities);
 
     // Use the agent's own skills config (SkillsConfigSchema defaults apply if not specified).
     const skillsConfig: SkillsConfig = agentConfig?.skills ?? SkillsConfigSchema.parse({});
@@ -580,12 +585,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // Registry-driven platform tools, in registry.ts declaration order
       // (alphabetical by category then name); conditional gates filter out a
       // descriptor when its predicate fails. The double `.filter` is intentional:
-      // the first drops descriptors whose `conditional` fails; the second drops
-      // `undefined` build-returns (defensive -- every passing conditional returns
-      // a non-undefined AgentTool in practice).
+      // the first pair drops descriptors whose runtime predicate or capability
+      // requirement fails; the final filter drops `undefined` build-returns.
       type PlatformTool = ReturnType<PlatformToolProvider>[number];
       let tools: ReturnType<PlatformToolProvider> = PLATFORM_TOOL_REGISTRY
         .filter((d) => !d.conditional || d.conditional(ctx))
+        .filter((d) => d.name !== "sessions_spawn" || heldCapabilities.includes("orch:spawn"))
         .map((d) => d.build(ctx))
         .filter((t): t is PlatformTool => t !== undefined);
       if (securityBoundary !== undefined) {
@@ -796,7 +801,6 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
     // Narrow a role:coordinator lead (selector + rationale in
     // setup-tools-coordinator.ts). Narrows the TOOL SURFACE only — caps unchanged.
-    const resolvedAutonomy = resolveAutonomy(agentConfig?.autonomy);
     const { effectiveGroups, narrowed: coordinatorNarrowed } = selectEffectiveToolGroups(resolvedAutonomy, toolGroups);
     if (coordinatorNarrowed) {
       skillsLogger.debug(
