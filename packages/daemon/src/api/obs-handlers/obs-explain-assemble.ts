@@ -299,7 +299,13 @@ export function assembleIncidentReport(
     isHardFailure ||
     DEGRADED_END_REASONS.has(endReason) ||
     signals.failures.length > 0;
-  const degraded = explicitDegraded ?? derivedDegraded;
+  const channelDegraded =
+    signals.channelHealth !== undefined && !signals.channelHealth.recovered;
+  const subagentDeliveryDegraded = signals.subagentDeliverySkipped !== undefined;
+  const degraded =
+    channelDegraded
+    || subagentDeliveryDegraded
+    || (explicitDegraded ?? derivedDegraded);
   const severity: "ok" | "degraded" | "failed" = isHardFailure
     ? "failed"
     : degraded
@@ -455,6 +461,9 @@ export function assembleIncidentReport(
     outcome: { endReason, degraded, severity },
     cost: { costUsd, totalTokens, tokenBasis: "input+output+cache" as const, cacheReadRatio },
     timing: { durationMs, turnCount },
+    ...(signals.responseLocale !== undefined
+      ? { responseLocale: signals.responseLocale }
+      : {}),
     toolStats,
     failures,
     breakerTimeline,
@@ -485,6 +494,11 @@ export function assembleIncidentReport(
     ...(signals.cronWakeGate !== undefined ? { cronWakeGate: signals.cronWakeGate } : {}),
     // The memory-recall outcome (absent when the trajectory has no recall records).
     ...(signals.recall !== undefined ? { recall: signals.recall } : {}),
+    // Automatic inbound link-prefetch census. Counts and duration only; the
+    // trajectory deliberately carries no URL or fetched content.
+    ...(signals.linkPrefetch !== undefined
+      ? { linkPrefetch: signals.linkPrefetch }
+      : {}),
     // The per-reason cache breaks (absent when the session
     // had none). Bounded to CACHE_BREAKS_CAP highest-count-first; the bound pass
     // (obs-explain-bound.ts) records a truncations[] breadcrumb when it sheds the
@@ -522,6 +536,9 @@ export function assembleIncidentReport(
       : {}),
     ...(signals.deliveryAborts !== undefined
       ? { deliverySkipped: { events: signals.deliveryAborts.events, chunksNotSent: signals.deliveryAborts.chunksNotSent } }
+      : {}),
+    ...(signals.subagentDeliverySkipped !== undefined
+      ? { subagentDeliverySkipped: signals.subagentDeliverySkipped }
       : {}),
     // The silent-failure recovery re-drives (model re-entry) — previously
     // log-only, so explain could not show a session re-entered the model.

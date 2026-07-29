@@ -18,25 +18,17 @@ import { homedir, userInfo } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// RIG_MODE=local — the rig is THIS machine: the daemon runs from this checkout against a local data
-// dir (default ~/.comis) and every default below shifts from the VPS production-install layout to
-// the caller's own. Anything explicitly set in env / the rig env file still wins, so a local run can
-// still point DATA at an isolated directory. See `_rig.sh` for the shell-side twin.
-const isLocal = process.env.RIG_MODE === "local";
-
 // This file's own directory. In the source checkout that is
 // <repo>/test/live/self-driving/scripts; on the box it is /root (deploy-scripts.sh globs *.mjs
 // there), which is exactly why the repo root is only derived in local mode.
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptsDir, "../../../..");
+const localRigEnvPath = resolve(scriptsDir, ".rig-env");
 
-const RIG_ENV_PATH =
-  process.env.RIG_ENV || (isLocal ? resolve(scriptsDir, ".rig-env") : "/root/comis-rig.env");
-
-const fileVars = (() => {
+const readRigEnv = (path) => {
   const vars = {};
   try {
-    for (const line of readFileSync(RIG_ENV_PATH, "utf8").split("\n")) {
+    for (const line of readFileSync(path, "utf8").split("\n")) {
       // `export K="${K:-value}"` (deploy-scripts renders this) or plain `K=value` / `K="value"`.
       const m =
         line.match(/^export\s+(\w+)="\$\{\w+:-(.*)\}"\s*$/) ||
@@ -47,7 +39,22 @@ const fileVars = (() => {
     /* no rig file — env + defaults carry it */
   }
   return vars;
-})();
+};
+
+// RIG_MODE=local — the rig is THIS machine: the daemon runs from this checkout against a local data
+// dir (default ~/.comis) and every default below shifts from the VPS production-install layout to
+// the caller's own. A bare helper invoked after local-up must discover that mode from the rendered
+// checkout-local .rig-env; deciding "remote" before reading it split injection from the trajectory
+// oracle (the emulator worked, while evidence was searched under /home/comis/.comis).
+const initialRigEnvPath =
+  process.env.RIG_ENV ||
+  (process.env.RIG_MODE === "remote" ? "/root/comis-rig.env" : localRigEnvPath);
+let fileVars = readRigEnv(initialRigEnvPath);
+const resolvedMode = process.env.RIG_MODE || fileVars.RIG_MODE || "remote";
+const isLocal = resolvedMode === "local";
+const RIG_ENV_PATH =
+  process.env.RIG_ENV || (isLocal ? localRigEnvPath : "/root/comis-rig.env");
+if (RIG_ENV_PATH !== initialRigEnvPath) fileVars = readRigEnv(RIG_ENV_PATH);
 
 const pick = (...cands) => cands.find((v) => v !== undefined && v !== "");
 

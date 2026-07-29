@@ -42,6 +42,23 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     expect(parsed.cacheBreaks).toBeUndefined();
   });
 
+  it("retains the content-free response locale decision", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      responseLocale: {
+        locale: "und-Latn",
+        source: "request",
+        enforced: true,
+      },
+    });
+
+    expect(parsed.responseLocale).toEqual({
+      locale: "und-Latn",
+      source: "request",
+      enforced: true,
+    });
+  });
+
   it("retains bounded lossless-context fallback coverage", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),
@@ -95,6 +112,39 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     expect(parsed.schemaVersion).toBe(1);
     expect(parsed.audit?.total).toBe(5);
     expect(parsed.audit?.byKind).toEqual({ secret_access: 2, injection_detected: 3 });
+  });
+
+  it("retains the counts-only automatic link-prefetch section", () => {
+    const linkPrefetch = {
+      attempts: 4,
+      detected: 5,
+      attempted: 4,
+      fetched: 2,
+      failed: 2,
+      validationRejected: 2,
+      invalid: 1,
+      duplicates: 0,
+      capped: 0,
+      durationMs: 52,
+    };
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      linkPrefetch,
+    });
+
+    expect(parsed.linkPrefetch).toEqual(linkPrefetch);
+    expect(Object.keys(parsed.linkPrefetch ?? {}).sort()).toEqual([
+      "attempted",
+      "attempts",
+      "capped",
+      "detected",
+      "duplicates",
+      "durationMs",
+      "failed",
+      "fetched",
+      "invalid",
+      "validationRejected",
+    ]);
   });
 
   it("strips a planted value-shaped field from the audit section (content-free)", () => {

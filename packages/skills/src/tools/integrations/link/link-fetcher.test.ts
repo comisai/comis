@@ -11,10 +11,14 @@ vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {
     ...actual,
-    validateUrl: vi.fn().mockResolvedValue({
-      ok: true,
-      value: { hostname: "example.com", ip: "93.184.216.34", url: new URL("http://example.com") },
-    }),
+    validateUrl: vi.fn(async (url: string) => ({
+      ok: true as const,
+      value: {
+        hostname: "example.com",
+        ip: "93.184.216.34",
+        url: new URL(url),
+      },
+    })),
   };
 });
 
@@ -38,10 +42,14 @@ const DEFAULT_CONFIG: LinkFetchConfig = {
 
 async function allowSsrf(): Promise<void> {
   const { validateUrl } = await import("@comis/core");
-  vi.mocked(validateUrl).mockResolvedValue({
+  vi.mocked(validateUrl).mockImplementation(async (url: string) => ({
     ok: true,
-    value: { hostname: "example.com", ip: "93.184.216.34", url: new URL("http://example.com") },
-  });
+    value: {
+      hostname: "example.com",
+      ip: "93.184.216.34",
+      url: new URL(url),
+    },
+  }));
 }
 
 describe("fetchLinkContent", () => {
@@ -111,7 +119,8 @@ describe("fetchLinkContent", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error.message).toContain("redirect");
+      expect(result.error.stage).toBe("request");
+      expect(result.error.error.message).toContain("redirect");
     }
   });
 
@@ -126,7 +135,8 @@ describe("fetchLinkContent", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error.message).toContain("loopback");
+      expect(result.error.stage).toBe("validation");
+      expect(result.error.error.message).toContain("loopback");
     }
   });
 
@@ -142,7 +152,8 @@ describe("fetchLinkContent", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error.message).toContain("404");
+      expect(result.error.stage).toBe("response");
+      expect(result.error.error.message).toContain("404");
     }
   });
 });

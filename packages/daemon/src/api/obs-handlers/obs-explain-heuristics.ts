@@ -74,7 +74,10 @@ import {
 // The two BENIGN learning verdicts (sibling — subdir cap).
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
-import { subagentStuckKilledVerdict } from "./obs-explain-subagent-killed-verdict.js"; // health-monitor-killed sub-agent (sibling — subdir cap)
+import {
+  subagentDeliverySkippedVerdict,
+  subagentStuckKilledVerdict,
+} from "./obs-explain-subagent-killed-verdict.js";
 import { freshTailOriginLostVerdict } from "./obs-explain-fresh-tail-verdict.js";
 import {
   backgroundPendingVerdict,
@@ -151,7 +154,30 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     cannot regress them; deliberate parent/operator kills return null).
   subagentStuckKilledVerdict,
 
+  subagentDeliverySkippedVerdict,
+
   backgroundRecoveryVerdict,
+
+  // An unrecovered channel transition means the transport stopped accepting
+  // inbound work even when the last completed agent turn itself was clean.
+  // A later healthy lifecycle record sets recovered=true in the signal fold,
+  // preventing this historical outage from labeling future turns.
+  (s) => {
+    const health = s.channelHealth;
+    if (health === undefined || health.recovered) return null;
+    const disconnected = health.currentState === "disconnected";
+    return {
+      code: disconnected ? "channel_disconnected" : "channel_health_degraded",
+      detail:
+        `${health.channelType} ${health.connectionMode} channel is ${health.currentState} `
+        + `after ${String(health.degradedTransitions)} degraded transition(s)`,
+      suggestedNextSteps: [
+        `inspect the ${health.channelType} adapter boundary logs for the first failing operation`,
+        "check adapter credentials and network connectivity, then restart the channel",
+        "run comis system-health to confirm the daemon-wide channel signal",
+      ],
+    };
+  },
 
   // 3) execution_step_limit_reached. The executor records every blocked call
   //    as a tool failure, so count-only breaker inference would otherwise

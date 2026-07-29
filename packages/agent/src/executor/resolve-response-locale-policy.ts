@@ -4,7 +4,6 @@ import {
   dominantScript,
   scriptShares,
   type ResponseLocalePolicy,
-  type ResponseLocaleSource,
   type ScriptClass,
 } from "@comis/core";
 import { tryCatch } from "@comis/shared";
@@ -39,67 +38,41 @@ function canonicalLocale(raw: string | undefined): string | undefined {
 export function resolveResponseLocalePolicy(
   input: ResolveResponseLocalePolicyInput,
 ): ResponseLocalePolicy {
-  const candidates: ReadonlyArray<readonly [string | undefined, ResponseLocaleSource, boolean]> = [
-    [input.explicitLocale, "explicit", true],
-    // ADVISORY, never ENFORCED — for the same reason the script tier below is.
-    // This tier is a DEVICE SETTING (a client UI language_code), so making it
-    // enforcing left the strongest signal in the system belonging to the one
-    // input that is not about the conversation at all. Live: a Hebrew
-    // conversation, one English technical instruction — which does not
-    // contradict a client language_code of "en", so the transport tier engaged
-    // and, being enforcing, outranked the conversation's own (advisory) Hebrew
-    // signal. The agent switched to English mid-conversation and stayed there.
-    //
-    // Only an OPERATOR PIN (`explicitLocale`) enforces. An operator who needs a
-    // guaranteed response language sets `agents.<id>.language`; everything else
-    // is a hint, which is all a per-message or per-device signal can honestly be.
-    [input.requestLocale, "request", false],
-  ];
   const translationTarget = canonicalLocale(input.translationTarget);
-  for (const [raw, source, enforceLocale] of candidates) {
-    const locale = canonicalLocale(raw);
-    if (locale !== undefined) {
-      // The request-tier locale is TRANSPORT metadata (a client UI
-      // language_code, a caller-supplied field) — a device setting, not the
-      // conversation's language. When the user's current message is written
-      // in a script that contradicts it, the conversation wins: skip the
-      // transport locale so the script fallback below (or unset) governs,
-      // and a correct same-script reply is never repaired toward the device
-      // language. The explicit operator locale is a deliberate pin and is
-      // never overridden.
-      if (source === "request" && contradictsRequestScript(locale, input.requestText)) {
-        continue;
-      }
-      return {
-        locale,
-        source,
-        ...(translationTarget === undefined ? {} : { translationTarget }),
-        enforceLocale,
-      };
-    }
+  const explicitLocale = canonicalLocale(input.explicitLocale);
+  if (explicitLocale !== undefined) {
+    return {
+      locale: explicitLocale,
+      source: "explicit",
+      ...(translationTarget === undefined ? {} : { translationTarget }),
+      enforceLocale: true,
+    };
   }
+
+  // Clear prose in the current request is a better conversation-language
+  // signal than a client UI locale. The prose threshold excludes short
+  // identifier-heavy fragments, so only a high-confidence script signal
+  // enables bounded post-generation repair.
   const requestScriptLocale = scriptLocaleFromRequest(input.requestText);
   if (requestScriptLocale !== undefined) {
     return {
       locale: requestScriptLocale,
       source: "request",
       ...(translationTarget === undefined ? {} : { translationTarget }),
-      // ADVISORY, never ENFORCED. This tier infers a locale from the script of the
-      // CURRENT message alone, so enforcing it made a single message switch the
-      // whole conversation's language — and then spend a repair round-trip trying
-      // to make the model comply. Live: one English instruction inside an
-      // otherwise-Hebrew conversation set `locale=en enforce=true`; all three
-      // repair passes correctly came back Hebrew (the model was honouring the
-      // established language), each costing a full extra model call and a
-      // prompt-cache break.
-      //
-      // Only an OPERATOR PIN (`explicitLocale` → source "explicit") enforces. The
-      // inferred locale still rides the prompt as a hint, which is all it was ever
-      // reliable enough to be: a model already mirrors its interlocutor's language
-      // without being policed into it.
+      enforceLocale: true,
+    };
+  }
+
+  const requestLocale = canonicalLocale(input.requestLocale);
+  if (requestLocale !== undefined) {
+    return {
+      locale: requestLocale,
+      source: "request",
+      ...(translationTarget === undefined ? {} : { translationTarget }),
       enforceLocale: false,
     };
   }
+
   return {
     source: "unset",
     ...(translationTarget === undefined ? {} : { translationTarget }),
@@ -116,24 +89,6 @@ export function resolveLocale(input: ResolveResponseLocalePolicyInput): Resolved
       ? "medium" as const
       : "low" as const;
   return { policy, confidence };
-}
-
-/**
- * True when the current request text carries a clear script signal that
- * contradicts the candidate locale's script. No text, no classifiable
- * shares, an "other" dominant class, or an unknown locale script all mean
- * "cannot judge" — the locale is kept.
- */
-function contradictsRequestScript(locale: string, requestText: string | undefined): boolean {
-  if (requestText === undefined || scriptShares(requestText).size === 0) return false;
-  const dominantClass = dominantScript(requestText);
-  if (dominantClass === "other") return false;
-  if (dominantClass === "latin" && latinProseWordCount(requestText) < LATIN_PROSE_MIN_WORDS) return false;
-  const maximized = tryCatch(() => new Intl.Locale(locale).maximize());
-  if (!maximized.ok || maximized.value.script === undefined) return false;
-  const localeClass = scriptClassForIsoScript(maximized.value.script);
-  if (localeClass === undefined) return false;
-  return localeClass !== dominantClass;
 }
 
 function scriptClassForIsoScript(script: string): ScriptClass | undefined {
@@ -170,6 +125,7 @@ const FOREIGN_SCRIPT_MIN_UNITS = 8;
 const LATIN_PROSE_MIN_SHARE = 0.2;
 const LATIN_PROSE_MIN_WORDS = 4;
 const LATIN_WORD = /\b[A-Za-z][A-Za-z'’]*\b/g;
+const COMMAND_OPTION = /(^|\s)--?[A-Za-z0-9][A-Za-z0-9-]*(?:\s|$)/;
 
 function withoutProtectedResponseSpans(text: string): string {
   const lower = text.toLowerCase();
@@ -225,7 +181,10 @@ function scriptUnits(text: string, scriptClass: ScriptClass): number {
 }
 
 function latinProseWordCount(text: string): number {
-  const proseCandidate = withoutProtectedResponseSpans(text);
+  const proseCandidate = withoutProtectedResponseSpans(text)
+    .split("\n")
+    .filter((line) => !COMMAND_OPTION.test(line))
+    .join("\n");
   const latinWords = proseCandidate.match(LATIN_WORD) ?? [];
   return latinWords.filter((word) => {
     if (word.length < 2) return false;

@@ -50,6 +50,8 @@ import {
   audioPreflight as audioPreflightFn,
 } from "@comis/channels";
 import { createCompositeResolver, preprocessMessage } from "@comis/skills";
+import { isVisionCapable } from "@comis/agent";
+import { getModel } from "@earendil-works/pi-ai/compat";
 
 const TEST_TURN_SCOPE = {
   conversation: { agentId: "default" },
@@ -103,6 +105,7 @@ function makeDeps(overrides: Partial<MediaPipelineDeps> = {}): MediaPipelineDeps
     linkRunner: { processMessage: vi.fn(async (text: string) => ({ enrichedText: text })) } as any,
     maxMediaBytes: 10_000_000,
     defaultAgentId: "default",
+    onSuspiciousContent: undefined,
     ...overrides,
   };
 }
@@ -162,7 +165,23 @@ describe("buildMediaPipeline", () => {
   });
 
   it("preprocessMessage calls linkRunner.processMessage when text present", async () => {
-    const lr = { processMessage: vi.fn(async (t: string) => ({ enrichedText: `enriched: ${t}` })) };
+    const receipt = {
+      detected: 1,
+      attempted: 1,
+      fetched: 1,
+      failed: 0,
+      validationRejected: 0,
+      invalid: 0,
+      duplicates: 0,
+      capped: 0,
+      durationMs: 3,
+    };
+    const lr = {
+      processMessage: vi.fn(async (t: string) => ({
+        enrichedText: `enriched: ${t}`,
+        receipt,
+      })),
+    };
     const deps = makeDeps({ linkRunner: lr as any });
     const result = await buildMediaPipeline(deps);
 
@@ -176,8 +195,142 @@ describe("buildMediaPipeline", () => {
       attachments: [],
     };
 
-    await result.preprocessMessage(msg, TEST_TURN_SCOPE);
+    const preprocessed = await result.preprocessMessage(msg, TEST_TURN_SCOPE);
     expect(lr.processMessage).toHaveBeenCalledWith("hello https://example.com");
+    expect(preprocessed.metadata.linkPrefetch).toEqual(receipt);
+  });
+
+  it("attaches trusted automatic transcription receipts to message metadata", async () => {
+    const receipt = {
+      provider: "local",
+      keyless: true,
+      model: "base",
+      source: "keyless-local",
+      outcome: "failed",
+      errorKind: "model_load_failed",
+      durationMs: 12,
+      audioBytes: 4096,
+    };
+    vi.mocked(preprocessMessage).mockResolvedValueOnce({
+      message: {
+        id: "m1",
+        channelId: "c1",
+        channelType: "telegram",
+        senderId: "u1",
+        text: "voice",
+        timestamp: Date.now(),
+        attachments: [{ type: "audio", url: "tg-file://voice" }],
+        metadata: {},
+      },
+      transcriptions: [],
+      analyses: [],
+      imageContents: [],
+      videoDescriptions: [],
+      fileExtractions: [],
+      sttReceipts: [receipt],
+    } as never);
+    const transcriber = { transcribe: vi.fn() } as any;
+    const deps = makeDeps({ transcriber });
+    deps.container.config.integrations.media.transcription.autoTranscribe = true;
+    (deps as unknown as Record<string, unknown>).voiceSelection = {
+      stt: {
+        provider: "local",
+        keyless: true,
+        source: "keyless-local",
+      },
+    };
+    const result = await buildMediaPipeline(deps);
+
+    const preprocessed = await result.preprocessMessage({
+      id: "m1",
+      channelId: "c1",
+      channelType: "telegram",
+      senderId: "u1",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [{ type: "audio", url: "tg-file://voice" }],
+      metadata: {},
+    }, TEST_TURN_SCOPE);
+
+    expect(preprocessed.metadata.sttPreprocess).toEqual([receipt]);
+    expect(preprocessMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sttSelection: expect.objectContaining({
+          provider: "local",
+          keyless: true,
+          model: "base",
+          source: "keyless-local",
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("uses the executing agent model for direct-vision preprocessing and its receipt", async () => {
+    vi.mocked(getModel).mockImplementation((_provider, model) => ({
+      id: model,
+    }) as never);
+    vi.mocked(isVisionCapable).mockImplementation(
+      (model) => (model as { id?: string }).id === "vision-model",
+    );
+    vi.mocked(preprocessMessage).mockImplementationOnce(async (mediaDeps, msg) => ({
+      message: msg,
+      transcriptions: [],
+      analyses: [],
+      imageContents: mediaDeps.visionAvailable
+        ? [{
+            type: "image",
+            data: "c2FuaXRpemVkLWltYWdl",
+            mimeType: "image/png",
+          }]
+        : [],
+      videoDescriptions: [],
+      fileExtractions: [],
+      sttReceipts: [],
+    }));
+    const container = makeContainer({
+      agents: {
+        default: {
+          name: "Default",
+          provider: "provider-a",
+          model: "text-model",
+        },
+        visual: {
+          name: "Visual",
+          provider: "provider-b",
+          model: "vision-model",
+        },
+      },
+    });
+    const result = await buildMediaPipeline(makeDeps({ container }));
+    const preprocessed = await result.preprocessMessage({
+      id: "m1",
+      channelId: "c1",
+      channelType: "telegram",
+      senderId: "u1",
+      text: "inspect this",
+      timestamp: Date.now(),
+      attachments: [{
+        type: "image",
+        url: "tg-file://image",
+        mimeType: "image/png",
+      }],
+      metadata: {},
+    }, {
+      conversation: { agentId: "visual" },
+    } as unknown as ResolvedTurnScope);
+
+    expect(preprocessMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ visionAvailable: true }),
+      expect.anything(),
+    );
+    expect(preprocessed.metadata.visionPreprocess).toEqual({
+      provider: "provider-b",
+      mainProvider: "provider-b",
+      model: "vision-model",
+      path: "vision-direct",
+      outcome: "ok",
+    });
   });
 
   it("audioPreflight is defined when transcriber provided", async () => {
@@ -187,6 +340,35 @@ describe("buildMediaPipeline", () => {
     const result = await buildMediaPipeline(deps);
 
     expect(result.audioPreflight).toBeDefined();
+  });
+
+  it("audioPreflight reads the live Telegram bot mention names", async () => {
+    const transcriber = { transcribe: vi.fn() } as any;
+    const tgPlugin = {
+      createResolver: vi.fn(() => ({ resolve: vi.fn(), schemes: ["tg-file"] })),
+      getBotMentionNames: vi.fn(() => ["test_bot"]),
+    } as any;
+    const deps = makeDeps({ transcriber, tgPlugin });
+    const result = await buildMediaPipeline(deps);
+
+    await result.audioPreflight?.({
+      id: "m1",
+      channelId: "group_a",
+      channelType: "telegram",
+      senderId: "user_a",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [{ type: "audio", url: "tg-file://voice" }],
+      metadata: { telegramChatType: "group" },
+    });
+
+    expect(tgPlugin.getBotMentionNames).toHaveBeenCalledOnce();
+    expect(audioPreflightFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        botNames: expect.arrayContaining(["TestBot", "test_bot"]),
+      }),
+      expect.anything(),
+    );
   });
 
   it("audioPreflight is undefined when no transcriber", async () => {

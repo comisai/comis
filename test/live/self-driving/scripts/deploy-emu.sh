@@ -19,7 +19,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$HERE/.live-env" ] && . "$HERE/.live-env"
 # shellcheck source=./_remote-root.sh
 . "$HERE/_remote-root.sh"
-rig_defaults
+rig_load_persisted_env "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env
 REPO="${REPO:-$(git rev-parse --show-toplevel)}"
 
 if rig_is_local; then

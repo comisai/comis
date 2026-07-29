@@ -18,7 +18,6 @@
  *
  * @module
  */
-
 import { fingerprint } from "@comis/core";
 import type { IncidentSignals } from "@comis/core";
 import {
@@ -52,6 +51,13 @@ export const BREAKER_N = 5;
 /** Token literals the misclassification heuristic looks for in a failure body. */
 const MISCLASS_TOKEN_RE = /"?status"?\s*:?\s*(200|403)|\b(200|403)\b|status/i;
 const DO_NOT_RETRY_RE = /DO NOT retry/i;
+const PROBLEMATIC_CHANNEL_STATES = new Set([
+  "disconnected",
+  "errored",
+  "stale",
+  "stuck",
+  "unknown",
+]);
 
 function ensureTool(acc: Acc, tool: string): { ok: number; failed: number; errorKinds: Map<string, number> } {
   let entry = acc.toolStats.get(tool);
@@ -60,6 +66,13 @@ function ensureTool(acc: Acc, tool: string): { ok: number; failed: number; error
     acc.toolStats.set(tool, entry);
   }
   return entry;
+}
+
+function nonnegativeInteger(value: unknown): number {
+  const parsed = asNumber(value);
+  return parsed !== undefined && Number.isSafeInteger(parsed) && parsed >= 0
+    ? parsed
+    : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +151,23 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
   const tool = asString(data.toolName);
 
   switch (type) {
+    case "prompt.submitted": {
+      const source = asString(data.responseLocaleSource);
+      const locale = asString(data.responseLocale);
+      const enforced = typeof data.responseLocaleEnforced === "boolean" ? data.responseLocaleEnforced : undefined;
+      if (
+        enforced === undefined
+        || (source !== "request" && source !== "explicit" && source !== "unset")
+      ) return;
+      if (source === "unset") {
+        if (locale !== undefined || enforced) return;
+        acc.responseLocale = { source, enforced };
+        return;
+      }
+      if (locale === undefined || locale.length === 0) return;
+      acc.responseLocale = { locale, source, enforced };
+      return;
+    }
     case "session.started": {
       // Channel identity rides the session.started data (channelType/channelId).
       const channelType = asString(data.channelType);
@@ -145,6 +175,67 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       if (acc.channel === undefined && (channelType !== undefined || channelId !== undefined)) {
         acc.channel = { type: channelType ?? "", id: channelId ?? "" };
       }
+      return;
+    }
+    case "channel.health_changed": {
+      const channelType = asString(data.channelType);
+      const connectionMode = asString(data.connectionMode);
+      const currentState = asString(data.currentState);
+      if (
+        channelType === undefined
+        || connectionMode === undefined
+        || currentState === undefined
+      ) return;
+      const isProblematic = PROBLEMATIC_CHANNEL_STATES.has(currentState);
+      if (acc.channelHealth === undefined) {
+        if (!isProblematic) return;
+        acc.channelHealth = {
+          channelType,
+          connectionMode,
+          degradedTransitions: 1,
+          currentState,
+          latestProblemState: currentState,
+          recovered: false,
+        };
+        return;
+      }
+      acc.channelHealth.channelType = channelType;
+      acc.channelHealth.connectionMode = connectionMode;
+      acc.channelHealth.currentState = currentState;
+      acc.channelHealth.recovered = !isProblematic;
+      if (isProblematic) {
+        acc.channelHealth.degradedTransitions += 1;
+        acc.channelHealth.latestProblemState = currentState;
+      }
+      return;
+    }
+    case "link.prefetch": {
+      const current = acc.linkPrefetch ?? {
+        attempts: 0,
+        detected: 0,
+        attempted: 0,
+        fetched: 0,
+        failed: 0,
+        validationRejected: 0,
+        invalid: 0,
+        duplicates: 0,
+        capped: 0,
+        durationMs: 0,
+      };
+      acc.linkPrefetch = {
+        attempts: current.attempts + 1,
+        detected: current.detected + nonnegativeInteger(data.detected),
+        attempted: current.attempted + nonnegativeInteger(data.attempted),
+        fetched: current.fetched + nonnegativeInteger(data.fetched),
+        failed: current.failed + nonnegativeInteger(data.failed),
+        validationRejected:
+          current.validationRejected
+          + nonnegativeInteger(data.validationRejected),
+        invalid: current.invalid + nonnegativeInteger(data.invalid),
+        duplicates: current.duplicates + nonnegativeInteger(data.duplicates),
+        capped: current.capped + nonnegativeInteger(data.capped),
+        durationMs: current.durationMs + nonnegativeInteger(data.durationMs),
+      };
       return;
     }
     case "terminal.drive_promoted": {
@@ -178,6 +269,18 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
         acc.subagentKilledIdleMs = asNumber(data.idleMs);
         acc.subagentKilledThresholdMs = asNumber(data.thresholdMs);
       }
+      return;
+    }
+    case "subagent.delivery_skipped": {
+      const runId = asString(data.runId);
+      const reason = asString(data.reason);
+      if (
+        runId === undefined
+        || (reason !== "no_origin" && reason !== "no_channel_params")
+      ) return;
+      acc.subagentDeliverySkippedCount += 1;
+      acc.subagentDeliverySkippedLastRunId = runId;
+      acc.subagentDeliverySkippedLastReason = reason;
       return;
     }
     case "background_task.notified": {
@@ -634,6 +737,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     videoOutcomeSeq: -1,
     voiceOutcomeSeq: -1,
     terminalDrivePromotedCount: 0,
+    subagentDeliverySkippedCount: 0,
     backgroundRecoveryRetryCount: 0,
     backgroundRecoveryByTask: new Map(),
   };
@@ -718,20 +822,17 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     : acc.toolTraceIds.size;
   return {
     sessionKey: acc.sessionKey,
+    ...(acc.responseLocale !== undefined ? { responseLocale: acc.responseLocale } : {}),
     toolStats,
     failures: acc.failures,
     breakerEvents: acc.breakerEvents,
     offloads: acc.offloads,
     nodeBudgetBreaches: acc.nodeBudgetBreaches,
-    // Materialize the lease-keyed spawn nodes → array (first-seen
-    // order); present ONLY when ≥1 capability.audited record (the presence-conditional mold).
+    // Materialize lease-keyed spawn nodes in first-seen order when present.
     ...(acc.spawnNodesByLease.size > 0
       ? { spawnTree: [...acc.spawnNodesByLease.values()] }
       : {}),
-    // Materialize the run skeletons → array (first-seen order), JOINing each run's
-    // toolCalls from the per-run leaseId tally (EXPLAIN-04: a deny is attributed to
-    // the run via its child leaseId). Present ONLY when ≥1 orchestrate.run_summary
-    // record (the presence-conditional spawnTree mold).
+    // Materialize run skeletons and join tool calls through each child lease id.
     ...(acc.orchestrateRunsByRunId.size > 0
       ? {
           orchestrate: [...acc.orchestrateRunsByRunId.values()].map((run) => ({
@@ -751,8 +852,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(misclassifiedTool !== undefined ? { misclassifiedTool } : {}),
     ...(misclassifiedToken !== undefined ? { misclassifiedToken } : {}),
     ...(acc.contextBudget !== undefined ? { contextBudget: acc.contextBudget } : {}),
-    // Surface the cascade ONLY when ≥2 distinct budget states occurred (a single state adds
-    // nothing over `contextBudget`; the dedup already collapsed a stable session to ≤1).
+    // A single budget state adds nothing beyond `contextBudget`.
     ...(acc.contextBudgetHistory.length >= 2 ? { contextBudgetHistory: acc.contextBudgetHistory } : {}),
     // A woke fire's wake-gate fact (absent when the trajectory carries no
     // scheduler.wake_gate record — a non-gate session or a skip, which opens none).
@@ -823,6 +923,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(learning !== undefined ? { learning } : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),
+    ...(acc.channelHealth !== undefined ? { channelHealth: acc.channelHealth } : {}),
     // Surface the backgrounding ONLY when ≥1 promotion fired (undefined,
     // never {}, when no drive backgrounded) — lets the terminal-drive verdict cite it.
     ...(acc.terminalDrivePromotedCount > 0
@@ -860,6 +961,17 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
           },
         }
       : {}),
+    ...(acc.subagentDeliverySkippedCount > 0
+      && acc.subagentDeliverySkippedLastRunId !== undefined
+      && acc.subagentDeliverySkippedLastReason !== undefined
+      ? {
+          subagentDeliverySkipped: {
+            count: acc.subagentDeliverySkippedCount,
+            lastRunId: acc.subagentDeliverySkippedLastRunId,
+            lastReason: acc.subagentDeliverySkippedLastReason,
+          },
+        }
+      : {}),
     ...(acc.backgroundRecoveryRetryCount > 0
       ? {
           backgroundRecovery: {
@@ -874,6 +986,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
               : {}),
           },
         }
+      : {}),
+    ...(acc.linkPrefetch !== undefined
+      ? { linkPrefetch: acc.linkPrefetch }
       : {}),
     // Surface the reconstructed image/vision/video/voice turns (presence-conditional; keyless voice costUsd:0 stays visible).
     ...(acc.image !== undefined ? { image: acc.image } : {}),

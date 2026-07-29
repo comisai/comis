@@ -541,6 +541,43 @@ describe("preprocessMessage", () => {
     expect(transcriber.transcribe).toHaveBeenCalledOnce();
   });
 
+  it("collects content-free automatic transcription receipts", async () => {
+    const msg = makeMessage({
+      attachments: [makeAudioAttachment()],
+    });
+    const deps = {
+      transcriber: makeTranscriber(),
+      resolveAttachment: makeResolver(),
+      logger: makeLogger(),
+      sttSelection: {
+        provider: "local",
+        keyless: true,
+        model: "base",
+        source: "keyless-local",
+      },
+    } as unknown as MediaProcessorDeps;
+
+    const result = await preprocessMessage(deps, msg);
+
+    expect((result as unknown as {
+      sttReceipts?: Array<Record<string, unknown>>;
+    }).sttReceipts).toEqual([
+      expect.objectContaining({
+        provider: "local",
+        keyless: true,
+        model: "base",
+        source: "keyless-local",
+        outcome: "ok",
+      }),
+    ]);
+    expect(JSON.stringify((result as unknown as {
+      sttReceipts?: unknown;
+    }).sttReceipts)).not.toContain("hello from voice");
+    expect(JSON.stringify((result as unknown as {
+      sttReceipts?: unknown;
+    }).sttReceipts)).not.toContain("tg-file://");
+  });
+
   it("skips size check when sizeBytes is undefined", async () => {
     const transcriber = makeTranscriber();
     const resolver = makeResolver();

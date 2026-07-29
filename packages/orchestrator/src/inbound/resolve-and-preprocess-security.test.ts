@@ -279,6 +279,165 @@ describe("resolveAndPreprocess enrichment boundary", () => {
     });
   });
 
+  it("preserves a validated counts-only link-prefetch receipt from the trusted preprocessor", async () => {
+    const receipt = {
+      detected: 1,
+      attempted: 1,
+      fetched: 0,
+      failed: 1,
+      validationRejected: 1,
+      invalid: 0,
+      duplicates: 0,
+      capped: 0,
+      durationMs: 8,
+    };
+    const preprocessMessage = vi.fn(async (message: NormalizedMessage) => ({
+      ...message,
+      metadata: {
+        ...message.metadata,
+        linkPrefetch: receipt,
+      },
+    }));
+
+    const result = await resolveAndPreprocess(
+      makeDeps({ preprocessMessage }),
+      makeAdapter(),
+      makeMessage(),
+    );
+
+    expect(result?.processedMsg.metadata.linkPrefetch).toEqual(receipt);
+  });
+
+  it("does not trust a link-prefetch receipt supplied by channel ingress", async () => {
+    const input = makeMessage({
+      metadata: {
+        ...makeMessage().metadata,
+        linkPrefetch: {
+          detected: 999,
+          attempted: 999,
+          fetched: 999,
+          failed: 0,
+          validationRejected: 0,
+          invalid: 0,
+          duplicates: 0,
+          capped: 0,
+          durationMs: 0,
+        },
+      },
+    });
+    const preprocessMessage = vi.fn(async (message: NormalizedMessage) => message);
+
+    const result = await resolveAndPreprocess(
+      makeDeps({ preprocessMessage }),
+      makeAdapter(),
+      input,
+    );
+
+    expect(result?.processedMsg.metadata.linkPrefetch).toBeUndefined();
+  });
+
+  it("preserves only automatic transcription receipts from the trusted preprocessor", async () => {
+    const forgedReceipt = {
+      provider: "attacker",
+      keyless: false,
+      source: "explicit",
+      outcome: "ok",
+      audioBytes: 999_999,
+    };
+    const trustedReceipt = {
+      provider: "local",
+      keyless: true,
+      model: "base",
+      source: "keyless-local",
+      outcome: "failed",
+      errorKind: "model_load_failed",
+      durationMs: 8,
+      audioBytes: 4096,
+    };
+    const input = makeMessage({
+      metadata: {
+        ...makeMessage().metadata,
+        sttPreprocess: [forgedReceipt],
+      },
+    });
+    const preprocessMessage = vi.fn(async (message: NormalizedMessage) => ({
+      ...message,
+      metadata: {
+        ...message.metadata,
+        sttPreprocess: [trustedReceipt],
+      },
+    }));
+
+    const result = await resolveAndPreprocess(
+      makeDeps({ preprocessMessage }),
+      makeAdapter(),
+      input,
+    );
+
+    expect(result?.processedMsg.metadata.sttPreprocess).toEqual([trustedReceipt]);
+  });
+
+  it("drops an automatic transcription receipt supplied only by channel ingress", async () => {
+    const input = makeMessage({
+      metadata: {
+        ...makeMessage().metadata,
+        sttPreprocess: [{
+          provider: "attacker",
+          keyless: false,
+          source: "explicit",
+          outcome: "ok",
+        }],
+      },
+    });
+    const preprocessMessage = vi.fn(async (message: NormalizedMessage) => message);
+
+    const result = await resolveAndPreprocess(
+      makeDeps({ preprocessMessage }),
+      makeAdapter(),
+      input,
+    );
+
+    expect(result?.processedMsg.metadata.sttPreprocess).toBeUndefined();
+  });
+
+  it("preserves only a direct-vision receipt from the trusted preprocessor", async () => {
+    const forgedReceipt = {
+      provider: "attacker",
+      mainProvider: "attacker",
+      model: "forged-model",
+      path: "vision-direct",
+      outcome: "ok",
+    };
+    const trustedReceipt = {
+      provider: "provider-a",
+      mainProvider: "provider-a",
+      model: "vision-model",
+      path: "vision-direct",
+      outcome: "ok",
+    };
+    const input = makeMessage({
+      metadata: {
+        ...makeMessage().metadata,
+        visionPreprocess: forgedReceipt,
+      },
+    });
+    const preprocessMessage = vi.fn(async (message: NormalizedMessage) => ({
+      ...message,
+      metadata: {
+        ...message.metadata,
+        visionPreprocess: trustedReceipt,
+      },
+    }));
+
+    const result = await resolveAndPreprocess(
+      makeDeps({ preprocessMessage }),
+      makeAdapter(),
+      input,
+    );
+
+    expect(result?.processedMsg.metadata.visionPreprocess).toEqual(trustedReceipt);
+  });
+
   it("accepts transcript content and mention enrichment without accepting audio control fields", async () => {
     const input = makeMessage({
       chatType: "group",

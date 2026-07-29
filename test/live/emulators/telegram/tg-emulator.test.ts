@@ -95,6 +95,18 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base", () => {
   // -------------------------------------------------------------------------
   // getMe (blocks boot) + setMyCommands (fire-and-forget)
   // -------------------------------------------------------------------------
+  it("starts injected message ids at the configured restart-safe base", () => {
+    const seeded = createTgEmulator({ botToken: TOKEN, initialMessageId: 1_000_100 });
+
+    expect(
+      seeded.injectMessage(
+        { chatId: CHAT_ID },
+        { id: 7, firstName: "tester" },
+        "restart-safe",
+      ),
+    ).toBe(1_000_100);
+  });
+
   describe("getMe / setMyCommands (boot envelopes)", () => {
     it("getMe returns the boot identity envelope the adapter awaits", async () => {
       const env = await callMethod(apiRoot, "getMe", {});
@@ -239,6 +251,35 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base", () => {
       const updates = env.result as Array<Record<string, unknown>>;
       expect(updates.length).toBe(1);
       expect((updates[0]!["message"] as Record<string, unknown>)["text"]).toBe("late ping");
+    });
+
+    it("CLIENT-DISCONNECT: an abandoned poll cannot consume the next update from a replacement poll", async () => {
+      const controller = new AbortController();
+      const abandonedPoll = fetch(botUrl(apiRoot, "getUpdates"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ timeout: 5 }),
+        signal: controller.signal,
+      });
+
+      // Let the empty poll register its server-side waiter, then reproduce a
+      // daemon stop by disconnecting the client before any update is available.
+      await new Promise((r) => setTimeout(r, 150));
+      controller.abort();
+      await expect(abandonedPoll).rejects.toMatchObject({ name: "AbortError" });
+      // The client promise rejects before the server socket close necessarily
+      // reaches the loopback peer. Wait for that disconnect notification.
+      await new Promise((r) => setTimeout(r, 50));
+
+      emu.injectMessage({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, "after restart");
+
+      // The disconnected waiter no longer owns delivery. A replacement daemon
+      // poll must receive the update exactly once instead of finding an empty
+      // queue after the dead socket silently consumed it.
+      const replacement = await callMethod(apiRoot, "getUpdates", { timeout: 0 });
+      const updates = replacement.result as Array<Record<string, unknown>>;
+      expect(updates).toHaveLength(1);
+      expect((updates[0]!["message"] as Record<string, unknown>)["text"]).toBe("after restart");
     });
 
     it("BLOCK-then-timeout: an empty-queue poll returns [] after ~timeout when nothing is injected", async () => {
@@ -1017,6 +1058,19 @@ describe("TgEmulator — group/forum chats + addressing inject", () => {
       const topic = emu.createForumTopic(group, "general-discussion");
       expect(typeof topic.threadId).toBe("number");
       expect(topic.threadId).toBeGreaterThan(0);
+    });
+
+    it("group media preserves the recorded shared-chat shape", async () => {
+      const group = emu.createGroupChat({
+        members: [{ id: 111, firstName: "a" }],
+        supergroup: true,
+      });
+
+      emu.injectMedia(group, { id: 111, firstName: "a" }, "voice", Buffer.from("voice"));
+      const updates = await pollUpdates();
+      const message = updates[0]!["message"] as Record<string, unknown>;
+
+      expect((message["chat"] as Record<string, unknown>)["type"]).toBe("supergroup");
     });
   });
 

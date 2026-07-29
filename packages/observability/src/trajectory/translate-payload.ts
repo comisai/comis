@@ -218,6 +218,17 @@ export function translatePayload(
         messageCount: payload.messageCount,
         systemDigest: payload.systemDigest,
         messagesDigest: payload.messagesDigest,
+        ...(typeof payload.responseLocale === "string"
+          ? { responseLocale: payload.responseLocale }
+          : {}),
+        ...(payload.responseLocaleSource === "request"
+          || payload.responseLocaleSource === "explicit"
+          || payload.responseLocaleSource === "unset"
+          ? { responseLocaleSource: payload.responseLocaleSource }
+          : {}),
+        ...(typeof payload.responseLocaleEnforced === "boolean"
+          ? { responseLocaleEnforced: payload.responseLocaleEnforced }
+          : {}),
       };
 
     case "session:started":
@@ -327,6 +338,7 @@ export function translatePayload(
     case "security:sandbox_downgrade_refused":
     case "subagent:delivery_deadlettered":
     case "subagent:delivery_retried": // The self-healing transient retry (sibling of delivery_deadlettered) — content-free {runId, channelType, attempt, transient}
+    case "subagent:delivery_skipped": // Terminal result had no route — content-free {runId, reason}.
     case "subagent:budget_exceeded":
     case "capability:audited":
     case "graph:node_spawned":

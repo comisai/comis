@@ -61,6 +61,9 @@ import {
   formatSessionKey,
   createConversationRef,
   emitObservationalEventSafely,
+  LinkPrefetchReceiptSchema,
+  SttPreprocessReceiptsSchema,
+  VisionDirectPreprocessReceiptSchema,
   safePath,
   sanitizeLogString,
   toSafeErrorLogString,
@@ -1574,6 +1577,73 @@ async function runSessionLocked(
       "Trajectory/cache-trace recorder init failed",
     );
   }
+  if (trajectoryRecorder !== null) {
+    const receipt = LinkPrefetchReceiptSchema.safeParse(
+      msg.metadata?.linkPrefetch,
+    );
+    if (receipt.success) {
+      trajectoryRecorder.recordEvent("link.prefetch", receipt.data);
+    }
+    const sttReceipts = SttPreprocessReceiptsSchema.safeParse(
+      msg.metadata?.sttPreprocess,
+    );
+    if (sttReceipts.success) {
+      for (const sttReceipt of sttReceipts.data) {
+        trajectoryRecorder.recordEvent("media.stt.requested", {
+          provider: sttReceipt.provider,
+          keyless: sttReceipt.keyless,
+          source: sttReceipt.source,
+          ...(sttReceipt.onSkip !== undefined
+            ? { onSkip: sttReceipt.onSkip }
+            : {}),
+        });
+        if (sttReceipt.outcome === "ok") {
+          trajectoryRecorder.recordEvent("media.stt.completed", {
+            provider: sttReceipt.provider,
+            keyless: sttReceipt.keyless,
+            source: sttReceipt.source,
+            outcome: "ok",
+            ...(sttReceipt.model !== undefined
+              ? { model: sttReceipt.model }
+              : {}),
+            ...(sttReceipt.durationMs !== undefined
+              ? { durationMs: sttReceipt.durationMs }
+              : {}),
+            ...(sttReceipt.audioBytes !== undefined
+              ? { audioBytes: sttReceipt.audioBytes }
+              : {}),
+            ...(sttReceipt.keyless ? { costUsd: 0 } : {}),
+          });
+        } else {
+          trajectoryRecorder.recordEvent("media.stt.failed", {
+            provider: sttReceipt.provider,
+            keyless: sttReceipt.keyless,
+            source: sttReceipt.source,
+            outcome: "failed",
+            errorKind: sttReceipt.errorKind,
+          });
+        }
+      }
+    }
+    const visionReceipt = VisionDirectPreprocessReceiptSchema.safeParse(
+      msg.metadata?.visionPreprocess,
+    );
+    if (visionReceipt.success) {
+      trajectoryRecorder.recordEvent("media.vision.requested", {
+        provider: visionReceipt.data.provider,
+        mainProvider: visionReceipt.data.mainProvider,
+      });
+      trajectoryRecorder.recordEvent("media.vision.completed", {
+        provider: visionReceipt.data.provider,
+        mainProvider: visionReceipt.data.mainProvider,
+        path: visionReceipt.data.path,
+        outcome: visionReceipt.data.outcome,
+        ...(visionReceipt.data.model !== undefined
+          ? { model: visionReceipt.data.model }
+          : {}),
+      });
+    }
+  }
 
   // Per-execution tool retry breaker (state resets each message)
   const toolRetryBreakerConfig = config.toolRetryBreaker;
@@ -2265,6 +2335,14 @@ async function runSessionLocked(
         id: s.name,
         ...(s.version !== undefined ? { version: String(s.version) } : {}),
       })) ?? [],
+      // The actual assembled names are safe, content-free capability metadata.
+      // Persist them once per session so an operator can distinguish an honest
+      // self-description from a tool hallucination without inspecting a raw
+      // provider request. buildTraceMetadata deduplicates, sorts, and bounds
+      // the list before it reaches disk.
+      toolInventory: {
+        names: mergedCustomTools.map((tool) => tool.name),
+      },
       // Scaffold in place so future writers cannot bypass
       // the redactor. When userPromptPrefixText is wired from a config path,
       // pass it here; the helper routes it through redactString +

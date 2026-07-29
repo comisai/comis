@@ -101,7 +101,12 @@ export interface MediaGenerationEvents {
  * The `path` a vision turn took — the "which path" signal (the locked
  * ladder order). `unavailable` is failure-only (no tier served).
  */
-export type VisionPath = "main-vision" | "registry" | "gemini-video" | "unavailable";
+export type VisionPath =
+  | "main-vision"
+  | "registry"
+  | "gemini-video"
+  | "vision-direct"
+  | "unavailable";
 
 /**
  * MediaVisionEvents: vision-analysis lifecycle events (media.vision:*).

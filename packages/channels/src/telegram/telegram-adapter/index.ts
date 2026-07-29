@@ -144,6 +144,11 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
     get bot(): Bot {
       return state.bot;
     },
+
+    getBotMentionNames: () => {
+      const username = state.botIdentity?.username;
+      return username === undefined || username.length === 0 ? [] : [username];
+    },
   };
 
   return adapter;

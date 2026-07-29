@@ -2,20 +2,25 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HELPER = resolve(HERE, "_remote-root.sh");
 const RIG_HELPER = resolve(HERE, "_rig.sh");
+const RIG_NODE_HELPER = resolve(HERE, "_rig.mjs");
 const RESTART_DAEMON = resolve(HERE, "restart-daemon.sh");
 const CLEAN_RESTART = resolve(HERE, "clean-restart.sh");
 const PHASE_ZERO_CHECK = resolve(HERE, "phase0-check.sh");
+const LOCAL_UP = resolve(HERE, "local-up.sh");
 const WIRE_EMULATOR = resolve(HERE, "wire-emu.mjs");
 const DEPLOY_SCRIPTS = resolve(HERE, "deploy-scripts.sh");
 const DEPLOY_EMULATOR = resolve(HERE, "deploy-emu.sh");
+const RIG_DOCTOR = resolve(HERE, "rig-doctor.sh");
+const VERIFY_BUILD = resolve(HERE, "verify-build.sh");
 const INSTALL_VPS = resolve(HERE, "install-vps.sh");
+const MEDIA_DRIVE = resolve(HERE, "media-drive.mjs");
 const temporaryDirectories: string[] = [];
 
 function shellQuote(value: string): string {
@@ -130,6 +135,20 @@ describe("sudo-aware live rig transport", () => {
 });
 
 describe("local rig mode", () => {
+  it("lets media injection select a sender independently from the chat", () => {
+    const source = readFileSync(MEDIA_DRIVE, "utf8");
+
+    expect(source).toContain("process.env.FROMUSER");
+    expect(source).toContain("fromUserId: fromUser");
+  });
+
+  it("sends the media caption in the control API field the emulator preserves", () => {
+    const source = readFileSync(MEDIA_DRIVE, "utf8");
+
+    expect(source).toContain("caption: caption || undefined");
+    expect(source).not.toContain("meta: caption");
+  });
+
   it("runs the command in a local shell with stdin intact and never reaches ssh", () => {
     const output = runRemoteRoot("0", "stream-data", "local");
 
@@ -229,6 +248,152 @@ describe("local rig mode", () => {
 
     expect(isolated).toContain("/tmp/explicit-isolated-rig|/tmp/fake-home|");
     expect(isolated).not.toContain("comis-does-not-exist-here");
+  });
+
+  it("reuses the rendered isolated rig after dropping stale remote live-env defaults", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-up-rig-env-"));
+    temporaryDirectories.push(directory);
+    const isolatedData = resolve(directory, "isolated-data");
+    const rigEnv = resolve(directory, "rig.env");
+    writeFileSync(
+      rigEnv,
+      [
+        'export RIG_MODE="${RIG_MODE:-local}"',
+        `export COMIS_USER="\${COMIS_USER:-test-user}"`,
+        `export COMIS_HOME="\${COMIS_HOME:-${directory}}"`,
+        `export DATA="\${DATA:-${isolatedData}}"`,
+        `export PKG="\${PKG:-${resolve(HERE, "../../../..")}}"`,
+        'export SERVICE="${SERVICE:-comis}"',
+        'export GW_PORT="${GW_PORT:-4767}"',
+        'export CHATID="${CHATID:-678314278}"',
+        `export EMU_DIR="\${EMU_DIR:-${resolve(HERE, "../../../..")}}"`,
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+
+    let output = "";
+    try {
+      execFileSync("bash", [LOCAL_UP], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: directory,
+          RIG_ENV: rigEnv,
+          COMIS_USER: "comis",
+          COMIS_HOME: "/home/comis-does-not-exist-here",
+          DATA: "/home/comis-does-not-exist-here/.comis",
+          PKG: "/home/comis-does-not-exist-here/.npm-global/lib/node_modules/comisai",
+          EMU_DIR: "/root/comis-emu",
+          SKIP_BUILD: "1",
+        },
+        stdio: "pipe",
+      });
+    } catch (error) {
+      const failure = error as { stdout?: Buffer | string; stderr?: Buffer | string };
+      output = `${String(failure.stdout ?? "")}${String(failure.stderr ?? "")}`;
+    }
+
+    expect(output).toContain(`data=${isolatedData}`);
+    expect(output).toContain(`no ${isolatedData}/config.yaml`);
+    expect(output).not.toContain(`data=${directory}/.comis`);
+  });
+
+  it("restores the rendered local gateway port with the isolated data root", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-rig-port-"));
+    temporaryDirectories.push(directory);
+    const isolatedData = resolve(directory, "isolated-data");
+    const rigEnv = resolve(directory, "rig.env");
+    writeFileSync(
+      rigEnv,
+      [
+        'export RIG_MODE="${RIG_MODE:-local}"',
+        `export COMIS_USER="\${COMIS_USER:-test-user}"`,
+        `export COMIS_HOME="\${COMIS_HOME:-${directory}}"`,
+        `export DATA="\${DATA:-${isolatedData}}"`,
+        `export PKG="\${PKG:-${resolve(HERE, "../../../..")}}"`,
+        'export SERVICE="${SERVICE:-comis}"',
+        'export GW_PORT="${GW_PORT:-4767}"',
+        'export CHATID="${CHATID:-678314278}"',
+        `export EMU_DIR="\${EMU_DIR:-${resolve(HERE, "../../../..")}}"`,
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+
+    const resolved = runRigHelper(
+      `rig_load_persisted_env "$RIG_ENV"; printf '%s|%s\\n' "$DATA" "$GW_PORT"`,
+      {
+        HOME: directory,
+        RIG_ENV: rigEnv,
+        COMIS_USER: "comis",
+        COMIS_HOME: "/home/comis-does-not-exist-here",
+        DATA: "/home/comis-does-not-exist-here/.comis",
+        PKG: "/home/comis-does-not-exist-here/.npm-global/lib/node_modules/comisai",
+        EMU_DIR: "/root/comis-emu",
+        GW_PORT: "4766",
+      },
+    );
+
+    expect(resolved.trim()).toBe(`${isolatedData}|4767`);
+  });
+
+  it("loads the rendered rig selection in every standalone local gate", () => {
+    for (const script of [DEPLOY_EMULATOR, RIG_DOCTOR, VERIFY_BUILD]) {
+      const source = readFileSync(script, "utf8");
+      expect(source, script).toContain("rig_load_persisted_env");
+    }
+  });
+
+  it("lets bare node helpers discover the rendered local rig mode", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-node-rig-mode-"));
+    temporaryDirectories.push(directory);
+    const helperCopy = resolve(directory, "_rig.mjs");
+    const isolatedData = resolve(directory, "isolated-data");
+    writeFileSync(helperCopy, readFileSync(RIG_NODE_HELPER, "utf8"));
+    writeFileSync(
+      resolve(directory, ".rig-env"),
+      [
+        'export RIG_MODE="${RIG_MODE:-local}"',
+        `export COMIS_USER="\${COMIS_USER:-test-user}"`,
+        `export COMIS_HOME="\${COMIS_HOME:-${directory}}"`,
+        `export DATA="\${DATA:-${isolatedData}}"`,
+        `export PKG="\${PKG:-${directory}}"`,
+        'export SERVICE="${SERVICE:-comis}"',
+        'export GW_PORT="${GW_PORT:-4767}"',
+        'export CHATID="${CHATID:-678314278}"',
+        `export EMU_DIR="\${EMU_DIR:-${directory}}"`,
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    const env = { ...process.env };
+    for (const key of [
+      "RIG_MODE",
+      "RIG_ENV",
+      "COMIS_USER",
+      "COMIS_HOME",
+      "COMIS_DATA_DIR",
+      "DATA",
+      "COMIS_SRC",
+      "GW_PORT",
+      "EMU_DIR",
+    ]) {
+      delete env[key];
+    }
+
+    const output = execFileSync(
+      "node",
+      [
+        "--input-type=module",
+        "-e",
+        `import { rig } from ${JSON.stringify(pathToFileURL(helperCopy).href)}; console.log(JSON.stringify({ mode: rig.mode, dataDir: rig.dataDir, gwPort: rig.gwPort }));`,
+      ],
+      { encoding: "utf8", env },
+    );
+
+    expect(JSON.parse(output)).toEqual({
+      mode: "local",
+      dataDir: isolatedData,
+      gwPort: 4767,
+    });
   });
 
   it("keeps the portable probes off Linux-only tools", () => {

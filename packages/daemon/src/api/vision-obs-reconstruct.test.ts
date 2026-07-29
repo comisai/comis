@@ -120,6 +120,35 @@ describe("offline reconstruction — comis explain surfaces a vision turn", () =
     expect(report.vision?.costUsd).toBeUndefined();
   });
 
+  it("the direct model injection path reconstructs from its trusted preprocessing receipt", async () => {
+    const report = await assemble([
+      trajectoryRecord(
+        "media.vision.requested",
+        { provider: "provider-a", mainProvider: "provider-a" },
+        1,
+      ),
+      trajectoryRecord(
+        "media.vision.completed",
+        {
+          provider: "provider-a",
+          mainProvider: "provider-a",
+          model: "vision-model",
+          path: "vision-direct",
+          outcome: "ok",
+        },
+        2,
+      ),
+    ]);
+
+    expect(report.vision).toEqual({
+      provider: "provider-a",
+      mainProvider: "provider-a",
+      model: "vision-model",
+      path: "vision-direct",
+      outcome: "ok",
+    });
+  });
+
   it("seq-aware: a stale lower-seq failed does NOT flip a higher-seq completed", async () => {
     // The fold must be seq-aware (mirror accumulateImageRecord): a
     // media.vision.failed appearing AFTER (in array order) a higher-seq

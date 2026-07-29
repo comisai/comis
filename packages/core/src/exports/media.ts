@@ -69,6 +69,7 @@ export type { VideoModelCaps, VideoDurations } from "../media/index.js";
 export {
   VOICE_KEYLESS,
   MAIN_PROVIDER_AUDIO,
+  STT_ERROR_KINDS,
   STT_ERR_TO_LOG,
   resolveTranscriptionProvider,
   resolveTtsProvider,

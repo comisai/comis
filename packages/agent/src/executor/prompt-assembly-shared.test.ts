@@ -19,6 +19,14 @@ describe("prompt assembly shared helpers", () => {
     })).toContain("same human language as the current user request");
   });
 
+  it("tells the model that a clear current-request language change outranks history", () => {
+    expect(renderResponseLocalePolicy({
+      locale: "und-Latn",
+      source: "request",
+      enforceLocale: false,
+    })).toContain("current request takes precedence over earlier conversation turns");
+  });
+
   it("computes stable hashes for identical feature inputs", () => {
     const input = { toolPolicy: { mode: "allowlist" }, tools: { enabledGroups: ["read"] } };
     expect(computeFeatureFlagHash(input)).toBe(computeFeatureFlagHash(input));

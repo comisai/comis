@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { AppContainer, Attachment, ChannelPort, NormalizedMessage, ResolvedTurnScope, TranscriptionPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, WrapExternalContentOptions } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, NormalizedMessage, ResolvedTurnScope, SttPreprocessSelection, TranscriptionPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, VisionDirectPreprocessReceipt, WrapExternalContentOptions } from "@comis/core";
 import type { MediaResolverPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { isVisionCapable } from "@comis/agent";
@@ -34,7 +34,7 @@ import {
 } from "@comis/skills";
 import type { LinkRunner, MediaPersistenceService, PersistedFile } from "@comis/skills";
 import { getModel } from "@earendil-works/pi-ai/compat";
-import { safePath, systemNowMs } from "@comis/core";
+import { safePath, SttPreprocessReceiptsSchema, systemNowMs } from "@comis/core";
 import os from "node:os";
 
 // ---------------------------------------------------------------------------
@@ -72,6 +72,10 @@ export interface MediaPipelineDeps {
   ssrfFetcher: SsrfGuardedFetcher;
   linkRunner: LinkRunner;
   transcriber?: TranscriptionPort;
+  /** Boot-resolved provider selection paired with the transcriber. */
+  voiceSelection?: {
+    stt?: Omit<SttPreprocessSelection, "model">;
+  };
   maxMediaBytes: number;
   defaultAgentId: string;
   imageAnalyzer?: ImageAnalysisPort;
@@ -84,7 +88,7 @@ export interface MediaPipelineDeps {
   /** Optional callback for suspicious-content detection in media textPrefix wrap output.
    *  Threaded through to preprocessMessage's deps so audio/image/video handlers fire the callback
    *  when wrapExternalContent detects injection patterns. */
-  onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
+  onSuspiciousContent: WrapExternalContentOptions["onSuspiciousContent"] | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +115,18 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
     maxMediaBytes,
     onSuspiciousContent,
   } = deps;
+  const transcriptionConfig = container.config.integrations.media.transcription;
+  const sttSelection: SttPreprocessSelection | undefined =
+    deps.voiceSelection?.stt === undefined
+      ? undefined
+      : {
+          ...deps.voiceSelection.stt,
+          ...(deps.voiceSelection.stt.provider === "local"
+            ? { model: transcriptionConfig.local?.model ?? "base" }
+            : transcriptionConfig.model !== undefined
+              ? { model: transcriptionConfig.model }
+              : {}),
+        };
 
   // -- Media file persistence --
   const persistenceConfig = container.config.integrations.media.persistence;
@@ -132,27 +148,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
     );
   }
 
-  // Determine if the default agent's model supports vision input.
   const agents = container.config.agents;
-  const defaultAgentConfig = Object.values(agents)[0];
-  let defaultModelVisionCapable = false;
-  if (defaultAgentConfig) {
-    try {
-      /* eslint-disable @typescript-eslint/no-explicit-any -- pi-ai getModel requires KnownProvider/KnownModel, config stores flexible strings */
-      const resolvedModel = getModel(
-        defaultAgentConfig.provider as any,
-        defaultAgentConfig.model as any,
-      );
-      /* eslint-enable @typescript-eslint/no-explicit-any */
-      if (resolvedModel) {
-        defaultModelVisionCapable = isVisionCapable(resolvedModel);
-      }
-    } catch {
-      // Model resolution failed -- assume no vision, use text-description fallback
-      channelsLogger.debug("Model resolution for vision check failed, defaulting to text-description path");
-    }
-  }
-  channelsLogger.debug({ defaultModelVisionCapable }, "Vision capability check complete");
 
   // Build video description callback from VisionProvider registry
   const visionConfig = container.config.integrations.media.vision;
@@ -294,6 +290,15 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
       if (linkResult.enrichedText !== msg.text) {
         enrichedMsg = { ...msg, text: linkResult.enrichedText };
       }
+      if (linkResult.receipt !== undefined) {
+        enrichedMsg = {
+          ...enrichedMsg,
+          metadata: {
+            ...enrichedMsg.metadata,
+            linkPrefetch: linkResult.receipt,
+          },
+        };
+      }
     }
 
     // 2. Media preprocessing with vision gating
@@ -306,7 +311,39 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
       // fall back to text-description via imageAnalyzer when it does not.
       // Also respect per-channel analyzeImages toggle.
       const imagesEnabled = channelMediaConfig?.analyzeImages !== false;
-      const visionAvailable = hasImages && defaultModelVisionCapable && imagesEnabled;
+      const agentConfig = agents[turnScope.conversation.agentId];
+      let agentModelVisionCapable = false;
+      if (agentConfig !== undefined) {
+        try {
+          /* eslint-disable @typescript-eslint/no-explicit-any -- pi-ai getModel requires KnownProvider/KnownModel, config stores flexible strings */
+          const resolvedModel = getModel(
+            agentConfig.provider as any,
+            agentConfig.model as any,
+          );
+          /* eslint-enable @typescript-eslint/no-explicit-any */
+          if (resolvedModel) {
+            agentModelVisionCapable = isVisionCapable(resolvedModel);
+          }
+        } catch {
+          channelsLogger.debug(
+            { agentId: turnScope.conversation.agentId },
+            "Model resolution for vision check failed",
+          );
+        }
+      }
+      const visionAvailable = hasImages
+        && agentModelVisionCapable
+        && imagesEnabled;
+      const visionPreprocess: VisionDirectPreprocessReceipt | undefined =
+        visionAvailable && agentConfig !== undefined
+          ? {
+              provider: agentConfig.provider,
+              mainProvider: agentConfig.provider,
+              model: agentConfig.model,
+              path: "vision-direct",
+              outcome: "ok",
+            }
+          : undefined;
 
       // Wrap resolveAttachment to intercept buffers for workspace persistence
       const persistedFiles: PersistedFile[] = [];
@@ -365,6 +402,9 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
           transcriber: container.config.integrations.media.transcription.autoTranscribe && audioEnabled
             ? transcriber
             : undefined,
+          sttSelection: container.config.integrations.media.transcription.autoTranscribe && audioEnabled
+            ? sttSelection
+            : undefined,
           // Pass imageAnalyzer ONLY when vision is NOT available AND images are enabled
           imageAnalyzer: visionAvailable ? undefined : (imagesEnabled ? deps.imageAnalyzer : undefined),
           resolveAttachment: effectiveResolve,
@@ -387,6 +427,19 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
         },
         enrichedMsg,
       );
+      const sttReceipts = SttPreprocessReceiptsSchema.safeParse(
+        result.sttReceipts,
+      );
+      const resultMessage = sttReceipts.success
+        && sttReceipts.data.length > 0
+        ? {
+            ...result.message,
+            metadata: {
+              ...result.message.metadata,
+              sttPreprocess: sttReceipts.data,
+            },
+          }
+        : result.message;
 
       // Emit file extraction events
       for (const fe of result.fileExtractions) {
@@ -471,25 +524,34 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
         return {
           ...result.message,
           metadata: {
-            ...result.message.metadata,
+            ...resultMessage.metadata,
             imageContents: result.imageContents,
+            ...(visionPreprocess !== undefined
+              ? { visionPreprocess }
+              : {}),
           },
         };
       }
 
-      return result.message;
+      return resultMessage;
     }
 
     return enrichedMsg;
   };
 
   // Build audioPreflight callback (wraps transcriber + resolveAttachment)
-  const botNames = Object.values(container.config.agents)
+  const configuredBotNames = Object.values(container.config.agents)
     .map((a) => a.name)
     .filter((n): n is string => typeof n === "string" && n.length > 0);
 
   const preflightFn = transcriber
     ? async (msg: NormalizedMessage) => {
+        const botNames = [
+          ...configuredBotNames,
+          ...(msg.channelType === "telegram"
+            ? tgPlugin?.getBotMentionNames() ?? []
+            : []),
+        ];
         return audioPreflight(
           {
             transcriber,

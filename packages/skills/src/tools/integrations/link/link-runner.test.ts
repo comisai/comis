@@ -37,8 +37,13 @@ function makeConfig(overrides: Partial<LinkUnderstandingConfig> = {}): LinkUnder
 }
 
 const mockLogger = {
+  debug: vi.fn(),
   info: vi.fn(),
   warn: vi.fn(),
+};
+const mockClock = {
+  now: vi.fn(() => 1_000),
+  nowDate: vi.fn(() => new Date(1_000)),
 };
 
 // ---------------------------------------------------------------------------
@@ -54,6 +59,7 @@ describe("createLinkRunner", () => {
     const runner = createLinkRunner({
       config: makeConfig({ enabled: false }),
       logger: mockLogger,
+      clock: mockClock,
     });
 
     const result = await runner.processMessage("Check https://example.com");
@@ -81,6 +87,7 @@ describe("createLinkRunner", () => {
     const runner = createLinkRunner({
       config: makeConfig(),
       logger: mockLogger,
+      clock: mockClock,
     });
 
     const result = await runner.processMessage("Hello https://example.com");
@@ -90,13 +97,25 @@ describe("createLinkRunner", () => {
     expect(mockFetch).toHaveBeenCalledOnce();
     expect(mockFormat).toHaveBeenCalledOnce();
     expect(mockInject).toHaveBeenCalledOnce();
+    expect((result as unknown as {
+      receipt?: Record<string, number>;
+    }).receipt).toMatchObject({
+      detected: 1,
+      attempted: 1,
+      fetched: 1,
+      failed: 0,
+      validationRejected: 0,
+    });
   });
 
   it("handles fetch failures gracefully", async () => {
     const mockFetch = vi.mocked(fetchLinkContent);
     mockFetch.mockResolvedValueOnce({
       ok: false,
-      error: new Error("HTTP 500"),
+      error: {
+        stage: "response",
+        error: new Error("HTTP 500"),
+      },
     } as any);
 
     const mockFormat = vi.mocked(formatLinkContext);
@@ -108,6 +127,7 @@ describe("createLinkRunner", () => {
     const runner = createLinkRunner({
       config: makeConfig(),
       logger: mockLogger,
+      clock: mockClock,
     });
 
     const result = await runner.processMessage("Check https://example.com");
@@ -135,6 +155,7 @@ describe("createLinkRunner", () => {
     const runner = createLinkRunner({
       config: makeConfig({ maxLinks: 2 }),
       logger: mockLogger,
+      clock: mockClock,
     });
 
     const text = "https://one.com https://two.com https://three.com https://four.com https://five.com";
@@ -150,6 +171,7 @@ describe("createLinkRunner", () => {
     const runner = createLinkRunner({
       config: makeConfig(),
       logger: mockLogger,
+      clock: mockClock,
     });
 
     const result = await runner.processMessage("Hello world, no links here");
@@ -174,6 +196,7 @@ describe("createLinkRunner", () => {
     const runner = createLinkRunner({
       config: makeConfig(),
       logger: mockLogger,
+      clock: mockClock,
     });
 
     const result = await runner.processMessage("Check https://example.com");
@@ -181,5 +204,55 @@ describe("createLinkRunner", () => {
     expect(result.linksProcessed).toBe(0);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("Network timeout");
+  });
+
+  it("records validation rejection without logging a secret-bearing URL", async () => {
+    const mockFetch = vi.mocked(fetchLinkContent);
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        stage: "validation",
+        error: new Error(
+          "Blocked: resolved IP 169.254.169.254 is a cloud metadata service address",
+        ),
+      },
+    } as never);
+
+    const runner = createLinkRunner({
+      config: makeConfig(),
+      logger: mockLogger,
+      clock: mockClock,
+    });
+
+    const result = await runner.processMessage(
+      "http://127.0.0.1/private?access_token=private-token",
+    );
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect((result as unknown as {
+      receipt?: Record<string, number>;
+    }).receipt).toMatchObject({
+      detected: 1,
+      attempted: 1,
+      fetched: 0,
+      failed: 1,
+      validationRejected: 1,
+    });
+    expect(JSON.stringify(mockLogger.info.mock.calls)).not.toContain("private-token");
+    expect(JSON.stringify(mockLogger.warn.mock.calls)).not.toContain("private-token");
+    expect(JSON.stringify(mockLogger.warn.mock.calls)).not.toContain(
+      "169.254.169.254",
+    );
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "link-understanding",
+        durationMs: expect.any(Number),
+        detected: 1,
+        attempted: 1,
+        fetched: 0,
+        failed: 1,
+      }),
+      "Link understanding completed",
+    );
   });
 });

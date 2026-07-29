@@ -359,6 +359,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
             url: filePath,
             mimeType: synthResult.value.mimeType,
             fileName,
+            isVoiceNote: true,
           });
           if (sendResult.ok) {
             delivered = true;

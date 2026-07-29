@@ -22,6 +22,11 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { rig } from './_rig.mjs';
+import {
+  findAssistantReplyAfterInbound,
+  telegramInboundGuid,
+  wireContainsAssistantReply,
+} from './drive-session-oracle.mjs';
 const [, , chatIdArg, textArg, quiesceMsArg, maxMsArg, dataArg] = process.argv;
 
 const readStdinLine = async () => {
@@ -72,6 +77,7 @@ if (process.env.INJECT_OPTS) {
 // from the SAME trusted sender = card 2, with SHARED memory + trusted origin + no cross-sender recall
 // pollution / no per-sender priming). Default: fromUserId == chatId.
 const fromUser = process.env.FROMUSER ? Number(process.env.FROMUSER) : Number(chatId);
+const sharedConversation = Number(chatId) < 0;
 const emu = JSON.parse(readFileSync(rig.emuWiringPath, 'utf8'));
 const base = emu.apiRoot;
 const tenantId = process.env.TENANT_ID || 'default';
@@ -168,11 +174,52 @@ let trajBase = trajPath ? trajLineCount(trajPath) : 0;
 const initial = await getOutbound(0, 1);
 let after = initial.reduce((m, o) => Math.max(m, o.messageId || 0), 0);
 const inj = await inject(text);
+const normalizedInboundId = telegramInboundGuid(
+  Number(botBody.result.id),
+  Number(chatId),
+  Number(inj.messageId),
+);
 process.stderr.write(`injected inboundId=${inj.messageId}, polling after ${after}; trajectory=${trajPath ? 'watched' : 'NONE (wire-only)'}\n`);
 
 const seen = [];
 let sawAnswer = false, turnEnded = false, lastNew = Date.now();
+let correlatedAnswer = null;
+let correlatedSessionPath = null;
 const start = Date.now();
+
+const sessionFiles = () => {
+  const files = [];
+  const visit = (current) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const path = `${current}/${entry.name}`;
+      if (entry.isDirectory()) visit(path);
+      else if (
+        entry.name.endsWith('.jsonl') &&
+        !entry.name.endsWith('.trajectory.jsonl') &&
+        !entry.name.endsWith('_session-metadata.jsonl')
+      ) files.push(path);
+    }
+  };
+  visit(`${DATA}/workspace/sessions`);
+  return files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+};
+
+const resolveCorrelatedAnswer = () => {
+  if (!sharedConversation || !DATA) return null;
+  try {
+    const candidates = correlatedSessionPath ? [correlatedSessionPath] : sessionFiles();
+    for (const path of candidates) {
+      const source = readFileSync(path, 'utf8');
+      if (!source.includes(normalizedInboundId)) continue;
+      correlatedSessionPath = path;
+      return findAssistantReplyAfterInbound(source, normalizedInboundId);
+    }
+  } catch {
+    /* Session persistence can race the poll; retry on the next iteration. */
+  }
+  return null;
+};
+
 while (Date.now() - start < maxMs) {
   // long-poll pre-answer (ride out reasoning gaps); snappy once the answer is in.
   const waitMs = sawAnswer ? quiesceMs : 20000;
@@ -183,6 +230,11 @@ while (Date.now() - start < maxMs) {
       if (o.method === 'sendMessage' && !isProgress(o.text)) sawAnswer = true;
     }
     lastNew = Date.now();
+  }
+  if (sharedConversation) {
+    correlatedAnswer = resolveCorrelatedAnswer();
+    if (correlatedAnswer && wireContainsAssistantReply(seen, correlatedAnswer)) break;
+    continue;
   }
   // Lazily pick up the trajectory once the turn creates it (fresh-session first turn — see the
   // `let trajPath` note). base=0 is correct here: we only land here when the pre-inject resolve
@@ -228,10 +280,27 @@ const detectAllowFromBlock = () => {
   return null;
 };
 const allowFromBlock = detectAllowFromBlock();
-const reason = turnEnded ? 'turn-ended(trajectory)' : sawAnswer ? 'answer+quiesce' : allowFromBlock ? 'BLOCKED(allowFrom)' : 'TIMEOUT';
-console.log(`=== ALL OUTBOUND (${seen.length}) in ${Math.round((Date.now() - start) / 1000)}s [${reason}]${sawAnswer ? '' : ' — NO SUBSTANTIVE ANSWER'} ===`);
+const correlatedWireAnswer = correlatedAnswer
+  ? wireContainsAssistantReply(seen, correlatedAnswer)
+  : false;
+const hasSubstantiveAnswer = sharedConversation ? correlatedWireAnswer : sawAnswer;
+const reason = correlatedWireAnswer
+  ? 'correlated-session-answer'
+  : turnEnded
+    ? 'turn-ended(trajectory)'
+    : sawAnswer && !sharedConversation
+      ? 'answer+quiesce'
+      : allowFromBlock
+        ? 'BLOCKED(allowFrom)'
+        : 'TIMEOUT';
+console.log(`=== ALL OUTBOUND (${seen.length}) in ${Math.round((Date.now() - start) / 1000)}s [${reason}]${hasSubstantiveAnswer ? '' : ' — NO SUBSTANTIVE ANSWER'} ===`);
 for (const o of seen) console.log(`[${o.method} ${o.messageId}] ${JSON.stringify((o.text || '').slice(0, 600))}`);
 console.log('=== SUBSTANTIVE ANSWER ===');
 let any = false;
-for (const o of seen) if (o.method === 'sendMessage' && !isProgress(o.text)) { console.log(o.text); any = true; }
+if (correlatedWireAnswer) {
+  console.log(correlatedAnswer);
+  any = true;
+} else if (!sharedConversation) {
+  for (const o of seen) if (o.method === 'sendMessage' && !isProgress(o.text)) { console.log(o.text); any = true; }
+}
 if (!any) console.log(`[NO SUBSTANTIVE ANSWER — ${allowFromBlock ? allowFromBlock : turnEnded ? 'turn ended with no chat delivery (empty-final/abort?) — read the trajectory' : 'timed out'}]`);

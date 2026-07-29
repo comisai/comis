@@ -6882,11 +6882,31 @@ describe("createPiEventBridge — per-root budget sibling", () => {
       reserveBudget(rootRunId, provider, model, estUsd, estTokens): SpendGateOutcome {
         const startMs = rootStartMs.get(rootRunId) ?? opts.clock.now();
         if (opts.clock.now() - startMs > opts.wallClockMs) {
-          return { kind: "exceeded", error: new SpendError("agent", opts.clock.now() - startMs, opts.wallClockMs, 0) };
+          return {
+            kind: "exceeded",
+            error: new SpendError(
+              "agent",
+              opts.clock.now() - startMs,
+              opts.wallClockMs,
+              0,
+              "wallClockMs",
+              "ms",
+            ),
+          };
         }
         const prior = tokenTotals.get(rootRunId) ?? 0;
         if (prior + estTokens > opts.tokens) {
-          return { kind: "exceeded", error: new SpendError("agent", prior, opts.tokens, estTokens) };
+          return {
+            kind: "exceeded",
+            error: new SpendError(
+              "agent",
+              prior,
+              opts.tokens,
+              estTokens,
+              "tokens",
+              "tokens",
+            ),
+          };
         }
         tokenTotals.set(rootRunId, prior + estTokens);
         const r = checkSpendCeiling(
@@ -6950,6 +6970,9 @@ describe("createPiEventBridge — per-root budget sibling", () => {
     listener(makeTurnEndEvent({ totalTokens: 10 }) as any);
 
     expect(getResult().finishReason).toBe("spend_exceeded");
+    expect(getResult().abortResponse).toBe(
+      "[Stopped: per-root wall-clock budget exceeded] Please try again.",
+    );
     expect(deps.onAbort).toHaveBeenCalled();
   });
 

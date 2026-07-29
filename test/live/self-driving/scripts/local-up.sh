@@ -24,7 +24,7 @@ RIG_MODE=local
 export RIG_MODE
 # shellcheck source=./_remote-root.sh
 . "$HERE/_remote-root.sh"
-rig_defaults
+rig_load_persisted_env "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env
 REPO="${REPO:-$(git rev-parse --show-toplevel)}"
 
 echo "=== local-up — $(rig_banner) ==="

@@ -1612,6 +1612,25 @@ describe("subagent:delivery_deadlettered event type", () => {
   });
 });
 
+describe("subagent:delivery_skipped event type", () => {
+  it("delivers the child route and a closed missing-route reason", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["subagent:delivery_skipped"] = {
+      runId: "run-route-lost",
+      agentId: "default",
+      sessionKey: "default:sub-agent:route-lost",
+      reason: "no_origin",
+      timestamp: 1,
+    };
+
+    bus.on("subagent:delivery_skipped", handler);
+    bus.emit("subagent:delivery_skipped", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+  });
+});
+
 describe("graph:node_updated enriched with tokensUsed/cost", () => {
   it("carries optional tokensUsed and cost and a listener reads them", () => {
     const bus = new TypedEventBus();

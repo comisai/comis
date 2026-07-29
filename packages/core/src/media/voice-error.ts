@@ -23,14 +23,17 @@
 
 import type { ErrorKind } from "../logging/log-fields.js";
 
-export type SttErrorKind =
-  | "no_keyless_engine"
-  | "auth_required"
-  | "model_load_failed"
-  | "model_download_failed"
-  | "timeout"
-  | "network"
-  | "dependency";
+export const STT_ERROR_KINDS = [
+  "no_keyless_engine",
+  "auth_required",
+  "model_load_failed",
+  "model_download_failed",
+  "timeout",
+  "network",
+  "dependency",
+] as const;
+
+export type SttErrorKind = (typeof STT_ERROR_KINDS)[number];
 
 /**
  * Maps each domain `SttErrorKind` onto one of the CLOSED 10-member log

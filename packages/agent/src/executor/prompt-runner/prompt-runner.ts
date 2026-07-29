@@ -114,6 +114,11 @@ function emitPromptSubmitted(params: RunPromptParams, messageText: string): void
       messageCount: transcriptLen + 1,
       systemDigest,
       messagesDigest,
+      ...(params.responseLocalePolicy?.locale !== undefined
+        ? { responseLocale: params.responseLocalePolicy.locale }
+        : {}),
+      responseLocaleSource: params.responseLocalePolicy?.source ?? "unset",
+      responseLocaleEnforced: params.responseLocalePolicy?.enforceLocale ?? false,
       timestamp: systemNowMs(),
     });
   } catch (err) {

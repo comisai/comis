@@ -32,10 +32,15 @@ vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {
     ...actual,
-    resolveWorkspaceDir: vi.fn((_config: unknown, agentId?: string) =>
-      agentId && agentId !== "default"
-        ? `/home/test/.comis/workspace-${agentId}`
-        : "/home/test/.comis/workspace"
+    resolveWorkspaceDir: vi.fn(
+      (_config: unknown, agentId?: string, baseDataDir?: string) => {
+        const base = baseDataDir && baseDataDir.length > 0
+          ? baseDataDir
+          : "/home/test/.comis";
+        return agentId && agentId !== "default"
+          ? `${base}/workspace-${agentId}`
+          : `${base}/workspace`;
+      },
     ),
   };
 });
@@ -283,6 +288,60 @@ describe("createAgentHandlers", () => {
       expect(deps.agents["minimal-bot"]).toBeDefined();
     });
 
+    it("inherits an omitted model binding from the trusted invoking agent and persists it", async () => {
+      const persistDeps = makePersistDeps();
+      const oauthCredentialStore = {
+        has: vi.fn(async () => ok(true)),
+        get: vi.fn(async () => ok(undefined)),
+        set: vi.fn(async () => ok(undefined)),
+        delete: vi.fn(async () => ok(false)),
+        list: vi.fn(async () => ok([])),
+      } as unknown as OAuthCredentialStorePort;
+      const deps = makeDeps({
+        agents: {
+          default: {
+            name: "Invoking Agent",
+            provider: "openai-codex",
+            model: "gpt-5.6-sol",
+            maxSteps: 25,
+            oauthProfiles: {
+              "openai-codex": "openai-codex:user_a@example.com",
+            },
+          } as AgentHandlerDeps["agents"][string],
+        },
+        oauthCredentialStore,
+        persistDeps,
+      });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.create"]!({
+        agentId: "inherited-bot",
+        config: { name: "Inherited Bot" },
+        _agentId: "default",
+        _trustLevel: "admin",
+      })) as { config: AgentHandlerDeps["agents"][string] };
+
+      expect(result.config).toMatchObject({
+        provider: "openai-codex",
+        model: "gpt-5.6-sol",
+        oauthProfiles: {
+          "openai-codex": "openai-codex:user_a@example.com",
+        },
+      });
+      expect(oauthCredentialStore.has).toHaveBeenCalledWith(
+        "openai-codex:user_a@example.com",
+      );
+      const agentsPatch = mockPersistToConfig.mock.calls[0]![1].patch.agents as
+        Record<string, Record<string, unknown>>;
+      expect(agentsPatch["inherited-bot"]).toMatchObject({
+        provider: "openai-codex",
+        model: "gpt-5.6-sol",
+        oauthProfiles: {
+          "openai-codex": "openai-codex:user_a@example.com",
+        },
+      });
+    });
+
     it("throws when agentId already exists", async () => {
       const deps = makeDeps();
       const handlers = createAgentHandlers(deps);
@@ -419,6 +478,32 @@ describe("createAgentHandlers", () => {
   // side-effects, NOT durable state — they NEVER reach config.yaml.
   // -------------------------------------------------------------------------
   describe("agents.create with inlineContent", () => {
+    it("uses the configured daemon data root for the created workspace and inline writes", async () => {
+      mockWriteInline.mockResolvedValueOnce({
+        ok: true,
+        value: { roleWritten: true, identityWritten: true, bytesWritten: 2 },
+      });
+      const persistDeps = makePersistDeps();
+      persistDeps.container.config.dataDir = "/custom/data";
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.create"]!({
+        agentId: "custom-root",
+        inlineContent: { role: "R", identity: "I" },
+        _trustLevel: "admin",
+      })) as { workspaceDir: string };
+
+      expect(result.workspaceDir).toBe("/custom/data/workspace-custom-root");
+      expect(mockWriteInline).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          workspaceDir: "/custom/data/workspace-custom-root",
+          agentId: "custom-root",
+        }),
+      );
+    });
+
     it("full inlineContent: forwards role+identity to helper, returns inlineWritesResult on RPC payload", async () => {
       mockWriteInline.mockResolvedValueOnce({
         ok: true,
@@ -1166,8 +1251,10 @@ describe("createAgentHandlers", () => {
       expect(persistedAgent).toHaveProperty("model", "claude-sonnet-4-5-20250929");
       // Should contain auto-added web tools (since no skills provided)
       expect(persistedAgent).toHaveProperty("skills");
-      // Should NOT contain Zod defaults that weren't user-provided
-      expect(persistedAgent).not.toHaveProperty("provider");
+      // The omitted provider is resolved from the configured default agent and
+      // persisted so a restart does not fall back to a different catalog default.
+      expect(persistedAgent).toHaveProperty("provider", "anthropic");
+      // Should NOT contain unrelated Zod defaults that weren't user-provided
       expect(persistedAgent).not.toHaveProperty("maxSteps");
       expect(persistedAgent).not.toHaveProperty("temperature");
       expect(persistedAgent).not.toHaveProperty("systemPrompt");

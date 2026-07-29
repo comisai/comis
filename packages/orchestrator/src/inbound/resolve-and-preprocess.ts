@@ -8,7 +8,16 @@
  * @module
  */
 
-import { toSafeErrorLogString, type NormalizedMessage, type ResolvedTurnScope, type SessionKey, type ChannelPort } from "@comis/core";
+import {
+  LinkPrefetchReceiptSchema,
+  SttPreprocessReceiptsSchema,
+  VisionDirectPreprocessReceiptSchema,
+  toSafeErrorLogString,
+  type NormalizedMessage,
+  type ResolvedTurnScope,
+  type SessionKey,
+  type ChannelPort,
+} from "@comis/core";
 import { resolveInboundTurnIdentity } from "./inbound-turn-identity.js";
 import { emitObservationalEvent } from "../execution/execution-event-emitter.js";
 import type { AgentExecutor, InboundMessageProvenancePlan } from "@comis/agent";
@@ -121,9 +130,18 @@ function isVisionImageContents(value: unknown): value is VisionImageContent[] {
 function projectContentEnrichment(
   authoritative: NormalizedMessage,
   candidate: NormalizedMessage,
-  options: { allowAudioMention: boolean; allowVisionImages: boolean },
+  options: {
+    allowAudioMention: boolean;
+    allowVisionImages: boolean;
+    allowLinkPrefetch: boolean;
+    allowSttPreprocess: boolean;
+    allowVisionPreprocess: boolean;
+  },
 ): NormalizedMessage {
   const metadata = { ...authoritative.metadata };
+  delete metadata.linkPrefetch;
+  delete metadata.sttPreprocess;
+  delete metadata.visionPreprocess;
   if (options.allowAudioMention && candidate.metadata.isBotMentioned === true) {
     metadata.isBotMentioned = true;
   }
@@ -132,6 +150,26 @@ function projectContentEnrichment(
     && isVisionImageContents(candidate.metadata.imageContents)
   ) {
     metadata.imageContents = candidate.metadata.imageContents;
+  }
+  if (options.allowLinkPrefetch) {
+    const receipt = LinkPrefetchReceiptSchema.safeParse(
+      candidate.metadata.linkPrefetch,
+    );
+    if (receipt.success) metadata.linkPrefetch = receipt.data;
+  }
+  if (options.allowSttPreprocess) {
+    const receipts = SttPreprocessReceiptsSchema.safeParse(
+      candidate.metadata.sttPreprocess,
+    );
+    if (receipts.success && receipts.data.length > 0) {
+      metadata.sttPreprocess = receipts.data;
+    }
+  }
+  if (options.allowVisionPreprocess) {
+    const receipt = VisionDirectPreprocessReceiptSchema.safeParse(
+      candidate.metadata.visionPreprocess,
+    );
+    if (receipt.success) metadata.visionPreprocess = receipt.data;
   }
 
   return {
@@ -248,7 +286,14 @@ export async function resolveAndPreprocess(
 
   // ===== Phase 1B: Audio preflight + media preprocessing =====
 
-  let processedMsg = effectiveMsg;
+  const ingressMetadata = { ...effectiveMsg.metadata };
+  delete ingressMetadata.linkPrefetch;
+  delete ingressMetadata.sttPreprocess;
+  delete ingressMetadata.visionPreprocess;
+  let processedMsg: NormalizedMessage = {
+    ...effectiveMsg,
+    metadata: ingressMetadata,
+  };
   const channelType = adapter.channelType;
 
   // -------------------------------------------------------------------
@@ -278,7 +323,13 @@ export async function resolveAndPreprocess(
           processedMsg = projectContentEnrichment(
             processedMsg,
             preflightResult.message,
-            { allowAudioMention: true, allowVisionImages: false },
+            {
+              allowAudioMention: true,
+              allowVisionImages: false,
+              allowLinkPrefetch: false,
+              allowSttPreprocess: false,
+              allowVisionPreprocess: false,
+            },
           );
           deps.logger.debug({
             step: "audio-preflight",
@@ -306,7 +357,13 @@ export async function resolveAndPreprocess(
       processedMsg = projectContentEnrichment(
         processedMsg,
         preprocessed,
-        { allowAudioMention: false, allowVisionImages: true },
+        {
+          allowAudioMention: false,
+          allowVisionImages: true,
+          allowLinkPrefetch: true,
+          allowSttPreprocess: true,
+          allowVisionPreprocess: true,
+        },
       );
     } catch (preprocessErr) {
       deps.logger.warn(

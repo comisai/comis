@@ -23,11 +23,10 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$HERE/.live-env" ] && . "$HERE/.live-env"
 # shellcheck source=./_rig.sh
-if [ -f "$HERE/_rig.sh" ]; then . "$HERE/_rig.sh" && rig_defaults; fi
-for _f in "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env; do
-  # shellcheck disable=SC1090 # the rig env path is mode-resolved at run time
-  [ -n "$_f" ] && [ -f "$_f" ] && . "$_f" && break
-done
+if [ -f "$HERE/_rig.sh" ]; then
+  . "$HERE/_rig.sh"
+  rig_load_persisted_env "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env
+fi
 DATA="${DATA:-/home/comis/.comis}"
 GW_HOST="${GW_HOST:-127.0.0.1}"
 GW_PORT="${GW_PORT:-4766}"

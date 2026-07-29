@@ -9,7 +9,7 @@
  */
 
 import * as os from "node:os";
-import type { AppContainer, TTSPort, TranscriptionPort, VisionProvider, FileExtractionPort, WrapExternalContentOptions, SecretManager, ImageGenerationConfig, TranscriptionConfig, TtsConfig } from "@comis/core";
+import type { AppContainer, ClockPort, TTSPort, TranscriptionPort, VisionProvider, FileExtractionPort, WrapExternalContentOptions, SecretManager, ImageGenerationConfig, TranscriptionConfig, TtsConfig } from "@comis/core";
 import { STT_ERR_TO_LOG, safePath } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { createAudioProviderSelector } from "./setup-audio-provider.js";
@@ -170,6 +170,7 @@ export const createImageGenGetter = createImageGenProviderFactory;
 export async function setupMedia(deps: {
   container: AppContainer;
   skillsLogger: ComisLogger;
+  clock: ClockPort;
   /** Optional callback for suspicious content detection */
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
   /**
@@ -183,7 +184,7 @@ export async function setupMedia(deps: {
    */
   audioSelector?: ReturnType<typeof createAudioProviderSelector>;
 }): Promise<MediaResult> {
-  const { container, skillsLogger } = deps;
+  const { container, skillsLogger, clock } = deps;
   const mediaConfig = container.config.integrations.media;
 
   // 6.6.8.pre1. ffmpeg/ffprobe availability detection
@@ -508,6 +509,7 @@ export async function setupMedia(deps: {
   const linkRunner: LinkRunner = createLinkRunner({
     config: mediaConfig.linkUnderstanding,
     logger: skillsLogger,
+    clock,
     onSuspiciousContent: deps.onSuspiciousContent,
   });
   if (mediaConfig.linkUnderstanding.enabled) {

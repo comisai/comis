@@ -53,6 +53,11 @@ export interface RouteContext {
   readonly query: string;
   /** The RAW request body as a string (handlers parse it themselves). */
   readonly body: string;
+  /**
+   * Aborts when the client disconnects before the route finishes. Long-running
+   * handlers must release any queued waiter without consuming later data.
+   */
+  readonly signal: AbortSignal;
 }
 
 /**
@@ -237,6 +242,7 @@ export function createHttpBackend(): HttpBackend {
   // on a Buffer would corrupt it into `{"type":"Buffer",...}`. A non-Buffer
   // body keeps the `application/json` + `JSON.stringify` path exactly.
   function send(res: ServerResponse, status: number, body: unknown, contentType?: string): void {
+    if (res.destroyed || res.writableEnded) return;
     res.statusCode = status;
     if (Buffer.isBuffer(body)) {
       res.setHeader("content-type", contentType ?? "application/octet-stream");
@@ -253,13 +259,34 @@ export function createHttpBackend(): HttpBackend {
   }
 
   async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const disconnectController = new AbortController();
+    const abortDisconnectedRequest = () => {
+      disconnectController.abort();
+    };
+    const stopWatchingSocket = () => {
+      req.socket.off("close", abortDisconnectedRequest);
+    };
+    req.once("aborted", abortDisconnectedRequest);
+    req.socket.once("close", abortDisconnectedRequest);
+    res.once("finish", stopWatchingSocket);
+    res.once("close", () => {
+      stopWatchingSocket();
+      abortDisconnectedRequest();
+    });
+
     const url = req.url ?? "";
     const httpMethod = req.method ?? "GET";
     const qIdx = url.indexOf("?");
     const path = qIdx >= 0 ? url.slice(0, qIdx) : url;
     const query = qIdx >= 0 ? url.slice(qIdx + 1) : "";
     const body = await readBody(req);
-    const baseCtx: RouteContext = { httpMethod, path, query, body };
+    const baseCtx: RouteContext = {
+      httpMethod,
+      path,
+      query,
+      body,
+      signal: disconnectController.signal,
+    };
 
     // (a) /control/* — SEPARATE branch from the Bot-API matcher, checked first.
     if (path.startsWith("/control/") || path === "/control") {

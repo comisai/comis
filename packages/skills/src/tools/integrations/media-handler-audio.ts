@@ -8,8 +8,19 @@
  * @module
  */
 
-import type { Attachment, TranscriptionPort } from "@comis/core";
-import { wrapExternalContent, type WrapExternalContentOptions, systemNowMs } from "@comis/core";
+import type {
+  Attachment,
+  SttErrorKind,
+  SttPreprocessReceipt,
+  SttPreprocessSelection,
+  TranscriptionPort,
+} from "@comis/core";
+import {
+  STT_ERROR_KINDS,
+  wrapExternalContent,
+  type WrapExternalContentOptions,
+  systemNowMs,
+} from "@comis/core";
 import type { MediaProcessorLogger } from "./media-preprocessor.js";
 import { resolveMediaAttachment } from "./media-handler-factory.js";
 import { redactErrorMessage } from "./media-adapter-shared.js";
@@ -19,6 +30,8 @@ export interface AudioHandlerDeps {
   readonly transcriber?: TranscriptionPort;
   readonly resolveAttachment: (attachment: Attachment) => Promise<Buffer | null>;
   readonly logger: MediaProcessorLogger;
+  /** Boot-resolved provider selection used by the automatic STT adapter. */
+  readonly sttSelection?: SttPreprocessSelection;
   /** Optional callback for suspicious content detection. */
   readonly onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
 }
@@ -27,6 +40,61 @@ export interface AudioHandlerDeps {
 export interface AudioHandlerResult {
   textPrefix?: string;
   transcription?: { attachmentUrl: string; text: string; language?: string };
+  sttReceipt?: SttPreprocessReceipt;
+}
+
+function classifySttError(error: Error): SttErrorKind {
+  const kind = (error as Error & { kind?: unknown }).kind;
+  return typeof kind === "string"
+    && STT_ERROR_KINDS.includes(kind as SttErrorKind)
+    ? kind as SttErrorKind
+    : "dependency";
+}
+
+function failurePrompt(errorKind: SttErrorKind): string {
+  switch (errorKind) {
+    case "model_load_failed":
+    case "model_download_failed":
+      return "[Voice message transcription failed because the local speech model could not be loaded. Check integrations.media.transcription.local.model, or set integrations.media.transcription.provider to a configured speech provider; ask the user to send text if voice remains unavailable]";
+    case "no_keyless_engine":
+      return "[Voice message transcription failed because no speech engine is available. Configure integrations.media.transcription.local.baseUrl or integrations.media.transcription.provider; ask the user to send text until it is configured]";
+    case "auth_required":
+      return "[Voice message transcription failed because the configured provider requires credentials. Check integrations.media.transcription.provider and its API key; ask the user to send text until credentials are configured]";
+    case "timeout":
+    case "network":
+    case "dependency":
+      return "[Voice message transcription failed. Check integrations.media.transcription.provider and provider availability; ask the user to send text if voice remains unavailable]";
+    default: {
+      const _exhaustive: never = errorKind;
+      return _exhaustive;
+    }
+  }
+}
+
+function receipt(
+  selection: SttPreprocessSelection | undefined,
+  fields:
+    | {
+        outcome: "ok";
+        durationMs?: number;
+        audioBytes?: number;
+      }
+    | {
+        outcome: "failed";
+        errorKind: SttErrorKind;
+        durationMs?: number;
+        audioBytes?: number;
+      },
+): SttPreprocessReceipt | undefined {
+  if (selection === undefined) return undefined;
+  return {
+    provider: selection.provider,
+    keyless: selection.keyless,
+    ...(selection.model !== undefined ? { model: selection.model } : {}),
+    source: selection.source,
+    ...(selection.onSkip !== undefined ? { onSkip: selection.onSkip } : {}),
+    ...fields,
+  };
 }
 
 /**
@@ -56,11 +124,21 @@ export async function processAudioAttachment(
     return {
       textPrefix: wrapped,
       transcription: { attachmentUrl: att.url, text: att.transcription },
+      sttReceipt: receipt(deps.sttSelection, { outcome: "ok" }),
     };
   }
 
   const buffer = await resolveMediaAttachment(att, deps.resolveAttachment, deps.logger, "Audio");
-  if (!buffer) return {};
+  if (!buffer) {
+    if (deps.sttSelection === undefined) return {};
+    return {
+      textPrefix: failurePrompt("network"),
+      sttReceipt: receipt(deps.sttSelection, {
+        outcome: "failed",
+        errorKind: "network",
+      }),
+    };
+  }
 
   const sttStart = systemNowMs();
   try {
@@ -96,6 +174,12 @@ export async function processAudioAttachment(
         return {
           textPrefix:
             "[Voice message received but the transcription came back empty — ask the user to resend it more clearly or to type the message]",
+          sttReceipt: receipt(deps.sttSelection, {
+            outcome: "failed",
+            errorKind: "dependency",
+            durationMs,
+            audioBytes: buffer.byteLength,
+          }),
         };
       }
 
@@ -121,6 +205,11 @@ export async function processAudioAttachment(
           text,
           language: result.value.language,
         },
+        sttReceipt: receipt(deps.sttSelection, {
+          outcome: "ok",
+          durationMs,
+          audioBytes: buffer.byteLength,
+        }),
       };
     } else {
       // Canonical `err:` (the Pino `err` serializer key — `error:` is
@@ -128,14 +217,31 @@ export async function processAudioAttachment(
       // line (defense-in-depth — the adapter already sanitizes its Result.err,
       // but the handler must never re-introduce a credential/URL).
       const errMsg = redactErrorMessage(result.error.message);
+      const errorKind = classifySttError(result.error);
       deps.logger.warn({ url: att.url, err: errMsg, hint: "STT provider returned error; voice message will not be transcribed", errorKind: "dependency" as const }, "Transcription failed");
       deps.logger.debug?.({ url: att.url, reason: "stt-failed", err: errMsg }, "Transcription failed");
+      return {
+        textPrefix: failurePrompt(errorKind),
+        sttReceipt: receipt(deps.sttSelection, {
+          outcome: "failed",
+          errorKind,
+          durationMs: systemNowMs() - sttStart,
+          audioBytes: buffer.byteLength,
+        }),
+      };
     }
   } catch (e) {
     const errMsg = redactErrorMessage(String(e));
     deps.logger.warn({ url: att.url, err: errMsg, hint: "Unexpected STT error; voice message will not be transcribed", errorKind: "internal" as const }, "Transcription threw unexpectedly");
     deps.logger.debug?.({ url: att.url, reason: "stt-failed", err: errMsg }, "Transcription threw unexpectedly");
+    return {
+      textPrefix: failurePrompt("dependency"),
+      sttReceipt: receipt(deps.sttSelection, {
+        outcome: "failed",
+        errorKind: "dependency",
+        durationMs: systemNowMs() - sttStart,
+        audioBytes: buffer.byteLength,
+      }),
+    };
   }
-
-  return { textPrefix: "[Voice message received but transcription failed — ask the user to send a text message instead]" };
 }

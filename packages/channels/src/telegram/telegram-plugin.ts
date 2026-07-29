@@ -34,6 +34,8 @@ interface ResolverLogger {
 export interface TelegramPluginHandle extends ChannelPluginPort {
   /** Create a media resolver using the internal Bot instance. */
   createResolver(deps: { ssrfFetcher: SsrfFetcher; maxBytes: number; logger: ResolverLogger }): MediaResolverPort;
+  /** Current platform handles used to recognize spoken group mentions. */
+  getBotMentionNames(): readonly string[];
 }
 
 /** Telegram platform capabilities (self-declared, validated at registration). */
@@ -96,5 +98,7 @@ export function createTelegramPlugin(deps: TelegramAdapterDeps): TelegramPluginH
         apiRoot: deps.apiRoot,
       });
     },
+
+    getBotMentionNames: () => adapter.getBotMentionNames(),
   };
 }

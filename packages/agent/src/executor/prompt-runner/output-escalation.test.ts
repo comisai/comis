@@ -227,6 +227,101 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
       promptError: instrumentationError,
     });
   });
+
+  it("preserves a bridge abort response without starting response-recovery turns", async () => {
+    const abortResponse =
+      "[Stopped: per-root wall-clock budget exceeded] Please try again.";
+    const prompt = vi.fn(async () => undefined);
+    const params = {
+      msg: {
+        channelType: "telegram",
+        channelId: "channel-a",
+        text: "keep checking",
+      },
+      session: {
+        agent: {
+          state: { model: { maxTokens: 8_192 } },
+          streamFunction: vi.fn(),
+        },
+        messages: [
+          { role: "user", content: [{ type: "text", text: "keep checking" }] },
+          {
+            role: "assistant",
+            content: [{ type: "toolCall", name: "exec", arguments: {} }],
+          },
+          { role: "toolResult", content: [{ type: "text", text: "pending" }] },
+          { role: "assistant", stopReason: "aborted", content: [] },
+        ],
+        prompt,
+      },
+      sessionKey: {
+        tenantId: "default",
+        channelId: "channel-a",
+        userId: "user_a",
+      },
+      agentId: "agent-a",
+      bridge: {
+        getResult: () => ({
+          abortResponse,
+          finishReason: "spend_exceeded",
+          lastStopReason: "aborted",
+          stepsExecuted: 1,
+          textEmitted: false,
+        }),
+        hasOutboundDelivery: () => true,
+      },
+      config: {
+        provider: "test-provider",
+        model: "test-model",
+        contextEngine: {
+          outputEscalation: { enabled: true },
+          postBatchContinuation: { enabled: true, maxRetries: 1 },
+        },
+      },
+      effectiveTimeout: {
+        promptTimeoutMs: 1_000,
+        retryPromptTimeoutMs: 1_000,
+        stallCeilingMultiplier: 2,
+        source: "agent_config",
+      },
+      executionStartMs: 0,
+      executionId: "execution-a",
+      resolvedModel: { id: "test-model" },
+      mergedCustomTools: [],
+      result: {
+        response: "",
+        finishReason: "stop",
+        tokensUsed: { input: 0, output: 0, total: 0 },
+        cost: { total: 0 },
+        stepsExecuted: 0,
+        llmCalls: 0,
+      },
+      deps: {
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() },
+        eventBus: { emit: vi.fn() },
+        clock: { now: () => 10 },
+      },
+    } as never;
+
+    const result = await escalateOutput(
+      params,
+      "keep checking",
+      undefined,
+      undefined,
+      false,
+      undefined,
+      true,
+      undefined,
+      false,
+    );
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect((params as { result: { response: string } }).result.response).toBe(abortResponse);
+    expect(result).toMatchObject({
+      promptSucceeded: true,
+      escalationAttempted: false,
+    });
+  });
 });
 
 describe("output-escalation.ts — dependency direction", () => {

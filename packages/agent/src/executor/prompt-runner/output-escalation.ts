@@ -1,16 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Output-size escalation policy and success-path response processing.
- *
- * The failure-path equivalents (overflow recovery, error classification,
- * timeout cost estimation) live in `./failure-path.js` so each module
- * stays at or below the 500L cap.
- *
- * This module imports types only from `./prompt-runner-types.js` — never
- * from `./prompt-runner.js`.
- *
- * @module
- */
+/** Output-size escalation policy and success-path response processing. */
 
 import { formatSessionKey, toSafeErrorLogString } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
@@ -27,7 +16,6 @@ import { runPostBatchContinuation } from "../post-batch-continuation.js";
 import { runNarrateNudge } from "../narrate-nudge.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
 import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
-
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { TurnBudgetTracker } from "../../budget/turn-budget-tracker.js";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
@@ -54,10 +42,31 @@ export async function escalateOutput(
 ): Promise<PromptRunResult> {
   let escalationAttempted = false;
   let ghostCost: PromptRunResult["ghostCost"];
+  const bridgeResult = params.bridge.getResult();
 
-  // Output escalation -- retry with higher output budget on max_tokens truncation.
+  // A bridge abort is already the terminal response for this execution.
+  // Do not let generic success-path recovery mistake the SDK's aborted-empty
+  // assistant turn for a recoverable silent response and start a fresh model
+  // turn after the safety boundary has fired.
+  if (bridgeResult.abortResponse !== undefined) {
+    params.result.response = bridgeResult.abortResponse;
+    params.deps.logger.debug(
+      {
+        step: "abort-recovery-suppressed",
+        finishReason: bridgeResult.finishReason,
+      },
+      "Response recovery skipped after safety abort",
+    );
+    return { promptSucceeded, promptError, escalationAttempted, ghostCost };
+  }
+
   if (promptSucceeded && !skipPrompt && !escalationAttempted && !budgetTracker) {
-    const escalation = await maybeEscalateOutput(params, messageText, promptImages);
+    const escalation = await maybeEscalateOutput(
+      params,
+      messageText,
+      promptImages,
+      bridgeResult.lastStopReason,
+    );
     if (escalation.ok) {
       escalationAttempted = escalation.value;
     } else {
@@ -73,9 +82,7 @@ export async function escalateOutput(
   if (promptSucceeded && !skipPrompt) {
     await processSuccessPath(params, budgetTracker, budgetCapped, requestedBudget);
   } else if (!promptSucceeded) {
-    // Only enter error path when prompt actually failed -- not when skipPrompt
-    // bypassed the prompt entirely (directive-only commands like /fork, /branch,
-    // /compact, /export already set result.response and result.finishReason).
+    // Directive-only commands set skipPrompt and bypass this failure path.
     const failureOutcome = await processFailurePath(
       params, messageText, promptImages, promptError,
     );
@@ -96,10 +103,10 @@ async function maybeEscalateOutput(
   params: RunPromptParams,
   messageText: string,
   promptImages: ImageContent[] | undefined,
+  bridgeStopReason: ReturnType<RunPromptParams["bridge"]["getResult"]>["lastStopReason"],
 ): Promise<Result<boolean, Error>> {
-  const { session, sessionKey, agentId, bridge, config, effectiveTimeout, deps } = params;
+  const { session, sessionKey, agentId, config, effectiveTimeout, deps } = params;
 
-  const bridgeStopReason = bridge.getResult().lastStopReason;
   const escalationConfig = config.contextEngine?.outputEscalation;
   const escalationEnabled = escalationConfig?.enabled !== false; // default true
 
@@ -200,7 +207,6 @@ async function processSuccessPath(
   // incrementing mock call counters (budget tests use callCount on getResult).
   const rawResponse = getVisibleAssistantText(session);
   const needsRecovery = rawResponse === "";
-  // Find the last user message index to bound empty-response recovery
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sessionMessages: any[] = (session as any).messages ?? [];
   let userMessageIndex = 0;
@@ -222,10 +228,7 @@ async function processSuccessPath(
 
   result.response = extractedResponse;
 
-  // If empty-response recovery also failed to produce visible
-  // text (all intermediate turns were thinking-only), attempt a continuation
-  // nudge. This covers the case where textEmitted=true from thinking deltas
-  // but no actual visible text exists anywhere in the session.
+  // Nudge once if all intermediate text was thinking-only.
   if (result.response === "" && (bridge.getResult().stepsExecuted ?? 0) > 0) {
     const lateResult = bridge.getResult();
     if (lateResult.finishReason === "stop") {
@@ -261,7 +264,6 @@ async function processSuccessPath(
     }
   }
 
-  // SEP: Post-loop fallback extraction (mid-loop extraction in bridge is primary path)
   const toolCallCount = bridge.getResult().stepsExecuted ?? 0;
   if (sepEnabled && !executionPlanRef.current && extractedResponse && toolCallCount > 0) {
     const plan = extractExecutionPlan({
@@ -279,12 +281,7 @@ async function processSuccessPath(
     if (plan) {
       executionPlanRef.current = plan;
       deps.logger.debug({ agentId }, "SEP plan extracted (post-loop fallback)");
-      // Inline backfill: post-loop extraction means no mid-loop step tracking
-      // ran, so completedCount is stuck at 0 and the nudge cannot fire. Use
-      // the bridge's recorded tool history as a proxy for work done and mark
-      // the first N steps as "done" (N = min(toolHistoryLen, stepCount)).
-      // Tool-to-step attribution is advisory/observability only; over-counting
-      // is strictly better than the 0/N deadlock.
+      // Backfill advisory progress from tool history after post-loop extraction.
       const toolHistoryLen = bridge.getResult().toolCallHistory?.length ?? 0;
       const doneCount = Math.min(toolHistoryLen, plan.steps.length);
       for (let i = 0; i < doneCount; i++) plan.steps[i]!.status = "done";

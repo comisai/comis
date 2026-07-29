@@ -57,7 +57,7 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 19 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 22 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / promptTimeout /
@@ -68,12 +68,37 @@ export interface IncidentFailure {
 // observability signal class.
 export interface IncidentSignals {
   sessionKey: string;
+  /** The LAST `prompt.submitted` locale decision in the selected record set.
+   * Exact-trace explain reports therefore describe the evaluated turn, while
+   * whole-session explain reports describe the latest turn. Content-free. */
+  responseLocale?:
+    | {
+        locale: string;
+        source: "request" | "explicit";
+        enforced: boolean;
+      }
+    | {
+        source: "unset";
+        enforced: false;
+      };
   /** agentId from the trajectory record envelopes (first seen). Fallback for
    *  reports whose metadata rollup carries no agentId. */
   agentId?: string;
   /** Channel identity from the session.started trajectory record. Fallback for
    *  reports whose metadata rollup carries no channel. */
   channel?: { type: string; id: string };
+  /** Channel-health lifecycle folded from `channel.health_changed` trajectory
+   * records. Present only after at least one degraded transition. The terminal
+   * state determines `recovered`, preventing an old outage from labeling later
+   * healthy turns while retaining the incident count and latest problem state. */
+  channelHealth?: {
+    channelType: string;
+    connectionMode: string;
+    degradedTransitions: number;
+    currentState: string;
+    latestProblemState: string;
+    recovered: boolean;
+  };
   toolStats: Record<
     string,
     { ok: number; failed: number; topErrorKind?: string }
@@ -103,6 +128,13 @@ export interface IncidentSignals {
    *  autonomous stuck-kill — the child's own rollup can still read success when
    *  the kill races completion. Absent (never `{}`) when no kill fired. */
   subagentKilled?: { killedBy: string; runtimeMs?: number; idleMs?: number; thresholdMs?: number };
+  /** Completed sub-agent results that had no authenticated completion route.
+   * Folded from `subagent.delivery_skipped`; counts and stable identifiers only. */
+  subagentDeliverySkipped?: {
+    count: number;
+    lastRunId: string;
+    lastReason: "no_origin" | "no_channel_params";
+  };
   /** Protected background-continuation recovery incidents folded from
    *  `background_task.notified` records whose reason is
    *  `recovery_retry_required`. Counts and stable identifiers only. */
@@ -111,6 +143,21 @@ export interface IncidentSignals {
     unresolvedCount: number;
     lastTaskId?: string;
     lastToolName?: string;
+  };
+  /** Aggregate of automatic inbound link-prefetch receipts in this session.
+   * Counts and elapsed time only; no URL or fetched content crosses the
+   * trajectory or incident-report boundary. */
+  linkPrefetch?: {
+    attempts: number;
+    detected: number;
+    attempted: number;
+    fetched: number;
+    failed: number;
+    validationRejected: number;
+    invalid: number;
+    duplicates: number;
+    capped: number;
+    durationMs: number;
   };
   failures: IncidentFailure[]; // normalized, newest-first
   breakerEvents: Array<{
@@ -366,7 +413,7 @@ export interface IncidentSignals {
     mainProvider?: string;
     model?: string;
     costUsd?: number;
-    path?: "main-vision" | "registry" | "gemini-video" | "unavailable";
+    path?: "main-vision" | "registry" | "gemini-video" | "vision-direct" | "unavailable";
     outcome: "ok" | "failed";
     errorKind?: string;
   };

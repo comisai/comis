@@ -21,10 +21,11 @@
 #   remote:  node /root/wire-emu.mjs && bash /root/restart-daemon.sh
 #   local:   node ./wire-emu.mjs && ./restart-daemon.sh
 #
-# EMU_GROUPS (a JSON array of {chatId, members:[{id,firstName,username?}], botId, botUsername}) is
-# passed through to the launcher. Group chats CANNOT be created over the /control API — only at
-# emulator launch — so a run that drives group/mention behaviour MUST set this (in .live-env or
-# inline) or those arcs are undrivable.
+# EMU_GROUPS (a JSON array of {chatId, members:[{id,firstName,username?}], botId, botUsername,
+# supergroup?, forum?}) is passed through to the launcher. Group chats CANNOT be created over the
+# /control API — only at emulator launch — so a run that drives group/mention behaviour MUST set
+# this (in .live-env or inline) or those arcs are undrivable. Topic scenarios require both
+# `supergroup:true` and `forum:true`.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$HERE/.live-env" ] && . "$HERE/.live-env"
@@ -33,11 +34,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   echo "missing $HERE/_rig.sh — re-run deploy-scripts.sh (the kit ships as a unit)" >&2
   exit 2
 }
-for _f in "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env; do
-  # shellcheck disable=SC1090 # the rig env path is mode-resolved at run time
-  [ -n "$_f" ] && [ -f "$_f" ] && . "$_f" && break
-done
-rig_defaults
+rig_load_persisted_env "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env
 if rig_is_local; then
   EMU_LOG="${EMU_LOG:-/tmp/comis-emu.log}"
   # tsx from the workspace (a devDependency of this repo) — never assume a global install locally.

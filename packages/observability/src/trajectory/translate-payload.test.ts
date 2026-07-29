@@ -12,6 +12,42 @@
 import { describe, it, expect } from "vitest";
 import { translatePayload } from "./translate-payload.js";
 
+describe("translatePayload — response locale decision", () => {
+  it("forwards only the content-free prompt locale decision fields", () => {
+    const data = translatePayload("prompt:submitted", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      promptChars: 120,
+      provider: "openai",
+      modelId: "model-a",
+      messageCount: 4,
+      systemDigest: "system-digest",
+      messagesDigest: "messages-digest",
+      responseLocale: "und-Latn",
+      responseLocaleSource: "request",
+      responseLocaleEnforced: true,
+      requestText: "must never cross the content-free trajectory boundary",
+      timestamp: 1717171717,
+    } as Record<string, unknown>);
+
+    expect(data).toEqual({
+      promptChars: 120,
+      provider: "openai",
+      modelId: "model-a",
+      messageCount: 4,
+      systemDigest: "system-digest",
+      messagesDigest: "messages-digest",
+      responseLocale: "und-Latn",
+      responseLocaleSource: "request",
+      responseLocaleEnforced: true,
+    });
+    expect("requestText" in data).toBe(false);
+    expect("agentId" in data).toBe(false);
+    expect("sessionKey" in data).toBe(false);
+    expect("timestamp" in data).toBe(false);
+  });
+});
+
 describe("translatePayload — script signals (envelope stripping)", () => {
   it("forwards context:script_zero_hit as exactly {scriptClass, lane, conversationId}", () => {
     const data = translatePayload("context:script_zero_hit", {

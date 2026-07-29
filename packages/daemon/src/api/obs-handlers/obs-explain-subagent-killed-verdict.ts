@@ -35,6 +35,29 @@ import type { IncidentSignals } from "@comis/core";
 /** Structural twin of `obs-explain-heuristics.RootCause` (kept local — no import cycle). */
 type SubagentKilledVerdict = { code: string; detail: string; suggestedNextSteps: string[] };
 
+/** A missing exact-origin completion route is terminal delivery degradation. */
+export function subagentDeliverySkippedVerdict(
+  s: IncidentSignals,
+): SubagentKilledVerdict | null {
+  const skipped = s.subagentDeliverySkipped;
+  if (skipped === undefined) return null;
+  const missing = skipped.lastReason === "no_origin"
+    ? "requesterOrigin"
+    : "announceChannelType/announceChannelId";
+  return {
+    code: "subagent_delivery_skipped",
+    detail:
+      `${String(skipped.count)} sub-agent completion(s) had no authenticated delivery route; `
+      + `the latest run ${skipped.lastRunId} was skipped with ${skipped.lastReason} (${missing} missing). `
+      + "A clean child execution rollup does not mean the result reached its parent.",
+    suggestedNextSteps: [
+      `preserve ${missing} when spawning, steering, or respawning the child`,
+      "inspect the parent session and exact-origin channel endpoint before re-running the task",
+      "obs.explain depth=full on the child session",
+    ],
+  };
+}
+
 /**
  * The health-monitor stuck-kill verdict. Fires only on the autonomous kill;
  * deliberate (parent/operator/system) kills return null.

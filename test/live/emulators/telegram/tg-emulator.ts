@@ -47,6 +47,7 @@ import type { Chat, Message, MessageEntity, ReactionTypeEmoji, Update, User } fr
 import {
   createHttpBackend,
   type HttpBackend,
+  type RouteContext,
   type RouteResult,
 } from "../../harness/backends/http-backend.js";
 import type { ChannelCaps, ChannelEmulator } from "../../harness/channel-emulator.js";
@@ -150,6 +151,8 @@ export interface RecordedOutbound extends AgnosticRecordedOutbound {
  * may read; all optional (the test author supplies what a scenario needs).
  */
 export interface MediaMeta {
+  /** Caption carried by the inbound Telegram media message. */
+  readonly caption?: string;
   /** Original filename (document). */
   readonly fileName?: string;
   /** MIME type (voice/document/video) — also seeds the file-route content-type when present. */
@@ -531,6 +534,12 @@ export interface CreateTgEmulatorOptions {
   /** The bot token grammy builds `/bot<token>/<method>` paths from (loopback stub). */
   readonly botToken: string;
   /**
+   * First Telegram `message_id` minted by this process. Standalone launchers
+   * advance this across restarts because a real Telegram chat never rewinds its
+   * message identity while Comis retains the conversation.
+   */
+  readonly initialMessageId?: number;
+  /**
    * Emulator-side cap on the long-poll block (ms). Defaults to 10s; the
    * scenario's request `timeout` (seconds) is honored but never exceeds this
    * cap, keeping tests deterministic regardless of the poller's request
@@ -797,6 +806,10 @@ function fileRouteForKind(kind: MediaKind, id: string): { filePath: string; cont
 export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   const backend: HttpBackend = createHttpBackend();
   const maxPollMs = opts.maxPollMs ?? DEFAULT_MAX_POLL_MS;
+  const initialMessageId = opts.initialMessageId ?? 100;
+  if (!Number.isSafeInteger(initialMessageId) || initialMessageId < 1) {
+    throw new TypeError("initialMessageId must be a positive safe integer");
+  }
   // The opt-in webhook-POST target (URL + secret). Absent → the
   // emulator is polling-only and `postWebhookMessage` throws (the default inject
   // path is unchanged). When present, `postWebhookMessage` POSTs the built
@@ -821,7 +834,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   // just the bot-global serve filter for a single DM.
   let pending: Update[] = [];
   const waiters: PollWaiter[] = [];
-  let nextMessageId = 100;
+  let nextMessageId = initialMessageId;
   // Per-chat group metadata (the recorded chat shape + members +
   // admins + bot identity). `injectMessage` stamps the recorded `Chat` onto a
   // group message so the mapper derives chatType group|forum + reads is_forum;
@@ -935,7 +948,11 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     return deliverable;
   }
 
-  function serveGetUpdates(body: Record<string, unknown>, query: URLSearchParams): Promise<RouteResult> {
+  function serveGetUpdates(
+    body: Record<string, unknown>,
+    query: URLSearchParams,
+    signal: AbortSignal,
+  ): Promise<RouteResult> {
     const offset = readNum(body, query, "offset");
     const limitRaw = readNum(body, query, "limit");
     const limit = limitRaw === undefined || limitRaw <= 0 ? 100 : limitRaw;
@@ -956,6 +973,12 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       );
     }
 
+    // A client that disconnected while its body was being read no longer owns
+    // delivery. Check before touching `pending` so it cannot consume an update.
+    if (signal.aborted) {
+      return Promise.resolve(okEnvelope([]));
+    }
+
     // Serve the updates THIS poll is entitled to (`update_id >= offset`),
     // removing only those delivered. The ack of confirmed (`< offset`) updates
     // is implicit: they were delivered+removed on a prior poll, and any still
@@ -974,14 +997,25 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
 
     return new Promise<RouteResult>((resolve) => {
       let settled = false;
-      const timer = setTimeout(() => {
-        // Timeout: remove this waiter (if still pending) and return [].
+      const removeWaiter = () => {
         const idx = waiters.indexOf(waiter);
         if (idx >= 0) waiters.splice(idx, 1);
-        if (!settled) {
-          settled = true;
-          resolve(okEnvelope([]));
-        }
+      };
+      const settle = (updates: Update[]) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
+        resolve(okEnvelope(updates));
+      };
+      const onAbort = () => {
+        removeWaiter();
+        settle([]);
+      };
+      const timer = setTimeout(() => {
+        // Timeout: remove this waiter (if still pending) and return [].
+        removeWaiter();
+        settle([]);
       }, waitMs);
       // Ensure the timer never blocks process exit (test hygiene).
       if (typeof timer.unref === "function") timer.unref();
@@ -990,13 +1024,13 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         limit,
         offset,
         resolve: (updates) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          resolve(okEnvelope(updates));
+          settle(updates);
         },
       };
       waiters.push(waiter);
+      signal.addEventListener("abort", onAbort, { once: true });
+      // Close can race the listener registration after the initial check.
+      if (signal.aborted) onAbort();
     });
   }
 
@@ -1066,7 +1100,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     };
   }
 
-  function dispatch(method: string, ctx: { body: string; query: string }): RouteResult | Promise<RouteResult> {
+  function dispatch(method: string, ctx: RouteContext): RouteResult | Promise<RouteResult> {
     const body = parseBody(ctx.body);
     const query = new URLSearchParams(ctx.query);
 
@@ -1097,7 +1131,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         // The TRUE long-poll (bot-global: one pending queue, one
         // waiter set, ack applied per-poll at serve time — as grammy's runner
         // polls per-bot with a single offset).
-        return serveGetUpdates(body, query);
+        return serveGetUpdates(body, query, ctx.signal);
 
       case "sendMessage":
         return sendMessage(body);
@@ -1449,9 +1483,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     return { status: 200, body: rec.bytes, contentType };
   });
 
-  backend.registerNativeRoute((method, routeCtx) =>
-    dispatch(method, { body: routeCtx.body, query: routeCtx.query }),
-  );
+  backend.registerNativeRoute((method, routeCtx) => dispatch(method, routeCtx));
 
   const emulator: TgEmulator = {
     caps: tgCaps satisfies ChannelCaps,
@@ -1645,17 +1677,20 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         firstName: from.firstName,
         ...(from.username !== undefined ? { username: from.username } : {}),
       });
+      const groupChat = groupChats.get(chat.chatId)?.chat;
       const update = makeMediaUpdate({
         updateId: nextUpdateId(),
         messageId,
         chatId: chat.chatId,
         from: user,
+        ...(groupChat === undefined ? {} : { chat: groupChat }),
         kind,
         fileId: handle.fileId,
         fileUniqueId: handle.fileUniqueId,
         // Echo the meta fields the per-kind grammy object carries (each spread
         // only when defined — the builder is exact-optional-safe).
         ...(meta?.mimeType !== undefined ? { mimeType: meta.mimeType } : {}),
+        ...(meta?.caption !== undefined ? { caption: meta.caption } : {}),
         ...(meta?.duration !== undefined ? { duration: meta.duration } : {}),
         ...(meta?.width !== undefined ? { width: meta.width } : {}),
         ...(meta?.height !== undefined ? { height: meta.height } : {}),

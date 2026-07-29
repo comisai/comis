@@ -663,8 +663,16 @@ function setupBundleFixture(tmpDirBase: string): BundleFixture {
         harness: "comis",
         model: "claude-3",
         config: { maxTokens: 2048 },
-        plugins: ["echo"],
-        skills: ["skill-a"],
+        plugins: {
+          count: 1,
+          chunks: [[{ name: "echo" }]],
+          truncated: false,
+        },
+        skills: {
+          count: 1,
+          chunks: [[{ id: "skill-a" }]],
+          truncated: false,
+        },
         prompting: {
           systemPrompt: "You are a helpful assistant.",
           userPromptPrefixText: "Please answer:",
@@ -1108,7 +1116,7 @@ describe("exportTrajectoryBundle", () => {
     expect(typeof prompts.systemPrompt).toBe("string");
     expect(prompts.systemPrompt).toBe("You are a helpful assistant.");
     expect(prompts.userPromptPrefixText).toBe("Please answer:");
-    expect(Array.isArray(prompts.skills)).toBe(true);
+    expect(prompts.skills).toEqual([{ id: "skill-a" }]);
 
     const systemPromptTxt = readFileSync(join(bundleDir, "system-prompt.txt"), "utf-8");
     expect(systemPromptTxt).toBe(prompts.systemPrompt);

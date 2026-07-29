@@ -51,7 +51,11 @@ import { toolFailureHint } from "./tool-failure-hint.js";
 import type { ExecutionBudgetWindow, SpendGateOutcome } from "../budget/budget-guard.js";
 import { checkSpendCeiling } from "../budget/budget-guard.js";
 import type { CostTracker } from "../budget/cost-tracker.js";
-import type { SpendAccumulator, SpendScope } from "../budget/spend-accumulator.js";
+import type {
+  SpendAccumulator,
+  SpendLimb,
+  SpendScope,
+} from "../budget/spend-accumulator.js";
 import type { StepCounter } from "../executor/step-counter.js";
 import type { CircuitBreaker } from "../safety/circuit-breaker.js";
 import type { ToolRetryBreaker } from "../safety/tool-retry-breaker.js";
@@ -102,6 +106,22 @@ const BRACKETED_TOOL_ERROR_CODE = /\[([a-z]+(?:_[a-z]+)+)\]/;
  * errorKind:"dependency", misdirecting an operator at a missing package.)
  */
 const NODE_PATH_TYPE_USAGE_ERRNO = /\b(?:EISDIR|ENOTDIR):/;
+
+function perRootBudgetAbortReason(limb: SpendLimb | undefined): string {
+  const resolvedLimb = limb ?? "aggregateUsd";
+  switch (resolvedLimb) {
+    case "aggregateUsd":
+      return "per-root dollar budget exceeded";
+    case "tokens":
+      return "per-root token budget exceeded";
+    case "wallClockMs":
+      return "per-root wall-clock budget exceeded";
+    default: {
+      const _exhaustive: never = resolvedLimb;
+      return _exhaustive;
+    }
+  }
+}
 
 /**
  * Classify a tool failure's errorKind when the SDK reported `isError: true`
@@ -495,8 +515,8 @@ export interface PiEventBridgeDeps {
   /**
    * Snapshot passed into `trace.metadata` once per session, immediately
    * after `session.started`. Contains harness/model/config/plugins/skills/
-   * prompting/redaction. When omitted, the trace.metadata lifecycle envelope
-   * is skipped for this session.
+   * bounded tool inventory/prompting/redaction. When omitted, the
+   * trace.metadata lifecycle envelope is skipped for this session.
    *
    * The config field is run through `sanitizeForPersistence` inside
    * `buildTraceMetadata` — raw config may contain secrets.
@@ -2408,7 +2428,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               );
                 if (rootGate.kind === "exceeded") {
                 m.finishReason = "spend_exceeded"; // reuse the single spend finishReason
-                m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
+                m.abortResponse = buildAbortRedirectMessage(
+                  deps.executionPlan?.current,
+                  perRootBudgetAbortReason(rootGate.error.limb),
+                );
                 m.aborted = true;
                 // This is the per-ROOT autonomy.budget meter, NOT the
                 // observability.spend ceiling — steer the operator hint at the right knob.

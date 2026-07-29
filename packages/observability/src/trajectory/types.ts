@@ -163,6 +163,9 @@ export const TRAJECTORY_EVENT_TYPES = [
   // to `comis explain`. Content-free: runId + closed
   // channelType + attempt count + the transient tag ONLY — never an announcement body / error string.
   "subagent.delivery_retried",
+  // A terminal sub-agent result had no authenticated completion route.
+  // Content-free: runId + closed missing-route reason only.
+  "subagent.delivery_skipped",
   "subagent.budget_exceeded",
 
   // The per-capability authorization
@@ -407,6 +410,12 @@ export const TRAJECTORY_EVENT_TYPES = [
   "scheduler.task_store_degraded",
   "scheduler.task_cancelled",
   "scheduler.task_store_reset",
+
+  // Automatic inbound link-prefetch receipt. Direct-emitted by the executor
+  // after the session recorder opens because preprocessing necessarily runs
+  // before the per-session EventBus bridge subscribes. Counts and duration
+  // only — never a URL, page title, response body, or error message.
+  "link.prefetch",
 ] as const;
 
 /** Closed union of trajectory event type strings. */

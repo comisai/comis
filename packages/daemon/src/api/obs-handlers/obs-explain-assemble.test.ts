@@ -113,6 +113,103 @@ function makeMetadata(overrides: Record<string, unknown> = {}): Record<string, u
   };
 }
 
+describe("assembleIncidentReport — response locale decision", () => {
+  it("surfaces the content-free locale decision on the explain report", () => {
+    const signals = makeSignals({
+      responseLocale: {
+        locale: "und-Latn",
+        source: "request",
+        enforced: true,
+      },
+    } as unknown as Partial<IncidentSignals>);
+
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report).toMatchObject({
+      responseLocale: {
+        locale: "und-Latn",
+        source: "request",
+        enforced: true,
+      },
+    });
+    expect(IncidentReportSchema.parse(report)).toMatchObject({
+      responseLocale: {
+        locale: "und-Latn",
+        source: "request",
+        enforced: true,
+      },
+    });
+  });
+});
+
+describe("assembleIncidentReport — channel health outcome", () => {
+  const cleanSignals = (recovered: boolean): IncidentSignals => makeSignals({
+    toolStats: {},
+    failures: [],
+    repeatedFailureCount: {},
+    hasMisclassificationSignal: false,
+    misclassifiedTool: undefined,
+    misclassifiedToken: undefined,
+    channelHealth: {
+      channelType: "telegram",
+      connectionMode: "polling",
+      degradedTransitions: 1,
+      currentState: recovered ? "healthy" : "disconnected",
+      latestProblemState: "disconnected",
+      recovered,
+    },
+  });
+
+  const cleanMetadata = (): Record<string, unknown> => makeMetadata({
+    sessionEnd: {
+      endReason: "success",
+      degraded: false,
+      durationMs: 10,
+      totalTokens: 20,
+      costUsd: 0,
+      toolStats: {},
+    },
+  });
+
+  it("marks a clean agent turn degraded while its channel remains disconnected", () => {
+    const report = assembleIncidentReport(
+      cleanSignals(false),
+      cleanMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.outcome).toEqual({
+      endReason: "success",
+      degraded: true,
+      severity: "degraded",
+    });
+  });
+
+  it("keeps a clean agent turn healthy after the channel recovery transition", () => {
+    const report = assembleIncidentReport(
+      cleanSignals(true),
+      cleanMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.outcome).toEqual({
+      endReason: "success",
+      degraded: false,
+      severity: "ok",
+    });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The per-node budget-breach section is surfaced when the signals carry
 // breaches (capSource names WHICH knob bound the node) and OMITTED when there
@@ -763,6 +860,30 @@ describe("assembleIncidentReport — identity & invariants", () => {
     expect(report.sessionKey).toBe(SESSION_KEY);
   });
 
+  it("surfaces aggregated automatic link-prefetch evidence", () => {
+    const linkPrefetch = {
+      attempts: 3,
+      detected: 4,
+      attempted: 4,
+      fetched: 2,
+      failed: 2,
+      validationRejected: 2,
+      invalid: 0,
+      duplicates: 0,
+      capped: 0,
+      durationMs: 41,
+    };
+    const report = assembleIncidentReport(
+      makeSignals({ linkPrefetch }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.linkPrefetch).toEqual(linkPrefetch);
+  });
+
   it("reads traceId / agentId / channel from the metadata", () => {
     const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(report.traceId).toBe("f942d38c-0000-0000-0000-000000000000");
@@ -1268,6 +1389,52 @@ describe("assembleIncidentReport — user surface (activity finalize + skipped d
     const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 0);
     expect(report.activityFinalize).toBeUndefined();
     expect(report.deliverySkipped).toBeUndefined();
+  });
+
+  it("degrades a clean child rollup when its completion had no delivery route", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "subagent.delivery_skipped",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: {
+          runId: "run-route-lost",
+          reason: "no_origin",
+        },
+      },
+    ]);
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata({
+        sessionEnd: {
+          endReason: "success",
+          degraded: false,
+          toolStats: {},
+        },
+      }),
+      null,
+      SESSION_KEY,
+      1,
+    );
+    const delivery = (report as unknown as {
+      subagentDeliverySkipped?: {
+        count: number;
+        lastRunId: string;
+        lastReason: string;
+      };
+    }).subagentDeliverySkipped;
+
+    expect(delivery).toEqual({
+      count: 1,
+      lastRunId: "run-route-lost",
+      lastReason: "no_origin",
+    });
+    expect(report.outcome).toEqual({
+      endReason: "success",
+      degraded: true,
+      severity: "degraded",
+    });
   });
 });
 

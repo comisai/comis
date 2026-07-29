@@ -150,8 +150,11 @@ export function renderResponseLocalePolicy(policy: ResponseLocalePolicy): string
   const scriptGuidance = policy.locale.startsWith("und-")
     ? " The tag identifies only the writing system; use the same human language as the current user request."
     : "";
+  const requestPriority = policy.source === "request"
+    ? " When the current request has a clear language signal, the current request takes precedence over earlier conversation turns."
+    : "";
   return `<response-locale locale="${policy.locale}" source="${policy.source}" enforce="${policy.enforceLocale}"${translation}>\n`
-    + `Apply this response-locale decision to user-visible prose.${scriptGuidance} Translation target is separate from response locale.\n`
+    + `Apply this response-locale decision to user-visible prose.${scriptGuidance}${requestPriority} Translation target is separate from response locale.\n`
     + "</response-locale>";
 }
 

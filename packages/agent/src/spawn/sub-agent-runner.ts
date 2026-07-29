@@ -3219,11 +3219,21 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }
         } else {
           // Log explicit reason when announcement cannot be routed
+          const suppressAnnounceReason = params.requesterOrigin
+            ? "no_channel_params" as const
+            : "no_origin" as const;
           deps.logger?.debug({
             runId,
-            suppressAnnounceReason: params.requesterOrigin ? "no_channel_params" : "no_origin",
+            suppressAnnounceReason,
             hasOrigin: !!params.requesterOrigin,
           }, "Sub-agent announcement skipped: no announce channel");
+          deps.eventBus.emit("subagent:delivery_skipped", {
+            runId,
+            agentId: params.agentId,
+            sessionKey: run.sessionKey,
+            reason: suppressAnnounceReason,
+            timestamp: clock.now(),
+          });
         }
 
         if (deliverySuppressedRunIds.has(runId)) return;
@@ -3386,11 +3396,21 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }, deps);
         } else if (!admissionRejected) {
           // Log explicit reason when failure announcement cannot be routed
+          const suppressAnnounceReason = params.requesterOrigin
+            ? "no_channel_params" as const
+            : "no_origin" as const;
           deps.logger?.debug({
             runId,
-            suppressAnnounceReason: params.requesterOrigin ? "no_channel_params" : "no_origin",
+            suppressAnnounceReason,
             hasOrigin: !!params.requesterOrigin,
           }, "Sub-agent failure announcement skipped: no announce channel");
+          deps.eventBus.emit("subagent:delivery_skipped", {
+            runId,
+            agentId: params.agentId,
+            sessionKey: run.sessionKey,
+            reason: suppressAnnounceReason,
+            timestamp: clock.now(),
+          });
         }
 
         // Lifecycle hook - onEnded (failure path)

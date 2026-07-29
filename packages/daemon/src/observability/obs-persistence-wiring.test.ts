@@ -52,6 +52,7 @@ import * as os from "node:os";
 import * as nodePath from "node:path";
 import { initSchema, createObservabilityStore, queryCacheBreakRateByReason } from "@comis/memory";
 import type { DiagnosticEvent } from "./diagnostic-collector.js";
+import * as orchestrationRows from "./obs-orchestration-rows.js";
 
 function deliveryAuthorityEventFields(channelType: string, conversationId: string) {
   return {
@@ -1419,6 +1420,45 @@ describe("deliveryDeadletteredEventToRow", () => {
   });
 });
 
+describe("deliverySkippedEventToRow", () => {
+  it("maps a missing sub-agent completion route to a content-free warning health signal", () => {
+    const mapper = (
+      orchestrationRows as unknown as {
+        deliverySkippedEventToRow: (payload: Record<string, unknown>) => {
+          timestamp: number;
+          category: string;
+          severity: string;
+          agentId?: string;
+          sessionKey?: string;
+          message: string;
+          details?: string;
+        };
+      }
+    ).deliverySkippedEventToRow;
+    const row = mapper({
+      runId: "run-route-lost",
+      agentId: "default",
+      sessionKey: "child-session-key",
+      reason: "no_origin",
+      timestamp: 8_500,
+    });
+
+    expect(row).toMatchObject({
+      timestamp: 8_500,
+      category: "health_signal",
+      severity: "warning",
+      agentId: "default",
+      sessionKey: "child-session-key",
+      message: "subagent:delivery_skipped",
+    });
+    expect(JSON.parse(row.details ?? "{}")).toEqual({
+      signal: "subagent_delivery_skipped",
+      reason: "no_origin",
+    });
+    expect(JSON.stringify(row)).not.toContain("run-route-lost");
+  });
+});
+
 describe("nodeBudgetExceededEventToRow", () => {
   it("maps a subagent:budget_exceeded payload to a warning health_signal row (capSource label only)", () => {
     const row = nodeBudgetExceededEventToRow({
@@ -1841,6 +1881,7 @@ describe("setupObsPersistence", () => {
     expect(eventBus.on).toHaveBeenCalledWith("context:dag_degraded", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("health:budget_exceeded", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("mcp:server:reconnect_failed", expect.any(Function));
+    expect(eventBus.on).toHaveBeenCalledWith("channel:health_changed", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("observability:trajectory_degraded", expect.any(Function));
     // The 2 multilingual health_signal subscriptions.
     expect(eventBus.on).toHaveBeenCalledWith("context:script_zero_hit", expect.any(Function));
@@ -1853,6 +1894,7 @@ describe("setupObsPersistence", () => {
     // The three previously-dark daemon-side orchestration subscriptions.
     expect(eventBus.on).toHaveBeenCalledWith("security:sandbox_downgrade_refused", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("subagent:delivery_deadlettered", expect.any(Function));
+    expect(eventBus.on).toHaveBeenCalledWith("subagent:delivery_skipped", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("subagent:budget_exceeded", expect.any(Function));
 
     // Cleanup
@@ -1936,21 +1978,43 @@ describe("setupObsPersistence", () => {
       agentId: "a1", sessionKey: "sk-1", traceId: "trace-1",
       reason: "resume_failed", failureKind: "invalid_jsonl", timestamp: 1015,
     });
+    // p. A polling adapter stopped after an inbound failure. The free-text error
+    // must not cross into the daemon-wide diagnostic row.
+    eventBus.emit("channel:health_changed", {
+      channelType: "telegram",
+      previousState: "healthy",
+      currentState: "disconnected",
+      connectionMode: "polling",
+      error: "Inbound body must stay out of the health row",
+      lastMessageAt: 900,
+      timestamp: 1016,
+    });
+    // A recovery is lifecycle evidence, not another system degradation row.
+    eventBus.emit("channel:health_changed", {
+      channelType: "telegram",
+      previousState: "startup-grace",
+      currentState: "healthy",
+      connectionMode: "polling",
+      error: null,
+      lastMessageAt: null,
+      timestamp: 1017,
+    });
 
     // Flush the diagnostic buffer.
     vi.advanceTimersByTime(500);
 
-    // Exactly one health_signal row per event (16 total), each with the right message.
+    // Exactly one health_signal row per degraded event (17 total), each with the right message.
     const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
     const healthRows = calls
       .map((c) => c[0] as { category?: string; message?: string; details?: string })
       .filter((r) => r.category === "health_signal");
-    expect(healthRows).toHaveLength(16);
+    expect(healthRows).toHaveLength(17);
     const messages = healthRows.map((r) => r.message).sort();
     expect(messages).toEqual([
       "autonomy:denial_breaker_tripped",
       "autonomy:killed",
       "autonomy:revoked",
+      "channel:health_changed",
       "context:dag_degraded",
       "context:script_zero_hit",
       "context:summary_language_mismatch",
@@ -1965,6 +2029,14 @@ describe("setupObsPersistence", () => {
       "subagent:delivery_deadlettered",
       "trajectory_resume_failed",
     ]);
+    const channelRow = healthRows.find((row) => row.message === "channel:health_changed")!;
+    expect(JSON.parse(channelRow.details ?? "{}")).toEqual({
+      signal: "channel_health_degraded",
+      channelType: "telegram",
+      connectionMode: "polling",
+      reason: "disconnected",
+    });
+    expect(channelRow.details).not.toContain("Inbound body");
     // The autonomy rows carry their closed signal labels.
     expect(JSON.parse(healthRows.find((r) => r.message === "durable:orphaned")!.details ?? "{}").signal).toBe("durable_orphaned");
     expect(JSON.parse(healthRows.find((r) => r.message === "durable:resumed")!.details ?? "{}").signal).toBe("durable_resumed");

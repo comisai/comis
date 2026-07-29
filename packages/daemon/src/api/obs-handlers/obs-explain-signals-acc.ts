@@ -34,7 +34,7 @@ export type SpawnNode = NonNullable<IncidentSignals["spawnTree"]>[number];
 
 // @optional-field-count: internal mutable fold accumulator — each optional field
 // is a DISTINCT terminal-record signal (breaker tool, contextBudget, promptTimeout,
-// toolSchemaUnsupported, lastRecall, spend, perRootBudget, the four media turns,
+// toolSchemaUnsupported, responseLocale, lastRecall, spend, perRootBudget, the four media turns,
 // agentId, channel) that is absent until its trajectory record class is seen. They
 // are not a configuration surface; collapsing or splitting them would only obscure
 // the one-fold-per-record-class structure.
@@ -57,6 +57,8 @@ export interface Acc {
    *  onto each run's `toolCalls` at materialization (EXPLAIN-04: the per-run leaseId
    *  attributes a deny to THE RUN). */
   orchestrateToolCallsByLease: Map<string, Map<string, OrchestrateToolCallFold>>;
+  /** The LAST valid `prompt.submitted` locale decision. */
+  responseLocale?: NonNullable<IncidentSignals["responseLocale"]>;
   breakerOpenedTool?: string;
   hasDoNotRetrySignal: boolean;
   /** Tools for which a log-shape breaker "opened" event was already synthesized
@@ -169,6 +171,8 @@ export interface Acc {
   agentId?: string;
   /** Channel identity from the session.started record's data. */
   channel?: { type: string; id: string };
+  /** Channel-health lifecycle after the first degraded transition. */
+  channelHealth?: NonNullable<IncidentSignals["channelHealth"]>;
   sessionKey: string;
   seq: number;
   /** The LAST `terminal.drive_promoted` reason seen (mode_detached |
@@ -187,8 +191,13 @@ export interface Acc {
   subagentKilledRuntimeMs?: number;
   subagentKilledIdleMs?: number;
   subagentKilledThresholdMs?: number;
+  subagentDeliverySkippedCount: number;
+  subagentDeliverySkippedLastRunId?: string;
+  subagentDeliverySkippedLastReason?: "no_origin" | "no_channel_params";
   backgroundRecoveryRetryCount: number;
   backgroundRecoveryByTask: Map<string, { unresolved: boolean; toolName?: string }>;
   backgroundRecoveryLastTaskId?: string;
   backgroundRecoveryLastToolName?: string;
+  /** Session aggregate of direct `link.prefetch` counts-only receipts. */
+  linkPrefetch?: NonNullable<IncidentSignals["linkPrefetch"]>;
 }

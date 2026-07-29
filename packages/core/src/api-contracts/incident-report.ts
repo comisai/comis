@@ -99,6 +99,21 @@ export const IncidentReportSchema = z.object({
     durationMs: z.number(),
     turnCount: z.number(),
   }),
+  /** Content-free response-locale decision for the selected turn (exact trace)
+   * or latest turn (whole session). */
+  responseLocale: z
+    .union([
+      z.object({
+        locale: z.string().min(2).max(128),
+        source: z.enum(["request", "explicit"]),
+        enforced: z.boolean(),
+      }),
+      z.object({
+        source: z.literal("unset"),
+        enforced: z.literal(false),
+      }),
+    ])
+    .optional(),
   toolStats: z.record(
     z.string(),
     z.object({
@@ -255,6 +270,24 @@ export const IncidentReportSchema = z.object({
       lastDegradedErrorKind: z.string().optional(),
     })
     .optional(),
+  /** Automatic inbound link-prefetch evidence aggregated over the session.
+   * The section is counts-and-duration only so operators can distinguish
+   * fetched, failed, validation-rejected, malformed, duplicate, and capped
+   * targets without exposing URLs or page content. */
+  linkPrefetch: z
+    .object({
+      attempts: z.number().int().nonnegative(),
+      detected: z.number().int().nonnegative(),
+      attempted: z.number().int().nonnegative(),
+      fetched: z.number().int().nonnegative(),
+      failed: z.number().int().nonnegative(),
+      validationRejected: z.number().int().nonnegative(),
+      invalid: z.number().int().nonnegative(),
+      duplicates: z.number().int().nonnegative(),
+      capped: z.number().int().nonnegative(),
+      durationMs: z.number().int().nonnegative(),
+    })
+    .optional(),
   /** The image-generation turn reconstructed from the
    *  session's `image.*` trajectory records (the terminal image record wins).
    *  The image cost (`costUsd`) rides HERE — `comis explain` shows it from the
@@ -305,7 +338,7 @@ export const IncidentReportSchema = z.object({
       /** The analysis cost in USD, reconstructed from the trajectory. Absent on a failed turn OR the registry/gemini-video tiers (which carry no per-call cost). */
       costUsd: z.number().optional(),
       /** Which ladder tier served (the "which path" signal). Absent on a partial record. */
-      path: z.enum(["main-vision", "registry", "gemini-video", "unavailable"]).optional(),
+      path: z.enum(["main-vision", "registry", "gemini-video", "vision-direct", "unavailable"]).optional(),
       /** The terminal outcome of the vision turn. */
       outcome: z.enum(["ok", "failed"]),
       /** The classified failure kind when `outcome === "failed"`. Absent on success. */
@@ -582,6 +615,15 @@ export const IncidentReportSchema = z.object({
       events: z.number(),
       /** Total blocks that were never sent across those events. */
       chunksNotSent: z.number(),
+    })
+    .optional(),
+  /** Completed sub-agent results that could not be announced because the
+   * authenticated origin or channel parameters were absent. */
+  subagentDeliverySkipped: z
+    .object({
+      count: z.number(),
+      lastRunId: z.string(),
+      lastReason: z.enum(["no_origin", "no_channel_params"]),
     })
     .optional(),
   /** Distinct agent turns derived from prompt anchors, with tool-lifecycle

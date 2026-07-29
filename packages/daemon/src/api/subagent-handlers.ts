@@ -326,6 +326,19 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
               callerConversation: controller.conversation,
             }
           : {}),
+        ...(run.requesterOrigin !== undefined
+          ? { requesterOrigin: run.requesterOrigin }
+          : {}),
+        ...(run.announceChannelType !== undefined
+          ? { announceChannelType: run.announceChannelType }
+          : {}),
+        ...(run.announceChannelId !== undefined
+          ? { announceChannelId: run.announceChannelId }
+          : {}),
+        ...(run.callerEndpoint !== undefined
+          ? { callerEndpoint: run.callerEndpoint }
+          : {}),
+        depth: run.depth,
         ...(run.rootRunId !== undefined ? { rootRunId: run.rootRunId } : {}),
         ...(run.leaseId !== undefined
           ? { parentLeaseId: run.leaseId }

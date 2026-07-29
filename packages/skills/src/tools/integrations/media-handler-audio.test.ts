@@ -70,11 +70,18 @@ describe("processAudioAttachment", () => {
 
   it("returns transcription on successful STT", async () => {
     const transcriber = makeTranscriber();
-    const deps: AudioHandlerDeps = {
+    const deps = {
       transcriber,
       resolveAttachment: makeResolver(),
       logger: makeLogger(),
-    };
+      sttSelection: {
+        provider: "local",
+        keyless: true,
+        model: "base",
+        source: "keyless-local",
+        onSkip: ["main_provider_has_no_audio_mapping"],
+      },
+    } as unknown as AudioHandlerDeps;
 
     const result = await processAudioAttachment(makeAudioAttachment(), deps, buildHint);
 
@@ -84,6 +91,17 @@ describe("processAudioAttachment", () => {
       attachmentUrl: "tg-file://audio1",
       text: "hello from voice",
       language: "en",
+    });
+    expect((result as unknown as {
+      sttReceipt?: Record<string, unknown>;
+    }).sttReceipt).toMatchObject({
+      provider: "local",
+      keyless: true,
+      model: "base",
+      source: "keyless-local",
+      onSkip: ["main_provider_has_no_audio_mapping"],
+      outcome: "ok",
+      audioBytes: Buffer.from("fake-audio-data").byteLength,
     });
   });
 
@@ -117,20 +135,47 @@ describe("processAudioAttachment", () => {
   });
 
   it("returns failure hint when transcription fails", async () => {
+    const providerError = Object.assign(
+      new Error("Unable to get model file path or buffer"),
+      { kind: "model_load_failed" as const },
+    );
     const transcriber: TranscriptionPort = {
-      transcribe: vi.fn().mockResolvedValue(err(new Error("API rate limited"))),
+      transcribe: vi.fn().mockResolvedValue(err(providerError)),
     };
     const logger = makeLogger();
-    const deps: AudioHandlerDeps = {
+    const deps = {
       transcriber,
       resolveAttachment: makeResolver(),
       logger,
-    };
+      sttSelection: {
+        provider: "local",
+        keyless: true,
+        model: "base",
+        source: "keyless-local",
+      },
+    } as unknown as AudioHandlerDeps;
 
     const result = await processAudioAttachment(makeAudioAttachment(), deps, buildHint);
 
     expect(result.textPrefix).toContain("transcription failed");
+    expect(result.textPrefix).toContain(
+      "integrations.media.transcription.local.model",
+    );
+    expect(result.textPrefix).toContain(
+      "integrations.media.transcription.provider",
+    );
     expect(result.transcription).toBeUndefined();
+    expect((result as unknown as {
+      sttReceipt?: Record<string, unknown>;
+    }).sttReceipt).toMatchObject({
+      provider: "local",
+      keyless: true,
+      model: "base",
+      source: "keyless-local",
+      outcome: "failed",
+      errorKind: "model_load_failed",
+      audioBytes: Buffer.from("fake-audio-data").byteLength,
+    });
     expect(logger.warn).toHaveBeenCalled();
   });
 

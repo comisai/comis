@@ -153,6 +153,18 @@ describe("audioPreflight", () => {
     expect(result.message.metadata?.isBotMentioned).toBe(true);
   });
 
+  it("matches a spoken compact form of a platform bot handle", async () => {
+    const deps = makeDeps({
+      transcriber: makeTranscriber("Hey Testbot what's the weather tomorrow?"),
+      botNames: ["test_bot"],
+    });
+    const msg = makeMessage({ attachments: [makeAudioAttachment()] });
+
+    const result = await audioPreflight(deps, msg);
+
+    expect(result.message.metadata?.isBotMentioned).toBe(true);
+  });
+
   it("does NOT set isBotMentioned when transcript does not contain bot name", async () => {
     const deps = makeDeps({
       transcriber: makeTranscriber("hey everyone, how are you?"),

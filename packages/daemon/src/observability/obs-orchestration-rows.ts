@@ -2,8 +2,8 @@
 /**
  * Orchestration-observability row-builders.
  *
- * The three previously-dark sub-agent-lifecycle events — sandbox-downgrade refusal /
- * dead-lettered delivery / per-node budget breach — mapped to content-free
+ * Sub-agent lifecycle failures — sandbox-downgrade refusal, dead-lettered or
+ * unroutable delivery, per-node budget breach, and attributed kill — map to content-free
  * `health_signal` diagnostic rows (a new `signal:` label rides
  * the EXISTING `obs_diagnostics` category, NO migration). Extracted from
  * `obs-persistence-wiring.ts` to keep that file under the 800-line cap.
@@ -68,6 +68,25 @@ export function deliveryDeadletteredEventToRow(
       signal: "delivery_deadlettered",
       channelType: payload.channelType,
       transient: payload.transient,
+    }),
+    traceId: undefined,
+  };
+}
+
+/** Map a missing sub-agent completion route to a content-free warning row. */
+export function deliverySkippedEventToRow(
+  payload: EventMap["subagent:delivery_skipped"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: payload.agentId,
+    sessionKey: payload.sessionKey,
+    message: "subagent:delivery_skipped",
+    details: JSON.stringify({
+      signal: "subagent_delivery_skipped",
+      reason: payload.reason,
     }),
     traceId: undefined,
   };

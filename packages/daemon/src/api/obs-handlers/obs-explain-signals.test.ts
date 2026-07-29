@@ -24,6 +24,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type { IncidentSignals } from "@comis/core";
+import { rootCause } from "./obs-explain-heuristics.js";
 import { toIncidentSignals } from "./obs-explain-signals.js";
 
 // ---------------------------------------------------------------------------
@@ -113,6 +114,50 @@ function event(
   return { traceSchema: "comis-trajectory", schemaVersion: 1, type, seq, data };
 }
 
+describe("toIncidentSignals — response locale decision", () => {
+  it("retains the latest content-free prompt locale decision", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        responseLocale: "he",
+        responseLocaleSource: "explicit",
+        responseLocaleEnforced: true,
+      }),
+      event("prompt.submitted", 2, {
+        responseLocale: "und-Latn",
+        responseLocaleSource: "request",
+        responseLocaleEnforced: true,
+      }),
+    ]);
+
+    expect(signals).toMatchObject({
+      responseLocale: {
+        locale: "und-Latn",
+        source: "request",
+        enforced: true,
+      },
+    });
+  });
+
+  it("retains an unset advisory decision without inventing a locale", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        responseLocaleSource: "unset",
+        responseLocaleEnforced: false,
+      }),
+    ]);
+
+    expect(signals).toMatchObject({
+      responseLocale: {
+        source: "unset",
+        enforced: false,
+      },
+    });
+    expect(
+      (signals as unknown as { responseLocale?: { locale?: string } }).responseLocale?.locale,
+    ).toBeUndefined();
+  });
+});
+
 describe("toIncidentSignals — turnCount (flag cumulative-across-turns toolStats)", () => {
   // The trajectory JSONL is append-only across session.reset_conversation severs, so one
   // file (and the whole-session toolStats) can span many turns. prompt.submitted is the
@@ -170,6 +215,106 @@ describe("toIncidentSignals — turnCount (flag cumulative-across-turns toolStat
       evt("agent-turn-b", "prompt.submitted", 3, { promptChars: 18 }),
     ]);
     expect(s.turnCount).toBe(2);
+  });
+});
+
+describe("toIncidentSignals — channel health transitions", () => {
+  const healthEvent = (
+    seq: number,
+    previousState: string,
+    currentState: string,
+  ): Record<string, unknown> => ({
+    traceSchema: "comis-trajectory",
+    schemaVersion: 1,
+    traceId: "session-fallback",
+    type: "channel.health_changed",
+    seq,
+    data: {
+      channelType: "telegram",
+      previousState,
+      currentState,
+      connectionMode: "polling",
+    },
+  });
+
+  it("names an unrecovered channel disconnection as the incident root cause", () => {
+    const signals = toIncidentSignals([
+      healthEvent(1, "startup-grace", "healthy"),
+      healthEvent(2, "healthy", "disconnected"),
+    ]);
+
+    expect(signals).toMatchObject({
+      channelHealth: {
+        channelType: "telegram",
+        connectionMode: "polling",
+        degradedTransitions: 1,
+        currentState: "disconnected",
+        latestProblemState: "disconnected",
+        recovered: false,
+      },
+    });
+    expect(rootCause(signals)).toMatchObject({
+      code: "channel_disconnected",
+    });
+  });
+
+  it("does not retain a channel failure verdict after a healthy recovery transition", () => {
+    const signals = toIncidentSignals([
+      healthEvent(1, "healthy", "disconnected"),
+      healthEvent(2, "startup-grace", "healthy"),
+    ]);
+
+    expect(signals).toMatchObject({
+      channelHealth: {
+        degradedTransitions: 1,
+        currentState: "healthy",
+        latestProblemState: "disconnected",
+        recovered: true,
+      },
+    });
+    expect(rootCause(signals)).toBeNull();
+  });
+});
+
+describe("toIncidentSignals — automatic link-prefetch receipts", () => {
+  it("aggregates counts-only receipts across session turns", () => {
+    const signals = toIncidentSignals([
+      event("link.prefetch", 1, {
+        detected: 1,
+        attempted: 1,
+        fetched: 1,
+        failed: 0,
+        validationRejected: 0,
+        invalid: 0,
+        duplicates: 0,
+        capped: 0,
+        durationMs: 12,
+      }),
+      event("link.prefetch", 2, {
+        detected: 2,
+        attempted: 1,
+        fetched: 0,
+        failed: 1,
+        validationRejected: 1,
+        invalid: 1,
+        duplicates: 0,
+        capped: 0,
+        durationMs: 7,
+      }),
+    ]);
+
+    expect(signals.linkPrefetch).toEqual({
+      attempts: 2,
+      detected: 3,
+      attempted: 2,
+      fetched: 1,
+      failed: 1,
+      validationRejected: 1,
+      invalid: 1,
+      duplicates: 0,
+      capped: 0,
+      durationMs: 19,
+    });
   });
 });
 

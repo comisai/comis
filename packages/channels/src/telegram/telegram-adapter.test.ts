@@ -234,6 +234,23 @@ describe("createTelegramAdapter", () => {
   });
 
   describe("start()", () => {
+    it("publishes the live bot username for spoken mention detection", async () => {
+      const adapter = createTelegramAdapter(makeDeps());
+      const mentionNames = (
+        adapter as unknown as {
+          getBotMentionNames?: () => readonly string[];
+        }
+      ).getBotMentionNames;
+
+      expect(mentionNames).toBeTypeOf("function");
+      expect(mentionNames?.()).toEqual([]);
+
+      const result = await adapter.start();
+
+      expect(result.ok).toBe(true);
+      expect(mentionNames?.()).toEqual(["test_bot"]);
+    });
+
     it("validates token and returns ok on valid token", async () => {
       vi.mocked(validateBotToken).mockResolvedValue(
         ok({ id: 123, username: "test_bot", isBot: true }),

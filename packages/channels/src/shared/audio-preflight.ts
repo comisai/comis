@@ -43,6 +43,51 @@ export interface PreflightResult {
   transcribed: boolean;
 }
 
+function mentionVariants(name: string): string[] {
+  const canonical = name
+    .normalize("NFKC")
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+  const spaced = canonical
+    .replace(/[_\-.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const compact = spaced.replace(/\s+/g, "");
+  return [...new Set([canonical, spaced, compact])]
+    .filter((variant) => variant.length > 0);
+}
+
+function containsBoundedPhrase(text: string, phrase: string): boolean {
+  const textChars = [...text];
+  const phraseChars = [...phrase];
+  if (phraseChars.length === 0 || phraseChars.length > textChars.length) return false;
+
+  for (let start = 0; start <= textChars.length - phraseChars.length; start += 1) {
+    const matches = phraseChars.every(
+      (character, offset) => textChars[start + offset] === character,
+    );
+    if (!matches) continue;
+    const before = textChars[start - 1];
+    const after = textChars[start + phraseChars.length];
+    const startsAtBoundary = before === undefined || !/[\p{L}\p{N}]/u.test(before);
+    const endsAtBoundary = after === undefined || !/[\p{L}\p{N}]/u.test(after);
+    if (startsAtBoundary && endsAtBoundary) return true;
+  }
+  return false;
+}
+
+function transcriptMentionsBot(transcript: string, botNames: readonly string[]): boolean {
+  const normalizedTranscript = transcript
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+  return botNames.some((name) =>
+    mentionVariants(name).some((variant) =>
+      containsBoundedPhrase(normalizedTranscript, variant),
+    ));
+}
+
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
@@ -110,16 +155,13 @@ export async function audioPreflight(
   const enrichedText = msg.text ? `${msg.text}\n${transcript}` : transcript;
 
   // Check if transcript contains bot name -> set metadata.isBotMentioned
-  const transcriptLower = transcript.toLowerCase();
-  const mentionedByVoice = deps.botNames.some(
-    (name) => name.length > 0 && transcriptLower.includes(name.toLowerCase()),
-  );
+  const mentionedByVoice = transcriptMentionsBot(transcript, deps.botNames);
 
   const updatedMetadata = { ...(msg.metadata ?? {}) };
   if (mentionedByVoice) {
     updatedMetadata.isBotMentioned = true;
     deps.logger.debug(
-      { botNames: deps.botNames },
+      { botNameCount: deps.botNames.length },
       "Bot name detected in voice transcript",
     );
   }

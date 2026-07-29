@@ -2,6 +2,7 @@
 import { ok, err, type Result } from "@comis/shared";
 import { z } from "zod";
 import { CanonicalLocaleSchema } from "./response-locale-policy.js";
+import { STT_ERROR_KINDS } from "../media/voice-error.js";
 
 const MAX_DATE_EPOCH_MS = 8_640_000_000_000_000;
 
@@ -80,6 +81,96 @@ type InboundMessageProvenanceBatch = z.infer<
 export const INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE = "comis.inbound-message-provenance";
 
 /**
+ * Content-free receipt from automatic inbound link prefetching.
+ *
+ * This field is produced by the trusted media preprocessor and recorded after
+ * the session trajectory opens. It contains counts and elapsed time only:
+ * never a URL, page title, response body, or error message.
+ */
+export const LinkPrefetchReceiptSchema = z.strictObject({
+  detected: z.number().int().nonnegative(),
+  attempted: z.number().int().nonnegative(),
+  fetched: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  validationRejected: z.number().int().nonnegative(),
+  invalid: z.number().int().nonnegative(),
+  duplicates: z.number().int().nonnegative(),
+  capped: z.number().int().nonnegative(),
+  durationMs: z.number().int().nonnegative(),
+});
+export type LinkPrefetchReceipt = z.infer<typeof LinkPrefetchReceiptSchema>;
+
+const SttSelectionSourceSchema = z.enum([
+  "explicit",
+  "keyless-local",
+  "follow-main-key",
+  "fallback",
+]);
+
+/**
+ * Content-free evidence from one automatic inbound transcription attempt.
+ *
+ * The trusted media preprocessor creates this receipt before the session
+ * trajectory opens. It deliberately excludes the attachment URL, transcript,
+ * provider error text, and audio content.
+ */
+const SttPreprocessReceiptBaseSchema = z.strictObject({
+  provider: z.string().min(1).max(128),
+  keyless: z.boolean(),
+  model: z.string().min(1).max(256).optional(),
+  source: SttSelectionSourceSchema,
+  onSkip: z.array(z.string().min(1).max(256)).max(16).optional(),
+  durationMs: z.number().int().nonnegative().optional(),
+  audioBytes: z.number().int().nonnegative().optional(),
+});
+
+export const SttPreprocessReceiptSchema = z.discriminatedUnion("outcome", [
+  SttPreprocessReceiptBaseSchema.extend({
+    outcome: z.literal("ok"),
+  }),
+  SttPreprocessReceiptBaseSchema.extend({
+    outcome: z.literal("failed"),
+    errorKind: z.enum(STT_ERROR_KINDS),
+  }),
+]);
+
+export const SttPreprocessReceiptsSchema = z
+  .array(SttPreprocessReceiptSchema)
+  .max(16);
+
+export type SttPreprocessReceipt = z.infer<
+  typeof SttPreprocessReceiptSchema
+>;
+
+/**
+ * Content-free evidence that sanitized inbound images were injected directly
+ * into the executing agent model's multimodal request.
+ *
+ * The trusted media preprocessor creates this receipt before the session
+ * trajectory opens. It excludes image bytes, attachment URLs, captions,
+ * extracted text, and model output.
+ */
+export const VisionDirectPreprocessReceiptSchema = z.strictObject({
+  provider: z.string().min(1).max(128),
+  mainProvider: z.string().min(1).max(128),
+  model: z.string().min(1).max(256).optional(),
+  path: z.literal("vision-direct"),
+  outcome: z.literal("ok"),
+});
+
+export type VisionDirectPreprocessReceipt = z.infer<
+  typeof VisionDirectPreprocessReceiptSchema
+>;
+
+export interface SttPreprocessSelection {
+  readonly provider: string;
+  readonly keyless: boolean;
+  readonly model?: string;
+  readonly source: z.infer<typeof SttSelectionSourceSchema>;
+  readonly onSkip?: string[];
+}
+
+/**
  * NormalizedMessage: Channel-agnostic representation of an incoming message.
  *
  * Every channel adapter converts its native message format into this shape
@@ -114,6 +205,12 @@ export const NormalizedMessageSchema = z.strictObject({
       traceId: z.guid().optional(),
       /** Canonical BCP-47 response locale resolved at the trusted ingress boundary. */
       locale: CanonicalLocaleSchema.optional(),
+      /** Trusted, counts-only automatic link-prefetch receipt. */
+      linkPrefetch: LinkPrefetchReceiptSchema.optional(),
+      /** Trusted, content-free automatic inbound transcription receipts. */
+      sttPreprocess: SttPreprocessReceiptsSchema.optional(),
+      /** Trusted, content-free direct model-vision preprocessing receipt. */
+      visionPreprocess: VisionDirectPreprocessReceiptSchema.optional(),
     }).default({}),
     /** Exact physical messages represented by a synthetic coalesced turn. */
     originalMessages: z.array(OriginalInboundMessageSchema).min(1).max(10_000).optional(),

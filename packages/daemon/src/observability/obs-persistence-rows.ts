@@ -302,6 +302,41 @@ export function healthBudgetExceededEventToRow(
   };
 }
 
+const PROBLEMATIC_CHANNEL_STATES = new Set([
+  "disconnected",
+  "errored",
+  "stale",
+  "stuck",
+  "unknown",
+]);
+
+/**
+ * Map a degraded `channel:health_changed` transition to the existing
+ * `health_signal` diagnostics category. Healthy/idle/startup transitions return
+ * null because they are lifecycle evidence, not system degradation. The row is
+ * content-free: it preserves only the channel label, transport mode, and closed
+ * health-state reason; the event's free-text error and activity timestamp stay
+ * out of the daemon-wide store.
+ */
+export function channelHealthChangedEventToRow(
+  payload: EventMap["channel:health_changed"],
+): DiagnosticRow | null {
+  if (!PROBLEMATIC_CHANNEL_STATES.has(payload.currentState)) return null;
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    message: "channel:health_changed",
+    details: JSON.stringify({
+      signal: "channel_health_degraded",
+      channelType: payload.channelType,
+      connectionMode: payload.connectionMode,
+      reason: payload.currentState,
+    }),
+    traceId: undefined,
+  };
+}
+
 /**
  * Map a `channel:inbound_silent` event (a webhook channel that has received no
  * inbound activity past its configured threshold) to a flat DiagnosticRow under

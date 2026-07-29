@@ -11197,6 +11197,54 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "responseLocale": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "locale": {
+                  "type": "string",
+                  "minLength": 2,
+                  "maxLength": 128
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "request",
+                    "explicit"
+                  ]
+                },
+                "enforced": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "locale",
+                "source",
+                "enforced"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "unset"
+                },
+                "enforced": {
+                  "type": "boolean",
+                  "const": false
+                }
+              },
+              "required": [
+                "source",
+                "enforced"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
         "toolStats": {
           "type": "object",
           "propertyNames": {
@@ -11795,6 +11843,74 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "linkPrefetch": {
+          "type": "object",
+          "properties": {
+            "attempts": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "detected": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "attempted": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "fetched": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "validationRejected": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "invalid": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "duplicates": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "capped": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "durationMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "attempts",
+            "detected",
+            "attempted",
+            "fetched",
+            "failed",
+            "validationRejected",
+            "invalid",
+            "duplicates",
+            "capped",
+            "durationMs"
+          ],
+          "additionalProperties": false
+        },
         "image": {
           "type": "object",
           "properties": {
@@ -11852,6 +11968,7 @@ export const CONTRACTS = {
                 "main-vision",
                 "registry",
                 "gemini-video",
+                "vision-direct",
                 "unavailable"
               ]
             },
@@ -12229,6 +12346,30 @@ export const CONTRACTS = {
           "required": [
             "events",
             "chunksNotSent"
+          ],
+          "additionalProperties": false
+        },
+        "subagentDeliverySkipped": {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "number"
+            },
+            "lastRunId": {
+              "type": "string"
+            },
+            "lastReason": {
+              "type": "string",
+              "enum": [
+                "no_origin",
+                "no_channel_params"
+              ]
+            }
+          },
+          "required": [
+            "count",
+            "lastRunId",
+            "lastReason"
           ],
           "additionalProperties": false
         },

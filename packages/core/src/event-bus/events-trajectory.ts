@@ -38,6 +38,10 @@ export interface TrajectoryEvents {
     messageCount: number;
     systemDigest: string;
     messagesDigest: string;
+    /** Content-free locale decision used for this exact model request. */
+    responseLocale?: string;
+    responseLocaleSource: "request" | "explicit" | "unset";
+    responseLocaleEnforced: boolean;
     timestamp: number;
   };
 

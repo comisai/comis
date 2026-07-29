@@ -11,6 +11,7 @@
 // Examples:
 //   node media-drive.mjs 678314278 /tmp/voice.wav voice "transcribe this"
 //   node media-drive.mjs 678314278 "$(base64 -w0 /tmp/chart.png)" photo "what's the trend?"
+//   FROMUSER=678314278 node media-drive.mjs -1001234567890 /tmp/group.ogg voice
 //
 // NOTE (rig limitation): on the loopback rig, a media INPUT is fetched by the daemon from the emulator
 // apiRoot. That fetch is SSRF-guarded; the emulator host is allowlisted (`trustedFetchOrigins`) so the
@@ -22,6 +23,7 @@ import { rig } from "./_rig.mjs";
 
 const [, , chatIdArg, fileOrB64, kindArg, captionArg, maxMsArg] = process.argv;
 const chatId = chatIdArg || rig.chatId;
+const fromUser = process.env.FROMUSER ? Number(process.env.FROMUSER) : Number(chatId);
 const kind = kindArg || "photo";
 const caption = captionArg || "";
 const maxMs = Number(maxMsArg || 180000);
@@ -51,7 +53,7 @@ const inj = await (
   await fetch(`${base}/control/chats/${chatId}/media`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ fromUserId: Number(chatId), kind, fileBase64, meta: caption ? { caption } : undefined }),
+    body: JSON.stringify({ fromUserId: fromUser, kind, fileBase64, caption: caption || undefined }),
   })
 ).json();
 process.stderr.write(`injected media messageId=${inj.messageId} kind=${kind} (caption: ${JSON.stringify(caption).slice(0, 80)})\n`);
