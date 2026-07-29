@@ -431,6 +431,11 @@ export class BwrapProvider implements SandboxProvider {
         args.push("--ro-bind", ro, ro);
       }
     }
+    // Apply masks after every caller-supplied bind so a later shared or
+    // read-only mount cannot remount an internal subtree into visibility.
+    for (const hiddenPath of opts.hiddenPaths ?? []) {
+      args.push("--tmpfs", hiddenPath);
+    }
 
     // -- Node runtime --
     // When the resolved Node mode is "bind", RO-bind the daemon's node binary so

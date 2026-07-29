@@ -110,6 +110,7 @@ export function buildSpawnCommand(
       // SandboxOptions. Undefined = open/unsecured (no regression).
       network: sandboxConfig.network,
       secureCredentialHome: sandboxConfig.secureCredentialHome,
+      hiddenPaths: sandboxConfig.hiddenPaths,
     });
     // bwrap handles cwd internally via --chdir; sandbox-exec does not.
     const providerHandlesCwd = sandboxConfig.sandbox.name === "bwrap";

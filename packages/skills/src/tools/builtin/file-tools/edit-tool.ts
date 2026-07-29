@@ -37,6 +37,7 @@ import {
   readFileWithMetadata,
   writeFilePreserving,
 } from "./shared/file-encoding.js";
+import { requireVisiblePath } from "../file/restricted-paths.js";
 import {
   applyEdits,
   generateDiffString,
@@ -228,6 +229,7 @@ export function createComisEditTool(
   tracker?: FileStateTracker,
   sharedPaths?: LazyPaths,
   config?: EditToolConfig,
+  hiddenPaths?: readonly string[],
 ): AgentTool<typeof EditParams> {
   // Comis extension: promptGuidelines (not part of AgentTool type, spread to bypass excess property check)
   const ext = { promptGuidelines: [
@@ -326,6 +328,7 @@ export function createComisEditTool(
         filePath,
         sharedPaths,
       );
+      requireVisiblePath(resolvedPath, hiddenPaths);
 
       // --- V5: Protected workspace file check ---
       const base = basename(resolvedPath);

@@ -26,6 +26,7 @@ import { readStringParam, readNumberParam } from "../../../platform-tools/tool-h
 import { readFileWithMetadata } from "./shared/file-encoding.js";
 import { parseNotebook, renderNotebookCells } from "./shared/notebook-utils.js";
 import { pathOutsideWorkspaceMessage } from "./path-error.js";
+import { requireVisiblePath } from "../file/restricted-paths.js";
 
 // Activity label spec. Descriptor name ==
 // emitted name for builtins (see read-tool.ts:361 → `name: "read"`). The
@@ -361,6 +362,7 @@ export function createComisReadTool(
   tracker?: FileStateTracker,
   readOnlyPaths?: string[],
   sharedPaths?: LazyPaths,
+  hiddenPaths?: readonly string[],
 ): AgentTool<typeof ReadParams> {
   // Comis extension: promptGuidelines (not part of AgentTool type, spread to bypass excess property check)
   const ext = { promptGuidelines: [
@@ -396,6 +398,7 @@ export function createComisReadTool(
         readOnlyPaths,
         sharedPaths,
       );
+      requireVisiblePath(resolvedPath, hiddenPaths);
 
       // V3: Device file blocking
       if (isDeviceFile(resolvedPath)) {

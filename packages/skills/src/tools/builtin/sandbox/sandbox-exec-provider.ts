@@ -116,6 +116,15 @@ function buildSbplProfile(opts: SandboxOptions): string {
     "",
     ";; Write access",
     ...writePaths.map((p) => `(allow file-write* (subpath ${sbplQuote(p)}))`),
+    "",
+    ";; Internal workspace subtrees",
+    ...(opts.hiddenPaths ?? []).flatMap((p) => {
+      const hidden = sbplQuote(resolvePath(p));
+      return [
+        `(deny file-read* (subpath ${hidden}))`,
+        `(deny file-write* (subpath ${hidden}))`,
+      ];
+    }),
   ];
 
   return lines.join("\n");

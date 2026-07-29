@@ -20,6 +20,7 @@ import { readStringParam, readNumberParam, readBooleanParam } from "../../../pla
 import { truncateLine, GREP_MAX_LINE_WIDTH } from "../truncate.js";
 import { ensureTool } from "../tool-provisioner.js";
 import { pathOutsideWorkspaceMessage } from "./path-error.js";
+import { hiddenDescendants, requireVisiblePath } from "../file/restricted-paths.js";
 
 // Activity label spec (SPEC §6.1). Descriptor name == emitted name for
 // builtins (grep-tool.ts:402 → `name: "grep"`). Two detailKeys (`pattern` +
@@ -401,6 +402,7 @@ export function createComisGrepTool(
   logger?: ToolLogger,
   readOnlyPaths?: string[],
   sharedPaths?: LazyPaths,
+  hiddenPaths?: readonly string[],
 ): AgentTool<typeof GrepParams> {
   // Comis extension: promptGuidelines (not part of AgentTool type, spread to bypass excess property check)
   const ext = { promptGuidelines: [
@@ -468,6 +470,7 @@ export function createComisGrepTool(
         } else {
           searchPath = workspacePath;
         }
+        requireVisiblePath(searchPath, hiddenPaths);
 
         // 3. Build rg arguments
         const args = buildRipgrepArgs(pattern, outputMode, {
@@ -475,6 +478,10 @@ export function createComisGrepTool(
           afterContext, beforeContext, context,
           headLimit, offset,
         });
+        for (const hidden of hiddenDescendants(searchPath, hiddenPaths)) {
+          if (hidden === ".") continue;
+          args.push("--glob", `!${hidden}`, "--glob", `!${hidden}/**`);
+        }
 
         // 4. Determine cwd and always pass an explicit search path to rg.
         // Why: rg falls back to reading stdin when no path is given and stdin

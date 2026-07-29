@@ -249,6 +249,13 @@ export interface AssembleToolsOptions {
     leaseId: string;
     caps: readonly AgentCapability[];
   }) => void;
+  /** Effective workspace root for an isolated child or worktree. */
+  workspacePath?: string;
+  /** Least-authority restrictions for a synthetic child assembly. */
+  securityBoundary?: {
+    hiddenPaths: readonly string[];
+    requireSandboxedExecution: boolean;
+  };
 }
 
 /** All services produced by the tools setup phase. */
@@ -400,6 +407,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     const includePlatform = options?.includePlatformTools ?? true;
     const toolGroups = options?.toolGroups;
     const sharedPaths = options?.sharedPaths;
+    const securityBoundary = options?.securityBoundary;
+    const agentWorkspaceDir = options?.workspacePath
+      ?? workspaceDirs.get(agentId)
+      ?? defaultWorkspaceDir;
     // Tracker resolution priority:
     //   1. Explicit tracker (sub-agent spawn path -- isolates per spawn).
     //   2. sessionKey + registry (inbound-message path -- persists across turns).
@@ -420,15 +431,15 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     // and write still surface as [stale_file]).
     // Only the agent's OWN workspace -- other-agent workspaces visible to
     // admin agents are covered by agents_manage's onAgentCreated callback.
-    const ownWorkspaceDir = workspaceDirs.get(agentId) ?? defaultWorkspaceDir;
-    await registerWorkspaceFilesInTracker(ownWorkspaceDir, fileStateTracker, skillsLogger);
+    await registerWorkspaceFilesInTracker(agentWorkspaceDir, fileStateTracker, skillsLogger);
 
     // Enrich sharedPaths for admin-trust agents: grant cross-workspace file access.
     // Default agent (orchestrator) and supervisor-profile agents can access other agent workspaces.
     // Lazy callback for admin agents so hot-added workspaces are visible without re-assembling tools.
     const isDefaultAgent = agentId === defaultAgentId;
     const isSupervisor = (agents[agentId] ?? agents[defaultAgentId])?.skills?.toolPolicy?.profile === "supervisor";
-    const effectiveSharedPaths: LazyPaths = (isDefaultAgent || isSupervisor)
+    const effectiveSharedPaths: LazyPaths = securityBoundary === undefined
+      && (isDefaultAgent || isSupervisor)
       ? () => {
           const paths = [...(sharedPaths ?? [])];
           for (const [id, dir] of workspaceDirs) {
@@ -447,7 +458,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
     // Resolve relative discoveryPaths against dataDir so ./skills -> ~/.comis/skills
     const agentWorkspaceSkillsDir = safePath(
-      workspaceDirs.get(agentId) ?? defaultWorkspaceDir,
+      agentWorkspaceDir,
       "skills",
     );
     // Force-include the bundled-skill install target (<dataDir>/skills) alongside the agent
@@ -552,7 +563,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         },
         browserSanitizeImage: sanitizeImageForApi,
         browserPersistMedia: getOrCreateScreenshotPersistence(agentId),
-        browserWorkspaceDir: workspaceDirs.get(agentId) ?? defaultWorkspaceDir,
+        browserWorkspaceDir: agentWorkspaceDir,
       };
 
       // Registry-driven platform tools, in registry.ts declaration order
@@ -562,14 +573,16 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // `undefined` build-returns (defensive -- every passing conditional returns
       // a non-undefined AgentTool in practice).
       type PlatformTool = ReturnType<PlatformToolProvider>[number];
-      const tools: ReturnType<PlatformToolProvider> = PLATFORM_TOOL_REGISTRY
+      let tools: ReturnType<PlatformToolProvider> = PLATFORM_TOOL_REGISTRY
         .filter((d) => !d.conditional || d.conditional(ctx))
         .map((d) => d.build(ctx))
         .filter((t): t is PlatformTool => t !== undefined);
+      if (securityBoundary !== undefined) {
+        tools = tools.filter((tool) => tool.name !== "browser");
+      }
 
       // HOISTED so BOTH the exec tool and the dag-gated ctx_* wiring (below) reuse
       // the ONE ALS-resolved session tool-results resolver.
-      const agentWorkspaceDir = workspaceDirs.get(agentId) ?? defaultWorkspaceDir;
       const getToolResultsDir = (): string | undefined => {
         const alsCtx = tryGetContext();
         if (alsCtx?.turnScope === undefined) return undefined;
@@ -594,6 +607,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
                 ? { mode: "broker-only" as const, brokerSocketPath: deps.brokerContext.socketPath }
                 : undefined,
               secureCredentialHome: deps.brokerContext ? true : undefined,
+              hiddenPaths: securityBoundary?.hiddenPaths,
             }
           : undefined;
 
@@ -606,10 +620,16 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
             "Exec tool running without OS sandbox (already warned at startup; per-call DEBUG)",
           );
         } else {
-          skillsLogger.warn(
-            { agentId, hint: "Sandbox enabled in config but no provider available -- exec tool will run without OS sandbox", errorKind: "config" as const },
-            "Exec tool running without OS sandbox",
-          );
+          const isolated = securityBoundary?.requireSandboxedExecution === true;
+          skillsLogger.warn({
+            agentId,
+            hint: isolated
+              ? "Install or enable a supported OS sandbox provider; exec and process are unavailable for isolated child runs"
+              : "Sandbox enabled in config but no provider is available; exec will run without OS sandbox",
+            errorKind: isolated ? "sandbox_unavailable" as const : "config" as const,
+          }, isolated
+            ? "Process tools unavailable for isolated child"
+            : "Exec tool running without OS sandbox");
           warnedNoSandboxAgents.add(agentId);
         }
       }
@@ -677,7 +697,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       }
       // Exec tool -- always instantiated; builtinTools ceiling applied after profile filtering.
       // (agentWorkspaceDir + getToolResultsDir are HOISTED above — shared with the ctx_* wiring.)
-      {
+      const processToolsAllowed = securityBoundary?.requireSandboxedExecution !== true
+        || sandboxCfg !== undefined;
+      if (processToolsAllowed) {
         const registry = getOrCreateRegistry(agentId);
 
         tools.push(createExecTool({
@@ -703,7 +725,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       }
 
       // Process tool -- always instantiated; builtinTools ceiling applied after profile filtering
-      {
+      if (processToolsAllowed) {
         const registry = getOrCreateRegistry(agentId);
         tools.push(createProcessTool({
           registry,
@@ -716,18 +738,40 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       }
 
       // Apply patch tool -- always included, gated by tool policy
-      tools.push(createApplyPatchTool(workspaceDirs.get(agentId) ?? defaultWorkspaceDir, effectiveSharedPaths, skillsLogger));
+      tools.push(createApplyPatchTool(
+        agentWorkspaceDir,
+        effectiveSharedPaths,
+        skillsLogger,
+        securityBoundary?.hiddenPaths,
+      ));
 
       // Sleep primitive -- always included; the model paces between
       // turns (defers for the ~5-min cache TTL) instead of polling. Stateless; see sleep-tool.ts.
       tools.push(createSleepTool());
 
       // Orchestrate tool — built by buildAutonomyToolWiring above.
-      if (orchestrateTool) tools.push(orchestrateTool);
+      if (orchestrateTool && securityBoundary === undefined) tools.push(orchestrateTool);
 
       // Terminal driver: per-agent registry + nine never-export tools (durability
       // wired inside). wireAgentTerminalTools folds the base deps + operator config in one call.
-      wireAgentTerminalTools(tools, terminalRegistries, agentId, { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress, timers: deps.timers, agentWorkspaceDir: workspaceDirs.get(agentId) ?? defaultWorkspaceDir }, skillsConfig.terminal);
+      if (securityBoundary === undefined) {
+        wireAgentTerminalTools(
+          tools,
+          terminalRegistries,
+          agentId,
+          {
+            dataDir,
+            skillsLogger,
+            eventBus,
+            sandboxProvider,
+            approvalGate,
+            ...terminalEgress,
+            timers: deps.timers,
+            agentWorkspaceDir,
+          },
+          skillsConfig.terminal,
+        );
+      }
 
       // Context expansion tools; depth resolution lives in maybeWireContextTools.
       maybeWireContextTools(tools, deps.lcdStore, agentId, agentConfig, {
@@ -819,7 +863,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
     return assembleToolPipeline({
       config: skillsConfig,
-      workspacePath: workspaceDirs.get(agentId) ?? defaultWorkspaceDir,
+      workspacePath: agentWorkspaceDir,
       secretManager,
       platformTools: platformToolProvider,
       // PiEventBridge emits tool:executed from SDK event stream -- no wrapWithAudit needed
@@ -831,6 +875,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       toolSourceProfiles,
       sharedPaths: effectiveSharedPaths,
       fileStateTracker,
+      hiddenPaths: securityBoundary?.hiddenPaths,
     });
   }
 

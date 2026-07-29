@@ -21,6 +21,7 @@ import { similarity, normalizeLine } from "./apply-patch-similarity.js";
 import type { PatchHunk, PatchOperation } from "./apply-patch-parser.js";
 import { PROTECTED_WORKSPACE_FILES, resolvePaths, type LazyPaths, type SafePathLogger } from "./safe-path-wrapper.js";
 import { withFileMutationQueue } from "../file-tools/shared/file-mutation-queue.js";
+import { requireVisiblePath } from "./restricted-paths.js";
 
 // Activity label spec. The EMITTED name
 // uses an UNDERSCORE — `apply-patch-tool.ts:475 → name: "apply_patch"` —
@@ -480,6 +481,7 @@ export function createApplyPatchTool(
   workspacePath: string,
   sharedPaths?: LazyPaths,
   logger?: SafePathLogger,
+  hiddenPaths?: readonly string[],
 ): AgentTool<typeof ApplyPatchParams> {
   return {
     name: "apply_patch",
@@ -514,6 +516,13 @@ export function createApplyPatchTool(
 
         // Resolve path for queue key (same resolution the handlers use internally)
         const queuePath = validatePath(workspacePath, op.path, resolvedShared);
+        requireVisiblePath(queuePath, hiddenPaths);
+        if (op.moveTo) {
+          requireVisiblePath(
+            validatePath(workspacePath, op.moveTo, resolvedShared),
+            hiddenPaths,
+          );
+        }
 
         // Wrap each file operation individually -- different files run in parallel
         await withFileMutationQueue(queuePath, async () => {

@@ -65,6 +65,8 @@ export function getBuiltinTools(
   sharedPaths?: LazyPaths,
   /** Optional per-session FileStateTracker for file safety guards. */
   fileStateTracker?: FileStateTracker,
+  /** Internal workspace subtrees unavailable to this tool assembly. */
+  hiddenPaths?: readonly string[],
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
 ): AgentTool<any>[] {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
@@ -98,7 +100,15 @@ export function getBuiltinTools(
   }
 
   // File tools (Comis-native)
-  const fileTools = createComisFileTools(config, workspacePath, logger, readOnlyPaths, sharedPaths, fileStateTracker);
+  const fileTools = createComisFileTools(
+    config,
+    workspacePath,
+    logger,
+    readOnlyPaths,
+    sharedPaths,
+    fileStateTracker,
+    hiddenPaths,
+  );
   tools.push(...fileTools);
 
   return tools;
@@ -152,6 +162,8 @@ export interface ToolPipelineDeps {
   sharedPaths?: LazyPaths;
   /** Optional per-session FileStateTracker for file safety guards. */
   fileStateTracker?: FileStateTracker;
+  /** Internal workspace subtrees unavailable to this tool assembly. */
+  hiddenPaths?: readonly string[];
 }
 
 /**
@@ -173,7 +185,18 @@ export async function assembleToolPipeline(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
 ): Promise<AgentTool<any>[]> {
   // Tier 1 - Builtin
-  const builtinTools = getBuiltinTools(deps.config, deps.workspacePath, deps.secretManager, deps.logger, deps.onSuspiciousContent, deps.readOnlyPaths, deps.toolSourceProfiles, deps.sharedPaths, deps.fileStateTracker);
+  const builtinTools = getBuiltinTools(
+    deps.config,
+    deps.workspacePath,
+    deps.secretManager,
+    deps.logger,
+    deps.onSuspiciousContent,
+    deps.readOnlyPaths,
+    deps.toolSourceProfiles,
+    deps.sharedPaths,
+    deps.fileStateTracker,
+    deps.hiddenPaths,
+  );
 
   // Tier 2 - Platform
   const platformTools = deps.platformTools ? deps.platformTools() : [];

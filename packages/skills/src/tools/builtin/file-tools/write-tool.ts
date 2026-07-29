@@ -43,6 +43,7 @@ import {
   writeFilePreserving,
 } from "./shared/file-encoding.js";
 import { validateConfigContent } from "./shared/edit-diff.js";
+import { requireVisiblePath } from "../file/restricted-paths.js";
 import { getGitDiffStat } from "./shared/git-diff.js";
 import { withFileMutationQueue } from "./shared/file-mutation-queue.js";
 import { pathOutsideWorkspaceMessage } from "./path-error.js";
@@ -198,6 +199,7 @@ export function createComisWriteTool(
   tracker?: FileStateTracker,
   sharedPaths?: LazyPaths,
   config?: WriteToolConfig,
+  hiddenPaths?: readonly string[],
 ): AgentTool<typeof WriteParams> {
   // Comis extension: promptGuidelines (not part of AgentTool type, spread to bypass excess property check)
   const ext = { promptGuidelines: [
@@ -234,6 +236,7 @@ export function createComisWriteTool(
 
       // --- V2: Path resolution (workspace -> sharedPaths) ---
       const absolutePath = resolveWritePath(workspacePath, filePath, sharedPaths);
+      requireVisiblePath(absolutePath, hiddenPaths);
 
       // --- V3: Device file blocking ---
       if (isDeviceFile(absolutePath)) {
