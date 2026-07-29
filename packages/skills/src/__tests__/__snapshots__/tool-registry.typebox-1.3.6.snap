@@ -1204,7 +1204,7 @@
           "type": "string"
         },
         "session_key": {
-          "description": "Session key (for billing.bySession)",
+          "description": "Session key (for billing.bySession, explain, session_report). Explain/report default to the current session when neither this nor trace_id is supplied.",
           "type": "string"
         },
         "since_hours": {
