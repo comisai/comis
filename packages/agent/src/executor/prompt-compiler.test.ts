@@ -130,6 +130,14 @@ describe("compileExecutionPrompt delegation directive", () => {
     expect(out.stableEnginePrefix).toMatch(/inline/i);
   });
 
+  it("requires current-turn spawn evidence when the user explicitly asks for delegation", () => {
+    const out = compileExecutionPrompt(makeInput({ delegationAvailable: true }));
+    expect(out.stableEnginePrefix).toMatch(/explicit.*delegat|asks? .*delegat/i);
+    expect(out.stableEnginePrefix).toMatch(/historical (memory|context)/i);
+    expect(out.stableEnginePrefix).toMatch(/successful `sessions_spawn`.*current turn/i);
+    expect(out.stableEnginePrefix).toMatch(/honest (refusal|limitation)/i);
+  });
+
   it("stays silent for an agent without the tool", () => {
     const out = compileExecutionPrompt(makeInput({ delegationAvailable: false }));
     expect(out.stableEnginePrefix).not.toContain("sessions_spawn");
