@@ -19,6 +19,40 @@ export function outboundVisibleText(outbound) {
   return typeof outbound?.caption === "string" ? outbound.caption : "";
 }
 
+/** Match the progress-only frames emitted by the live activity renderer. */
+export function isDriveProgressText(text) {
+  return (
+    !text
+    || /^(🔧|✓|🤖|❌|⏳)/.test(text)
+    || /\(running/.test(text)
+    || /reading ~/.test(text)
+    || /^\s*\[[ x~]\]/.test(text)
+    || /\(step \d+ of \d+\)/i.test(text)
+    || /^\s*───\s*$/.test(text)
+  );
+}
+
+/** Whether one emulator wire record belongs to the selected Telegram topic. */
+export function telegramOutboundMatchesThread(outbound, threadId) {
+  if (threadId === undefined) {
+    return outbound?.messageThreadId === undefined || outbound?.messageThreadId === null;
+  }
+  const expected = Number(threadId);
+  const actual = Number(outbound?.messageThreadId);
+  return Number.isFinite(expected) && Number.isFinite(actual) && actual === expected;
+}
+
+/** Return the last substantive wire reply from one exact Telegram conversation. */
+export function findTelegramConversationWireAnswer(outbound, threadId) {
+  for (let index = outbound.length - 1; index >= 0; index -= 1) {
+    const item = outbound[index];
+    if (!telegramOutboundMatchesThread(item, threadId)) continue;
+    const visibleText = outboundVisibleText(item);
+    if (visibleText && !isDriveProgressText(visibleText)) return visibleText;
+  }
+  return null;
+}
+
 function encodeSessionPathComponent(value) {
   let encoded = "";
   for (const character of value) {
@@ -174,12 +208,16 @@ function normalizeWireText(value) {
 }
 
 /** Whether the recorded Telegram wire contains this session-correlated answer. */
-export function wireContainsAssistantReply(outbound, assistantReply) {
+export function wireContainsAssistantReply(outbound, assistantReply, route) {
   const expected = normalizeWireText(assistantReply);
   return outbound.some(
     (item) =>
       item?.method === "sendMessage" &&
       typeof item.text === "string" &&
+      (
+        route === undefined
+        || telegramOutboundMatchesThread(item, route.threadId)
+      ) &&
       normalizeWireText(item.text) === expected,
   );
 }
@@ -194,10 +232,11 @@ export function sharedConversationFinished({
   correlatedAnswer,
   sawAnswer,
   turnEnded,
+  threadId,
 }) {
   if (
     correlatedAnswer !== null
-    && wireContainsAssistantReply(outbound, correlatedAnswer)
+    && wireContainsAssistantReply(outbound, correlatedAnswer, { threadId })
   ) {
     return true;
   }

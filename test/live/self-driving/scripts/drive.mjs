@@ -25,6 +25,8 @@ import { rig } from './_rig.mjs';
 import {
   driveTextFilePath,
   findAssistantReplyAfterInbound,
+  findTelegramConversationWireAnswer,
+  isDriveProgressText,
   outboundVisibleText,
   selectMainTrajectoryPath,
   selectTelegramConversationTrajectoryPath,
@@ -136,13 +138,13 @@ const inject = async (t) =>
   })).json();
 
 // v2: a message is PROGRESS (not the final answer) if it's a tool/announce/checklist/plan line.
-const isProgress = (t) =>
-  !t ||
-  /^(🔧|✓|🤖|❌|⏳)/.test(t) ||
-  /\(running/.test(t) || /reading ~/.test(t) ||
-  /^\s*\[[ x~]\]/.test(t) ||                 // markdown checklist:  [ ] / [~] / [x]
-  /\(step \d+ of \d+\)/i.test(t) ||          // "(step 1 of 3)"
-  /^\s*───\s*$/.test(t);
+const isProgress = isDriveProgressText;
+const isConversationAnswer = (outbound) => {
+  const visibleText = outboundVisibleText(outbound);
+  if (!visibleText || isProgress(visibleText)) return false;
+  return !sharedConversation
+    || findTelegramConversationWireAnswer([outbound], injectOpts?.thread) !== null;
+};
 
 // --- trajectory turn-end watch (authoritative completion signal) ---
 const resolveTraj = () => {
@@ -258,8 +260,7 @@ while (Date.now() - start < maxMs) {
   if (batch.length) {
     for (const o of batch) {
       seen.push(o); after = Math.max(after, o.messageId || after);
-      const visibleText = outboundVisibleText(o);
-      if (visibleText && !isProgress(visibleText)) sawAnswer = true;
+      if (isConversationAnswer(o)) sawAnswer = true;
     }
     lastNew = Date.now();
   }
@@ -279,13 +280,13 @@ while (Date.now() - start < maxMs) {
       correlatedAnswer,
       sawAnswer,
       turnEnded,
+      threadId: injectOpts?.thread,
     })) {
       const tail = await getOutbound(after, 2500);
       for (const o of tail) {
         seen.push(o);
         after = Math.max(after, o.messageId || after);
-        const visibleText = outboundVisibleText(o);
-        if (visibleText && !isProgress(visibleText)) sawAnswer = true;
+        if (isConversationAnswer(o)) sawAnswer = true;
       }
       break;
     }
@@ -297,8 +298,7 @@ while (Date.now() - start < maxMs) {
     for (const o of tail) {
       seen.push(o);
       after = Math.max(after, o.messageId || after);
-      const visibleText = outboundVisibleText(o);
-      if (visibleText && !isProgress(visibleText)) sawAnswer = true;
+      if (isConversationAnswer(o)) sawAnswer = true;
     }
     break;
   }
@@ -332,11 +332,22 @@ const detectAllowFromBlock = () => {
 };
 const allowFromBlock = detectAllowFromBlock();
 const correlatedWireAnswer = correlatedAnswer
-  ? wireContainsAssistantReply(seen, correlatedAnswer)
+  ? wireContainsAssistantReply(
+      seen,
+      correlatedAnswer,
+      sharedConversation ? { threadId: injectOpts?.thread } : undefined,
+    )
   : false;
-const hasSubstantiveAnswer = sharedConversation ? correlatedWireAnswer : sawAnswer;
+const correctedWireAnswer = sharedConversation && turnEnded
+  ? findTelegramConversationWireAnswer(seen, injectOpts?.thread)
+  : null;
+const hasSubstantiveAnswer = sharedConversation
+  ? correlatedWireAnswer || correctedWireAnswer !== null
+  : sawAnswer;
 const reason = correlatedWireAnswer
   ? 'correlated-session-answer'
+  : correctedWireAnswer !== null
+    ? 'turn-ended-visible-answer'
   : turnEnded
     ? 'turn-ended(trajectory)'
     : sawAnswer && !sharedConversation
@@ -350,6 +361,9 @@ console.log('=== SUBSTANTIVE ANSWER ===');
 let any = false;
 if (correlatedWireAnswer) {
   console.log(correlatedAnswer);
+  any = true;
+} else if (correctedWireAnswer !== null) {
+  console.log(correctedWireAnswer);
   any = true;
 } else if (!sharedConversation) {
   for (const o of seen) {
