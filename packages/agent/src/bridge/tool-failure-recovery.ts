@@ -31,6 +31,8 @@ export interface ToolRecoveryIdentity {
 export interface ToolExecutionResultRecord {
   readonly toolName: string;
   readonly success: boolean;
+  /** True when this record is a non-terminal background handoff placeholder. */
+  readonly backgrounded?: boolean;
   readonly durationMs: number;
   readonly invocationSequence?: number;
   readonly errorText?: string;

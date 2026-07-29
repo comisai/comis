@@ -44,6 +44,8 @@ interface RollupInput {
   toolExecResults?: ReadonlyArray<{
     toolName: string;
     success: boolean;
+    /** Non-terminal background handoffs are accounted at settlement instead. */
+    backgrounded?: boolean;
     errorKind?: ErrorKind;
   }>;
 }
@@ -91,6 +93,7 @@ export function buildSessionHealthRollup(
   const rawErrorKinds = new Map<ErrorKind, number>();
 
   for (const r of bridgeResult.toolExecResults ?? []) {
+    if (r.backgrounded === true) continue;
     let stat = toolStatsMap.get(r.toolName);
     if (stat === undefined) {
       stat = { ok: 0, failed: 0 };

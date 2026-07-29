@@ -255,6 +255,88 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     expect(observe.mock.calls[0]![0].outcome).toBe("success");
   });
 
+  it("records only terminal background settlements and ignores the successful handoff placeholder", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe, resolve } = makeStubStore(baseVerdict({
+      outcome: "failure",
+      sources: ["tool"],
+    }));
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("tool:executed", toolPayload({
+      toolName: "mcp__reports--read_slow_report",
+      success: true,
+      backgrounded: true,
+    }));
+    bus.emit("diagnostic:message_processed", {
+      messageId: "message-bg",
+      channelId: "channel-bg",
+      channelType: "telegram",
+      agentId: AGENT,
+      sessionKey: SESSION_KEY,
+      traceId: TRACE,
+      toolCalls: 1,
+      llmCalls: 1,
+      receivedAt: NOW - 1_000,
+      executionDurationMs: 900,
+      deliveryDurationMs: 100,
+      totalDurationMs: 1_000,
+      tokensUsed: 100,
+      cost: 0.01,
+      status: "success",
+      finishReason: "end_turn",
+      timestamp: NOW,
+    });
+    await flushMicrotasks();
+    expect(resolve).not.toHaveBeenCalled();
+
+    bus.emit("background_task:failed", {
+      agentId: AGENT,
+      taskId: "task-bg",
+      toolName: "mcp__reports--read_slow_report",
+      error: "upstream unavailable",
+      errorKind: "dependency",
+      durationMs: 10_001,
+      origin: {} as never,
+      timestamp: NOW,
+      sessionKey: SESSION_KEY,
+      traceId: TRACE,
+    });
+    bus.emit("background_task:failed", {
+      agentId: AGENT,
+      taskId: "task-bg",
+      toolName: "mcp__reports--read_slow_report",
+      error: "upstream unavailable",
+      errorKind: "dependency",
+      durationMs: 10_001,
+      origin: {} as never,
+      timestamp: NOW,
+      sessionKey: SESSION_KEY,
+      traceId: TRACE,
+      dispatchRedelivery: true,
+    });
+    await flushMicrotasks();
+
+    expect(observe).toHaveBeenCalledTimes(1);
+    expect(observe.mock.calls[0]![0]).toMatchObject({
+      trajectoryId: TRACE,
+      sessionId: SESSION_KEY,
+      outcome: "failure",
+      source: "tool",
+    });
+    expect(resolve).toHaveBeenCalledTimes(1);
+  });
+
   it("persists the ingress sender-trust decision with a tool outcome", async () => {
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore();

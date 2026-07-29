@@ -752,6 +752,42 @@ describe("createPiEventBridge", () => {
       expect(endEmit![1].success).toBe(true);
     });
 
+    it("keeps an auto-background handoff neutral in breaker and execution outcome accounting", () => {
+      const recordResult = vi.fn();
+      const depsWithBreaker = createMockDeps({
+        toolRetryBreaker: {
+          beforeToolCall: vi.fn().mockReturnValue({ block: false }),
+          recordResult,
+          getBlockedTools: vi.fn().mockReturnValue([]),
+          reset: vi.fn(),
+        } as never,
+      });
+      const bridge = createPiEventBridge(depsWithBreaker);
+
+      bridge.listener(makeToolExecutionStartEvent("mcp__reports--read_slow_report", "tc-bg") as any);
+      bridge.listener(makeToolExecutionEndEvent(
+        "mcp__reports--read_slow_report",
+        "tc-bg",
+        false,
+        {
+          content: [{ type: "text", text: "moved to background" }],
+          details: {
+            status: "backgrounded",
+            taskId: "task-bg",
+            toolName: "mcp__reports--read_slow_report",
+          },
+        },
+      ) as any);
+
+      expect(recordResult).not.toHaveBeenCalled();
+      expect(bridge.getResult().toolExecResults).toEqual([
+        expect.objectContaining({
+          toolName: "mcp__reports--read_slow_report",
+          backgrounded: true,
+        }),
+      ]);
+    });
+
     it("emits tool:executed with success=false when isError", () => {
       const { listener } = createPiEventBridge(deps);
 

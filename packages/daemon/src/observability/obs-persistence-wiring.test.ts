@@ -2221,6 +2221,78 @@ describe("setupObsPersistence", () => {
     result.drainAll();
   });
 
+  it("persists one real session-health outcome for each terminal background task and ignores redelivery", () => {
+    const eventBus = createMockEventBus();
+    const obsStore = createMockObsStore();
+    const db = createMockDb();
+    const channelActivityTracker = createMockChannelActivityTracker();
+    const result = setupObsPersistence({
+      eventBus: eventBus as never,
+      obsStore: obsStore as never,
+      db: db as never,
+      channelActivityTracker: channelActivityTracker as never,
+      startupTimestamp: Date.now(),
+      snapshotIntervalMs: 300_000,
+    });
+    const failed = {
+      agentId: "a1",
+      taskId: "task-failed",
+      toolName: "mcp__reports--read_slow_report",
+      error: "private upstream body",
+      errorKind: "dependency" as const,
+      durationMs: 10_001,
+      origin: {} as never,
+      timestamp: 3_000,
+      sessionKey: "sk-1",
+      traceId: "trace-bg-failed",
+    };
+
+    eventBus.emit("background_task:failed", failed);
+    eventBus.emit("background_task:failed", { ...failed, dispatchRedelivery: true });
+    eventBus.emit("background_task:completed", {
+      agentId: "a1",
+      taskId: "task-completed",
+      toolName: "mcp__reports--read_other_report",
+      durationMs: 10_002,
+      origin: {} as never,
+      timestamp: 3_001,
+      sessionKey: "sk-1",
+      traceId: "trace-bg-completed",
+    });
+    vi.advanceTimersByTime(500);
+
+    const rows = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls
+      .map((call) => call[0] as {
+        category?: string;
+        message?: string;
+        details?: string;
+      })
+      .filter((row) => row.category === "session_summary");
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => JSON.parse(row.details ?? "{}"))).toEqual([
+      expect.objectContaining({
+        degraded: true,
+        toolStats: {
+          "mcp__reports--read_slow_report": { ok: 0, failed: 1 },
+        },
+        topErrorKinds: { dependency: 1 },
+        endReason: "completed_with_tool_errors",
+      }),
+      expect.objectContaining({
+        degraded: false,
+        toolStats: {
+          "mcp__reports--read_other_report": { ok: 1, failed: 0 },
+        },
+        topErrorKinds: {},
+        endReason: "success",
+      }),
+    ]);
+    expect(rows[0]!.details).not.toContain("private upstream body");
+
+    clearInterval(result.snapshotTimer);
+    result.drainAll();
+  });
+
   it("pushes token usage events through buffer to obsStore", () => {
     const eventBus = createMockEventBus();
     const obsStore = createMockObsStore();

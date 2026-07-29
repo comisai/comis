@@ -1321,10 +1321,19 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // background-failure-attribution.ts.
           const relayedBackgroundFailure =
             !toolSuccess && isRelayedBackgroundFailure(endEvent.toolName, errorText);
+          // A successful auto-background response is only a handoff. It must
+          // remain neutral until background_task:{completed,failed} supplies
+          // the terminal outcome.
+          const resultBackgrounded =
+            endEvent.result != null
+            && typeof endEvent.result === "object"
+            && ((endEvent.result as Record<string, unknown>).details as Record<string, unknown> | undefined)
+              ?.status === "backgrounded";
           if (
             deps.toolRetryBreaker
             && classifiedFailureBy !== "runtime_guard"
             && !relayedBackgroundFailure
+            && !resultBackgrounded
           ) {
             const transition = deps.toolRetryBreaker.recordResult(
               endEvent.toolName,
@@ -1371,6 +1380,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           m.toolExecResults.push({
             toolName: endEvent.toolName,
             success: toolSuccess,
+            ...(resultBackgrounded ? { backgrounded: true } : {}),
             durationMs,
             ...(invocationSequence === undefined ? {} : { invocationSequence }),
             ...(recoveryIdentity === undefined ? {} : { recoveryIdentity }),
@@ -1490,11 +1500,6 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // toolSuccess is true while the tool is still running. Mark it so
           // outcome consumers (the activity card above all) do not close a
           // still-running tool as "completed".
-          const resultBackgrounded =
-            endEvent.result != null
-            && typeof endEvent.result === "object"
-            && ((endEvent.result as Record<string, unknown>).details as Record<string, unknown> | undefined)
-              ?.status === "backgrounded";
           deps.eventBus.emit("tool:executed", {
             toolName: endEvent.toolName,
             toolCallId: endEvent.toolCallId,
