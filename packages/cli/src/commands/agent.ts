@@ -327,61 +327,31 @@ export function registerAgentCommand(program: Command): void {
 }
 
 /**
- * Extract agent entries from config.get response for the agents section.
+ * Extract agent entries from the flat agents section returned by config.read.
  *
- * Handles various response shapes from the config.get RPC call,
- * normalizing into a flat array of AgentEntry objects.
+ * The section response is the agents map itself: agent ID to agent config.
  */
-function extractAgents(config: Record<string, unknown> | null | undefined): AgentEntry[] {
-  if (!config || typeof config !== "object") return [];
+function extractAgents(agentsSection: Record<string, unknown> | null | undefined): AgentEntry[] {
+  if (!agentsSection || typeof agentsSection !== "object") return [];
   const agents: AgentEntry[] = [];
 
-  const agentsObj = config["agents"] as Record<string, unknown> | undefined;
-
-  if (agentsObj && typeof agentsObj === "object") {
-    for (const [name, value] of Object.entries(agentsObj)) {
-      if (value && typeof value === "object") {
-        const v = value as Record<string, unknown>;
-        agents.push({
-          name,
-          provider:
-            (typeof v["provider"] === "string" ? v["provider"] : undefined) ??
-            (typeof v["defaultProvider"] === "string" ? v["defaultProvider"] : undefined),
-          model:
-            (typeof v["model"] === "string" ? v["model"] : undefined) ??
-            (typeof v["defaultModel"] === "string" ? v["defaultModel"] : undefined),
-          bindings: Array.isArray(v["bindings"])
-            ? (v["bindings"] as string[]).map(String)
-            : undefined,
-        });
-      }
-    }
-  }
-
-  // Also check bindings for agent references
-  const bindings = config["bindings"] as Array<Record<string, unknown>> | undefined;
-  if (Array.isArray(bindings)) {
-    for (const binding of bindings) {
-      const agentId = typeof binding["agentId"] === "string" ? binding["agentId"] : undefined;
-      if (agentId && !agents.some((a) => a.name === agentId)) {
-        agents.push({
-          name: agentId,
-          bindings: [formatBinding(binding)],
-        });
-      }
+  for (const [name, value] of Object.entries(agentsSection)) {
+    if (value && typeof value === "object") {
+      const v = value as Record<string, unknown>;
+      agents.push({
+        name,
+        provider:
+          (typeof v["provider"] === "string" ? v["provider"] : undefined) ??
+          (typeof v["defaultProvider"] === "string" ? v["defaultProvider"] : undefined),
+        model:
+          (typeof v["model"] === "string" ? v["model"] : undefined) ??
+          (typeof v["defaultModel"] === "string" ? v["defaultModel"] : undefined),
+        bindings: Array.isArray(v["bindings"])
+          ? (v["bindings"] as string[]).map(String)
+          : undefined,
+      });
     }
   }
 
   return agents;
-}
-
-/**
- * Format a binding object into a human-readable string.
- */
-function formatBinding(binding: Record<string, unknown>): string {
-  const parts: string[] = [];
-  if (binding["channelId"]) parts.push(`channel:${binding["channelId"]}`);
-  if (binding["peerId"]) parts.push(`peer:${binding["peerId"]}`);
-  if (binding["channelType"]) parts.push(`type:${binding["channelType"]}`);
-  return parts.length > 0 ? parts.join(",") : "*";
 }
