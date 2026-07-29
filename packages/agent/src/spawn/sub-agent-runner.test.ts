@@ -411,6 +411,65 @@ describe("createSubAgentRunner", () => {
     });
   });
 
+  it("an active owner wait claims the child completion instead of double-announcing it", async () => {
+    let resolveExecution!: (
+      value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>,
+    ) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const announceToParent = vi.fn().mockResolvedValue(undefined);
+    deps.announceToParent = announceToParent;
+    const callerConversation = createTestConversation();
+    const callerSessionKey = formattedConversation(callerConversation);
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "wait-owned completion",
+      agentId: "default",
+      callerAgentId: "parent",
+      callerSessionKey,
+      callerConversation,
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+    const waitWithAnnouncementClaim = runner.waitForCompletions as unknown as (
+      runIds: readonly string[],
+      timeoutMs: number,
+      signal: AbortSignal | undefined,
+      announcementConsumerSessionKey: string,
+    ) => ReturnType<typeof runner.waitForCompletions>;
+    const waiting = waitWithAnnouncementClaim(
+      [runId],
+      60_000,
+      undefined,
+      callerSessionKey,
+    );
+
+    resolveExecution({
+      response: "one terminal result",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    await expect(waiting).resolves.toEqual([{
+      runId,
+      status: "completed",
+      completion: expect.objectContaining({
+        endReason: "completed",
+        summary: "one terminal result",
+      }),
+    }]);
+    expect(announceToParent).not.toHaveBeenCalled();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(deps.eventBus.emit).not.toHaveBeenCalledWith(
+      "subagent:delivery_skipped",
+      expect.anything(),
+    );
+  });
+
   // -----------------------------------------------------------------------
   // Allowlist blocks unauthorized agent
   // -----------------------------------------------------------------------

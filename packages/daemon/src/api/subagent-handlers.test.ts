@@ -218,6 +218,7 @@ describe("createSubagentHandlers", () => {
 
     const result = await handlers["subagent.wait"]!({
       _agentId: "parent-agent",
+      _callerSessionKey: "default:user1:channel1",
       _callerConversationScope: CALLER_SCOPE,
     });
 
@@ -225,6 +226,7 @@ describe("createSubagentHandlers", () => {
       ["run-1"],
       30_000,
       undefined,
+      "default:user1:channel1",
     );
     expect(result).toEqual({
       results: [{
