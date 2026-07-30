@@ -163,6 +163,21 @@ async function runExecute(
 
 const HIT: LcdSearchHit = { kind: "message", refId: "m1", snippet: "a hit", rank: -1 };
 
+describe("ctx_search — recovery scope", () => {
+  it("limits recovery claims to content already ingested into the conversation", () => {
+    const { deps } = makeDeps(makeStore({
+      hits: [],
+      cjkZeroHit: false,
+      lane: "word",
+      matchErrored: false,
+    }));
+    const tool = createCtxSearchTool(deps);
+
+    expect(tool.description).toMatch(/content.*already.*conversation/isu);
+    expect(tool.description).toMatch(/cannot recover.*source.*omitted.*before/isu);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // context:script_zero_hit emit (purity-gated)
 // ---------------------------------------------------------------------------

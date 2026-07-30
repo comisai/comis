@@ -147,6 +147,57 @@ describe("processDocumentAttachment", () => {
       .toBeLessThan(result.textPrefix!.indexOf("SECURITY NOTICE"));
   });
 
+  it("bounds an inline document preview and points recovery at the durable source", async () => {
+    const sourceText = Array.from(
+      { length: 20_000 },
+      (_, index) => `line ${index}: source detail`,
+    ).join("\n");
+    const deps: DocumentHandlerDeps = {
+      fileExtractor: makeFileExtractor({
+        text: sourceText,
+        truncated: true,
+      }),
+      resolveAttachment: makeResolver(),
+      logger: makeLogger(),
+      durableFilePath: "documents/current.txt",
+    };
+
+    const result = await processDocumentAttachment(
+      makeDocumentAttachment(),
+      deps,
+      { ...makeBudget(), maxInlinePrefixChars: 20_000 },
+      buildHint,
+    );
+
+    expect(result.textPrefix!.length).toBeLessThanOrEqual(20_000);
+    expect(result.textPrefix).toContain('path="documents/current.txt"');
+    expect(result.textPrefix).toMatch(/use.*read.*offset.*limit/isu);
+    expect(result.textPrefix).toMatch(/do not claim.*entire file.*until/isu);
+    expect(result.textPrefix).not.toContain("split it into smaller files");
+  });
+
+  it("does not promise source recovery when a truncated document was not persisted", async () => {
+    const deps: DocumentHandlerDeps = {
+      fileExtractor: makeFileExtractor({
+        text: "A".repeat(80_000),
+        truncated: true,
+      }),
+      resolveAttachment: makeResolver(),
+      logger: makeLogger(),
+    };
+
+    const result = await processDocumentAttachment(
+      makeDocumentAttachment(),
+      deps,
+      { ...makeBudget(), maxInlinePrefixChars: 20_000 },
+      buildHint,
+    );
+
+    expect(result.textPrefix!.length).toBeLessThanOrEqual(20_000);
+    expect(result.textPrefix).toMatch(/split.*smaller files/isu);
+    expect(result.textPrefix).not.toMatch(/full original.*stored/isu);
+  });
+
   it("returns empty result when extraction fails", async () => {
     const logger = makeLogger();
     const deps: DocumentHandlerDeps = {

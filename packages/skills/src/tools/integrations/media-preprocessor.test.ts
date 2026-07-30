@@ -1204,7 +1204,7 @@ describe("preprocessMessage", () => {
   // Document processing
   // -------------------------------------------------------------------------
 
-  function makeFileExtractor(overrides?: { fail?: boolean; errorKind?: string; text?: string }): FileExtractionPort {
+  function makeFileExtractor(overrides?: { fail?: boolean; errorKind?: string; text?: string; truncated?: boolean }): FileExtractionPort {
     return {
       supportedMimes: ["text/plain", "application/pdf"],
       extract: overrides?.fail
@@ -1214,7 +1214,7 @@ describe("preprocessMessage", () => {
             fileName: "report.pdf",
             mimeType: "application/pdf",
             extractedChars: (overrides?.text ?? "Extracted document content").length,
-            truncated: false,
+            truncated: overrides?.truncated ?? false,
             durationMs: 15,
             buffer: Buffer.from("fake-pdf"),
           })),
@@ -1233,6 +1233,37 @@ describe("preprocessMessage", () => {
   }
 
   describe("document processing", () => {
+    it("keeps an extracted document message within the normalized text ceiling", async () => {
+      const sourceText = Array.from(
+        { length: 20_000 },
+        (_, index) => `line ${index}: durable document detail`,
+      ).join("\n");
+      const msg = makeMessage({
+        text: "can you read all of this",
+        attachments: [makeDocumentAttachment("tg-file://oversized-document", {
+          mimeType: "text/plain",
+          fileName: "oversized.txt",
+          sizeBytes: 5_000_000,
+        })],
+      });
+
+      const result = await preprocessMessage({
+        fileExtractor: makeFileExtractor({
+          text: sourceText,
+          truncated: true,
+        }),
+        resolveAttachment: makeResolver(),
+        logger: makeLogger(),
+      }, msg, {
+        durableFilePath: () => "documents/oversized.txt",
+      });
+
+      expect(result.message.text.length).toBeLessThanOrEqual(65_536);
+      expect(result.message.text).toContain("documents/oversized.txt");
+      expect(result.message.text).toMatch(/use.*read.*offset.*limit/isu);
+      expect(result.message.text).toContain("can you read all of this");
+    });
+
     it("extracts document content and wraps with security boundary", async () => {
       const fileExtractor = makeFileExtractor();
       const resolver = makeResolver();

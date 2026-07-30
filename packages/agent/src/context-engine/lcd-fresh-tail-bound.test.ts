@@ -43,7 +43,8 @@ describe("boundFreshTailMessages", () => {
     expect(typeof content).toBe("string"); // shape preserved
     expect((content as string).length).toBeLessThan(huge.length);
     expect(content as string).toContain("truncated");
-    expect((content as string).toLowerCase()).toContain("lossless");
+    expect(content as string).toMatch(/message text.*recoverable/isu);
+    expect(content as string).toMatch(/source content.*already.*truncated.*not.*recoverable/isu);
     expect(boundedMessages).toBe(1);
     expect(charsRemoved).toBeGreaterThan(0);
   });
