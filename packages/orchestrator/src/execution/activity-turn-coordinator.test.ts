@@ -1293,6 +1293,36 @@ describe("a failure with no failed activity events never renders a naked errorKi
     expect(outcome.reason).toBe("stopped — spend limit reached");
     coord.dispose();
   });
+
+  it("attributes an incoming failure to the failed event observed in its activity timeline", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent({
+      status: "failed",
+      errorKind: "timeout",
+      phase: "end",
+      toolName: "mcp__second-test-service--slow_status",
+    }));
+
+    await coord.finalize({ kind: "failure", errorKind: "timeout", failedEvents: [] });
+
+    const outcome = renderer.finalizeCalls[0].outcome as Extract<
+      typeof renderer.finalizeCalls[0]["outcome"],
+      { kind: "failure" }
+    >;
+    expect(outcome.kind).toBe("failure");
+    expect(outcome.failedEvents).toHaveLength(1);
+    expect(outcome.failedEvents[0]).toMatchObject({
+      status: "failed",
+      errorKind: "timeout",
+      toolName: "mcp__second-test-service--slow_status",
+    });
+    expect(outcome.reason).toBeUndefined();
+    coord.dispose();
+  });
 });
 
 describe("a delivered answer never renders a failure pill (F-ACT-1 layer 4)", () => {

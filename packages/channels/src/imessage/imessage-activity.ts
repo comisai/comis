@@ -6,7 +6,7 @@
  * later frames are no-ops, the closing follow-up is SUPPRESSED on success (the
  * assistant reply is the signal — posting a "✓ done" on every success would be
  * noise on a channel that cannot edit), and a failure posts exactly one
- * `❌ {errorKind}` follow-up. Three parts, copying the per-channel
+ * attributed `❌` follow-up. Three parts, copying the per-channel
  * `classify<Ch>Error` / `make<Ch>RenderActions` / `create<Ch>ActivityRenderer`
  * shape (signal-activity.ts is the closest non-EditPlace structural analog —
  * `buttons:"none"`, no rich effect, thin wiring):
@@ -21,7 +21,7 @@
  *      classifier). The wrapped "Failed to send …" message is read
  *      for NOTHING user-facing — it selects the variant only and is NEVER rendered
  *      or logged as activity text. The S4 fixture proves the failure text is
- *      `❌ {errorKind}` (from `failureLabel`), not the bridge error body.
+ *      an attributed redacted activity label, not the bridge error body.
  *
  *   2. `makeIMessageRenderActions` — the `ActivityRenderActions` adapter. `send`
  *      posts a plain opening status via `adapter.sendMessage` (NO silent effect —

@@ -382,7 +382,12 @@ export async function callTool(
       // the threshold exactly as before — only the surfaced message changes.
       if (isTimeout) {
         const timeoutMs = state.options.callToolTimeoutMs;
-        const timeoutHint = mcpCallTimeoutHint(serverName, toolName, timeoutMs);
+        const timeoutHint = mcpCallTimeoutHint(
+          serverName,
+          toolName,
+          timeoutMs,
+          Object.keys(args).length > 0,
+        );
         logger.warn(
           {
             serverName,
@@ -411,18 +416,26 @@ export async function callTool(
  * @param serverName - the MCP server whose call expired.
  * @param toolName - the qualified tool name that expired.
  * @param timeoutMs - the ACTUAL resolved `integrations.mcp.callToolTimeoutMs`.
+ * @param hasInputArguments - whether this invocation supplied arguments whose
+ *   scope can potentially be reduced or split.
  * @returns the hint text (also used verbatim as the Error message).
  */
 export function mcpCallTimeoutHint(
   serverName: string,
   toolName: string,
   timeoutMs: number,
+  hasInputArguments: boolean,
 ): string {
+  const callerRemediation = hasInputArguments
+    ? `Narrow the request scope or split it into smaller calls using this tool's input arguments ` +
+      `so each call completes inside ${timeoutMs}ms. `
+    : "This call supplied no input arguments. Check the MCP server's health and latency before " +
+      "retrying; an unchanged retry will re-expire the same deadline. ";
   return (
     `MCP tool "${toolName}" on server "${serverName}" timed out — it exceeded the call ` +
     `deadline of ${timeoutMs}ms (\`integrations.mcp.callToolTimeoutMs\`, currently ${timeoutMs}). ` +
     "This deadline is deterministic — do not retry it unchanged, the same call re-expires it. " +
-    `Narrow the request (a smaller page/date window/fewer entities) so it completes inside ${timeoutMs}ms. ` +
+    callerRemediation +
     "The deadline itself cannot be changed from here — it is an immutable config path, so only an " +
     "operator can adjust it by editing the config file and restarting the daemon."
   );

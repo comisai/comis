@@ -361,6 +361,31 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/operator/i);
   });
 
+  it("insurance: a zero-argument MCP timeout does not invent request scope controls", () => {
+    const r = rootCause(
+      makeSignals({
+        failures: [
+          {
+            seq: 0,
+            toolName: "mcp__vendor--status",
+            classifiedFailureBy: "mcp_classifier",
+            transportOk: false,
+            errorKind: "timeout",
+            resultDigest: "abc",
+            resultBytes: 10,
+            errorPreview: "timed out at the configured deadline",
+            argsPreview: {},
+          },
+        ],
+      }),
+    );
+
+    expect(r!.code).toBe("provider_timeout");
+    expect(r!.suggestedNextSteps[0]).toMatch(/no (input |tool )?arguments/i);
+    expect(r!.suggestedNextSteps[0]).not.toMatch(/narrow|smaller|fewer/i);
+    expect(r!.suggestedNextSteps.join(" ")).toContain("integrations.mcp.callToolTimeoutMs");
+  });
+
   it("insurance: context_bloat (offloads ≥ N + token spike)", () => {
     const r = rootCause(
       makeSignals({

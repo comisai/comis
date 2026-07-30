@@ -301,7 +301,7 @@ describe("Signal golden fixtures (DeleteAndRepost — readFixture + toEqual)", (
     expect(log).toEqual(readFixture("signal", "S3"));
   });
 
-  it("S4 outright failure — running activity deleted, then a KEPT ❌ {errorKind} send (no trailing delete)", async () => {
+  it("S4 outright failure — running activity deleted, then a kept attributed ❌ send", async () => {
     const log = await runScenario(
       [makeFrame(0, "running tool"), makeFrame(1, "tool failed")],
       { kind: "failure", errorKind: "dependency", failedEvents: [ev(1, { status: "failed", errorKind: "dependency" })] },

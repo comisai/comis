@@ -575,6 +575,16 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
       }
     }
 
+    // The coordinator's stream is the authoritative activity timeline for the
+    // turn. Preserve its failed events when an upstream failure arrives without
+    // attached event evidence, while leaving explicit upstream evidence intact.
+    if (effective.kind === "failure" && effective.failedEvents.length === 0) {
+      const failedEvents = events.filter((event) => event.status === "failed");
+      if (isNonEmptyEvents(failedEvents)) {
+        effective = { ...effective, failedEvents };
+      }
+    }
+
     // (1a2) A failure whose answer was fully delivered, with every observed
     // failure followed by a successful completion of the same tool, is a
     // SUCCESS WITH RECOVERED FAILURES:

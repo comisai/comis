@@ -5,7 +5,7 @@
  * it wires the `createAppendOnlyRenderer` IDENTICALLY to iMessage: ONE
  * opening status (the first non-trivial frame), later frames are no-ops, the
  * closing follow-up is SUPPRESSED on success (the assistant reply is the signal),
- * and a failure posts exactly one `❌ {errorKind}` follow-up. Three parts,
+ * and a failure posts exactly one attributed `❌` follow-up. Three parts,
  * copying the per-channel `classify<Ch>Error` / `make<Ch>RenderActions` /
  * `create<Ch>ActivityRenderer` shape (signal-activity.ts is the closest
  * non-EditPlace structural analog — `buttons:"none"`, no rich effect, thin wiring):
@@ -19,7 +19,7 @@
  *      invented rich classifier). The wrapped "Failed to send …" message is read
  *      for NOTHING user-facing — it selects the variant only and is NEVER
  *      rendered or logged as activity text. The S4 fixture proves the failure
- *      text is `❌ {errorKind}` (from `failureLabel`), not the SDK body.
+ *      text comes from the redacted activity event, not the SDK body.
  *
  *   2. `makeLineRenderActions` — the `ActivityRenderActions` adapter. `send` posts
  *      a plain opening status via `adapter.sendMessage` (NO silent effect — LINE

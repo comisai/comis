@@ -558,12 +558,15 @@ describe("subagentLine", () => {
 describe("failureLabel", () => {
   it("formats the closing ❌ {errorKind} by default (marker-less byte parity)", () => {
     // No markers arg → the hardcoded glyph, byte-identical to the default theme's output.
-    expect(failureLabel({ kind: "failure", errorKind: "timeout" })).toBe("❌ timeout");
+    expect(failureLabel({ kind: "failure", errorKind: "timeout", failedEvents: [] })).toBe("❌ timeout");
   });
 
   it("is byte-identical to the cross glyph when the default theme markers are passed", () => {
     // Passing the default bundle's markers must reproduce the marker-less output exactly.
-    expect(failureLabel({ kind: "failure", errorKind: "timeout" }, DEFAULT_THEME_MARKERS)).toBe(
+    expect(failureLabel(
+      { kind: "failure", errorKind: "timeout", failedEvents: [] },
+      DEFAULT_THEME_MARKERS,
+    )).toBe(
       "❌ timeout",
     );
   });
@@ -571,7 +574,10 @@ describe("failureLabel", () => {
   it("failure label uses the ascii marker and drops the cross emoji", () => {
     // The ascii theme strips ALL emoji: the closing failure line carries
     // the bracketed `[ERR]` tag and NO `❌`.
-    const out = failureLabel({ kind: "failure", errorKind: "timeout" }, ASCII_MARKERS);
+    const out = failureLabel(
+      { kind: "failure", errorKind: "timeout", failedEvents: [] },
+      ASCII_MARKERS,
+    );
     expect(out).toBe("[ERR] timeout");
     expect(out).not.toContain("❌");
     expect(out).not.toMatch(/\p{Extended_Pictographic}/u);
@@ -579,7 +585,10 @@ describe("failureLabel", () => {
 
   it("interpolates only the closed-union errorKind after the themed marker", () => {
     // The marker carries the errorKind only — never raw outcome internals.
-    expect(failureLabel({ kind: "failure", errorKind: "dependency" }, ASCII_MARKERS)).toBe(
+    expect(failureLabel(
+      { kind: "failure", errorKind: "dependency", failedEvents: [] },
+      ASCII_MARKERS,
+    )).toBe(
       "[ERR] dependency",
     );
   });
@@ -602,6 +611,22 @@ describe("failureLabel", () => {
     expect(failureLabel({ kind: "failure", errorKind: "timeout", failedEvents: [] })).toBe(
       "❌ timeout",
     );
+  });
+
+  it("keeps the attributed failed step in the closing label instead of collapsing to its error category", () => {
+    const failedEvent = event({
+      status: "failed",
+      phase: "end",
+      defaultLabel: "checking secondary service status",
+      toolName: "service_status",
+      errorKind: "timeout",
+    });
+
+    expect(failureLabel({
+      kind: "failure",
+      errorKind: "timeout",
+      failedEvents: [failedEvent],
+    })).toBe("❌ checking secondary service status — timeout");
   });
 });
 

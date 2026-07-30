@@ -2,6 +2,6 @@
   "calls": [
     { "op": "send", "id": "dc-msg-0", "text": "🔧 running tool", "silent": false },
     { "op": "edit", "id": "dc-msg-0", "text": "🔧 tool failed" },
-    { "op": "edit", "id": "dc-msg-0", "text": "❌ dependency" }
+    { "op": "edit", "id": "dc-msg-0", "text": "❌ working — dependency" }
   ]
 }
