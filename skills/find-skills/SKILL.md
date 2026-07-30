@@ -1,7 +1,7 @@
 ---
 name: find-skills
-version: 1.0.3
-description: Discover and install agent skills from the open skills ecosystem at skills.sh. Use this skill when the user asks "how do I do X", "find a skill for X", "is there a skill that can...", "can you do X" for a specialized capability, wants to extend agent capabilities, or mentions wishing they had help with a specific domain (design, testing, deployment, etc.) -- even if they don't use the word "skill".
+version: 1.0.4
+description: "MANDATORY: For requests asking whether a skill or specialized capability exists, load this skill and run its catalog workflow before answering. Do not answer from general capabilities or generic web search."
 comis:
   requires:
     bins: ["git"]

@@ -111,8 +111,9 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
       resolve(repositoryRoot, "skills/find-skills/SKILL.md"),
       "utf8",
     );
-    const description =
-      manifest.match(/^description:\s*(.+)$/mu)?.[1] ?? "";
+    const description = (
+      manifest.match(/^description:\s*(.+)$/mu)?.[1] ?? ""
+    ).replace(/^["']|["']$/gu, "");
 
     expect(description).toMatch(/^MANDATORY:/u);
     expect(description).toMatch(/load this skill/iu);
