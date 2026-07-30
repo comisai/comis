@@ -72,6 +72,7 @@ function makeRequest(overrides: Partial<{
   fingerprintParams: Record<string, unknown>;
   agentId: string;
   sessionKey: string;
+  traceId: string;
   trustLevel: "admin" | "user" | "guest";
   callbackOwner: {
     tenantId: string;
@@ -91,6 +92,7 @@ function makeRequest(overrides: Partial<{
     params,
     fingerprintParams: overrides.fingerprintParams ?? params,
     sessionKey,
+    traceId: overrides.traceId ?? "40000000-0000-4000-8000-000000000004",
     ...authority,
     trustLevel: overrides.trustLevel ?? "user" as const,
     callbackOwner: overrides.callbackOwner ?? {
@@ -940,6 +942,18 @@ describe("batch parallel requests", () => {
       operationFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
     expect(JSON.stringify(payload)).not.toContain("private-test-value");
+  });
+
+  it("carries the live request trace onto the approval event", () => {
+    const handler = vi.fn();
+    eventBus.on("approval:requested", handler);
+
+    gate.requestApproval(makeRequest({
+      traceId: "50000000-0000-4000-8000-000000000005",
+    }));
+
+    const payload = handler.mock.calls[0]![0] as EventMap["approval:requested"];
+    expect(payload.traceId).toBe("50000000-0000-4000-8000-000000000005");
   });
 
   it("fails closed without creating a shared pending bucket when principal identity is missing", async () => {
