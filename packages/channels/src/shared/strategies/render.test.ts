@@ -603,6 +603,22 @@ describe("failureLabel", () => {
       "❌ timeout",
     );
   });
+
+  it("keeps the attributed failed step in the closing label instead of collapsing to its error category", () => {
+    const failedEvent = event({
+      status: "failed",
+      phase: "end",
+      defaultLabel: "checking secondary service status",
+      toolName: "service_status",
+      errorKind: "timeout",
+    });
+
+    expect(failureLabel({
+      kind: "failure",
+      errorKind: "timeout",
+      failedEvents: [failedEvent],
+    })).toBe("❌ checking secondary service status — timeout");
+  });
 });
 
 describe("successLabel", () => {
