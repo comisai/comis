@@ -86,6 +86,7 @@ export function registerFailureDetectorMetadata(): void {
           errorKind: "config" satisfies ErrorKind,
           classifiedField: "message",
           matchedRule: "missing_provider_configuration",
+          matchedToken: missingConfigKey,
           failureDisclosure: {
             kind: "missing_configuration",
             configKey: missingConfigKey,
@@ -100,6 +101,7 @@ export function registerFailureDetectorMetadata(): void {
           errorKind: "resource" satisfies ErrorKind,
           classifiedField: "message",
           matchedRule: "/rate limit|quota exceeded|usage limit|too many requests/",
+          matchedToken: WEB_SEARCH_CONFIG_KEY,
           failureDisclosure: {
             kind: "quota_exhausted",
             configKey: WEB_SEARCH_CONFIG_KEY,
