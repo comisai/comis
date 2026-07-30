@@ -5,6 +5,8 @@
 import {
   ConversationScopeSchema,
   createConversationRef,
+  emitObservationalEventSafely,
+  systemNowMs,
   type ConversationRef,
 } from "@comis/core";
 import { AuthorizationError } from "../errors.js";
@@ -55,18 +57,40 @@ function denialLogMessages(method: SessionReadMethod): {
 function denySessionRead(
   deps: SessionHandlerDeps,
   method: SessionReadMethod,
+  tenantId: string,
   callerAgentId: string,
   reason: "caller_scope_unavailable" | "conversation_scope_mismatch",
   message: string,
 ): never {
   const logMessages = denialLogMessages(method);
-  deps.logger.audit({
-    kind: "capability_denied",
-    outcome: "denied",
-    actionType: method,
-    agentId: callerAgentId,
-    authorizationFailure: reason,
-  }, logMessages.audit);
+  if (deps.eventBus !== undefined) {
+    emitObservationalEventSafely(
+      { eventBus: deps.eventBus, logger: deps.logger },
+      "audit:event",
+      {
+        timestamp: systemNowMs(),
+        tenantId,
+        agentId: callerAgentId,
+        actionType: method,
+        kind: "capability_denied",
+        classification: "read",
+        outcome: "denied",
+        metadata: {
+          authorizationFailure: reason,
+          method,
+          decision: "deny",
+        },
+      },
+    );
+  } else {
+    deps.logger.audit({
+      kind: "capability_denied",
+      outcome: "denied",
+      actionType: method,
+      agentId: callerAgentId,
+      authorizationFailure: reason,
+    }, logMessages.audit);
+  }
   deps.logger.warn({
     method,
     agentId: callerAgentId,
@@ -87,6 +111,7 @@ export function denyModelSessionScopeMismatch(
   return denySessionRead(
     deps,
     method,
+    caller.tenantId,
     caller.agentId,
     "conversation_scope_mismatch",
     message,
@@ -107,9 +132,13 @@ export function resolveModelSessionCaller(
   const rawScope = rawParams._callerConversationScope;
   const parsed = ConversationScopeSchema.safeParse(rawScope);
   if (!parsed.success) {
+    const fallbackTenantId = typeof rawParams._tenantId === "string"
+      ? rawParams._tenantId
+      : deps.tenantId;
     return denySessionRead(
       deps,
       method,
+      fallbackTenantId,
       callerAgentId,
       "caller_scope_unavailable",
       "Session query access denied",
@@ -123,6 +152,7 @@ export function resolveModelSessionCaller(
     return denySessionRead(
       deps,
       method,
+      parsed.data.tenantId,
       callerAgentId,
       "conversation_scope_mismatch",
       "Session query access denied",
@@ -134,6 +164,7 @@ export function resolveModelSessionCaller(
     return denySessionRead(
       deps,
       method,
+      parsed.data.tenantId,
       callerAgentId,
       "caller_scope_unavailable",
       "Session query access denied",
@@ -175,6 +206,7 @@ export function requireModelSessionAccess(
   denySessionRead(
     deps,
     "session.history",
+    caller.tenantId,
     caller.agentId,
     "conversation_scope_mismatch",
     caller.isSubagent

@@ -68,6 +68,7 @@ import { extractMcpServerName } from "@comis/shared";
 import {
   classifyMcpErrorType,
   classifyRuntimeToolGuard,
+  buildFailureArgsPreview,
   extractMcpFailureCode,
   sanitizeToolArgs,
   extractErrorText,
@@ -84,6 +85,9 @@ const TOOL_ERROR_INTERNAL_CODES: ReadonlySet<string> = new Set([
   "grep_error",
   "dir_create_failed",
   "pdf_error",
+]);
+const TOOL_ERROR_AUTH_CODES: ReadonlySet<string> = new Set([
+  "permission_denied",
 ]);
 
 /**
@@ -131,8 +135,9 @@ function perRootBudgetAbortReason(limb: SpendLimb | undefined): string {
  * trajectory + alerting + the channel activity label.
  *
  * A structured bracketed `[code]` means the call REACHED the tool and the tool
- * rejected it — that is `validation` (the model's input/policy) or, for the IO
- * codes above, `internal` (the tool's own failure). It is NEVER a `dependency`:
+ * rejected it — that is `auth` for an explicit permission denial,
+ * `validation` for caller-correctable input, or `internal` for the IO codes
+ * above. It is NEVER a `dependency`:
  * "dependency" is reserved for a genuinely external/MCP/transport failure, which
  * is exactly the no-structured-code fallback.
  *
@@ -144,7 +149,9 @@ function perRootBudgetAbortReason(limb: SpendLimb | undefined): string {
 export function classifyToolError(_toolName: string, errorText: string | undefined): ErrorKind {
   const code = errorText ? BRACKETED_TOOL_ERROR_CODE.exec(errorText)?.[1] : undefined;
   if (code !== undefined) {
-    return TOOL_ERROR_INTERNAL_CODES.has(code) ? "internal" : "validation";
+    if (TOOL_ERROR_INTERNAL_CODES.has(code)) return "internal";
+    if (TOOL_ERROR_AUTH_CODES.has(code)) return "auth";
+    return "validation";
   }
   // A raw Node wrong-path-type errno (EISDIR/ENOTDIR) is the model's bad input,
   // not an external dependency — classify as validation (the bad-argument family).
@@ -1521,6 +1528,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const executedRedactedParams = redactValue(rawArgsForParams, { homeDir: deps.homeDir }).value as
             | Record<string, unknown>
             | undefined;
+          const failureArgsPreview = !toolSuccess
+            ? buildFailureArgsPreview(rawArgsForParams, deps.homeDir)
+            : undefined;
 
           // Content-free web_search/web_fetch grounding summary (count +
           // source hosts only) — computed on the SUCCESS path so the trajectory
@@ -1553,8 +1563,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // (large values → "[N chars]"). Success omits it — the input is
             // only diagnostically load-bearing on a failure, and gating keeps
             // the trajectory lean.
-            ...(!toolSuccess && executedRedactedParams !== undefined && {
-              argsPreview: sanitizeToolArgs(executedRedactedParams),
+            ...(failureArgsPreview !== undefined && {
+              argsPreview: failureArgsPreview,
             }),
             ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
             ...(errorText && { errorMessage: sanitizeLogString(errorText).slice(0, 1500) }),
