@@ -157,5 +157,10 @@ describe("drive group conversation correlation", () => {
       1,
       6000445,
     )).toBe("I heard the voice message.");
+    expect(findTelegramConversationWireAnswer(
+      outbound,
+      1,
+      6000999,
+    )).toBeNull();
   });
 });

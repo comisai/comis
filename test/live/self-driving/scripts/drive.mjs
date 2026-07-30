@@ -160,7 +160,11 @@ const isConversationAnswer = (outbound) => {
   const visibleText = outboundVisibleText(outbound);
   if (!visibleText || isProgress(visibleText)) return false;
   return !sharedConversation
-    || findTelegramConversationWireAnswer([outbound], injectOpts?.thread) !== null;
+    || findTelegramConversationWireAnswer(
+      [outbound],
+      injectOpts?.thread,
+      inj.messageId,
+    ) !== null;
 };
 
 // --- trajectory turn-end watch (authoritative execution signal) ---
@@ -302,6 +306,7 @@ while (Date.now() - start < maxMs) {
       sawAnswer,
       turnEnded,
       threadId: injectOpts?.thread,
+      inboundMessageId: inj.messageId,
     })) {
       const tail = await getOutbound(after, 2500);
       for (const o of tail) {
@@ -378,11 +383,17 @@ const correlatedWireAnswer = correlatedAnswer
   ? wireContainsAssistantReply(
       seen,
       correlatedAnswer,
-      sharedConversation ? { threadId: injectOpts?.thread } : undefined,
+      sharedConversation
+        ? { threadId: injectOpts?.thread, inboundMessageId: inj.messageId }
+        : undefined,
     )
   : false;
 const correctedWireAnswer = sharedConversation && turnEnded
-  ? findTelegramConversationWireAnswer(seen, injectOpts?.thread)
+  ? findTelegramConversationWireAnswer(
+      seen,
+      injectOpts?.thread,
+      inj.messageId,
+    )
   : null;
 const hasSubstantiveAnswer = sharedConversation
   ? correlatedWireAnswer || correctedWireAnswer !== null
