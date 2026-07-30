@@ -146,7 +146,7 @@ import { resolveEffectiveContextWindow } from "../../model/effective-context-win
 import { DEFAULT_EFFECTIVE_CAP_BY_CLASS } from "../../context-engine/budget-capacity-cap.js";
 import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
 import { scriptTokenFactor } from "@comis/core";
-import { isAnthropicFamily, isGoogleFamily, resolveProviderCapabilities } from "../../provider/capabilities.js";
+import { resolveProviderCapabilities } from "../../provider/capabilities.js";
 import { detectOnboardingState } from "../../workspace/onboarding-detector.js";
 import { validateRoleAttribution, sessionTreeHasSameRoleAnomaly } from "../../context-engine/index.js";
 import type { TokenAnchor, WindowProvenance } from "../../context-engine/types.js";
@@ -1793,17 +1793,6 @@ async function runSessionLocked(
     if (!sideEffects?.discoveredTools?.length) return alternative?.override;
 
     if (!contextTools) return alternative?.override;
-
-    // Skip mid-turn injection for providers without explicit cache control.
-    // Discovery state is already persisted via markDiscovered() in the tool execution
-    // wrapper. Next execution includes these tools via applyToolDeferral() -> isDiscovered().
-    if (!resolvedModel || (!isAnthropicFamily(resolvedModel.provider) && !isGoogleFamily(resolvedModel.provider))) {
-      deps.logger.debug(
-        { discoveredCount: sideEffects.discoveredTools.length, provider: resolvedModel?.provider },
-        "Skipped mid-turn injection (provider uses automatic prefix caching)",
-      );
-      return alternative?.override;
-    }
 
     let injectedCount = 0;
     for (const name of sideEffects.discoveredTools) {

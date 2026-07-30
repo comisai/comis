@@ -83,12 +83,10 @@ export interface DeferralContext {
   neverDefer?: string[];
   /** Operator override: tools that should always be deferred (from config.deferredTools.alwaysDefer). */
   alwaysDefer?: string[];
-  /** Provider family for mid-turn injection awareness.
-   *  "anthropic" and "google" support mid-turn tool injection, so MCP tools
-   *  can be deferred behind discover_tools. Other providers (e.g., "openai",
-   *  "default", "other") do not inject mid-turn, so MCP tools must be active
-   *  from the start. Required — pass the explicit family for the resolved
-   *  model; use "default" when no specific family applies. */
+  /** Provider family used by provider-specific deferral policies. All client
+   *  agent loops support same-turn injection by updating the live tool array.
+   *  Required — pass the explicit family for the resolved model; use
+   *  "default" when no specific family applies. */
   providerFamily: string;
   /** Names of tools currently ACTIVE in this session (post-deferral).
    *  Consumed by discover_tools to return "already active" guidance when
@@ -429,8 +427,7 @@ export function applyToolDeferral(
     }
   }
 
-  // MCP tools are ACTIVE BY DEFAULT for providers that support mid-turn tool
-  // injection (`anthropic`, `google`). Empirically, the model rarely invokes
+  // MCP tools are ACTIVE BY DEFAULT. Empirically, the model rarely invokes
   // the server-side discovery tool (`tool_search_tool_regex`) and falls back
   // to `exec`/`web_fetch` -- deferral here paid a 0-discovery cost for no
   // benefit. Token cost of keeping ~20 MCP tools active is ~3-5k at cache-read
@@ -440,9 +437,7 @@ export function applyToolDeferral(
   // Operators who DO want MCP deferral opt in via
   // `config.deferredTools.alwaysDefer`. The nano-class rule below still
   // catches MCP tools when capabilityClass is `"nano"` (aggressive deferral for
-  // the most constrained models). Providers without mid-turn injection (OpenAI,
-  // xAI, etc.) were already exempt from MCP deferral and remain so -- the
-  // flip means the Anthropic/Google branch now matches their behavior.
+  // the most constrained models).
 
   // Aggressive deferral for nano-class models. The 'small' class ceiling policy
   // is implemented via DeferralContext.activeToolCeiling; nano retains its own
