@@ -139,6 +139,25 @@ describe("persistInboundMessageProvenance", () => {
     expect(message.text).toContain(password);
   });
 
+  it("redacts a thumb-typed opaque token from both provenance persistence forms", () => {
+    const credential = "AZ9mQ2-v7Kp3_X8nL4tR6sB1";
+    const message = {
+      ...first,
+      text: `heres the token ${credential}`,
+      attachments: [],
+      metadata: {},
+    } satisfies NormalizedMessage;
+
+    const planned = planInboundMessageProvenance(message, RECORDED_AT);
+
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(JSON.stringify(planned.value.payloads)).not.toContain(credential);
+    expect(planned.value.ledgerContent).not.toContain(credential);
+    expect(JSON.stringify(planned.value)).toContain("[REDACTED]");
+    expect(message.text).toContain(credential);
+  });
+
   it("splits a large physical batch into complete markers below the offline reader record ceiling", () => {
     const appendCustomEntry = vi.fn()
       .mockImplementation(() => `entry-${appendCustomEntry.mock.calls.length}`);

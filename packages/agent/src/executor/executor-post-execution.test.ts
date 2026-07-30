@@ -2134,6 +2134,28 @@ describe("paired-conversation memory store applies the secret-egress guard", () 
     expect(enqueued).toHaveLength(0);
   });
 
+  it("behavior — a paired memory containing a thumb-typed opaque token is not stored or embedded", async () => {
+    const { storePairedConversationMemory } = await loadHelper();
+    const memoryPort = makeCapturingMemoryPort();
+    const enqueued: Array<{ id: string; content: string }> = [];
+    const credential = "AZ9mQ2-v7Kp3_X8nL4tR6sB1";
+
+    await storePairedConversationMemory({
+      memoryPort,
+      pairedContent: `[user] heres the token ${credential}\n[agent] stored securely`,
+      effectiveAgentId: "agent_a",
+      sessionKey: { tenantId: "tenant_a", userId: "user_a" },
+      channelType: "telegram",
+      formattedKey: "agent_a:telegram:chan-1",
+      now: clock.now(),
+      logger: makeSilentLogger(),
+      embeddingEnqueue: (id: string, content: string) => enqueued.push({ id, content }),
+    });
+
+    expect(memoryPort.store).not.toHaveBeenCalled();
+    expect(enqueued).toHaveLength(0);
+  });
+
   it("behavior — a paired memory with NO secret still stores unchanged (gate does not regress the happy path)", async () => {
     const { storePairedConversationMemory } = await loadHelper();
     const memoryPort = makeCapturingMemoryPort();

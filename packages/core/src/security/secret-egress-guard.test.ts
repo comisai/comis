@@ -109,6 +109,15 @@ describe("scrubSecretsFromText", () => {
     expect(result.redactions).toBe(1);
   });
 
+  it("scrubs an opaque credential disclosed after a plain-language token label", () => {
+    const credential = "AZ9mQ2-v7Kp3_X8nL4tR6sB1";
+    const result = scrubSecretsFromText(`heres the token ${credential}`);
+
+    expect(result.text).toBe("heres the token [REDACTED]");
+    expect(result.text).not.toContain(credential);
+    expect(result.redactions).toBe(1);
+  });
+
   it("preserves environment references in natural-language storage confirmations", () => {
     const input =
       "Confirm storing SERVICE_PASSWORD in the encrypted secret store. The confirmed value is ${SERVICE_PASSWORD}.";
@@ -129,6 +138,15 @@ describe("scrubSecretsFromText", () => {
 
   it("does not treat plural token-usage metrics as credential assignments", () => {
     const input = "Runtime: 2.1s | Steps: 3 | Tokens: 200 | Cost: $0.0200";
+    expect(scrubSecretsFromText(input)).toEqual({ text: input, redactions: 0 });
+  });
+
+  it.each([
+    "the token budget is 128000",
+    "heres the token count from the last run",
+    "use the token window from the model settings",
+    "the secret project is still confidential",
+  ])("preserves ordinary credential-label prose without a supplied value: %s", (input) => {
     expect(scrubSecretsFromText(input)).toEqual({ text: input, redactions: 0 });
   });
 });

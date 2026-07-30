@@ -285,6 +285,26 @@ describe("ingestTurn", () => {
     expect(databaseBytes.indexOf(Buffer.from("[REDACTED]"))).toBeGreaterThanOrEqual(0);
   });
 
+  it("keeps a thumb-typed opaque token out of LCD base rows and FTS indexes", () => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const credential = "AZ9mQ2-v7Kp3_X8nL4tR6sB1";
+
+    ingestTurn(
+      store,
+      SCOPE,
+      0,
+      [userMsg(`heres the token ${credential}`) as AgentMessage],
+      FIXED_NOW,
+      createMockLogger(),
+    );
+
+    const databaseBytes = db.serialize();
+    expect(databaseBytes.indexOf(Buffer.from(credential))).toBe(-1);
+    expect(databaseBytes.indexOf(Buffer.from("[REDACTED]"))).toBeGreaterThanOrEqual(0);
+  });
+
   it("tokenCount is computed agent-side via estimateMessageTokens; thinking tokens ARE counted", () => {
     const { store, appended } = makeRecordingStore();
     const logger = createMockLogger();
