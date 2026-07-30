@@ -57,6 +57,8 @@ export interface ApprovalGate {
   requestApproval(
     req: Omit<ApprovalRequest, "requestId" | "shortId" | "createdAt" | "timeoutMs"> & {
       fingerprintParams: Record<string, unknown>;
+      /** Formatted session identifier used only for live activity correlation. */
+      sessionKey: string;
     },
   ): Promise<ApprovalResolution>;
 
@@ -338,6 +340,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
   function requestApproval(
     req: Omit<ApprovalRequest, "requestId" | "shortId" | "createdAt" | "timeoutMs"> & {
       fingerprintParams: Record<string, unknown>;
+      sessionKey: string;
     },
   ): Promise<ApprovalResolution> {
     const captured = tryCatch(() => ({
@@ -347,6 +350,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       fingerprintParams: req.fingerprintParams,
       tenantId: req.tenantId,
       agentId: req.agentId,
+      sessionKey: req.sessionKey,
       conversationRef: req.conversationRef,
       resolvingPrincipalId: req.resolvingPrincipalId,
       trustLevel: req.trustLevel,
@@ -388,6 +392,8 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       : err(new Error("Approval request identity is invalid"));
     if (
       !captured.ok
+      || typeof captured.value.sessionKey !== "string"
+      || captured.value.sessionKey.length === 0
       || !callbackOwner.ok
       || !cacheKeyResult.ok
       || !displayParams.ok
@@ -502,6 +508,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       tenantId: request.tenantId,
       agentId: request.agentId,
       conversationRef: request.conversationRef,
+      sessionKey: requestInput.sessionKey,
       resolvingPrincipalId: request.resolvingPrincipalId,
       trustLevel: request.trustLevel,
       createdAt: request.createdAt,

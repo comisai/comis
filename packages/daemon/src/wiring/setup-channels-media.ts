@@ -425,7 +425,6 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
           // Pass imageAnalyzer ONLY when vision is NOT available AND images are enabled
           imageAnalyzer: visionAvailable ? undefined : (imagesEnabled ? deps.imageAnalyzer : undefined),
           resolveAttachment: effectiveResolve,
-          durableFilePath: (attachment) => persistedFilePaths.get(attachment.url),
           maxMediaBytes,
           logger: channelsLogger,
           // Vision-direct path: sanitize images for API injection
@@ -444,6 +443,9 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
           onSuspiciousContent,
         },
         enrichedMsg,
+        {
+          durableFilePath: (attachment) => persistedFilePaths.get(attachment.url),
+        },
       );
       const sttReceipts = SttPreprocessReceiptsSchema.safeParse(
         result.sttReceipts,

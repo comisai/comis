@@ -90,6 +90,7 @@ function makeRequest(overrides: Partial<{
     action: overrides.action ?? "agents.restart",
     params,
     fingerprintParams: overrides.fingerprintParams ?? params,
+    sessionKey,
     ...authority,
     trustLevel: overrides.trustLevel ?? "user" as const,
     callbackOwner: overrides.callbackOwner ?? {

@@ -275,6 +275,7 @@ describe("buildMediaPipeline", () => {
         }),
       }),
       expect.anything(),
+      expect.anything(),
     );
   });
 
@@ -335,6 +336,7 @@ describe("buildMediaPipeline", () => {
     expect(preprocessMessage).toHaveBeenCalledWith(
       expect.objectContaining({ visionAvailable: true }),
       expect.anything(),
+      expect.anything(),
     );
     expect(preprocessed.metadata.visionPreprocess).toEqual({
       provider: "provider-b",
@@ -351,8 +353,8 @@ describe("buildMediaPipeline", () => {
       ok: true,
       value: { buffer: image },
     });
-    vi.mocked(preprocessMessage).mockImplementationOnce(async (mediaDeps, msg) => {
-      const durablePath = mediaDeps.durableFilePath?.(msg.attachments[0]!);
+    vi.mocked(preprocessMessage).mockImplementationOnce(async (_mediaDeps, msg, context) => {
+      const durablePath = context?.durableFilePath(msg.attachments[0]!);
       const attachmentHint = durablePath === undefined
         ? "use image_analyze tool to view | url: tg-file://current"
         : `use image_analyze with source_type="file" and source="${durablePath}" to view`;
@@ -576,6 +578,7 @@ describe("buildMediaPipeline", () => {
     expect(preprocessMessage).toHaveBeenCalledWith(
       expect.objectContaining({ onSuspiciousContent: callback }),
       expect.anything(),
+      expect.anything(),
     );
   });
 
@@ -599,6 +602,7 @@ describe("buildMediaPipeline", () => {
 
     expect(preprocessMessage).toHaveBeenCalledWith(
       expect.objectContaining({ onSuspiciousContent: undefined }),
+      expect.anything(),
       expect.anything(),
     );
   });

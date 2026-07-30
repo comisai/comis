@@ -62,8 +62,6 @@ export interface MediaProcessorDeps {
   readonly imageAnalyzer?: ImageAnalysisPort;
   /** Function to resolve attachment URLs/protocols to raw Buffer data. */
   readonly resolveAttachment?: (attachment: Attachment) => Promise<Buffer | null>;
-  /** Return the durable workspace-relative path assigned to an attachment, when available. */
-  readonly durableFilePath?: (attachment: Attachment) => string | undefined;
   /** Maximum allowed file size in bytes. Attachments exceeding this are skipped. */
   readonly maxMediaBytes?: number;
   /** When true, build ImageContent blocks instead of text descriptions for image attachments. */
@@ -86,6 +84,12 @@ export interface MediaProcessorDeps {
   readonly fileExtractionConfig?: Pick<FileExtractionConfig, "maxTotalChars">;
   /** Optional callback for suspicious content detection in external content. */
   readonly onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
+}
+
+/** Per-message media state created by the inbound persistence boundary. */
+export interface MediaPreprocessContext {
+  /** Return the durable workspace-relative path assigned to an attachment, when available. */
+  readonly durableFilePath: (attachment: Attachment) => string | undefined;
 }
 
 /** Result of preprocessing a message. */
@@ -196,6 +200,7 @@ function buildAttachmentHint(
 export async function preprocessMessage(
   deps: MediaProcessorDeps,
   msg: NormalizedMessage,
+  context?: MediaPreprocessContext,
 ): Promise<PreprocessResult> {
   const transcriptions: PreprocessResult["transcriptions"] = [];
   const sttReceipts: PreprocessResult["sttReceipts"] = [];
@@ -248,7 +253,7 @@ export async function preprocessMessage(
       if (r.transcription) transcriptions.push(r.transcription);
       if (r.sttReceipt) sttReceipts.push(r.sttReceipt);
     } else if (kind === "image") {
-      const r = await processImageAttachment(att, { imageAnalyzer: deps.imageAnalyzer, resolveAttachment, visionAvailable: deps.visionAvailable, sanitizeImage: deps.sanitizeImage, logger: deps.logger, onSuspiciousContent: deps.onSuspiciousContent }, imageContents.length, (a) => buildAttachmentHint("image", a, "image_analyze", deps.durableFilePath?.(a)));
+      const r = await processImageAttachment(att, { imageAnalyzer: deps.imageAnalyzer, resolveAttachment, visionAvailable: deps.visionAvailable, sanitizeImage: deps.sanitizeImage, logger: deps.logger, onSuspiciousContent: deps.onSuspiciousContent }, imageContents.length, (a) => buildAttachmentHint("image", a, "image_analyze", context?.durableFilePath(a)));
       if (r.textPrefix) textPrefixes.push(r.textPrefix);
       if (r.analysis) analyses.push(r.analysis);
       if (r.imageContent) imageContents.push(r.imageContent);

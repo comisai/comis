@@ -223,17 +223,18 @@ export interface ComisSessionManager {
 
   /**
    * Append exact pre-serialized JSONL content to the session's durable inbound
-   * message ledger. The caller already holds this session's `withSession` lock;
-   * this method deliberately does not acquire a second lock.
+   * message ledger under the ledger's own lock. Transcript execution and
+   * physical message receipt are independent writers: a turn may remain paused
+   * for approval while its follow-up decision is durably recorded.
    */
   appendInboundMessageLedger(
     sessionKey: SessionKey,
     content: string,
-  ): Result<void, Error>;
+  ): Promise<Result<void, Error>>;
 
   /**
    * Plan and atomically append one physical inbound occurrence while holding
-   * the same per-session lock used by SDK transcript writes. A failed partial
+   * the dedicated inbound-ledger lock. A failed partial
    * append is truncated back before the lock is released, so an operator retry
    * cannot duplicate a JSON prefix or poison the ledger.
    */
@@ -291,6 +292,8 @@ export interface ComisSessionManager {
  */
 export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisSessionManager {
   const inboundLedgerIndexes = new Map<string, InboundLedgerIndex>();
+  const inboundLedgerLockKey = (sessionKey: SessionKey): string =>
+    `inbound-ledger:${formatSessionKey(sessionKey)}`;
   const appendInboundLedger = (
     sessionKey: SessionKey,
     content: string,
@@ -379,12 +382,30 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
       });
     },
 
-    appendInboundMessageLedger(
+    async appendInboundMessageLedger(
       sessionKey: SessionKey,
       content: string,
-    ): Result<void, Error> {
-      const appended = appendInboundLedger(sessionKey, content, false);
-      return appended.ok ? ok(undefined) : appended;
+    ): Promise<Result<void, Error>> {
+      const sessionKeyStr = formatSessionKey(sessionKey);
+      const locked = await withSessionLock(
+        deps.fileLock,
+        deps.lockDir,
+        inboundLedgerLockKey(sessionKey),
+        () => {
+          const appended = appendInboundLedger(sessionKey, content, false);
+          return appended.ok ? ok(undefined) : appended;
+        },
+        {
+          retries: 10,
+          retryMinTimeout: 1_000,
+          logger: deps.logger,
+          sessionKey: sessionKeyStr,
+        },
+      );
+      if (!locked.ok) {
+        return err(new Error(`Inbound provenance ledger lock failed (${locked.error})`));
+      }
+      return locked.value;
     },
 
     async persistInboundMessage(
@@ -398,7 +419,7 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
       const locked = await withSessionLock(
         deps.fileLock,
         deps.lockDir,
-        sessionKeyStr,
+        inboundLedgerLockKey(sessionKey),
         () => {
           const ledgerPath = sessionKeyToInboundMessageLedgerPath(
             sessionKey,
@@ -522,10 +543,28 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
         deps.lockDir,
         sessionKeyStr,
         async () => {
-          await Promise.all([
-            unlinkSessionArtifact(sessionPath),
-            unlinkSessionArtifact(inboundMessageLedgerPath),
-          ]);
+          const ledgerDestroyResult = await withSessionLock(
+            deps.fileLock,
+            deps.lockDir,
+            inboundLedgerLockKey(sessionKey),
+            async () => {
+              await Promise.all([
+                unlinkSessionArtifact(sessionPath),
+                unlinkSessionArtifact(inboundMessageLedgerPath),
+              ]);
+            },
+            {
+              retries: 10,
+              retryMinTimeout: 500,
+              logger: deps.logger,
+              sessionKey: sessionKeyStr,
+            },
+          );
+          if (!ledgerDestroyResult.ok) {
+            return Promise.reject(new Error(
+              `Inbound provenance ledger removal lock failed (${ledgerDestroyResult.error})`,
+            ));
+          }
           const sessionDir = dirname(sessionPath);
           const toolResultsDir = safePath(sessionDir, "tool-results");
           await suppressError(

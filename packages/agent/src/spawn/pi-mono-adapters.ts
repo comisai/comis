@@ -53,7 +53,7 @@ export function createEphemeralComisSessionManager(cwd: string): ComisSessionMan
       // No-op: in-memory sessions have nothing to destroy
     },
 
-    appendInboundMessageLedger() {
+    async appendInboundMessageLedger() {
       // Internal ephemeral turns are excluded from offline channel retrieval.
       return ok(undefined);
     },

@@ -1615,13 +1615,14 @@ describe("preprocessMessage", () => {
       const result = await preprocessMessage({
         visionAvailable: false,
         resolveAttachment: makeResolver(),
-        durableFilePath: (attachment) =>
-          attachment.url === att.url ? "photos/current.png" : undefined,
         logger: makeLogger(),
       }, makeMessage({
         text: "what does this say",
         attachments: [att],
-      }));
+      }), {
+        durableFilePath: (attachment) =>
+          attachment.url === att.url ? "photos/current.png" : undefined,
+      });
 
       expect(result.message.text).toContain(
         '[Attached: image (image/png, 2048 bytes) — use image_analyze with source_type="file" and source="photos/current.png" to view]',

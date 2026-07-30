@@ -41,6 +41,7 @@ export interface InfraEvents {
     tenantId: string;
     agentId: string;
     conversationRef: string;
+    sessionKey?: string; // Live activity correlation; absent on restored requests.
     resolvingPrincipalId: string;
     trustLevel: string;
     createdAt: number;
