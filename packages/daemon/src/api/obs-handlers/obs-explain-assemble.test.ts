@@ -113,6 +113,39 @@ function makeMetadata(overrides: Record<string, unknown> = {}): Record<string, u
   };
 }
 
+describe("assembleIncidentReport — queue disposition timeline", () => {
+  it("surfaces queue and steering decisions on the one-call explain report", () => {
+    const queueTimeline = [
+      {
+        seq: 3,
+        event: "steer_injected" as const,
+        channelType: "telegram",
+      },
+      {
+        seq: 2,
+        event: "coalesced" as const,
+        channelType: "telegram",
+        messageCount: 2,
+      },
+    ];
+    const signals = makeSignals({
+      queueTimeline,
+    } as unknown as Partial<IncidentSignals>);
+
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(
+      (report as unknown as { queueTimeline?: unknown[] }).queueTimeline,
+    ).toEqual(queueTimeline);
+  });
+});
+
 describe("assembleIncidentReport — response locale decision", () => {
   it("surfaces the content-free locale decision on the explain report", () => {
     const signals = makeSignals({

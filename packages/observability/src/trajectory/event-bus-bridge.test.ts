@@ -2722,6 +2722,49 @@ describe("queue + execution + sender bridge", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
+  it("steer lifecycle decisions map to content-free queue trajectory records", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+    const sessionKey = "t1:u1:c1" as any;
+
+    bus.emit("steer:injected", {
+      sessionKey,
+      channelType: "telegram",
+      agentId: "agent-1",
+      timestamp: Date.now(),
+    });
+    bus.emit("steer:rejected", {
+      sessionKey,
+      channelType: "telegram",
+      agentId: "agent-1",
+      reason: "compacting",
+      timestamp: Date.now(),
+    });
+    bus.emit("steer:followup_queued", {
+      sessionKey,
+      channelType: "telegram",
+      agentId: "agent-1",
+      reason: "compacting",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls.map(({ type, data }) => ({ type, data }))).toEqual([
+      {
+        type: "queue.steer_injected",
+        data: { channelType: "telegram" },
+      },
+      {
+        type: "queue.steer_rejected",
+        data: { channelType: "telegram", reason: "compacting" },
+      },
+      {
+        type: "queue.followup_queued",
+        data: { channelType: "telegram", reason: "compacting" },
+      },
+    ]);
+  });
+
   // ---- Execution lifecycle events ----
 
   it("execution_aborted_maps_to_execution.aborted with reason; sessionKey/agentId stripped", () => {
