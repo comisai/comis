@@ -46,6 +46,19 @@ const EXPLICIT_DELEGATION_REQUEST_PHRASES = [
   " bring in another",
 ];
 
+const DELEGATION_NEGATION_PREFIXES = [
+  " don't ",
+  " dont ",
+  " do not ",
+  " don't ever ",
+  " dont ever ",
+  " do not ever ",
+  " never ",
+  " not ",
+  " no ",
+  " without ",
+];
+
 const DELEGATION_SUCCESS_CLAIM_PHRASES = [
   " two independent checks",
   " both independent checks",
@@ -105,6 +118,26 @@ function containsEvidencePhrase(text: string, phrases: readonly string[]): boole
   return phrases.some((phrase) => text.includes(phrase));
 }
 
+function containsUnnegatedEvidencePhrase(
+  text: string,
+  phrases: readonly string[],
+): boolean {
+  for (const phrase of phrases) {
+    let offset = 0;
+    while (offset < text.length) {
+      const index = text.indexOf(phrase, offset);
+      if (index < 0) break;
+      const prefix = text.slice(Math.max(0, index - 20), index + 1);
+      const negated = DELEGATION_NEGATION_PREFIXES.some(
+        (negation) => prefix.endsWith(negation),
+      );
+      if (!negated) return true;
+      offset = index + phrase.length;
+    }
+  }
+  return false;
+}
+
 export interface DelegationEvidenceGuardResult {
   response: string;
   corrected: boolean;
@@ -131,7 +164,7 @@ export function enforceCurrentTurnDelegationEvidence(params: {
   honestResponse: string;
 }): DelegationEvidenceGuardResult {
   const request = normalizedEvidenceText(params.request);
-  const requested = containsEvidencePhrase(
+  const requested = containsUnnegatedEvidencePhrase(
     request,
     EXPLICIT_DELEGATION_REQUEST_PHRASES,
   );
