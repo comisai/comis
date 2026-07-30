@@ -3076,6 +3076,43 @@ describe("createPiEventBridge", () => {
       expect(endEmit![1].success).toBe(false);
     });
 
+    it("MCP tool failure emits the bounded structured failure code", () => {
+      const { listener } = createPiEventBridge(deps);
+      const wrapped = wrapExternalContent(
+        JSON.stringify({
+          code: "credential_invalid",
+          retryable: false,
+          requiredEnv: "MCP_TEST_TOKEN",
+        }),
+        { source: "mcp_tool" },
+      );
+
+      listener({
+        type: "tool_execution_start",
+        toolName: "mcp__test-service--account_summary",
+        toolCallId: "tc-mcp-code",
+        args: { detail_level: 1 },
+      } as any);
+      listener(makeToolExecutionEndEvent(
+        "mcp__test-service--account_summary",
+        "tc-mcp-code",
+        true,
+        {
+          content: [{ type: "text", text: wrapped }],
+          details: {},
+        },
+      ) as any);
+
+      const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const endEmit = calls.find(
+        (call) =>
+          call[0] === "tool:executed"
+          && call[1].toolName === "mcp__test-service--account_summary",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].failureCode).toBe("credential_invalid");
+    });
+
     it("non-MCP tool failure does NOT include mcpServer on tool:executed event", () => {
       const { listener } = createPiEventBridge(deps);
 

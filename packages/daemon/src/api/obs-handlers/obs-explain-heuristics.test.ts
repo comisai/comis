@@ -36,6 +36,35 @@ function makeSignals(overrides?: Partial<IncidentSignals>): IncidentSignals {
 }
 
 describe("obs-explain-heuristics", () => {
+  it("prefers an MCP credential failure code over its downstream breaker symptom", () => {
+    const r = rootCause(
+      makeSignals({
+        failures: [
+          {
+            seq: 3,
+            toolName: "mcp__test-service--account_summary",
+            classifiedFailureBy: "mcp_classifier",
+            transportOk: false,
+            errorKind: "dependency",
+            failureCode: "credential_invalid",
+            resultDigest: "abc123def456",
+            resultBytes: 905,
+            errorPreview: "[redacted:untrusted-content digest:679076382916]",
+          },
+        ],
+        breakerOpenedTool: "mcp__test-service--account_summary",
+        hasDoNotRetrySignal: true,
+        repeatedFailureCount: {
+          "mcp__test-service--account_summary": 5,
+        },
+      }),
+    );
+
+    expect(r?.code).toBe("mcp_credential_invalid");
+    expect(r?.detail).toContain("mcp__test-service--account_summary");
+    expect(r?.detail).toContain("credential_invalid");
+  });
+
   it("prioritizes a failed direct child above unrelated retained breaker state", () => {
     const signals = makeSignals({
       breakerOpenedTool: "stale_fixture",

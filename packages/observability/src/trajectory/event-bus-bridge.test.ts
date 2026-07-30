@@ -308,9 +308,10 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
       httpStatus: 200,
       matchedRule: "status_token",
       matchedToken: "503",
+      failureCode: "credential_invalid",
       resultBytes: 1234,
       resultDigest: "abc123def456",
-    });
+    } as any);
 
     expect(recorder.calls).toHaveLength(1);
     expect(recorder.calls[0].type).toBe("tool.result");
@@ -322,6 +323,7 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     expect(data.httpStatus).toBe(200);
     expect(data.matchedRule).toBe("status_token");
     expect(data.matchedToken).toBe("503");
+    expect(data.failureCode).toBe("credential_invalid");
     expect(data.resultBytes).toBe(1234);
     expect(data.resultDigest).toBe("abc123def456");
   });

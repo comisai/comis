@@ -1821,11 +1821,14 @@ describe("assembleIncidentReport — cacheBreaks?", () => {
 
 const TRACE_ID = "f942d38c-0000-0000-0000-000000000000";
 
-/** A fixture reader: no trajectory/cache/metadata, the given audit rows. */
-function makeAuditReader(auditRows: Array<Record<string, unknown>>): IncidentSourceReader {
+/** A fixture reader: the given trajectory and audit rows, with no cache records. */
+function makeAuditReader(
+  auditRows: Array<Record<string, unknown>>,
+  sessionRecords: Array<Record<string, unknown>> = [],
+): IncidentSourceReader {
   return {
     async readSessionRecords() {
-      return [];
+      return sessionRecords;
     },
     async readCacheTraceRecords() {
       return [];
@@ -1934,6 +1937,45 @@ describe("assembleIncidentReportFromSources — audit?", () => {
         "retry after the required capability can produce current-turn evidence",
       ],
     });
+  });
+
+  it("keeps a concrete MCP credential failure above the response-honesty symptom", async () => {
+    const reader = makeAuditReader(
+      [
+        auditRow("audit", TRACE_ID, {
+          action: "response.persistent_action_evidence_guard",
+          outcome: "denied",
+        }),
+      ],
+      [
+        {
+          traceSchema: "comis-trajectory",
+          schemaVersion: 1,
+          type: "tool.result",
+          seq: 144,
+          traceId: TRACE_ID,
+          sessionKey: SESSION_KEY,
+          data: {
+            toolName: "mcp__test-service--account_summary",
+            success: false,
+            errorKind: "dependency",
+            classifiedFailureBy: "mcp_classifier",
+            transportOk: false,
+            failureCode: "credential_invalid",
+            resultBytes: 905,
+            resultDigest: "679076382916",
+          },
+        },
+      ],
+    );
+
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.failures[0]?.failureCode).toBe("credential_invalid");
+    expect(report.likelyRootCause?.code).toBe("mcp_credential_invalid");
   });
 
   it("names a corrected destructive no-effect claim as the acute cause", async () => {
