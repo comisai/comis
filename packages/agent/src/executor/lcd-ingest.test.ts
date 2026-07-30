@@ -305,6 +305,26 @@ describe("ingestTurn", () => {
     expect(databaseBytes.indexOf(Buffer.from("[REDACTED]"))).toBeGreaterThanOrEqual(0);
   });
 
+  it("keeps an unlabeled credential-shaped value out of LCD base rows and FTS indexes", () => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const credential = "aZ9mQ2v7Kp3X8nL4tR6sB1cD5eF0gH7jK9mN2pQ4wX6yT8u0";
+
+    ingestTurn(
+      store,
+      SCOPE,
+      0,
+      [userMsg(`ok try this one ${credential}`) as AgentMessage],
+      FIXED_NOW,
+      createMockLogger(),
+    );
+
+    const databaseBytes = db.serialize();
+    expect(databaseBytes.indexOf(Buffer.from(credential))).toBe(-1);
+    expect(databaseBytes.indexOf(Buffer.from("[REDACTED]"))).toBeGreaterThanOrEqual(0);
+  });
+
   it("tokenCount is computed agent-side via estimateMessageTokens; thinking tokens ARE counted", () => {
     const { store, appended } = makeRecordingStore();
     const logger = createMockLogger();

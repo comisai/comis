@@ -8,6 +8,7 @@
  */
 
 import {
+  looksLikeSecretValue,
   PLAINTEXT_SECRET_PREFIXES,
   PREFIX_MIN_BODY_LENGTHS,
 } from "./secret-detection.js";
@@ -66,6 +67,9 @@ const LABELED_SECRET_DISCLOSURE_RE = new RegExp(
     `(?:"([^"\\r\\n]*)"|'([^'\\r\\n]*)'|([^\\s,;}\\r\\n]+?)(?=[,;]|\\.(?=\\s|$)|\\s|$))`,
   "gim",
 );
+const NON_WHITESPACE_TOKEN_RE = /\S+/g;
+const LEADING_TEXT_WRAPPERS = "([{<\"'`*";
+const TRAILING_TEXT_WRAPPERS = ")]}>\"'`*.,;:!?";
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -81,6 +85,7 @@ export function mightContainSecret(text: string): boolean {
     if (text.includes(prefix)) return true;
   }
   if (text.includes("Bearer ") || text.includes("Token ")) return true;
+  if (containsOpaqueSecretValue(text)) return true;
   const lower = text.toLowerCase();
   if (!SECRET_FIELD_HINTS.some((field) => lower.includes(field))) return false;
   if (text.includes(":") || text.includes("=")) return true;
@@ -157,6 +162,51 @@ function scrubLabeledDisclosures(text: string): ScrubResult {
   return { text: scrubbed, redactions };
 }
 
+function splitTextToken(token: string): {
+  readonly leading: string;
+  readonly candidate: string;
+  readonly trailing: string;
+} {
+  let start = 0;
+  while (
+    start < token.length
+    && LEADING_TEXT_WRAPPERS.includes(token.charAt(start))
+  ) {
+    start++;
+  }
+  let end = token.length;
+  while (
+    end > start
+    && TRAILING_TEXT_WRAPPERS.includes(token.charAt(end - 1))
+  ) {
+    end--;
+  }
+  return {
+    leading: token.slice(0, start),
+    candidate: token.slice(start, end),
+    trailing: token.slice(end),
+  };
+}
+
+function containsOpaqueSecretValue(text: string): boolean {
+  for (const match of text.matchAll(NON_WHITESPACE_TOKEN_RE)) {
+    const token = match[0];
+    if (looksLikeSecretValue(splitTextToken(token).candidate)) return true;
+  }
+  return false;
+}
+
+function scrubOpaqueSecretValues(text: string): ScrubResult {
+  let redactions = 0;
+  const scrubbed = text.replace(NON_WHITESPACE_TOKEN_RE, (token) => {
+    const { leading, candidate, trailing } = splitTextToken(token);
+    if (!looksLikeSecretValue(candidate)) return token;
+    redactions++;
+    return `${leading}${REDACTED}${trailing}`;
+  });
+  return { text: scrubbed, redactions };
+}
+
 /**
  * Scrub unstructured text of secret-shaped values.
  * Self-contained intra-core loop — does NOT call redactSecretsInText from observability.
@@ -197,6 +247,10 @@ export function scrubSecretsFromText(text: string): ScrubResult {
       return `Bearer ${REDACTED}`;
     });
   }
+
+  const opaque = scrubOpaqueSecretValues(result);
+  result = opaque.text;
+  redactions += opaque.redactions;
 
   return { text: result, redactions };
 }

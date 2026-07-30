@@ -158,6 +158,25 @@ describe("persistInboundMessageProvenance", () => {
     expect(message.text).toContain(credential);
   });
 
+  it("redacts an unlabeled credential-shaped value from both provenance persistence forms", () => {
+    const credential = "aZ9mQ2v7Kp3X8nL4tR6sB1cD5eF0gH7jK9mN2pQ4wX6yT8u0";
+    const message = {
+      ...first,
+      text: `ok try this one ${credential}`,
+      attachments: [],
+      metadata: {},
+    } satisfies NormalizedMessage;
+
+    const planned = planInboundMessageProvenance(message, RECORDED_AT);
+
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(JSON.stringify(planned.value.payloads)).not.toContain(credential);
+    expect(planned.value.ledgerContent).not.toContain(credential);
+    expect(JSON.stringify(planned.value)).toContain("[REDACTED]");
+    expect(message.text).toContain(credential);
+  });
+
   it("splits a large physical batch into complete markers below the offline reader record ceiling", () => {
     const appendCustomEntry = vi.fn()
       .mockImplementation(() => `entry-${appendCustomEntry.mock.calls.length}`);
