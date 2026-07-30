@@ -956,6 +956,60 @@ describe("createSubAgentRunner", () => {
     fs.rmSync(outputDir, { recursive: true, force: true });
   });
 
+  it("resolves relative expected outputs inside the child workspace", async () => {
+    vi.useRealTimers();
+    const outputDir = await mkdtemp(join(tmpdir(), "relative-completion-output-test-"));
+    const relativeOutputPath = "projects/run-tracker/index.html";
+    const outputPath = join(outputDir, relativeOutputPath);
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, "<title>Run Tracker</title>", "utf8");
+    const enqueue = vi.fn().mockResolvedValue(ok("queued"));
+    const resolveExpectedOutputPath = vi.fn(
+      (_agentId: string, requestedPath: string) => ok(path.resolve(outputDir, requestedPath)),
+    );
+    const depsWithWorkspaceResolver = {
+      ...deps,
+      resolveExpectedOutputPath,
+      batcher: {
+        enqueue,
+        flush: vi.fn().mockResolvedValue(undefined),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+        pending: 0,
+        hasDelivered: vi.fn().mockReturnValue(false),
+        markDelivered: vi.fn(),
+      },
+    } as unknown as SubAgentRunnerDeps;
+    const callerConversation = createTestConversation({
+      agentId: "parent-agent",
+      channelType: "telegram",
+    });
+    const runner = createSubAgentRunner(depsWithWorkspaceResolver);
+
+    runner.spawn({
+      task: "create the run tracker",
+      agentId: "report-agent",
+      expected_outputs: [relativeOutputPath],
+      callerAgentId: "parent-agent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalledOnce());
+    expect(resolveExpectedOutputPath).toHaveBeenCalledWith(
+      "report-agent",
+      relativeOutputPath,
+    );
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      attachments: [{ sourceAgentId: "report-agent", path: outputPath }],
+    }));
+    await runner.shutdown();
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  });
+
   it("shutdown closes spawn admission before waiting for active runs", async () => {
     const runner = createSubAgentRunner(deps);
 
