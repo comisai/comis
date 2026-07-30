@@ -382,6 +382,8 @@ export interface HybridSearchResult {
   score: number;
 }
 
+const SQLITE_VEC_MAX_K = 4_096;
+
 /**
  * Execute hybrid search combining FTS5 text matching and sqlite-vec
  * vector KNN, fused via Reciprocal Rank Fusion.
@@ -419,7 +421,12 @@ export function hybridSearch(
   let vecRanked: Array<{ id: string; rank: number }> = [];
 
   if (queryEmbedding !== undefined && queryEmbedding.length > 0 && vecIsAvailable) {
-    const vecRaw = searchByVector(db, queryEmbedding, overfetchLimit, scope);
+    const vecRaw = searchByVector(
+      db,
+      queryEmbedding,
+      Math.min(overfetchLimit, SQLITE_VEC_MAX_K),
+      scope,
+    );
 
     vecRanked = vecRaw.map((item, idx) => ({
       id: item.id,
