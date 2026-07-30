@@ -29,6 +29,7 @@ import {
   selectPromptTimeoutReply,
   selectBackgroundTaskFailedNotice,
   selectDelegationEvidenceMissingReply,
+  selectVisionUnavailableReply,
   type LocaleCatalog,
 } from "./degraded-reply-i18n.js";
 
@@ -182,4 +183,46 @@ export function buildDelegationEvidenceMissingReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectDelegationEvidenceMissingReply(language, localeCatalog);
+}
+
+interface VisionFailureRecord {
+  readonly toolName: string;
+  readonly success: boolean;
+  readonly errorText?: string;
+}
+
+/**
+ * Identify the actionable image-analysis terminal emitted when neither the
+ * active model nor the configured vision registry can serve the request.
+ *
+ * All four signatures are required so an attachment-resolution error or an
+ * ordinary provider failure cannot trigger the deterministic replacement.
+ */
+export function hasUnavailableVisionFailure(
+  records?: ReadonlyArray<VisionFailureRecord>,
+): boolean {
+  return records?.some((record) => {
+    const errorText = record.errorText;
+    return record.toolName === "image_analyze"
+      && !record.success
+      && errorText !== undefined
+      && errorText.includes("No vision provider available for image analysis.")
+      && errorText.includes("integrations.media.vision.providers")
+      && errorText.includes("integrations.media.vision.defaultProvider")
+      && errorText.includes("Re-uploading will not help until that configuration changes.");
+  }) ?? false;
+}
+
+/**
+ * Replace model-authored recovery advice with the runtime-owned capability
+ * truth. Configuration identifiers remain verbatim across locales.
+ */
+export function buildVisionUnavailableReply(
+  agentId: string,
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return `${selectVisionUnavailableReply(language, localeCatalog)} `
+    + `agents.${agentId}.model, integrations.media.vision.providers, `
+    + "integrations.media.vision.defaultProvider.";
 }

@@ -877,8 +877,8 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(
       /result\.response\s*=\s*buildVisionUnavailableReply\s*\(\s*effectiveAgentId/,
     );
-    expect(stripped.indexOf("buildVisionUnavailableReply"))
-      .toBeLessThan(stripped.indexOf("buildToolFailureNotice"));
+    expect(stripped.lastIndexOf("buildVisionUnavailableReply"))
+      .toBeLessThan(stripped.lastIndexOf("buildToolFailureNotice"));
   });
 });
 

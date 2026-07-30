@@ -123,7 +123,7 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildVisionUnavailableReply, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import { enforceCurrentTurnDelegationEvidence } from "./executor-response-filter.js";
 import { BACKGROUND_POLLER_TOOL } from "../safety/background-failure-attribution.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
@@ -1438,7 +1438,42 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     bridgeResult.failedTools ?? [],
     bridgeResult.toolExecResults,
   );
+  const unavailableVision =
+    unrecoveredFailed.includes("image_analyze")
+    && hasUnavailableVisionFailure(bridgeResult.toolExecResults);
+  if (unavailableVision) {
+    result.response = buildVisionUnavailableReply(
+      effectiveAgentId,
+      replyLanguage,
+      localeCatalog,
+    );
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        errorKind: "precondition" as const,
+        hint:
+          `Select a vision-capable model at agents.${effectiveAgentId}.model, or configure `
+          + "integrations.media.vision.providers and integrations.media.vision.defaultProvider; "
+          + "re-uploading the same image will not help until that configuration changes",
+      },
+      "Unavailable vision recovery guidance replaced",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.vision_unavailable_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "capability_recovery",
+        reason: "vision_unavailable",
+        requiredTool: "image_analyze",
+      },
+    });
+  }
   if (
+    !unavailableVision &&
     unrecoveredFailed.length > 0 &&
     isStopTurn &&
     !modelAcknowledgedFailure(result.response ?? "", unrecoveredFailed) &&

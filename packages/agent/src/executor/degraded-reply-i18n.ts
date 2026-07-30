@@ -22,7 +22,8 @@ export type LocaleMessageId =
   | "tool_failure_notice_unnamed"
   | "prompt_timeout"
   | "background_task_failed_notice"
-  | "delegation_evidence_missing";
+  | "delegation_evidence_missing"
+  | "vision_unavailable";
 
 export type LocalePack = Readonly<Partial<Record<LocaleMessageId, string>>>;
 
@@ -62,6 +63,10 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "⚠️ This background task failed, so its result may be incomplete.",
   delegation_evidence_missing:
     "I did not successfully start the requested sub-agent in this turn, so I cannot claim a new independent check. Please retry the request.",
+  vision_unavailable:
+    "I couldn't analyze this image because no vision provider is available. "
+      + "Re-uploading the same image will not help until the vision configuration changes. "
+      + "Settings:",
   pipeline_timeout:
     "I stopped this request because it was taking too long and hit the time limit "
       + "for a single turn. Nothing was left half-applied. If it needs many lookups, "
@@ -250,6 +255,14 @@ export function selectDelegationEvidenceMissingReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "delegation_evidence_missing");
+}
+
+/** Honest replacement when image analysis reached the unavailable terminal. */
+export function selectVisionUnavailableReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "vision_unavailable");
 }
 
 export function selectPipelineTimeoutReply(
