@@ -162,6 +162,7 @@ function translateBridgedPayload(
         ...(payload.httpStatus !== undefined ? { httpStatus: payload.httpStatus } : {}),
         ...(payload.matchedRule !== undefined ? { matchedRule: payload.matchedRule } : {}),
         ...(payload.matchedToken !== undefined ? { matchedToken: payload.matchedToken } : {}),
+        ...(payload.failureCode !== undefined ? { failureCode: payload.failureCode } : {}),
         ...(payload.resultBytes !== undefined ? { resultBytes: payload.resultBytes } : {}),
         ...(payload.resultDigest !== undefined ? { resultDigest: payload.resultDigest } : {}),
       };

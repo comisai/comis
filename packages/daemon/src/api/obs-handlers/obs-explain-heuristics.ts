@@ -325,6 +325,35 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
+  // A structured MCP machine code is the provider's concrete failure verdict.
+  // It is upstream of retry-breaker and response-honesty symptoms.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) =>
+        candidate.classifiedFailureBy === "mcp_classifier"
+        && candidate.failureCode !== undefined,
+    );
+    if (failure === undefined || failure.failureCode === undefined) return null;
+    const credentialInvalid = failure.failureCode === "credential_invalid";
+    return {
+      code: credentialInvalid ? "mcp_credential_invalid" : "mcp_reported_failure",
+      detail:
+        `${failure.toolName} reported the structured MCP failure code `
+        + `${failure.failureCode}; later breaker or response-honesty signals are downstream symptoms`,
+      suggestedNextSteps: credentialInvalid
+        ? [
+            `replace the credential bound to ${failure.toolName} and reconnect its MCP server`,
+            "retry the tool after rotation; a connected process alone does not prove the credential is accepted",
+            "obs.explain depth=full",
+          ]
+        : [
+            `inspect the MCP server configuration for ${failure.toolName}`,
+            "retry only after resolving the reported server-side failure code",
+            "obs.explain depth=full",
+          ],
+    };
+  },
+
   // 4) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {
     const trippedByEvent = s.breakerOpenedTool !== undefined || s.hasDoNotRetrySignal;

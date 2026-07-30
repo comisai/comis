@@ -68,6 +68,7 @@ import { extractMcpServerName } from "@comis/shared";
 import {
   classifyMcpErrorType,
   classifyRuntimeToolGuard,
+  extractMcpFailureCode,
   sanitizeToolArgs,
   extractErrorText,
 } from "./bridge-event-handlers.js";
@@ -989,6 +990,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           let matchedRule: string | undefined;
           let matchedToken: string | undefined;
           let failureDisclosure: ToolExecutionResultRecord["failureDisclosure"];
+          let failureCode: string | undefined;
           let httpStatus: number | undefined;
           // transportOk tracks whether the call reached the tool boundary. An
           // exit-code, detector, MCP argument-validation, or MCP-content failure
@@ -1174,6 +1176,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const mcpServer = extractMcpServerName(endEvent.toolName);
           if (!toolSuccess) {
             errorText = extractErrorText(endEvent.result);
+            if (mcpServer !== undefined) {
+              failureCode = extractMcpFailureCode(endEvent.result);
+            }
             runtimeToolGuard = classifyRuntimeToolGuard(errorText);
             const serialized =
               typeof endEvent.result === "string"
@@ -1316,6 +1321,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 ...(httpStatus !== undefined && { httpStatus }),
                 ...(matchedRule !== undefined && { matchedRule }),
                 ...(matchedToken !== undefined && { matchedToken: sanitizeLogString(matchedToken).slice(0, 1500) }),
+                ...(failureCode !== undefined && { failureCode }),
                 ...(resultBytes !== undefined && { resultBytes }),
                 ...(resultDigest !== undefined && { resultDigest }),
               },
@@ -1564,6 +1570,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(httpStatus !== undefined && { httpStatus }),
             ...(matchedRule !== undefined && { matchedRule }),
             ...(matchedToken !== undefined && { matchedToken: sanitizeLogString(matchedToken).slice(0, 1500) }),
+            ...(failureCode !== undefined && { failureCode }),
             ...(resultBytes !== undefined && { resultBytes }),
             ...(resultDigest !== undefined && { resultDigest }),
             ...(webResultMeta?.resultCount !== undefined && { resultCount: webResultMeta.resultCount }),

@@ -67,6 +67,16 @@ const LABELED_SECRET_DISCLOSURE_RE = new RegExp(
     `(?:"([^"\\r\\n]*)"|'([^'\\r\\n]*)'|([^\\s,;}\\r\\n]+?)(?=[,;]|\\.(?=\\s|$)|\\s|$))`,
   "gim",
 );
+const SECRET_REPLACEMENT_ACTION_FRAGMENT =
+  "(?:replac(?:e|ing)|updat(?:e|ing)|chang(?:e|ing)|overwrit(?:e|ing)|rotat(?:e|ing))";
+const SECRET_REPLACEMENT_ACTION_RE =
+  /\b(?:replac(?:e|ing)|updat(?:e|ing)|chang(?:e|ing)|overwrit(?:e|ing)|rotat(?:e|ing))\b/i;
+const LABELED_SECRET_REPLACEMENT_RE = new RegExp(
+  `((?:^|[\\s,{])${SECRET_REPLACEMENT_ACTION_FRAGMENT}\\b[^\\r\\n]{0,96}?`
+    + `["']?[A-Za-z0-9_.-]*${SECRET_FIELD_FRAGMENT}["']?\\s+(?:with|to)\\s*)`
+    + `(?:"([^"\\r\\n]*)"|'([^'\\r\\n]*)'|([^\\s\\r\\n]+?)(?=[,;]|\\.(?=\\s|$)|\\s|$))`,
+  "gim",
+);
 const NON_WHITESPACE_TOKEN_RE = /\S+/g;
 const LEADING_TEXT_WRAPPERS = "([{<\"'`*";
 const TRAILING_TEXT_WRAPPERS = ")]}>\"'`*.,;:!?";
@@ -90,6 +100,7 @@ export function mightContainSecret(text: string): boolean {
   if (!SECRET_FIELD_HINTS.some((field) => lower.includes(field))) return false;
   if (text.includes(":") || text.includes("=")) return true;
   if (lower.includes("value") && SECRET_STORAGE_ACTION_RE.test(text)) return true;
+  if (SECRET_REPLACEMENT_ACTION_RE.test(text)) return true;
   return SECRET_DISCLOSURE_INTRO_RE.test(text);
 }
 
@@ -162,6 +173,28 @@ function scrubLabeledDisclosures(text: string): ScrubResult {
   return { text: scrubbed, redactions };
 }
 
+function scrubLabeledReplacements(text: string): ScrubResult {
+  let redactions = 0;
+  const scrubbed = text.replace(
+    LABELED_SECRET_REPLACEMENT_RE,
+    (
+      match,
+      prefix: string,
+      doubleQuoted: string | undefined,
+      singleQuoted: string | undefined,
+      bare: string | undefined,
+    ) => {
+      const value = doubleQuoted ?? singleQuoted ?? bare ?? "";
+      if (!isPlausibleDisclosedSecret(value)) return match;
+      redactions++;
+      if (doubleQuoted !== undefined) return `${prefix}"${REDACTED}"`;
+      if (singleQuoted !== undefined) return `${prefix}'${REDACTED}'`;
+      return `${prefix}${REDACTED}`;
+    },
+  );
+  return { text: scrubbed, redactions };
+}
+
 function splitTextToken(token: string): {
   readonly leading: string;
   readonly candidate: string;
@@ -220,8 +253,13 @@ export function scrubSecretsFromText(text: string): ScrubResult {
   const labeled = scrubLabeledAssignments(text);
   const confirmed = scrubLabeledConfirmations(labeled.text);
   const disclosed = scrubLabeledDisclosures(confirmed.text);
-  let result = disclosed.text;
-  let redactions = labeled.redactions + confirmed.redactions + disclosed.redactions;
+  const replaced = scrubLabeledReplacements(disclosed.text);
+  let result = replaced.text;
+  let redactions =
+    labeled.redactions
+    + confirmed.redactions
+    + disclosed.redactions
+    + replaced.redactions;
 
   for (const prefix of PLAINTEXT_SECRET_PREFIXES) {
     const minBody = PREFIX_MIN_BODY_LENGTHS.get(prefix) ?? 0;

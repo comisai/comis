@@ -83,6 +83,31 @@ describe("sanitizeSessionSecrets", () => {
     expect(persisted.match(/\[REDACTED\]/g)).toHaveLength(2);
   });
 
+  it("repairs replacement-request credentials in messages and provenance records", () => {
+    const credential = "synthetic-service-token-7f3a9c2b8d4e6f10";
+    const text = `replace the service token with ${credential}`;
+    const path = writeJsonl(tmpDir, [
+      { type: "session", version: 1, id: "s1" },
+      {
+        type: "custom",
+        customType: "comis.inbound-message-provenance",
+        data: { messages: [{ text }] },
+      },
+      {
+        type: "message",
+        message: {
+          role: "user",
+          content: [{ type: "text", text }],
+        },
+      },
+    ]);
+
+    expect(sanitizeSessionSecrets(path)).toBe(2);
+    const persisted = readFileSync(path, "utf8");
+    expect(persisted).not.toContain(credential);
+    expect(persisted.match(/\[REDACTED\]/g)).toHaveLength(2);
+  });
+
   it("repairs unlabeled credential-shaped values in user messages and provenance records", () => {
     const credential = "aZ9mQ2v7Kp3X8nL4tR6sB1cD5eF0gH7jK9mN2pQ4wX6yT8u0";
     const path = writeJsonl(tmpDir, [

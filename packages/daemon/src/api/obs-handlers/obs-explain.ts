@@ -628,7 +628,12 @@ export async function assembleIncidentReportFromSources(
   }
   const persistentActionEvidenceVerdict =
     persistentActionEvidenceGuardVerdict(auditRows, report.traceId);
-  if (persistentActionEvidenceVerdict !== null) {
+  const hasStructuredMcpFailure = report.failures.some(
+    (failure) =>
+      failure.classifiedFailureBy === "mcp_classifier"
+      && failure.failureCode !== undefined,
+  );
+  if (persistentActionEvidenceVerdict !== null && !hasStructuredMcpFailure) {
     report.likelyRootCause = persistentActionEvidenceVerdict;
   }
   const destructiveActionEvidenceVerdict = destructiveActionEvidenceGuardVerdict(

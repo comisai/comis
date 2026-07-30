@@ -585,6 +585,7 @@ describe("toIncidentSignals — structured event shape (production)", () => {
         httpStatus: 200,
         resultDigest: "abc123",
         matchedToken: "403",
+        failureCode: "credential_invalid",
       }),
       event("tool.breaker_opened", 7, {
         toolName: "web_fetch",
@@ -609,6 +610,7 @@ describe("toIncidentSignals — structured event shape (production)", () => {
     expect(f).toBeDefined();
     expect(f!.transportOk).toBe(true);
     expect(f!.httpStatus).toBe(200);
+    expect(f!.failureCode).toBe("credential_invalid");
   });
 
   // Live-test observability gap: the trajectory tool.result event

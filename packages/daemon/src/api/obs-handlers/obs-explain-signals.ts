@@ -125,6 +125,7 @@ function handleLogRecord(acc: Acc, rec: Record<string, unknown>): void {
       transportOk: false,
       ...(httpStatus !== undefined ? { httpStatus } : {}),
       errorKind,
+      ...(asString(rec.failureCode) !== undefined ? { failureCode: asString(rec.failureCode) } : {}),
       resultDigest,
       resultBytes,
       errorPreview,
@@ -333,6 +334,7 @@ function handleEventRecord(
         transportOk: data.transportOk === true,
         ...(httpStatus !== undefined ? { httpStatus } : {}),
         errorKind,
+        ...(asString(data.failureCode) !== undefined ? { failureCode: asString(data.failureCode) } : {}),
         ...(asString(data.matchedToken) !== undefined
           ? { matchedToken: asString(data.matchedToken) }
           : {}),

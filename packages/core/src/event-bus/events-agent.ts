@@ -144,6 +144,8 @@ export interface AgentEvents {
     matchedRule?: string;
     /** The token that matched, e.g. a status code. */
     matchedToken?: string;
+    /** A content-free machine failure code extracted from a structured tool result. */
+    failureCode?: string;
     /** Size in bytes of the full serialized result — never the body. */
     resultBytes?: number;
     /** 12-hex digest of the full result payload — never the body. */

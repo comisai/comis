@@ -118,6 +118,17 @@ describe("scrubSecretsFromText", () => {
     expect(result.redactions).toBe(1);
   });
 
+  it("scrubs an opaque credential supplied in a replacement request", () => {
+    const credential = "synthetic-service-token-7f3a9c2b8d4e6f10";
+    const result = scrubSecretsFromText(
+      `replace the service token with ${credential}`,
+    );
+
+    expect(result.text).toBe("replace the service token with [REDACTED]");
+    expect(result.text).not.toContain(credential);
+    expect(result.redactions).toBe(1);
+  });
+
   it("scrubs a standalone credential-shaped value without relying on surrounding prose", () => {
     const credential = "aZ9mQ2v7Kp3X8nL4tR6sB1cD5eF0gH7jK9mN2pQ4wX6yT8u0";
     const result = scrubSecretsFromText(`ok try this one ${credential}`);
@@ -131,6 +142,8 @@ describe("scrubSecretsFromText", () => {
     "ok try this one 12345678901234567890",
     "use commit b76e6141ed853dd08f280908db35cc37df85457e",
     "try https://example.com/a/very/long/non-secret/resource?mode=active",
+    "replace the token budget with 256000",
+    "replace the service token with ${SERVICE_TOKEN}",
   ])("preserves long non-secret values in ordinary prose: %s", (input) => {
     expect(scrubSecretsFromText(input)).toEqual({ text: input, redactions: 0 });
   });

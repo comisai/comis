@@ -74,6 +74,29 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     });
   });
 
+  it("retains a bounded machine failure code on incident failures", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      failures: [
+        {
+          seq: 1,
+          toolName: "mcp__test-service--account_summary",
+          classifiedFailureBy: "mcp_classifier",
+          transportOk: false,
+          errorKind: "dependency",
+          failureCode: "credential_invalid",
+          resultDigest: "abc123def456",
+          resultBytes: 905,
+          errorPreview: "[redacted:untrusted-content digest:679076382916]",
+        },
+      ],
+    });
+
+    expect(
+      (parsed.failures[0] as Record<string, unknown>).failureCode,
+    ).toBe("credential_invalid");
+  });
+
   it("retains the normalized inbound edit kind", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),
