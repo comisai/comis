@@ -174,14 +174,14 @@ describe("resolveTraceToSession", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolveRootRunToSession", () => {
-  it("resolves the current synthetic in-process root shape without reading the session index", async () => {
-    // `root-session-<agentId>-<formattedKey>` repeats agentId before the
-    // canonical session key. A pure string op — pass a dataDir with NO index
-    // at all to prove no file access is required.
+  it("resolves the generated synthetic in-process root shape without reading the session index", async () => {
+    // `root-session-<generation>-<agentId>-<formattedKey>` carries a unique
+    // execution generation before the canonical session key. A pure string op
+    // — pass a dataDir with NO index at all to prove no file access is required.
     const emptyDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-rootrun-synthetic-"));
     const resolved = await resolveRootRunToSession(
       emptyDataDir,
-      "root-session-default-default:agent:default:user:telegram:1717000000",
+      "root-session-11111111-1111-4111-8111-111111111111-default-default:agent:default:user:telegram:1717000000",
     );
     expect(resolved).toBe("default:agent:default:user:telegram:1717000000");
   });
@@ -190,7 +190,7 @@ describe("resolveRootRunToSession", () => {
     const emptyDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-rootrun-hyphenated-"));
     const resolved = await resolveRootRunToSession(
       emptyDataDir,
-      "root-session-release-agent-default:agent:release-agent:user:telegram:1717000000",
+      "root-session-11111111-1111-4111-8111-111111111111-release-agent-default:agent:release-agent:user:telegram:1717000000",
     );
     expect(resolved).toBe("default:agent:release-agent:user:telegram:1717000000");
   });

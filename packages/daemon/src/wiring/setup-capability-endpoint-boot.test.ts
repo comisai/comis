@@ -26,7 +26,11 @@ import {
 import type { McpClientManager } from "@comis/skills";
 import { safeResultRunId } from "@comis/skills/tools";
 import { createLeaseManager } from "@comis/infra";
-import { createRootRunIdResolver, constructCapabilityLayer } from "./setup-capability-endpoint-boot.js";
+import {
+  createRootRunIdRegistry,
+  createRootRunIdResolver,
+  constructCapabilityLayer,
+} from "./setup-capability-endpoint-boot.js";
 
 /** Track temp data dirs + stop thunks so each socket-binding test tears down. */
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -245,6 +249,80 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
 
     expect(resolved).toEqual({ ok: true, value: "root-cron-execution-1" });
     expect(registerRoot).not.toHaveBeenCalled();
+  });
+
+  it("retires one session-root generation without letting its in-flight turn escape the tombstone", () => {
+    let nowMs = 1_700_000_000_100;
+    const registerRoot = vi.fn();
+    const ids = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    const registry = createRootRunIdRegistry({
+      holder: { current: { reserveBudget: vi.fn(), registerRoot } },
+      clock: { now: () => nowMs },
+      idFactory: () => ids.shift()!,
+    });
+    const sessionKey = {
+      tenantId: "t1",
+      agentId: "a1",
+      channelId: "c1",
+      userId: "u1",
+    };
+    const firstContext = createResolvedRequestContext({
+      tenantId: "t1",
+      userId: "u1",
+      sessionKey,
+      agentId: "a1",
+      traceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      startedAt: 1_700_000_000_000,
+      trustLevel: "user",
+    });
+    expect(firstContext.ok).toBe(true);
+    if (!firstContext.ok) return;
+
+    const firstRoot = runWithContext(
+      firstContext.value,
+      () => registry.resolve("a1", sessionKey),
+    );
+    expect(firstRoot).toEqual({
+      ok: true,
+      value: "root-session-11111111-1111-4111-8111-111111111111-a1-t1:agent:a1:u1:c1",
+    });
+    if (!firstRoot.ok) return;
+
+    nowMs = 1_700_000_000_200;
+    expect(registry.retire(firstRoot.value)).toBe(true);
+    expect(runWithContext(
+      firstContext.value,
+      () => registry.resolve("a1", sessionKey),
+    )).toEqual(firstRoot);
+
+    const laterContext = createResolvedRequestContext({
+      tenantId: "t1",
+      userId: "u1",
+      sessionKey,
+      agentId: "a1",
+      traceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      startedAt: 1_700_000_000_201,
+      trustLevel: "user",
+    });
+    expect(laterContext.ok).toBe(true);
+    if (!laterContext.ok) return;
+
+    const laterRoot = runWithContext(
+      laterContext.value,
+      () => registry.resolve("a1", sessionKey),
+    );
+    expect(laterRoot).toEqual({
+      ok: true,
+      value: "root-session-22222222-2222-4222-8222-222222222222-a1-t1:agent:a1:u1:c1",
+    });
+    expect(runWithContext(
+      firstContext.value,
+      () => registry.resolve("a1", sessionKey),
+    )).toEqual(firstRoot);
+    expect(registerRoot).toHaveBeenCalledTimes(2);
   });
 
   it("resolveRootRunId reports a trusted context identity mismatch without minting a fallback", () => {
