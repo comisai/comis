@@ -17,6 +17,7 @@ import {
   TypedEventBus,
   type BackgroundTaskOrigin,
   type RequestContext,
+  type TurnActivityContext,
 } from "@comis/core";
 
 // Build a real-ish event bus so on()/off()/emit() work end-to-end. We
@@ -178,6 +179,11 @@ describe("createBackgroundCompletionRunner", () => {
         : { kind: "retryable_pre_send" as const, errorKind: "resource" as const, message: started.error.message };
     }),
     resolveMaxBackgroundHops: (agentId: string) => number = () => maxBackgroundHops,
+    activityCoordinatorFactory?: (ctx: TurnActivityContext) => {
+      start(ctx: TurnActivityContext): void;
+      finalize(outcome: { kind: "silent"; reason: "NO_REPLY" }): Promise<void>;
+      dispose(): void;
+    },
   ) {
     return createBackgroundCompletionRunner({
       eventBus,
@@ -205,6 +211,7 @@ describe("createBackgroundCompletionRunner", () => {
       resolveMaxBackgroundHops,
       ...(isTurnInFlight ? { isTurnInFlight } : {}),
       ...(assembleToolsForAgent ? { assembleToolsForAgent } : {}),
+      ...(activityCoordinatorFactory ? { activityCoordinatorFactory } : {}),
       deliverCompletion,
       logger: makeLogger(),
     });
@@ -511,6 +518,83 @@ describe("createBackgroundCompletionRunner", () => {
     expect(reentered.taskId).toBe(task.id);
     expect(reentered.hopCount).toBe(1);
     expect(reentered.sessionKey).toBe(originSessionKey(task.origin));
+    await runner.shutdown();
+  });
+
+  it("starts originating-channel activity before a background continuation can request approval", async () => {
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ channelType: "telegram", channelId: "chat-1" }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    const start = vi.fn();
+    const finalize = vi.fn().mockResolvedValue(undefined);
+    const dispose = vi.fn();
+    const activityCoordinatorFactory = vi.fn(() => ({ start, finalize, dispose }));
+    executor.execute.mockImplementation(async (...args: unknown[]) => {
+      const context = getContext();
+      expect(start).toHaveBeenCalledOnce();
+      eventBus.emit("approval:requested", {
+        requestId: "approval-1",
+        shortId: "Ab3Cd4Ef5Gh6",
+        toolName: "pipeline",
+        action: "graph.execute",
+        params: {},
+        tenantId: context.tenantId,
+        agentId: context.agentId,
+        conversationRef: task.origin.conversationRef,
+        sessionKey: formatSessionKey(context.sessionKey),
+        resolvingPrincipalId: context.userId,
+        trustLevel: context.trustLevel,
+        createdAt: 10,
+        timeoutMs: 300_000,
+        traceId: context.traceId,
+        channelType: "telegram",
+      });
+      return executeFinalized({
+        response: "Background work is still running.",
+        executionId: "execution-with-approval",
+        finishReason: "background_pending",
+      })(...args);
+    });
+
+    const runner = build(3, undefined, undefined, undefined, undefined, activityCoordinatorFactory);
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(activityCoordinatorFactory).toHaveBeenCalledOnce();
+    const turnContext = activityCoordinatorFactory.mock.calls[0]![0];
+    expect(turnContext).toMatchObject({
+      agentId: "default",
+      sessionKey: originSessionKey(task.origin),
+      channelType: "telegram",
+      channelKey: "chat-1",
+      chatType: "direct",
+      inboundMessageId: task.continuationExecutionId,
+      rendererKey: "default:telegram:chat-1",
+    });
+    expect(start).toHaveBeenCalledWith(turnContext);
+    expect(finalize).not.toHaveBeenCalled();
+    expect(dispose).not.toHaveBeenCalled();
+
+    eventBus.emit("approval:resolved", {
+      requestId: "approval-1",
+      approved: false,
+      approvedBy: "user1",
+      reason: "declined",
+      resolvedAt: 11,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(finalize).toHaveBeenCalledWith({ kind: "silent", reason: "NO_REPLY" });
     await runner.shutdown();
   });
 
