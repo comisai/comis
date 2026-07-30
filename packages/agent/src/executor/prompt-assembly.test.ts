@@ -2475,6 +2475,30 @@ describe("assembleExecutionPrompt", () => {
       expect(call).not.toHaveProperty("senderTrustDisplayMode");
     });
 
+    it("injects and audits normalized current trust when sender display is disabled", async () => {
+      const emit = vi.fn();
+      const params = makeParams({
+        config: makeConfig({
+          elevatedReply: { senderTrustMap: { "user-1": "admin" }, defaultTrustLevel: "external" },
+        }),
+        deps: {
+          workspaceDir: "/workspace",
+          eventBus: { emit },
+        } as PromptAssemblyParams["deps"],
+      });
+
+      await assembleExecutionPrompt(params);
+
+      const inboundMeta = mockBuildInboundMetadataSection.mock.calls.at(-1)?.[0];
+      expect(inboundMeta).toMatchObject({ senderId: "user-1", senderTrust: "user" });
+      expect(emit).toHaveBeenCalledWith("sender:trust_resolved", expect.objectContaining({
+        agentId: "agent-1",
+        senderId: "user-1",
+        trustLevel: "user",
+        displayMode: "disabled",
+      }));
+    });
+
     it("additionalSections is always empty (RAG relocated to preamble)", async () => {
       const mockSearchResult = {
         entry: { id: "m1", tenantId: "t", content: "Test memory", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },
