@@ -2776,6 +2776,52 @@ describe("createMemoryRecall — query understanding", () => {
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
   });
 
+  it("searches with the current request plus recent user turns while preserving the current request as the intent authority", async () => {
+    const fts = [makeResult("current-project", { base: 0.9 })];
+    let seenQuery: string | undefined;
+    const recordingPort = {
+      async search() {
+        return ok(fts);
+      },
+      async searchLanes(_key: SessionKey, q: string) {
+        seenQuery = q;
+        return ok({ fts, vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      {
+        memoryPort: recordingPort,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        queryUnderstanding: QU_OFF,
+      } as Partial<MemoryRecallConfig>),
+    );
+    const recallWithRecentTurns = recall.recall as unknown as (
+      query: string,
+      scope: ReturnType<typeof memoryScope>,
+      sessionKey: SessionKey,
+      recentUserTurns: readonly string[],
+    ) => ReturnType<typeof recall.recall>;
+
+    await recallWithRecentTurns(
+      "the tests are failing can you look",
+      memoryScope("agent_y", "tenant_x"),
+      SESSION_KEY_OBJ,
+      [
+        "im working on the run tracker in projects/run-tracker",
+        "the delete row thing is fixed now",
+      ],
+    );
+
+    expect(seenQuery).toBe(
+      "tests failing look fixed delete row thing working run tracker projects",
+    );
+  });
+
   it("NO queryUnderstanding CONFIG: an absent queryUnderstanding → original query + no range (byte-identical)", async () => {
     const fts = [makeResult("a", { base: 0.9 })];
     const capture: { laneOpts?: MemorySearchOptions } = {};

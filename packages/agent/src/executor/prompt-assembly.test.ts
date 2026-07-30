@@ -603,6 +603,43 @@ describe("assembleExecutionPrompt", () => {
     expect(result.dynamicPreamble).toContain("rag-section-1");
   });
 
+  it("forwards recent user turns so recall resolves a follow-up against the active conversation", async () => {
+    const memoryPort = {
+      search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+      store: vi.fn(),
+    } as any;
+    mockRecall.mockResolvedValue({ ok: true, value: [] });
+    const params = makeParams({
+      msg: makeMsg({ text: "the tests are failing can you look" }),
+      config: makeConfig({
+        rag: {
+          enabled: true,
+          maxResults: 5,
+          minScore: 0.3,
+          includeTrustLevels: ["learned"],
+          maxContextChars: 5000,
+        },
+      }),
+      deps: { workspaceDir: "/workspace", memoryPort },
+    });
+    (params as PromptAssemblyParams & { recentUserTurns: readonly string[] }).recentUserTurns = [
+      "im working on the run tracker in projects/run-tracker",
+      "the delete row thing is fixed now",
+    ];
+
+    await assembleExecutionPrompt(params);
+
+    expect(mockRecall).toHaveBeenCalledWith(
+      "the tests are failing can you look",
+      expect.any(Object),
+      DEFAULT_SESSION,
+      [
+        "im working on the run tracker in projects/run-tracker",
+        "the delete row thing is fixed now",
+      ],
+    );
+  });
+
   it("sub-agent recall excludes agent-shared memories from sibling runs", async () => {
     const childSession: SessionKey = {
       tenantId: "tenant-1",
