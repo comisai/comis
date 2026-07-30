@@ -2105,7 +2105,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // pass accessor closures for sessionTracker / inboundMessageIdResolver
   // (const `{current?:T}` container pattern; populated after setupChannels
   // returns by mutating the .current field).
-  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, msTeamsIngress, commandQueue, deliveryService } = await setupChannels(
+  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, msTeamsIngress, commandQueue, activityCoordinatorFactory, deliveryService } = await setupChannels(
     buildChannelManagerDeps({
       agents: handle, msTeamsConversationStore,
       assembleToolsForAgent,
@@ -2166,6 +2166,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     resolveSessionManager: (agentId) => handle.piSessionAdapters.get(agentId),
     assembleToolsForAgent, adaptersByType, deliveryService,
     taskManager: backgroundTaskManager, fallbackNotifyFn: bgNotifyFn,
+    ...(activityCoordinatorFactory === undefined ? {} : { activityCoordinatorFactory }),
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
     resolveMaxBackgroundHops: (agentId) => resolveAgentBackgroundTasksConfig(agents, agentId).maxBackgroundHops,
     logger: daemonLogger,

@@ -15,12 +15,15 @@ import {
   toSafeErrorLogString,
   type BackgroundTaskOrigin,
   type ComisLogger,
+  type EventMap,
   type NormalizedMessage,
   type RequestContext,
   type ResolvedRequestContextSeed,
   type SessionKey,
   type SessionQueryScope,
   type SessionStoreError,
+  type TurnActivityContext,
+  type TurnOutcome,
   type TypedEventBus,
 } from "@comis/core";
 import type { AgentExecutor } from "../executor/types.js";
@@ -41,6 +44,16 @@ export interface BackgroundCompletionRunner {
 export interface RunnerSessionStore {
   loadByRef(scope: SessionQueryScope, conversationRef: BackgroundTaskOrigin["conversationRef"]): Result<unknown | undefined, SessionStoreError>;
 }
+
+export interface BackgroundActivityCoordinator {
+  start(ctx: TurnActivityContext): void;
+  finalize(outcome: TurnOutcome): Promise<void>;
+  dispose(): void;
+}
+
+export type BackgroundActivityCoordinatorFactory = (
+  ctx: TurnActivityContext,
+) => BackgroundActivityCoordinator;
 
 export interface BackgroundCompletionRunnerDeps {
   eventBus: TypedEventBus;
@@ -84,6 +97,7 @@ export interface BackgroundCompletionRunnerDeps {
   deliveryProtection: BackgroundContinuationOutbox["deliveryProtection"];
   resolveMaxBackgroundHops(agentId: string): number;
   isTurnInFlight?: (formattedSessionKey: string) => boolean;
+  activityCoordinatorFactory?: BackgroundActivityCoordinatorFactory;
   logger: ComisLogger;
 }
 
@@ -119,6 +133,142 @@ export function createBackgroundCompletionRunner(
   const log = deps.logger.child({ submodule: "background-completion-runner" });
   let stopped = false;
   let inflight: Promise<void> = Promise.resolve();
+  const retainedActivity = new Set<{ dispose(): void }>();
+
+  function createActivityContext(
+    origin: BackgroundTaskOrigin,
+    sessionKey: string,
+    traceId: string,
+    inboundMessageId: string,
+  ): TurnActivityContext {
+    const endpoint = origin.turnScope.endpoint;
+    const chatType = endpoint.conversationKind === "direct" ? "direct" as const : "group" as const;
+    return {
+      agentId: origin.turnScope.conversation.agentId,
+      sessionKey,
+      traceId,
+      channelType: endpoint.channelType,
+      channelKey: endpoint.conversationId,
+      chatType,
+      inboundMessageId,
+      ...(endpoint.threadId === undefined ? {} : { threadId: endpoint.threadId }),
+      rendererKey: `${origin.turnScope.conversation.agentId}:${endpoint.channelType}:${endpoint.conversationId}`,
+    };
+  }
+
+  function startActivity(
+    ctx: TurnActivityContext,
+  ): { executionSettled(): Promise<void>; dispose(): void } | undefined {
+    if (deps.activityCoordinatorFactory === undefined) return undefined;
+    const built = tryCatch(() => {
+      const coordinator = deps.activityCoordinatorFactory?.(ctx);
+      if (coordinator === undefined) return undefined;
+      coordinator.start(ctx);
+      return coordinator;
+    });
+    if (!built.ok || built.value === undefined) {
+      log.warn(
+        {
+          agentId: ctx.agentId,
+          sessionKey: ctx.sessionKey,
+          traceId: ctx.traceId,
+          hint: "Inspect the background activity coordinator factory; continuation execution proceeds without live activity rendering",
+          errorKind: "internal" as const,
+        },
+        "Background completion activity subscription failed",
+      );
+      return undefined;
+    }
+
+    const coordinator = built.value;
+    const pendingApprovals = new Set<string>();
+    let executionHasSettled = false;
+    let finalized = false;
+    let finalizePromise: Promise<void> | undefined;
+
+    const removeListeners = (): void => {
+      deps.eventBus.off("approval:requested", onApprovalRequested);
+      deps.eventBus.off("approval:resolved", onApprovalResolved);
+    };
+    const dispose = (): void => {
+      if (finalized) return;
+      finalized = true;
+      removeListeners();
+      retainedActivity.delete(lease);
+      coordinator.dispose();
+    };
+    const finalize = async (): Promise<void> => {
+      if (finalizePromise !== undefined) return finalizePromise;
+      finalized = true;
+      removeListeners();
+      retainedActivity.delete(lease);
+      const invoked = tryCatch(() => coordinator.finalize({
+        kind: "silent",
+        reason: "NO_REPLY",
+      }));
+      if (!invoked.ok) {
+        coordinator.dispose();
+        log.warn(
+          {
+            agentId: ctx.agentId,
+            sessionKey: ctx.sessionKey,
+            traceId: ctx.traceId,
+            hint: "Inspect the originating channel activity renderer; background approval controls may require manual cleanup",
+            errorKind: "platform" as const,
+          },
+          "Background completion activity finalization failed",
+        );
+        return;
+      }
+      finalizePromise = fromPromise(invoked.value).then((settled) => {
+        if (!settled.ok) {
+          coordinator.dispose();
+          log.warn(
+            {
+              agentId: ctx.agentId,
+              sessionKey: ctx.sessionKey,
+              traceId: ctx.traceId,
+              hint: "Inspect the originating channel activity renderer; background approval controls may require manual cleanup",
+              errorKind: "platform" as const,
+            },
+            "Background completion activity finalization failed",
+          );
+        }
+      });
+      return finalizePromise;
+    };
+    const onApprovalRequested = (request: EventMap["approval:requested"]): void => {
+      if (
+        request.agentId === ctx.agentId
+        && request.sessionKey === ctx.sessionKey
+        && request.traceId === ctx.traceId
+      ) {
+        pendingApprovals.add(request.requestId);
+      }
+    };
+    const onApprovalResolved = (resolution: EventMap["approval:resolved"]): void => {
+      if (!pendingApprovals.delete(resolution.requestId)) return;
+      if (executionHasSettled && pendingApprovals.size === 0) {
+        const closing = finalize();
+        inflight = inflight.then(() => closing).catch(() => undefined);
+        suppressError(closing, "background completion approval activity finalization");
+      }
+    };
+    const lease = {
+      async executionSettled(): Promise<void> {
+        executionHasSettled = true;
+        if (pendingApprovals.size === 0) {
+          await finalize();
+          return;
+        }
+        retainedActivity.add(lease);
+      },
+      dispose,
+    };
+    deps.eventBus.on("approval:requested", onApprovalRequested);
+    deps.eventBus.on("approval:resolved", onApprovalResolved);
+    return lease;
+  }
 
   function emitRoutingOutcome(
     taskId: string,
@@ -382,6 +532,12 @@ export function createBackgroundCompletionRunner(
         traceId: reentryContext.value.traceId,
       },
     };
+    const activity = startActivity(createActivityContext(
+      origin,
+      formattedSessionKey,
+      reentryContext.value.traceId,
+      syntheticMsg.id,
+    ));
 
     const scopedInvocation = tryCatch(() => runWithContext(
       reentryContext.value,
@@ -523,6 +679,7 @@ export function createBackgroundCompletionRunner(
     const scopedResult = scopedInvocation.ok
       ? await fromPromise(scopedInvocation.value)
       : scopedInvocation;
+    await activity?.executionSettled();
     const executionResult = scopedResult.ok ? scopedResult.value : scopedResult;
     if (!executionResult.ok) {
       log.warn(
@@ -778,6 +935,8 @@ export function createBackgroundCompletionRunner(
       deps.eventBus.off("background_task:failed", onFailed);
       // Wait for any in-flight handler to settle before returning.
       await inflight;
+      for (const activity of retainedActivity) activity.dispose();
+      retainedActivity.clear();
     },
   };
 }

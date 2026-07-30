@@ -50,6 +50,8 @@ export { formatCompletionAnnouncement, TRAILING_INSTRUCTION } from "./completion
 export { createTurnFlightTracker } from "./turn-flight-tracker.js";
 export { createBackgroundCompletionRunner } from "./completion-runner.js";
 export type {
+  BackgroundActivityCoordinator,
+  BackgroundActivityCoordinatorFactory,
   BackgroundCompletionRunner,
   BackgroundCompletionRunnerDeps,
   RunnerSessionStore,

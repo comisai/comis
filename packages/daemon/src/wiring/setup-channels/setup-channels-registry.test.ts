@@ -297,6 +297,7 @@ describe("setupChannels", () => {
       expect(createChannelManager).toHaveBeenCalled();
       expect(mockChannelManager.startAll).toHaveBeenCalled();
       expect(result.channelManager).toBe(mockChannelManager);
+      expect(result).toHaveProperty("activityCoordinatorFactory");
     });
 
     it("threads the configured tenant into the channel manager", async () => {
