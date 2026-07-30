@@ -6010,7 +6010,8 @@
             "running",
             "interrupted",
             "completed",
-            "failed"
+            "failed",
+            "cancelled"
           ]
         },
         "date": {
@@ -6104,7 +6105,8 @@
                   "running",
                   "interrupted",
                   "completed",
-                  "failed"
+                  "failed",
+                  "cancelled"
                 ]
               },
               "nodeCount": {

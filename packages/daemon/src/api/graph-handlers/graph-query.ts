@@ -26,9 +26,13 @@ import {
 } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type GraphHandlerDeps } from "./graph-helpers.js";
+import {
+  readTerminalGraphMetadata,
+  type TerminalGraphMetadata,
+} from "./graph-run-metadata.js";
 import { readDurableGraphCheckpoint } from "../../graph/graph-durable-checkpoint.js";
 
-type DiskGraphStatus = "running" | "interrupted" | "completed" | "failed";
+type DiskGraphStatus = "running" | "interrupted" | "completed" | "failed" | "cancelled";
 
 function latestCheckpoint(
   deps: GraphHandlerDeps,
@@ -55,11 +59,20 @@ function checkpointStatus(
   deps: GraphHandlerDeps,
   graphId: string,
   checkpoint: ReturnType<typeof latestCheckpoint>,
+  metadata: TerminalGraphMetadata,
   hasErrorFile: boolean,
 ): DiskGraphStatus {
   const live = deps.graphCoordinator.getStatus(graphId);
-  if (live !== undefined && !live.isTerminal) return "running";
-  if (checkpoint === undefined) return hasErrorFile ? "failed" : "completed";
+  if (live !== undefined) {
+    if (!live.isTerminal) return "running";
+    if (live.graphStatus === "cancelled") return "cancelled";
+    return live.graphStatus === "completed" ? "completed" : "failed";
+  }
+  if (metadata.kind === "valid") return metadata.status;
+  if (checkpoint === undefined) {
+    if (hasErrorFile) return "failed";
+    return metadata.kind === "invalid" ? "interrupted" : "completed";
+  }
   const hasIncomplete = checkpoint.nodes.some((node) =>
     node.status === "pending" || node.status === "ready" || node.status === "running"
   );
@@ -298,10 +311,13 @@ export function bindGraphQueryHandlers(deps: GraphHandlerDeps): Record<string, R
           const files = readdirSync(graphDir);
           const fileCount = files.length;
           const checkpoint = latestCheckpoint(deps, graphId, files);
-          const nodeCount = checkpoint?.nodes.length
+          const metadata = readTerminalGraphMetadata(deps, graphId, files);
+          const nodeCount = metadata.kind === "valid"
+            ? metadata.nodeIds.length
+            : checkpoint?.nodes.length
             ?? files.filter((f) => f.endsWith("-output.md")).length;
           const hasError = files.some((f) => f.includes("-error"));
-          const status = checkpointStatus(deps, graphId, checkpoint, hasError);
+          const status = checkpointStatus(deps, graphId, checkpoint, metadata, hasError);
 
           // Derive name from ticker patterns in filenames
           const tickerCounts = new Map<string, number>();
@@ -359,11 +375,19 @@ export function bindGraphQueryHandlers(deps: GraphHandlerDeps): Record<string, R
       const files = readdirSync(graphDir);
       const maxLen = 12000;
       const checkpoint = latestCheckpoint(deps, graphId, files);
+      const metadata = readTerminalGraphMetadata(deps, graphId, files);
 
       // Group files into nodes
       const nodeMap = new Map<string, { output: string | null; artifacts: Array<{ filename: string; content: string }> }>();
       for (const nodeId of checkpoint?.executionOrder ?? []) {
         nodeMap.set(nodeId, { output: null, artifacts: [] });
+      }
+      if (metadata.kind === "valid") {
+        for (const nodeId of metadata.nodeIds) {
+          if (!nodeMap.has(nodeId)) {
+            nodeMap.set(nodeId, { output: null, artifacts: [] });
+          }
+        }
       }
 
       for (const file of files) {
@@ -417,7 +441,7 @@ export function bindGraphQueryHandlers(deps: GraphHandlerDeps): Record<string, R
       }
 
       const hasError = files.some((f) => f.includes("-error"));
-      const status = checkpointStatus(deps, graphId, checkpoint, hasError);
+      const status = checkpointStatus(deps, graphId, checkpoint, metadata, hasError);
 
       const nodes = [...nodeMap.entries()].map(([nodeId, data]) => ({
         nodeId,

@@ -1265,10 +1265,15 @@ describe("createGraphCoordinator", () => {
     });
 
     it("cancelByRootRunId terminalizes matching graphs without retrying killed nodes", async () => {
-      const { deps, runner } = createTestDeps({
+      fsWriteCalls.length = 0;
+      const { deps, runner, eventBus } = createTestDeps({
         resolveRootRunId: () => ({ ok: true, value: "root-controlled" }),
       });
       const coordinator = createGraphCoordinator(deps);
+      const completedEvents: Array<Record<string, unknown>> = [];
+      eventBus.on("graph:completed", (payload) => {
+        completedEvents.push(payload as unknown as Record<string, unknown>);
+      });
       const graph = buildGraph([
         { nodeId: "A", retries: 1 },
         { nodeId: "B", dependsOn: ["A"] },
@@ -1306,6 +1311,15 @@ describe("createGraphCoordinator", () => {
       ).toBe(false);
 
       await coordinator.shutdown();
+
+      expect(completedEvents).toHaveLength(1);
+      expect(completedEvents[0]!.status).toBe("failed");
+      expect(completedEvents[0]!.cancelReason).toBe("killed");
+      const metadataWrite = fsWriteCalls.find((call) => call.path.includes("_run-metadata.json"));
+      expect(metadataWrite).toBeDefined();
+      const metadata = JSON.parse(metadataWrite!.content);
+      expect(metadata.status).toBe("failed");
+      expect(metadata.cancelReason).toBe("killed");
     });
 
     it("cancel returns false for already-completed graph", async () => {
@@ -2084,6 +2098,7 @@ describe("createGraphCoordinator", () => {
     });
 
     it("includes cancelReason 'manual' on cancel()", async () => {
+      fsWriteCalls.length = 0;
       const { deps, runner, eventBus } = createTestDeps();
       const coordinator = createGraphCoordinator(deps);
 
@@ -2105,6 +2120,15 @@ describe("createGraphCoordinator", () => {
 
       expect(completedEvents).toHaveLength(1);
       expect(completedEvents[0]!.cancelReason).toBe("manual");
+      expect(completedEvents[0]!.status).toBe("cancelled");
+      expect(coordinator.getStatus(result.value)?.graphStatus).toBe("cancelled");
+      expect(coordinator.listGraphs().find((entry) => entry.graphId === result.value)?.status).toBe("cancelled");
+
+      const metadataWrite = fsWriteCalls.find((call) => call.path.includes("_run-metadata.json"));
+      expect(metadataWrite).toBeDefined();
+      const metadata = JSON.parse(metadataWrite!.content);
+      expect(metadata.status).toBe("cancelled");
+      expect(metadata.cancelReason).toBe("manual");
     });
 
     it("omits cancelReason on normal completion", async () => {

@@ -87,7 +87,7 @@ export interface GraphRunState {
   skippedNodesEmitted: Set<string>;    // tracks nodes already emitted as skipped
   cumulativeTokens: number;
   cumulativeCost: number;
-  cancelReason?: "timeout" | "budget" | "manual";
+  cancelReason?: "timeout" | "budget" | "manual" | "killed";
   /** Reply language resolved once at graph submission, carried to node envelopes. */
   resolvedLanguage?: string;
   /** Shared directory path for inter-node data sharing. */

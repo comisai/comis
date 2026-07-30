@@ -79,6 +79,37 @@ function makeInterruptedRun(): {
   return { dataDir, graphId, deps };
 }
 
+function makeHardStoppedRun(): {
+  dataDir: string;
+  graphId: string;
+  deps: GraphHandlerDeps;
+} {
+  const dataDir = mkdtempSync(join(tmpdir(), "comis-graph-query-"));
+  tempDirs.push(dataDir);
+  const graphId = "graph-hard-stopped";
+  const graphDir = join(dataDir, "graph-runs", graphId);
+  mkdirSync(graphDir, { recursive: true, mode: 0o700 });
+  writeFileSync(join(graphDir, "_run-metadata.json"), JSON.stringify({
+    graphId,
+    status: "failed",
+    cancelReason: "manual",
+    nodes: {
+      first: { status: "skipped" },
+      second: { status: "skipped" },
+    },
+  }), { mode: 0o600 });
+  writeFileSync(join(graphDir, "first-output.md"), "Killed by parent agent", { mode: 0o600 });
+
+  const graphCoordinator = {
+    getStatus: () => undefined,
+  } as unknown as GraphCoordinator;
+  const deps = {
+    dataDir,
+    graphCoordinator,
+  } as unknown as GraphHandlerDeps;
+  return { dataDir, graphId, deps };
+}
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -114,6 +145,64 @@ describe("graph run history checkpoint truthfulness", () => {
         expect.objectContaining({ nodeId: "museum", output: "museum output" }),
         expect.objectContaining({ nodeId: "decision", output: null }),
       ],
+    }));
+  });
+
+  it("preserves a failed hard-stop status after the coordinator restarts", async () => {
+    const { deps, graphId } = makeHardStoppedRun();
+    const handlers = bindGraphQueryHandlers(deps);
+
+    const runs = await handlers["graph.runs"]!({});
+    const detail = await handlers["graph.runDetail"]!({ graphId });
+
+    expect(runs).toEqual({
+      runs: [
+        expect.objectContaining({
+          graphId,
+          status: "failed",
+          nodeCount: 2,
+        }),
+      ],
+    });
+    expect(detail).toEqual(expect.objectContaining({
+      graphId,
+      status: "failed",
+      nodes: [
+        expect.objectContaining({ nodeId: "first", output: "Killed by parent agent" }),
+        expect.objectContaining({ nodeId: "second", output: null }),
+      ],
+    }));
+  });
+
+  it("reports a persisted manual cancellation as cancelled after restart", async () => {
+    const { dataDir, deps, graphId } = makeHardStoppedRun();
+    const graphDir = join(dataDir, "graph-runs", graphId);
+    writeFileSync(join(graphDir, "_run-metadata.json"), JSON.stringify({
+      graphId,
+      status: "completed",
+      cancelReason: "manual",
+      nodes: {
+        first: { status: "completed" },
+        second: { status: "skipped" },
+      },
+    }), { mode: 0o600 });
+    const handlers = bindGraphQueryHandlers(deps);
+
+    const runs = await handlers["graph.runs"]!({});
+    const detail = await handlers["graph.runDetail"]!({ graphId });
+
+    expect(runs).toEqual({
+      runs: [
+        expect.objectContaining({
+          graphId,
+          status: "cancelled",
+          nodeCount: 2,
+        }),
+      ],
+    });
+    expect(detail).toEqual(expect.objectContaining({
+      graphId,
+      status: "cancelled",
     }));
   });
 });
