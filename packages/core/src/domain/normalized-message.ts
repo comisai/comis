@@ -180,6 +180,19 @@ export type VisionDirectPreprocessReceipt = z.infer<
   typeof VisionDirectPreprocessReceiptSchema
 >;
 
+/**
+ * Content-free proof that the internal completion relay is rewriting a
+ * runtime-settled action result rather than handling ordinary cross-session
+ * prose. Consumers must also verify the internal relay channel and sender.
+ */
+export const RuntimeActionEvidenceSchema = z.strictObject({
+  kind: z.literal("background_completion"),
+});
+
+export type RuntimeActionEvidence = z.infer<
+  typeof RuntimeActionEvidenceSchema
+>;
+
 export interface SttPreprocessSelection {
   readonly provider: string;
   readonly keyless: boolean;
@@ -229,6 +242,8 @@ export const NormalizedMessageSchema = z.strictObject({
       sttPreprocess: SttPreprocessReceiptsSchema.optional(),
       /** Trusted, content-free direct model-vision preprocessing receipt. */
       visionPreprocess: VisionDirectPreprocessReceiptSchema.optional(),
+      /** Runtime-owned current-action receipt for internal completion rewrites. */
+      runtimeActionEvidence: RuntimeActionEvidenceSchema.optional(),
       /** Trusted projection of earlier group chatter, rendered as untrusted prompt context. */
       groupHistoryContext: z
         .array(GroupHistoryContextEntrySchema)
