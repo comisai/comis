@@ -26,6 +26,7 @@ import { DeliveryOriginSchema } from "./delivery-origin.js";
 import {
   ConversationRefSchema,
   ConversationScopeSchema,
+  ResolvedTurnScopeSchema,
   createConversationRef,
 } from "./conversation-scope.js";
 import {
@@ -101,6 +102,8 @@ const DurableNodeCostSchema = z.strictObject({
 
 /** Authoritative graph state needed to continue the exact submitted DAG. */
 const DurableGraphCheckpointSchema = z.strictObject({
+  /** Exact resolved turn authority, including the endpoint omitted by broader conversation partitions. */
+  turnScope: ResolvedTurnScopeSchema,
   graph: ExecutionGraphSchema,
   executionOrder: z.array(z.string().min(1)).min(1),
   nodes: z.array(NodeExecutionStateSchema).min(1),

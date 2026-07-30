@@ -277,6 +277,8 @@ export interface DurableResumeEngineDeps {
   readonly revokeLease?: (leaseId: string) => void;
   /** Resume a run from its checkpoint under the re-minted lease. */
   readonly resumeRun: (record: DurableRunRecord, lease: IssuedLease) => Promise<Result<void, Error>>;
+  /** Resolve endpoint authority stored outside a broad durable conversation partition. */
+  readonly resolveTurnScope?: (record: DurableRunRecord) => Result<ResolvedTurnScope, Error>;
   readonly notify: NotifyFn;
   readonly nowMs: () => number;
   /** The wall-clock recovery budget (ms) — the whole pass is bounded by it. */
@@ -341,6 +343,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
     remintLease,
     revokeLease,
     resumeRun,
+    resolveTurnScope,
     notify,
     nowMs,
     recoveryBudgetMs,
@@ -656,10 +659,15 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
         // broaden authority).
         const displaySession = conversationScopeToSessionKey(record.conversationScope);
         const partition = record.conversationScope.partition;
-        const endpoint = partition.kind === "endpoint-conversation-principal"
-          ? partition.endpoint
-          : undefined;
-        if (!displaySession.ok || endpoint === undefined) {
+        const resolvedTurnScope = partition.kind === "endpoint-conversation-principal"
+          ? ok<ResolvedTurnScope>({
+              conversation: record.conversationScope,
+              principal: { principalId: record.principalId },
+              endpoint: partition.endpoint,
+            })
+          : resolveTurnScope?.(record)
+            ?? err(new Error("the durable record omitted its resolved endpoint"));
+        if (!displaySession.ok || !resolvedTurnScope.ok) {
           await orphan(
             record,
             "invalid durable record authority",
@@ -668,11 +676,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
           orphaned++;
           continue;
         }
-        const turnScope: ResolvedTurnScope = {
-          conversation: record.conversationScope,
-          principal: { principalId: record.principalId },
-          endpoint,
-        };
+        const turnScope = resolvedTurnScope.value;
         const lease = remintLease({
           agentId: record.agentId,
           caps: record.caps,

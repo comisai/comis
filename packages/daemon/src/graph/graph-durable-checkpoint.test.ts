@@ -189,7 +189,26 @@ describe("round-trip through the durable_run_checkpoints JSON column", () => {
 });
 
 describe("protected exact-graph checkpoint artifact", () => {
+  const endpoint = {
+    channelType: "telegram",
+    channelInstanceId: "telegram-main",
+    conversationId: "chat-a",
+    conversationKind: "direct" as const,
+  };
   const checkpoint: DurableGraphCheckpoint = {
+    turnScope: {
+      conversation: {
+        tenantId: "tenant-a",
+        agentId: "agent-a",
+        partition: {
+          kind: "channel-principal",
+          channelType: "telegram",
+          principalId: "user-a",
+        },
+      },
+      principal: { principalId: "user-a" },
+      endpoint,
+    },
     graph: {
       nodes: [
         {

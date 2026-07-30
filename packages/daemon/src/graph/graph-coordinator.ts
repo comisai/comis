@@ -19,6 +19,7 @@ import {
   conversationScopeToSessionKey,
   validateAndSortGraph,
   parseDurableRunRecord,
+  ResolvedTurnScopeSchema,
   toSafeErrorLogString,
 } from "@comis/core";
 import { randomUUID } from "node:crypto";
@@ -110,11 +111,29 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       || gs.callerAgentId === undefined
       || gs.callerConversationLocator === undefined
       || gs.callerPrincipalId === undefined
+      || gs.callerEndpoint === undefined
     ) return true;
     const store = deps.durableRuns;
     const rootRunId = gs.rootRunId;
     const terminal = gs.stateMachine.isTerminal();
-    const graphCheckpoint = createDurableGraphCheckpoint(gs);
+    const parsedTurnScope = ResolvedTurnScopeSchema.safeParse({
+      conversation: gs.callerConversationLocator.conversationScope,
+      principal: { principalId: gs.callerPrincipalId },
+      endpoint: gs.callerEndpoint,
+    });
+    if (!parsedTurnScope.success) {
+      deps.logger?.warn(
+        {
+          graphId: gs.graphId,
+          rootRunId,
+          hint: "Preserve the resolved caller endpoint when submitting the graph; durable authority was not advanced",
+          errorKind: "validation" as const,
+        },
+        "Graph durable turn authority is incomplete",
+      );
+      return false;
+    }
+    const graphCheckpoint = createDurableGraphCheckpoint(gs, parsedTurnScope.data);
     const checkpointArtifact = writeDurableGraphCheckpoint(
       deps.dataDir,
       gs.durableArtifactGraphId ?? gs.graphId,
@@ -197,7 +216,8 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       && gs.rootRunId !== undefined
       && gs.callerAgentId !== undefined
       && gs.callerConversationLocator !== undefined
-      && gs.callerPrincipalId !== undefined;
+      && gs.callerPrincipalId !== undefined
+      && gs.callerEndpoint !== undefined;
   }
 
   function releaseDurableRetention(gs: GraphRunState): void {

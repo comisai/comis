@@ -4434,6 +4434,7 @@ function seedGraphCheckpoint(
   }> = {},
 ): string {
   const content = JSON.stringify({
+    turnScope: makeCallerTurnScope("telegram", "chat_a"),
     graph: graph.graph,
     executionOrder: graph.executionOrder,
     nodes,

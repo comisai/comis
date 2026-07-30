@@ -328,7 +328,7 @@ export const GraphRunsContract = defineContract({
     runs: z.array(z.object({
       graphId: z.string(),
       name: z.string(),
-      status: z.enum(["completed", "failed"]),
+      status: z.enum(["running", "interrupted", "completed", "failed"]),
       nodeCount: z.number(),
       date: z.string(),
       fileCount: z.number(),
@@ -364,7 +364,7 @@ export const GraphRunDetailContract = defineContract({
   response: z.object({
     graphId: z.string(),
     name: z.string(),
-    status: z.enum(["completed", "failed"]),
+    status: z.enum(["running", "interrupted", "completed", "failed"]),
     date: z.string(),
     nodes: z.array(z.object({
       nodeId: z.string(),

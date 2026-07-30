@@ -23,11 +23,14 @@
  */
 
 import {
+  createConversationRef,
   parseDurableGraphCheckpoint,
   safePath,
   type DurableGraphCheckpoint,
+  type DurableRunRecord,
   type NodeExecutionState,
   type NodeStatus,
+  type ResolvedTurnScope,
 } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { readRegularFile, writeRegularFile } from "@comis/observability";
@@ -121,9 +124,13 @@ export function snapshotToSpawnTree(snapshot: GraphExecutionSnapshot): SpawnTree
 }
 
 /** Capture the exact submitted graph and all restart-relevant runtime ledgers. */
-export function createDurableGraphCheckpoint(gs: GraphRunState): DurableGraphCheckpoint {
+export function createDurableGraphCheckpoint(
+  gs: GraphRunState,
+  turnScope: ResolvedTurnScope,
+): DurableGraphCheckpoint {
   const snapshot = gs.stateMachine.snapshot();
   return {
+    turnScope,
     graph: gs.graph.graph,
     executionOrder: [...snapshot.executionOrder],
     nodes: [...snapshot.nodes.values()].map((state) => ({ ...state })),
@@ -135,6 +142,46 @@ export function createDurableGraphCheckpoint(gs: GraphRunState): DurableGraphChe
     nodeCost: [...gs.nodeCost].map(([nodeId, cost]) => ({ nodeId, cost })),
     skippedNodesEmitted: [...gs.skippedNodesEmitted],
   };
+}
+
+/**
+ * Recover the exact resolved turn authority from the content-addressed graph
+ * checkpoint. The durable row retains the canonical conversation partition,
+ * while this artifact retains the endpoint that broader partitions omit.
+ */
+export function resolveGraphResumeTurnScope(
+  dataDir: string,
+  record: DurableRunRecord,
+): Result<ResolvedTurnScope, Error> {
+  if (record.checkpointRef === null) {
+    return err(new Error("graph resume authority has no protected checkpoint reference"));
+  }
+  const loaded = readDurableGraphCheckpoint(dataDir, record.checkpointRef);
+  if (!loaded.ok) return loaded;
+  const turnScope = loaded.value.turnScope;
+  const reference = createConversationRef(turnScope.conversation);
+  if (
+    !reference.ok
+    || reference.value !== record.conversationRef
+    || turnScope.conversation.tenantId !== record.tenantId
+    || turnScope.conversation.agentId !== record.agentId
+    || turnScope.principal.principalId !== record.principalId
+  ) {
+    return err(new Error("graph resume turn authority diverges from the durable row"));
+  }
+  const origin = record.deliveryOrigin;
+  if (
+    origin !== null
+    && (
+      origin.channelType !== turnScope.endpoint.channelType
+      || origin.channelId !== turnScope.endpoint.conversationId
+      || origin.threadId !== turnScope.endpoint.threadId
+      || origin.userId !== turnScope.principal.principalId
+    )
+  ) {
+    return err(new Error("graph resume endpoint diverges from the durable delivery origin"));
+  }
+  return ok(turnScope);
 }
 
 /** Persist content-bearing graph state in an owner-only artifact, never the authority row. */

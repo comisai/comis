@@ -26,6 +26,47 @@ import {
 } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type GraphHandlerDeps } from "./graph-helpers.js";
+import { readDurableGraphCheckpoint } from "../../graph/graph-durable-checkpoint.js";
+
+type DiskGraphStatus = "running" | "interrupted" | "completed" | "failed";
+
+function latestCheckpoint(
+  deps: GraphHandlerDeps,
+  graphId: string,
+  files: readonly string[],
+) {
+  if (!deps.dataDir) return undefined;
+  const candidates = files
+    .filter((file) => /^durable-checkpoint-[a-f0-9]{64}\.json$/.test(file))
+    .map((file) => ({
+      file,
+      mtimeMs: statSync(safePath(deps.dataDir!, "graph-runs", graphId, file)).mtimeMs,
+    }))
+    .sort((left, right) => right.mtimeMs - left.mtimeMs);
+  for (const candidate of candidates) {
+    const ref = ["graph-runs", graphId, candidate.file].join("/");
+    const loaded = readDurableGraphCheckpoint(deps.dataDir, ref);
+    if (loaded.ok) return loaded.value;
+  }
+  return undefined;
+}
+
+function checkpointStatus(
+  deps: GraphHandlerDeps,
+  graphId: string,
+  checkpoint: ReturnType<typeof latestCheckpoint>,
+  hasErrorFile: boolean,
+): DiskGraphStatus {
+  const live = deps.graphCoordinator.getStatus(graphId);
+  if (live !== undefined && !live.isTerminal) return "running";
+  if (checkpoint === undefined) return hasErrorFile ? "failed" : "completed";
+  const hasIncomplete = checkpoint.nodes.some((node) =>
+    node.status === "pending" || node.status === "ready" || node.status === "running"
+  );
+  if (hasIncomplete) return "interrupted";
+  const hasFailure = checkpoint.nodes.some((node) => node.status === "failed");
+  return hasFailure || hasErrorFile ? "failed" : "completed";
+}
 
 // ---------------------------------------------------------------------------
 // Query handlers
@@ -242,7 +283,7 @@ export function bindGraphQueryHandlers(deps: GraphHandlerDeps): Record<string, R
       const runs: Array<{
         graphId: string;
         name: string;
-        status: "completed" | "failed";
+        status: DiskGraphStatus;
         nodeCount: number;
         date: string;
         fileCount: number;
@@ -256,9 +297,11 @@ export function bindGraphQueryHandlers(deps: GraphHandlerDeps): Record<string, R
           const dirStat = statSync(graphDir);
           const files = readdirSync(graphDir);
           const fileCount = files.length;
-          const nodeCount = files.filter((f) => f.endsWith("-output.md")).length;
+          const checkpoint = latestCheckpoint(deps, graphId, files);
+          const nodeCount = checkpoint?.nodes.length
+            ?? files.filter((f) => f.endsWith("-output.md")).length;
           const hasError = files.some((f) => f.includes("-error"));
-          const status: "completed" | "failed" = hasError ? "failed" : "completed";
+          const status = checkpointStatus(deps, graphId, checkpoint, hasError);
 
           // Derive name from ticker patterns in filenames
           const tickerCounts = new Map<string, number>();
@@ -315,9 +358,13 @@ export function bindGraphQueryHandlers(deps: GraphHandlerDeps): Record<string, R
       const dirStat = statSync(graphDir);
       const files = readdirSync(graphDir);
       const maxLen = 12000;
+      const checkpoint = latestCheckpoint(deps, graphId, files);
 
       // Group files into nodes
       const nodeMap = new Map<string, { output: string | null; artifacts: Array<{ filename: string; content: string }> }>();
+      for (const nodeId of checkpoint?.executionOrder ?? []) {
+        nodeMap.set(nodeId, { output: null, artifacts: [] });
+      }
 
       for (const file of files) {
         if (!file.endsWith(".md")) continue;
@@ -370,7 +417,7 @@ export function bindGraphQueryHandlers(deps: GraphHandlerDeps): Record<string, R
       }
 
       const hasError = files.some((f) => f.includes("-error"));
-      const status: "completed" | "failed" = hasError ? "failed" : "completed";
+      const status = checkpointStatus(deps, graphId, checkpoint, hasError);
 
       const nodes = [...nodeMap.entries()].map(([nodeId, data]) => ({
         nodeId,
