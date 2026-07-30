@@ -23,6 +23,7 @@ export type LocaleMessageId =
   | "prompt_timeout"
   | "background_task_failed_notice"
   | "delegation_evidence_missing"
+  | "persistent_action_evidence_missing"
   | "destructive_action_not_verified"
   | "vision_unavailable";
 
@@ -64,6 +65,8 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "⚠️ This background task failed, so its result may be incomplete.",
   delegation_evidence_missing:
     "I did not successfully start the requested sub-agent in this turn, so I cannot claim a new independent check. Please retry the request.",
+  persistent_action_evidence_missing:
+    "I did not perform or verify the requested repeated action in this turn, so I cannot report it as successful. Please retry the request.",
   destructive_action_not_verified:
     "I could not verify that anything was deleted. The command had no observable effect, so I am not treating the deletion as complete.",
   vision_unavailable:
@@ -258,6 +261,14 @@ export function selectDelegationEvidenceMissingReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "delegation_evidence_missing");
+}
+
+/** Honest replacement when a persistent action has no current-turn tool proof. */
+export function selectPersistentActionEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "persistent_action_evidence_missing");
 }
 
 /** Honest replacement when a destructive command reports no observable effect. */

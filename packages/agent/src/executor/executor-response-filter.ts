@@ -197,6 +197,73 @@ export function enforceCurrentTurnDelegationEvidence(params: {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Persistent-action evidence
+// ---------------------------------------------------------------------------
+
+const PERSISTENT_ACTION_REQUEST_PATTERNS = [
+  /\b(?:keep|continue|repeat|retry)\b[\s\S]{0,120}\b(?:until|till)\b/iu,
+  /\b(?:do not|don't|dont|never)\s+stop\b/iu,
+];
+
+const TERMINAL_SUCCESS_CLAIM_PATTERNS = [
+  /\b(?:pass(?:ed|es)?|succeed(?:ed|s)?|successful|verified)\b/iu,
+];
+
+export interface PersistentActionEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_current_turn_action_evidence";
+}
+
+/**
+ * Prevent a persistent or retry-until-terminal request from being reported as
+ * successful when the current execution produced no terminal tool receipt.
+ *
+ * This is a deliberately narrow provider-neutral safety net. It does not infer
+ * an application workflow or require a specific tool: any successful,
+ * non-placeholder current-turn tool result is acceptable evidence.
+ */
+export function enforcePersistentActionEvidence(params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  honestResponse: string;
+}): PersistentActionEvidenceGuardResult {
+  const persistentRequest = PERSISTENT_ACTION_REQUEST_PATTERNS.some(
+    (pattern) => pattern.test(params.request),
+  );
+  if (!persistentRequest) {
+    return { response: params.response, corrected: false };
+  }
+
+  const successfulToolReceipt = (params.toolExecResults ?? []).some(
+    (result) => result.success && result.backgrounded !== true,
+  );
+  if (successfulToolReceipt) {
+    return { response: params.response, corrected: false };
+  }
+
+  const claimsTerminalSuccess =
+    isCompletionClaim(params.response)
+    || TERMINAL_SUCCESS_CLAIM_PATTERNS.some(
+      (pattern) => pattern.test(params.response),
+    );
+  if (!claimsTerminalSuccess) {
+    return { response: params.response, corrected: false };
+  }
+
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "missing_current_turn_action_evidence",
+  };
+}
+
 export interface DestructiveEffectEvidenceGuardResult {
   response: string;
   corrected: boolean;

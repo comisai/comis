@@ -29,6 +29,7 @@ import {
   selectPromptTimeoutReply,
   selectBackgroundTaskFailedNotice,
   selectDelegationEvidenceMissingReply,
+  selectPersistentActionEvidenceMissingReply,
   selectDestructiveActionNotVerifiedReply,
   selectVisionUnavailableReply,
   type LocaleCatalog,
@@ -184,6 +185,14 @@ export function buildDelegationEvidenceMissingReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectDelegationEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when a persistent action lacks current-turn tool proof. */
+export function buildPersistentActionEvidenceMissingReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectPersistentActionEvidenceMissingReply(language, localeCatalog);
 }
 
 /** Honest replacement when a destructive command had no observable effect. */
