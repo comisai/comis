@@ -29,7 +29,7 @@ import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-import { connectServer, isNeedsOAuthLoginError } from "./mcp-client-connect.js";
+import { connectServer, isNeedsOAuthLoginError, reconnectServer } from "./mcp-client-connect.js";
 import { createTokenStore, type TokenStore } from "./oauth/token-store.js";
 import type { RefreshResult } from "./oauth/refresh-deduper.js";
 import type {
@@ -467,5 +467,64 @@ describe("connectServer — stdio failure diagnosability", () => {
         timestamp: expect.any(Number),
       },
     });
+  });
+});
+
+describe("reconnectServer — live credential refresh", () => {
+  it("replaces only credential fields while preserving the stored runtime config", async () => {
+    connectImpl = () => Promise.resolve();
+    const state = makeState();
+    const storedConfig: McpServerConfig = {
+      name: "svc",
+      transport: "http",
+      url: "https://example.com/mcp",
+      enabled: true,
+      env: { MCP_TEST_TOKEN: "test-key-stale" },
+      headers: { Authorization: "Bearer test-key-stale-header" },
+      maxConcurrency: 7,
+      keepaliveIntervalMs: 0,
+      toolAllowlist: ["account_summary"],
+    };
+    state.serverConfigs.set("svc", storedConfig);
+    state.connections.set("svc", {
+      name: "svc",
+      client: { close: vi.fn(async () => {}) } as unknown as McpConnection["client"],
+      status: "connected",
+      tools: [],
+      lastHealthCheck: 0,
+      reconnectAttempt: 0,
+      maxReconnectAttempts: 5,
+      generation: 0,
+    });
+    const deps = { logger: makeLogger() } as unknown as McpClientManagerDeps;
+    type ReconnectWithCredentials = (
+      reconnectState: McpClientManagerState,
+      reconnectDeps: McpClientManagerDeps,
+      name: string,
+      credentials: {
+        readonly env: McpServerConfig["env"];
+        readonly headers: McpServerConfig["headers"];
+      },
+    ) => ReturnType<typeof reconnectServer>;
+
+    const result = await (reconnectServer as unknown as ReconnectWithCredentials)(
+      state,
+      deps,
+      "svc",
+      {
+        env: { MCP_TEST_TOKEN: "test-key-rotated" },
+        headers: { Authorization: "Bearer test-key-header-rotated" },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(state.serverConfigs.get("svc")).toEqual(expect.objectContaining({
+      url: "https://example.com/mcp",
+      maxConcurrency: 7,
+      keepaliveIntervalMs: 0,
+      toolAllowlist: ["account_summary"],
+      env: { MCP_TEST_TOKEN: "test-key-rotated" },
+      headers: { Authorization: "Bearer test-key-header-rotated" },
+    }));
   });
 });

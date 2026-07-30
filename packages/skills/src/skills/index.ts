@@ -132,6 +132,7 @@ export type { RedirectPolicyOptions } from "./integrations/mcp-client/index.js";
 export type {
   McpClientManager,
   McpClientManagerDeps,
+  McpReconnectCredentials,
   McpServerConfig,
   McpConnection,
   McpConnectionStatus,

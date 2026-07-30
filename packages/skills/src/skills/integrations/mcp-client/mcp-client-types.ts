@@ -196,6 +196,7 @@ export interface McpServerConfig {
   readonly oauthFetch?: FetchLike;
 }
 
+export type McpReconnectCredentials = { readonly env: McpServerConfig["env"] | undefined; readonly headers: McpServerConfig["headers"] | undefined };
 /** Connection status for an MCP server. */
 export type McpConnectionStatus = "connected" | "disconnected" | "connecting" | "reconnecting" | "error";
 
@@ -393,8 +394,7 @@ export interface McpClientManager {
     qualifiedName: string,
     args: Record<string, unknown>,
   ): Promise<Result<McpToolCallResult, Error>>;
-  /** Reconnect a named server using its stored config. */
-  reconnect(name: string): Promise<Result<McpConnection, Error>>;
+  reconnect(name: string, credentials?: McpReconnectCredentials): Promise<Result<McpConnection, Error>>;
 }
 // ---------------------------------------------------------------------------
 // Closure-state interface

@@ -81,6 +81,7 @@ import { buildPersistedMcpEntry } from "./mcp-persisted-entry.js";
 // (headerName, headerValue) pair before the Zod contract parse. Called in both
 // mcp.connect and mcp.test after the env-scan block. Mutates headers in place.
 import { processHeaderCredentials } from "./mcp-header-credential.js";
+import { resolveMcpReconnectCredentials } from "./mcp-reconnect-credentials.js";
 
 // persistMcpServers helper extracted to a sibling module to keep
 // mcp-handlers.ts under the 800-line cap. The helper is the single
@@ -817,8 +818,13 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const params = McpReconnectContract.request.parse(userParams);
       const name = params.server_name;
 
-      // Use manager's reconnect (preserves generation counter, uses stored config)
-      const result = await manager.reconnect(name);
+      // Preserve the stored runtime config while refreshing only credential-bearing
+      // fields from raw persisted refs and the current live secret map.
+      const refreshedCredentials = resolveMcpReconnectCredentials(deps, name);
+      if (!refreshedCredentials.ok) throw refreshedCredentials.error;
+      const result = refreshedCredentials.value === undefined
+        ? await manager.reconnect(name)
+        : await manager.reconnect(name, refreshedCredentials.value);
       if (!result.ok) {
         // Fallback: if no stored config, try with provided params
         if (result.error.message.includes("no stored config")) {
