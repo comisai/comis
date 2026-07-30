@@ -7,10 +7,87 @@
  *
  * @module
  */
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
 import { seedBundledSkills } from "./seed-bundled-skills.js";
 
+function listFiles(root: string, relativeDirectory = ""): string[] {
+  const directory = resolve(root, relativeDirectory);
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const relativePath = relativeDirectory
+      ? `${relativeDirectory}/${entry.name}`
+      : entry.name;
+    if (entry.isDirectory()) return listFiles(root, relativePath);
+    return entry.isFile() ? [relativePath] : [];
+  });
+}
+
 describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled skills", () => {
+  it("packages every repository-shipped prompt skill for boot seeding", () => {
+    const repositoryRoot = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../../..",
+    );
+    const repositorySkills = resolve(repositoryRoot, "skills");
+    const bundledSkills = resolve(
+      repositoryRoot,
+      "packages/daemon/bundled-skills",
+    );
+    const shippedSkillNames = readdirSync(repositorySkills, {
+      withFileTypes: true,
+    })
+      .filter(
+        (entry) =>
+          entry.isDirectory() &&
+          existsSync(resolve(repositorySkills, entry.name, "SKILL.md")),
+      )
+      .map((entry) => entry.name)
+      .sort();
+    const violations: string[] = [];
+
+    expect(shippedSkillNames.length).toBeGreaterThan(0);
+
+    for (const skillName of shippedSkillNames) {
+      const sourceRoot = resolve(repositorySkills, skillName);
+      const packagedRoot = resolve(bundledSkills, skillName);
+      const packagedManifest = resolve(packagedRoot, "SKILL.md");
+
+      if (!existsSync(packagedManifest)) {
+        violations.push(`${skillName}: missing bundled SKILL.md`);
+        continue;
+      }
+
+      const sourceFiles = listFiles(sourceRoot);
+      const packagedFiles = listFiles(packagedRoot);
+      if (JSON.stringify(packagedFiles) !== JSON.stringify(sourceFiles)) {
+        violations.push(`${skillName}: bundled file tree differs`);
+        continue;
+      }
+
+      for (const relativePath of sourceFiles) {
+        if (
+          !readFileSync(resolve(sourceRoot, relativePath)).equals(
+            readFileSync(resolve(packagedRoot, relativePath)),
+          )
+        ) {
+          violations.push(`${skillName}: ${relativePath} differs`);
+        }
+      }
+
+      const manifest = readFileSync(
+        resolve(sourceRoot, "SKILL.md"),
+        "utf8",
+      );
+      if (!/^version:\s*\S+/mu.test(manifest)) {
+        violations.push(`${skillName}: missing version frontmatter`);
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+
   it("seeds missing skills, RE-seeds version-changed skills, and SKIPS up-to-date ones", () => {
     const bundled: Record<string, string> = { "skill-creator": "1.1.1", "claude-code": "1.0.0", codex: "1.0.0" };
     const installed: Record<string, string | undefined> = {
