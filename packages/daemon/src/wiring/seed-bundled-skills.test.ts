@@ -22,7 +22,10 @@ import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
-import { seedBundledSkills } from "./seed-bundled-skills.js";
+import {
+  defaultSeedBundledSkillsDeps,
+  seedBundledSkills,
+} from "./seed-bundled-skills.js";
 
 function listFiles(root: string, relativeDirectory = ""): string[] {
   const directory = resolve(root, relativeDirectory);
@@ -160,6 +163,48 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
       );
       expect(result.stdout.trim()).toBe(
         resolve(realpathSync(workspace), "output/chart.png"),
+      );
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("removes retired files when reseeding a changed bundled skill", () => {
+    const fixtureRoot = mkdtempSync(resolve(tmpdir(), "comis-skill-reseed-"));
+    const bundledRoot = resolve(fixtureRoot, "bundled");
+    const skillsTarget = resolve(fixtureRoot, "installed");
+    const bundledSkill = resolve(bundledRoot, "example-skill");
+    const installedSkill = resolve(skillsTarget, "example-skill");
+    mkdirSync(resolve(bundledSkill, "scripts"), { recursive: true });
+    mkdirSync(resolve(installedSkill, "scripts"), { recursive: true });
+    writeFileSync(
+      resolve(bundledSkill, "SKILL.md"),
+      "---\nname: example-skill\nversion: 2.0.0\n---\n",
+    );
+    writeFileSync(
+      resolve(bundledSkill, "scripts/generate.cjs"),
+      "module.exports = {};\n",
+    );
+    writeFileSync(
+      resolve(installedSkill, "SKILL.md"),
+      "---\nname: example-skill\nversion: 1.0.0\n---\n",
+    );
+    writeFileSync(
+      resolve(installedSkill, "scripts/generate.js"),
+      "module.exports = {};\n",
+    );
+
+    try {
+      const result = seedBundledSkills(
+        defaultSeedBundledSkillsDeps(bundledRoot, skillsTarget),
+      );
+
+      expect(result.seeded).toEqual(["example-skill"]);
+      expect(existsSync(resolve(installedSkill, "scripts/generate.cjs"))).toBe(
+        true,
+      );
+      expect(existsSync(resolve(installedSkill, "scripts/generate.js"))).toBe(
+        false,
       );
     } finally {
       rmSync(fixtureRoot, { recursive: true, force: true });
