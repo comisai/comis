@@ -30,6 +30,14 @@ describe("compileExecutionPrompt", () => {
       .toBe("included");
   });
 
+  it("requires immediate refusal when the current sender cannot access a required tool", () => {
+    const result = compileExecutionPrompt(makeInput());
+
+    expect(result.stableEnginePrefix).toMatch(/current sender.*trust.*required by a tool/iu);
+    expect(result.stableEnginePrefix).toMatch(/refuse.*immediately.*required trust level/iu);
+    expect(result.stableEnginePrefix).toMatch(/do not ask.*missing parameters/iu);
+  });
+
   it("separates trusted operator policy from untrusted agent state", () => {
     const result = compileExecutionPrompt(makeInput({
       operatorPolicy: [{

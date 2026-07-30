@@ -584,6 +584,18 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
 
   // Sender trust resolution
   const trustDisplayConfig = deps.senderTrustDisplayConfig;
+  const configuredSenderTrust =
+    config.elevatedReply?.senderTrustMap?.[msg.senderId]
+    ?? config.elevatedReply?.defaultTrustLevel;
+  const currentSenderTrust = tryGetContext()?.trustLevel
+    ?? (
+      configuredSenderTrust === "admin"
+      || configuredSenderTrust === "user"
+      || configuredSenderTrust === "guest"
+        ? configuredSenderTrust
+        : "user"
+    );
+  inboundMeta = { ...inboundMeta, senderTrust: currentSenderTrust };
   let senderTrustEntries: SenderTrustEntry[] = [];
   let senderTrustDisplayMode: TrustDisplayMode = "raw";
 
@@ -602,10 +614,6 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         logger.debug("Sender trust HMAC using agentId fallback (no hashSecretRef configured)");
       }
     }
-
-    // Resolve current sender's trust for metadata injection
-    const currentSenderTrust = trustMap[msg.senderId] ?? defaultLevel;
-    inboundMeta = { ...inboundMeta, senderTrust: currentSenderTrust };
 
     // Build display entries for ALL known senders
     const allSenders = new Map<string, string>(); // senderId -> trustLevel
@@ -627,17 +635,17 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       }),
     }));
 
-    // Emit audit event
-    if (deps.eventBus) {
-      deps.eventBus.emit("sender:trust_resolved", {
-        agentId: agentId ?? config.name,
-        senderId: msg.senderId,
-        trustLevel: currentSenderTrust,
-        displayMode: senderTrustDisplayMode,
-        sessionKey: formatSessionKey(sessionKey),
-        timestamp: deps.clock.now(),
-      });
-    }
+  }
+
+  if (deps.eventBus) {
+    deps.eventBus.emit("sender:trust_resolved", {
+      agentId: agentId ?? config.name,
+      senderId: msg.senderId,
+      trustLevel: currentSenderTrust,
+      displayMode: trustDisplayConfig?.enabled ? senderTrustDisplayMode : "disabled",
+      sessionKey: formatSessionKey(sessionKey),
+      timestamp: deps.clock.now(),
+    });
   }
 
   // 5. Assemble the full system prompt
