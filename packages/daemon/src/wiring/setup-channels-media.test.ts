@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AppContainer, ChannelPort, Attachment, NormalizedMessage, ResolvedTurnScope } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -83,7 +84,7 @@ function makeContainer(overrides: Record<string, any> = {}): AppContainer {
       integrations: {
         media: {
           persistence: { enabled: false, maxFileBytes: 10_000_000 },
-          transcription: { autoTranscribe: false },
+          transcription: { autoTranscribe: false, preflight: true },
           tts: {},
           vision: { enabled: false, videoTimeoutMs: 30000, videoMaxDescriptionChars: 500 },
         },
@@ -99,6 +100,7 @@ function makeContainer(overrides: Record<string, any> = {}): AppContainer {
 function makeDeps(overrides: Partial<MediaPipelineDeps> = {}): MediaPipelineDeps {
   return {
     container: makeContainer(overrides as any),
+    clock: createFakeClock(0),
     channelsLogger: makeLogger(),
     adaptersByType: new Map<string, ChannelPort>(),
     ssrfFetcher: { fetch: vi.fn() } as any,
@@ -344,11 +346,23 @@ describe("buildMediaPipeline", () => {
 
   it("audioPreflight reads the live Telegram bot mention names", async () => {
     const transcriber = { transcribe: vi.fn() } as any;
+    const clock = createFakeClock(1_000);
     const tgPlugin = {
       createResolver: vi.fn(() => ({ resolve: vi.fn(), schemes: ["tg-file"] })),
       getBotMentionNames: vi.fn(() => ["test_bot"]),
     } as any;
-    const deps = makeDeps({ transcriber, tgPlugin });
+    const deps = makeDeps({
+      transcriber,
+      tgPlugin,
+      clock,
+      voiceSelection: {
+        stt: {
+          provider: "local",
+          keyless: true,
+          source: "keyless-local",
+        },
+      },
+    });
     const result = await buildMediaPipeline(deps);
 
     await result.audioPreflight?.({
@@ -366,6 +380,13 @@ describe("buildMediaPipeline", () => {
     expect(audioPreflightFn).toHaveBeenCalledWith(
       expect.objectContaining({
         botNames: expect.arrayContaining(["TestBot", "test_bot"]),
+        clock,
+        sttSelection: {
+          provider: "local",
+          keyless: true,
+          model: "base",
+          source: "keyless-local",
+        },
       }),
       expect.anything(),
     );
@@ -373,6 +394,18 @@ describe("buildMediaPipeline", () => {
 
   it("audioPreflight is undefined when no transcriber", async () => {
     const deps = makeDeps({ transcriber: undefined });
+    const result = await buildMediaPipeline(deps);
+
+    expect(result.audioPreflight).toBeUndefined();
+  });
+
+  it("audioPreflight is undefined when transcription preflight is disabled", async () => {
+    const container = makeContainer();
+    container.config.integrations.media.transcription.preflight = false;
+    const deps = makeDeps({
+      container,
+      transcriber: { transcribe: vi.fn() } as any,
+    });
     const result = await buildMediaPipeline(deps);
 
     expect(result.audioPreflight).toBeUndefined();

@@ -15,7 +15,7 @@ import type { ComisLogger } from "@comis/infra";
 import type { createAudioProviderSelector } from "./setup-audio-provider.js";
 // The resolved-voice-selection shape the daemon RPC handlers consume.
 // Type-only (erased at runtime — no madge edge); same-package, so no project-ref cycle.
-import type { ResolvedVoiceSelection } from "../api/types.js";
+import type { ResolvedVoiceState } from "../api/types.js";
 import {
   createTTSProvider,
   createSTTProvider,
@@ -85,8 +85,9 @@ export interface MediaResult {
   /** The boot-resolved STT/TTS selections (`source`/`keyless`/
    *  `provider` + the `onSkip` reasons), threaded to the daemon RPC handlers for
    *  the `media.stt.*`/`media.tts.*` trajectory emit. Present only when the audio
-   *  selector ran AND resolved (`sel.ok`); undefined otherwise. */
-  voiceSelection?: { stt?: ResolvedVoiceSelection; tts?: ResolvedVoiceSelection };
+   *  selector ran. Successful selections and typed STT unavailability retain the
+   *  exact boot resolver outcome for downstream handlers. */
+  voiceSelection?: ResolvedVoiceState;
 }
 
 // ---------------------------------------------------------------------------
@@ -568,10 +569,10 @@ export async function setupMedia(deps: {
   // handlers thread `source`/`keyless`/`provider` + the collected `onSkip` reasons
   // onto the `media.stt.*`/`media.tts.*` trajectory (no re-derivation — the SAME
   // SttSelection/TtsSelection the adapter construction above used). Present only
-  // when the selector ran AND resolved (`sel.ok`); an honest-unavailable or
-  // selector-less boot leaves the slice undefined (the handler falls back to the
-  // config-derived provider + keyless).
-  const voiceSelection: { stt?: ResolvedVoiceSelection; tts?: ResolvedVoiceSelection } = {};
+  // when the selector ran. Honest STT unavailability retains the same typed
+  // resolver result so downstream handlers do not replace its actionable hint
+  // with a generic message.
+  const voiceSelection: ResolvedVoiceState = {};
   if (sttSel?.ok) {
     // Optional-call `sttSkips` — a selector without the skip-collection method
     // (or a partial test mock) may not expose it; an absent collector → no onSkip.
@@ -581,6 +582,11 @@ export async function setupMedia(deps: {
       keyless: sttSel.keyless,
       source: sttSel.source,
       ...(skips.length > 0 ? { onSkip: skips } : {}),
+    };
+  } else if (sttSel !== undefined) {
+    voiceSelection.sttUnavailable = {
+      errorKind: sttSel.errorKind,
+      hint: sttSel.hint,
     };
   }
   if (ttsSel?.ok) {
@@ -597,7 +603,9 @@ export async function setupMedia(deps: {
     ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner,
     ffmpegCapabilities, mediaTempManager, mediaSemaphore, audioConverter,
     transcriber, ssrfFetcher, fileExtractor,
-    ...(voiceSelection.stt !== undefined || voiceSelection.tts !== undefined
+    ...(voiceSelection.stt !== undefined
+      || voiceSelection.tts !== undefined
+      || voiceSelection.sttUnavailable !== undefined
       ? { voiceSelection }
       : {}),
   };

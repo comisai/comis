@@ -88,6 +88,7 @@ vi.mock("@comis/skills", () => ({
 }));
 
 vi.mock("@comis/skills/tools", () => ({
+  resolveHiddenReadAllowPaths: vi.fn(() => []),
   createExecTool: mockCreateExecTool,
   createSleepTool: vi.fn(() => ({ name: "sleep" })),
   createProcessTool: mockCreateProcessTool,

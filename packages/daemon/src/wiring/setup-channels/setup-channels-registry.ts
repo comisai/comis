@@ -398,6 +398,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     audioPreflight: preflightFn,
   } = await buildMediaPipeline({
     container,
+    clock: deps.clock,
     channelsLogger,
     adaptersByType,
     tgPlugin,

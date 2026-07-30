@@ -89,8 +89,9 @@ function recordHasTraceId(record: Record<string, unknown>, traceId: string): boo
   return record.traceId === traceId;
 }
 
-/** Select one prompt-anchored execution, including settlement rows whose
- * request context has ended and therefore carries the session fallback trace. */
+/** Select one prompt-anchored execution, including same-trace preparation
+ * before the prompt and settlement rows whose ended request context carries
+ * the session fallback trace. */
 function recordsForExecution(
   records: ReadonlyArray<Record<string, unknown>>,
   traceId: string,
@@ -103,7 +104,10 @@ function recordsForExecution(
     (record) => record.type === "prompt.submitted",
   );
   const end = relativeEnd < 0 ? records.length : start + 1 + relativeEnd;
-  return records.slice(start, end);
+  const preparationRecords = records
+    .slice(0, start)
+    .filter((record) => recordHasTraceId(record, traceId));
+  return [...preparationRecords, ...records.slice(start, end)];
 }
 
 function recordData(record: Record<string, unknown> | undefined): Record<string, unknown> {

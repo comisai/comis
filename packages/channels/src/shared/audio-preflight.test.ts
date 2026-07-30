@@ -6,6 +6,7 @@
 import type { NormalizedMessage, Attachment, TranscriptionPort } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { describe, expect, it, vi } from "vitest";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { audioPreflight, type PreflightDeps } from "./audio-preflight.js";
 
 // ---------------------------------------------------------------------------
@@ -14,6 +15,7 @@ import { audioPreflight, type PreflightDeps } from "./audio-preflight.js";
 
 function makeLogger() {
   return {
+    info: vi.fn(),
     debug: vi.fn(),
     warn: vi.fn(),
   };
@@ -58,6 +60,7 @@ function makeDeps(overrides: Partial<PreflightDeps> = {}): PreflightDeps {
     transcriber: makeTranscriber(),
     resolveAttachment: makeResolver(),
     botNames: ["Comis"],
+    clock: createFakeClock(0),
     logger: makeLogger(),
     ...overrides,
   };
@@ -102,6 +105,48 @@ describe("audioPreflight", () => {
     // Attachment should have transcription set
     const enrichedAtt = result.message.attachments[0]!;
     expect(enrichedAtt.transcription).toBe("hey everyone");
+  });
+
+  it("returns content-free timing and byte evidence for successful preflight STT", async () => {
+    const clock = createFakeClock(1_000);
+    const transcriber: TranscriptionPort = {
+      transcribe: vi.fn(async () => {
+        clock.advance(321);
+        return ok({ text: "hey comis", language: "en" });
+      }),
+    };
+    const deps = makeDeps({
+      clock,
+      transcriber,
+      sttSelection: {
+        provider: "local",
+        keyless: true,
+        model: "base",
+        source: "keyless-local",
+      },
+    });
+    const msg = makeMessage({ attachments: [makeAudioAttachment()] });
+
+    const result = await audioPreflight(deps, msg);
+
+    expect(result.sttReceipt).toEqual({
+      provider: "local",
+      keyless: true,
+      model: "base",
+      source: "keyless-local",
+      outcome: "ok",
+      durationMs: 321,
+      audioBytes: 15,
+    });
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "audio-preflight",
+        durationMs: 321,
+        audioBytes: 15,
+        transcriptChars: 9,
+      }),
+      "Audio preflight transcription complete",
+    );
   });
 
   it("enriches message text with transcript appended to original", async () => {

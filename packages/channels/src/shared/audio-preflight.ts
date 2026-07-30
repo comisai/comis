@@ -14,7 +14,14 @@
  * @module
  */
 
-import type { NormalizedMessage, Attachment, TranscriptionPort } from "@comis/core";
+import type {
+  Attachment,
+  ClockPort,
+  NormalizedMessage,
+  SttPreprocessReceipt,
+  SttPreprocessSelection,
+  TranscriptionPort,
+} from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,11 +34,16 @@ export interface PreflightDeps {
   resolveAttachment: (att: Attachment) => Promise<Buffer | null>;
   /** Bot name(s) to search for in transcript. */
   botNames: string[];
+  /** Clock used for deterministic preflight boundary timing. */
+  clock: ClockPort;
+  /** Boot-resolved STT provider selection for content-free evidence. */
+  sttSelection?: SttPreprocessSelection;
   /** Logger for preflight operations. */
   logger: PreflightLogger;
 }
 
 interface PreflightLogger {
+  info(obj: Record<string, unknown>, msg: string): void;
   debug(obj: Record<string, unknown>, msg: string): void;
   warn(obj: Record<string, unknown>, msg: string): void;
 }
@@ -41,6 +53,8 @@ export interface PreflightResult {
   message: NormalizedMessage;
   /** Whether transcription occurred. */
   transcribed: boolean;
+  /** Trusted content-free evidence for the pre-mention STT boundary. */
+  sttReceipt?: SttPreprocessReceipt;
 }
 
 function mentionVariants(name: string): string[] {
@@ -129,18 +143,60 @@ export async function audioPreflight(
   if (!buffer) return { message: msg, transcribed: false };
 
   // Transcribe
+  const startedAt = deps.clock.now();
   const result = await deps.transcriber.transcribe(buffer, {
     mimeType: audioAtt.mimeType ?? "audio/ogg",
   });
+  const durationMs = Math.max(0, deps.clock.now() - startedAt);
   if (!result.ok) {
     deps.logger.warn(
-      { url: audioAtt.url, err: result.error.message, hint: "Audio preflight resolution failed; voice processing will be skipped", errorKind: "dependency" as const },
+      {
+        url: audioAtt.url,
+        err: result.error.message,
+        durationMs,
+        audioBytes: buffer.byteLength,
+        hint: "Audio preflight resolution failed; voice processing will be skipped",
+        errorKind: "dependency" as const,
+      },
       "Preflight transcription failed",
     );
     return { message: msg, transcribed: false };
   }
 
   const transcript = result.value.text;
+  const sttReceipt: SttPreprocessReceipt | undefined =
+    deps.sttSelection === undefined
+      ? undefined
+      : {
+          provider: deps.sttSelection.provider,
+          keyless: deps.sttSelection.keyless,
+          ...(deps.sttSelection.model !== undefined
+            ? { model: deps.sttSelection.model }
+            : {}),
+          source: deps.sttSelection.source,
+          ...(deps.sttSelection.onSkip !== undefined
+            ? { onSkip: deps.sttSelection.onSkip }
+            : {}),
+          outcome: "ok",
+          durationMs,
+          audioBytes: buffer.byteLength,
+        };
+  deps.logger.info(
+    {
+      step: "audio-preflight",
+      durationMs,
+      audioBytes: buffer.byteLength,
+      transcriptChars: transcript.length,
+      ...(deps.sttSelection !== undefined
+        ? {
+            provider: deps.sttSelection.provider,
+            keyless: deps.sttSelection.keyless,
+            source: deps.sttSelection.source,
+          }
+        : {}),
+    },
+    "Audio preflight transcription complete",
+  );
   deps.logger.debug(
     { url: audioAtt.url, transcriptLen: transcript.length },
     "Preflight transcription complete",
@@ -174,5 +230,6 @@ export async function audioPreflight(
       metadata: updatedMetadata,
     },
     transcribed: true,
+    ...(sttReceipt !== undefined ? { sttReceipt } : {}),
   };
 }

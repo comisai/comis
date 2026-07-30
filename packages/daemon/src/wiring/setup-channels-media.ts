@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { AppContainer, Attachment, ChannelPort, NormalizedMessage, ResolvedTurnScope, SttPreprocessSelection, TranscriptionPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, VisionDirectPreprocessReceipt, WrapExternalContentOptions } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ClockPort, NormalizedMessage, ResolvedTurnScope, SttPreprocessSelection, TranscriptionPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, VisionDirectPreprocessReceipt, WrapExternalContentOptions } from "@comis/core";
 import type { MediaResolverPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { isVisionCapable } from "@comis/agent";
@@ -22,6 +22,7 @@ import {
   type TelegramPluginHandle,
   type LinePluginHandle,
   type MsTeamsPluginHandle,
+  type PreflightResult,
 } from "@comis/channels";
 import {
   createCompositeResolver,
@@ -53,8 +54,7 @@ export interface MediaPipelineResult {
     turnScope: ResolvedTurnScope,
   ) => Promise<NormalizedMessage>;
   /** Audio preflight for voice note transcription (undefined when no transcriber). */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PreflightResult type from channels package not re-exported
-  audioPreflight?: (msg: NormalizedMessage) => Promise<any>;
+  audioPreflight?: (msg: NormalizedMessage) => Promise<PreflightResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +64,7 @@ export interface MediaPipelineResult {
 /** Dependencies for media pipeline assembly. */
 export interface MediaPipelineDeps {
   container: AppContainer;
+  clock: ClockPort;
   channelsLogger: ComisLogger;
   adaptersByType: Map<string, ChannelPort>;
   tgPlugin?: TelegramPluginHandle;
@@ -544,7 +545,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
     .map((a) => a.name)
     .filter((n): n is string => typeof n === "string" && n.length > 0);
 
-  const preflightFn = transcriber
+  const preflightFn = transcriber && transcriptionConfig.preflight
     ? async (msg: NormalizedMessage) => {
         const botNames = [
           ...configuredBotNames,
@@ -557,6 +558,8 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
             transcriber,
             resolveAttachment,
             botNames,
+            clock: deps.clock,
+            sttSelection,
             logger: channelsLogger,
           },
           msg,

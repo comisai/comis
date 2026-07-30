@@ -22,6 +22,7 @@ import {
   type ResolvedTurnScope,
   type SessionKey,
   type ChannelPort,
+  type SttPreprocessReceipt,
 } from "@comis/core";
 import { resolveInboundTurnIdentity } from "./inbound-turn-identity.js";
 import { emitObservationalEvent } from "../execution/execution-event-emitter.js";
@@ -385,6 +386,7 @@ export async function resolveAndPreprocess(
     metadata: ingressMetadata,
     originalMessages: getOriginalInboundMessages(effectiveMsg),
   };
+  let preflightSttReceipt: SttPreprocessReceipt | undefined;
   const channelType = adapter.channelType;
 
   // -------------------------------------------------------------------
@@ -411,6 +413,7 @@ export async function resolveAndPreprocess(
       try {
         const preflightResult = await deps.audioPreflight(structuredClone(processedMsg));
         if (preflightResult.transcribed) {
+          preflightSttReceipt = preflightResult.sttReceipt;
           processedMsg = projectContentEnrichment(
             processedMsg,
             preflightResult.message,
@@ -462,6 +465,23 @@ export async function resolveAndPreprocess(
         "Media preprocessing failed, using original message",
       );
     }
+  }
+  if (preflightSttReceipt !== undefined) {
+    const downstreamReceipts = SttPreprocessReceiptsSchema.safeParse(
+      processedMsg.metadata.sttPreprocess,
+    );
+    processedMsg = {
+      ...processedMsg,
+      metadata: {
+        ...processedMsg.metadata,
+        sttPreprocess: [
+          preflightSttReceipt,
+          ...(downstreamReceipts.success
+            ? downstreamReceipts.data.slice(1)
+            : []),
+        ],
+      },
+    };
   }
 
   // -------------------------------------------------------------------

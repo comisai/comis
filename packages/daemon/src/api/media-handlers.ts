@@ -466,7 +466,19 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
 
     [MediaTranscribeContract.method]: async (rawParams) => {
       if (!deps.transcriber) {
-        throw new Error("Transcription service not configured. Set media.transcription.provider in config.");
+        const unavailable = deps.voiceSelection?.sttUnavailable ?? {
+          errorKind: "dependency" as const,
+          hint: "Transcription service not configured. Set integrations.media.transcription.provider in config.",
+        };
+        const voice = wireVoiceForHandler(rawParams, deps, "stt");
+        voice.failed({
+          sttErrorKind: unavailable.errorKind,
+          provider: voice.provider,
+          source: voice.source,
+          errMessage: unavailable.hint,
+          hint: unavailable.hint,
+        });
+        throw new Error(unavailable.hint);
       }
       if (!deps.resolveAttachment) {
         throw new Error("Attachment resolution not available in this context.");
