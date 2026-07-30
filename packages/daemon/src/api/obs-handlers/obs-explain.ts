@@ -121,7 +121,10 @@ function recordsForExecution(
   const preparationRecords = records
     .slice(0, start)
     .filter((record) => recordHasTraceId(record, traceId));
-  return [...preparationRecords, ...records.slice(start, end)];
+  const settlementRecords = records
+    .slice(end)
+    .filter((record) => recordHasTraceId(record, traceId));
+  return [...preparationRecords, ...records.slice(start, end), ...settlementRecords];
 }
 
 function latestPromptTraceId(
