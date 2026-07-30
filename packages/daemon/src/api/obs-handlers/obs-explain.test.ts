@@ -598,6 +598,78 @@ describe("bindObsExplainHandlers", () => {
     expect(second.coverage.trajectory).toEqual({ found: true, records: 3 });
   });
 
+  it("session lookup selects newer in-flight trajectory activity over stale completed metadata", async () => {
+    const sessionKey = "default:agent:default:user_a:telegram:peer:user_a";
+    const completedTraceId = "trace-completed";
+    const activeTraceId = "trace-active";
+    const records = [
+      {
+        traceSchema: "comis-trajectory",
+        type: "prompt.submitted",
+        seq: 1,
+        sessionId: sessionKey,
+        sessionKey,
+        traceId: completedTraceId,
+        agentId: "default",
+        data: { inboundKind: "message" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "session.summary",
+        seq: 2,
+        sessionId: sessionKey,
+        sessionKey,
+        traceId: completedTraceId,
+        agentId: "default",
+        data: {
+          endReason: "success",
+          degraded: false,
+          turnCount: 1,
+          costUsd: 0.01,
+          toolStats: {},
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "prompt.submitted",
+        seq: 3,
+        sessionId: sessionKey,
+        sessionKey,
+        traceId: activeTraceId,
+        agentId: "default",
+        data: { inboundKind: "message" },
+      },
+    ];
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => records,
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({
+        traceId: completedTraceId,
+        sessionEnd: {
+          endReason: "success",
+          degraded: false,
+          turnCount: 1,
+          costUsd: 0.01,
+          toolStats: {},
+        },
+      }),
+      readDiagnosticsRollup: async () => ({
+        traceId: completedTraceId,
+        payload: { endReason: "success", degraded: false },
+      }),
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, ".", {
+      sessionKey,
+      depth: "summary",
+    });
+
+    expect(report.traceId).toBe(activeTraceId);
+    expect(report.outcome.endReason).toBe("unknown");
+    expect(report.coverage?.rollup.present).toBe(false);
+    expect(report.timing.turnCount).toBe(2);
+  });
+
   it("historical cron execution derives success from its selected terminal evidence", async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-cron-outcome-"));
     const sessionKey = "default:agent:default:scheduler-cron:scheduler:job-a:peer:scheduler-cron";
