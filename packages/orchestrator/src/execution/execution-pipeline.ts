@@ -477,6 +477,13 @@ export async function executeAndDeliver(
     };
 
     const readCoordinatorExecutionOutcome = (): TurnOutcome | undefined => {
+      // A background hand-off is non-terminal UI state, not a failed activity:
+      // the accepted task continues under the background manager and the
+      // delivered acknowledgement already tells the user it is pending.
+      // Keep the execution diagnostic classified as `background_pending`, but
+      // let successful acknowledgement delivery close the transient activity
+      // scaffold through the normal success-shaped renderer path.
+      if (execResult.finishReason === "background_pending") return undefined;
       const executionLifecycle = readExecutionLifecycle();
       const currentAbortReason = execResult.currentAbortReason();
       const abortOutcome = mapAbortToTurnOutcome({
