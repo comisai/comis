@@ -26,7 +26,11 @@ import {
   hashSubAgentResumeDescriptor,
   type SubAgentResumeDescriptor,
 } from "./sub-agent-resume-descriptor.js";
-import { computeWorkspacePolicyCombinedHash, createConversationRef } from "@comis/core";
+import {
+  computeWorkspacePolicyCombinedHash,
+  createConversationRef,
+  TypedEventBus,
+} from "@comis/core";
 import type {
   ClockPort,
   TimerPort,
@@ -99,7 +103,7 @@ function createDeps(over: Partial<SubAgentRunnerDeps> = {}): SubAgentRunnerDeps 
     // tick before terminal settle (each test that needs completion overrides it).
     executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
     sendToChannel: vi.fn().mockResolvedValue(true),
-    eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+    eventBus: new TypedEventBus(),
     config: {
       enabled: true,
       maxPingPongTurns: 3,

@@ -35,6 +35,7 @@ import {
   formatSessionKey,
   resolveAutonomy,
   runWithContext,
+  TypedEventBus,
   type ConversationScope,
 } from "@comis/core";
 import type { LeaseManager } from "@comis/infra";
@@ -117,7 +118,7 @@ function makeHarness(autonomyOverrides?: Parameters<typeof resolveAutonomy>[0]) 
     },
     executeAgent: executeAgent as unknown as SubAgentRunnerDeps["executeAgent"],
     sendToChannel: vi.fn().mockResolvedValue(true),
-    eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+    eventBus: new TypedEventBus(),
     config: {
       enabled: true,
       maxPingPongTurns: 3,

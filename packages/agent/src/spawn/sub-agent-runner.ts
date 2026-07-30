@@ -37,6 +37,7 @@ import {
   type AgentCapability,
   type ResultRef,
   type ErrorKind,
+  type EventMap,
   AgentExecutionFinishReasonSchema,
   classifyAgentFinishErrorKind,
   SUB_AGENT_TOOL_DENYLIST,
@@ -203,6 +204,16 @@ export interface SubAgentRunTelemetry {
   cacheWriteTokens: number;
 }
 
+/** Content-free live health folded from this running child's tool outcomes. */
+export interface SubAgentRunProgress {
+  health: "healthy" | "degraded";
+  toolCalls: number;
+  failedToolCalls: number;
+  lastFailedTool?: string;
+  lastErrorKind?: ErrorKind;
+  updatedAt: number;
+}
+
 export type SubAgentCompletion =
   | {
       endReason: "completed";
@@ -281,6 +292,7 @@ export interface SubAgentQueuedRun extends SubAgentRunCommon {
 export interface SubAgentRunningRun extends SubAgentRunCommon {
   status: "running";
   startedAt: number;
+  progress: SubAgentRunProgress;
   queuedAt?: never;
   completion?: never;
   telemetry?: never;
@@ -885,6 +897,37 @@ function classifyRequiredTool(
 export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const { clock, timers } = deps;
   const runs = new Map<string, SubAgentRun>();
+  const createRunProgress = (updatedAt: number): SubAgentRunProgress => ({
+    health: "healthy",
+    toolCalls: 0,
+    failedToolCalls: 0,
+    updatedAt,
+  });
+  const observeChildToolOutcome = (event: EventMap["tool:executed"]): void => {
+    if (event.backgrounded || event.agentId === undefined || event.sessionKey === undefined) {
+      return;
+    }
+    for (const run of runs.values()) {
+      if (
+        run.status !== "running"
+        || run.agentId !== event.agentId
+        || run.sessionKey !== event.sessionKey
+      ) {
+        continue;
+      }
+      run.progress.toolCalls++;
+      run.progress.updatedAt = event.timestamp;
+      if (!event.success) {
+        run.progress.health = "degraded";
+        run.progress.failedToolCalls++;
+        run.progress.lastFailedTool = event.toolName;
+        if (event.errorKind !== undefined) {
+          run.progress.lastErrorKind = event.errorKind;
+        }
+      }
+    }
+  };
+  deps.eventBus.on("tool:executed", observeChildToolOutcome);
   interface CompletionDeferred {
     promise: Promise<SubAgentCompletion>;
     resolve(completion: SubAgentCompletion): void;
@@ -1022,7 +1065,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // @allow-throw: queued runs cannot complete successfully without first entering the running variant.
         throw new Error("A queued sub-agent run cannot complete before execution starts");
       }
-      const { status: _status, ...base } = current;
+      const { status: _status, progress: _progress, ...base } = current;
       terminal = {
           ...base,
           status: "completed",
@@ -1039,7 +1082,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     } else {
       const base = current.status === "queued"
         ? (({ status: _status, queuedAt: _queuedAt, ...common }) => common)(current)
-        : (({ status: _status, ...common }) => common)(current);
+        : (({ status: _status, progress: _progress, ...common }) => common)(current);
       terminal = {
           ...base,
           status: "failed",
@@ -2261,7 +2304,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       // A required tool must be present on the child's FIRST model request.
       // Reachability alone is insufficient because schema deferral may otherwise
-      // hide the tool behind discover_tools. Providers that preserve an automatic
+      // hide the tool behind dynamic discovery. Providers that preserve an automatic
       // prefix cache cannot inject the discovered schema mid-turn, leaving a child
       // able to rediscover the same required tool without ever calling it.
       params = {
@@ -2585,13 +2628,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         runPrincipalId,
       );
     const runDisplay = displayKeyForConversation(runConversation);
+    const startedAt = clock.now();
     const run: SubAgentRun = {
       runId, status: "running", agentId: params.agentId,
       trustLevel: acceptedTrustLevel,
       task: params.task, sessionKey: runDisplay.formatted,
       conversationScope: runConversation.conversationScope,
       conversationRef: runConversation.conversationRef,
-      startedAt: clock.now(),
+      startedAt,
+      progress: createRunProgress(startedAt),
       requesterOrigin: params.requesterOrigin,
       depth: currentDepth,
       rootRunId,
@@ -2641,10 +2686,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     let run: SubAgentRunningRun;
     if (admittedRun.status === "queued") {
       const { status: _status, queuedAt: _queuedAt, ...common } = admittedRun;
+      const startedAt = clock.now();
       run = {
         ...common,
         status: "running",
-        startedAt: clock.now(),
+        startedAt,
+        progress: createRunProgress(startedAt),
       };
       runs.set(runId, run);
     } else {
@@ -4137,6 +4184,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
   async function performShutdown(): Promise<void> {
     sweepInterval.cancel();
+    deps.eventBus.off("tool:executed", observeChildToolOutcome);
 
     const activeSettled = await waitForTrackedPromises(
       activePromises,
