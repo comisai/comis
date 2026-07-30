@@ -13,7 +13,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import type { ApprovalGate } from "@comis/core";
-import { tryGetContext, registerActivityLabelSpec } from "@comis/core";
+import { normalizeForSearch, tryGetContext, registerActivityLabelSpec } from "@comis/core";
 import {
   jsonResult,
   throwToolError,
@@ -123,15 +123,41 @@ type MemoryManageToolParamsType = Static<typeof MemoryManageToolParams>;
 
 const VALID_ACTIONS = ["stats", "browse", "delete", "forget", "flush", "export", "pin", "unpin"] as const;
 const FORGET_MATCH_LIMIT = 5000;
+const FORGET_QUERY_NOISE = new Set([
+  "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "from",
+  "is", "it", "as", "be", "was", "are", "been", "being", "have", "has", "had", "do", "does", "did",
+  "will", "would", "could", "should", "may", "might", "can", "not", "no", "so", "if", "then", "than",
+  "that", "this", "these", "those", "what", "which", "who", "how", "when", "where", "why", "all",
+  "each", "every", "both", "more", "most", "other", "some", "such", "only", "own", "same", "too",
+  "very", "just", "about", "after", "again", "also", "am", "any", "because", "before", "between",
+  "during", "here", "into", "its", "me", "my", "our", "out", "over", "he", "her", "him", "his",
+  "i", "we", "they", "them", "their", "you", "your", "up", "down", "forget", "forgotten", "remember",
+  "memory", "detail", "details", "thing", "things", "fact", "facts", "information", "info",
+]);
 
-function matchedMemoryIds(value: unknown): string[] {
+function forgetMatchTokens(value: string): Set<string> {
+  return new Set(
+    normalizeForSearch(value)
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((token) => token.length > 1 && !FORGET_QUERY_NOISE.has(token)),
+  );
+}
+
+function matchedMemoryIds(value: unknown, query: string): string[] {
   if (value === null || typeof value !== "object") return [];
   const results = (value as { results?: unknown }).results;
   if (!Array.isArray(results)) return [];
+  const queryTokens = forgetMatchTokens(query);
+  if (queryTokens.size === 0) return [];
+  const requiredMatches = queryTokens.size === 1 ? 1 : 2;
   return [...new Set(results.flatMap((entry) => {
     if (entry === null || typeof entry !== "object") return [];
     const id = (entry as { id?: unknown }).id;
-    return typeof id === "string" && id.length > 0 ? [id] : [];
+    const content = (entry as { content?: unknown }).content;
+    if (typeof id !== "string" || id.length === 0 || typeof content !== "string") return [];
+    const contentTokens = forgetMatchTokens(content);
+    const overlap = [...queryTokens].filter((token) => contentTokens.has(token)).length;
+    return overlap >= requiredMatches ? [id] : [];
   }))];
 }
 
@@ -258,7 +284,7 @@ export function createMemoryManageTool(
               agentId,
               _trustLevel,
             });
-            const ids = matchedMemoryIds(searchResult);
+            const ids = matchedMemoryIds(searchResult, query);
             if (ids.length === 0) {
               return jsonResult({ deleted: 0, failed: 0, total: 0 });
             }

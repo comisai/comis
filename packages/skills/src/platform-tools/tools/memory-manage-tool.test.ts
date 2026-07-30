@@ -302,7 +302,7 @@ describe("memory_manage tool", () => {
           return {
             results: [
               { id: "mem-explicit", content: "ordinary detail", score: 1, tags: [], createdAt: 1 },
-              { id: "mem-paired", content: "paired detail", score: 0.9, tags: [], createdAt: 2 },
+              { id: "mem-paired", content: "[user] ordinary detail\n[agent] paired detail", score: 0.9, tags: [], createdAt: 2 },
             ],
           };
         }
