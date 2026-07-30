@@ -7,7 +7,8 @@
  *
  * Decomposition:
  *   - setup-cross-session-runtime.ts — setupCrossSession orchestrator + sendToChannel + announceToParent + crossSessionSender + announcement batcher + result condenser + sub-agent runner construction
- *   - setup-cross-session-graph.ts   — buildExecuteSubAgent + resolveGraphCacheRetention + MIN_SUB_AGENT_STEPS
+ *   - setup-cross-session-graph.ts   — buildExecuteSubAgent + resolveGraphCacheRetention
+ *   - execute-sub-agent-contract.ts  — MIN_SUB_AGENT_STEPS + ExecuteSubAgentDeps + ExecuteSubAgentFn
  *   - setup-cross-session-events.ts  — registerProxyTypingListeners (typing:proxy_start/stop + TTL sweep + shutdown)
  *
  * SUB_AGENT_TOOL_DENYLIST was moved to @comis/core. Import it from
@@ -18,7 +19,5 @@
 
 export type { CrossSessionResult } from "./setup-cross-session-runtime.js";
 export { setupCrossSession } from "./setup-cross-session-runtime.js";
-export {
-  resolveGraphCacheRetention,
-  MIN_SUB_AGENT_STEPS,
-} from "./setup-cross-session-graph.js";
+export { resolveGraphCacheRetention } from "./setup-cross-session-graph.js";
+export { MIN_SUB_AGENT_STEPS } from "./execute-sub-agent-contract.js";

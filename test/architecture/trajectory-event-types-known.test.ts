@@ -91,6 +91,15 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "provider:recovered",
 
   // -------------------------------------------------------------------
+  // Stream liveness heartbeat — fires on EVERY delta to reset the stall
+  // timer, so it carries no state transition of its own and would add one
+  // trajectory record per chunk. What an incident needs from it (did the
+  // stream stall, and when did output stop) is already reconstructable from
+  // the turn's model.completed / execution.aborted records.
+  // -------------------------------------------------------------------
+  "execution:stream_progress",
+
+  // -------------------------------------------------------------------
   // Model catalog + observability metadata not tied to a single turn.
   // -------------------------------------------------------------------
   "model:catalog_loaded",

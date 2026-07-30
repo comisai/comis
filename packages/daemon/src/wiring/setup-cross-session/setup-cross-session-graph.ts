@@ -6,9 +6,8 @@
  *
  * @module
  */
-import type { AgentCapability, NormalizedMessage, SessionKey, SpawnPacket, AppContainer, AgentConfig, FileLockPort, ConversationLocator, SessionStorePort, WorkspacePolicySnapshot } from "@comis/core";
+import type { NormalizedMessage, SpawnPacket, AgentConfig } from "@comis/core";
 import { ConversationRefSchema, ConversationScopeSchema, tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
 import {
   createStepCounter,
   createSpawnPacketBuilder,
@@ -18,65 +17,13 @@ import {
   getCacheSafeParams,
   resolveOperationModel,
   resolveProviderFamily,
-  type ExecutionResult,
 } from "@comis/agent";
 import { randomUUID } from "node:crypto";
-import type { Result } from "@comis/shared";
-import type { GitExec } from "@comis/skills/tools";
-import type { WorktreeRegistry } from "../setup-worktree-sweep.js";
 import { resolveGraphCacheRetention } from "./graph-cache-retention.js";
 import { maybePrepareWorktreeForSpawn } from "./worktree-spawn-run.js";
 import { toolResultsReadBoundaryForSession } from "../tool-results-dir.js";
+import { MIN_SUB_AGENT_STEPS, type ExecuteSubAgentDeps, type ExecuteSubAgentFn } from "./execute-sub-agent-contract.js";
 export { resolveGraphCacheRetention } from "./graph-cache-retention.js";
-/** Minimum spawn budget so boot cannot consume every step. */
-export const MIN_SUB_AGENT_STEPS = 30;
-/** Closure-captured dependencies for executeSubAgent. */
-export interface ExecuteSubAgentDeps {
-  container: AppContainer;
-  sessionStore: Pick<SessionStorePort, "load" | "loadByRef">;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires complex type parameters from pi-ai SDK
-  assembleToolsForAgent: (agentId: string, options?: import("../setup-tools.js").AssembleToolsOptions) => Promise<any[]>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentExecutor.execute has complex signature crossing package boundaries
-  getExecutor: (agentId: string) => { execute: (...args: any[]) => Promise<any> };
-  fileLock: FileLockPort;
-  logger?: ComisLogger;
-  /** Git seam for isolated child worktrees; absence is reported and skips isolation. */
-  worktreeGitExec?: GitExec;
-  /** Shared registry used by boot and periodic orphan sweeps. */
-  worktreeRegistry?: WorktreeRegistry;
-}
-/** Callback signature accepted by createSubAgentRunner. */
-export type ExecuteSubAgentFn = (
-  agentId: string,
-  sessionKey: SessionKey,
-  conversation: ConversationLocator,
-  task: string,
-  maxSteps?: number,
-  callerAgentId?: string,
-  graphOverrides?: {
-    graphId?: string;
-    nodeId?: string;
-    reuseConversation?: ConversationLocator;
-    graphNodeDepth?: number;
-    workspacePolicySnapshot?: WorkspacePolicySnapshot;
-  },
-  /** Per-spawn token budget — rides executionOverrides into the child's
-   *  BudgetGuard per-execution cap. Absent ⇒ no per-execution cap. */
-  tokenBudget?: number,
-  autonomyContext?: {
-    rootRunId: string;
-    parentLeaseId?: string;
-    parentCaps: readonly AgentCapability[];
-    onAssemblyAuthority(authority: {
-      rootRunId: string;
-      leaseId: string;
-      caps: readonly AgentCapability[];
-    }): void;
-  },
-  providerLifecycle?: {
-    onProviderStart(): Result<void, Error>;
-  },
-) => Promise<Pick<ExecutionResult, "response" | "tokensUsed" | "cost" | "finishReason" | "stepsExecuted" | "toolCallHistory" | "terminalErrorKind" | "errorContext"> & { workspaceDir: string }>;
 /**
  * Build the executeSubAgent callback wired into createSubAgentRunner. The
  * closure captures the daemon container + session store + tool assembler +
