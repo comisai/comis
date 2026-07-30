@@ -956,6 +956,57 @@ describe("createSubAgentRunner", () => {
     fs.rmSync(outputDir, { recursive: true, force: true });
   });
 
+  it("resolves relative expected outputs inside the child workspace", async () => {
+    vi.useRealTimers();
+    const outputDir = await mkdtemp(join(tmpdir(), "relative-completion-output-test-"));
+    const relativeOutputPath = "projects/run-tracker/index.html";
+    const outputPath = join(outputDir, relativeOutputPath);
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, "<title>Run Tracker</title>", "utf8");
+    const enqueue = vi.fn().mockResolvedValue(ok("queued"));
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "created the run tracker",
+      tokensUsed: { total: 200 },
+      cost: { total: 0.02 },
+      finishReason: "stop",
+      stepsExecuted: 3,
+      workspaceDir: outputDir,
+    });
+    deps.batcher = {
+      enqueue,
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      pending: 0,
+      hasDelivered: vi.fn().mockReturnValue(false),
+      markDelivered: vi.fn(),
+    };
+    const callerConversation = createTestConversation({
+      agentId: "parent-agent",
+      channelType: "telegram",
+    });
+    const runner = createSubAgentRunner(deps);
+
+    runner.spawn({
+      task: "create the run tracker",
+      agentId: "report-agent",
+      expected_outputs: [relativeOutputPath],
+      callerAgentId: "parent-agent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalledOnce());
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      attachments: [{ sourceAgentId: "report-agent", path: outputPath }],
+    }));
+    await runner.shutdown();
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  });
+
   it("shutdown closes spawn admission before waiting for active runs", async () => {
     const runner = createSubAgentRunner(deps);
 
@@ -2001,6 +2052,7 @@ describe("createSubAgentRunner", () => {
     expect(childTask).toContain("Expected output contract");
     expect(childTask).toContain("/workspace/reports/monthly.csv");
     expect(childTask).toContain("exact path");
+    expect(childTask).toContain("Relative paths resolve from your execution workspace");
   });
 
   // A per-spawn tokenBudget is threaded to executeAgent, where the daemon wiring
@@ -3579,6 +3631,16 @@ describe("validateOutputs", () => {
       expect(results[1]!.size).toBeUndefined();
     } finally {
       fs.unlinkSync(tmpFile);
+      fs.rmdirSync(tmpDir);
+    }
+  });
+
+  it("rejects expected output paths that escape the execution workspace", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "comis-workspace-test-"));
+    try {
+      const results = await validateOutputs(["../outside.txt"], 1, 10, tmpDir);
+      expect(results).toEqual([{ path: "../outside.txt", exists: false }]);
+    } finally {
       fs.rmdirSync(tmpDir);
     }
   });

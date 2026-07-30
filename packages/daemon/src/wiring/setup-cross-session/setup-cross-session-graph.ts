@@ -76,7 +76,7 @@ export type ExecuteSubAgentFn = (
   providerLifecycle?: {
     onProviderStart(): Result<void, Error>;
   },
-) => Promise<Pick<ExecutionResult, "response" | "tokensUsed" | "cost" | "finishReason" | "stepsExecuted" | "toolCallHistory" | "terminalErrorKind">>;
+) => Promise<Pick<ExecutionResult, "response" | "tokensUsed" | "cost" | "finishReason" | "stepsExecuted" | "toolCallHistory" | "terminalErrorKind"> & { workspaceDir: string }>;
 /**
  * Build the executeSubAgent callback wired into createSubAgentRunner. The
  * closure captures the daemon container + session store + tool assembler +
@@ -590,7 +590,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       cost: result.cost,
       finishReason: result.finishReason,
       stepsExecuted: result.stepsExecuted,
-      toolCallHistory: result.toolCallHistory,
+      toolCallHistory: result.toolCallHistory, workspaceDir: effectiveWorkspaceDir,
       ...(result.terminalErrorKind === undefined
         ? {}
         : { terminalErrorKind: result.terminalErrorKind }),
