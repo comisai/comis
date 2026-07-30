@@ -4,6 +4,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -112,6 +115,19 @@ function makeLogger(): ComisLogger {
     level: "debug",
     isLevelEnabled: vi.fn(() => true),
   } as unknown as ComisLogger;
+}
+
+function writeReconnectConfig(contents: string): {
+  configPath: string;
+  cleanup: () => void;
+} {
+  const dir = mkdtempSync(resolve(tmpdir(), "comis-mcp-reconnect-"));
+  const configPath = resolve(dir, "config.yaml");
+  writeFileSync(configPath, contents, "utf8");
+  return {
+    configPath,
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -787,7 +803,7 @@ describe("MCP RPC Handlers", () => {
   });
 
   describe("mcp.reconnect", () => {
-    it("uses manager.reconnect with stored config", async () => {
+    it("uses manager.reconnect with stored config when no persisted config source is available", async () => {
       const tool = makeTool("search");
       (manager.reconnect as any).mockResolvedValue(ok(makeConnection("ctx7", [tool])));
 
@@ -798,6 +814,113 @@ describe("MCP RPC Handlers", () => {
 
       expect(manager.reconnect).toHaveBeenCalledWith("ctx7");
       expect(result.status).toBe("connected");
+    });
+
+    it("refreshes persisted env and header refs from the current secret map before reconnecting", async () => {
+      const fixture = writeReconnectConfig([
+        "integrations:",
+        "  mcp:",
+        "    servers:",
+        "      - name: ctx7",
+        "        transport: http",
+        "        url: https://example.com/mcp",
+        "        env:",
+        '          MCP_TEST_TOKEN: "${MCP_TEST_TOKEN}"',
+        "        headers:",
+        '          Authorization: "Bearer ${MCP_HEADER_TOKEN}"',
+        "",
+      ].join("\n"));
+      try {
+        const tool = makeTool("search");
+        (manager.getConnection as any).mockReturnValue(makeConnection("ctx7", [tool]));
+        (manager.reconnect as any).mockResolvedValue(ok(makeConnection("ctx7", [tool])));
+        const container = {
+          config: {
+            integrations: {
+              mcp: {
+                servers: [{
+                  name: "ctx7",
+                  transport: "http",
+                  url: "https://example.com/mcp",
+                  env: { MCP_TEST_TOKEN: "test-key-stale" },
+                  headers: { Authorization: "Bearer test-key-stale-header" },
+                  enabled: true,
+                }],
+              },
+            },
+          },
+        } as any;
+        const logger = makeLogger();
+        const handlers = createMcpHandlers({
+          mcpClientManager: manager,
+          logger,
+          container,
+          secretManager: {
+            get: (key: string) =>
+              key === "MCP_TEST_TOKEN"
+                ? "test-key-rotated"
+                : key === "MCP_HEADER_TOKEN"
+                  ? "test-key-header-rotated"
+                  : undefined,
+          },
+          persistDeps: {
+            container,
+            configPaths: [fixture.configPath],
+            defaultConfigPaths: [],
+            logger,
+          },
+        } as any);
+
+        await handlers["mcp.reconnect"]({ server_name: "ctx7" });
+
+        expect(manager.reconnect).toHaveBeenCalledWith("ctx7", {
+          env: { MCP_TEST_TOKEN: "test-key-rotated" },
+          headers: { Authorization: "Bearer test-key-header-rotated" },
+        });
+      } finally {
+        fixture.cleanup();
+      }
+    });
+
+    it("rejects a missing persisted credential before disconnecting the existing server", async () => {
+      const fixture = writeReconnectConfig([
+        "integrations:",
+        "  mcp:",
+        "    servers:",
+        "      - name: ctx7",
+        "        transport: stdio",
+        "        command: node",
+        "        env:",
+        '          MCP_TEST_TOKEN: "${MISSING_MCP_TOKEN}"',
+        "",
+      ].join("\n"));
+      try {
+        (manager.getConnection as any).mockReturnValue(makeConnection("ctx7"));
+        (manager.reconnect as any).mockResolvedValue(ok(makeConnection("ctx7")));
+        const container = {
+          config: { integrations: { mcp: { servers: [] } } },
+        } as any;
+        const logger = makeLogger();
+        const handlers = createMcpHandlers({
+          mcpClientManager: manager,
+          logger,
+          container,
+          secretManager: { get: () => undefined },
+          persistDeps: {
+            container,
+            configPaths: [fixture.configPath],
+            defaultConfigPaths: [],
+            logger,
+          },
+        } as any);
+
+        await expect(
+          handlers["mcp.reconnect"]({ server_name: "ctx7" }),
+        ).rejects.toThrow(/ctx7.*MISSING_MCP_TOKEN/);
+        expect(manager.reconnect).not.toHaveBeenCalled();
+      } finally {
+        fixture.cleanup();
+      }
     });
 
     it("falls back to connect when no stored config and transport provided", async () => {
