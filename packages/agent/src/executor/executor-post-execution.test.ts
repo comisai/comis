@@ -874,9 +874,14 @@ describe("tool-failure endReason and notice", () => {
   it("source-grep — unavailable vision replaces contradictory model recovery advice", () => {
     const stripped = readPostExecStripped();
     expect(stripped).toMatch(/hasUnavailableVisionFailure/);
+    expect(stripped).toMatch(/groundedVisionFallbackTool/);
+    expect(stripped).toMatch(
+      /unavailableVision[\s\S]{0,500}?visionFallbackTool\s*===\s*undefined/,
+    );
     expect(stripped).toMatch(
       /result\.response\s*=\s*buildVisionUnavailableReply\s*\(\s*effectiveAgentId/,
     );
+    expect(stripped).toContain("response.vision_fallback_grounded");
     expect(stripped.lastIndexOf("buildVisionUnavailableReply"))
       .toBeLessThan(stripped.lastIndexOf("buildToolFailureNotice"));
   });

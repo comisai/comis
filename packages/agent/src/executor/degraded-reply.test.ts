@@ -396,6 +396,10 @@ describe("unavailable vision response honesty", () => {
         errorText?: string;
       }>,
     ) => boolean;
+    groundedVisionFallbackTool?: (
+      response: string,
+      messages: ReadonlyArray<unknown>,
+    ) => string | undefined;
   };
 
   async function loadVisionHonestyExports(): Promise<VisionHonestyExports> {
@@ -451,5 +455,112 @@ describe("unavailable vision response honesty", () => {
     });
     expect(buildVisionUnavailableReply("default", "he", catalog))
       .toMatch(/^לא ניתן לנתח את התמונה כרגע\./);
+  });
+
+  const source = "photos/fixture-image.png";
+  const unavailable =
+    "No vision provider available for image analysis. "
+    + "Active model \"text-only-model\" is configured at agents.default.model. "
+    + "Select a vision-capable model, or configure integrations.media.vision.providers and "
+    + "integrations.media.vision.defaultProvider with an available credential. "
+    + "Re-uploading will not help until that configuration changes.";
+  const response =
+    "GREEN FORK CAFE, 28 JUL 2026. FALAFEL BOWL 42.50 ILS. "
+    + "TOTAL 42.50 ILS. PAID CARD.";
+  const ocrOutput =
+    "GREEN FORK CAFE\n28 JUL 2026\nFALAFEL BOWL 42.50 ILS\n"
+    + "TOTAL 42.50 ILS\nPAID CARD\n";
+
+  function assistantCall(id: string, name: string, args: Record<string, unknown>): unknown {
+    return {
+      role: "assistant",
+      content: [{ type: "toolCall", id, name, arguments: args }],
+    };
+  }
+
+  function toolResult(
+    id: string,
+    name: string,
+    text: string,
+    options: { isError?: boolean; stdout?: string; exitCode?: number } = {},
+  ): unknown {
+    return {
+      role: "toolResult",
+      toolCallId: id,
+      toolName: name,
+      content: [{ type: "text", text }],
+      details: {
+        ...(options.stdout === undefined ? {} : { stdout: options.stdout }),
+        ...(options.exitCode === undefined ? {} : { exitCode: options.exitCode }),
+      },
+      isError: options.isError ?? false,
+    };
+  }
+
+  it("preserves a response grounded by a later tool over the exact same image", async () => {
+    const { groundedVisionFallbackTool } = await loadVisionHonestyExports();
+    expect(groundedVisionFallbackTool).toBeTypeOf("function");
+    if (groundedVisionFallbackTool === undefined) return;
+
+    expect(groundedVisionFallbackTool(response, [
+      assistantCall("vision", "image_analyze", {
+        action: "analyze",
+        source_type: "file",
+        source,
+      }),
+      toolResult("vision", "image_analyze", unavailable, { isError: true }),
+      assistantCall("ocr", "exec", {
+        command: `tesseract ${source} stdout -l eng`,
+      }),
+      toolResult("ocr", "exec", JSON.stringify({ exitCode: 0, stdout: ocrOutput }), {
+        stdout: ocrOutput,
+        exitCode: 0,
+      }),
+    ])).toBe("exec");
+  });
+
+  it("does not treat an availability probe as grounded image recovery", async () => {
+    const { groundedVisionFallbackTool } = await loadVisionHonestyExports();
+    expect(groundedVisionFallbackTool).toBeTypeOf("function");
+    if (groundedVisionFallbackTool === undefined) return;
+
+    expect(groundedVisionFallbackTool(response, [
+      assistantCall("vision", "image_analyze", { source_type: "file", source }),
+      toolResult("vision", "image_analyze", unavailable, { isError: true }),
+      assistantCall("probe", "exec", { command: "which tesseract" }),
+      toolResult("probe", "exec", "/usr/bin/tesseract", {
+        stdout: "/usr/bin/tesseract",
+        exitCode: 0,
+      }),
+    ])).toBeUndefined();
+  });
+
+  it("requires the successful tool output to substantively overlap the final answer", async () => {
+    const { groundedVisionFallbackTool } = await loadVisionHonestyExports();
+    expect(groundedVisionFallbackTool).toBeTypeOf("function");
+    if (groundedVisionFallbackTool === undefined) return;
+
+    expect(groundedVisionFallbackTool(response, [
+      assistantCall("vision", "image_analyze", { source_type: "file", source }),
+      toolResult("vision", "image_analyze", unavailable, { isError: true }),
+      assistantCall("inspect", "exec", { command: `identify ${source}` }),
+      toolResult("inspect", "exec", "width 1024 height 768 color rgb", {
+        stdout: "width 1024 height 768 color rgb",
+        exitCode: 0,
+      }),
+    ])).toBeUndefined();
+  });
+
+  it("does not recognize fallback recovery after an ordinary vision failure", async () => {
+    const { groundedVisionFallbackTool } = await loadVisionHonestyExports();
+    expect(groundedVisionFallbackTool).toBeTypeOf("function");
+    if (groundedVisionFallbackTool === undefined) return;
+
+    expect(groundedVisionFallbackTool(response, [
+      assistantCall("vision", "image_analyze", { source_type: "file", source }),
+      toolResult("vision", "image_analyze", "Failed to resolve attachment.", { isError: true }),
+      assistantCall("ocr", "exec", { command: `tesseract ${source} stdout` }),
+      toolResult("ocr", "exec", ocrOutput, { stdout: ocrOutput, exitCode: 0 }),
+    ])).toBeUndefined();
   });
 });

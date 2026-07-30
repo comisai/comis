@@ -1802,6 +1802,30 @@ function auditRow(kind: string, traceId: string | null, extra: Record<string, un
 }
 
 describe("assembleIncidentReportFromSources — audit?", () => {
+  it("reports a grounded vision fallback instead of chronic breaker noise", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.vision_fallback_grounded",
+        outcome: "success",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "vision_fallback_grounded",
+      detail:
+        "configured image analysis was unavailable, but a later tool used the same image "
+        + "and produced evidence that grounded the delivered response",
+      suggestedNextSteps: [
+        "no user retry is required; the fallback recovered this turn",
+        "configure a vision-capable model or vision provider to avoid the fallback path",
+      ],
+    });
+  });
+
   it("ranks a delegation-evidence correction above generic session noise", async () => {
     const reader = makeAuditReader([
       auditRow("audit", TRACE_ID, {
