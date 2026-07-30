@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
+  buildProbeMessage,
   classifyInterruptEvidence,
+  selectPipelineApproval,
   selectUnseenGraphId,
   verifyResumeOutcome,
 } from "./durability-resume-probe-core.mjs";
@@ -69,6 +71,73 @@ function persistedCheckpoint() {
 }
 
 describe("durable graph probe candidate selection", () => {
+  it("builds a thumb-typed request without naming an internal mechanism", () => {
+    const message = buildProbeMessage(
+      "ANCHOR_MARKER",
+      "DURABLE_RESUME_MARKER",
+    );
+
+    expect(message).toContain("ANCHOR_MARKER");
+    expect(message).toContain("DURABLE_RESUME_MARKER");
+    expect(message).toContain("one connected three step job all at once");
+    expect(message).toContain("ask me if im ready");
+    expect(message).toContain("dont lose the finished first step");
+    expect(message).not.toMatch(/\b(?:pipeline|graph|dag|orchestrate|subagent)\b/i);
+    expect(message).not.toMatch(/[.!?]/);
+  });
+
+  it("selects only the new attributed pipeline approval callback", () => {
+    expect(selectPipelineApproval([
+      {
+        messageId: 40,
+        text: "approval required: pipeline\n(running 0 s)",
+        replyMarkup: {
+          inline_keyboard: [[
+            { text: "Approve", callback_data: "v1.approve.stale.signature" },
+          ]],
+        },
+      },
+      {
+        messageId: 42,
+        text: "approval required: another tool\n(running 0 s)",
+        replyMarkup: {
+          inline_keyboard: [[
+            { text: "Approve", callback_data: "v1.approve.wrong.signature" },
+          ]],
+        },
+      },
+      {
+        messageId: 43,
+        text: "approval required: pipeline\n(running 0 s)",
+        raw: {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: "Approve", callback_data: "v1.approve.current.signature" },
+              { text: "Deny", callback_data: "v1.deny.current.signature" },
+            ]],
+          },
+        },
+      },
+    ], 40)).toEqual({
+      botMessageId: 43,
+      callbackData: "v1.approve.current.signature",
+    });
+  });
+
+  it("refuses ambiguous new pipeline approval callbacks", () => {
+    const event = (messageId: number) => ({
+      messageId,
+      text: "approval required: pipeline\n(running 0 s)",
+      replyMarkup: {
+        inline_keyboard: [[
+          { text: "Approve", callback_data: `v1.approve.${messageId}.signature` },
+        ]],
+      },
+    });
+
+    expect(selectPipelineApproval([event(41), event(42)], 40)).toBeUndefined();
+  });
+
   it("selects the newest unseen canonical execution graph directory", () => {
     expect(selectUnseenGraphId(
       new Set(["22222222-2222-4222-8222-222222222222"]),
