@@ -86,6 +86,11 @@ export async function processDocumentAttachment(
   // Format as XML block, then wrap as external content to prevent injection
   const fileBlock = formatFileBlock(extractResult.value.text, extractResult.value.fileName, extractResult.value.mimeType);
   const wrapped = wrapExternalContent(fileBlock, { source: "document", onSuspiciousContent: deps.onSuspiciousContent });
+  const coverageNote = extractResult.value.truncated
+    ? `<document-extraction-coverage complete="false" extracted-chars="${extractResult.value.extractedChars}">
+Only a prefix was extracted. Do not claim the entire file was read. Resending the same unchanged file will not increase coverage; ask the user to split it into smaller files when complete coverage is required.
+</document-extraction-coverage>`
+    : undefined;
 
   deps.logger.debug?.({
     url: att.url,
@@ -96,7 +101,7 @@ export async function processDocumentAttachment(
   }, "Document attachment extracted");
 
   return {
-    textPrefix: wrapped,
+    textPrefix: coverageNote ? `${coverageNote}\n${wrapped}` : wrapped,
     fileExtraction: {
       url: att.url,
       fileName: extractResult.value.fileName,
