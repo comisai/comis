@@ -190,7 +190,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   obs_query: (ctx: ToolDescriptionContext): string => {
-    const base = "MANDATORY evidence for runtime self-reports. Asked what Comis did, what failed, why it was slow, counts, or cost? Call explain, system_health, or billing before answering. Never infer runtime cause from chat memory. If the query cannot establish it, say unknown.";
+    const base = "MANDATORY evidence for runtime self-reports. What failed, why it was slow, counts, or cost? Call explain/system_health/billing before answering. Use system_health for failure or degraded counts. Never infer runtime cause from chat memory; say unknown if evidence cannot establish it.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   // Confusable pair: sessions_manage / sessions_list

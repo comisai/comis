@@ -31,6 +31,13 @@ import type { RpcCall } from "./cron-tool.js";
 // Parameter schema
 // ---------------------------------------------------------------------------
 
+const VALID_DIAGNOSTIC_CATEGORIES = [
+  "usage",
+  "webhook",
+  "message",
+  "session",
+] as const;
+
 const ObsQueryToolParams = Type.Object({
   action: Type.Union(
     [
@@ -74,7 +81,19 @@ const ObsQueryToolParams = Type.Object({
     Type.Integer({ description: "Maximum number of results to return" }),
   ),
   category: Type.Optional(
-    Type.String({ description: "Diagnostic category filter (for diagnostics)" }),
+    Type.Union(
+      [
+        Type.Literal("usage"),
+        Type.Literal("webhook"),
+        Type.Literal("message"),
+        Type.Literal("session"),
+      ],
+      {
+        description:
+          "Diagnostic event family for action=diagnostics: usage | webhook | message | session. " +
+          "This is not a failure filter; use action=system_health for failure or degraded counts.",
+      },
+    ),
   ),
   threshold_ms: Type.Optional(
     Type.Integer({ description: "Staleness threshold in ms (for channels.stale, default 300000)" }),
@@ -142,7 +161,7 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
     name: "obs_query",
     label: "Observability Query",
     description:
-      "MANDATORY evidence for runtime self-reports. Asked what Comis did, what failed, why it was slow, counts, or cost? Call explain, system_health, or billing before answering. Never infer runtime cause from chat memory. If the query cannot establish it, say unknown.",
+      "MANDATORY evidence for runtime self-reports. Asked what Comis did, what failed, why it was slow, counts, or cost? Call explain, system_health, or billing before answering. Use system_health for failure or degraded counts; diagnostics.category only accepts usage, webhook, message, or session. Never infer runtime cause from chat memory. If the query cannot establish it, say unknown.",
     parameters: ObsQueryToolParams,
 
     async execute(
@@ -157,7 +176,27 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
         const action = readEnumParam(p, "action", VALID_ACTIONS);
 
         if (action === "diagnostics") {
-          const category = readStringParam(p, "category", false);
+          const rawCategory = readStringParam(p, "category", false);
+          if (
+            rawCategory !== undefined &&
+            !VALID_DIAGNOSTIC_CATEGORIES.includes(
+              rawCategory as (typeof VALID_DIAGNOSTIC_CATEGORIES)[number],
+            )
+          ) {
+            throwToolError(
+              "invalid_value",
+              `Invalid category: "${rawCategory}".`,
+              {
+                validValues: [...VALID_DIAGNOSTIC_CATEGORIES],
+                param: "category",
+                hint:
+                  "Use action=system_health for failure or degraded counts.",
+              },
+            );
+          }
+          const category = rawCategory as
+            | (typeof VALID_DIAGNOSTIC_CATEGORIES)[number]
+            | undefined;
           const limit = readNumberParam(p, "limit", false);
           const sinceMs = readNumberParam(p, "since_ms", false);
           const ctx = tryGetContext();
