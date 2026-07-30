@@ -2258,6 +2258,21 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // @allow-throw: spawn() consumed exclusively by daemon RPC handlers.
         throw new RequiredToolsUnreachableError(unreachable);
       }
+
+      // A required tool must be present on the child's FIRST model request.
+      // Reachability alone is insufficient because schema deferral may otherwise
+      // hide the tool behind discover_tools. Providers that preserve an automatic
+      // prefix cache cannot inject the discovered schema mid-turn, leaving a child
+      // able to rediscover the same required tool without ever calling it.
+      params = {
+        ...params,
+        discoveredDeferredTools: [
+          ...new Set([
+            ...(params.discoveredDeferredTools ?? []),
+            ...params.requiredTools,
+          ]),
+        ],
+      };
     }
 
     // Sandbox no-downgrade gate. The single fail-closed posture
