@@ -4696,15 +4696,17 @@ describe("PiExecutor", () => {
       expect(mockResourceLoaderArgs.captured.additionalSkillPaths).toEqual(discoveryPaths);
     });
 
-    it("uses noSkills: false to enable SDK discovery", async () => {
+    it("disables SDK-global skill sources while retaining Comis discovery paths", async () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
       await executor.execute(testMessage, testSessionKey);
 
       expect(mockResourceLoaderArgs.captured).toBeTruthy();
-      // noSkills should not be set to true (defaults to false)
-      expect(mockResourceLoaderArgs.captured.noSkills).not.toBe(true);
+      expect(mockResourceLoaderArgs.captured.noSkills).toBe(true);
+      expect(mockResourceLoaderArgs.captured.additionalSkillPaths).toEqual(
+        testConfig.skills?.discoveryPaths,
+      );
     });
 
     it("skillsOverride filters denied skills", async () => {
