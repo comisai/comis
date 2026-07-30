@@ -3,13 +3,17 @@ import { lstatSync, readFileSync } from "node:fs";
 import { safePath } from "@comis/core";
 import { tryCatch } from "@comis/shared";
 import type { GraphHandlerDeps } from "./graph-helpers.js";
+import {
+  resolveGraphRunStatus,
+  type GraphRunCancelReason,
+} from "../../graph/graph-run-status.js";
 
 export type TerminalGraphMetadata =
   | { kind: "absent" }
   | { kind: "invalid" }
   | {
     kind: "valid";
-    status: "completed" | "failed";
+    status: "completed" | "failed" | "cancelled";
     nodeIds: string[];
   };
 
@@ -53,8 +57,17 @@ export function readTerminalGraphMetadata(
   const metadata = value as Record<string, unknown>;
   const status = metadata.status;
   const nodes = metadata.nodes;
+  const rawCancelReason = metadata.cancelReason;
+  const cancelReason = rawCancelReason as GraphRunCancelReason | undefined;
   if (
-    (status !== "completed" && status !== "failed")
+    (status !== "completed" && status !== "failed" && status !== "cancelled")
+    || (
+      cancelReason !== undefined
+      && cancelReason !== "manual"
+      && cancelReason !== "budget"
+      && cancelReason !== "timeout"
+      && cancelReason !== "killed"
+    )
     || typeof nodes !== "object"
     || nodes === null
     || Array.isArray(nodes)
@@ -71,7 +84,9 @@ export function readTerminalGraphMetadata(
   }
   return {
     kind: "valid",
-    status,
+    status: status === "failed" || status === "cancelled"
+      ? status
+      : resolveGraphRunStatus(cancelReason, status),
     nodeIds: Object.keys(nodes),
   };
 }

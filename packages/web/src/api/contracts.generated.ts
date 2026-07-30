@@ -6186,7 +6186,8 @@ export const CONTRACTS = {
             "running",
             "interrupted",
             "completed",
-            "failed"
+            "failed",
+            "cancelled"
           ]
         },
         "date": {
@@ -6280,7 +6281,8 @@ export const CONTRACTS = {
                   "running",
                   "interrupted",
                   "completed",
-                  "failed"
+                  "failed",
+                  "cancelled"
                 ]
               },
               "nodeCount": {

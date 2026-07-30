@@ -32,7 +32,7 @@ import {
 } from "./graph-run-metadata.js";
 import { readDurableGraphCheckpoint } from "../../graph/graph-durable-checkpoint.js";
 
-type DiskGraphStatus = "running" | "interrupted" | "completed" | "failed";
+type DiskGraphStatus = "running" | "interrupted" | "completed" | "failed" | "cancelled";
 
 function latestCheckpoint(
   deps: GraphHandlerDeps,
@@ -65,6 +65,7 @@ function checkpointStatus(
   const live = deps.graphCoordinator.getStatus(graphId);
   if (live !== undefined) {
     if (!live.isTerminal) return "running";
+    if (live.graphStatus === "cancelled") return "cancelled";
     return live.graphStatus === "completed" ? "completed" : "failed";
   }
   if (metadata.kind === "valid") return metadata.status;

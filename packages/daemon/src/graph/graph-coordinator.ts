@@ -66,6 +66,7 @@ import {
   cancelGraphRun,
   cancelGraphsByRootRunId,
 } from "./graph-cancellation.js";
+import { resolveGraphRunSnapshot, resolveGraphRunStatus } from "./graph-run-status.js";
 export type { GraphCoordinatorDeps, GraphRunState, CoordinatorSharedState, CoordinatorConfig } from "./graph-coordinator-state.js";
 import type {
   CoordinatorSharedState,
@@ -684,7 +685,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
 
   function getStatus(graphId: string): GraphExecutionSnapshot | undefined {
     const gs = state.graphs.get(graphId);
-    return gs?.stateMachine.snapshot();
+    return gs ? resolveGraphRunSnapshot(gs) : undefined;
   }
 
   function cancel(graphId: string): boolean {
@@ -719,7 +720,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       .map((gs) => ({
         graphId: gs.graphId,
         label: gs.graph.graph.label,
-        status: gs.stateMachine.getGraphStatus(),
+        status: resolveGraphRunStatus(gs.cancelReason, gs.stateMachine.getGraphStatus()),
         startedAt: gs.startedAt,
         completedAt: gs.completedAt,
       }));

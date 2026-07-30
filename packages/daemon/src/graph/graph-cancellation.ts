@@ -24,13 +24,14 @@ export function cancelGraphRun(
   deps: CancellationDeps,
   graphId: string,
   complete: (gs: GraphRunState) => void,
+  cancelReason: NonNullable<GraphRunState["cancelReason"]> = "manual",
 ): GraphCancellationResult {
   const gs = state.graphs.get(graphId);
   if (!gs || gs.stateMachine.isTerminal()) {
     return { cancelled: false, killed: 0 };
   }
 
-  gs.cancelReason = "manual";
+  gs.cancelReason = cancelReason;
   gs.cacheWarmCleanup?.();
   let killed = 0;
 
@@ -91,7 +92,7 @@ export function cancelGraphsByRootRunId(
   let killed = 0;
   for (const gs of [...state.graphs.values()]) {
     if ((gs.rootRunId ?? gs.graphId) !== rootRunId) continue;
-    const result = cancelGraphRun(state, deps, gs.graphId, complete);
+    const result = cancelGraphRun(state, deps, gs.graphId, complete, "killed");
     if (!result.cancelled) continue;
     graphsCancelled++;
     killed += result.killed;

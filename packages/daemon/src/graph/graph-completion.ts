@@ -8,7 +8,7 @@
  * @module
  */
 
-import { safePath, systemNowMs, systemDateFrom, toSafeErrorLogString } from "@comis/core";
+import { safePath, systemNowMs, systemDateFrom, toSafeErrorLogString, type GraphStatus } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { writeRegularFile } from "@comis/observability";
 import { clearAllTimers } from "./graph-cleanup.js";
@@ -18,6 +18,7 @@ import type {
   GraphCoordinatorDeps,
   GraphRunState,
 } from "./graph-coordinator-state.js";
+import { resolveGraphRunStatus } from "./graph-run-status.js";
 
 // ---------------------------------------------------------------------------
 // Announcement types
@@ -110,6 +111,7 @@ export async function handleGraphCompletion(
 
   // 2b. Emit graph:completed event
   const snap = gs.stateMachine.snapshot();
+  const graphStatus = resolveGraphRunStatus(gs.cancelReason, snap.graphStatus);
   let nodesCompleted = 0;
   let nodesFailed = 0;
   let nodesSkipped = 0;
@@ -158,7 +160,7 @@ export async function handleGraphCompletion(
 
   deps.eventBus.emit("graph:completed", {
     graphId: gs.graphId,
-    status: gs.stateMachine.getGraphStatus(),
+    status: graphStatus,
     durationMs: gs.completedAt! - gs.startedAt,
     nodeCount: gs.graph.graph.nodes.length,
     nodesCompleted,
@@ -175,7 +177,7 @@ export async function handleGraphCompletion(
   });
 
   // 2c. Write _run-metadata.json to disk
-  writeRunMetadata(deps, gs);
+  writeRunMetadata(deps, gs, graphStatus);
 
   const callerConversation = gs.callerConversationLocator;
   const callerEndpoint = gs.callerEndpoint;
@@ -299,7 +301,7 @@ export async function handleGraphCompletion(
     {
       submodule: "graph-coordinator",
       graphId: gs.graphId,
-      status: gs.stateMachine.getGraphStatus(),
+      status: graphStatus,
       durationMs: gs.completedAt - gs.startedAt,
       nodesTotal: gs.graph.graph.nodes.length,
       nodesSucceeded: nodesCompleted,
@@ -633,6 +635,7 @@ export function handleGraphTimeout(
 export function writeRunMetadata(
   deps: Pick<GraphCoordinatorDeps, "logger">,
   gs: GraphRunState,
+  graphStatus: GraphStatus,
 ): void {
   try {
     const snap = gs.stateMachine.snapshot();
@@ -716,7 +719,7 @@ export function writeRunMetadata(
       startedAt: systemDateFrom(gs.startedAt).toISOString(),
       completedAt: systemDateFrom(gs.completedAt ?? systemNowMs()).toISOString(),
       durationMs: (gs.completedAt ?? systemNowMs()) - gs.startedAt,
-      status: gs.stateMachine.getGraphStatus(),
+      status: graphStatus,
       traceId: gs.graphTraceId,
       nodesTotal: gs.graph.graph.nodes.length,
       nodesSucceeded,

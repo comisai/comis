@@ -28,8 +28,11 @@ import "../../components/display/ic-icon.js";
 
 /** Status-to-color mapping for status dots. */
 const STATUS_COLORS: Record<string, string> = {
+  running: "#3b82f6",
+  interrupted: "#f59e0b",
   completed: "#22c55e",
   failed: "#ef4444",
+  cancelled: "#6b7280",
 };
 
 /**

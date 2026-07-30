@@ -236,7 +236,7 @@ export interface OrchestrationEvents {
     nodesCompleted: number;
     nodesFailed: number;
     nodesSkipped: number;
-    cancelReason?: "timeout" | "budget" | "manual";
+    cancelReason?: "timeout" | "budget" | "manual" | "killed";
     timestamp: number;
     /** Aggregate cache read tokens across all graph nodes. */
     graphCacheReadTokens?: number;
