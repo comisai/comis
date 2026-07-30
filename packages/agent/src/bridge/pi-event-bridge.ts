@@ -1403,9 +1403,15 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             rawArgsForParams,
             recoveryIdentitySalt,
           );
+          const rawAction = (rawArgsForParams as { action?: unknown } | undefined)?.action;
+          const toolAction =
+            typeof rawAction === "string" && rawAction.length > 0 && rawAction.length <= 64
+              ? rawAction
+              : undefined;
           // Track all tool execution results
           m.toolExecResults.push({
             toolName: endEvent.toolName,
+            ...(toolAction === undefined ? {} : { action: toolAction }),
             success: toolSuccess,
             ...(resultBackgrounded ? { backgrounded: true } : {}),
             durationMs,

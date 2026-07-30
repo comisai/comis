@@ -1868,6 +1868,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   const canPersistPairedMemory = learningEligible !== false;
   const skipMemoryForOperation =
     operationType != null && MEMORY_SKIP_OPERATIONS.has(operationType);
+  const requestedDurableForgetting = bridgeResult.toolExecResults?.some(
+    (record) =>
+      record.toolName === "memory_manage"
+      && (record.action === "forget" || record.action === "delete"),
+  ) ?? false;
   const pairedUserText = resolvePairedMemoryUserText(msg);
 
   // Layer 0: silent sentinels never enter memory. Idempotent under
@@ -1881,6 +1886,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     deps.logger.debug(
       { agentId: effectiveAgentId, sessionKey: formattedKey, step: "memory-persistence" },
       "Paired memory skipped: turn ineligible for learning",
+    );
+  } else if (requestedDurableForgetting) {
+    deps.logger.debug(
+      { agentId: effectiveAgentId, sessionKey: formattedKey, step: "memory-persistence" },
+      "Paired memory skipped: turn requested durable forgetting",
     );
   } else if (isSilent) {
     deps.logger.debug(

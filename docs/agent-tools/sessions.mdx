@@ -20,7 +20,7 @@ icon: "users"
 | `sessions_spawn` | Start a background sub-agent with artifact references and an optional objective |
 | `subagents` | Manage sub-agents (`list`, `wait`, `kill`, `steer`) |
 | `memory_get` | Retrieve a memory entry by key |
-| `memory_manage` | Create, update, or delete memory entries (admin CRUD: stats, browse, delete, flush, export, pin, unpin) |
+| `memory_manage` | Create, update, or delete memory entries (admin CRUD: stats, browse, delete, forget, flush, export, pin, unpin) |
 | `memory_search` | Semantic search over agent memory (hybrid text + vector similarity) |
 | `memory_store` | Store a new memory entry (secret-detection guard applied) |
 | `ctx_search` | In-session full-text search over THIS conversation's compressed history (DAG mode) |
@@ -293,16 +293,17 @@ Agents have access to long-term memory that persists across conversations. Four 
   </Accordion>
 
   <Accordion title="memory_manage -- Admin CRUD">
-    Admin-only memory CRUD operations. Requires admin trust level. The `delete` and `flush` sub-actions require user approval. `pin`/`unpin` mark a single entry as always-injected in recall.
+    Admin-only memory CRUD operations. Requires admin trust level. The `delete`, `forget`, and `flush` sub-actions require user approval. `forget` searches the authorized memory scope and removes every matching explicit or paired entry. `pin`/`unpin` mark a single entry as always-injected in recall.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `manage_action` | string | Yes | One of `stats`, `browse`, `delete`, `flush`, `export`, `pin`, `unpin` |
+    | `manage_action` | string | Yes | One of `stats`, `browse`, `delete`, `forget`, `flush`, `export`, `pin`, `unpin` |
     | `tenant_id` | string | No | Tenant scope filter |
     | `agent_id` | string | No | Agent scope filter |
     | `ids` | string[] | For delete | Memory entry IDs to delete |
+    | `query` | string | For forget | Natural-language memory to remove from every matching scoped entry |
     | `id` | string | For pin/unpin | Single memory entry ID to pin/unpin |
     | `offset` | integer | No | Pagination offset (default: 0) |
     | `limit` | integer | No | Maximum results |

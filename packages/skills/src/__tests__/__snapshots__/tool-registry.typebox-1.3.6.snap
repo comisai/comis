@@ -1887,6 +1887,10 @@
               "type": "string"
             },
             {
+              "const": "forget",
+              "type": "string"
+            },
+            {
               "const": "flush",
               "type": "string"
             },
@@ -1903,7 +1907,7 @@
               "type": "string"
             }
           ],
-          "description": "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), flush (clear all entries for scope), export (full JSON export), pin (mark entry as always-injected in recall), unpin (remove always-inject mark)"
+          "description": "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), forget (find and remove all scoped entries matching a natural-language query), flush (clear all entries for scope), export (full JSON export), pin (mark entry as always-injected in recall), unpin (remove always-inject mark)"
         },
         "agent_id": {
           "description": "Agent ID scope for filtering",
@@ -1934,6 +1938,11 @@
           "description": "Pagination offset (default: 0)",
           "minimum": 0,
           "type": "integer"
+        },
+        "query": {
+          "description": "Natural-language memory to remove (required for forget action)",
+          "minLength": 1,
+          "type": "string"
         },
         "sort": {
           "anyOf": [

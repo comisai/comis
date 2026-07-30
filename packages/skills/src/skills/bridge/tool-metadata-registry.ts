@@ -365,15 +365,17 @@ export function registerAllToolMetadata(): void {
     // memory.pin RPC fully supporting it (admin-manage-tools live-test 2026-06-25).
     // Kept in lockstep with the tool's TypeBox action enum + `id` param by the
     // schema↔metadata parity test in tool-metadata-registry.test.ts.
-    validActions: ["stats", "browse", "delete", "flush", "export", "pin", "unpin"],
+    validActions: ["stats", "browse", "delete", "forget", "flush", "export", "pin", "unpin"],
     validKeys: [
-      "action", "tenant_id", "agent_id", "ids", "id", "offset", "limit", "sort",
+      "action", "tenant_id", "agent_id", "ids", "id", "query", "offset", "limit", "sort",
       "memory_type", "trust_level", "tags",
     ],
-    // tenant_id / agent_id are scope filters with defaults; ids is required for
-    // delete; id is required for pin/unpin (the single-entry pinning actions).
+    // tenant_id / agent_id are scope filters with defaults. Natural-language
+    // forgetting resolves every matching row before invoking the same scoped
+    // per-ID deletion path.
     requiredByAction: {
       delete: ["ids"],
+      forget: ["query"],
       pin: ["id"],
       unpin: ["id"],
     },
