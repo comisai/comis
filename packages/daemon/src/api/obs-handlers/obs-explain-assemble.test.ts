@@ -781,7 +781,6 @@ describe("assembleIncidentReport — per-root budget abort", () => {
     );
 
     expect(report.outcome.endReason).toBe("max_steps");
-    expect(report.likelyRootCause?.code).toBe("execution_step_limit_reached");
   });
 
   it("derives endReason + perRootBudget from a terminal execution.aborted when the rollup lacks a spend endReason", () => {

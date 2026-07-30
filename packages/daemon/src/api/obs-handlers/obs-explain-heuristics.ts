@@ -196,15 +196,15 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 3) execution_step_limit_reached. The executor records every blocked call
-  //    as a tool failure, so count-only breaker inference would otherwise
-  //    describe a local resource guard as an upstream outage.
+  // 3) execution_step_limit_reached. Normal turns record a blocked call as a
+  //    tool failure; sub-agent turns can terminate directly with max_steps.
+  //    Either signal must outrank unrelated recall/breaker inference.
   (s) => {
     const failure = s.failures.find(
       (candidate) =>
         candidate.classifiedFailureBy === "runtime_guard" && candidate.matchedRule === "step_limit",
     );
-    if (failure === undefined) return null;
+    if (failure === undefined && s.endReason !== "max_steps") return null;
     return {
       code: "execution_step_limit_reached",
       detail:

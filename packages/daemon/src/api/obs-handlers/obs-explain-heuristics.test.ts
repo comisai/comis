@@ -227,6 +227,13 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.some((step) => /max_steps|simplify/i.test(step))).toBe(true);
   });
 
+  it("names a max-steps terminal without a synthetic blocked-tool failure", () => {
+    const result = rootCause(makeSignals({ endReason: "max_steps" }));
+
+    expect(result?.code).toBe("execution_step_limit_reached");
+    expect(result?.detail).toContain("max_steps");
+  });
+
   it("background capacity guards name the exact saturated config knob and occupancy", () => {
     const r = rootCause(
       makeSignals({
