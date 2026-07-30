@@ -3304,6 +3304,51 @@ describe("createMemoryRecall — MMR diversity re-rank", () => {
     expect(got.value.map((result) => result.entry.id)).toContain("F");
   });
 
+  it("MMR keeps an explicit correction ahead of its similar prior fact within the output cap", async () => {
+    const fts = [
+      makeResult("prior", { base: 0.95, content: "The setting is alpha." }),
+      makeResult("topic_b", { base: 0.94 }),
+      makeResult("topic_c", { base: 0.93 }),
+      makeResult("topic_d", { base: 0.92 }),
+      makeResult("topic_e", { base: 0.91 }),
+      makeResult("correction", {
+        base: 0.8,
+        content: "Correction: the setting is beta, not alpha.",
+        tags: ["correction"],
+      }),
+    ];
+    const { store } = fakeEmbeddingStore(new Map([
+      ["prior", [1, 0, 0, 0, 0]],
+      ["topic_b", [0, 1, 0, 0, 0]],
+      ["topic_c", [0, 0, 1, 0, 0]],
+      ["topic_d", [0, 0, 0, 1, 0]],
+      ["topic_e", [0, 0, 0, 0, 1]],
+      ["correction", [1, 0, 0, 0, 0]],
+    ]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        minScore: 0,
+        lanes: PARITY_LANES,
+        mmr: { enabled: true, lambda: 0.7 },
+      } as Partial<MemoryRecallConfig>),
+    );
+
+    const got = await recall.recall("setting", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
+
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value).toHaveLength(5);
+    expect(got.value.map((result) => result.entry.id)).toContain("correction");
+    expect(got.value.map((result) => result.entry.id)).not.toContain("prior");
+  });
+
   it("SCOPE: the recorded readEmbeddings call's scope === {tenantId: SESSION_KEY_OBJ.tenantId, agentId: <recall agentId>}", async () => {
     const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
     const { store, calls } = fakeEmbeddingStore(new Map([["a", [1, 0]], ["b", [0, 1]]]));
