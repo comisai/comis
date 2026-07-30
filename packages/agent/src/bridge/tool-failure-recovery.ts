@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHmac } from "node:crypto";
-import type { ErrorKind } from "@comis/core";
+import type {
+  ErrorKind,
+  ModelOperationType,
+  ToolFailureDisclosure,
+} from "@comis/core";
 
 const MAX_IDENTITY_FIELD_CHARS = 512;
 const MESSAGE_ACTIONS = new Set([
@@ -44,6 +48,8 @@ export interface ToolExecutionResultRecord {
   readonly invocationSequence?: number;
   readonly errorText?: string;
   readonly errorKind?: ErrorKind;
+  /** Trusted, bounded adapter classification; never raw tool/provider prose. */
+  readonly failureDisclosure?: ToolFailureDisclosure;
   readonly recoveryIdentity?: ToolRecoveryIdentity;
 }
 
@@ -206,4 +212,132 @@ export function classifyToolFailureRecovery(
     recoveredToolNames: [...failureNames].filter((toolName) => !unrecoveredNames.has(toolName)),
     unrecoveredToolNames: [...unrecoveredNames],
   };
+}
+
+const MAX_CONFIG_KEY_CHARS = 256;
+
+function isConfigKeySegment(value: string): boolean {
+  if (value.length === 0) return false;
+  const first = value.charCodeAt(0);
+  const firstIsLetter =
+    (first >= 65 && first <= 90) || (first >= 97 && first <= 122);
+  if (!firstIsLetter) return false;
+  for (const character of value.slice(1)) {
+    const code = character.charCodeAt(0);
+    const allowed =
+      (code >= 65 && code <= 90)
+      || (code >= 97 && code <= 122)
+      || (code >= 48 && code <= 57)
+      || character === "_"
+      || character === "-";
+    if (!allowed) return false;
+  }
+  return true;
+}
+
+/** Accept only closed, content-free disclosure facts from trusted tool metadata. */
+export function normalizeToolFailureDisclosure(
+  value: unknown,
+): ToolFailureDisclosure | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const candidate = value as { kind?: unknown; configKey?: unknown };
+  if (
+    typeof candidate.configKey !== "string"
+    || candidate.configKey.length > MAX_CONFIG_KEY_CHARS
+  ) {
+    return undefined;
+  }
+  const segments = candidate.configKey.split(".");
+  if (
+    segments.length < 2
+    || segments.length > 9
+    || !segments.every(isConfigKeySegment)
+  ) {
+    return undefined;
+  }
+  switch (candidate.kind) {
+    case "missing_configuration":
+    case "quota_exhausted":
+    case "provider_unavailable":
+      return {
+        kind: candidate.kind,
+        configKey: candidate.configKey,
+      };
+    default:
+      return undefined;
+  }
+}
+
+function latestUnrecoveredDisclosure(
+  failedTools: readonly string[],
+  toolExecResults: readonly ToolExecutionResultRecord[] | undefined,
+): ToolExecutionResultRecord | undefined {
+  const unrecovered = new Set(
+    classifyToolFailureRecovery(failedTools, toolExecResults).unrecoveredToolNames,
+  );
+  const results = toolExecResults ?? [];
+  for (let index = results.length - 1; index >= 0; index -= 1) {
+    const result = results.at(index);
+    if (
+      result !== undefined
+      && !result.success
+      && result.failureDisclosure !== undefined
+      && unrecovered.has(result.toolName)
+    ) {
+      return result;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Preserve the upstream tool cause when a sub-agent's later model call times
+ * out. This text is parent-rewrite input, not a direct localized platform
+ * reply; it carries only fixed runtime prose plus a validated config key.
+ */
+export function buildSubagentTerminalToolFailureReply(params: {
+  operationType: ModelOperationType | undefined;
+  finishReason: string;
+  failedTools: readonly string[];
+  toolExecResults: readonly ToolExecutionResultRecord[] | undefined;
+}): string | undefined {
+  if (
+    params.operationType !== "subagent"
+    || params.finishReason !== "prompt_timeout"
+  ) {
+    return undefined;
+  }
+  const failure = latestUnrecoveredDisclosure(
+    params.failedTools,
+    params.toolExecResults,
+  );
+  const disclosure = failure?.failureDisclosure;
+  if (failure === undefined || disclosure === undefined) return undefined;
+
+  switch (disclosure.kind) {
+    case "missing_configuration":
+      return (
+        `The sub-agent could not complete the task because ${failure.toolName} is not configured. `
+        + `Configure ${disclosure.configKey} before retrying. Splitting or narrowing the same request `
+        + "will not fix the missing configuration."
+      );
+    case "quota_exhausted":
+      return (
+        `The sub-agent could not complete the task because ${failure.toolName} exhausted its provider `
+        + `quota or plan capacity. Restore provider capacity or configure another provider under `
+        + `${disclosure.configKey} before retrying. Splitting or narrowing the same request will not fix `
+        + "this provider failure."
+      );
+    case "provider_unavailable":
+      return (
+        `The sub-agent could not complete the task because every available provider for `
+        + `${failure.toolName} failed. Restore provider access or configure another provider under `
+        + `${disclosure.configKey} before retrying. Splitting or narrowing the same request will not fix `
+        + "this provider failure."
+      );
+    default: {
+      const _exhaustive: never = disclosure;
+      return _exhaustive;
+    }
+  }
 }

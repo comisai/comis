@@ -173,6 +173,7 @@ import {
 } from "./thinking-block-hash-invariant.js";
 import {
   buildToolRecoveryIdentity,
+  normalizeToolFailureDisclosure,
   type ToolExecutionResultRecord,
 } from "./tool-failure-recovery.js";
 import { isContextExhaustionErrorMessage } from "../context-engine/errors.js";
@@ -987,6 +988,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             | undefined;
           let matchedRule: string | undefined;
           let matchedToken: string | undefined;
+          let failureDisclosure: ToolExecutionResultRecord["failureDisclosure"];
           let httpStatus: number | undefined;
           // transportOk tracks whether the call reached the tool boundary. An
           // exit-code, detector, MCP argument-validation, or MCP-content failure
@@ -1083,6 +1085,25 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                       // sanitized+bounded at BOTH sinks (WARN + emit), never here.
                       matchedRule = detected.matchedRule;
                       matchedToken = detected.matchedToken;
+                      failureDisclosure = normalizeToolFailureDisclosure(
+                        detected.failureDisclosure,
+                      );
+                      if (
+                        detected.failureDisclosure !== undefined
+                        && failureDisclosure === undefined
+                      ) {
+                        deps.logger.warn(
+                          {
+                            submodule: "bridge.failure-detector",
+                            toolName: endEvent.toolName,
+                            toolCallId: endEvent.toolCallId,
+                            errorKind: "internal" as const,
+                            hint:
+                              "Fix failureDetector.failureDisclosure to use a closed kind and a dotted config key under 256 characters",
+                          },
+                          "Tool failure disclosure rejected",
+                        );
+                      }
                     }
                     const status = (r as { status?: unknown })?.status;
                     if (typeof status === "number") httpStatus = status;
@@ -1388,6 +1409,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // Carry the closed-union errorKind (set on the failure path only)
             // for the rollup's bounded topErrorKinds.
             ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
+            ...(failureDisclosure !== undefined && { failureDisclosure }),
           });
 
           // Capture outbound deliveries. The post-execution silent-sentinel

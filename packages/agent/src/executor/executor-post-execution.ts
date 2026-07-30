@@ -140,9 +140,11 @@ import type { BackgroundTaskManager } from "../background/background-task-manage
 import { reconcilePendingBackgroundTurn } from "./pending-background-reply.js";
 import { synchronizeFinalAssistantResponse } from "./phase-filter.js";
 import {
+  buildSubagentTerminalToolFailureReply,
   classifyToolFailureRecovery,
   type ToolExecutionResultRecord,
 } from "../bridge/tool-failure-recovery.js";
+export { buildSubagentTerminalToolFailureReply } from "../bridge/tool-failure-recovery.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1512,6 +1514,35 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     bridgeResult.failedTools ?? [],
     bridgeResult.toolExecResults,
   );
+  const subagentTerminalToolFailureReply = buildSubagentTerminalToolFailureReply({
+    operationType: params.executionOverrides?.operationType,
+    finishReason: effectiveFinishReason,
+    failedTools: bridgeResult.failedTools ?? [],
+    toolExecResults: bridgeResult.toolExecResults,
+  });
+  if (subagentTerminalToolFailureReply !== undefined) {
+    result.response = subagentTerminalToolFailureReply;
+    const disclosedFailure = bridgeResult.toolExecResults
+      ?.find((toolResult) => toolResult.failureDisclosure !== undefined);
+    const configKey =
+      disclosedFailure?.failureDisclosure?.configKey ?? "the failed tool's provider configuration";
+    result.errorContext = {
+      errorType: "UpstreamToolFailure",
+      retryable: false,
+      ...(disclosedFailure?.toolName !== undefined
+        ? { failingTool: disclosedFailure.toolName }
+        : {}),
+    };
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        errorKind: disclosedFailure?.errorKind ?? ("dependency" as const),
+        hint:
+          `Restore provider access or update ${configKey} before retrying; changing request size will not recover this failure`,
+      },
+      "Sub-agent timeout reply replaced with upstream tool cause",
+    );
+  }
   const unavailableVisionFailure =
     unrecoveredFailed.includes("image_analyze")
     && hasUnavailableVisionFailure(bridgeResult.toolExecResults);
