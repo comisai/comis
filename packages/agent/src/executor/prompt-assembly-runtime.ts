@@ -348,7 +348,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         );
       }
       const recalled = memoryScope.ok
-        ? await recall.recall(msg.text, memoryScope.value, sessionKey)
+        ? await recall.recall(msg.text, memoryScope.value, sessionKey, params.recentUserTurns)
         : memoryScope;
 
       if (recalled.ok && recalled.value.length > 0) {

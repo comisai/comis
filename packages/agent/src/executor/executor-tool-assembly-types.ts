@@ -232,6 +232,8 @@ export interface ToolAssemblyParams {
   tools?: AgentTool[];
   executionOverrides?: ExecutionOverrides;
   isFirstMessageInSession: boolean;
+  /** Bounded user-authored turns from the immutable session-context snapshot. */
+  recentUserTurns: readonly string[];
   /** Session manager instance for session context and messages. */
   sm: {
     buildSessionContext(): { messages: unknown[] };

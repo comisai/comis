@@ -263,6 +263,7 @@ function makeParams(overrides?: Partial<PromptAssemblyParams>): PromptAssemblyPa
   // missing site would throw at runtime.
   const merged: PromptAssemblyParams = {
     config: makeConfig(),
+    recentUserTurns: [],
     deps: { workspaceDir: "/workspace" },
     msg: makeMsg(),
     sessionKey: DEFAULT_SESSION,
@@ -611,6 +612,10 @@ describe("assembleExecutionPrompt", () => {
     mockRecall.mockResolvedValue({ ok: true, value: [] });
     const params = makeParams({
       msg: makeMsg({ text: "the tests are failing can you look" }),
+      recentUserTurns: [
+        "im working on the run tracker in projects/run-tracker",
+        "the delete row thing is fixed now",
+      ],
       config: makeConfig({
         rag: {
           enabled: true,
@@ -622,10 +627,6 @@ describe("assembleExecutionPrompt", () => {
       }),
       deps: { workspaceDir: "/workspace", memoryPort },
     });
-    (params as PromptAssemblyParams & { recentUserTurns: readonly string[] }).recentUserTurns = [
-      "im working on the run tracker in projects/run-tracker",
-      "the delete row thing is fixed now",
-    ];
 
     await assembleExecutionPrompt(params);
 
@@ -672,6 +673,7 @@ describe("assembleExecutionPrompt", () => {
       "Hello",
       expect.objectContaining({ includeAgentShared: false }),
       childSession,
+      [],
     );
   });
 

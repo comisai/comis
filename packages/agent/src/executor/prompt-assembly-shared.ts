@@ -483,6 +483,8 @@ export function buildRecallTrace(
 /** Dependencies required by the prompt assembly helper. */
 export interface PromptAssemblyParams {
   config: PerAgentConfig;
+  /** Bounded user-authored turns captured with the current session context. */
+  recentUserTurns: readonly string[];
   deps: {
     workspaceDir: string;
     /** Immutable workspace policy captured once at turn start. */

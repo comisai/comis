@@ -2800,14 +2800,7 @@ describe("createMemoryRecall — query understanding", () => {
         queryUnderstanding: QU_OFF,
       } as Partial<MemoryRecallConfig>),
     );
-    const recallWithRecentTurns = recall.recall as unknown as (
-      query: string,
-      scope: ReturnType<typeof memoryScope>,
-      sessionKey: SessionKey,
-      recentUserTurns: readonly string[],
-    ) => ReturnType<typeof recall.recall>;
-
-    await recallWithRecentTurns(
+    await recall.recall(
       "the tests are failing can you look",
       memoryScope("agent_y", "tenant_x"),
       SESSION_KEY_OBJ,
@@ -2818,7 +2811,7 @@ describe("createMemoryRecall — query understanding", () => {
     );
 
     expect(seenQuery).toBe(
-      "tests failing look fixed delete row thing working run tracker projects",
+      "tests failing look delete row thing fixed im working run tracker projects",
     );
   });
 

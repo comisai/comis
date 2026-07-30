@@ -209,6 +209,7 @@ function makeParams(overrides?: Partial<ToolAssemblyParams>): ToolAssemblyParams
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- NormalizedMessage shape simplified
     msg: makeMsg() as any,
     isFirstMessageInSession: true,
+    recentUserTurns: [],
     sm: makeSm(),
     formattedKeyForGuides: "tenant-a:user_a:chan-a",
     deliveredGuides: new Set<string>(),

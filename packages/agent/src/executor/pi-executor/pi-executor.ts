@@ -121,6 +121,7 @@ import { postExecution } from "../executor-post-execution.js";
 import { resolveLocale } from "../resolve-response-locale-policy.js";
 import { assembleTools } from "../executor-tool-assembly.js";
 import { assembleModelRequest, prepareTurn } from "../turn-preparation.js";
+import { selectRecentUserTurns } from "../../rag/recall-conversation.js";
 import {
   getDeliveredGuides,
   setDeliveredGuides,
@@ -1023,6 +1024,7 @@ async function runSessionLocked(
   );
 
   const isFirstMessageInSession = sessionContext.messages.length === 0;
+  const recentUserTurns = selectRecentUserTurns(sessionContext.messages);
 
   // Get or create session-scoped guide delivery tracking.
   // Clear on session reset (isFirstMessageInSession) so guides re-inject.
@@ -1193,7 +1195,7 @@ async function runSessionLocked(
   // Extracted to executor-tool-assembly.ts
   const toolAssembly = await assembleTools({
     config, deps: frozenDeps, sessionKey, msg, tools, executionOverrides,
-    isFirstMessageInSession, sm, formattedKeyForGuides, deliveredGuides,
+    isFirstMessageInSession, recentUserTurns, sm, formattedKeyForGuides, deliveredGuides,
     resolvedModel, modelCompat, modelProfile, windowProvenance, agentId, safetyReinforcement, _directives,
   });
   const {

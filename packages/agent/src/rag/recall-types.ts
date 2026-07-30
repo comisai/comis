@@ -278,5 +278,6 @@ export interface MemoryRecall {
     query: string,
     scope: MemoryRecallScope,
     sessionKey: SessionKey,
+    recentUserTurns?: readonly string[],
   ): Promise<Result<MemorySearchResult[], Error>>;
 }

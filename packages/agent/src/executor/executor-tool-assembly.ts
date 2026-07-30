@@ -129,7 +129,7 @@ function estimateSystemTokensFactored(systemPrompt: string, toolOverheadChars: n
 export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAssemblyResult> {
   const {
     config, deps, sessionKey, msg, tools, executionOverrides,
-    isFirstMessageInSession, sm, deliveredGuides,
+    isFirstMessageInSession, recentUserTurns, sm, deliveredGuides,
     resolvedModel, modelCompat, modelProfile: modelProfileParam, windowProvenance, agentId, safetyReinforcement, _directives,
   } = params;
 
@@ -283,6 +283,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // -------------------------------------------------------------------
   const promptResult = await assembleExecutionPrompt({
     config,
+    recentUserTurns,
     deps: {
       workspaceDir: effectiveWorkspaceDir, // AGENTS.md/BOOT.md from the run's working tree.
       workspacePolicySnapshot: deps.workspacePolicySnapshot,
