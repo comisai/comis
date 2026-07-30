@@ -7,7 +7,17 @@
  *
  * @module
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
@@ -86,6 +96,73 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     }
 
     expect(violations).toEqual([]);
+  });
+
+  it("downloads a generated chart into an ESM workspace without host renderers", () => {
+    const repositoryRoot = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../../..",
+    );
+    const generator = resolve(
+      repositoryRoot,
+      "packages/daemon/bundled-skills/chart-visualization/scripts/generate.cjs",
+    );
+    const fixtureRoot = mkdtempSync(resolve(tmpdir(), "comis-chart-skill-"));
+    const workspace = resolve(fixtureRoot, "workspace");
+    const fetchStub = resolve(fixtureRoot, "fetch-stub.cjs");
+    mkdirSync(workspace);
+    writeFileSync(
+      resolve(workspace, "package.json"),
+      JSON.stringify({ type: "module" }),
+    );
+    writeFileSync(
+      fetchStub,
+      [
+        "globalThis.fetch = async (url) => {",
+        '  if (url === "https://example.com/chart.png") {',
+        "    return new Response(Uint8Array.from([137, 80, 78, 71]), {",
+        '      status: 200, headers: { "content-type": "image/png" },',
+        "    });",
+        "  }",
+        "  return Response.json({",
+        '    success: true, resultObj: "https://example.com/chart.png",',
+        "  });",
+        "};",
+      ].join("\n"),
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          generator,
+          JSON.stringify({
+            tool: "generate_bar_chart",
+            args: {
+              data: [{ category: "runs", value: 2 }],
+              title: "Weekly runs",
+            },
+          }),
+          "--output",
+          "output/chart.png",
+        ],
+        {
+          cwd: workspace,
+          encoding: "utf8",
+          env: { NODE_OPTIONS: `--require=${fetchStub}` },
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(resolve(workspace, "output/chart.png"))).toEqual(
+        Buffer.from([137, 80, 78, 71]),
+      );
+      expect(result.stdout.trim()).toBe(
+        resolve(workspace, "output/chart.png"),
+      );
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it("seeds missing skills, RE-seeds version-changed skills, and SKIPS up-to-date ones", () => {
