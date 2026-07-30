@@ -703,7 +703,10 @@ describe("session commands handle daemon offline", () => {
     registerSessionsCommand(program);
 
     try {
-      await program.parseAsync(["node", "test", "sessions", "inspect", "test-key"]);
+      await program.parseAsync([
+        "node", "test", "sessions", "inspect", "test-key",
+        "--tenant", "test-tenant", "--agent", "default",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }

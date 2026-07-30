@@ -192,7 +192,10 @@ describe("RPC failure exit code 1", () => {
     registerSessionsCommand(program);
 
     try {
-      await program.parseAsync(["node", "test", "sessions", "inspect", "test:key:1"]);
+      await program.parseAsync([
+        "node", "test", "sessions", "inspect", "test:key:1",
+        "--tenant", "test-tenant", "--agent", "test-agent",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }
