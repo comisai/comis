@@ -68,6 +68,30 @@ function approvalFrame(corr: ApprovalCorrelation = approval()): ActivityRenderFr
   };
 }
 
+function toolFrame(): ActivityRenderFrame {
+  return {
+    frameSeq: 0,
+    visibleEvents: [
+      {
+        schemaVersion: 1,
+        activityId: "00000000-0000-0000-0000-000000000001",
+        sessionKey: "sess-a",
+        agentId: "main",
+        traceId: "trace-a",
+        ts: "2026-05-26T00:00:00.000Z",
+        phase: "start",
+        status: "running",
+        kind: "tool",
+        semanticPhase: "tool",
+        defaultLabel: "running shell",
+      } as ActivityEvent,
+    ],
+    groupedActivityIds: {},
+    planSnapshot: undefined,
+    changeSet: { added: [], edited: [], removed: [] },
+  };
+}
+
 describe("Telegram inline-keyboard approval (budget-safe signed callback_data)", () => {
   it("paints a kind:'approval' frame as buttons whose callback_data is the signed wire string", async () => {
     const timer = createFakeTimers();
@@ -91,6 +115,27 @@ describe("Telegram inline-keyboard approval (budget-safe signed callback_data)",
     }
     expect(flat[0].callback_data).toBe(`v1.approve.Tg345Hjk678X.${sign("approve", "Tg345Hjk678X")}`);
     expect(flat[1].callback_data).toBe(`v1.deny.Tg345Hjk678X.${sign("deny", "Tg345Hjk678X")}`);
+  });
+
+  it("adds approval buttons when approval follows an existing tool placeholder", async () => {
+    const timer = createFakeTimers();
+    const clock = createFakeClock(0);
+    const fake = createFakeTelegramAdapter();
+    const r = createTelegramActivityRenderer(fake, "chat-1", { timer, clock, signCallbackData: sign });
+
+    await r.apply(toolFrame());
+    await r.apply(approvalFrame());
+    timer.advance(800);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const edit = fake.recorded.calls.find((call) => call.op === "edit");
+    expect(edit).toMatchObject({
+      buttons: [[
+        expect.objectContaining({ callback_data: expect.stringMatching(/^v1\.approve\./) }),
+        expect.objectContaining({ callback_data: expect.stringMatching(/^v1\.deny\./) }),
+      ]],
+    });
   });
 
   it("the rows render through renderTelegramButtons into a grammY InlineKeyboard (no over-budget omission)", async () => {
