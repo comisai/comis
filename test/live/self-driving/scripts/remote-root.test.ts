@@ -183,6 +183,14 @@ describe("local rig mode", () => {
     expect(guard).toBeLessThan(memoryWipe);
   });
 
+  it("limits clean-restart worker cleanup to the selected data root", () => {
+    const source = readFileSync(CLEAN_RESTART, "utf8");
+
+    expect(source).toContain('for s in "$DATA"/terminal-worker/*.sock');
+    expect(source).toContain("tmux -S '$s' kill-server");
+    expect(source).not.toMatch(/pkill\b[^\n]*(?:share\/codex|share\/claude|bwrap)/);
+  });
+
   it("lets media injection select a sender independently from the chat", () => {
     const source = readFileSync(MEDIA_DRIVE, "utf8");
 
