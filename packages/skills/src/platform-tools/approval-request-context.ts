@@ -14,6 +14,8 @@ export interface ApprovalRequestContext {
   readonly agentId: string;
   /** Formatted session identifier used only for live activity correlation. */
   readonly sessionKey: string;
+  /** Correlates live approval activity with the originating request. */
+  readonly traceId: string;
   readonly conversationRef: ConversationRef;
   readonly resolvingPrincipalId: string;
   readonly trustLevel: UserTrustLevel;
@@ -34,6 +36,7 @@ export function resolveApprovalRequestContext(): Result<ApprovalRequestContext, 
         userId: context.userId,
         agentId: context.agentId,
         sessionKey: context.sessionKey,
+        traceId: context.traceId,
         turnScope: context.turnScope,
         trustLevel: context.trustLevel,
         channelType: context.channelType,
@@ -43,7 +46,7 @@ export function resolveApprovalRequestContext(): Result<ApprovalRequestContext, 
     return err(new Error("Approval requires a resolved request identity"));
   }
   const identity = captured.value;
-  const { userId, agentId, sessionKey, turnScope, trustLevel } = identity;
+  const { userId, agentId, sessionKey, traceId, turnScope, trustLevel } = identity;
   if (
     typeof userId !== "string"
     || userId.length === 0
@@ -51,6 +54,8 @@ export function resolveApprovalRequestContext(): Result<ApprovalRequestContext, 
     || agentId.length === 0
     || typeof sessionKey !== "string"
     || sessionKey.length === 0
+    || typeof traceId !== "string"
+    || traceId.length === 0
     || turnScope === undefined
     || !["admin", "user", "guest"].includes(trustLevel)
   ) {
@@ -92,6 +97,7 @@ export function resolveApprovalRequestContext(): Result<ApprovalRequestContext, 
     tenantId: origin.tenantId,
     agentId,
     sessionKey,
+    traceId,
     conversationRef: conversationRef.value,
     resolvingPrincipalId: turnScope.principal.principalId,
     trustLevel,
