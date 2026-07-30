@@ -1264,6 +1264,32 @@ describe("createGraphCoordinator", () => {
       await coordinator.shutdown();
     });
 
+    it("cancelByRootRunId terminalizes matching graphs without retrying killed nodes", async () => {
+      const { deps, runner } = createTestDeps();
+      const coordinator = createGraphCoordinator(deps);
+      const graph = buildGraph([
+        { nodeId: "A", retries: 1 },
+        { nodeId: "B", dependsOn: ["A"] },
+      ]);
+      const result = await coordinator.run({
+        graph,
+        callerRootRunId: "root-controlled",
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const cancelled = coordinator.cancelByRootRunId("root-controlled");
+
+      expect(cancelled).toEqual({ graphsCancelled: 1, killed: 1 });
+      expect(runner.killRun).toHaveBeenCalledTimes(1);
+      const status = coordinator.getStatus(result.value);
+      expect(status?.isTerminal).toBe(true);
+      expect(status?.stats.running).toBe(0);
+      expect(status?.stats.pending).toBe(0);
+
+      await coordinator.shutdown();
+    });
+
     it("cancel returns false for already-completed graph", async () => {
       const { deps, runner, eventBus } = createTestDeps();
       const coordinator = createGraphCoordinator(deps);

@@ -43,6 +43,9 @@ function createMockDeps(over: Partial<AutonomyHandlerDeps> = {}): AutonomyHandle
     subAgentRunner: {
       killByRootRun: vi.fn().mockReturnValue({ killed: 0 }),
     },
+    graphCoordinator: {
+      cancelByRootRunId: vi.fn().mockReturnValue({ graphsCancelled: 0, killed: 0 }),
+    },
     // A durable store stub whose invalidateForRevoke is observable.
     durableRuns: {
       invalidateForRevoke: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
@@ -212,6 +215,24 @@ describe("createAutonomyHandlers — lease.revoke + run.kill", () => {
     expect(deps.subAgentRunner.killByRootRun).toHaveBeenCalledWith("R1");
     expect(deps.leaseManager.revokeByRootRun).toHaveBeenCalledWith("R1");
     expect(result).toEqual({ killed: 4 });
+  });
+
+  it("run.kill cancels graph-owned runs before sweeping the remaining spawn tree", async () => {
+    const calls: string[] = [];
+    vi.mocked(deps.graphCoordinator!.cancelByRootRunId).mockImplementation(() => {
+      calls.push("graph");
+      return { graphsCancelled: 1, killed: 3 };
+    });
+    vi.mocked(deps.subAgentRunner.killByRootRun).mockImplementation(() => {
+      calls.push("runner");
+      return { killed: 0 };
+    });
+
+    const result = await handlers["run.kill"]!({ rootRunId: "R1" });
+
+    expect(calls).toEqual(["graph", "runner"]);
+    expect(deps.graphCoordinator!.cancelByRootRunId).toHaveBeenCalledWith("R1");
+    expect(result).toEqual({ killed: 3 });
   });
 
   it("run.kill with no rootRunId throws Missing required parameter", async () => {
