@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { parsePhase, isVisibleTextBlock, getVisibleAssistantText } from "./phase-filter.js";
+import * as phaseFilter from "./phase-filter.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -493,5 +494,68 @@ describe("getVisibleAssistantText — cross-turn walk-back bound", () => {
       ],
     };
     expect(getVisibleAssistantText(session)).toBe("");
+  });
+});
+
+describe("synchronize final assistant response", () => {
+  function synchronize(
+    session: unknown,
+    response: string,
+  ): "unchanged" | "updated" | "missing" {
+    const candidate = (phaseFilter as Record<string, unknown>)
+      .synchronizeFinalAssistantResponse;
+    expect(candidate).toBeTypeOf("function");
+    return (candidate as (
+      session: unknown,
+      response: string,
+    ) => "unchanged" | "updated" | "missing")(session, response);
+  }
+
+  it("replaces rejected visible prose while preserving protocol blocks and metadata", () => {
+    const session = {
+      messages: [
+        { role: "user", content: "retry until successful" },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "private", signature: "signed" },
+            { type: "text", text: "Unverified success claim" },
+          ],
+          stopReason: "stop",
+          timestamp: 42,
+        },
+      ],
+    };
+
+    expect(synchronize(session, "I could not verify the action.")).toBe("updated");
+    expect(getVisibleAssistantText(session)).toBe("I could not verify the action.");
+    expect(session.messages[1]).toMatchObject({
+      role: "assistant",
+      stopReason: "stop",
+      timestamp: 42,
+      content: [
+        { type: "thinking", thinking: "private", signature: "signed" },
+        { type: "text", text: "I could not verify the action." },
+      ],
+    });
+  });
+
+  it("leaves an already synchronized response unchanged", () => {
+    const session = {
+      messages: [
+        { role: "assistant", content: [{ type: "text", text: "Current reply" }] },
+      ],
+    };
+
+    expect(synchronize(session, "Current reply")).toBe("unchanged");
+  });
+
+  it("does not fabricate an assistant message when the current turn has none", () => {
+    const session = {
+      messages: [{ role: "user", content: "new request" }],
+    };
+
+    expect(synchronize(session, "Fallback reply")).toBe("missing");
+    expect(session.messages).toHaveLength(1);
   });
 });
