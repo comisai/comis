@@ -1001,6 +1001,23 @@ describe("current-turn delegation evidence guard", () => {
       corrected: false,
     });
   });
+
+  it("does not treat a negative delegation instruction as a delegation request", () => {
+    const ordinaryResponse =
+      "The test suite passed and the slow test took twenty seconds.";
+    const guarded = delegationEvidenceGuard()({
+      request:
+        "dont delegate this run npm test yourself in queue-fixture and find the slow one",
+      response: ordinaryResponse,
+      toolExecResults: [{ toolName: "exec", success: true }],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: ordinaryResponse,
+      corrected: false,
+    });
+  });
 });
 
 type DestructiveEffectEvidenceGuard = (params: {
