@@ -1001,6 +1001,15 @@ describe("setupCrossSession", () => {
     );
 
     expect(deps.assembleToolsForAgent).not.toHaveBeenCalled();
+    const announcementMessage = execute.mock.calls[0]![0];
+    expect(announcementMessage).toMatchObject({
+      channelType: "cross-session",
+      senderId: "cross-session-relay",
+      metadata: {
+        crossSession: true,
+        runtimeActionEvidence: { kind: "background_completion" },
+      },
+    });
     expect(execute).toHaveBeenCalledWith(
       expect.any(Object),
       expect.any(Object),

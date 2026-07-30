@@ -205,7 +205,6 @@ export function setupCrossSession(deps: {
   closeTrajectory?: (formattedSessionKey: string) => Promise<void>;
 }): CrossSessionResult {
   const { sessionStore, container, assembleToolsForAgent, getExecutor, adaptersByType } = deps;
-
   // Build the three callback closures from injected deps.
   const executeInSession = async (
     agentId: string,
@@ -214,6 +213,7 @@ export function setupCrossSession(deps: {
     text: string,
     fixedTools?: Awaited<ReturnType<typeof assembleToolsForAgent>>,
     resolvedLanguage?: string,
+    runtimeActionEvidence?: NormalizedMessage["metadata"]["runtimeActionEvidence"],
   ): Promise<{ response: string; tokensUsed: { total: number }; cost: { total: number } }> => {
     const targetSessionKey = { ...sessionKey, agentId };
     const formattedTargetSessionKey = formatSessionKey(targetSessionKey);
@@ -257,7 +257,7 @@ export function setupCrossSession(deps: {
         text,
         timestamp: systemNowMs(),
         attachments: [],
-        metadata: { crossSession: true },
+        metadata: { crossSession: true, ...(runtimeActionEvidence ? { runtimeActionEvidence } : {}) },
       };
       const tools = fixedTools ?? await assembleToolsForAgent(agentId);
       const result = await getExecutor(agentId).execute(msg, targetSessionKey, tools, undefined, agentId);
@@ -369,7 +369,7 @@ export function setupCrossSession(deps: {
         callerConversation,
         text,
         [],
-        options?.resolvedLanguage,
+        options?.resolvedLanguage, { kind: "background_completion" },
       );
       const trimmed = result.response.trim();
       const isNoReply = !trimmed || trimmed === "NO_REPLY" || trimmed.startsWith("NO_REPLY");

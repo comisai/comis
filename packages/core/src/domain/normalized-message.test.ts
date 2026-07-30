@@ -96,6 +96,27 @@ describe("NormalizedMessage", () => {
       expect(result.ok).toBe(false);
     });
 
+    it("accepts only typed runtime action evidence metadata", () => {
+      const valid = parseMessage(validMessage({
+        metadata: {
+          runtimeActionEvidence: { kind: "background_completion" },
+        },
+      }));
+      const invalid = parseMessage(validMessage({
+        metadata: {
+          runtimeActionEvidence: { kind: "ordinary_cross_session" },
+        },
+      }));
+
+      expect(valid.ok).toBe(true);
+      expect(invalid.ok).toBe(false);
+      if (valid.ok) {
+        expect(valid.value.metadata.runtimeActionEvidence).toEqual({
+          kind: "background_completion",
+        });
+      }
+    });
+
     it("accepts all valid channel types", () => {
       const channelTypes = [
         "telegram",

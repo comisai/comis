@@ -1028,6 +1028,7 @@ type PersistentActionEvidenceGuard = (params: {
     success: boolean;
     backgrounded?: boolean;
   }>;
+  currentActionEvidence?: boolean;
   honestResponse: string;
 }) => {
   response: string;
@@ -1088,6 +1089,19 @@ describe("persistent action evidence guard", () => {
     }).corrected).toBe(true);
   });
 
+  it("accepts a runtime completion receipt as current action evidence", () => {
+    expect(persistentActionEvidenceGuard()({
+      request,
+      response: falseClaim,
+      toolExecResults: [],
+      currentActionEvidence: true,
+      honestResponse,
+    })).toEqual({
+      response: falseClaim,
+      corrected: false,
+    });
+  });
+
   it("preserves an honest limitation and an ordinary non-persistent answer", () => {
     expect(persistentActionEvidenceGuard()({
       request,
@@ -1142,6 +1156,47 @@ describe("persistent action evidence guard", () => {
       corrected: true,
       reason: "missing_current_turn_action_evidence",
     });
+  });
+});
+
+type RuntimeActionEvidenceDetector = (message: {
+  channelType: string;
+  senderId: string;
+  metadata: {
+    runtimeActionEvidence?: { kind: "background_completion" };
+  };
+}) => boolean;
+
+function runtimeActionEvidenceDetector(): RuntimeActionEvidenceDetector {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .hasTrustedRuntimeActionEvidence;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as RuntimeActionEvidenceDetector;
+}
+
+describe("trusted runtime action evidence", () => {
+  const receipt = {
+    runtimeActionEvidence: { kind: "background_completion" as const },
+  };
+
+  it("requires the internal completion relay identity and typed receipt", () => {
+    const detect = runtimeActionEvidenceDetector();
+
+    expect(detect({
+      channelType: "cross-session",
+      senderId: "cross-session-relay",
+      metadata: receipt,
+    })).toBe(true);
+    expect(detect({
+      channelType: "telegram",
+      senderId: "user_a",
+      metadata: receipt,
+    })).toBe(false);
+    expect(detect({
+      channelType: "cross-session",
+      senderId: "cross-session-relay",
+      metadata: {},
+    })).toBe(false);
   });
 });
 
