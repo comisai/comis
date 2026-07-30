@@ -2,14 +2,6 @@
 // @allow-throw: builtin tool boundary; throws caught by AgentTool wrapper.
 /**
  * Exec tool shared helpers.
- *
- * Extracted from `exec-tool.ts` (1,626L monolith). Block-move of the 10
- * module-level helpers (resolveCwd, killTree, buildSpawnCommand,
- * resolveDataEnv, commandUsesRawInterpreter, resolveSecretRefs, ecosystemFor,
- * buildInstallDetourHint, buildSoftStopErrorTemplate, buildInstallDetourEventPayload)
- * plus two factory-body extractions (evaluateInstallDetourGate, buildExecEnv)
- * required to keep `index.ts` thin.
- *
  * @module
  */
 
@@ -23,6 +15,12 @@ import { throwToolError } from "../../../platform-tools/tool-helpers.js";
 import { resolveApprovalRequestContext } from "../../../platform-tools/approval-request-context.js";
 import { parseInstallDetour, type InstallDetourDecision, type DetourOverlap } from "../install-detour.js";
 import { SECRET_REF_NAME_PATTERN, type ToolLogger } from "./exec-types.js";
+import { instrumentRemovalCommand } from "./exec-destructive.js";
+
+export {
+  gradeDestructiveExecEffect,
+  isDestructiveExecCommand,
+} from "./exec-destructive.js";
 
 // ---------------------------------------------------------------------------
 // cwd resolution
@@ -91,9 +89,10 @@ export function buildSpawnCommand(
   pty?: boolean,
 ): { bin: string; args: string[]; cwd: string | undefined } {
   let result: { bin: string; args: string[]; cwd: string | undefined };
+  const executionCommand = instrumentRemovalCommand(command);
 
   if (!sandboxConfig) {
-    result = { bin: "/bin/bash", args: ["-c", command], cwd };
+    result = { bin: "/bin/bash", args: ["-c", executionCommand], cwd };
   } else {
     const allReadOnlyPaths = [
       ...sandboxConfig.readOnlyPaths,
@@ -117,7 +116,7 @@ export function buildSpawnCommand(
     const providerHandlesCwd = sandboxConfig.sandbox.name === "bwrap";
     result = {
       bin: sandboxArgs[0],
-      args: [...sandboxArgs.slice(1), "/bin/bash", "-c", command],
+      args: [...sandboxArgs.slice(1), "/bin/bash", "-c", executionCommand],
       cwd: providerHandlesCwd ? undefined : cwd,
     };
   }

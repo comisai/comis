@@ -45,6 +45,12 @@ export const GENERIC_TOOL_FAILURE_HINT =
  */
 export function toolFailureHint(errorText?: string): string {
   if (errorText) {
+    if (errorText.toLowerCase().includes("deletion command had no observable effect")) {
+      return (
+        "The deletion target had no observable effect; confirm the target exists inside "
+        + "the workspace write fence and inspect the exact command's approval before retrying"
+      );
+    }
     const runtimeGuard = classifyRuntimeToolGuard(errorText);
     if (runtimeGuard === "step_limit") {
       return "Execution step budget was exhausted; increase max_steps for the run or simplify the task before retrying";

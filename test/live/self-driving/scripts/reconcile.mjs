@@ -6,18 +6,21 @@
 // carries PROVENANCE ONLY (toolName / toolCallId / success / durationMs), never the result payload.
 // The VALUE the agent saw lives in the RAW session `.jsonl` (wrapExternalContent-wrapped tool
 // results). This helper reads BOTH: trajectory for provenance (which tool ran, served model, recall)
-// and the raw session for the numbers to reconcile the reply against. Plus the book + conservation
-// invariant (price-independent) and the last wire reply.
+// and the raw session for the numbers to reconcile the reply against. It also reads the emulator's
+// recorded outbound surface so a post-execution correction is not confused with the model draft.
 //
-// Usage (on the VPS):  node /root/reconcile.mjs <chatId> [dataDir=/home/comis/.comis]
+// Usage: node reconcile.mjs <chatId> [dataDir=/home/comis/.comis] [threadId]
 //   Prints a compact digest; digits are ASCII-safe to grep, Hebrew is \u-escaped (do not grep prose).
 //   Exit 0 always (a read-only oracle) — the CALLER decides pass/fail by reconciling the printed sets.
 import { readFileSync, existsSync } from "node:fs";
 import { rig } from "./_rig.mjs";
+import { reconcileAssistantSurfaces } from "./drive-session-oracle.mjs";
 import { resolveChatSessionArtifacts } from "./session-artifact-ref.mjs";
 
 const chatId = process.argv[2] || rig.chatId;
 const DATA = process.argv[3] || rig.dataDir;
+const threadArg = process.argv[4];
+const threadId = threadArg === undefined ? undefined : Number(threadArg);
 const decimals = (s) => [...new Set((s.match(/-?\d[\d,]*\.\d{1,6}/g) || []).map((x) => x.replace(/,/g, "")))];
 
 // Resolve through structured provenance. Privacy-principal session directories
@@ -46,7 +49,7 @@ for (const r of tlines) {
   if (r.type === "memory.recalled") recalled += (d.finalCount ?? d.count ?? d.results?.length ?? 0);
 }
 
-// --- raw session: the VALUES the model saw (tool results) + last assistant text ---
+// --- raw session: the VALUES the model saw (tool results) + last assistant draft ---
 let sessNums = [], lastAssistant = "";
 if (sessFile && existsSync(sessFile)) {
   const raw = readFileSync(sessFile, "utf8");
@@ -54,6 +57,26 @@ if (sessFile && existsSync(sessFile)) {
   const slines = raw.split("\n").filter(Boolean);
   for (const l of slines) { try { const o = JSON.parse(l); const role = o.role || o.message?.role; if (role === "assistant") { const c = o.content || o.message?.content; const txt = typeof c === "string" ? c : Array.isArray(c) ? c.map((p) => p.text || "").join(" ") : ""; if (txt.trim()) lastAssistant = txt; } } catch { /* skip a malformed session line */ } }
 }
+
+// --- emulator: the actual user-visible Telegram reply ---
+let outbound = [];
+let wireAvailable = false;
+try {
+  const wiring = JSON.parse(readFileSync(rig.emuWiringPath, "utf8"));
+  if (typeof wiring.apiRoot === "string" && wiring.apiRoot.length > 0) {
+    const response = await fetch(
+      `${wiring.apiRoot}/control/chats/${encodeURIComponent(chatId)}/outbound?afterMessageId=0&waitMs=0`,
+    );
+    const body = await response.json();
+    if (response.ok && Array.isArray(body)) {
+      outbound = body;
+      wireAvailable = true;
+    }
+  }
+} catch {
+  // The digest remains useful offline, but must say the wire surface was unavailable.
+}
+const assistantSurfaces = reconcileAssistantSurfaces(lastAssistant, outbound, threadId);
 
 // --- book + conservation invariant ---
 let book = null, inv = null;
@@ -77,4 +100,9 @@ console.log(`served=${[...served].join(",") || "?"}  recall.rows=${recalled}`);
 console.log(`tools[last-turn]=${tools.map((t) => `${t.name}${t.ok === false ? "✗" : ""}${t.ms != null ? "(" + t.ms + "ms)" : ""}`).join(" ") || "none"}`);
 console.log(`session.tool_numbers(${sessNums.length})= ${sessNums.slice(0, 40).join(" ")}`);
 if (book) console.log(`book: cash=${book.cash} start=${book.starting_cash} positions=${Object.keys(book.positions || {}).length} trade_log=${(book.trade_log || []).length} realized=${book.realized_pnl ?? 0}  INVARIANT=${inv}${inv === 0 ? " ✓" : " ✗BROKEN"}`);
-console.log(`last_assistant_wire(${lastAssistant.length}c)= ${lastAssistant.replace(/\s+/g, " ").slice(0, 400)}`);
+console.log(`last_assistant_session_draft(${assistantSurfaces.sessionDraft.length}c)= ${assistantSurfaces.sessionDraft.replace(/\s+/g, " ").slice(0, 400)}`);
+if (wireAvailable && assistantSurfaces.wireReply !== null) {
+  console.log(`last_assistant_wire(${assistantSurfaces.wireReply.length}c)= ${assistantSurfaces.wireReply.replace(/\s+/g, " ").slice(0, 400)}`);
+} else {
+  console.log("last_assistant_wire(UNAVAILABLE)= emulator outbound did not provide a substantive reply");
+}

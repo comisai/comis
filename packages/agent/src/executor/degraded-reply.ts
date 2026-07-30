@@ -29,6 +29,8 @@ import {
   selectPromptTimeoutReply,
   selectBackgroundTaskFailedNotice,
   selectDelegationEvidenceMissingReply,
+  selectDestructiveActionNotVerifiedReply,
+  selectVisionUnavailableReply,
   type LocaleCatalog,
 } from "./degraded-reply-i18n.js";
 
@@ -182,4 +184,240 @@ export function buildDelegationEvidenceMissingReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectDelegationEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when a destructive command had no observable effect. */
+export function buildDestructiveActionNotVerifiedReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectDestructiveActionNotVerifiedReply(language, localeCatalog);
+}
+
+interface VisionFailureRecord {
+  readonly toolName: string;
+  readonly success: boolean;
+  readonly errorText?: string;
+}
+
+/**
+ * Identify the actionable image-analysis terminal emitted when neither the
+ * active model nor the configured vision registry can serve the request.
+ *
+ * All four signatures are required so an attachment-resolution error or an
+ * ordinary provider failure cannot trigger the deterministic replacement.
+ */
+export function hasUnavailableVisionFailure(
+  records?: ReadonlyArray<VisionFailureRecord>,
+): boolean {
+  return records?.some((record) => {
+    const errorText = record.errorText;
+    return record.toolName === "image_analyze"
+      && !record.success
+      && errorText !== undefined
+      && errorText.includes("No vision provider available for image analysis.")
+      && errorText.includes("integrations.media.vision.providers")
+      && errorText.includes("integrations.media.vision.defaultProvider")
+      && errorText.includes("Re-uploading will not help until that configuration changes.");
+  }) ?? false;
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+interface RecordedToolCall {
+  readonly index: number;
+  readonly name: string;
+  readonly arguments: unknown;
+}
+
+interface UnavailableVisionAttempt {
+  readonly resultIndex: number;
+  readonly source: string;
+}
+
+function asRecord(value: unknown): UnknownRecord | undefined {
+  return typeof value === "object" && value !== null
+    ? value as UnknownRecord
+    : undefined;
+}
+
+function resultText(message: UnknownRecord): string {
+  const content = Array.isArray(message.content) ? message.content : [];
+  return content
+    .map((block) => {
+      const record = asRecord(block);
+      return record?.type === "text" && typeof record.text === "string"
+        ? record.text
+        : "";
+    })
+    .filter((text) => text.length > 0)
+    .join("\n");
+}
+
+function resultEvidence(message: UnknownRecord): string {
+  const details = asRecord(message.details);
+  if (typeof details?.stdout === "string" && details.stdout.trim().length > 0) {
+    return details.stdout;
+  }
+  return resultText(message);
+}
+
+function sourceFromVisionArguments(value: unknown): string | undefined {
+  const args = asRecord(value);
+  if (args === undefined) return undefined;
+  const source = args.source;
+  if (typeof source === "string" && source.trim().length > 0) {
+    return source;
+  }
+  const attachmentUrl = args.attachment_url;
+  if (typeof attachmentUrl === "string" && attachmentUrl.trim().length > 0) {
+    return attachmentUrl;
+  }
+  return undefined;
+}
+
+function containsSource(value: unknown, source: string, depth = 0): boolean {
+  if (depth > 6) return false;
+  if (typeof value === "string") return value.includes(source);
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsSource(entry, source, depth + 1));
+  }
+  const record = asRecord(value);
+  return record !== undefined
+    && Object.values(record).some((entry) => containsSource(entry, source, depth + 1));
+}
+
+function evidenceTokens(text: string): Set<string> {
+  const matches = text
+    .slice(0, 20_000)
+    .normalize("NFKC")
+    .toLowerCase()
+    .match(/[\p{L}\p{N}]+/gu) ?? [];
+  return new Set(matches.filter((token) => token.length >= 2));
+}
+
+function evidenceGroundsResponse(evidence: string, response: string): boolean {
+  const evidenceSet = evidenceTokens(evidence);
+  const responseSet = evidenceTokens(response);
+  if (evidenceSet.size < 4 || responseSet.size < 4) return false;
+  let overlap = 0;
+  for (const token of evidenceSet) {
+    if (responseSet.has(token)) overlap += 1;
+  }
+  return overlap >= 4
+    && overlap / Math.min(evidenceSet.size, responseSet.size) >= 0.5;
+}
+
+function collectToolCalls(messages: ReadonlyArray<unknown>): Map<string, RecordedToolCall> {
+  const calls = new Map<string, RecordedToolCall>();
+  for (const [index, entry] of messages.entries()) {
+    const message = asRecord(entry);
+    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+    for (const item of message.content) {
+      const block = asRecord(item);
+      if (
+        block?.type !== "toolCall"
+        || typeof block.id !== "string"
+        || typeof block.name !== "string"
+      ) {
+        continue;
+      }
+      calls.set(block.id, {
+        index,
+        name: block.name,
+        arguments: block.arguments,
+      });
+    }
+  }
+  return calls;
+}
+
+function latestUnavailableVisionAttempt(
+  messages: ReadonlyArray<unknown>,
+  calls: ReadonlyMap<string, RecordedToolCall>,
+): UnavailableVisionAttempt | undefined {
+  let latest: UnavailableVisionAttempt | undefined;
+  for (const [index, entry] of messages.entries()) {
+    const message = asRecord(entry);
+    if (
+      message?.role !== "toolResult"
+      || message.toolName !== "image_analyze"
+      || message.isError !== true
+      || typeof message.toolCallId !== "string"
+    ) {
+      continue;
+    }
+    const call = calls.get(message.toolCallId);
+    const source = call?.name === "image_analyze"
+      ? sourceFromVisionArguments(call.arguments)
+      : undefined;
+    if (
+      source !== undefined
+      && hasUnavailableVisionFailure([{
+        toolName: "image_analyze",
+        success: false,
+        errorText: resultText(message),
+      }])
+    ) {
+      latest = { resultIndex: index, source };
+    }
+  }
+  return latest;
+}
+
+/**
+ * Return the later tool that grounded a response after configured image
+ * analysis was unavailable. The proof is deliberately conservative: the tool
+ * must run after the failure, consume the exact same source, succeed, and
+ * produce evidence with substantial token overlap against the final response.
+ */
+export function groundedVisionFallbackTool(
+  response: string,
+  messages: ReadonlyArray<unknown>,
+): string | undefined {
+  const calls = collectToolCalls(messages);
+  const attempt = latestUnavailableVisionAttempt(messages, calls);
+  if (attempt === undefined || response.trim().length === 0) return undefined;
+
+  for (const [index, entry] of messages.entries()) {
+    if (index <= attempt.resultIndex) continue;
+    const message = asRecord(entry);
+    if (
+      message?.role !== "toolResult"
+      || message.isError !== false
+      || typeof message.toolCallId !== "string"
+      || typeof message.toolName !== "string"
+    ) {
+      continue;
+    }
+    const call = calls.get(message.toolCallId);
+    if (
+      call === undefined
+      || call.index <= attempt.resultIndex
+      || call.name !== message.toolName
+      || !containsSource(call.arguments, attempt.source)
+    ) {
+      continue;
+    }
+    const details = asRecord(message.details);
+    if (typeof details?.exitCode === "number" && details.exitCode !== 0) continue;
+    if (evidenceGroundsResponse(resultEvidence(message), response)) {
+      return call.name;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Replace model-authored recovery advice with the runtime-owned capability
+ * truth. Configuration identifiers remain verbatim across locales.
+ */
+export function buildVisionUnavailableReply(
+  agentId: string,
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return `${selectVisionUnavailableReply(language, localeCatalog)} `
+    + `agents.${agentId}.model, integrations.media.vision.providers, `
+    + "integrations.media.vision.defaultProvider.";
 }

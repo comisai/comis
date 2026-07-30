@@ -25,6 +25,7 @@ import type { ExecutionPlan } from "../planner/types.js";
 import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { stripReasoningTagsFromText } from "../response-filter/reasoning-tags.js";
 import { isVisibleTextBlock } from "./phase-filter.js";
+import { isCompletionClaim } from "./critic-isolation.js";
 
 // ---------------------------------------------------------------------------
 // Current-turn delegation evidence
@@ -160,6 +161,40 @@ export function enforceCurrentTurnDelegationEvidence(params: {
     response: params.honestResponse,
     corrected: true,
     reason: "missing_current_turn_spawn",
+  };
+}
+
+export interface DestructiveEffectEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "destructive_action_no_effect";
+}
+
+/** Prevent an exit-zero deletion no-op from being described as completed. */
+export function enforceDestructiveEffectEvidence(params: {
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    errorText?: string;
+  }>;
+  honestResponse: string;
+}): DestructiveEffectEvidenceGuardResult {
+  const noEffect = (params.toolExecResults ?? []).some(
+    (result) =>
+      result.toolName === "exec"
+      && !result.success
+      && result.errorText
+        ?.toLowerCase()
+        .includes("deletion command had no observable effect") === true,
+  );
+  if (!noEffect || !isCompletionClaim(params.response)) {
+    return { response: params.response, corrected: false };
+  }
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "destructive_action_no_effect",
   };
 }
 

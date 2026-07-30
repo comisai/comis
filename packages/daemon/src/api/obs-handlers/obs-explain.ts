@@ -50,6 +50,10 @@ import { boundIncidentReport } from "./obs-explain-bound.js";
 
 const DELEGATION_EVIDENCE_GUARD_ACTION =
   "response.delegation_evidence_guard";
+const DESTRUCTIVE_ACTION_EVIDENCE_GUARD_ACTION =
+  "response.destructive_action_evidence_guard";
+const VISION_FALLBACK_GROUNDED_ACTION =
+  "response.vision_fallback_grounded";
 
 /** Default data directory (lazy). Mirrors obs-trace.ts / obs-explain-readers.ts. */
 function defaultDataDir(): string {
@@ -524,6 +528,15 @@ export async function assembleIncidentReportFromSources(
       degraded: report.outcome.degraded,
     });
   }
+  const visionFallbackVerdict = visionFallbackGroundedVerdict(
+    auditRows,
+    report.traceId,
+  );
+  if (visionFallbackVerdict !== null) {
+    // A proven same-source fallback explains the user-visible outcome more
+    // accurately than chronic breaker noise from the failed primary tool.
+    report.likelyRootCause = visionFallbackVerdict;
+  }
   const delegationEvidenceVerdict = delegationEvidenceGuardVerdict(
     auditRows,
     report.traceId,
@@ -534,6 +547,13 @@ export async function assembleIncidentReportFromSources(
     // above chronic tool noise so one explain call names the honesty failure
     // that changed the user-visible outcome.
     report.likelyRootCause = delegationEvidenceVerdict;
+  }
+  const destructiveActionEvidenceVerdict = destructiveActionEvidenceGuardVerdict(
+    auditRows,
+    report.traceId,
+  );
+  if (destructiveActionEvidenceVerdict !== null) {
+    report.likelyRootCause = destructiveActionEvidenceVerdict;
   }
   const bounded = boundIncidentReport(report, params.depth ?? "summary");
 
@@ -548,6 +568,34 @@ export async function assembleIncidentReportFromSources(
   // Step 5: dev-mode response validation (catches field type regressions).
   if (IS_DEV) ObsExplainContract.response.parse(bounded);
   return bounded;
+}
+
+function visionFallbackGroundedVerdict(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  traceId: string,
+): IncidentReport["likelyRootCause"] {
+  if (
+    traceId.length === 0
+    || !rows.some(
+      (row) =>
+        row.traceId === traceId
+        && row.action === VISION_FALLBACK_GROUNDED_ACTION
+        && row.outcome === "success",
+    )
+  ) {
+    return null;
+  }
+
+  return {
+    code: "vision_fallback_grounded",
+    detail:
+      "configured image analysis was unavailable, but a later tool used the same image "
+      + "and produced evidence that grounded the delivered response",
+    suggestedNextSteps: [
+      "no user retry is required; the fallback recovered this turn",
+      "configure a vision-capable model or vision provider to avoid the fallback path",
+    ],
+  };
 }
 
 function delegationEvidenceGuardVerdict(
@@ -579,6 +627,34 @@ function delegationEvidenceGuardVerdict(
       "inspect sessions_spawn admission and the tool inventory for this turn",
       "if a spawn was refused, inspect the bound-naming tool failure in this report",
       "retry the request after correcting the spawn precondition",
+    ],
+  };
+}
+
+function destructiveActionEvidenceGuardVerdict(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  traceId: string,
+): IncidentReport["likelyRootCause"] {
+  if (
+    traceId.length === 0
+    || !rows.some(
+      (row) =>
+        row.traceId === traceId
+        && row.action === DESTRUCTIVE_ACTION_EVIDENCE_GUARD_ACTION
+        && row.outcome === "denied",
+    )
+  ) {
+    return null;
+  }
+  return {
+    code: "destructive_action_no_effect",
+    detail:
+      "the response honesty guard replaced a completion claim because the destructive "
+      + "exec command reported no observable filesystem effect",
+    suggestedNextSteps: [
+      "inspect the failed exec record and its bound approval request",
+      "confirm the intended target exists inside the configured workspace or write fence",
+      "retry only after correcting the target; do not treat an exit-zero no-op as success",
     ],
   };
 }

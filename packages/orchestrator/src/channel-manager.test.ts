@@ -1466,22 +1466,24 @@ describe("createChannelManager", () => {
 
   describe("command queue enqueue failure logging", () => {
     function makeCommandQueue(enqueueResult: ReturnType<typeof ok> | ReturnType<typeof err>): CommandQueue {
+      const enqueue = vi.fn(async (_sk, _msg, _ct, handler) => {
+        // Still execute the handler so streaming delivery works
+        if (enqueueResult.ok) {
+          await handler([makeMessage()], {
+            signal: new AbortController().signal,
+            receivedAt: 1,
+            sourceTerminalScope: {
+              publish: () => 0,
+              isPublished: false,
+            },
+            inboundProvenancePlans: [],
+          });
+        }
+        return enqueueResult;
+      });
       return {
-        enqueue: vi.fn(async (_sk, _msg, _ct, handler) => {
-          // Still execute the handler so streaming delivery works
-          if (enqueueResult.ok) {
-            await handler([makeMessage()], {
-              signal: new AbortController().signal,
-              receivedAt: 1,
-              sourceTerminalScope: {
-                publish: () => 0,
-                isPublished: false,
-              },
-              inboundProvenancePlans: [],
-            });
-          }
-          return enqueueResult;
-        }),
+        enqueue,
+        submit: enqueue,
         getQueueDepth: vi.fn(() => 0),
         isProcessing: vi.fn(() => false),
         drain: vi.fn(async () => {}),

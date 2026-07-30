@@ -576,13 +576,13 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
   }
 
   function onApprovalRequested(p: EventMap["approval:requested"]): void {
-    if (p.traceId === undefined) return; // trace-less restored approvals: not live activity
+    if (p.traceId === undefined || p.sessionKey === undefined) return;
     const activityId = activityIdFor(`approval:${p.requestId}`);
     dispatch(
       {
         schemaVersion: 1,
         activityId,
-        sessionKey: p.conversationRef,
+        sessionKey: p.sessionKey,
         agentId: p.agentId,
         traceId: p.traceId,
         ts: ts(),

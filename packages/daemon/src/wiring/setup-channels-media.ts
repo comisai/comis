@@ -348,6 +348,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
 
       // Wrap resolveAttachment to intercept buffers for workspace persistence
       const persistedFiles: PersistedFile[] = [];
+      const persistedFilePaths = new Map<string, string>();
       const persistenceResolutions = new Map<string, Promise<Buffer | null>>();
       const effectiveResolve = persistenceEnabled
         ? (att: Attachment): Promise<Buffer | null> => {
@@ -374,6 +375,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
                   });
                   if (persistResult.ok) {
                     persistedFiles.push(persistResult.value);
+                    persistedFilePaths.set(att.url, persistResult.value.relativePath);
                     channelsLogger.info(
                       { relativePath: persistResult.value.relativePath, sizeBytes: persistResult.value.sizeBytes, mediaKind },
                       "Media file persisted to workspace",
@@ -398,6 +400,13 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
           return pending;
         }
         : resolveAttachment;
+
+      if (persistenceEnabled) {
+        for (const attachment of enrichedMsg.attachments) {
+          if (attachment.sizeBytes !== undefined && attachment.sizeBytes > maxMediaBytes) continue;
+          await effectiveResolve(attachment);
+        }
+      }
 
       // Per-channel processor gating: disable processors when channel config says false
       const audioEnabled = channelMediaConfig?.transcribeAudio !== false;
@@ -434,13 +443,10 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
           onSuspiciousContent,
         },
         enrichedMsg,
+        {
+          durableFilePath: (attachment) => persistedFilePaths.get(attachment.url),
+        },
       );
-      if (persistenceEnabled) {
-        for (const attachment of enrichedMsg.attachments) {
-          if (attachment.sizeBytes !== undefined && attachment.sizeBytes > maxMediaBytes) continue;
-          await effectiveResolve(attachment);
-        }
-      }
       const sttReceipts = SttPreprocessReceiptsSchema.safeParse(
         result.sttReceipts,
       );

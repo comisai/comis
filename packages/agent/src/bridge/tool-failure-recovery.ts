@@ -22,11 +22,18 @@ export type MessageRecoveryAction =
   | "fetch"
   | "attach";
 
-export interface ToolRecoveryIdentity {
+export interface MessageRecoveryIdentity {
   readonly kind: "message_route";
   readonly action: MessageRecoveryAction;
   readonly routeTargetDigest: string;
 }
+
+export interface ExecRecoveryIdentity {
+  readonly kind: "exec_command";
+  readonly commandDigest: string;
+}
+
+export type ToolRecoveryIdentity = MessageRecoveryIdentity | ExecRecoveryIdentity;
 
 export interface ToolExecutionResultRecord {
   readonly toolName: string;
@@ -96,10 +103,23 @@ export function buildToolRecoveryIdentity(
   args: unknown,
   identitySalt: string,
 ): ToolRecoveryIdentity | undefined {
-  if (toolName !== "message" || typeof args !== "object" || args === null || Array.isArray(args)) {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) {
     return undefined;
   }
   const values = args as Record<string, unknown>;
+  if (toolName === "exec") {
+    const command = boundedIdentityField(values.command);
+    if (command === undefined) return undefined;
+    return {
+      kind: "exec_command",
+      commandDigest: createHmac("sha256", identitySalt)
+        .update(command, "utf8")
+        .digest("hex"),
+    };
+  }
+  if (toolName !== "message") {
+    return undefined;
+  }
   const action = messageAction(values.action);
   const channelType = boundedIdentityField(values.channel_type);
   const channelId = boundedIdentityField(values.channel_id);
@@ -119,12 +139,20 @@ function identitiesMatch(
   success: ToolExecutionResultRecord,
 ): boolean {
   if (failure.toolName !== success.toolName) return false;
-  if (failure.toolName !== "message") return true;
+  if (failure.toolName !== "message" && failure.toolName !== "exec") return true;
   const failedIdentity = failure.recoveryIdentity;
   const successfulIdentity = success.recoveryIdentity;
-  return failedIdentity !== undefined
-    && successfulIdentity !== undefined
-    && failedIdentity.kind === successfulIdentity.kind
+  if (failedIdentity === undefined || successfulIdentity === undefined) {
+    return false;
+  }
+  if (
+    failedIdentity.kind === "exec_command"
+    && successfulIdentity.kind === "exec_command"
+  ) {
+    return failedIdentity.commandDigest === successfulIdentity.commandDigest;
+  }
+  return failedIdentity.kind === "message_route"
+    && successfulIdentity.kind === "message_route"
     && failedIdentity.action === successfulIdentity.action
     && failedIdentity.routeTargetDigest === successfulIdentity.routeTargetDigest;
 }

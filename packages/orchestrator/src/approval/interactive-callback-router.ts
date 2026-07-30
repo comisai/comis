@@ -297,7 +297,7 @@ export function approvalRequestIsOwnedByInbound(
     && request.conversationRef === inbound.conversationRef
     && request.resolvingPrincipalId === inbound.resolvingPrincipalId
     && owner.tenantId === inbound.tenantId
-    && owner.userId === inbound.inboundUserId
+    && owner.userId === inbound.resolvingPrincipalId
     && owner.channelType === inbound.channelType
     && owner.channelKey === inbound.channelKey
     && owner.threadId === inbound.threadId;
@@ -312,7 +312,7 @@ function graphReportIsOwnedByInbound(
     && report.resolvingPrincipalId === inbound.resolvingPrincipalId
     && report.agentId === inbound.agentId
     && report.tenantId === inbound.tenantId
-    && report.userId === inbound.inboundUserId
+    && report.userId === inbound.resolvingPrincipalId
     && report.channelType === inbound.channelType
     && report.channelKey === inbound.channelKey
     && report.endpoint.threadId === inbound.threadId;

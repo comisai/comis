@@ -143,6 +143,92 @@ describe("tool failure recovery classification", () => {
     });
   });
 
+  it("does not let a different exec command hide a prior exec failure", () => {
+    const blocked = buildToolRecoveryIdentity(
+      "exec",
+      { command: 'find "$HOME/Downloads" -exec rm -rf -- {} +' },
+      IDENTITY_SALT,
+    );
+    const noEffect = buildToolRecoveryIdentity(
+      "exec",
+      { command: 'rm -rf -- "$HOME/Downloads"/*' },
+      IDENTITY_SALT,
+    );
+
+    expect(classifyToolFailureRecovery(
+      ["exec"],
+      [
+        {
+          toolName: "exec",
+          success: false,
+          durationMs: 1,
+          invocationSequence: 0,
+          recoveryIdentity: blocked,
+        },
+        {
+          toolName: "exec",
+          success: true,
+          durationMs: 1,
+          invocationSequence: 1,
+          recoveryIdentity: noEffect,
+        },
+      ],
+    )).toMatchObject({
+      recoveredFailureCount: 0,
+      unrecoveredFailureCount: 1,
+      recoveredToolNames: [],
+      unrecoveredToolNames: ["exec"],
+    });
+  });
+
+  it("recovers an exec failure only when the exact command later succeeds", () => {
+    const identity = buildToolRecoveryIdentity(
+      "exec",
+      { command: "pnpm test" },
+      IDENTITY_SALT,
+    );
+
+    expect(classifyToolFailureRecovery(
+      ["exec"],
+      [
+        {
+          toolName: "exec",
+          success: false,
+          durationMs: 1,
+          invocationSequence: 0,
+          recoveryIdentity: identity,
+        },
+        {
+          toolName: "exec",
+          success: true,
+          durationMs: 1,
+          invocationSequence: 1,
+          recoveryIdentity: identity,
+        },
+      ],
+    )).toMatchObject({
+      recoveredFailureCount: 1,
+      unrecoveredFailureCount: 0,
+      recoveredToolNames: ["exec"],
+    });
+  });
+
+  it("keeps exec identities content-free while binding the exact command", () => {
+    const identity = buildToolRecoveryIdentity(
+      "exec",
+      { command: "rm -rf private-folder" },
+      IDENTITY_SALT,
+    );
+    const serialized = JSON.stringify(identity);
+
+    expect(identity).toMatchObject({
+      kind: "exec_command",
+      commandDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(serialized).not.toContain("private-folder");
+    expect(serialized).not.toContain("rm -rf");
+  });
+
   it("keeps recovery identities bounded and free of raw route values", () => {
     const identity = buildToolRecoveryIdentity("message", {
       action: "attach",

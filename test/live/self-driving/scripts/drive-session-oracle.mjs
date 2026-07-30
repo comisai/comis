@@ -53,6 +53,14 @@ export function findTelegramConversationWireAnswer(outbound, threadId) {
   return null;
 }
 
+/** Keep the model draft recorded in the session distinct from the delivered reply. */
+export function reconcileAssistantSurfaces(sessionDraft, outbound, threadId) {
+  return {
+    sessionDraft,
+    wireReply: findTelegramConversationWireAnswer(outbound, threadId),
+  };
+}
+
 function encodeSessionPathComponent(value) {
   let encoded = "";
   for (const character of value) {

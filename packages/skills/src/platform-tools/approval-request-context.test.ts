@@ -65,6 +65,8 @@ describe("resolveApprovalRequestContext", () => {
       value: {
         tenantId: "default",
         agentId: "resolved-agent",
+        sessionKey: "default:agent:resolved-agent:human-user:chat-1:thread:thread-1",
+        traceId: "40000000-0000-4000-8000-000000000004",
         conversationRef: conversationRef.value,
         resolvingPrincipalId: "principal-human-user",
         trustLevel: "admin",

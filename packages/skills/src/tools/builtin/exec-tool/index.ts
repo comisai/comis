@@ -17,7 +17,13 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Type } from "typebox";
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
-import { safePath, systemNowMs, tryGetContext, registerActivityLabelSpec } from "@comis/core";
+import {
+  safePath,
+  systemNowMs,
+  tryGetContext,
+  registerActivityLabelSpec,
+  requiresConfirmation,
+} from "@comis/core";
 import { redactSecretsInText, parseShellCommand } from "@comis/observability";
 import {
   jsonResult,
@@ -26,6 +32,7 @@ import {
   readNumberParam,
   readBooleanParam,
 } from "../../../platform-tools/tool-helpers.js";
+import { resolveApprovalRequestContext } from "../../../platform-tools/approval-request-context.js";
 import { extractHeredoc, extractDashCArg, validateExecCommand } from "../exec-security/index.js";
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, ExecParams, type ExecToolDeps } from "./exec-types.js";
 import {
@@ -34,6 +41,7 @@ import {
   resolveSecretRefs,
   evaluateInstallDetourGate,
   buildExecEnv,
+  isDestructiveExecCommand,
 } from "./exec-shared.js";
 import { executeForeground } from "./exec-foreground.js";
 import { executeBackground } from "./exec-background.js";
@@ -71,8 +79,8 @@ export { killTree, buildSpawnCommand, buildInstallDetourHint } from "./exec-shar
  * Backward compat NOT preserved.
  *
  * @param deps - Dependencies bundle. See `ExecToolDeps` for field semantics.
- *   `toolCapabilityPort` is REQUIRED; `approvalGate` is optional but
- *   required for the soft-stop override path.
+ *   `toolCapabilityPort` is REQUIRED; `approvalGate` is optional and is used
+ *   for destructive commands and the soft-stop install override path.
  * @returns AgentTool implementing the exec interface.
  */
 export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams> {
@@ -138,6 +146,39 @@ export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams>
             timestamp: systemNowMs(),
           });
           throwToolError("permission_denied", validationError.message);
+        }
+        const destructiveCommand = isDestructiveExecCommand(command);
+        if (destructiveCommand && background) {
+          throwToolError(
+            "invalid_value",
+            "Destructive exec commands must run in the foreground so their effect can be verified.",
+          );
+        }
+        if (
+          destructiveCommand
+          && deps.approvalGate !== undefined
+          && requiresConfirmation("system.exec")
+        ) {
+          const approvalContext = resolveApprovalRequestContext();
+          if (!approvalContext.ok) {
+            throwToolError("permission_denied", approvalContext.error.message, {
+              hint: "Retry from a resolved agent request scope.",
+            });
+          }
+          const resolution = await deps.approvalGate.requestApproval({
+            toolName: "exec",
+            action: "system.exec",
+            params: { command },
+            fingerprintParams: { command },
+            ...approvalContext.value,
+          });
+          if (!resolution.approved) {
+            throwToolError(
+              "permission_denied",
+              "Action denied: destructive exec command was not approved",
+              { hint: resolution.reason ?? "Request approval before retrying." },
+            );
+          }
         }
         // Install-detour mode policy gate
         const gate = await evaluateInstallDetourGate({

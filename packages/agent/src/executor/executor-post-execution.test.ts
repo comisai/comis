@@ -867,8 +867,31 @@ describe("tool-failure endReason and notice", () => {
     // The notice call site must consult the recovery-aware helper, not raw failedTools.
     expect(stripped).toMatch(/unrecoveredFailedToolNames/);
     // The notice append must be guarded by a non-empty unrecovered set.
-    const noticeBlock = stripped.match(/unrecovered[A-Za-z]*\s*\.length\s*>\s*0[\s\S]{0,600}?buildToolFailureNotice/);
+    const noticeBlock = stripped.match(
+      /(?:unrecovered[A-Za-z]*|userVisibleFailed)\s*\.length\s*>\s*0[\s\S]{0,600}?buildToolFailureNotice/,
+    );
     expect(noticeBlock).not.toBeNull();
+  });
+
+  it("source-grep — unavailable vision replaces contradictory model recovery advice", () => {
+    const stripped = readPostExecStripped();
+    expect(stripped).toMatch(/hasUnavailableVisionFailure/);
+    expect(stripped).toMatch(/groundedVisionFallbackTool/);
+    expect(stripped).toMatch(
+      /unavailableVision[\s\S]{0,500}?visionFallbackTool\s*===\s*undefined/,
+    );
+    expect(stripped).toMatch(
+      /userVisibleFailed[\s\S]{0,500}?visionFallbackTool[\s\S]{0,500}?image_analyze/,
+    );
+    expect(stripped).toMatch(
+      /userVisibleFailed\.length\s*>\s*0[\s\S]{0,600}?buildToolFailureNotice/,
+    );
+    expect(stripped).toMatch(
+      /result\.response\s*=\s*buildVisionUnavailableReply\s*\(\s*effectiveAgentId/,
+    );
+    expect(stripped).toContain("response.vision_fallback_grounded");
+    expect(stripped.lastIndexOf("buildVisionUnavailableReply"))
+      .toBeLessThan(stripped.lastIndexOf("buildToolFailureNotice"));
   });
 });
 

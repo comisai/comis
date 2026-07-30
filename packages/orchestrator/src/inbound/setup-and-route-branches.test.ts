@@ -298,7 +298,7 @@ describe("setupAndRoute typing controller behavior", () => {
     const noopEnqueue = vi.fn(async () => ok(undefined));
     const deps = makeMinimalDeps({
       eventBus,
-      commandQueue: { enqueue: noopEnqueue } as never,
+      commandQueue: { submit: noopEnqueue } as never,
       streamingConfig: {
         defaultMode: "instant",
         perChannel: {
@@ -395,7 +395,7 @@ describe("setupAndRoute typing controller behavior", () => {
     const noopEnqueue = vi.fn(async () => ok(undefined));
     const deps = makeMinimalDeps({
       eventBus: eventBus as never,
-      commandQueue: { enqueue: noopEnqueue } as never,
+      commandQueue: { submit: noopEnqueue } as never,
       streamingConfig: {
         defaultMode: "instant",
         perChannel: {
@@ -749,7 +749,7 @@ describe("setupAndRoute steer+followup routing", () => {
       resolveActiveSession: vi.fn(() => runHandle),
     };
     const enqueue = vi.fn(async () => ok(undefined));
-    const commandQueue = { enqueue };
+    const commandQueue = { submit: enqueue };
     const deps = makeMinimalDeps({
       sessionResolver: sessionResolver as never,
       commandQueue: commandQueue as never,
@@ -800,7 +800,7 @@ describe("setupAndRoute steer+followup routing", () => {
       sessionResolver: {
         resolveActiveSession: vi.fn(() => runHandle),
       } as never,
-      commandQueue: { enqueue } as never,
+      commandQueue: { submit: enqueue } as never,
       queueConfig: {
         defaultMode: "steer+followup",
         perChannel: {},
@@ -842,7 +842,7 @@ describe("setupAndRoute steer+followup routing", () => {
     const enqueue = vi.fn(async () => ok(undefined));
     const deps = makeMinimalDeps({
       sessionResolver: sessionResolver as never,
-      commandQueue: { enqueue } as never,
+      commandQueue: { submit: enqueue } as never,
       queueConfig: {
         defaultMode: "steer+followup",
         perChannel: { telegram: { mode: "queue" } },
@@ -899,7 +899,7 @@ describe("setupAndRoute command-queue routing", () => {
       child: vi.fn().mockReturnThis(),
     };
     const deps = makeMinimalDeps({
-      commandQueue: { enqueue } as never,
+      commandQueue: { submit: enqueue } as never,
       logger: logger as never,
     });
     const adapter = makeAdapter();
@@ -968,7 +968,7 @@ describe("setupAndRoute command-queue routing", () => {
       return ok(undefined);
     });
     const deps = makeMinimalDeps({
-      commandQueue: { enqueue } as never,
+      commandQueue: { submit: enqueue } as never,
       eventBus,
     });
     const msg = makeMsg({
@@ -1065,6 +1065,73 @@ describe("setupAndRoute command-queue routing", () => {
     ]);
   });
 
+  it("returns after queue admission while the accepted execution remains active", async () => {
+    const eventBus = new TypedEventBus();
+    let markExecutionStarted!: () => void;
+    const executionStarted = new Promise<void>((resolve) => {
+      markExecutionStarted = resolve;
+    });
+    let releaseExecution!: () => void;
+    const executionRelease = new Promise<void>((resolve) => {
+      releaseExecution = resolve;
+    });
+    const executor = makeExecutor();
+    vi.mocked(executor.execute).mockImplementation(async () => {
+      markExecutionStarted();
+      await executionRelease;
+      return {
+        response: "ok",
+        sessionKey: makeSessionKey(),
+        tokensUsed: { input: 0, output: 0, total: 0 },
+        cost: { total: 0 },
+        stepsExecuted: 0,
+        llmCalls: 1,
+        finishReason: "stop" as const,
+      };
+    });
+    const commandQueue = createCommandQueue({
+      eventBus,
+      config: QueueConfigSchema.parse({
+        defaultMode: "followup",
+        maxConcurrentSessions: 1,
+      }),
+    });
+    const sessionKey = makeSessionKey();
+    const deps = makeMinimalDeps({ eventBus, commandQueue });
+    const message = makeMsg({
+      id: "00000000-0000-0000-0000-000000000413",
+    });
+    let routingReturned = false;
+    const routed = setupAndRoute(
+      deps,
+      makeAdapter(),
+      message,
+      message,
+      sessionKey,
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      executor,
+      new Set(),
+      new Map() as never,
+      undefined,
+      EMPTY_INBOUND_PROVENANCE,
+    ).then(() => {
+      routingReturned = true;
+    });
+
+    await executionStarted;
+    await Promise.resolve();
+    try {
+      expect(routingReturned).toBe(true);
+      expect(commandQueue.isProcessing(sessionKey)).toBe(true);
+    } finally {
+      releaseExecution();
+      await routed;
+      await commandQueue.shutdown();
+    }
+  });
+
   it("aborts the authoritative active SDK run when the queue cancels execution", async () => {
     let resolveExecutorStarted!: () => void;
     const executorStarted = new Promise<void>((resolve) => {
@@ -1126,7 +1193,7 @@ describe("setupAndRoute command-queue routing", () => {
       return ok(undefined);
     });
     const deps = makeMinimalDeps({
-      commandQueue: { enqueue } as never,
+      commandQueue: { submit: enqueue } as never,
       sessionResolver: sessionResolver as never,
     });
 
@@ -1245,7 +1312,7 @@ describe("setupAndRoute command-queue routing", () => {
       return ok(undefined);
     });
     const deps = makeMinimalDeps({
-      commandQueue: { enqueue } as never,
+      commandQueue: { submit: enqueue } as never,
       sessionResolver: sessionResolver as never,
       eventBus,
     });

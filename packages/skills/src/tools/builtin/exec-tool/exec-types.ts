@@ -124,8 +124,10 @@ export interface ToolLogger {
  * (`packages/daemon/src/wiring/setup-tools.ts`); the no-op returns empty
  * connected-server and skill arrays so the parser sees no overlaps.
  *
- * `approvalGate` is OPTIONAL — only required by the `soft-stop` mode
- * override path. Missing gate → `soft-stop` denies override (fail-closed).
+ * `approvalGate` is OPTIONAL — it gates destructive commands when approvals
+ * are enabled and also serves the `soft-stop` install override path. Missing
+ * gate means the approvals subsystem is disabled; install overrides still
+ * fail closed.
  */
 export interface ExecToolDeps {
   readonly workspacePath: string;
@@ -139,7 +141,7 @@ export interface ExecToolDeps {
   readonly getToolResultsDir?: () => string | undefined;
   /** REQUIRED for the capability layer. */
   readonly toolCapabilityPort: ToolCapabilityPort;
-  /** Optional. Required only for soft-stop override path. */
+  /** Optional. Gates destructive commands and soft-stop install overrides. */
   readonly approvalGate?: ApprovalGate;
   /**
    * Broker proxy env injected ONLY for the driven-CLI spawn — never for general exec.

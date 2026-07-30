@@ -572,7 +572,7 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
           return ok(value);
         },
       ),
-      appendInboundMessageLedger: mockAppendInboundMessageLedger,
+      appendInboundMessageLedger: mockAppendInboundMessageLedger.mockResolvedValue(ok(undefined)),
       persistInboundMessage: vi.fn().mockResolvedValue(ok({
         payloads: [],
         ledgerContent: "",
@@ -1385,7 +1385,7 @@ describe("PiExecutor", () => {
               })),
             ),
           ),
-          appendInboundMessageLedger: mockAppendInboundMessageLedger,
+          appendInboundMessageLedger: mockAppendInboundMessageLedger.mockResolvedValue(ok(undefined)),
           persistInboundMessage: vi.fn().mockResolvedValue(ok({ payloads: [], ledgerContent: "" })),
           destroySession: vi.fn().mockResolvedValue(undefined),
         } as PiExecutorDeps["sessionAdapter"],

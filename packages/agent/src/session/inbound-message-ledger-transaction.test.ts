@@ -98,6 +98,88 @@ function makeTempDir(): string {
 }
 
 describe("persistInboundMessage", () => {
+  it("persists a follow-up while the transcript turn remains locked", async () => {
+    const lockTails = new Map<string, Promise<void>>();
+    const fileLock = {
+      withLock: vi.fn(async (
+        lockPath: string,
+        callback: () => unknown | Promise<unknown>,
+      ) => {
+        const previous = lockTails.get(lockPath) ?? Promise.resolve();
+        let releaseCurrent = (): void => {};
+        const current = new Promise<void>((resolve) => {
+          releaseCurrent = resolve;
+        });
+        lockTails.set(lockPath, current);
+        await previous;
+        try {
+          return ok(await callback());
+        } finally {
+          releaseCurrent();
+          if (lockTails.get(lockPath) === current) lockTails.delete(lockPath);
+        }
+      }),
+      cleanupStaleLocks: vi.fn(async () => 0),
+    } as unknown as FileLockPort;
+    const sessionBaseDir = makeTempDir();
+    const manager = createComisSessionManager({
+      sessionBaseDir,
+      lockDir: makeTempDir(),
+      cwd: sessionBaseDir,
+      fileLock,
+    });
+    const sessionKey: SessionKey = {
+      tenantId: "default",
+      userId: "user_a",
+      channelId: "telegram-chat",
+      agentId: "default",
+    };
+    let releaseTranscript = (): void => {};
+    const transcriptRelease = new Promise<void>((resolve) => {
+      releaseTranscript = resolve;
+    });
+    let transcriptEntered = (): void => {};
+    const transcriptStarted = new Promise<void>((resolve) => {
+      transcriptEntered = resolve;
+    });
+    const transcriptTurn = manager.withSession(sessionKey, async () => {
+      transcriptEntered();
+      await transcriptRelease;
+    });
+    await transcriptStarted;
+
+    let persistSettled = false;
+    const persist = manager.persistInboundMessage(
+      sessionKey,
+      {
+        id: "22222222-2222-4222-8222-222222222222",
+        channelId: "telegram-chat",
+        channelType: "telegram",
+        senderId: "user_a",
+        text: "yes",
+        timestamp: 1_789_000_000_002,
+        attachments: [],
+        metadata: {},
+      },
+      1_789_000_100_002,
+    ).then((result) => {
+      persistSettled = true;
+      return result;
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(persistSettled).toBe(true);
+      }, { timeout: 100 });
+    } finally {
+      releaseTranscript();
+      await transcriptTurn;
+    }
+
+    expect(await persist).toMatchObject({ ok: true });
+    expect(new Set(fileLock.withLock.mock.calls.map(([lockPath]) => lockPath)).size).toBe(2);
+  });
+
   it("reuses provenance after restart without treating receipt as completed processing", async () => {
     const fileLock = {
       withLock: vi.fn(async (

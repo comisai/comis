@@ -123,8 +123,11 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
-import { enforceCurrentTurnDelegationEvidence } from "./executor-response-filter.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import {
+  enforceCurrentTurnDelegationEvidence,
+  enforceDestructiveEffectEvidence,
+} from "./executor-response-filter.js";
 import { BACKGROUND_POLLER_TOOL } from "../safety/background-failure-attribution.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
@@ -1434,21 +1437,118 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       },
     });
   }
+  const destructiveEffectEvidence = enforceDestructiveEffectEvidence({
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    honestResponse: buildDestructiveActionNotVerifiedReply(replyLanguage, localeCatalog),
+  });
+  if (destructiveEffectEvidence.corrected) {
+    result.response = destructiveEffectEvidence.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        errorKind: "precondition" as const,
+        hint:
+          "Inspect the failed exec record and bound approval in comis explain, confirm the "
+          + "target exists inside the workspace write fence, then retry the corrected target.",
+      },
+      "Unverified destructive action completion claim replaced",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.destructive_action_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "destructive_effect",
+        reason: destructiveEffectEvidence.reason,
+        requiredTool: "exec",
+      },
+    });
+  }
   const unrecoveredFailed = unrecoveredFailedToolNames(
     bridgeResult.failedTools ?? [],
     bridgeResult.toolExecResults,
   );
+  const unavailableVisionFailure =
+    unrecoveredFailed.includes("image_analyze")
+    && hasUnavailableVisionFailure(bridgeResult.toolExecResults);
+  const visionFallbackTool = unavailableVisionFailure
+    ? groundedVisionFallbackTool(result.response ?? "", session.messages)
+    : undefined;
+  const unavailableVision =
+    unavailableVisionFailure && visionFallbackTool === undefined;
+  const userVisibleFailed = visionFallbackTool === undefined
+    ? unrecoveredFailed
+    : unrecoveredFailed.filter((toolName) => toolName !== "image_analyze");
+  if (visionFallbackTool !== undefined) {
+    deps.logger.info(
+      {
+        step: "response-honesty",
+        failedTool: "image_analyze",
+        recoveryTool: visionFallbackTool,
+      },
+      "Unavailable vision recovered by grounded fallback",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.vision_fallback_grounded",
+      kind: "audit",
+      outcome: "success",
+      metadata: {
+        failedTool: "image_analyze",
+        recoveryTool: visionFallbackTool,
+        reason: "same_source_output_overlap",
+      },
+    });
+  }
+  if (unavailableVision) {
+    result.response = buildVisionUnavailableReply(
+      effectiveAgentId,
+      replyLanguage,
+      localeCatalog,
+    );
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        errorKind: "precondition" as const,
+        hint:
+          `Select a vision-capable model at agents.${effectiveAgentId}.model, or configure `
+          + "integrations.media.vision.providers and integrations.media.vision.defaultProvider; "
+          + "re-uploading the same image will not help until that configuration changes",
+      },
+      "Unavailable vision recovery guidance replaced",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.vision_unavailable_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "capability_recovery",
+        reason: "vision_unavailable",
+        requiredTool: "image_analyze",
+      },
+    });
+  }
   if (
-    unrecoveredFailed.length > 0 &&
+    !unavailableVision &&
+    userVisibleFailed.length > 0 &&
     isStopTurn &&
-    !modelAcknowledgedFailure(result.response ?? "", unrecoveredFailed) &&
+    !modelAcknowledgedFailure(result.response ?? "", userVisibleFailed) &&
     !isSilentResponse(result.response ?? "")
   ) {
     // Never NAME the background poller as the culprit. It relays other tools'
     // failures, so blaming it points the reader at the one tool that was
     // working — the same mis-attribution the retry breaker had. Prefer any
     // real tool in the list; fall back to a nameless notice.
-    const failedToolName = unrecoveredFailed.find((t) => t !== BACKGROUND_POLLER_TOOL);
+    const failedToolName = userVisibleFailed.find((t) => t !== BACKGROUND_POLLER_TOOL);
     // Localized prose + the tool name VERBATIM. This was a bare English
     // `[tool failure] <tool> reported an error`, appended raw to replies in
     // any language — a bracket-tagged internal string, outside the only

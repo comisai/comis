@@ -1802,6 +1802,30 @@ function auditRow(kind: string, traceId: string | null, extra: Record<string, un
 }
 
 describe("assembleIncidentReportFromSources — audit?", () => {
+  it("reports a grounded vision fallback instead of chronic breaker noise", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.vision_fallback_grounded",
+        outcome: "success",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "vision_fallback_grounded",
+      detail:
+        "configured image analysis was unavailable, but a later tool used the same image "
+        + "and produced evidence that grounded the delivered response",
+      suggestedNextSteps: [
+        "no user retry is required; the fallback recovered this turn",
+        "configure a vision-capable model or vision provider to avoid the fallback path",
+      ],
+    });
+  });
+
   it("ranks a delegation-evidence correction above generic session noise", async () => {
     const reader = makeAuditReader([
       auditRow("audit", TRACE_ID, {
@@ -1823,6 +1847,31 @@ describe("assembleIncidentReportFromSources — audit?", () => {
         "inspect sessions_spawn admission and the tool inventory for this turn",
         "if a spawn was refused, inspect the bound-naming tool failure in this report",
         "retry the request after correcting the spawn precondition",
+      ],
+    });
+  });
+
+  it("names a corrected destructive no-effect claim as the acute cause", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.destructive_action_evidence_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "destructive_action_no_effect",
+      detail:
+        "the response honesty guard replaced a completion claim because the destructive "
+        + "exec command reported no observable filesystem effect",
+      suggestedNextSteps: [
+        "inspect the failed exec record and its bound approval request",
+        "confirm the intended target exists inside the configured workspace or write fence",
+        "retry only after correcting the target; do not treat an exit-zero no-op as success",
       ],
     });
   });

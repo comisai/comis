@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   normalizedInboundTextError,
   outboundVisibleText,
+  reconcileAssistantSurfaces,
   selectTelegramConversationTrajectoryPath,
   sharedConversationFinished,
   telegramInjectAddressingError,
@@ -38,6 +41,36 @@ describe("drive outbound visibility", () => {
       messageId: 44,
       caption: "",
     })).toBe("");
+  });
+
+  it("keeps the persisted assistant draft separate from the corrected wire reply", () => {
+    const surfaces = reconcileAssistantSurfaces(
+      "Please re-upload the image and I can try again.",
+      [
+        {
+          method: "sendMessage",
+          messageId: 45,
+          text: "Re-uploading the same image will not help until vision is configured.",
+        },
+        {
+          method: "editMessageText",
+          messageId: 44,
+          text: "❌ dependency — a step failed outside the tool timeline",
+        },
+      ],
+    );
+
+    expect(surfaces).toEqual({
+      sessionDraft: "Please re-upload the image and I can try again.",
+      wireReply: "Re-uploading the same image will not help until vision is configured.",
+    });
+
+    const reconcileSource = readFileSync(
+      fileURLToPath(new URL("./reconcile.mjs", import.meta.url)),
+      "utf8",
+    );
+    expect(reconcileSource).toContain("last_assistant_session_draft");
+    expect(reconcileSource).toContain("reconcileAssistantSurfaces(");
   });
 });
 

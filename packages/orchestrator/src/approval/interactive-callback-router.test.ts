@@ -109,7 +109,7 @@ function makeRequest(over: Partial<ApprovalRequest> = {}): ApprovalRequest {
     trustLevel: "untrusted",
     callbackOwner: {
       tenantId: "tenant-a",
-      userId: "user-a",
+      userId: "principal-user-a",
       channelType: "telegram",
       channelKey: "chat-1",
       threadId: "thread-1",
@@ -217,7 +217,10 @@ describe("InteractiveCallbackRouter — signed branch", () => {
   it("cross-user: a signed callback cannot resolve another user's request in the same channel", async () => {
     const { router, resolveCalls } = makeRouter([makeRequest()]);
 
-    const res = await router.route(inbound(signedPayload("approve"), { inboundUserId: "user-b" }));
+    const res = await router.route(inbound(signedPayload("approve"), {
+      inboundUserId: "user-b",
+      resolvingPrincipalId: "principal-user-b",
+    }));
 
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toEqual({ kind: "unknown" });
@@ -362,7 +365,7 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
       threadId: "thread-1",
       conversationKind: "shared",
     },
-    userId: "user-a",
+    userId: "principal-user-a",
     sessionKey: SESSION_K,
     agentId: "agent-1",
     channelType: "telegram",
@@ -548,10 +551,35 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
     if (replay.ok) expect(replay.value).toEqual({ kind: "unknown" });
   });
 
+  it("routes a report callback when the platform sender differs from its canonical principal", async () => {
+    const canonicalOwner = {
+      ...reportOwner,
+      userId: "principal-user-a",
+    };
+    const { router } = makeRouter([]);
+    const registered = router.registerGraphReport(canonicalOwner);
+    expect(registered.ok).toBe(true);
+    if (!registered.ok) return;
+
+    const routed = await router.route(inbound(registered.value, {
+      inboundUserId: "678314278",
+      resolvingPrincipalId: "principal-user-a",
+    }));
+
+    expect(routed).toEqual({
+      ok: true,
+      value: {
+        kind: "graph_report_requested",
+        graphId: reportOwner.graphId,
+      },
+    });
+  });
+
   it.each([
     ["sender", {
       sessionKey: "tenant-a:agent:agent-1:other-user:chat-1:thread:thread-1",
       inboundUserId: "other-user",
+      resolvingPrincipalId: "principal-other-user",
     }],
     ["agent", { agentId: "agent-2" }],
     ["channel type", { channelType: "discord" }],
@@ -625,7 +653,10 @@ describe("InteractiveCallbackRouter — plain-text branch", () => {
   it("plain text cannot resolve a request owned by another user in the same channel", async () => {
     const { router, resolveCalls } = makeRouter([makeRequest()]);
 
-    const res = await router.route(inbound("approve", { inboundUserId: "user-b" }));
+    const res = await router.route(inbound("approve", {
+      inboundUserId: "user-b",
+      resolvingPrincipalId: "principal-user-b",
+    }));
 
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toEqual({ kind: "unknown" });
@@ -639,6 +670,41 @@ describe("InteractiveCallbackRouter — plain-text branch", () => {
     if (res.ok) expect(res.value).toEqual({ kind: "resolved", requestId: REQUEST_ID, choice: "approve" });
     expect(resolveCalls).toEqual([
       { requestId: REQUEST_ID, approved: true, approvedBy: "user-a", reason: undefined },
+    ]);
+  });
+
+  it("resolves plain-text approval when the platform sender differs from its canonical principal", async () => {
+    const request = makeRequest({
+      callbackOwner: {
+        tenantId: "tenant-a",
+        userId: "principal-user-a",
+        channelType: "telegram",
+        channelKey: "chat-1",
+        threadId: "thread-1",
+      },
+    });
+    const { router, resolveCalls } = makeRouter([request]);
+
+    const res = await router.route(inbound("approve", {
+      inboundUserId: "678314278",
+      resolvingPrincipalId: "principal-user-a",
+    }));
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value).toEqual({
+        kind: "resolved",
+        requestId: REQUEST_ID,
+        choice: "approve",
+      });
+    }
+    expect(resolveCalls).toEqual([
+      {
+        requestId: REQUEST_ID,
+        approved: true,
+        approvedBy: "678314278",
+        reason: undefined,
+      },
     ]);
   });
 

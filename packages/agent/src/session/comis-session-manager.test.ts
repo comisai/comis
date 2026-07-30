@@ -141,7 +141,7 @@ describe("appendInboundMessageLedger", () => {
     dirs.length = 0;
   });
 
-  it("appends the exact supplied content to an owner-only ledger file", () => {
+  it("appends the exact supplied content to an owner-only ledger file", async () => {
     const baseDir = makeTmpDir();
     const lockDir = makeTmpDir();
     dirs.push(baseDir, lockDir);
@@ -150,8 +150,8 @@ describe("appendInboundMessageLedger", () => {
     const first = "{\"message\":\"first\"}\n";
     const second = "{\"message\":\"second\"}\n";
 
-    const firstResult = mgr.appendInboundMessageLedger(key, first);
-    const secondResult = mgr.appendInboundMessageLedger(key, second);
+    const firstResult = await mgr.appendInboundMessageLedger(key, first);
+    const secondResult = await mgr.appendInboundMessageLedger(key, second);
 
     expect(firstResult).toEqual({ ok: true, value: undefined });
     expect(secondResult).toEqual({ ok: true, value: undefined });
@@ -180,7 +180,7 @@ describe("appendInboundMessageLedger", () => {
     if (!planned.ok) return;
 
     const outcome = await mgr.withSession(key, async (sessionManager) => {
-      const ledgerWrite = mgr.appendInboundMessageLedger(key, planned.value.ledgerContent);
+      const ledgerWrite = await mgr.appendInboundMessageLedger(key, planned.value.ledgerContent);
       expect(ledgerWrite.ok).toBe(true);
       const sdkWrite = appendInboundMessageProvenance(sessionManager, planned.value);
       expect(sdkWrite.ok).toBe(true);
@@ -194,7 +194,7 @@ describe("appendInboundMessageLedger", () => {
     )).toBe(planned.value.ledgerContent);
   });
 
-  it("returns an error when a symlinked session directory escapes confinement", () => {
+  it("returns an error when a symlinked session directory escapes confinement", async () => {
     const baseDir = makeTmpDir();
     const lockDir = makeTmpDir();
     const outsideDir = makeTmpDir();
@@ -204,7 +204,7 @@ describe("appendInboundMessageLedger", () => {
     symlinkSync(outsideDir, join(tenantDir, "cron@3atest-job"));
     const mgr = createComisSessionManager({ sessionBaseDir: baseDir, lockDir, cwd: baseDir, fileLock });
 
-    const result = mgr.appendInboundMessageLedger(makeKey(), "must not escape\n");
+    const result = await mgr.appendInboundMessageLedger(makeKey(), "must not escape\n");
 
     expect(result.ok).toBe(false);
     expect(existsSync(join(outsideDir, "bot~ledger~inbound.jsonl"))).toBe(false);
