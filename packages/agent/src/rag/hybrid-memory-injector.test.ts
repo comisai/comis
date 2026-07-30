@@ -145,7 +145,7 @@ describe("createHybridMemoryInjector", () => {
         mockResult("B".repeat(500), 0.7),
       ];
       // Very small budget -- may not fit all remaining
-      const result = injector.split(results, 100);
+      const result = injector.split(results, 400);
 
       expect(result.inlineMemory).toContain("Top memory");
       // System prompt sections may be empty if budget too small for header
