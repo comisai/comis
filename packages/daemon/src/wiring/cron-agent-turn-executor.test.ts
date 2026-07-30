@@ -218,6 +218,26 @@ describe("cron governed agent-turn executor", () => {
     expect(deps.deliverText).toHaveBeenCalledWith(expect.objectContaining({ text: "Queue healthy" }));
   });
 
+  it("binds the synthetic scheduler delivery principal into the agent request context", async () => {
+    const deps = makeDeps();
+    let observedContext: ReturnType<typeof tryGetContext>;
+    vi.mocked(deps._executor.execute).mockImplementationOnce(async (_message, sessionKey) => {
+      observedContext = tryGetContext();
+      return successfulExecution(sessionKey);
+    });
+    const execute = createCronAgentTurnExecutor(deps);
+
+    const result = await execute(input(), new AbortController().signal);
+
+    expect(result.ok).toBe(true);
+    expect(observedContext?.deliveryOrigin).toEqual({
+      tenantId: "tenant-a",
+      userId: "scheduler-cron-agent-a",
+      channelType: "scheduler",
+      channelId: "cron-job-job-a",
+    });
+  });
+
   it("passes exact accepted evidence and agent execution identity to origin continuation", async () => {
     const deps = makeDeps();
     deps.continueTurn.mockResolvedValue({ mode: "origin_history", status: "appended" });
