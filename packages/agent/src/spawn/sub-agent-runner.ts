@@ -184,7 +184,8 @@ function appendExpectedOutputContract(task: string, expectedOutputs: string[] | 
     `${task}\n\n` +
     `Expected output contract:\n` +
     `${paths}\n` +
-    `Create every file at its exact path. The completion runner validates these exact paths; ` +
+    `Create every file at its exact path. Relative paths resolve from your execution workspace. ` +
+    `The completion runner validates these exact paths; ` +
     `an alternate filename or directory is treated as missing. Before your final response, verify every listed file exists.`
   );
 }
@@ -439,6 +440,8 @@ export interface SubAgentRunnerDeps {
     finishReason: string;
     stepsExecuted: number;
     toolCallHistory?: string[];
+    /** Actual jailed execution root used to resolve expected output paths. */
+    workspaceDir?: string;
     /** Boundary-classified kind for settled failures whose finish reason does not fix one. */
     terminalErrorKind?: ErrorKind;
     errorContext?: {
@@ -3137,13 +3140,18 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         let validationResults: ValidationResult[] | undefined;
         if (params.expected_outputs && params.expected_outputs.length > 0) {
           try {
-            validationResults = await validateOutputs(params.expected_outputs);
+            validationResults = await validateOutputs(
+              params.expected_outputs,
+              3,
+              200,
+              result.workspaceDir,
+            );
             const missing = validationResults.filter((v) => !v.exists);
             if (missing.length > 0) {
               deps.logger?.warn({
                 runId,
                 missingFiles: missing.map((v) => v.path),
-                hint: "Sub-agent did not produce all expected output files; check task description clarity",
+                hint: "Verify each expected_outputs entry names a file written inside the child execution workspace",
                 errorKind: "validation" as const,
               }, "Sub-agent output validation: missing files");
             }
@@ -3357,7 +3365,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                 ? {
                     attachments: validationResults
                       .filter((output) => output.exists)
-                      .map((output) => ({ sourceAgentId: params.agentId, path: output.path })),
+                      .map((output) => ({
+                        sourceAgentId: params.agentId,
+                        path: output.resolvedPath ?? output.path,
+                      })),
                   }
                 : {}),
             }, deps);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Completion-announcement text and expected-output validation. */
 
-import { systemSleep } from "@comis/core";
+import { safePath, systemSleep } from "@comis/core";
 import { stat } from "node:fs/promises";
 
 export interface AbortClassification {
@@ -12,6 +12,8 @@ export interface AbortClassification {
 
 export interface ValidationResult {
   path: string;
+  /** Confined absolute path used for filesystem access and attachment delivery. */
+  resolvedPath?: string;
   exists: boolean;
   size?: number;
 }
@@ -141,15 +143,33 @@ export function stripAnnouncementInstruction(text: string): string {
   return index === -1 ? text : text.slice(0, index).trimEnd();
 }
 
-/** Validate expected output files with bounded retries for filesystem flush lag. */
-export async function validateOutputs(paths: string[], retries = 3, delayMs = 200): Promise<ValidationResult[]> {
+/**
+ * Validate expected output files with bounded retries for filesystem flush lag.
+ * When an execution workspace is known, relative paths resolve inside it and
+ * absolute paths must remain confined to it.
+ */
+export async function validateOutputs(
+  paths: string[],
+  retries = 3,
+  delayMs = 200,
+  workspaceDir?: string,
+): Promise<ValidationResult[]> {
   const results: ValidationResult[] = [];
   for (const filePath of paths) {
+    let resolvedPath = filePath;
+    if (workspaceDir !== undefined) {
+      try {
+        resolvedPath = safePath(workspaceDir, filePath);
+      } catch {
+        results.push({ path: filePath, exists: false });
+        continue;
+      }
+    }
     let exists = false;
     let size: number | undefined;
     for (let attempt = 0; attempt < retries; attempt++) {
       try {
-        const fileStat = await stat(filePath);
+        const fileStat = await stat(resolvedPath);
         exists = true;
         size = fileStat.size;
         break;
@@ -157,7 +177,12 @@ export async function validateOutputs(paths: string[], retries = 3, delayMs = 20
         if (attempt < retries - 1) await systemSleep(delayMs);
       }
     }
-    results.push({ path: filePath, exists, size });
+    results.push({
+      path: filePath,
+      ...(workspaceDir === undefined ? {} : { resolvedPath }),
+      exists,
+      size,
+    });
   }
   return results;
 }

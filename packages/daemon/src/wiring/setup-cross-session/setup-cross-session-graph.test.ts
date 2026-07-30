@@ -499,7 +499,7 @@ describe("setup-cross-session-graph", () => {
       });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey, conversation, "wt task");
+      const result = await executeSubAgent("agent-2", sessionKey, conversation, "wt task");
 
       // Honest wiring: git worktree add actually ran.
       const addCall = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "add");
@@ -509,6 +509,7 @@ describe("setup-cross-session-graph", () => {
       expect(addCall!.args).toContain(expectedDir);
       // The child ran IN the worktree: its executionOverrides.workspaceDir IS it.
       expect(capturedOverrides[0].workspaceDir).toBe(expectedDir);
+      expect(result.workspaceDir).toBe(expectedDir);
     });
 
     it("auto-cleans a CLEAN worktree on completion (git worktree remove) and drops the registry entry", async () => {
@@ -548,10 +549,11 @@ describe("setup-cross-session-graph", () => {
       });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey, conversation, "plain task");
+      const result = await executeSubAgent("agent-2", sessionKey, conversation, "plain task");
 
       expect(gitCalls).toHaveLength(0);
       expect(capturedOverrides[0].workspaceDir).toBeUndefined();
+      expect(result.workspaceDir).toBe(WORKSPACE);
     });
 
     it("honestly SKIPS (no crash) when worktree requested but the git seam is not wired", async () => {
@@ -561,12 +563,13 @@ describe("setup-cross-session-graph", () => {
       });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey, conversation, "wt task");
+      const result = await executeSubAgent("agent-2", sessionKey, conversation, "wt task");
 
       // No git calls (no seam), but the child still ran in its shared workspace.
       expect(gitCalls).toHaveLength(0);
       expect(executor.execute).toHaveBeenCalledOnce();
       expect(capturedOverrides[0].workspaceDir).toBeUndefined();
+      expect(result.workspaceDir).toBe(WORKSPACE);
     });
   });
 });
