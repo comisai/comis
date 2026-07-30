@@ -44,6 +44,8 @@ describe("compileExecutionPrompt", () => {
     expect(result.stableEnginePrefix).toMatch(/source attribution.*exact.*URL/iu);
     expect(result.stableEnginePrefix).toMatch(/successful.*retriev/iu);
     expect(result.stableEnginePrefix).toMatch(/never (?:cite|invent).*URL.*not.*retriev/iu);
+    expect(result.stableEnginePrefix).toMatch(/several.*plausible.*all relevant.*URL/iu);
+    expect(result.stableEnginePrefix).toMatch(/instead of asking.*(?:quote|identify)/iu);
   });
 
   it("keeps sources-only answers within successfully retrieved evidence", () => {
