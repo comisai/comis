@@ -1,6 +1,6 @@
 ---
 name: podcast-generation
-version: 1.0.1
+version: 1.0.2
 description: Convert text content into two-host conversational podcast audio. Transforms articles, reports, documentation, or any written content into natural dialogue between male and female hosts, then synthesizes speech audio. Use this skill when the user requests to generate, create, or produce a podcast from text content -- even if they just say "turn this into audio" or "make this listenable".
 comis:
   requires:
@@ -13,6 +13,7 @@ comis:
 Generate podcast audio from text content. The workflow: create a structured JSON dialogue script, then execute audio generation via a bundled Python script that handles TTS synthesis and audio mixing.
 
 All script paths below are relative to this skill's directory. Resolve them against the directory containing the manifest file shown in `<location>` (e.g., if `<location>` is `~/.comis/skills/podcast-generation/SKILL.md`, then `scripts/generate.py` means `~/.comis/skills/podcast-generation/scripts/generate.py`).
+Invoke the resolved script by its absolute path while keeping the tool working directory inside the execution workspace. Never set `cwd` to the skill directory; it is outside workspace bounds. In command examples below, replace each relative `scripts/...` path with its resolved absolute path.
 
 Write script files and generated outputs to your workspace directory (shown in the "Workspace" section of your system prompt).
 

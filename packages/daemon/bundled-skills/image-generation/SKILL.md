@@ -1,6 +1,6 @@
 ---
 name: image-generation
-version: 1.0.1
+version: 1.0.2
 description: Generate images using structured prompts and optional reference images. Supports character design, scenes, product visualization, and any visual content creation. Use this skill when the user requests to generate, create, imagine, draw, or visualize images, characters, portraits, scenes, products, or any visual content -- even if they don't explicitly say "generate an image".
 comis:
   requires:
@@ -13,6 +13,7 @@ comis:
 Generate high-quality images using structured JSON prompts and a bundled Python script. Supports reference images for style and composition guidance.
 
 All script paths below are relative to this skill's directory. Resolve them against the directory containing the manifest file shown in `<location>` (e.g., if `<location>` is `~/.comis/skills/image-generation/SKILL.md`, then `scripts/generate.py` means `~/.comis/skills/image-generation/scripts/generate.py`).
+Invoke the resolved script by its absolute path while keeping the tool working directory inside the execution workspace. Never set `cwd` to the skill directory; it is outside workspace bounds. In command examples below, replace each relative `scripts/...` path with its resolved absolute path.
 
 Write prompt files and generated outputs to your workspace directory (shown in the "Workspace" section of your system prompt).
 

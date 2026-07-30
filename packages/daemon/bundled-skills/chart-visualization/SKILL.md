@@ -1,6 +1,6 @@
 ---
 name: chart-visualization
-version: 1.0.1
+version: 1.0.2
 description: Generate data visualizations and charts from user data. Supports 26 chart types including line, bar, pie, scatter, treemap, sankey, radar, funnel, maps, org charts, mind maps, network graphs, and more. Use this skill whenever the user wants to visualize data, create a chart, plot a graph, make a diagram, display metrics, or show data visually -- even if they don't explicitly say "chart" or "visualization".
 comis:
   requires:
@@ -12,6 +12,7 @@ comis:
 Generate charts and data visualizations from user data. Selects the best chart type from 26 options, extracts parameters from detailed specs, and generates a chart image via a bundled Node.js script.
 
 All script paths below are relative to this skill's directory. Resolve them against the directory containing the manifest file shown in `<location>` (e.g., if `<location>` is `~/.comis/skills/chart-visualization/SKILL.md`, then `scripts/generate.js` means `~/.comis/skills/chart-visualization/scripts/generate.js`).
+Invoke the resolved script by its absolute path while keeping the tool working directory inside the execution workspace. Never set `cwd` to the skill directory; it is outside workspace bounds. In command examples below, replace each relative `scripts/...` path with its resolved absolute path.
 
 ## Workflow
 

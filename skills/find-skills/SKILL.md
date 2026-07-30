@@ -1,6 +1,6 @@
 ---
 name: find-skills
-version: 1.0.1
+version: 1.0.2
 description: Discover and install agent skills from the open skills ecosystem at skills.sh. Use this skill when the user asks "how do I do X", "find a skill for X", "is there a skill that can...", "can you do X" for a specialized capability, wants to extend agent capabilities, or mentions wishing they had help with a specific domain (design, testing, deployment, etc.) -- even if they don't use the word "skill".
 comis:
   requires:
@@ -12,6 +12,7 @@ comis:
 Discover and install skills from the open agent skills ecosystem into Comis.
 
 All script paths below are relative to this skill's directory. Resolve them against the directory containing the manifest file shown in `<location>`.
+Invoke the resolved script by its absolute path while keeping the tool working directory inside the execution workspace. Never set `cwd` to the skill directory; it is outside workspace bounds. In command examples below, replace each relative `scripts/...` path with its resolved absolute path.
 
 ## Workflow
 
