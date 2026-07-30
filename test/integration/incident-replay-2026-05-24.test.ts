@@ -157,7 +157,11 @@ describe("duplicate-adapter replay — boot warning", () => {
       eventBus,
       messageRouter: { resolve: vi.fn(() => "default") } as any,
       sessionManager: {
-        loadOrCreate: vi.fn(() => []),
+        // `ensure` registers the conversation before the turn runs
+      // (inbound-pipeline). Absent, the pipeline throws before any
+      // assertion in the file can run.
+      ensure: vi.fn(() => ok(undefined)),
+      loadOrCreate: vi.fn(() => []),
         save: vi.fn(),
         expire: vi.fn(),
       } as any,
@@ -263,7 +267,11 @@ describe("duplicate-adapter replay — deduplication event", () => {
       logger: logger as any,
       messageRouter: { resolve: vi.fn(() => "default") } as any,
       sessionManager: {
-        loadOrCreate: vi.fn(() => ok([])),
+        // `ensure` registers the conversation before the turn runs
+      // (inbound-pipeline). Absent, the pipeline throws before any
+      // assertion in the file can run.
+      ensure: vi.fn(() => ok(undefined)),
+      loadOrCreate: vi.fn(() => ok([])),
         save: vi.fn(() => ok(undefined)),
         isExpired: vi.fn(() => ok(false)),
         expire: vi.fn(() => ok(true)),
@@ -366,7 +374,11 @@ describe("duplicate-adapter replay — queue ownership", () => {
       logger: logger as any,
       messageRouter: { resolve: vi.fn(() => "default") } as any,
       sessionManager: {
-        loadOrCreate: vi.fn(() => ok([])),
+        // `ensure` registers the conversation before the turn runs
+      // (inbound-pipeline). Absent, the pipeline throws before any
+      // assertion in the file can run.
+      ensure: vi.fn(() => ok(undefined)),
+      loadOrCreate: vi.fn(() => ok([])),
         save: vi.fn(() => ok(undefined)),
         isExpired: vi.fn(() => ok(false)),
         expire: vi.fn(() => ok(true)),

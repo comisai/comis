@@ -146,6 +146,10 @@ function makeMinimalDeps(overrides?: Partial<ChannelManagerDeps>): ChannelManage
     eventBus,
     messageRouter: { resolve: vi.fn(() => "agent-default"), updateConfig: vi.fn() } as any,
     sessionManager: {
+      // `ensure` registers the conversation before the turn runs
+      // (inbound-pipeline). Absent, the pipeline throws before any
+      // assertion in the file can run.
+      ensure: vi.fn(() => ok(undefined)),
       loadOrCreate: vi.fn(() => []),
       save: vi.fn(),
       isExpired: vi.fn(() => false),
