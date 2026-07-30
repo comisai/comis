@@ -1605,6 +1605,30 @@ describe("preprocessMessage", () => {
       expect(result.message.text).toContain("original text");
     });
 
+    it("emits durable file arguments for a persisted unprocessed image", async () => {
+      const att: Attachment = {
+        type: "image",
+        url: "tg-file://current",
+        mimeType: "image/png",
+        sizeBytes: 2048,
+      };
+      const result = await preprocessMessage({
+        visionAvailable: false,
+        resolveAttachment: makeResolver(),
+        durableFilePath: (attachment) =>
+          attachment.url === att.url ? "photos/current.png" : undefined,
+        logger: makeLogger(),
+      }, makeMessage({
+        text: "what does this say",
+        attachments: [att],
+      }));
+
+      expect(result.message.text).toContain(
+        '[Attached: image (image/png, 2048 bytes) — use image_analyze with source_type="file" and source="photos/current.png" to view]',
+      );
+      expect(result.message.text).not.toContain("tg-file://current");
+    });
+
     it("emits image hint without size when sizeBytes is missing", async () => {
       const resolver = makeResolver();
       const att: Attachment = {
