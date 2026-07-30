@@ -124,7 +124,7 @@ describe("durable graph probe candidate selection", () => {
     });
   });
 
-  it("refuses ambiguous new pipeline approval callbacks", () => {
+  it("rejects ambiguous new pipeline approval callbacks", () => {
     const event = (messageId: number) => ({
       messageId,
       text: "approval required: pipeline\n(running 0 s)",
