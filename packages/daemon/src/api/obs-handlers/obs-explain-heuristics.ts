@@ -433,6 +433,15 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   (s) => {
     const failure = s.failures.find((f) => f.errorKind === "timeout");
     if (failure === undefined) return null;
+    const argumentsKnownEmpty =
+      failure.argsPreview !== undefined
+      && Object.keys(failure.argsPreview).length === 0;
+    const callerRemediation = argumentsKnownEmpty
+      ? "the timed-out call to " + failure.toolName
+        + " supplied no tool arguments; check the server's health and latency before retrying"
+      : "narrow the request for " + failure.toolName
+        + " or split it into smaller calls using its tool arguments"
+        + " so each call completes inside the deadline";
     return {
       code: "provider_timeout",
       detail:
@@ -447,8 +456,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       // fact that an agent cannot patch it (immutable config path), so the
       // reader knows the step needs an operator and a daemon restart.
       suggestedNextSteps: [
-        "narrow the request for " + failure.toolName
-          + " (a smaller page / date window / fewer entities) so it completes inside the deadline",
+        callerRemediation,
         "check provider latency / rate-limit headroom",
         "if it genuinely needs longer, an operator can raise"
           + " `integrations.mcp.callToolTimeoutMs` (MCP tools) in the config file"
