@@ -2984,6 +2984,38 @@ describe("createMemoryRecall — query understanding", () => {
     ]);
   });
 
+  it("SYNONYM-ON expands residence phrasing and a common abbreviated appointment term after relevance tokenization", async () => {
+    let seenQuery: string | undefined;
+    const recordingPort = {
+      async search() {
+        return ok([]);
+      },
+      async searchLanes(_key: SessionKey, query: string) {
+        seenQuery = query;
+        return ok({ fts: [], vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      {
+        memoryPort: recordingPort,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        queryUnderstanding: { intentReweight: false, synonyms: true, temporalParse: false },
+      } as Partial<MemoryRecallConfig>),
+    );
+
+    await recall.recall(
+      "Where am I living now, and what day is physio?",
+      memoryScope("agent_y", "tenant_x"),
+      SESSION_KEY_OBJ,
+    );
+
+    expect(seenQuery).toContain("location");
+    expect(seenQuery).toContain("physiotherapy");
+  });
+
   it("RANGE-ON: temporalParse=true + 'last week' → the search options carry the parsed occurredAtRange (from the fixedClock)", async () => {
     const fts = [makeResult("a", { base: 0.9 })];
     const capture: { laneOpts?: MemorySearchOptions } = {};
