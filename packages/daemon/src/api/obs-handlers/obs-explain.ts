@@ -50,6 +50,8 @@ import { boundIncidentReport } from "./obs-explain-bound.js";
 
 const DELEGATION_EVIDENCE_GUARD_ACTION =
   "response.delegation_evidence_guard";
+const VISION_FALLBACK_GROUNDED_ACTION =
+  "response.vision_fallback_grounded";
 
 /** Default data directory (lazy). Mirrors obs-trace.ts / obs-explain-readers.ts. */
 function defaultDataDir(): string {
@@ -524,6 +526,15 @@ export async function assembleIncidentReportFromSources(
       degraded: report.outcome.degraded,
     });
   }
+  const visionFallbackVerdict = visionFallbackGroundedVerdict(
+    auditRows,
+    report.traceId,
+  );
+  if (visionFallbackVerdict !== null) {
+    // A proven same-source fallback explains the user-visible outcome more
+    // accurately than chronic breaker noise from the failed primary tool.
+    report.likelyRootCause = visionFallbackVerdict;
+  }
   const delegationEvidenceVerdict = delegationEvidenceGuardVerdict(
     auditRows,
     report.traceId,
@@ -548,6 +559,34 @@ export async function assembleIncidentReportFromSources(
   // Step 5: dev-mode response validation (catches field type regressions).
   if (IS_DEV) ObsExplainContract.response.parse(bounded);
   return bounded;
+}
+
+function visionFallbackGroundedVerdict(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  traceId: string,
+): IncidentReport["likelyRootCause"] {
+  if (
+    traceId.length === 0
+    || !rows.some(
+      (row) =>
+        row.traceId === traceId
+        && row.action === VISION_FALLBACK_GROUNDED_ACTION
+        && row.outcome === "success",
+    )
+  ) {
+    return null;
+  }
+
+  return {
+    code: "vision_fallback_grounded",
+    detail:
+      "configured image analysis was unavailable, but a later tool used the same image "
+      + "and produced evidence that grounded the delivered response",
+    suggestedNextSteps: [
+      "no user retry is required; the fallback recovered this turn",
+      "configure a vision-capable model or vision provider to avoid the fallback path",
+    ],
+  };
 }
 
 function delegationEvidenceGuardVerdict(

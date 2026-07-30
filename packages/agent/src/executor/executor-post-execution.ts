@@ -123,7 +123,7 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildVisionUnavailableReply, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import { enforceCurrentTurnDelegationEvidence } from "./executor-response-filter.js";
 import { BACKGROUND_POLLER_TOOL } from "../safety/background-failure-attribution.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
@@ -1438,9 +1438,40 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     bridgeResult.failedTools ?? [],
     bridgeResult.toolExecResults,
   );
-  const unavailableVision =
+  const unavailableVisionFailure =
     unrecoveredFailed.includes("image_analyze")
     && hasUnavailableVisionFailure(bridgeResult.toolExecResults);
+  const visionFallbackTool = unavailableVisionFailure
+    ? groundedVisionFallbackTool(result.response ?? "", session.messages)
+    : undefined;
+  const unavailableVision =
+    unavailableVisionFailure && visionFallbackTool === undefined;
+  const userVisibleFailed = visionFallbackTool === undefined
+    ? unrecoveredFailed
+    : unrecoveredFailed.filter((toolName) => toolName !== "image_analyze");
+  if (visionFallbackTool !== undefined) {
+    deps.logger.info(
+      {
+        step: "response-honesty",
+        failedTool: "image_analyze",
+        recoveryTool: visionFallbackTool,
+      },
+      "Unavailable vision recovered by grounded fallback",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.vision_fallback_grounded",
+      kind: "audit",
+      outcome: "success",
+      metadata: {
+        failedTool: "image_analyze",
+        recoveryTool: visionFallbackTool,
+        reason: "same_source_output_overlap",
+      },
+    });
+  }
   if (unavailableVision) {
     result.response = buildVisionUnavailableReply(
       effectiveAgentId,
@@ -1474,16 +1505,16 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   }
   if (
     !unavailableVision &&
-    unrecoveredFailed.length > 0 &&
+    userVisibleFailed.length > 0 &&
     isStopTurn &&
-    !modelAcknowledgedFailure(result.response ?? "", unrecoveredFailed) &&
+    !modelAcknowledgedFailure(result.response ?? "", userVisibleFailed) &&
     !isSilentResponse(result.response ?? "")
   ) {
     // Never NAME the background poller as the culprit. It relays other tools'
     // failures, so blaming it points the reader at the one tool that was
     // working — the same mis-attribution the retry breaker had. Prefer any
     // real tool in the list; fall back to a nameless notice.
-    const failedToolName = unrecoveredFailed.find((t) => t !== BACKGROUND_POLLER_TOOL);
+    const failedToolName = userVisibleFailed.find((t) => t !== BACKGROUND_POLLER_TOOL);
     // Localized prose + the tool name VERBATIM. This was a bare English
     // `[tool failure] <tool> reported an error`, appended raw to replies in
     // any language — a bracket-tagged internal string, outside the only

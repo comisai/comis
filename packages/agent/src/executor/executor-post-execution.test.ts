@@ -867,7 +867,9 @@ describe("tool-failure endReason and notice", () => {
     // The notice call site must consult the recovery-aware helper, not raw failedTools.
     expect(stripped).toMatch(/unrecoveredFailedToolNames/);
     // The notice append must be guarded by a non-empty unrecovered set.
-    const noticeBlock = stripped.match(/unrecovered[A-Za-z]*\s*\.length\s*>\s*0[\s\S]{0,600}?buildToolFailureNotice/);
+    const noticeBlock = stripped.match(
+      /(?:unrecovered[A-Za-z]*|userVisibleFailed)\s*\.length\s*>\s*0[\s\S]{0,600}?buildToolFailureNotice/,
+    );
     expect(noticeBlock).not.toBeNull();
   });
 
