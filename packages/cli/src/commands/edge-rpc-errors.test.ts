@@ -343,7 +343,9 @@ describe("null/empty RPC response handling", () => {
   it("agent list with empty agents object shows 'No agents configured'", async () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.read", { agents: {} })
+        // The `agents` section response IS the agents map, so an empty section
+        // is `{}` — a `{ agents: {} }` wrapper reads as one agent named "agents".
+        .onCall("config.read", {})
         .build();
       return fn(mockClient);
     });

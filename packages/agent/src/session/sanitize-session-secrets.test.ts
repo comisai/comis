@@ -685,3 +685,50 @@ describe("projectSessionValueForPersistence — bare-token name collision", () =
     }
   });
 });
+
+describe("projectSessionValueForPersistence — structural conversation identity", () => {
+  // A conversation ref is `cv_` + 43 base64url chars: machine-minted, and
+  // high-entropy by construction, so the API-key heuristic reads it as a
+  // credential. Redacting it protects nothing and corrupts the record — a
+  // persisted `conversationRef` of `[REDACTED]` no longer parses, which made the
+  // delivered-assistant idempotency scan skip the stored attempt and append a
+  // duplicate on every retry.
+  const REF = "cv_pOlYgluGmYXit8tyt8ISFbDrcagaUAexi7C7Kolw0IA";
+
+  it("keeps a conversation ref intact through the persistence projection", () => {
+    const out = projectSessionValueForPersistence({
+      conversationRef: REF,
+      attemptId: "attempt_a",
+    });
+
+    expect(out.redactions).toBe(0);
+    expect((out.value as { conversationRef: string }).conversationRef).toBe(REF);
+  });
+
+  it("keeps the ref intact when nested inside a custom session entry", () => {
+    const out = projectSessionValueForPersistence({
+      type: "custom",
+      customType: "delivered_assistant_history",
+      data: { conversationRef: REF, text: "already seen by the user" },
+    });
+
+    expect((out.value as { data: { conversationRef: string } }).data.conversationRef).toBe(REF);
+  });
+
+  it("still redacts a credential parked under the conversationRef key", () => {
+    // The carve-out requires the exact ref shape, so it cannot be used as a
+    // laundering channel for a real secret.
+    const out = projectSessionValueForPersistence({
+      conversationRef: "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    });
+
+    expect(out.redactions).toBeGreaterThan(0);
+    expect((out.value as { conversationRef: string }).conversationRef).not.toContain("sk-ant");
+  });
+
+  it("still redacts a high-entropy value under an unrelated key", () => {
+    const out = projectSessionValueForPersistence({ someOtherField: REF });
+
+    expect(out.redactions).toBeGreaterThan(0);
+  });
+});

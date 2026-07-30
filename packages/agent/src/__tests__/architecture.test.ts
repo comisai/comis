@@ -149,6 +149,7 @@ describe("@comis/agent -- architecture invariants", () => {
       "pi-executor.ts",            // JSDoc + comments referring to discover_tools as a known concept (mid-turn injection)
       "pi-executor-types.ts",      // PiExecutorDeps interface JSDoc references discover_tools concept
       "viable-floor.ts",           // boot-WARN dominance hint names discover_tools as the discovery API (active-tool-ceiling lever)
+      "sub-agent-runner.ts",       // comment on why a required tool must ride the child's FIRST request rather than sit behind discover_tools
       // Anthropic payload-reshape identifiers.
       "tool-deferral-injection.ts", // payload reshape removes the client-side discover_tools tool name
       "stub-filter-injector.ts",   // JSDoc explaining stub-filter interaction with discover_tools removal
