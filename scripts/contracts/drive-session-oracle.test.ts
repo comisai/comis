@@ -5,9 +5,12 @@ import {
   driveTextFilePath,
   findAssistantReplyAfterInbound,
   findTelegramConversationWireAnswer,
+  isDriveProgressText,
+  reconcileDriveOutbound,
   selectMainTrajectoryPath,
   telegramInboundGuid,
   telegramInjectAddressingError,
+  wireQuiescenceFinished,
   wireContainsAssistantReply,
 } from "../../test/live/self-driving/scripts/drive-session-oracle.mjs";
 
@@ -18,6 +21,44 @@ function sessionRecord(value: unknown): string {
 }
 
 describe("live driver session correlation", () => {
+  it("treats deterministic approval acknowledgements as progress", () => {
+    expect(isDriveProgressText("Approved: exec (Ab3Cd5Ef7Gh9)")).toBe(true);
+    expect(isDriveProgressText("Denied: exec (Ab3Cd5Ef7Gh9)")).toBe(true);
+  });
+
+  it("recovers same-message edits from the final emulator snapshot", () => {
+    const initial = [{ method: "sendMessage", messageId: 40, text: "old" }];
+    const sent = { method: "sendMessage", messageId: 41, text: "running" };
+    const edited = {
+      method: "editMessageText",
+      messageId: 41,
+      text: "approval required",
+      raw: { reply_markup: { inline_keyboard: [[{ text: "Approve" }]] } },
+    };
+
+    expect(reconcileDriveOutbound(initial, [sent], [...initial, sent, edited])).toEqual([
+      sent,
+      edited,
+    ]);
+  });
+
+  it("does not use wire quiescence while an authoritative trajectory is available", () => {
+    expect(wireQuiescenceFinished({
+      trajectoryAvailable: true,
+      sawAnswer: true,
+      lastNewMs: 1_000,
+      nowMs: 20_000,
+      quiesceMs: 8_000,
+    })).toBe(false);
+    expect(wireQuiescenceFinished({
+      trajectoryAvailable: false,
+      sawAnswer: true,
+      lastNewMs: 1_000,
+      nowMs: 20_000,
+      quiesceMs: 8_000,
+    })).toBe(true);
+  });
+
   it("waits for delayed direct-message delivery after the trajectory turn ends", () => {
     expect(directConversationFinished({
       sawAnswer: false,
