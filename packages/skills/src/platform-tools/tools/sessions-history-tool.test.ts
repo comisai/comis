@@ -85,4 +85,23 @@ describe("sessions_history tool", () => {
       } as never),
     ).rejects.toThrow("timeout");
   });
+
+  it("preserves an RPC authorization denial as a structured permission error", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => {
+      const error = new Error("Session history access denied");
+      error.name = "AuthorizationError";
+      throw error;
+    });
+    const tool = createSessionsHistoryTool(mockRpcCall);
+
+    await expect(
+      tool.execute("call-auth", {
+        tenant_id: "default",
+        agent_id: "default",
+        conversation_ref: "cv_other",
+      } as never),
+    ).rejects.toThrow(
+      /\[permission_denied\].*Session history access denied.*Hint:.*caller conversation/s,
+    );
+  });
 });

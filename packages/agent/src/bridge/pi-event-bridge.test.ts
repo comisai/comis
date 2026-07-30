@@ -839,6 +839,44 @@ describe("createPiEventBridge", () => {
       expect(String(ap.edits)).toMatch(/^\[\d+ chars\]$/); // large value bounded to a size placeholder
     });
 
+    it("keeps numeric authority identifiers diagnosable in a failed-call preview while credentials stay redacted", () => {
+      const { listener } = createPiEventBridge(deps);
+      listener({
+        type: "tool_execution_start",
+        toolName: "session_search",
+        toolCallId: "tc-auth",
+        args: {
+          tenant_id: "678314278",
+          agent_id: "default",
+          query: "harbor code",
+          token: "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+        },
+      } as any);
+      listener(makeToolExecutionEndEvent(
+        "session_search",
+        "tc-auth",
+        true,
+        { message: "[permission_denied] Session query tenant does not match the authenticated caller" },
+      ) as any);
+
+      const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+      const endEmit = emit.mock.calls.find(
+        (call) => call[0] === "tool:executed" && call[1].toolCallId === "tc-auth",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].errorKind).toBe("auth");
+      expect(endEmit![1].argsPreview).toEqual({
+        tenant_id: "678314278",
+        agent_id: "default",
+        query: "harbor code",
+        token: "<redacted>",
+      });
+      expect(endEmit![1].params.tenant_id).toBe("<redacted>");
+      expect(JSON.stringify(endEmit![1])).not.toContain(
+        "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+      );
+    });
+
     it("does NOT carry argsPreview on a SUCCESSFUL tool:executed (failure-only — keeps the trajectory lean)", () => {
       const { listener } = createPiEventBridge(deps);
       listener(makeToolExecutionStartEvent("read", "tc-ok") as any);
