@@ -605,6 +605,32 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     Sibling file.
   orchestrateFailedVerdict,
 
+  // A failed voice provider is more specific than the generic tool-error
+  // catch-all below. Derive STT versus TTS from the failed tool rather than
+  // guessing from the shared media.voice signal.
+  (s) => {
+    const voice = s.voice;
+    if (voice?.outcome !== "failed" || voice.errorKind !== "auth_required") return null;
+    const isStt = s.failures.some((failure) => failure.toolName === "transcribe_audio");
+    const isTts = s.failures.some((failure) => failure.toolName === "tts_synthesize");
+    if (!isStt && !isTts) return null;
+    const operation = isStt ? "transcription" : "speech synthesis";
+    const knob = isStt
+      ? "integrations.media.transcription.provider"
+      : "integrations.media.tts.provider";
+    const provider = voice.provider.length > 0 ? voice.provider : "<unknown>";
+    return {
+      code: "voice_auth_required",
+      detail:
+        `${operation} provider "${provider}" failed with auth_required` +
+        (voice.source !== undefined ? ` (selection source: ${voice.source})` : ""),
+      suggestedNextSteps: [
+        `configure credentials for "${provider}", select an available provider, or change ${knob}`,
+        "obs.explain depth=full for the failing voice tool errorPreview",
+      ],
+    };
+  },
+
   // 10) completed_with_tool_errors (the CATCH-ALL ACUTE cause — last of the acute
   //     tier, above the BENIGN learning verdicts #11-13 below). A
   //     degraded session whose tool failures matched none of the named rules
