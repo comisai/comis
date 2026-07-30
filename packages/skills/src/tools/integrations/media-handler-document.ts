@@ -10,7 +10,7 @@
 
 import type { Attachment, FileExtractionPort } from "@comis/core";
 import { wrapExternalContent, type WrapExternalContentOptions } from "@comis/core";
-import { formatFileBlock } from "./document/xml-block.js";
+import { formatFileBlock, xmlEscapeAttr } from "./document/xml-block.js";
 import type { MediaProcessorLogger, FileExtractionMetric } from "./media-preprocessor.js";
 import { resolveMediaAttachment } from "./media-handler-factory.js";
 
@@ -18,6 +18,8 @@ import { resolveMediaAttachment } from "./media-handler-factory.js";
 export interface DocumentBudgetState {
   totalExtractedChars: number;
   maxTotalChars: number;
+  /** Maximum room remaining for this complete model-visible prefix. */
+  maxInlinePrefixChars?: number;
 }
 
 /** Deps subset needed by the document handler. */
@@ -25,6 +27,8 @@ export interface DocumentHandlerDeps {
   readonly fileExtractor?: FileExtractionPort;
   readonly resolveAttachment: (attachment: Attachment) => Promise<Buffer | null>;
   readonly logger: MediaProcessorLogger;
+  /** Workspace-relative path of the persisted original attachment, when available. */
+  readonly durableFilePath?: string;
   /** Optional callback for suspicious content detection. */
   readonly onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
 }
@@ -34,6 +38,98 @@ export interface DocumentHandlerResult {
   textPrefix?: string;
   fileExtraction?: FileExtractionMetric;
   extractedChars?: number;
+}
+
+interface DocumentPrefixInput {
+  readonly text: string;
+  readonly fileName: string;
+  readonly mimeType: string;
+  readonly upstreamTruncated: boolean;
+  readonly extractedChars: number;
+  readonly durableFilePath?: string;
+  readonly maxChars: number;
+  readonly onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
+}
+
+function coverageNote(
+  input: DocumentPrefixInput,
+  inlineChars: number,
+  incomplete: boolean,
+): string | undefined {
+  if (!incomplete) return undefined;
+  const attrs = [
+    'complete="false"',
+    `extracted-chars="${input.extractedChars}"`,
+    `inline-chars="${inlineChars}"`,
+  ];
+  if (input.durableFilePath !== undefined) {
+    attrs.push(`path="${xmlEscapeAttr(input.durableFilePath)}"`);
+    return `<document-extraction-coverage ${attrs.join(" ")}>
+Only a preview is inline. The full original file is stored at the trusted workspace path above. Use the read tool with that path and offset/limit to recover every required section. Do not claim the entire file was read until the necessary ranges have been read.
+</document-extraction-coverage>`;
+  }
+  return `<document-extraction-coverage ${attrs.join(" ")}>
+Only a prefix was extracted. Do not claim the entire file was read. Resending the same unchanged file will not increase coverage; the omitted source is not available through conversation recovery tools. Ask the user to split it into smaller files when complete coverage is required.
+</document-extraction-coverage>`;
+}
+
+function renderDocumentPrefix(
+  input: DocumentPrefixInput,
+  inlineChars: number,
+  incomplete: boolean,
+  reportSuspiciousContent = false,
+): string {
+  const fileBlock = formatFileBlock(
+    input.text.slice(0, inlineChars),
+    input.fileName,
+    input.mimeType,
+  );
+  const wrapped = wrapExternalContent(fileBlock, {
+    source: "document",
+    onSuspiciousContent: reportSuspiciousContent
+      ? input.onSuspiciousContent
+      : undefined,
+  });
+  const note = coverageNote(input, inlineChars, incomplete);
+  return note === undefined ? wrapped : `${note}\n${wrapped}`;
+}
+
+/**
+ * Fit a structurally complete external-content block into the caller's exact
+ * remaining message budget. Rebuilding the wrapper avoids slicing through its
+ * security delimiter or the document XML.
+ */
+function buildDocumentPrefix(input: DocumentPrefixInput): string | undefined {
+  const full = renderDocumentPrefix(
+    input,
+    input.text.length,
+    input.upstreamTruncated,
+  );
+  if (full.length <= input.maxChars) {
+    return renderDocumentPrefix(
+      input,
+      input.text.length,
+      input.upstreamTruncated,
+      true,
+    );
+  }
+
+  let low = 0;
+  let high = input.text.length;
+  let bestInlineChars: number | undefined;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = renderDocumentPrefix(input, mid, true);
+    if (candidate.length <= input.maxChars) {
+      bestInlineChars = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return bestInlineChars === undefined
+    ? undefined
+    : renderDocumentPrefix(input, bestInlineChars, true, true);
 }
 
 /**
@@ -83,14 +179,16 @@ export async function processDocumentAttachment(
     return {};
   }
 
-  // Format as XML block, then wrap as external content to prevent injection
-  const fileBlock = formatFileBlock(extractResult.value.text, extractResult.value.fileName, extractResult.value.mimeType);
-  const wrapped = wrapExternalContent(fileBlock, { source: "document", onSuspiciousContent: deps.onSuspiciousContent });
-  const coverageNote = extractResult.value.truncated
-    ? `<document-extraction-coverage complete="false" extracted-chars="${extractResult.value.extractedChars}">
-Only a prefix was extracted. Do not claim the entire file was read. Resending the same unchanged file will not increase coverage; ask the user to split it into smaller files when complete coverage is required.
-</document-extraction-coverage>`
-    : undefined;
+  const prefix = buildDocumentPrefix({
+    text: extractResult.value.text,
+    fileName: extractResult.value.fileName,
+    mimeType: extractResult.value.mimeType,
+    upstreamTruncated: extractResult.value.truncated,
+    extractedChars: extractResult.value.extractedChars,
+    durableFilePath: deps.durableFilePath,
+    maxChars: budgetState.maxInlinePrefixChars ?? Number.POSITIVE_INFINITY,
+    onSuspiciousContent: deps.onSuspiciousContent,
+  });
 
   deps.logger.debug?.({
     url: att.url,
@@ -101,7 +199,7 @@ Only a prefix was extracted. Do not claim the entire file was read. Resending th
   }, "Document attachment extracted");
 
   return {
-    textPrefix: coverageNote ? `${coverageNote}\n${wrapped}` : wrapped,
+    textPrefix: prefix,
     fileExtraction: {
       url: att.url,
       fileName: extractResult.value.fileName,

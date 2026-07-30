@@ -82,7 +82,9 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
     name: "ctx_search",
     label: "Context Search",
     description:
-      "Full-text search over THIS conversation's compressed history (the in-session lossless store). " +
+      "Full-text search over content already ingested into THIS conversation's compressed history " +
+      "(the in-session lossless store). It cannot recover attachment or source content omitted before " +
+      "conversation ingestion. " +
       "Distinct from memory_search (cross-session recall). Use to recover detail that was compressed " +
       "out of your visible context, then ctx_expand to read the full region.",
     parameters: CtxSearchParams,

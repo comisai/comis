@@ -89,12 +89,13 @@ const FRESH_TAIL_MESSAGE_CAP_FLOOR_CHARS = 12_000;
 /**
  * Honest taint/marker suffix appended to every bounded fresh-tail message via
  * the guard's `toolHint`. Masking fresh-tail content is acceptable ONLY
- * because the LCD store keeps the full content losslessly and `ctx_expand`
- * recovers it — parity with the deterministic-fallback note wording
- * (lcd-leaf-summarizer.ts:582). Content-free by construction (no message text).
+ * because the LCD store keeps the complete message text that reached the
+ * conversation and `ctx_expand` recovers it. This says nothing about source
+ * bytes omitted by an upstream extractor before the message was stored.
+ * Content-free by construction (no message text).
  */
 const FRESH_TAIL_BOUND_RECOVERY_HINT =
-  "the full content is preserved losslessly in the LCD store and is recoverable";
+  "Message text is recoverable; source content already truncated before ingestion is not recoverable.";
 
 /**
  * The per-message char cap for this turn's fresh-tail bounding:
@@ -121,8 +122,8 @@ export function computeFreshTailCapChars(availableHistoryTokens: number): number
  * (head+tail+honest marker) and return a NEW message carrying the truncated
  * content; every message that fits passes through REFERENTIALLY unchanged
  * (verbatim fidelity preserved for what fits). The guard's marker carries the
- * lossless-recovery hint via `toolHint`, so the model is honestly told the
- * full content is recoverable.
+ * scoped-recovery hint via `toolHint`, so the model knows precisely which
+ * content is recoverable.
  *
  * Covered roles:
  *  - `toolResult` (huge file reads / command dumps),
