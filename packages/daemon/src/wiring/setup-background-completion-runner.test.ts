@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import {
@@ -257,6 +257,12 @@ describe("setupBackgroundCompletionRunner", () => {
         lastMessageId: "outbound-1",
       },
     }));
+    const activityStart = vi.fn();
+    const activityCoordinatorFactory = vi.fn(() => ({
+      start: activityStart,
+      finalize: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
+    }));
     const taskManager = {
       getTask: vi.fn(() => task),
       commitDispatchState: vi.fn((_taskId: string, next: import("@comis/agent").BackgroundSessionState) => {
@@ -293,6 +299,7 @@ describe("setupBackgroundCompletionRunner", () => {
       resolveSessionManager: vi.fn(() => undefined),
       taskManager: taskManager as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
+      ...({ activityCoordinatorFactory } as unknown as Record<string, unknown>),
       resolveMaxBackgroundHops: () => 3,
       logger: makeLogger(),
     });
@@ -308,6 +315,8 @@ describe("setupBackgroundCompletionRunner", () => {
     await ctx.runner.shutdown();
 
     expect(task.dispatchState).toBe("delivered");
+    expect(activityCoordinatorFactory).toHaveBeenCalledOnce();
+    expect(activityStart).toHaveBeenCalledOnce();
     expect(deliverToChannel).toHaveBeenCalledWith(
       adapter,
       origin.turnScope.endpoint.conversationId,
@@ -323,6 +332,25 @@ describe("setupBackgroundCompletionRunner", () => {
         origin: "background-completion",
       },
     );
+  });
+
+  it("daemon threads the channel activity coordinator into background completion setup", () => {
+    const daemonSource = readFileSync(new URL("../daemon.ts", import.meta.url), "utf8");
+    const channelsStart = daemonSource.indexOf("= await setupChannels(");
+    const completionStart = daemonSource.indexOf("setupBackgroundCompletionRunner({");
+    expect(channelsStart).toBeGreaterThan(-1);
+    expect(completionStart).toBeGreaterThan(channelsStart);
+
+    const channelDestructure = daemonSource.slice(
+      daemonSource.lastIndexOf("const {", channelsStart),
+      channelsStart,
+    );
+    const completionSetup = daemonSource.slice(
+      completionStart,
+      daemonSource.indexOf("});", completionStart) + 3,
+    );
+    expect(channelDestructure).toContain("activityCoordinatorFactory");
+    expect(completionSetup).toContain("activityCoordinatorFactory");
   });
 
   it("parks an adapter rejection without a ledger instead of resending", async () => {
