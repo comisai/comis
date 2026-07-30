@@ -57,6 +57,8 @@ const NAMED_AGENT_SESSION_KEY = "default:agent:worker:678314278:678314278:peer:6
 const TASK_ROOT_RUN_ID = "root-task-check-244cd6a3-0a81-48b1-a4f1-2e24375a6b35";
 const TASK_CORRELATION_ID = "256bb57a-b6c3-46ba-88d3-459c7be29dfe";
 const TASK_SESSION_KEY = "default:agent:default:scheduler-task-check-default:scheduler:task-check:attempt-task-a:peer:scheduler-task-check-default";
+const GRAPH_ID = "5ea53a58-f0fc-4683-b6e6-53b1d828e602";
+const GRAPH_TRACE_ID = "5a6c1d74-da1c-4d09-93c3-33862a076b9b";
 
 // Every temp dir created — torn down in afterEach so no temp tree leaks.
 const tmpDirs: string[] = [];
@@ -316,6 +318,123 @@ function writeTaskSessionIndex(dataDir: string): void {
       traceId: TASK_CORRELATION_ID,
       sessionKey: TASK_SESSION_KEY,
     }) + "\n",
+    "utf-8",
+  );
+}
+
+function graphTrajectoryLines(): string {
+  return [
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.started",
+      seq: 1,
+      traceId: GRAPH_TRACE_ID,
+      data: { channelType: "telegram", channelId: "678314278" },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "prompt.submitted",
+      seq: 2,
+      traceId: GRAPH_TRACE_ID,
+      data: { inboundKind: "message" },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "model.completed",
+      seq: 3,
+      traceId: GRAPH_TRACE_ID,
+      data: { inputTokens: 100, outputTokens: 20, stopReason: "stop" },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "delivery.dispatched",
+      seq: 4,
+      traceId: GRAPH_TRACE_ID,
+      data: { status: "success" },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.summary",
+      seq: 5,
+      traceId: GRAPH_TRACE_ID,
+      data: {
+        degraded: false,
+        turnCount: 1,
+        costUsd: 0.01,
+        toolStats: {},
+        breakerTripCount: 0,
+        topErrorKinds: {},
+        source: "runtime",
+        endReason: "success",
+      },
+    },
+  ].map((line) => JSON.stringify(line)).join("\n") + "\n";
+}
+
+function writeGraphSessionIndex(dataDir: string): void {
+  const logsDir = path.join(dataDir, "logs");
+  fs.mkdirSync(logsDir, { recursive: true });
+  const dayKey = systemDateFrom(systemNowMs()).toISOString().slice(0, 10);
+  fs.writeFileSync(
+    path.join(logsDir, `session-index.${dayKey}.jsonl`),
+    JSON.stringify({
+      traceSchema: "comis-session-index",
+      schemaVersion: 1,
+      event: "turn_completed",
+      traceId: GRAPH_TRACE_ID,
+      sessionKey: SESSION_KEY,
+    }) + "\n",
+    "utf-8",
+  );
+}
+
+function writeGraphRunMetadata(dataDir: string): void {
+  const graphDir = path.join(dataDir, "graph-runs", GRAPH_ID);
+  fs.mkdirSync(graphDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(graphDir, "_run-metadata.json"),
+    JSON.stringify({
+      graphId: GRAPH_ID,
+      graphName: "PRIVATE GRAPH LABEL",
+      startedAt: "2026-07-30T06:20:44.795Z",
+      completedAt: "2026-07-30T06:22:27.305Z",
+      durationMs: 102_510,
+      status: "completed",
+      traceId: GRAPH_TRACE_ID,
+      nodesTotal: 2,
+      nodesSucceeded: 2,
+      nodesFailed: 0,
+      nodesSkipped: 0,
+      nodesRetried: 1,
+      totalCostUsd: 0.25,
+      totalTokens: 12_000,
+      nodes: {
+        weather: {
+          status: "completed",
+          durationMs: 29_576,
+          subAgentRunId: "run-weather",
+          cacheReadTokens: 2_000,
+          cacheWriteTokens: 0,
+          cacheEffectiveness: 1,
+          attemptsUsed: 2,
+          output: "PRIVATE NODE OUTPUT",
+        },
+        decision: {
+          status: "completed",
+          durationMs: 2_915,
+          subAgentRunId: "run-decision",
+          cacheReadTokens: null,
+          cacheWriteTokens: null,
+          cacheEffectiveness: null,
+          attemptsUsed: 1,
+        },
+      },
+    }),
     "utf-8",
   );
 }
@@ -581,6 +700,60 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     ]);
     expect(JSON.stringify(report)).not.toContain("PRIVATE TASK BODY MUST NOT SURFACE");
     db.close();
+  });
+
+  it("resolves a graph identifier through terminal metadata and the real nested session layout", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = buildRealSessionFile(dataDir);
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(runtimeFile, graphTrajectoryLines(), "utf-8");
+    writeTrajectoryPointerFileBestEffort({
+      sessionFile,
+      sessionId: SESSION_KEY,
+      runtimeFile,
+    });
+    writeRealMetadata(sessionFile);
+    writeGraphSessionIndex(dataDir);
+    writeGraphRunMetadata(dataDir);
+
+    const report = await assembleIncidentReportFromSources(
+      makeRealReader(dataDir),
+      dataDir,
+      {
+        graphId: GRAPH_ID,
+        depth: "full",
+      } as unknown as Parameters<typeof assembleIncidentReportFromSources>[2],
+    );
+    const graph = (report as unknown as {
+      graph?: {
+        graphId: string;
+        status: string;
+        traceId?: string;
+        nodes: Array<Record<string, unknown>>;
+      };
+    }).graph;
+
+    expect(report.sessionKey).toBe(SESSION_KEY);
+    expect(report.traceId).toBe(GRAPH_TRACE_ID);
+    expect(report.outcome.endReason).toBe("success");
+    expect(graph).toMatchObject({
+      graphId: GRAPH_ID,
+      status: "completed",
+      traceId: GRAPH_TRACE_ID,
+    });
+    expect(graph?.nodes).toEqual([
+      expect.objectContaining({
+        nodeId: "weather",
+        status: "completed",
+        attemptsUsed: 2,
+      }),
+      expect.objectContaining({
+        nodeId: "decision",
+        status: "completed",
+        attemptsUsed: 1,
+      }),
+    ]);
+    expect(JSON.stringify(graph)).not.toContain("PRIVATE");
   });
 
 });

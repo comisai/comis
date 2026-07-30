@@ -18,6 +18,17 @@ describe("explain helper reference routing", () => {
     });
   });
 
+  it("routes UUID graph identifiers when terminal graph metadata exists", () => {
+    expect(paramsForExplainRef(
+      "5ea53a58-f0fc-4683-b6e6-53b1d828e602",
+      "full",
+      true,
+    )).toEqual({
+      graphId: "5ea53a58-f0fc-4683-b6e6-53b1d828e602",
+      depth: "full",
+    });
+  });
+
   it("routes root-prefixed identifiers before checking for colons", () => {
     expect(paramsForExplainRef("root-session-default:user:telegram", "full")).toEqual({
       rootRunId: "root-session-default:user:telegram",
