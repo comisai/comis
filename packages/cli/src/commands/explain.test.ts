@@ -287,6 +287,9 @@ describe("comis explain default (table) renders key report fields", () => {
     ]);
 
     const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain(
+      "Trace:      6ba7b810-9dad-11d1-80b4-00c04fd430c8 (latest; session totals below include prior turns — rerun explain with this trace for the exact turn)",
+    );
     expect(output).toContain("14 tool failures across 25 turns");
     expect(output).toContain("content_heuristic_misclassification");
     // The token figure names its basis so it doesn't read as the same "tok" as
@@ -294,6 +297,24 @@ describe("comis explain default (table) renders key report fields", () => {
     expect(output).toContain("735800 tok (incl cache reads)");
     // The table branch must NOT have emitted the whole report as JSON.
     expect(() => JSON.parse(output)).toThrow();
+  });
+
+  it("renders a trace without a session-total caveat when the requested reference is a trace", async () => {
+    const { client } = captureClient();
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync([
+      "node",
+      "test",
+      "explain",
+      "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+    ]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Trace:      6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    expect(output).not.toContain("session totals below include prior turns");
   });
 });
 
