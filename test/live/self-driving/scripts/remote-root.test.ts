@@ -145,6 +145,7 @@ describe("local rig mode", () => {
       [
         "-c",
         [
+          "set -e",
           `source ${shellQuote(RIG_HELPER)}`,
           `DATA=${shellQuote(directory)}`,
           'rig_refuse_continuity_wipe "$DATA"',

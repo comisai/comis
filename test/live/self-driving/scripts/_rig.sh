@@ -159,6 +159,26 @@ rig_defaults() {
   return 0
 }
 
+# Refuse a destructive clean restart when a stateful campaign has marked its data root as carrying
+# load-bearing continuity. The marker is intentionally durable across daemon restarts and code deploys.
+# A caller may override it only when deliberately ending that relationship.
+rig_refuse_continuity_wipe() {
+  local _data_dir="${1:-${DATA:-}}"
+  if [ -z "$_data_dir" ]; then
+    echo "cannot check continuity protection without a DATA root" >&2
+    return 2
+  fi
+
+  local _sentinel="${CONTINUITY_SENTINEL:-$_data_dir/.continuity-protected}"
+  if [ -e "$_sentinel" ] && [ "${ALLOW_CONTINUITY_WIPE:-0}" != "1" ]; then
+    echo "Refusing clean-restart: $_data_dir is continuity-protected." >&2
+    echo "Use restart-daemon.sh for this rig, or use a separate scratch DATA root for clean-slate verification." >&2
+    echo "Set ALLOW_CONTINUITY_WIPE=1 only when intentionally ending the relationship." >&2
+    return 3
+  fi
+  return 0
+}
+
 # ---------------------------------------------------------------------------
 # Portable probes — the three places the box-side payloads were Linux-only.
 # ---------------------------------------------------------------------------

@@ -14,7 +14,7 @@
 
 ## The fix-verify loop (THE discipline — apply per issue)
 
-> **Per issue: run forward → stop at the first failure → fix it test-first → wipe logs + memory + test sessions → rebuild + clean-restart → reproduce on the clean slate → confirm it works → only then continue. One issue fully closed before the next.**
+> **Per issue: run forward → stop at the first failure → fix it test-first → reproduce from zero on a separate clean scratch rig → confirm both success and honest failure → rebuild + restart the rig under test → replay there → only then continue. A continuous relationship's durable state is protected and never used as the destructive scratch slate. One issue fully closed before the next.**
 
 ⛔ **The anti-pattern this exists to kill (the #1 observed deviation): running the whole plan, collecting a pile of failures, and fixing them all at the end.** That is forbidden — it contaminates every later test (they run on the still-buggy system, so a "pass" may be masking an unfixed earlier bug), and no fix is reproduced on a clean slate. **The invariant is structural: ≤ 1 open COMIS-FAIL at any moment.** A COMIS-FAIL is *open* until it is either CLOSED (fix → clean-slate → reproduce → confirm) or DOCUMENTED-as-a-finding; you may not drive the next test while one is open. "Note it and keep going / fix them at the end" is the failure mode, not the discipline.
 
@@ -25,10 +25,10 @@
    - **Composition-root / wiring gaps** (built-but-not-wired) are usually only catchable by a **source-guard arch test** (`test/architecture/*-wiring-guard.test.ts`, the `audio-wiring-guard.test.ts` pattern) — the handler's own unit test stays green while the live wiring is missing. Use it.
    - **A bug is often a LAYER MISMATCH** (two subsystems disagreeing), not a defect at the site that throws. Read the docs/design for the *intended* behavior, trace the mechanism **end-to-end across every layer**, and fix the **authoritative** layer — never a parallel guard/allowlist at a convenient layer that hides the symptom and leaves the layers inconsistent (the reverted `ADMIN_DEAD_MANAGE_TOOLS` denylist that hid the dead admin tools instead of reconciling the deny-by-origin/trust layers). See **AGENTS.md §2.11**.
 5. **Review the fix against the cause:** does it make the observed failure *impossible*, or just silence the test? If you can't explain how the next production occurrence is prevented, you fixed the symptom — keep going.
-6. **Clean slate** (`01-SETUP.md §5`): wipe logs + LCD/`memory.db` + the test session/agents/jobs you created.
-7. **Rebuild + clean-restart** and **prove you're running the new code** — a live process holds the old `dist/` in memory.
-8. **Reproduce on the clean slate** — drive the *same* failing test again from zero.
-9. **Confirm** the predicate now holds **against ground truth (both oracles)**, *and* that a forced failure still **degrades honestly** (both branches).
+6. **Clean scratch proof** (`01-SETUP.md §5`): use a separate scratch `DATA` root, wipe its logs + LCD/`memory.db` + sessions/agents/jobs, then replay the minimum prerequisite history and the failing shape from zero. For a stateless campaign, the rig under test may itself be that scratch root.
+7. **Protect continuity.** A relationship/learning/long-horizon campaign marks its primary data root with `PROTECT_CONTINUITY_AFTER_RESTART=1` on the initial clean slate. `clean-restart.sh` then refuses that root before any stop or delete. Never override the guard during the campaign; `ALLOW_CONTINUITY_WIPE=1` deliberately ends and invalidates that relationship.
+8. **Rebuild + restart both rigs** and **prove they are running the new code** — use `clean-restart.sh` for the scratch root and `restart-daemon.sh` for the protected primary root. A live process holds the old `dist/` in memory.
+9. **Reproduce and confirm twice:** first on the scratch root from zero, then replay the failure in the preserved primary relationship. The predicate must hold **against ground truth (both oracles)**, and a forced failure must still **degrade honestly**.
 10. **Close the observability gap, if any** (`03-OBSERVABILITY.md §obs-loop`). If diagnosing needed a raw-log grep / a hand-join / any evidence not already in `explain`/`system`/the trajectory, that gap is itself an issue — close it **test-first** before moving on.
 11. **Re-run any test the fix could regress**, then resume forward progress.
 

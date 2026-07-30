@@ -13,6 +13,10 @@
 # `DATA` at a dedicated directory (see `01-SETUP.md §Local mode`) before running a from-scratch
 # workload, or accept that the wipe is real.
 #
+# Stateful relationship campaigns should set PROTECT_CONTINUITY_AFTER_RESTART=1 on their initial clean
+# slate. Later invocations then refuse before stopping the daemon or deleting anything. Use a separate
+# scratch DATA root for fix verification. ALLOW_CONTINUITY_WIPE=1 deliberately ends the relationship.
+#
 # Env: SERVICE, DATA, COMIS_USER, GW_PORT — the rig env file supplies per-rig values; explicit env wins.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,6 +31,10 @@ SERVICE="${SERVICE:-comis}"
 DATA="${DATA:-/home/comis/.comis}"
 COMIS_USER="${COMIS_USER:-comis}"
 GW_PORT="${GW_PORT:-4766}"
+
+# This must remain before every process stop and destructive operation. A protected relationship cannot
+# tolerate a "guard" that fires only after the daemon is down or its durable state has already changed.
+rig_refuse_continuity_wipe "$DATA"
 
 # Run a wipe step as the data dir's owner. Remote: root drops to the service user. Local: the files
 # are already the caller's, and a sudo here would leave root-owned leftovers in their own data dir —
@@ -114,6 +122,9 @@ as_service_user "
   # a backtick in THIS very comment once re-triggered -- keep it plain text).
   if [ '$WIPE_CRONS' = '1' ]; then rm -f '$DATA'/workspace*/.scheduler/cron-jobs.json '$DATA'/workspace*/.scheduler/cron-jobs.json.bak '$DATA'/workspace*/.scheduler/cron-jobs.json.lock '$DATA'/workspace*/.scheduler/execution.jsonl; fi
 "
+if [ "${PROTECT_CONTINUITY_AFTER_RESTART:-0}" = "1" ]; then
+  as_service_user "umask 077; : > '$DATA'/.continuity-protected"
+fi
 # Relaunch via systemd + verify the boot from the fresh structured log (restart-daemon.sh waits for
 # a post-restart 'Comis daemon started' and probes the gateway port; the log wipe above guarantees
 # whatever it finds belongs to THIS boot).
