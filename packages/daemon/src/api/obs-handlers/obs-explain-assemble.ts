@@ -488,6 +488,9 @@ export function assembleIncidentReport(
     toolStats,
     failures,
     breakerTimeline,
+    ...(signals.queueTimeline !== undefined
+      ? { queueTimeline: signals.queueTimeline }
+      : {}),
     offloads,
     // Per-node token-budget breaches reconstructed from the
     // session's subagent.budget_exceeded records — capSource names WHICH knob bound

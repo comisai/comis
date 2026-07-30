@@ -23,6 +23,7 @@ import {
   IncidentContextBudgetHistoryEntrySchema,
   IncidentCronWakeGateSchema,
   IncidentPromptTimeoutSchema,
+  IncidentQueueTimelineEntrySchema,
   SpawnTreeNodeSchema,
   OrchestrateRunSchema,
 } from "./incident-report-sections.js";
@@ -58,6 +59,7 @@ export {
   IncidentContextBudgetSchema,
   IncidentCronWakeGateSchema,
   IncidentPromptTimeoutSchema,
+  IncidentQueueTimelineEntrySchema,
   SpawnTreeNodeSchema,
   OrchestrateRunSchema,
 };
@@ -159,6 +161,7 @@ export const IncidentReportSchema = z.object({
       consecutiveFailures: z.number().optional(),
     }),
   ),
+  queueTimeline: IncidentQueueTimelineEntrySchema.array().optional(),
   offloads: z.array(
     z.object({
       seq: z.number(),

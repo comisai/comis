@@ -253,6 +253,9 @@ export const TRAJECTORY_EVENT_TYPES = [
   "queue.dequeued",
   "queue.overflow",
   "queue.coalesced",
+  "queue.steer_injected",
+  "queue.steer_rejected",
+  "queue.followup_queued",
 
   // Execution control
   "execution.aborted",

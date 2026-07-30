@@ -348,13 +348,6 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "session:sub_agent_spawn_rejected",
 
   // -------------------------------------------------------------------
-  // Steering injection - orchestrator-driven mid-execution control.
-  // -------------------------------------------------------------------
-  "steer:followup_queued",
-  "steer:injected",
-  "steer:rejected",
-
-  // -------------------------------------------------------------------
   // Streaming block + typing-indicator events - presentation-layer.
   // -------------------------------------------------------------------
   "streaming:block_sent",
