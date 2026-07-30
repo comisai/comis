@@ -504,6 +504,78 @@ describe("skills.import handler", () => {
     ).rejects.toThrow(/must contain a SKILL.md/i);
   });
 
+  it("rejects import when skill markdown references a file outside the approved directory", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = typeof url === "string" ? url : url.toString();
+      if (u.startsWith("https://api.github.com/")) {
+        return new Response(
+          JSON.stringify([
+            {
+              name: "SKILL.md",
+              type: "file",
+              download_url: "https://download/SKILL.md",
+              path: "skills/my-skill/SKILL.md",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        "Follow the [shared workflow](../shared-workflow.md).",
+        { status: 200 },
+      );
+    });
+    const handlers = createSkillHandlers(
+      makeDeps({ workspaceDirs: new Map([["agent-a", wsDir]]) }),
+    );
+
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/my-skill",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/outside the approved GitHub directory/i);
+    expect(fs.existsSync(join(wsDir, "skills", "my-skill"))).toBe(false);
+  });
+
+  it("rejects import when skill markdown references a missing bundle file", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = typeof url === "string" ? url : url.toString();
+      if (u.startsWith("https://api.github.com/")) {
+        return new Response(
+          JSON.stringify([
+            {
+              name: "SKILL.md",
+              type: "file",
+              download_url: "https://download/SKILL.md",
+              path: "skills/my-skill/SKILL.md",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        "Read the [local guide](references/guide.md).",
+        { status: 200 },
+      );
+    });
+    const handlers = createSkillHandlers(
+      makeDeps({ workspaceDirs: new Map([["agent-a", wsDir]]) }),
+    );
+
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/my-skill",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/missing from the fetched bundle/i);
+    expect(fs.existsSync(join(wsDir, "skills", "my-skill"))).toBe(false);
+  });
+
   it("rejects local-scope import when calling agent has no workspace directory registered", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response(
