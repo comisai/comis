@@ -125,7 +125,7 @@ export function createDeleteAndRepostRenderer(
         case "failure": {
           // Delete the running activity, then post the final themed failure line
           // and KEEP it. The marker follows the resolved theme; omitting
-          // markers yields the byte-identical "❌ {errorKind}".
+          // markers yields the default attributed failure form.
           const deleted = await deleteLast();
           if (!deleted.ok) return deleted;
           const sent = await actions.send(failureLabel(outcome, markers));

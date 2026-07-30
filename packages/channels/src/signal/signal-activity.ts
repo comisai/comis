@@ -16,8 +16,8 @@
  *      `{kind:"internal", cause:e}` (KISS — no invented rich
  *      classifier). The raw RPC error `.message` is read for NOTHING
  *      user-facing — it selects the variant only and is NEVER rendered or logged
- *      as activity text. The S4 fixture proves the failure text is
- *      `❌ {errorKind}` (from `failureLabel`), not the RPC body.
+ *      as activity text. The S4 fixture proves the failure text is an
+ *      attributed, redacted activity label, not the RPC body.
  *
  *   2. `makeSignalRenderActions` — the `ActivityRenderActions` adapter. `send`
  *      posts a plain message via `adapter.sendMessage` (NO silent effect — Signal

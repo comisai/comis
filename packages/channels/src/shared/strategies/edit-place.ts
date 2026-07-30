@@ -220,7 +220,7 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
         case "failure": {
           // KEEP the message: edit to the themed failure form, never delete.
           // The marker follows the resolved theme; omitting markers yields the
-          // byte-identical "❌ {errorKind}".
+          // default attributed failure form.
           if (messageId !== undefined) {
             const edited = await actions.edit(
               messageId,

@@ -99,7 +99,7 @@ export function createAppendOnlyRenderer(deps: AppendOnlyDeps): ChannelActivityR
 
         case "failure": {
           // The marker follows the resolved theme; omitting markers
-          // yields the byte-identical "❌ {errorKind}".
+          // yields the default attributed failure form.
           const sent = await actions.send(failureLabel(outcome, markers));
           if (!sent.ok) return sent;
           return ok(undefined);

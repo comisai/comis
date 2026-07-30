@@ -268,22 +268,33 @@ export function appendPrompt(text: string, prompt?: string): string {
  * Closing failure marker carrying the (closed-union) errorKind; themed when
  * markers are supplied. With no markers (or the default theme's markers) the
  * output is the cross-prefixed `"<marker> {errorKind}"`;
- * the ascii theme yields `"[ERR] {errorKind}"` with no emoji. Interpolates
- * ONLY the closed-union `errorKind` plus the fixed one-line `reason` (a
- * named-constant string from the abort mapper) — never raw outcome internals.
+ * the ascii theme yields `"[ERR] {errorKind}"` with no emoji. An attributed
+ * failure uses the newest named, already-redacted activity event followed by
+ * the closed-union error kind. Raw outcome internals are never rendered.
  *
  * When `outcome.reason` is present (a resource abort: step limit / loop), the
  * label reads `"<marker> {errorKind} — {reason}"` so a stopped turn renders
- * truthfully instead of the bare errorKind. Absent reason → the bare
- * `"<marker> {errorKind}"` form.
+ * truthfully instead of the bare errorKind. With neither a reason nor a named
+ * failed event, the label falls back to the bare `"<marker> {errorKind}"` form.
  */
 export function failureLabel(
   outcome: Extract<TurnOutcome, { kind: "failure" }>,
   markers?: Pick<ActivityStatusMarkers, "failure">,
 ): string {
-  const base = `${markers?.failure ?? DEFAULT_MARKERS.failure} ${outcome.errorKind}`;
-  if (outcome.reason === undefined || outcome.reason.length === 0) return base;
-  return `${base} — ${outcome.reason}`;
+  const marker = markers?.failure ?? DEFAULT_MARKERS.failure;
+  const base = `${marker} ${outcome.errorKind}`;
+  if (outcome.reason !== undefined && outcome.reason.length > 0) {
+    return `${base} — ${outcome.reason}`;
+  }
+  for (const event of [...outcome.failedEvents].reverse()) {
+    const label = event?.defaultLabel && event.defaultLabel.length > 0
+      ? event.defaultLabel
+      : event?.toolName;
+    if (label !== undefined && label.length > 0) {
+      return `${marker} ${label} — ${outcome.errorKind}`;
+    }
+  }
+  return base;
 }
 
 /**

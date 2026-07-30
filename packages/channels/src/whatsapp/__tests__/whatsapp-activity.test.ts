@@ -70,7 +70,11 @@ function successOutcome(deliveredAtMs: number, trivial = false): TurnOutcome {
 }
 
 function failureOutcome(): TurnOutcome {
-  return { kind: "failure", errorKind: "dependency" } as TurnOutcome;
+  return {
+    kind: "failure",
+    errorKind: "dependency",
+    failedEvents: [ev({ status: "failed", phase: "end", defaultLabel: "working" })],
+  } as TurnOutcome;
 }
 
 /** Drain microtasks so a fired timer callback's async body settles. */

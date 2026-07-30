@@ -6,7 +6,7 @@
  * delete, so it wires the AppendOnly strategy IDENTICALLY to iMessage:
  * ONE opening status (the first non-trivial frame), later frames are no-ops, the
  * closing follow-up is SUPPRESSED on success (the assistant reply is the signal),
- * and a failure posts exactly one `❌ {errorKind}` follow-up.
+ * and a failure posts exactly one attributed `❌` follow-up.
  *
  * Scope: only the AppendOnly RENDERING half is covered here. The LINE
  * Quick Reply approval-chip affordance is covered in
@@ -169,7 +169,7 @@ describe("createLineActivityRenderer (AppendOnly wiring)", () => {
     expect(sends).toHaveLength(1);
   });
 
-  it("posts exactly one ❌ {errorKind} follow-up on failure", async () => {
+  it("posts exactly one attributed ❌ follow-up on failure", async () => {
     const fake = createFakeLineAdapter();
     const r = createLineActivityRenderer(fake, "chat-1");
 
@@ -249,7 +249,7 @@ describe("LINE golden fixtures (AppendOnly call-log — readFixture + toEqual)",
     expect(log).toEqual(readFixture("line", "S3"));
   });
 
-  it("S4 outright failure — 1 opening status + exactly one ❌ {errorKind} closing", async () => {
+  it("S4 outright failure — 1 opening status + exactly one attributed ❌ closing", async () => {
     const log = await runScenario(
       [makeFrame(0, "running tool"), makeFrame(1, "tool failed")],
       { kind: "failure", errorKind: "dependency", failedEvents: [ev(1, { status: "failed", errorKind: "dependency" })] },

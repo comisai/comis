@@ -5,8 +5,8 @@
  * iMessage is send-only — it has no in-place edit and no delete, so it wires the
  * AppendOnly strategy: ONE opening status (the first non-trivial frame),
  * later frames are no-ops, the closing follow-up is SUPPRESSED on success (the
- * assistant reply is the signal), and a failure posts exactly one
- * `❌ {errorKind}` follow-up. The single net-new piece of logic here is
+ * assistant reply is the signal), and a failure posts exactly one attributed
+ * `❌` follow-up. The single net-new piece of logic here is
  * `classifyIMessageError` — the live adapter wraps send failures in
  * `new Error("Failed to send iMessage: …")` with no structured numeric code, so
  * the classifier defaults to `internal` and reads the error structurally ONLY
@@ -165,7 +165,7 @@ describe("createIMessageActivityRenderer (AppendOnly wiring)", () => {
     expect(sends).toHaveLength(1);
   });
 
-  it("posts exactly one ❌ {errorKind} follow-up on failure", async () => {
+  it("posts exactly one attributed ❌ follow-up on failure", async () => {
     const fake = createFakeIMessageAdapter();
     const r = createIMessageActivityRenderer(fake, "chat-1");
 
@@ -246,7 +246,7 @@ describe("iMessage golden fixtures (AppendOnly rows — readFixture + toEqual)",
     expect(log).toEqual(readFixture("imessage", "S3"));
   });
 
-  it("S4 outright failure — 1 opening status + exactly one ❌ {errorKind} closing", async () => {
+  it("S4 outright failure — 1 opening status + exactly one attributed ❌ closing", async () => {
     const log = await runScenario(
       [makeFrame(0, "running tool"), makeFrame(1, "tool failed")],
       { kind: "failure", errorKind: "dependency", failedEvents: [ev(1, { status: "failed", errorKind: "dependency" })] },
