@@ -14,16 +14,15 @@ import type { AppContainer } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, ComisSessionManager, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import { createCommandHandler, parseSlashCommand, createMessageRouter, createCommandQueue, createActivityTurnCoordinator, type CommandHandlerDeps, type CommandQueue, type ActivityTurnCoordinator, type ActivityBreakerGate } from "@comis/orchestrator";
-import { type VoiceResponsePipelineDeps, createLifecycleReactor, reactWithFallback, createTestSink, type LifecycleReactor, type ChannelRegistry } from "@comis/channels";
+import { createLifecycleReactor, reactWithFallback, createTestSink, type LifecycleReactor, type ChannelRegistry } from "@comis/channels";
 import { buildReadOnlyChannelRegistry, buildChannelCredentialMap } from "./setup-channels-registry-builder.js";
 import { buildActivityRenderers, type ActivityRendererFactory } from "./setup-channels-activity-renderers.js";
 import { resolveActivityKillSwitchSlice } from "./activity-kill-switch.js";
 import { createGraphReportRequestHandler, type GraphReportDurability } from "./graph-report-delivery.js";
+import { buildVoiceResponsePipeline } from "./setup-channels-voice-response.js";
 import { createChannelManager, createDeterministicLocalization, processInboundMessage, type ChannelManager } from "@comis/orchestrator";
 import { DmScopeConfigSchema, RetryConfigSchema, createRetryEngine } from "@comis/core";
 import {
-  shouldAutoTts,
-  resolveOutputFormat,
   parseOutboundMedia,
   type SsrfGuardedFetcher,
   type LinkRunner,
@@ -153,41 +152,11 @@ export async function buildAndStartChannelManager(
   const messageRouter = createMessageRouter(routingConfig);
   let channelManager: ChannelManager | undefined;
 
-  let voiceResponsePipeline: VoiceResponsePipelineDeps | undefined;
-  if (deps.ttsAdapter) {
-    const ttsConfig = container.config.integrations.media.tts;
-
-    const providerFormatKey: "openai" | "elevenlabs" | "edge" =
-      ttsConfig.provider === "elevenlabs" ? "elevenlabs"
-      : ttsConfig.provider === "edge" ? "edge"
-      : "openai";
-
-    voiceResponsePipeline = {
-      ttsAdapter: deps.ttsAdapter,
-      audioConverter: deps.audioConverter,
-      mediaTempManager: deps.mediaTempManager
-        ? { getManagedDir: () => deps.mediaTempManager!.getManagedDir() }
-        : { getManagedDir: () => undefined },
-      mediaSemaphore: deps.mediaSemaphore
-        ? { run: <T>(fn: () => Promise<T>) => deps.mediaSemaphore!.run(fn) }
-        : { run: async <T>(fn: () => Promise<T>) => fn() },
-      shouldAutoTts,
-      resolveOutputFormat: resolveOutputFormat as VoiceResponsePipelineDeps["resolveOutputFormat"],
-      ttsConfig: {
-        autoMode: ttsConfig.autoMode,
-        tagPattern: ttsConfig.tagPattern,
-        voice: ttsConfig.voice,
-        maxTextLength: ttsConfig.maxTextLength,
-        outputFormats: ttsConfig.outputFormats,
-        providerFormatKey,
-        provider: ttsConfig.provider, // §2.7 voice-identity (INFO line)
-        keyless: ttsConfig.provider === "edge" || ttsConfig.provider === "local", // edge/local ⇒ $0
-        ...(ttsConfig.model !== undefined ? { model: ttsConfig.model } : {}),
-      },
-      logger: channelsLogger,
-    };
-    channelsLogger.debug({ autoMode: ttsConfig.autoMode, providerFormatKey, provider: ttsConfig.provider }, "Voice response pipeline wired");
-  }
+  const voiceResponsePipeline = buildVoiceResponsePipeline(
+    container.config,
+    deps,
+    channelsLogger,
+  );
 
   let commandQueue: CommandQueue | undefined;
   if (deps.queueConfig?.enabled) {
