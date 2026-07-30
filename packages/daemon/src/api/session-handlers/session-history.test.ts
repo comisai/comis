@@ -79,6 +79,20 @@ const subagentScopeFor = (agentId: string, runId: string): ConversationScope => 
     },
   },
 });
+const sharedScopeFor = (agentId: string): ConversationScope => ({
+  tenantId: "test",
+  agentId,
+  partition: {
+    kind: "endpoint-conversation-principal",
+    principalId: "user-1",
+    endpoint: {
+      ...SESSION_ENDPOINT,
+      conversationId: "shared-channel",
+      threadId: "shared-thread",
+      conversationKind: "shared",
+    },
+  },
+});
 const canonicalSessionKeyFor = (agentId: string) => {
   const result = conversationScopeToSessionKey(scopeFor(agentId));
   if (!result.ok) throw result.error;
@@ -224,7 +238,7 @@ function makeDeps(
     tenantId: "test",
     logger: {
       info: vi.fn(), debug: vi.fn(), warn: vi.fn(),
-      error: vi.fn(), trace: vi.fn(), fatal: vi.fn(), child: vi.fn(),
+      error: vi.fn(), trace: vi.fn(), fatal: vi.fn(), audit: vi.fn(), child: vi.fn(),
     } as unknown as SessionHandlerDeps["logger"],
     ...overrides,
   };
@@ -381,7 +395,7 @@ describe("session.history deliveryStatus join", () => {
 // preserved.
 // ---------------------------------------------------------------------------
 describe("session.history agent-origin self-scoping", () => {
-  it("session.history returns the exact caller session without a serialized agent field", async () => {
+  it("session.history returns the exact caller session from its trusted conversation scope", async () => {
     const deps = makeDeps({ deliveryQueue: makeQueuePort([]) });
     const handlers = bindSessionReadHandlers(deps);
 
@@ -391,7 +405,9 @@ describe("session.history agent-origin self-scoping", () => {
       agent_id: "caller-agent",
       conversation_ref: referenceFor("caller-agent"),
       _agentId: "caller-agent",
+      _tenantId: "test",
       _callerSessionKey: SESSION_KEY,
+      _callerConversationScope: scopeFor("caller-agent"),
     })) as { messages: Array<{ role: string; content: string }> };
 
     expect(r.messages.length).toBeGreaterThan(0);
@@ -429,6 +445,133 @@ describe("session.history agent-origin self-scoping", () => {
         _callerConversationScope: subagentScopeFor("caller-agent", "caller-run"),
       }),
     ).rejects.toThrow(/sub-agent session access denied/i);
+  });
+
+  it("session.history denies a model-origin caller reading an unrelated same-agent shared conversation", async () => {
+    const callerScope = scopeFor("caller-agent");
+    const targetScope = sharedScopeFor("caller-agent");
+    const targetRefResult = createConversationRef(targetScope);
+    if (!targetRefResult.ok) throw targetRefResult.error;
+    const targetRef = targetRefResult.value;
+    const deps = makeDeps({
+      deliveryQueue: makeQueuePort([]),
+      sessionStore: {
+        listDetailed: vi.fn().mockReturnValue(ok([])),
+        loadByRef: vi.fn().mockReturnValue(ok({
+          conversationRef: targetRef,
+          conversationScope: targetScope,
+          messages: [{ role: "user", content: "shared-private-marker", timestamp: 10 }],
+          metadata: {},
+          createdAt: 1,
+          updatedAt: 2,
+        })),
+      } as never,
+    });
+    const handlers = bindSessionReadHandlersRaw(deps);
+
+    await expect(handlers["session.history"]!({
+      tenant_id: "test",
+      agent_id: "caller-agent",
+      conversation_ref: targetRef,
+      _agentId: "caller-agent",
+      _tenantId: "test",
+      _callerConversationScope: callerScope,
+    })).rejects.toThrow(/session history access denied/i);
+    expect(deps.logger.audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "capability_denied",
+        outcome: "denied",
+        actionType: "session.history",
+      }),
+      "session.history conversation scope denied",
+    );
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "session.history",
+        errorKind: "auth",
+      }),
+      "Session history conversation scope authorization failed",
+    );
+  });
+
+  it("session.history lets a model-origin parent inspect its directly delegated child", async () => {
+    const callerScope = scopeFor("caller-agent");
+    const callerRef = referenceFor("caller-agent");
+    const childScope = subagentScopeFor("caller-agent", "delegated-child");
+    const childRefResult = createConversationRef(childScope);
+    if (!childRefResult.ok) throw childRefResult.error;
+    const childRef = childRefResult.value;
+    const deps = makeDeps({
+      deliveryQueue: makeQueuePort([]),
+      sessionStore: {
+        listDetailed: vi.fn().mockReturnValue(ok([])),
+        loadByRef: vi.fn().mockReturnValue(ok({
+          conversationRef: childRef,
+          conversationScope: childScope,
+          messages: [{ role: "assistant", content: "delegated-result", timestamp: 10 }],
+          metadata: {
+            parentConversationRef: callerRef,
+            spawnedByAgent: "caller-agent",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        })),
+      } as never,
+    });
+    const handlers = bindSessionReadHandlersRaw(deps);
+
+    const result = await handlers["session.history"]!({
+      tenant_id: "test",
+      agent_id: "caller-agent",
+      conversation_ref: childRef,
+      _agentId: "caller-agent",
+      _tenantId: "test",
+      _callerConversationScope: callerScope,
+    }) as { messages: Array<{ content: string }> };
+
+    expect(result.messages).toEqual([
+      expect.objectContaining({ content: "delegated-result" }),
+    ]);
+  });
+
+  it("session.history lets a model-origin parent inspect a delegated child owned by another agent", async () => {
+    const callerScope = scopeFor("caller-agent");
+    const callerRef = referenceFor("caller-agent");
+    const childScope = subagentScopeFor("child-agent", "delegated-child");
+    const childRefResult = createConversationRef(childScope);
+    if (!childRefResult.ok) throw childRefResult.error;
+    const childRef = childRefResult.value;
+    const deps = makeDeps({
+      deliveryQueue: makeQueuePort([]),
+      sessionStore: {
+        listDetailed: vi.fn().mockReturnValue(ok([])),
+        loadByRef: vi.fn().mockReturnValue(ok({
+          conversationRef: childRef,
+          conversationScope: childScope,
+          messages: [{ role: "assistant", content: "cross-agent-delegated-result", timestamp: 10 }],
+          metadata: {
+            parentConversationRef: callerRef,
+            spawnedByAgent: "caller-agent",
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        })),
+      } as never,
+    });
+    const handlers = bindSessionReadHandlersRaw(deps);
+
+    const result = await handlers["session.history"]!({
+      tenant_id: "test",
+      agent_id: "child-agent",
+      conversation_ref: childRef,
+      _agentId: "caller-agent",
+      _tenantId: "test",
+      _callerConversationScope: callerScope,
+    }) as { messages: Array<{ content: string }> };
+
+    expect(result.messages).toEqual([
+      expect.objectContaining({ content: "cross-agent-delegated-result" }),
+    ]);
   });
 
   it("session.history still returns the full transcript for an admin/operator call with NO _agentId injected", async () => {

@@ -40,6 +40,24 @@ function subagentScope(agentId: string, runId: string): ConversationScope {
   };
 }
 
+function sharedScope(agentId: string, conversationId: string): ConversationScope {
+  return {
+    tenantId: "tenant_a",
+    agentId,
+    partition: {
+      kind: "endpoint-conversation-principal",
+      principalId: `principal-${agentId}`,
+      endpoint: {
+        channelType: "telegram",
+        channelInstanceId: `account-${agentId}`,
+        conversationId,
+        threadId: "thread-shared",
+        conversationKind: "shared",
+      },
+    },
+  };
+}
+
 function reference(conversationScope: ConversationScope) {
   const result = createConversationRef(conversationScope);
   if (!result.ok) throw result.error;
@@ -254,6 +272,94 @@ describe("session list explicit authority", () => {
     ]);
     expect(listed.total).toBe(1);
     expect(searched).toEqual({ mode: "search", results: [], total: 0 });
+  });
+
+  it("limits a model-origin list and content search to the caller conversation and its delegated children", async () => {
+    const callerScope = scope("agent_a");
+    const groupScope = sharedScope("agent_a", "shared-conversation");
+    const childScope = subagentScope("agent_a", "delegated-child");
+    const entries: SessionDetailedEntry[] = [
+      {
+        ...entry("agent_a"),
+        conversationRef: reference(callerScope),
+        conversationScope: callerScope,
+      },
+      {
+        ...entry("agent_a"),
+        conversationRef: reference(groupScope),
+        conversationScope: groupScope,
+      },
+      {
+        ...entry("agent_a"),
+        conversationRef: reference(childScope),
+        conversationScope: childScope,
+        metadata: {
+          parentConversationRef: reference(callerScope),
+          spawnedByAgent: "agent_a",
+        },
+      },
+    ];
+    const deps = {
+      ...makeDeps(),
+      sessionStore: {
+        listDetailed: vi.fn().mockReturnValue(ok(entries)),
+        loadByRef: vi.fn((
+          _query: { tenantId: string; agentId: string },
+          conversationRef: string,
+        ) => {
+          const found = entries.find((candidate) => candidate.conversationRef === conversationRef);
+          return ok(found === undefined ? undefined : {
+            conversationRef: found.conversationRef,
+            conversationScope: found.conversationScope,
+            messages: [{
+              role: "user",
+              content: found.conversationRef === reference(groupScope)
+                ? "shared-private-marker"
+                : "caller-visible-marker",
+              timestamp: 10,
+            }],
+            metadata: found.metadata,
+            createdAt: found.createdAt,
+            updatedAt: found.updatedAt,
+          });
+        }),
+      },
+    } as unknown as SessionHandlerDeps;
+    const handlers = bindSessionListHandlers(deps);
+    const authority = {
+      tenant_id: "tenant_a",
+      agent_id: "agent_a",
+      _agentId: "agent_a",
+      _tenantId: "tenant_a",
+      _callerConversationScope: callerScope,
+    };
+
+    const listed = await handlers["session.list"]!(authority) as {
+      sessions: Array<{ conversationRef: string }>;
+      total: number;
+    };
+    const searched = await handlers["session.search"]!({
+      ...authority,
+      query: "shared-private-marker",
+      summarize: false,
+    }) as { results: unknown[]; total: number };
+
+    expect(listed.sessions.map((session) => session.conversationRef)).toEqual(
+      expect.arrayContaining([reference(childScope), reference(callerScope)]),
+    );
+    expect(listed.total).toBe(2);
+    expect(searched).toEqual({ mode: "search", results: [], total: 0 });
+  });
+
+  it("rejects a model-origin query without an exact caller conversation scope", async () => {
+    const handlers = bindSessionListHandlers(makeDeps());
+
+    await expect(handlers["session.list"]!({
+      tenant_id: "tenant_a",
+      agent_id: "agent_a",
+      _agentId: "agent_a",
+      _tenantId: "tenant_a",
+    })).rejects.toThrow(/session query access denied/i);
   });
 
   it("lets the authenticated control plane select an explicit agent scope", async () => {
