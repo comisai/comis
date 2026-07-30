@@ -748,8 +748,8 @@ describe("createTelegramAdapter", () => {
       const adapter = await createStartedTelegramAdapter();
       const result = await adapter.editMessage("12345", "99", "Approval required", {
         buttons: [[
-          { label: "Approve", callback_data: "v1.approve.short.signature" },
-          { label: "Deny", callback_data: "v1.deny.short.signature" },
+          { text: "Approve", callback_data: "v1.approve.short.signature" },
+          { text: "Deny", callback_data: "v1.deny.short.signature" },
         ]],
       });
 

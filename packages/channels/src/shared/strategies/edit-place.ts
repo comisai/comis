@@ -81,6 +81,8 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
   let pendingEdit: TimerHandle | undefined;
   /** Latest frame text awaiting an edit flush. */
   let latestText = "";
+  /** Latest native controls awaiting an edit flush. Undefined on text-only channels. */
+  let latestButtons: RichButton[][] | undefined;
   /** Pending delete timer (deliveredAt wait); cancelled on shutdown paths. */
   let pendingDelete: TimerHandle | undefined;
   /** First-apply clock snapshot; feeds `elapsedMs`
@@ -111,7 +113,11 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
     if (messageId === undefined) return;
     // Best-effort: a transient edit failure during streaming is non-fatal; the
     // coordinator owns retry/error translation on the final apply/finalize.
-    await actions.edit(messageId, latestText);
+    await actions.edit(
+      messageId,
+      latestText,
+      latestButtons === undefined ? undefined : { buttons: latestButtons },
+    );
   }
 
   async function deletePlaceholder(): Promise<Result<void, ActivityRenderError>> {
@@ -132,12 +138,13 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
       const elapsedMs =
         clock !== undefined && startedAtMs !== undefined ? clock.now() - startedAtMs : undefined;
       latestText = renderFrameText(frame, markers, elapsedMs);
+      latestButtons = buildButtons?.(frame.visibleEvents);
 
       // First frame posts the placeholder; later frames only debounce an edit.
       if (messageId === undefined) {
         // Build the signed approval rows from the frame. A button-less
         // renderer (no `buildButtons`) or a non-approval frame yields `[]`.
-        const buttons = buildButtons?.(frame.visibleEvents) ?? [];
+        const buttons = latestButtons ?? [];
         // A button-less channel (WhatsApp) appends the plain-text approval prompt
         // to the placeholder instead; a non-approval frame yields
         // `""`, leaving the placeholder text byte-identical.
@@ -178,7 +185,11 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
           // them yields the byte-identical default check-done line.
           let unsupportedEdit: ActivityRenderError | undefined;
           if (messageId !== undefined) {
-            const edited = await actions.edit(messageId, successLabel(markers));
+            const edited = await actions.edit(
+              messageId,
+              successLabel(markers),
+              buildButtons === undefined ? undefined : { buttons: [] },
+            );
             if (!edited.ok) {
               if (edited.error.kind !== "not_supported") return edited;
               // The final answer already has its own delivered message. If the
@@ -211,7 +222,11 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
           // The marker follows the resolved theme; omitting markers yields the
           // byte-identical "❌ {errorKind}".
           if (messageId !== undefined) {
-            const edited = await actions.edit(messageId, failureLabel(outcome, markers));
+            const edited = await actions.edit(
+              messageId,
+              failureLabel(outcome, markers),
+              buildButtons === undefined ? undefined : { buttons: [] },
+            );
             if (!edited.ok) return edited;
           }
           return ok(undefined);

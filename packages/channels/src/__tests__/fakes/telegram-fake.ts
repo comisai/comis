@@ -37,7 +37,7 @@ export interface GrammyErrorShape {
 /** One recorded adapter call — discriminated by `op`, ids deterministic, no timestamps. */
 export type FakeTelegramCall =
   | { op: "send"; id: string; text: string; silent: boolean; buttons?: RichButton[][] }
-  | { op: "edit"; id: string; text: string }
+  | { op: "edit"; id: string; text: string; buttons?: RichButton[][] }
   | { op: "delete"; id: string }
   | { op: "react"; id: string; emoji: string }
   | { op: "removeReaction"; id: string; emoji: string };
@@ -112,11 +112,16 @@ export function createFakeTelegramAdapter(channelId = "chat-1"): FakeTelegramAda
       _channelId: string,
       messageId: string,
       text: string,
-      _options?: SendMessageOptions,
+      options?: SendMessageOptions,
     ): Promise<Result<void, Error>> {
       const injected = takeInjectedError(adapter);
       if (injected) return err(injected);
-      recorded.calls.push({ op: "edit", id: messageId, text });
+      recorded.calls.push({
+        op: "edit",
+        id: messageId,
+        text,
+        ...(options?.buttons !== undefined ? { buttons: options.buttons } : {}),
+      });
       return ok(undefined);
     },
 

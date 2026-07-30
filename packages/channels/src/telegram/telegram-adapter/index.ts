@@ -113,8 +113,8 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
     sendMessage: (chatId, text, options) =>
       sendMessage(state, deps, chatId, text, options),
 
-    editMessage: (chatId, messageId, text) =>
-      editMessage(state, deps, chatId, messageId, text),
+    editMessage: (chatId, messageId, text, options) =>
+      editMessage(state, deps, chatId, messageId, text, options),
 
     reactToMessage: (chatId, messageId, emoji) =>
       reactToMessage(state, deps, chatId, messageId, emoji),

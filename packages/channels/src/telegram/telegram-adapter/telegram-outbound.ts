@@ -144,15 +144,21 @@ export async function editMessage(
   chatId: string,
   messageId: string,
   text: string,
+  options?: SendMessageOptions,
 ): Promise<Result<void, Error>> {
   const activeBot = getActiveBot(state);
   if (!activeBot.ok) return activeBot;
   const bot = activeBot.value;
+  const richOptions =
+    options?.buttons === undefined
+      ? undefined
+      : { reply_markup: renderTelegramButtons(options.buttons) };
   try {
     const sanitizedText = sanitizeTelegramHtml(text);
     try {
       await bot.api.editMessageText(Number(chatId), Number(messageId), sanitizedText, {
         parse_mode: "HTML",
+        ...richOptions,
       });
     } catch (htmlErr) {
       if (isTelegramHtmlParseError(htmlErr)) {
@@ -160,7 +166,16 @@ export async function editMessage(
           { channelType: "telegram", chatId, messageId, err: toSafeErrorLogString(htmlErr), hint: "HTML parse failed on edit, retrying as plain text", errorKind: "platform" as const },
           "HTML parse fallback triggered (edit)",
         );
-        await bot.api.editMessageText(Number(chatId), Number(messageId), text);
+        if (richOptions === undefined) {
+          await bot.api.editMessageText(Number(chatId), Number(messageId), text);
+        } else {
+          await bot.api.editMessageText(
+            Number(chatId),
+            Number(messageId),
+            text,
+            richOptions,
+          );
+        }
       } else {
         throw htmlErr;
       }
