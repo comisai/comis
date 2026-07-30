@@ -158,7 +158,16 @@ export function registerMcpResourcesForClient(
       //          agent_id + conversation_ref); tenant + default-agent are the
       //          daemon identity the same indirection binds the call to, so the
       //          handler's `_tenantId`/`_agentId` cross-check passes.
+      // `agentId` names the acting agent EXPLICITLY, which is what keeps this an
+      // ADDRESSED read rather than an ambient model-caller read. Session reads
+      // isolate a model caller to its own conversation, and this read is
+      // deliberately of ANOTHER conversation — an allowlisted one — so binding it
+      // as a model caller denies it (`conversation_scope_mismatch`) no matter
+      // what caller scope is supplied. The authorization that applies here is the
+      // per-client allowlist checked immediately above, which is what makes
+      // `conversationRef` reachable at all.
       const history = (await deps.daemonRpcForMcpClient("session.history", {
+        agentId: deps.defaultAgentId,
         tenant_id: deps.tenantId,
         agent_id: deps.defaultAgentId,
         conversation_ref: conversationRef,
