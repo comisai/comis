@@ -356,6 +356,30 @@ describe("setup-cross-session-graph", () => {
       expect((result as { terminalErrorKind?: string }).terminalErrorKind).toBe("dependency");
     });
 
+    it("threads actionable executor error context through the subagent execution boundary", async () => {
+      const { deps, executor } = makeGraphDeps({});
+      vi.mocked(executor.execute).mockResolvedValueOnce({
+        ...executionResult({ response: "" }),
+        finishReason: "prompt_timeout",
+        errorContext: {
+          errorType: "UpstreamToolFailure",
+          retryable: false,
+          failingTool: "web_search",
+          configKey: "tools.web.search",
+        },
+      });
+      const executeSubAgent = buildExecuteSubAgent(deps);
+
+      const result = await executeSubAgent("agent-2", sessionKey, conversation, "task");
+
+      expect(result.errorContext).toEqual({
+        errorType: "UpstreamToolFailure",
+        retryable: false,
+        failingTool: "web_search",
+        configKey: "tools.web.search",
+      });
+    });
+
     it("binds child tool assembly to the exact child session and inherited delivery origin", async () => {
       const { deps } = makeGraphDeps({});
       const executeSubAgent = buildExecuteSubAgent(deps);
