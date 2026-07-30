@@ -896,6 +896,7 @@ type DelegationEvidenceGuard = (params: {
     success: boolean;
     backgrounded?: boolean;
   }>;
+  runtimeCompletion?: boolean;
   honestResponse: string;
 }) => {
   response: string;
@@ -984,6 +985,37 @@ describe("current-turn delegation evidence guard", () => {
     });
   });
 
+  it("preserves a configured-agent creation result from a runtime completion envelope", () => {
+    const created =
+      "The Live Test Helper agent was created successfully and is ready.";
+    const guarded = delegationEvidenceGuard()({
+      request:
+        "[Background Task: agents_manage]\nAgent created.\nTool guide: use another agent for delegation.",
+      response: created,
+      toolExecResults: [],
+      runtimeCompletion: true,
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: created,
+      corrected: false,
+    });
+  });
+
+  it("still guards the same delegation prose when it is an ordinary request", () => {
+    const guarded = delegationEvidenceGuard()({
+      request: "use another agent for an independent check",
+      response: falseClaim,
+      toolExecResults: [],
+      runtimeCompletion: false,
+      honestResponse,
+    });
+
+    expect(guarded.corrected).toBe(true);
+    expect(guarded.response).toBe(honestResponse);
+  });
+
   it("leaves ordinary replies unchanged even when session history was queried", () => {
     const ordinaryRequest = "what did the earlier reviewer say";
     const ordinaryResponse = "The earlier review said the battery lasted eight hours.";
@@ -1017,6 +1049,37 @@ describe("current-turn delegation evidence guard", () => {
       response: ordinaryResponse,
       corrected: false,
     });
+  });
+});
+
+type TrustedBackgroundCompletionDetector = (message: {
+  channelType: string;
+  senderId: string;
+}) => boolean;
+
+function trustedBackgroundCompletionDetector(): TrustedBackgroundCompletionDetector {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .isTrustedBackgroundCompletionEnvelope;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as TrustedBackgroundCompletionDetector;
+}
+
+describe("trusted background completion envelope", () => {
+  it("requires both the internal channel and completion-runner identity", () => {
+    const detect = trustedBackgroundCompletionDetector();
+
+    expect(detect({
+      channelType: "background_task",
+      senderId: "background-task-runner",
+    })).toBe(true);
+    expect(detect({
+      channelType: "telegram",
+      senderId: "background-task-runner",
+    })).toBe(false);
+    expect(detect({
+      channelType: "background_task",
+      senderId: "user_a",
+    })).toBe(false);
   });
 });
 
