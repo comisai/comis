@@ -72,6 +72,25 @@ export function resolveTerminalUnavailable(
     : { errorKind: fallbackKind, hint: fallbackHint };
 }
 
+/**
+ * Build the actionable user-facing error for an image request that reached the
+ * vision ladder's unavailable terminal. The binding and registry knobs are
+ * both named because either selecting a vision-capable main model or
+ * configuring a credentialed registry provider can make the request servable.
+ */
+export function visionUnavailableError(
+  agentId: string,
+  modelId: string | undefined,
+): Error {
+  const modelKnob = `agents.${agentId}.model`;
+  return new Error(
+    `No vision provider available for image analysis. Active model "${modelId ?? "<unknown>"}" is configured at ${modelKnob}. ` +
+    "Select a vision-capable model, or configure integrations.media.vision.providers and " +
+    "integrations.media.vision.defaultProvider with an available credential. " +
+    "Re-uploading will not help until that configuration changes.",
+  );
+}
+
 /** A bound vision-trajectory + §2.7-log emitter. Returned by
  *  `createVisionObsEmitter` (which fires `media.vision.requested` at
  *  construction); the handler calls `succeeded`/`failed` on the tier branches it

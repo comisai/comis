@@ -62,7 +62,11 @@ import { getModel } from "@earendil-works/pi-ai/compat";
 import { guessMimeFromExtension, detectMimeFromMagicBytes, mimeToExtension } from "../wiring/daemon-utils.js";
 // The vision-turn trajectory direct-emit helper (extracted to a
 // sibling to keep this file ≤800 — the emits would otherwise push it over).
-import { createVisionObsEmitter, resolveTerminalUnavailable } from "./vision-obs-emit.js";
+import {
+  createVisionObsEmitter,
+  resolveTerminalUnavailable,
+  visionUnavailableError,
+} from "./vision-obs-emit.js";
 // The voice-handler wiring shim (sibling — media-handlers.ts is
 // at its 800-line cap). Each handler calls wireVoiceForHandler + .completed/.failed.
 import { wireVoiceForHandler, toSttErrorKind, pruneTtsOutputDir } from "./voice-handler-wiring.js";
@@ -90,6 +94,8 @@ export type { MediaHandlerDeps };
 export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcHandler> {
   return {
     [ImageAnalyzeContract.method]: async (rawParams) => {
+      const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
+      const mainModelId = deps.mainModelIdFor?.(agentId);
       // The registry is not the ONLY vision path — a
       // vision-capable MAIN provider serves image.analyze with no separate
       // vision key (deps.mainProviderVision). Short-circuit ONLY when NEITHER a
@@ -97,7 +103,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       // unavailable tier handles the no-capable-tier case with an errorKind).
       const hasRegistry = !!deps.visionRegistry && deps.visionRegistry.size > 0;
       if (!hasRegistry && !deps.mainProviderVision) {
-        throw new Error("No vision provider available for image analysis.");
+        throw visionUnavailableError(agentId, mainModelId);
       }
       const userParams = stripInternalFields(rawParams);
       const params = ImageAnalyzeContract.request.parse(userParams);
@@ -192,7 +198,6 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       // firewall — never re-derives selection). Tiers: main-vision → registry
       // (the unchanged path when the main lacks vision) → honest-
       // unavailable. The buffer/scope/size guards above ran FIRST (untouched).
-      const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
       const preferredProvider = deps.mediaConfig.vision.defaultProvider;
       const main = deps.resolveAgentMainProvider?.(agentId) ?? { providerId: "unknown" };
       // §2.7 clock (systemNowMs, never Date.now()) + the trajectory/§2.7-log emitter (fires media.vision.requested at construction).
@@ -205,7 +210,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       if (deps.mainProviderVision && deps.mainModelIdFor) {
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi-ai getModel requires KnownProvider/KnownModel; config stores flexible strings (the proven setup-channels-media.ts cast).
-          const resolvedModel = getModel(main.providerId as any, deps.mainModelIdFor(agentId) as any);
+          const resolvedModel = getModel(main.providerId as any, mainModelId as any);
           if (resolvedModel) visionCapable = isVisionCapable(resolvedModel);
         } catch { /* model resolution failed → not vision-capable, use the registry */ }
       }
@@ -275,7 +280,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       // the last bridge failure's kind/hint over the generic unsupported_provider.
       const term = resolveTerminalUnavailable(sel, lastBridgeKind ?? "unsupported_provider", lastBridgeHint ?? "No vision provider available for image analysis.");
       obs.failed({ errorKind: term.errorKind, path: "unavailable", provider: main.providerId, mainProvider: main.providerId, hint: term.hint, message: "Vision analysis unavailable" });
-      throw new Error("No vision provider available for image analysis.");
+      throw visionUnavailableError(agentId, mainModelId);
     },
 
     [TtsSynthesizeContract.method]: async (rawParams) => {
