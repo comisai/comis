@@ -112,6 +112,12 @@ export function registerExplainCommand(program: Command): void {
           // Table view — concise key fields (kept small; the test exercises both
           // this branch and the json branch to hold the coverage floor).
           info(`Session:    ${report.sessionKey}`);
+          const requestedSession = idArg.includes(":") && !idArg.startsWith("root-");
+          info(
+            requestedSession
+              ? `Trace:      ${report.traceId} (latest; session totals below include prior turns — rerun explain with this trace for the exact turn)`
+              : `Trace:      ${report.traceId}`,
+          );
           // "Did you mean …?" — the request resolved ZERO records and the
           // assembler found closer REAL keys (a lossy/partial key like
           // `telegram:<chatId>`). Surface them so the operator copies the right
