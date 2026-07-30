@@ -211,12 +211,30 @@ describe("call timeout names its knob", () => {
       Promise.reject(new McpError(ErrorCode.RequestTimeout, "Request timed out")),
     );
 
-    const result = await callTool(state, deps, `mcp:${serverName}/vendor_activity_report`, {});
+    const result = await callTool(
+      state,
+      deps,
+      `mcp:${serverName}/vendor_activity_report`,
+      { report_range: "month" },
+    );
     if (result.ok) throw new Error("expected err");
     // An identical retry deterministically re-expires the same deadline.
     expect(result.error.message).toMatch(/do not retry (it |the call )?unchanged/i);
     // …and it names the two things that DO change the outcome.
     expect(result.error.message).toMatch(/narrow/i);
+  });
+
+  it("does not recommend narrowing a timed-out call that supplied no input arguments", async () => {
+    const serverName = "vendor-mcp";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new McpError(ErrorCode.RequestTimeout, "Request timed out")),
+    );
+
+    const result = await callTool(state, deps, `mcp:${serverName}/status`, {});
+    if (result.ok) throw new Error("expected err");
+
+    expect(result.error.message).toMatch(/no input arguments/i);
+    expect(result.error.message).not.toMatch(/narrow the request|smaller page|fewer entities/i);
   });
 
   it("does not send the agent to patch the knob — that config path is immutable at runtime", async () => {
