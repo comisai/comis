@@ -170,6 +170,42 @@ export const IncidentPromptTimeoutSchema = z.object({
 /** The terminal prompt-timeout attribution record (see {@link IncidentPromptTimeoutSchema}). */
 export type IncidentPromptTimeout = z.infer<typeof IncidentPromptTimeoutSchema>;
 
+/** One content-free terminal node from persisted graph-run metadata. */
+export const IncidentGraphNodeSchema = z.object({
+  nodeId: z.string().min(1),
+  status: z.enum(["pending", "ready", "running", "completed", "failed", "skipped"]),
+  durationMs: z.number().nonnegative().nullable(),
+  subAgentRunId: z.string().min(1).nullable(),
+  attemptsUsed: z.number().int().positive(),
+});
+
+export type IncidentGraphNode = z.infer<typeof IncidentGraphNodeSchema>;
+
+/**
+ * Authoritative terminal graph lifecycle evidence. Labels, tasks, node output,
+ * and errors are deliberately absent; only identifiers, states, counts, timing,
+ * and aggregate usage may leave the persisted metadata reader.
+ */
+export const IncidentGraphRunSchema = z.object({
+  graphId: z.string().min(1),
+  status: z.enum(["completed", "failed", "cancelled"]),
+  cancelReason: z.enum(["manual", "budget", "timeout", "killed"]).optional(),
+  traceId: z.string().min(1).optional(),
+  startedAt: z.string().optional(),
+  completedAt: z.string().optional(),
+  durationMs: z.number().nonnegative(),
+  nodesTotal: z.number().int().nonnegative(),
+  nodesSucceeded: z.number().int().nonnegative(),
+  nodesFailed: z.number().int().nonnegative(),
+  nodesSkipped: z.number().int().nonnegative(),
+  nodesRetried: z.number().int().nonnegative(),
+  totalCostUsd: z.number().nonnegative().optional(),
+  totalTokens: z.number().int().nonnegative().optional(),
+  nodes: IncidentGraphNodeSchema.array().max(20),
+});
+
+export type IncidentGraphRun = z.infer<typeof IncidentGraphRunSchema>;
+
 /**
  * One node of the root→children SPAWN TREE folded from a
  * session's `capability.audited` records (one per `leaseId`) — the attenuated

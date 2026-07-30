@@ -88,6 +88,9 @@ export const FULL_MAX_SPAWN_NODES = 200;
  */
 export const SUMMARY_MAX_ORCHESTRATE_RUNS = 40;
 export const FULL_MAX_ORCHESTRATE_RUNS = 200;
+/** Terminal graphs contain at most 20 nodes; summary keeps the diagnostic head. */
+export const SUMMARY_MAX_GRAPH_NODES = 8;
+export const FULL_MAX_GRAPH_NODES = 20;
 /**
  * toolStats cap. UNLIKE spawnTree/failures (arrays exempt
  * from the structural backstop via REPORT_ARRAY_FIELDS), `toolStats` is a RECORD —

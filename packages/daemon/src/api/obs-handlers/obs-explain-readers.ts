@@ -58,12 +58,14 @@ import {
   safePath,
   type ContextBrowsePort,
   type EventMap,
+  type IncidentGraphRun,
 } from "@comis/core";
 import {
   resolveTrajectoryPointerFilePath,
   safeTrajectorySessionFileName,
 } from "@comis/observability";
 import type { ObservabilityStore } from "@comis/memory";
+import { readIncidentGraphRun } from "./obs-explain-graph.js";
 
 /** Per-read line cap (mirrors observability's MAX_TRAJECTORY_RUNTIME_EVENTS
  * intent at a report-appropriate scale — a post-mortem never needs more). */
@@ -151,6 +153,8 @@ const AUDIT_QUERY_LIMIT = 1000;
  * real implementation reads files; tests inject fixture records.
  */
 export interface IncidentSourceReader {
+  /** Read one bounded terminal graph lifecycle record by its durable graph id. */
+  readGraphRun?(graphId: string): Promise<IncidentGraphRun | null>;
   /**
    * Resolve an execution trace through the durable session-summary store when
    * the bounded session index no longer contains the execution.
@@ -683,6 +687,10 @@ export function makeRealReader(
   const logsDir = safePath(base, "logs");
 
   return {
+    async readGraphRun(graphId: string): Promise<IncidentGraphRun | null> {
+      const result = readIncidentGraphRun(base, graphId);
+      return result.ok ? result.value : null;
+    },
     async resolveTraceSessionKey(traceId: string, includeSynthetic = false): Promise<string> {
       if (obsStore === undefined) return "";
       const rows = obsStore.queryDiagnostics({

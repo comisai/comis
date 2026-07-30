@@ -29,7 +29,13 @@
 
 import { AuthorizationError } from "../errors.js";
 import * as os from "node:os";
-import { ObsExplainContract, stripInternalFields, safePath, type IncidentReport } from "@comis/core";
+import {
+  ObsExplainContract,
+  stripInternalFields,
+  safePath,
+  type IncidentGraphRun,
+  type IncidentReport,
+} from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
 import {
@@ -73,6 +79,8 @@ function defaultDataDir(): string {
 export interface AssembleIncidentReportParams {
   readonly sessionKey?: string;
   readonly traceId?: string;
+  /** A durable execution-graph id resolved through terminal run metadata. */
+  readonly graphId?: string;
   /**
    * A governed run's rootRunId (the 3rd ref). Canonicalized to the
    * run's sessionKey FIRST via {@link resolveRootRunToSession} — the synthetic
@@ -305,6 +313,11 @@ export async function assembleIncidentReportFromSources(
   dataDir: string,
   params: AssembleIncidentReportParams,
 ): Promise<IncidentReport> {
+  const graph: IncidentGraphRun | null =
+    params.graphId !== undefined && reader.readGraphRun !== undefined
+      ? await reader.readGraphRun(params.graphId)
+      : null;
+  const graphTraceId = graph?.traceId;
   // Step 3: canonicalize a traceId OR a rootRunId to its sessionKey FIRST,
   // so by-trace, by-rootRun, and by-session collapse to one assembler path. The
   // rootRunId arm is checked FIRST; `sessionKey` is present when both
@@ -315,7 +328,11 @@ export async function assembleIncidentReportFromSources(
   const taskCheck = params.rootRunId !== undefined && reader.readTaskCheckLifecycle !== undefined
     ? await reader.readTaskCheckLifecycle(params.rootRunId)
     : null;
-  const indexedSessionKey = params.rootRunId
+  const indexedSessionKey = params.graphId !== undefined
+    ? graphTraceId === undefined
+      ? ""
+      : await resolveTraceToSession(dataDir, graphTraceId, params.includeSynthetic)
+    : params.rootRunId
     ? await resolveRootRunToSession(dataDir, params.rootRunId, taskCheck)
     : params.traceId
       ? await resolveTraceToSession(dataDir, params.traceId, params.includeSynthetic)
@@ -323,7 +340,7 @@ export async function assembleIncidentReportFromSources(
   const cronExecutionTraceId = params.rootRunId !== undefined
     ? traceIdFromCronRootRun(params.rootRunId)
     : undefined;
-  const fallbackTraceId = params.traceId ?? cronExecutionTraceId;
+  const fallbackTraceId = params.traceId ?? cronExecutionTraceId ?? graphTraceId;
   const sessionKey =
     indexedSessionKey.length === 0 &&
       fallbackTraceId !== undefined &&
@@ -343,9 +360,16 @@ export async function assembleIncidentReportFromSources(
   // decided post-assembly (an injected reader may still surface telemetry for a ""
   // key — then the session WAS effectively found and must keep its real rootCause).
   const refResolutionMissed =
-    (params.traceId !== undefined || params.rootRunId !== undefined) && sessionKey === "";
+    (params.graphId !== undefined && graph === null)
+    || (
+      params.graphId === undefined
+      && (params.traceId !== undefined || params.rootRunId !== undefined)
+      && sessionKey === ""
+    );
   // Which ref missed — drives the not-found detail + truncation field below.
-  const missedRefField = params.rootRunId !== undefined ? "rootRunId" : "traceId";
+  const missedRefField = params.graphId !== undefined
+    ? "graphId"
+    : params.rootRunId !== undefined ? "rootRunId" : "traceId";
 
   // Step 4: read the bounded sources (production reads files; tests
   // inject the fixture reader).
@@ -367,7 +391,7 @@ export async function assembleIncidentReportFromSources(
   const taskSessionCache = taskCheck === null || taskExecutionSessionKey.length === 0
     ? []
     : await reader.readCacheTraceRecords(taskExecutionSessionKey);
-  const executionTraceId = params.traceId ?? cronExecutionTraceId;
+  const executionTraceId = params.traceId ?? cronExecutionTraceId ?? graphTraceId;
   const latestSessionTraceId =
     taskCheck === null && executionTraceId === undefined
       ? latestPromptTraceId(sessionRecords)
@@ -444,7 +468,9 @@ export async function assembleIncidentReportFromSources(
   // the exact lossy-key case it exists to serve. Fall back to the raw ref so the
   // ranker can match it (the recurring live friction).
   const candidateSeed =
-    sessionKey !== "" ? sessionKey : (params.sessionKey ?? params.traceId ?? params.rootRunId ?? "");
+    sessionKey !== ""
+      ? sessionKey
+      : (params.sessionKey ?? params.traceId ?? params.rootRunId ?? params.graphId ?? "");
   const candidateSessionKeys =
     records.length === 0 && metadata === null && reader.listCandidateSessionKeys
       ? await reader.listCandidateSessionKeys(candidateSeed)
@@ -510,12 +536,14 @@ export async function assembleIncidentReportFromSources(
         },
   );
   if (taskCheck !== null) report.taskCheck = taskCheckReportSection(taskCheck);
+  if (graph !== null) report.graph = graph;
   // The report is genuinely empty only when NO source surfaced any activity.
   const reportIsEmpty =
     report.failures.length === 0 &&
     report.breakerTimeline.length === 0 &&
     report.offloads.length === 0 &&
-    Object.keys(report.toolStats).length === 0;
+    Object.keys(report.toolStats).length === 0 &&
+    report.graph === undefined;
   if (anyRefMissed && reportIsEmpty) {
     // An honest not-found verdict + ledger note so the empty report
     // does not masquerade as a healthy zero-activity session. The bound pass
@@ -528,7 +556,18 @@ export async function assembleIncidentReportFromSources(
     // to a traceId lookup — NOT a typo'd/expired traceId. Name that + point at the
     // candidates instead of the misdirecting "typo/expired" hint.
     report.likelyRootCause =
-      candidateSessionKeys.length > 0
+      missedField === "graphId"
+        ? {
+            code: "graph_not_found",
+            detail:
+              "graphId did not resolve to a valid terminal graph record under "
+              + "graph-runs/<graphId>/_run-metadata.json",
+            suggestedNextSteps: [
+              "verify the graphId with graph.runs or graph.runDetail",
+              "if the graph is still running, use graph.status until terminal metadata is written",
+            ],
+          }
+        : candidateSessionKeys.length > 0
         ? {
             code: "session_not_found",
             detail: `${missedField} did not resolve — it looks like a lossy/partial sessionKey (e.g. a bare chatId or the "<user>~peer~<peer>" trajectory-filename form), which matches no session on disk. See coverage.candidateSessionKeys for the closest real keys.`,
@@ -548,7 +587,9 @@ export async function assembleIncidentReportFromSources(
           };
     report.truncations.push({
       field: missedField,
-      reason: `${missedField} not found in session index (today/yesterday) — empty report is unresolved, not a clean session`,
+      reason: missedField === "graphId"
+        ? "graphId terminal metadata was missing or invalid — empty report is unresolved"
+        : `${missedField} not found in session index (today/yesterday) — empty report is unresolved, not a clean session`,
     });
   } else {
     // Thread the mapped terminal endReason (the NAMED degradation cause)

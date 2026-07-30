@@ -11098,6 +11098,10 @@ export const CONTRACTS = {
           "type": "string",
           "minLength": 1
         },
+        "graphId": {
+          "type": "string",
+          "minLength": 1
+        },
         "depth": {
           "type": "string",
           "enum": [
@@ -11521,6 +11525,151 @@ export const CONTRACTS = {
             ],
             "additionalProperties": false
           }
+        },
+        "graph": {
+          "type": "object",
+          "properties": {
+            "graphId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "completed",
+                "failed",
+                "cancelled"
+              ]
+            },
+            "cancelReason": {
+              "type": "string",
+              "enum": [
+                "manual",
+                "budget",
+                "timeout",
+                "killed"
+              ]
+            },
+            "traceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "startedAt": {
+              "type": "string"
+            },
+            "completedAt": {
+              "type": "string"
+            },
+            "durationMs": {
+              "type": "number",
+              "minimum": 0
+            },
+            "nodesTotal": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "nodesSucceeded": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "nodesFailed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "nodesSkipped": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "nodesRetried": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "totalCostUsd": {
+              "type": "number",
+              "minimum": 0
+            },
+            "totalTokens": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "nodes": {
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "ready",
+                      "running",
+                      "completed",
+                      "failed",
+                      "skipped"
+                    ]
+                  },
+                  "durationMs": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "subAgentRunId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "attemptsUsed": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "durationMs",
+                  "subAgentRunId",
+                  "attemptsUsed"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "graphId",
+            "status",
+            "durationMs",
+            "nodesTotal",
+            "nodesSucceeded",
+            "nodesFailed",
+            "nodesSkipped",
+            "nodesRetried",
+            "nodes"
+          ],
+          "additionalProperties": false
         },
         "spawnTree": {
           "type": "array",

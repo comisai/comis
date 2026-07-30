@@ -22,6 +22,7 @@ import {
   IncidentContextBudgetSchema,
   IncidentContextBudgetHistoryEntrySchema,
   IncidentCronWakeGateSchema,
+  IncidentGraphRunSchema,
   IncidentPromptTimeoutSchema,
   IncidentQueueTimelineEntrySchema,
   SpawnTreeNodeSchema,
@@ -31,6 +32,7 @@ import type {
   IncidentContextBudget,
   IncidentContextBudgetHistoryEntry,
   IncidentCronWakeGate,
+  IncidentGraphRun,
   IncidentPromptTimeout,
   SpawnTreeNode,
   OrchestrateRun,
@@ -58,12 +60,13 @@ import type {
 export {
   IncidentContextBudgetSchema,
   IncidentCronWakeGateSchema,
+  IncidentGraphRunSchema,
   IncidentPromptTimeoutSchema,
   IncidentQueueTimelineEntrySchema,
   SpawnTreeNodeSchema,
   OrchestrateRunSchema,
 };
-export type { IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentCronWakeGate, IncidentPromptTimeout, SpawnTreeNode, OrchestrateRun };
+export type { IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentCronWakeGate, IncidentGraphRun, IncidentPromptTimeout, SpawnTreeNode, OrchestrateRun };
 
 export const IncidentReportSchema = z.object({
   schemaVersion: z.literal(1),
@@ -188,6 +191,8 @@ export const IncidentReportSchema = z.object({
       }),
     )
     .optional(),
+  /** Authoritative terminal graph metadata for a graphId-targeted report. */
+  graph: IncidentGraphRunSchema.optional(),
   /** The root→children SPAWN TREE reconstructed from the
    *  session's `capability.audited` records — the unattended-run authorization
    *  topology ("one call to root-cause an unattended run"). Node shape +
@@ -764,7 +769,7 @@ export type { IncidentFailure, IncidentSignals } from "./incident-report-signals
 /**
  * Assemble a redaction-safe post-mortem for a single agent session.
  *
- * Accepts ONE of `sessionKey`, `traceId`, or `rootRunId` (the
+ * Accepts ONE of `sessionKey`, `traceId`, `rootRunId`, or `graphId` (the
  * `.refine` rejects none-of-three). A `traceId` is canonicalized to its
  * sessionKey, and a `rootRunId` (a governed run) is canonicalized to the
  * run's sessionKey, so there is one assembler path. `depth` selects the
@@ -782,12 +787,17 @@ export const ObsExplainContract = defineContract({
       // canonicalizes it to its sessionKey FIRST (resolveRootRunToSession), so the
       // system→explain drill-down can paste the worst run's rootRunId straight in.
       rootRunId: z.string().min(1).optional(),
+      graphId: z.string().min(1).optional(),
       depth: z.enum(["summary", "full"]).optional(),
       // Admin opt-in to include synthetic/test sessions (excluded by default).
       includeSynthetic: z.boolean().optional(),
     })
-    .refine((r) => r.sessionKey != null || r.traceId != null || r.rootRunId != null, {
-      message: "sessionKey, traceId, or rootRunId required",
+    .refine((r) =>
+      r.sessionKey != null
+      || r.traceId != null
+      || r.rootRunId != null
+      || r.graphId != null, {
+      message: "sessionKey, traceId, rootRunId, or graphId required",
     }),
   response: IncidentReportSchema,
   // rpc, NOT admin. The obs_query agent tool's

@@ -52,6 +52,30 @@ function manyOrchestrateRuns(count: number): NonNullable<IncidentReport["orchest
   }));
 }
 
+/** Build a terminal graph with `count` content-free node summaries. */
+function graphWithNodes(count: number): NonNullable<IncidentReport["graph"]> {
+  return {
+    graphId: "11111111-1111-4111-8111-111111111111",
+    status: "completed",
+    traceId: "trace_graph_test",
+    startedAt: "2026-07-30T06:20:44.795Z",
+    completedAt: "2026-07-30T06:20:45.795Z",
+    durationMs: 1_000,
+    nodesTotal: count,
+    nodesSucceeded: count,
+    nodesFailed: 0,
+    nodesSkipped: 0,
+    nodesRetried: 0,
+    nodes: Array.from({ length: count }, (_, i) => ({
+      nodeId: `node-${String(i).padStart(3, "0")}`,
+      status: "completed" as const,
+      durationMs: 100,
+      subAgentRunId: `run-${String(i).padStart(3, "0")}`,
+      attemptsUsed: 1,
+    })),
+  };
+}
+
 /** Build a toolStats record with `count` distinct tool entries (each a valid {ok,failed} object). */
 function manyToolStats(count: number): IncidentReport["toolStats"] {
   const out: IncidentReport["toolStats"] = {};
@@ -522,6 +546,28 @@ describe("boundIncidentReport — report-level bounding pass", () => {
     // 80 < FULL_MAX_ORCHESTRATE_RUNS (200) → full retains all, no truncation.
     expect(bounded.orchestrate!.length).toBe(80);
     expect(bounded.truncations.some((t) => t.field === "orchestrate")).toBe(false);
+  });
+
+  it("caps terminal graph nodes at summary depth while preserving a schema-valid graph", () => {
+    const bounded = boundIncidentReport(
+      makeReport({ graph: graphWithNodes(20) }),
+      "summary",
+    );
+
+    expect(bounded.graph?.nodes).toHaveLength(8);
+    expect(() => IncidentReportSchema.parse(bounded)).not.toThrow();
+    expect(bounded.truncations.some((entry) => entry.field === "graph.nodes")).toBe(true);
+  });
+
+  it("retains all terminal graph nodes at full depth", () => {
+    const bounded = boundIncidentReport(
+      makeReport({ graph: graphWithNodes(20) }),
+      "full",
+    );
+
+    expect(bounded.graph?.nodes).toHaveLength(20);
+    expect(() => IncidentReportSchema.parse(bounded)).not.toThrow();
+    expect(bounded.truncations.some((entry) => entry.field === "graph.nodes")).toBe(false);
   });
 });
 
