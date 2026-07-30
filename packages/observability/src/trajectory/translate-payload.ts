@@ -548,6 +548,16 @@ export function translatePayload(
         messageCount: payload.messageCount,
       };
 
+    case "steer:injected":
+      return { channelType: payload.channelType };
+
+    case "steer:rejected":
+    case "steer:followup_queued":
+      return {
+        channelType: payload.channelType,
+        reason: payload.reason,
+      };
+
     // ---- Execution control ----
     // agentId and sessionKey are envelope-only — stripped from data.
 

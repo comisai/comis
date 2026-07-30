@@ -102,6 +102,7 @@ export interface Acc {
   toolStats: Map<string, { ok: number; failed: number; errorKinds: Map<string, number> }>;
   failures: IncidentFailure[];
   breakerEvents: IncidentSignals["breakerEvents"];
+  queueTimeline: NonNullable<IncidentSignals["queueTimeline"]>;
   offloads: IncidentSignals["offloads"];
   nodeBudgetBreaches: IncidentSignals["nodeBudgetBreaches"];
   /** The `capability.audited` fold groups nodes by leaseId

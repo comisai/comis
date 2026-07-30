@@ -85,6 +85,41 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     ).toBe(true);
   });
 
+  it("retains the content-free queue disposition timeline", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      queueTimeline: [
+        {
+          seq: 4,
+          event: "steer_rejected",
+          channelType: "telegram",
+          reason: "compacting",
+        },
+        {
+          seq: 3,
+          event: "steer_injected",
+          channelType: "telegram",
+        },
+      ],
+    });
+
+    expect(
+      (parsed as unknown as { queueTimeline?: unknown[] }).queueTimeline,
+    ).toEqual([
+      {
+        seq: 4,
+        event: "steer_rejected",
+        channelType: "telegram",
+        reason: "compacting",
+      },
+      {
+        seq: 3,
+        event: "steer_injected",
+        channelType: "telegram",
+      },
+    ]);
+  });
+
   it("retains bounded lossless-context fallback coverage", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),

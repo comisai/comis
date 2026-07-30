@@ -15,6 +15,7 @@ import type {
   IncidentContextBudgetHistoryEntry,
   IncidentCronWakeGate,
   IncidentPromptTimeout,
+  IncidentQueueTimelineEntry,
   SpawnTreeNode,
   OrchestrateRun,
 } from "./incident-report-sections.js";
@@ -57,7 +58,7 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 23 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 24 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / promptTimeout /
@@ -179,6 +180,9 @@ export interface IncidentSignals {
     toolName: string;
     consecutiveFailures?: number;
   }>;
+  /** Latest queue and steering decisions, newest first. Content-free and
+   * bounded by the normalizer; absent when the session emitted none. */
+  queueTimeline?: IncidentQueueTimelineEntry[];
   offloads: Array<{
     seq: number;
     toolName: string;

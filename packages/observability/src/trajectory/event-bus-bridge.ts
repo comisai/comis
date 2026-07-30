@@ -344,6 +344,9 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "queue:dequeued": "queue.dequeued",
   "queue:overflow": "queue.overflow",
   "queue:coalesced": "queue.coalesced",
+  "steer:injected": "queue.steer_injected",
+  "steer:rejected": "queue.steer_rejected",
+  "steer:followup_queued": "queue.followup_queued",
 
   // Execution control — events-messaging.ts
   "execution:aborted": "execution.aborted",

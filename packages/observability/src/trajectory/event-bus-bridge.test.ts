@@ -1414,6 +1414,26 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       messageCount: 3,
       timestamp: 0,
     },
+    "steer:injected": {
+      sessionKey: "t1:u1:c1",
+      channelType: "telegram",
+      agentId: "agent-1",
+      timestamp: 0,
+    },
+    "steer:rejected": {
+      sessionKey: "t1:u1:c1",
+      channelType: "telegram",
+      agentId: "agent-1",
+      reason: "compacting",
+      timestamp: 0,
+    },
+    "steer:followup_queued": {
+      sessionKey: "t1:u1:c1",
+      channelType: "telegram",
+      agentId: "agent-1",
+      reason: "compacting",
+      timestamp: 0,
+    },
     // execution events
     "execution:aborted": {
       sessionKey: "t1:u1:c1",
@@ -2720,6 +2740,49 @@ describe("queue + execution + sender bridge", () => {
     expect(data.messageCount).toBe(5);
     expect(data.sessionKey).toBeUndefined();
     expect(data.timestamp).toBeUndefined();
+  });
+
+  it("steer lifecycle decisions map to content-free queue trajectory records", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+    const sessionKey = "t1:u1:c1" as any;
+
+    bus.emit("steer:injected", {
+      sessionKey,
+      channelType: "telegram",
+      agentId: "agent-1",
+      timestamp: Date.now(),
+    });
+    bus.emit("steer:rejected", {
+      sessionKey,
+      channelType: "telegram",
+      agentId: "agent-1",
+      reason: "compacting",
+      timestamp: Date.now(),
+    });
+    bus.emit("steer:followup_queued", {
+      sessionKey,
+      channelType: "telegram",
+      agentId: "agent-1",
+      reason: "compacting",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls.map(({ type, data }) => ({ type, data }))).toEqual([
+      {
+        type: "queue.steer_injected",
+        data: { channelType: "telegram" },
+      },
+      {
+        type: "queue.steer_rejected",
+        data: { channelType: "telegram", reason: "compacting" },
+      },
+      {
+        type: "queue.followup_queued",
+        data: { channelType: "telegram", reason: "compacting" },
+      },
+    ]);
   });
 
   // ---- Execution lifecycle events ----
@@ -4185,7 +4248,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // The exact count keeps every bridge addition or removal deliberate.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(136);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(139);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

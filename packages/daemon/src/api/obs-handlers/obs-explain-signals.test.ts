@@ -114,6 +114,68 @@ function event(
   return { traceSchema: "comis-trajectory", schemaVersion: 1, type, seq, data };
 }
 
+describe("toIncidentSignals — queue disposition timeline", () => {
+  it("retains bounded queue and steering decisions needed to diagnose interruption handling", () => {
+    const signals = toIncidentSignals([
+      event("queue.enqueued", 1, {
+        channelType: "telegram",
+        queueDepth: 1,
+        mode: "collect",
+      }),
+      event("queue.coalesced", 2, {
+        channelType: "telegram",
+        messageCount: 2,
+      }),
+      event("queue.steer_injected", 3, {
+        channelType: "telegram",
+      }),
+      event("queue.steer_rejected", 4, {
+        channelType: "telegram",
+        reason: "compacting",
+      }),
+      event("queue.followup_queued", 5, {
+        channelType: "telegram",
+        reason: "compacting",
+      }),
+    ]);
+
+    expect(
+      (signals as unknown as { queueTimeline?: unknown[] }).queueTimeline,
+    ).toEqual([
+      {
+        seq: 5,
+        event: "followup_queued",
+        channelType: "telegram",
+        reason: "compacting",
+      },
+      {
+        seq: 4,
+        event: "steer_rejected",
+        channelType: "telegram",
+        reason: "compacting",
+      },
+      {
+        seq: 3,
+        event: "steer_injected",
+        channelType: "telegram",
+      },
+      {
+        seq: 2,
+        event: "coalesced",
+        channelType: "telegram",
+        messageCount: 2,
+      },
+      {
+        seq: 1,
+        event: "enqueued",
+        channelType: "telegram",
+        queueDepth: 1,
+        mode: "collect",
+      },
+    ]);
+  });
+});
+
 describe("toIncidentSignals — response locale decision", () => {
   it("retains the latest content-free prompt locale decision", () => {
     const signals = toIncidentSignals([

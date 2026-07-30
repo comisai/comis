@@ -11381,6 +11381,77 @@ export const CONTRACTS = {
             "additionalProperties": false
           }
         },
+        "queueTimeline": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "type": "number"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "enqueued",
+                  "dequeued",
+                  "overflow",
+                  "coalesced",
+                  "steer_injected",
+                  "steer_rejected",
+                  "followup_queued"
+                ]
+              },
+              "channelType": {
+                "type": "string"
+              },
+              "queueDepth": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "followup",
+                  "collect",
+                  "steer",
+                  "steer+followup"
+                ]
+              },
+              "waitTimeMs": {
+                "type": "number",
+                "minimum": 0
+              },
+              "policy": {
+                "type": "string"
+              },
+              "droppedCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "messageCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "not_streaming",
+                  "compacting",
+                  "no_active_run"
+                ]
+              }
+            },
+            "required": [
+              "seq",
+              "event",
+              "channelType"
+            ],
+            "additionalProperties": false
+          }
+        },
         "offloads": {
           "type": "array",
           "items": {

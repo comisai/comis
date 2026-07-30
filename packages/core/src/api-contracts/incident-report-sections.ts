@@ -8,6 +8,7 @@
  * the trajectory and the report/`IncidentSignals` both reference:
  *   - `IncidentContextBudgetSchema` — the per-LLM-call budget equation.
  *   - `IncidentPromptTimeoutSchema` — the terminal prompt-timeout attribution.
+ *   - `IncidentQueueTimelineEntrySchema` — one queue or steering decision.
  *   - `SpawnTreeNodeSchema` — one node of the per-cap spawn tree.
  *
  * Barrel-only: external consumers import these from `"@comis/core"` (re-exported
@@ -16,6 +17,35 @@
  * @module
  */
 import { z } from "zod";
+
+/**
+ * One content-free queue or steering decision on the session timeline.
+ * Fields not applicable to an event are omitted. The normalizer retains only
+ * the latest bounded slice, newest first.
+ */
+export const IncidentQueueTimelineEntrySchema = z.object({
+  seq: z.number(),
+  event: z.enum([
+    "enqueued",
+    "dequeued",
+    "overflow",
+    "coalesced",
+    "steer_injected",
+    "steer_rejected",
+    "followup_queued",
+  ]),
+  channelType: z.string(),
+  queueDepth: z.number().int().nonnegative().optional(),
+  mode: z.enum(["followup", "collect", "steer", "steer+followup"]).optional(),
+  waitTimeMs: z.number().nonnegative().optional(),
+  policy: z.string().optional(),
+  droppedCount: z.number().int().nonnegative().optional(),
+  messageCount: z.number().int().nonnegative().optional(),
+  reason: z.enum(["not_streaming", "compacting", "no_active_run"]).optional(),
+});
+
+/** One queue disposition entry (see {@link IncidentQueueTimelineEntrySchema}). */
+export type IncidentQueueTimelineEntry = z.infer<typeof IncidentQueueTimelineEntrySchema>;
 
 /**
  * The per-LLM-call context budget equation,

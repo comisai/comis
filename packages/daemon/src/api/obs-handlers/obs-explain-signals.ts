@@ -38,6 +38,7 @@ import {
   parseContextBudgetRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
 } from "./obs-explain-signal-folds.js";
 import { summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
+import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
 import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
 // Tunable thresholds (module-top constants per the naming contract).
 // ---------------------------------------------------------------------------
@@ -148,6 +149,7 @@ function handleEventRecord(
   const recordSeq = asNumber(rec.seq);
   const isCurrentTurn = latestPromptSeq === undefined
     || (recordSeq !== undefined && recordSeq > latestPromptSeq);
+  if (accumulateQueueRecord(acc, type, recordSeq, data)) return;
   switch (type) {
     case "prompt.submitted": {
       const inboundKind = asString(data.inboundKind);
@@ -700,6 +702,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     toolStats: new Map(),
     failures: [],
     breakerEvents: [],
+    queueTimeline: [],
     offloads: [],
     nodeBudgetBreaches: [],
     spawnNodesByLease: new Map(),
@@ -804,6 +807,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     toolStats,
     failures: currentTurnFailures,
     breakerEvents: acc.breakerEvents,
+    ...(acc.queueTimeline.length > 0 ? { queueTimeline: acc.queueTimeline } : {}),
     offloads: acc.offloads,
     nodeBudgetBreaches: currentTurnNodeBudgetBreaches,
     // Materialize lease-keyed spawn nodes in first-seen order when present.
