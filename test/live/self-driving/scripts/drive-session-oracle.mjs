@@ -24,12 +24,45 @@ export function isDriveProgressText(text) {
   return (
     !text
     || /^(🔧|✓|🤖|❌|⏳)/.test(text)
+    || /^(?:Approved|Denied):\s/.test(text)
     || /\(running/.test(text)
     || /reading ~/.test(text)
     || /^\s*\[[ x~]\]/.test(text)
     || /\(step \d+ of \d+\)/i.test(text)
     || /^\s*───\s*$/.test(text)
   );
+}
+
+/**
+ * Recover records that reuse an existing Telegram message id.
+ *
+ * The emulator's long-poll cursor is a Telegram message id, while edits retain
+ * the original id. Its append-only full snapshot therefore remains the
+ * authoritative wire record. When the pre-inject snapshot is still an exact
+ * prefix, return every appended record; if the chat was reset or changed
+ * underneath the drive, keep the already-correlated polled records.
+ */
+export function reconcileDriveOutbound(initial, polled, snapshot) {
+  if (!Array.isArray(snapshot) || snapshot.length < initial.length) return polled;
+  for (let index = 0; index < initial.length; index += 1) {
+    if (JSON.stringify(initial[index]) !== JSON.stringify(snapshot[index])) {
+      return polled;
+    }
+  }
+  return snapshot.slice(initial.length);
+}
+
+/** Use answer quiescence only when no authoritative trajectory can end the turn. */
+export function wireQuiescenceFinished({
+  trajectoryAvailable,
+  sawAnswer,
+  lastNewMs,
+  nowMs,
+  quiesceMs,
+}) {
+  return !trajectoryAvailable
+    && sawAnswer
+    && nowMs - lastNewMs >= quiesceMs;
 }
 
 /** Whether one emulator wire record belongs to the selected Telegram topic. */

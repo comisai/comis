@@ -30,12 +30,14 @@ import {
   isDriveProgressText,
   normalizedInboundTextError,
   outboundVisibleText,
+  reconcileDriveOutbound,
   selectMainTrajectoryPath,
   selectTelegramConversationTrajectoryPath,
   sharedConversationFinished,
   telegramInboundGuid,
   telegramInjectAddressingError,
   wireContainsAssistantReply,
+  wireQuiescenceFinished,
 } from './drive-session-oracle.mjs';
 const [, , chatIdArg, textArg, quiesceMsArg, maxMsArg, dataArg] = process.argv;
 
@@ -328,8 +330,23 @@ while (Date.now() - start < maxMs) {
     }
     break;
   }
-  if (sawAnswer && Date.now() - lastNew >= quiesceMs) break;
+  if (wireQuiescenceFinished({
+    trajectoryAvailable: trajPath !== null,
+    sawAnswer,
+    lastNewMs: lastNew,
+    nowMs: Date.now(),
+    quiesceMs,
+  })) break;
 }
+// Telegram edits keep the original message id, so the id-cursor long poll
+// cannot return an edit once that message id has already advanced the cursor.
+// Reconcile against the emulator's append-only full snapshot before judging or
+// printing the wire; this captures approval keyboards and later edit states.
+const finalSnapshot = await getOutbound(0, 1);
+const reconciledOutbound = reconcileDriveOutbound(initial, seen, finalSnapshot);
+seen.splice(0, seen.length, ...reconciledOutbound);
+sawAnswer = seen.some(isConversationAnswer);
+
 // A 0-outbound "timeout" is often NOT a wedge: an unauthorized sender (FROMUSER
 // not in the agent's allowFrom list) is rejected at the auth layer BEFORE any
 // agent turn, so there is correctly no reply. Distinguish that from a real hang
