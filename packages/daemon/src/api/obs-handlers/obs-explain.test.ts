@@ -1088,9 +1088,19 @@ describe("assembleIncidentReportFromSources", () => {
   });
 
   it("reclassifies an accepted background completion instead of reporting it as pending", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-background-"));
     const sessionKey = "default:agent-a:telegram:chat-a:user_a";
     const traceId = "trace-background-complete";
     const records = [
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "prompt.submitted",
+        seq: 0,
+        traceId,
+        agentId: "agent-a",
+        data: { inboundKind: "message" },
+      },
       {
         traceSchema: "comis-trajectory",
         schemaVersion: 1,
@@ -1141,8 +1151,17 @@ describe("assembleIncidentReportFromSources", () => {
       {
         traceSchema: "comis-trajectory",
         schemaVersion: 1,
-        type: "delivery.dispatched",
+        type: "prompt.submitted",
         seq: 5,
+        traceId: "trace-background-reentry",
+        agentId: "agent-a",
+        data: { inboundKind: "background_task" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "delivery.dispatched",
+        seq: 6,
         traceId,
         agentId: "agent-a",
         data: {
@@ -1157,7 +1176,7 @@ describe("assembleIncidentReportFromSources", () => {
         traceSchema: "comis-trajectory",
         schemaVersion: 1,
         type: "background_task.notified",
-        seq: 6,
+        seq: 7,
         traceId,
         agentId: "agent-a",
         data: {
@@ -1169,6 +1188,7 @@ describe("assembleIncidentReportFromSources", () => {
       },
     ];
     const reader: IncidentSourceReader = {
+      resolveTraceSessionKey: async () => sessionKey,
       readSessionRecords: async () => records,
       readCacheTraceRecords: async () => [],
       readSessionMetadata: async () => ({
@@ -1184,7 +1204,7 @@ describe("assembleIncidentReportFromSources", () => {
       readAuditEvents: async () => [],
     };
 
-    const report = await assembleIncidentReportFromSources(reader, ".", { sessionKey });
+    const report = await assembleIncidentReportFromSources(reader, dataDir, { traceId });
 
     expect(report.backgroundTasks).toEqual({
       promoted: 1,
