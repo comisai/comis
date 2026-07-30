@@ -129,6 +129,7 @@ import {
   enforcePersistentActionEvidence,
   enforceDestructiveEffectEvidence,
   hasTrustedRuntimeActionEvidence,
+  isTrustedBackgroundCompletionEnvelope,
 } from "./executor-response-filter.js";
 import { BACKGROUND_POLLER_TOOL } from "../safety/background-failure-attribution.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
@@ -1412,6 +1413,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     request: msg.text ?? "",
     response: result.response ?? "",
     toolExecResults: bridgeResult.toolExecResults,
+    runtimeCompletion: isTrustedBackgroundCompletionEnvelope(msg),
     honestResponse: buildDelegationEvidenceMissingReply(replyLanguage, localeCatalog),
   });
   if (delegationEvidence.corrected) {
