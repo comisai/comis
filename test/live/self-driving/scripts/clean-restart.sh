@@ -65,15 +65,11 @@ else
   systemctl stop "$SERVICE" 2>/dev/null || true
 fi
 sleep 2
-# Reap orphan terminal-driver tmux servers + their jailed coding-CLIs (claude/codex). The daemon is dead
-# now, but the unit uses KillMode=process (so durable drives CAN survive restarts) — the tmux servers are
-# detached and the bwrap jails are `--die-with-parent` on the TMUX PANE (not the daemon), so they SURVIVE
-# the stop. Worse, the durable-drive store cleared below would otherwise RESURRECT them on the next boot —
-# recover-on-boot replays the persisted journal and RE-LAUNCHES + re-runs the drive (not a clean
-# re-attach), so a prior run's backgrounded "build X" drive comes back into a from-scratch run, burning
-# model tokens (the sockets are PID-named `tmux-<pid>.sock`, so the new daemon can't re-attach the pane).
+# Reap orphan terminal-driver tmux servers scoped to this data root. Killing each server terminates its
+# pane and child process tree, including its jailed coding CLI. The daemon is dead now, but the unit uses
+# KillMode=process, so detached terminal workers can survive the stop and be recovered on the next boot.
+# Process-name-wide cleanup is unsafe here: another Comis rig or the caller may also be running Codex.
 for s in "$DATA"/terminal-worker/*.sock; do [ -e "$s" ] && { as_service_user "tmux -S '$s' kill-server" 2>/dev/null || true; }; done
-pkill -9 -f "share/claude/versions|share/codex|bwrap.*permission-mode" 2>/dev/null || true
 rm -f "$DATA"/terminal-worker/*.sock 2>/dev/null || true
 sleep 1
 # IMPORTANT: the session dir is default/<chatId>/ — NOT default/telegram/. Replacing memory.db clears the
