@@ -755,6 +755,34 @@ describe("assembleIncidentReport — outcome", () => {
 // ---------------------------------------------------------------------------
 
 describe("assembleIncidentReport — per-root budget abort", () => {
+  it("prefers a terminal max-steps abort over a generic metadata error", () => {
+    const records: Array<Record<string, unknown>> = [
+      {
+        traceSchema: "comis-trajectory",
+        type: "execution.aborted",
+        seq: 20,
+        agentId: "default",
+        traceId: "t-abort",
+        data: { reason: "max_steps" },
+      },
+    ];
+    const report = assembleIncidentReport(
+      toIncidentSignals(records),
+      makeMetadata({
+        sessionEnd: {
+          type: "session_end",
+          endReason: "error",
+          degraded: true,
+        },
+      }),
+      null,
+      SESSION_KEY,
+      records.length,
+    );
+
+    expect(report.outcome.endReason).toBe("max_steps");
+  });
+
   it("derives endReason + perRootBudget from a terminal execution.aborted when the rollup lacks a spend endReason", () => {
     const records: Array<Record<string, unknown>> = [
       // an EARLIER non-spend turn in the same (multi-turn) session

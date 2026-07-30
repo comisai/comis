@@ -280,16 +280,18 @@ export function assembleIncidentReport(
   // totalTokens / executionCostUsd / degraded). Live sessions nest them under
   // `sessionEnd`. Read `sessionEnd.<field>` first, then the metadata top-level
   // field of the same name — so BOTH on-disk shapes resolve.
-  const executionEndReason =
+  const metadataEndReason =
     (sessionEnd !== undefined ? asString(sessionEnd.endReason) : undefined) ??
-    (metadata !== null ? asString(metadata.endReason) : undefined) ??
-    // A HARD abort (per-root budget / loop) skips the clean
-    // sessionEnd rollup, so the metadata endReason is absent — fall back to the
-    // terminal `execution.aborted` reason captured from the trajectory. Without
-    // this a per-root spend abort surfaced endReason:"unknown" → the spend-verdict
-    // (gated on "spend_exceeded") never fired + perRootBudget stayed off the verdict.
-    signals.abortReason ??
-    "unknown";
+    (metadata !== null ? asString(metadata.endReason) : undefined);
+  // A hard abort can either skip the clean rollup or be collapsed by a
+  // sub-agent boundary to generic "error". In both cases the terminal
+  // `execution.aborted` reason is the more specific source. Preserve any
+  // non-generic metadata outcome.
+  const executionEndReason =
+    signals.abortReason !== undefined &&
+    (metadataEndReason === undefined || metadataEndReason === "error")
+      ? signals.abortReason
+      : metadataEndReason ?? "unknown";
   const deliveryStatus = signals.deliveryDispatch?.status;
   const deliveryFailed = deliveryStatus === "failure";
   const deliveryPartial = deliveryStatus === "partial";
