@@ -38,6 +38,24 @@ describe("compileExecutionPrompt", () => {
     expect(result.stableEnginePrefix).toMatch(/do not ask.*missing parameters/iu);
   });
 
+  it("requires exact retrieved source URLs when the user asks for attribution", () => {
+    const result = compileExecutionPrompt(makeInput());
+
+    expect(result.stableEnginePrefix).toMatch(/source attribution.*exact.*URL/iu);
+    expect(result.stableEnginePrefix).toMatch(/successful.*retriev/iu);
+    expect(result.stableEnginePrefix).toMatch(/never (?:cite|invent).*URL.*not.*retriev/iu);
+    expect(result.stableEnginePrefix).toMatch(/several.*plausible.*all relevant.*URL/iu);
+    expect(result.stableEnginePrefix).toMatch(/instead of asking.*(?:quote|identify)/iu);
+  });
+
+  it("keeps sources-only answers within successfully retrieved evidence", () => {
+    const result = compileExecutionPrompt(makeInput());
+
+    expect(result.stableEnginePrefix).toMatch(/sources? only.*every factual claim/iu);
+    expect(result.stableEnginePrefix).toMatch(/successful.*retriev/iu);
+    expect(result.stableEnginePrefix).toMatch(/omit.*not supported/iu);
+  });
+
   it("separates trusted operator policy from untrusted agent state", () => {
     const result = compileExecutionPrompt(makeInput({
       operatorPolicy: [{
