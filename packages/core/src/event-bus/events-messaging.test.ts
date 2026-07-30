@@ -317,6 +317,24 @@ describe("MessagingEvents payload structure", () => {
     expect(received.timeoutMs).toBe(180_000);
   });
 
+  it("execution:stream_progress carries only identity and time", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["execution:stream_progress"] = {
+      agentId: "agent-1",
+      sessionKey: "default:user1:channel1",
+      timestamp: Date.now(),
+    };
+    bus.on("execution:stream_progress", handler);
+    bus.emit("execution:stream_progress", payload);
+    expect(handler).toHaveBeenCalledWith(payload);
+    expect(Object.keys(payload).sort()).toEqual([
+      "agentId",
+      "sessionKey",
+      "timestamp",
+    ]);
+  });
+
   it("announcement:dead_lettered delivers runId, channelType, reason, timestamp", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();

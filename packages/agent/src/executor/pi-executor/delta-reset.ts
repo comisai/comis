@@ -60,6 +60,8 @@ export function createDeltaResetComposer(
   args: {
     channelOnDelta: ((delta: string, kind: "text" | "thinking") => void) | undefined;
     getResetTimer: () => (() => void) | undefined;
+    /** Content-free health activity callback, invoked at the throttled cadence. */
+    onActivity?: () => void;
     clock: ClockPort;
     /** Minimum ms between stall-timer resets. Default 1_000 (~1/s). */
     throttleMs?: number;
@@ -74,6 +76,7 @@ export function createDeltaResetComposer(
     if (now - lastResetAtMs >= throttleMs) {
       lastResetAtMs = now;
       args.getResetTimer()?.();
+      args.onActivity?.();
     }
     args.channelOnDelta?.(delta, kind);
   };
