@@ -1532,6 +1532,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       ...(disclosedFailure?.toolName !== undefined
         ? { failingTool: disclosedFailure.toolName }
         : {}),
+      ...(disclosedFailure?.failureDisclosure?.configKey !== undefined
+        ? { configKey: disclosedFailure.failureDisclosure.configKey }
+        : {}),
     };
     deps.logger.warn(
       {

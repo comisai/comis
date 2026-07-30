@@ -3908,6 +3908,57 @@ describe("abort wiring in spawn", () => {
     );
   });
 
+  it("pins an upstream provider config key onto the failed announcement outcome", async () => {
+    const enqueue = vi.fn().mockResolvedValue(ok("queued"));
+    deps.batcher = {
+      enqueue,
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      pending: 0,
+      hasDelivered: vi.fn().mockReturnValue(false),
+      markDelivered: vi.fn(),
+    };
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response:
+        "Provider capacity must change under tools.web.search; splitting or narrowing cannot fix it.",
+      tokensUsed: { total: 3000 },
+      cost: { total: 0.3 },
+      finishReason: "prompt_timeout",
+      stepsExecuted: 9,
+      errorContext: {
+        errorType: "UpstreamToolFailure",
+        retryable: false,
+        failingTool: "web_search",
+        configKey: "tools.web.search",
+      },
+    });
+    const callerConversation = createTestConversation({
+      agentId: "parent-agent",
+      channelType: "telegram",
+    });
+    const runner = createSubAgentRunner(deps);
+
+    runner.spawn({
+      task: "research a current topic",
+      agentId: "research-agent",
+      callerAgentId: "parent-agent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
+      announceChannelType: "telegram",
+      announceChannelId: "chat-1",
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      terminalOutcome: expect.objectContaining({
+        status: "failed",
+        requiredConfigKey: "tools.web.search",
+      }),
+    }));
+  });
+
   // completion with stop does not include abort in announcement
   it("completion with stop does not include abort in announcement", async () => {
     vi.mocked(deps.executeAgent).mockResolvedValue({

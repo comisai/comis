@@ -111,6 +111,8 @@ export interface CondenseParams {
     originalError?: string;
     /** Tool that was in-flight when the error occurred. */
     failingTool?: string;
+    /** Exact validated configuration surface that must change before retry. */
+    configKey?: string;
   };
 }
 
@@ -556,6 +558,8 @@ async function persistFullResult(
       errorType: string;
       retryable: boolean;
       originalError?: string;
+      failingTool?: string;
+      configKey?: string;
     };
   },
 ): Promise<void> {

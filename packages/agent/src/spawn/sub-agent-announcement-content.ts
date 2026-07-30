@@ -20,7 +20,15 @@ export interface ValidationResult {
 
 export type AnnouncementTerminalOutcome =
   | { status: "completed" }
-  | { status: "failed"; failureNotice: string };
+  | {
+      status: "failed";
+      failureNotice: string;
+      /**
+       * Runtime-validated configuration surface needed to recover the failure.
+       * Parent rewrites may localize prose but cannot remove this exact key.
+       */
+      requiredConfigKey?: string;
+    };
 
 export interface AnnouncementDisclosureResult {
   text: string | undefined;
@@ -37,8 +45,14 @@ export function enforceAnnouncementTerminalOutcome(
 ): AnnouncementDisclosureResult {
   if (outcome.status === "completed") return { text: candidate, corrected: false };
   const notice = outcome.failureNotice.trim();
-  const text = candidate?.trim();
-  if (text?.includes(notice)) return { text, corrected: false };
+  let text = candidate?.trim() ?? "";
+  let corrected = false;
+  const requiredConfigKey = outcome.requiredConfigKey?.trim();
+  if (requiredConfigKey && !text.includes(requiredConfigKey)) {
+    text = text ? `${text}\n\n${requiredConfigKey}` : requiredConfigKey;
+    corrected = true;
+  }
+  if (text.includes(notice)) return { text, corrected };
   return {
     text: text ? `${text}\n\n${notice}` : notice,
     corrected: true,
@@ -51,7 +65,10 @@ export function buildAnnouncementRewriteInput(
   outcome: AnnouncementTerminalOutcome,
 ): string {
   if (outcome.status === "completed") return announcementText;
-  return `${announcementText}\n\nThe final user-facing response must include this exact failure notice verbatim:\n${outcome.failureNotice}`;
+  const requiredRecovery = outcome.requiredConfigKey
+    ? `\nPreserve the exact configuration key ${outcome.requiredConfigKey}. In the requested language, state that provider capacity or configuration must change before retrying and that splitting or narrowing the request cannot restore provider access.`
+    : "";
+  return `${announcementText}${requiredRecovery}\n\nThe final user-facing response must include this exact failure notice verbatim:\n${outcome.failureNotice}`;
 }
 
 export function buildAnnouncementMessage(params: {

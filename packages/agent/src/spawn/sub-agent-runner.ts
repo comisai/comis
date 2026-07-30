@@ -449,6 +449,7 @@ export interface SubAgentRunnerDeps {
       retryable: boolean;
       originalError?: string;
       failingTool?: string;
+      configKey?: string;
     };
   }>;
   sendToChannel: (channelType: string, channelId: string, text: string, options?: { threadId?: string }) => Promise<boolean>;
@@ -556,7 +557,13 @@ export interface SubAgentRunnerDeps {
       guidesDelivered?: string[];
       usage?: { inputTokens?: number; outputTokens?: number; totalTokens: number; costUsd: number; cacheReadTokens?: number; cacheWriteTokens?: number; cacheSavedUsd?: number; cacheEffectiveness?: number };
       // Error context for non-successful executions
-      errorContext?: { errorType: string; retryable: boolean; originalError?: string; failingTool?: string };
+      errorContext?: {
+        errorType: string;
+        retryable: boolean;
+        originalError?: string;
+        failingTool?: string;
+        configKey?: string;
+      };
     }): Promise<{
       level: 1 | 2 | 3;
       result: { taskComplete: boolean; summary: string; conclusions: string[]; filePaths?: string[]; actionableItems?: string[]; errors?: string[]; keyData?: Record<string, unknown>; confidence?: number };
@@ -3359,6 +3366,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                       params.callerAgentId ?? params.agentId,
                       params.resolvedLanguage,
                     ) ?? buildBackgroundTaskFailedNotice(params.resolvedLanguage),
+                    ...(result.errorContext?.errorType === "UpstreamToolFailure"
+                      && result.errorContext.configKey !== undefined
+                      ? { requiredConfigKey: result.errorContext.configKey }
+                      : {}),
                   },
               runId,
               ...(validationResults?.some((output) => output.exists)
