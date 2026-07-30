@@ -348,6 +348,52 @@ describe("memory_manage tool", () => {
       });
       expect(result.details).toEqual({ deleted: 2, failed: 0, total: 2 });
     });
+
+    it("excludes unrelated semantic candidates from the destructive delete set", async () => {
+      (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
+        approved: true,
+        approvedBy: "operator",
+      });
+      mockRpcCall.mockImplementation(async (method) => {
+        if (method === "memory.search_files") {
+          return {
+            results: [
+              { id: "mem-target", content: "The old tote bag is purple.", score: 1, tags: [], createdAt: 1 },
+              {
+                id: "mem-unrelated",
+                content: "Physiotherapy is every Thursday and morning updates stay short.",
+                score: 0.9,
+                tags: [],
+                createdAt: 2,
+              },
+            ],
+          };
+        }
+        if (method === "memory.delete") {
+          return { deleted: 1, failed: 0, total: 1 };
+        }
+        return {};
+      });
+
+      const tool = createMemoryManageTool(mockRpcCall, mockApprovalGate);
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-forget-safe", {
+          action: "forget",
+          query: "the old tote bag",
+        } as never),
+      );
+
+      expect(mockApprovalGate.requestApproval).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "memory.forget",
+          params: { query: "the old tote bag", matches: 1 },
+        }),
+      );
+      expect(mockRpcCall).toHaveBeenLastCalledWith("memory.delete", expect.objectContaining({
+        ids: ["mem-target"],
+      }));
+      expect(result.details).toEqual({ deleted: 1, failed: 0, total: 1 });
+    });
   });
 
   // -----------------------------------------------------------------------
