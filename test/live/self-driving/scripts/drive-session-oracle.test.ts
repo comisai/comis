@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  findTelegramConversationWireAnswer,
   normalizedInboundTextError,
   outboundVisibleText,
   reconcileAssistantSurfaces,
@@ -137,5 +138,24 @@ describe("drive group conversation correlation", () => {
       sawAnswer: true,
       turnEnded: false,
     })).toBe(false);
+  });
+
+  it("accepts an exact inbound reply as forum-thread routing evidence", () => {
+    const outbound = [{
+      method: "sendMessage",
+      messageId: 6000446,
+      text: "I heard the voice message.",
+      raw: {
+        chat_id: -1001234567890,
+        text: "I heard the voice message.",
+        reply_parameters: { message_id: 6000445 },
+      },
+    }];
+
+    expect(findTelegramConversationWireAnswer(
+      outbound,
+      1,
+      6000445,
+    )).toBe("I heard the voice message.");
   });
 });
