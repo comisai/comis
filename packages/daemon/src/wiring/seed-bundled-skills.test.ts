@@ -11,6 +11,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -119,13 +120,13 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
       fetchStub,
       [
         "globalThis.fetch = async (url) => {",
-        '  if (url === "https://example.com/chart.png") {',
+        '  if (String(url) === "https://mdn.alipayobjects.com/chart.png") {',
         "    return new Response(Uint8Array.from([137, 80, 78, 71]), {",
         '      status: 200, headers: { "content-type": "image/png" },',
         "    });",
         "  }",
         "  return Response.json({",
-        '    success: true, resultObj: "https://example.com/chart.png",',
+        '    success: true, resultObj: "https://mdn.alipayobjects.com/chart.png",',
         "  });",
         "};",
       ].join("\n"),
@@ -158,7 +159,7 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
         Buffer.from([137, 80, 78, 71]),
       );
       expect(result.stdout.trim()).toBe(
-        resolve(workspace, "output/chart.png"),
+        resolve(realpathSync(workspace), "output/chart.png"),
       );
     } finally {
       rmSync(fixtureRoot, { recursive: true, force: true });

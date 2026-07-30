@@ -1,6 +1,6 @@
 ---
 name: chart-visualization
-version: 1.0.2
+version: 1.0.3
 description: Generate data visualizations and charts from user data. Supports 26 chart types including line, bar, pie, scatter, treemap, sankey, radar, funnel, maps, org charts, mind maps, network graphs, and more. Use this skill whenever the user wants to visualize data, create a chart, plot a graph, make a diagram, display metrics, or show data visually -- even if they don't explicitly say "chart" or "visualization".
 comis:
   requires:
@@ -34,7 +34,9 @@ Read the corresponding file in `references/` (e.g., `references/generate_line_ch
 
 ### 3. Generate chart
 
-Build a JSON payload and invoke the script:
+Build a JSON payload and invoke the script. Use the bundled generator directly;
+do not hand-build an SVG, invoke host-specific renderers, or install rendering
+packages.
 
 ```json
 {
@@ -49,12 +51,19 @@ Build a JSON payload and invoke the script:
 ```
 
 ```bash
-node scripts/generate.js '<payload_json>'
+node scripts/generate.cjs '<payload_json>' --output output/chart.png
 ```
 
 ### 4. Return result
 
-The script outputs the URL of the generated chart image. Return the image URL and the `args` spec used for generation to the user.
+With `--output`, the script downloads the generated image into the execution
+workspace and prints its absolute path. Return that path so the channel can
+deliver the image, plus a concise description of the data and any coverage
+caveats. The output path must stay inside the execution workspace.
+
+If only a link is requested, omit `--output`; the script prints the image URL.
+If generation or download fails, report the failure honestly. Do not retry with
+`sips`, `qlmanage`, ImageMagick, CairoSVG, or an ad-hoc package installation.
 
 ## Reference Material
 
