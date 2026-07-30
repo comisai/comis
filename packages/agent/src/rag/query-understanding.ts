@@ -154,11 +154,12 @@ const SYNONYM_FANOUT_CAP = 3;
 /**
  * Personal residence questions need concept expansion rather than a token-level mapping:
  * `live` alone is ambiguous (a live service, stream, or status), while the whole phrase identifies
- * a location lookup. Keeping this phrase-bounded prevents operational queries from pulling in
- * unrelated personal-location memories.
+ * a location lookup. The auxiliary and subject are optional because the rolling relevance query
+ * removes function words before synonym expansion. Keeping the `where … live/living` shape
+ * phrase-bounded prevents operational queries from pulling in unrelated personal-location memories.
  */
 const PERSONAL_LOCATION_PHRASE_RE =
-  /\b(?:where\s+(?:do\s+)?(?:i|we)\s+live|my\s+(?:location|residence|home|address|city))\b/i;
+  /\b(?:where\s+(?:(?:do|am|are)\s+)?(?:(?:i|we)\s+)?(?:live|living)|(?:my|our)\s+(?:location|residence|home|address|city))\b/i;
 const PERSONAL_LOCATION_EXPANSIONS = ["location", "residence", "address"] as const;
 
 /**
@@ -177,6 +178,7 @@ const SYNONYM_MAP: Readonly<Record<string, readonly string[]>> = {
   k8s: ["kubernetes"],
   env: ["environment"],
   ci: ["continuous integration"],
+  physio: ["physiotherapy", "physical therapy"],
 };
 
 /**
@@ -212,7 +214,11 @@ export function expandSynonyms(query: string): string {
 
   for (const tok of tokens) {
     push(tok);
-    const expansions = SYNONYM_MAP[tok.toLowerCase()];
+    // Whitespace tokenization preserves sentence punctuation for output identity. Normalize
+    // only the map lookup so a terminal `?` or `,` cannot suppress a known expansion.
+    const lookupTokens = tokenize(tok);
+    const lookupKey = lookupTokens.length === 1 ? lookupTokens[0] : tok.toLowerCase();
+    const expansions = SYNONYM_MAP[lookupKey];
     if (expansions !== undefined) {
       for (const phrase of expansions.slice(0, SYNONYM_FANOUT_CAP)) {
         for (const word of phrase.split(/\s+/).filter((w) => w.length > 0)) {
