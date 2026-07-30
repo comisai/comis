@@ -57,6 +57,32 @@ describe("sanitizeSessionSecrets", () => {
     expect(sanitizeSessionSecrets(path)).toBe(0);
   });
 
+  it("repairs opaque token disclosures in user messages and provenance records", () => {
+    const credential = "AZ9mQ2-v7Kp3_X8nL4tR6sB1";
+    const path = writeJsonl(tmpDir, [
+      { type: "session", version: 1, id: "s1" },
+      {
+        type: "custom",
+        customType: "comis.inbound-message-provenance",
+        data: {
+          messages: [{ text: `heres the token ${credential}` }],
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: `heres the token ${credential}` }],
+        },
+      },
+    ]);
+
+    expect(sanitizeSessionSecrets(path)).toBe(2);
+    const persisted = readFileSync(path, "utf8");
+    expect(persisted).not.toContain(credential);
+    expect(persisted.match(/\[REDACTED\]/g)).toHaveLength(2);
+  });
+
   it("redacts env_value in gateway env_set toolCall", () => {
     const path = writeJsonl(tmpDir, [
       { type: "session", version: 1, id: "s1" },
