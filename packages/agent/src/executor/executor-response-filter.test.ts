@@ -1102,6 +1102,47 @@ describe("persistent action evidence guard", () => {
       honestResponse,
     }).corrected).toBe(false);
   });
+
+  it("preserves a step-limit disclosure containing negated success words", () => {
+    const announcementRequest = [
+      "[System Message]",
+      "A background task has halted (max steps reached).",
+      "",
+      "Task: Keep checking the local operation until it passes.",
+      "Status: Failed — Halted (max steps reached)",
+      "Abort: step_limit | Hint: Increase max_steps or simplify the task",
+    ].join("\n");
+    const truthfulFailure = [
+      "The operation stopped at the max_steps limit before it passed, so it did not complete.",
+      "Increase max_steps or simplify the task before retrying.",
+    ].join(" ");
+
+    expect(persistentActionEvidenceGuard()({
+      request: announcementRequest,
+      response: truthfulFailure,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: truthfulFailure,
+      corrected: false,
+    });
+  });
+
+  it("still rejects success reported after earlier failed attempts", () => {
+    const mixedOutcomeClaim =
+      "The first two attempts failed; the next attempt passed successfully.";
+
+    expect(persistentActionEvidenceGuard()({
+      request,
+      response: mixedOutcomeClaim,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_current_turn_action_evidence",
+    });
+  });
 });
 
 type DestructiveEffectEvidenceGuard = (params: {
