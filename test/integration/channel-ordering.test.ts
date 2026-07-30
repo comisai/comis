@@ -157,6 +157,10 @@ function makeMinimalDeps(
     // SessionLifecycle methods return Result now; loadOrCreate is .ok-checked
     // by resolve-and-preprocess before the executor runs.
     sessionManager: {
+      // `ensure` registers the conversation before the turn runs
+      // (inbound-pipeline). Absent, the pipeline throws before any
+      // assertion in the file can run.
+      ensure: vi.fn(() => ok(undefined)),
       loadOrCreate: vi.fn(() => ok([])),
       save: vi.fn(() => ok(undefined)),
       isExpired: vi.fn(() => ok(false)),

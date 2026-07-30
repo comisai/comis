@@ -3,13 +3,20 @@
  * validateLearnedDocBody — the STATIC poison/secret scan that is ALL the validation
  * an advisory Mental Model doc receives before it crosses into durable storage.
  *
- * Each untrusted text field (`name` / `body` / `description`) is run through the
+ * Each text field (`name` / `body` / `description`) is run through the
  * {@link validateMemoryWrite} keystone, and a CRITICAL on ANY field rejects the doc
  * (the memory-poison `injection-trajectory` + secret-egress defenses). A
  * `warn` severity is benign — the keystone records it but it NEVER rejects (severity
- * is a classification, never coerced to a boolean). The attacker-influenced `name`
- * (LLM output distilled from an UNTRUSTED transcript) is ALSO length-bounded to
- * reject a megabyte-name DoS before the scan runs over it.
+ * is a classification, never coerced to a boolean). The `name` is ALSO
+ * length-bounded to reject a megabyte-name DoS before the scan runs over it.
+ *
+ * `body` and `description` are the model's own prose, distilled from an UNTRUSTED
+ * transcript, and they reach prompts and delivery — they get the whole keystone,
+ * secret-egress check included. The `name` is a machine-built identifier
+ * (`<kind>-<groupKey>`) that the model never authors, so it is exempt from the
+ * secret-egress check alone: that check reads a long high-entropy run as a leaked
+ * credential, and a sha256 group key is indistinguishable from a hex credential by
+ * entropy. Command and injection patterns still reject a name.
  *
  * STATIC-ONLY by construction: an advisory doc carries no embedded procedure,
  * no parameter schema, no tool policy and no dynamic-replay surface — so this
@@ -28,14 +35,14 @@
  * @module validate-learned-doc-body
  */
 
-import { validateMemoryWrite } from "./memory-write-validator.js";
+import { validateMemoryWrite, SECRET_EGRESS_PATTERN } from "./memory-write-validator.js";
 
 /**
  * The maximum char length allowed for a learned-doc `name`.
- * `name` is attacker-influenced (LLM output distilled from
- * an UNTRUSTED transcript) and flows into durable storage / lookup keys / prompts, so
- * a sane ceiling rejects a megabyte-name DoS at validation. 120 chars matches the
- * prompt's "short, stable, kebab-case" instruction.
+ * The name derives from a group key that can be external input (a channel sender
+ * id on a profile doc) and flows into durable storage / lookup keys / prompts, so
+ * a sane ceiling rejects a megabyte-name DoS at validation. 120 chars leaves room
+ * for a kind prefix plus a full sha256 group key.
  */
 export const MAX_DOC_NAME_LENGTH = 120;
 
@@ -84,8 +91,23 @@ export function validateLearnedDocBody(doc: { name: string; body: string; descri
   ];
   for (const [field, content] of textFields) {
     const r = validateMemoryWrite(content);
-    if (r.severity === "critical") {
-      findings.push({ field, patterns: r.criticalPatterns });
+    if (r.severity !== "critical") {
+      continue;
+    }
+    // The secret-egress scrubber classifies a long high-entropy run as a leaked
+    // credential. That is right for `body` / `description`, which carry the
+    // model's prose into prompts and delivery — but the `name` is a machine-built
+    // identifier (`<kind>-<groupKey>`, the group key being a sha256 of an
+    // already-stored signature), and a hash is indistinguishable from a hex
+    // credential by entropy alone. Scanning it that way refused every reflected
+    // skill and topic doc, reported as a poison verdict, so the learning path
+    // admitted nothing. Command/injection patterns still reject a name.
+    const patterns =
+      field === "name"
+        ? r.criticalPatterns.filter((p) => p !== SECRET_EGRESS_PATTERN)
+        : r.criticalPatterns;
+    if (patterns.length > 0) {
+      findings.push({ field, patterns });
     }
   }
 

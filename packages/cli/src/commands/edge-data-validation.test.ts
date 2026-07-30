@@ -188,7 +188,7 @@ const { registerAgentCommand } = await import("./agent.js");
 const { registerMemoryCommand } = await import("./memory.js");
 const { withClient } = await import("../client/rpc-client.js");
 
-describe("session key parsing edge cases", () => {
+describe("conversation ref rendering edge cases", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -203,117 +203,34 @@ describe("session key parsing edge cases", () => {
     exitSpy.restore();
   });
 
-  it("inspect handles empty string key", async () => {
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("session.status", {
-          model: "x",
-          agentName: "default",
-          tokensUsed: { totalTokens: 0, totalCost: 0 },
-          stepsExecuted: 0,
-          maxSteps: 25,
-        })
-        .build();
-      return fn(mockClient);
-    });
-
-    const program = createTestProgram();
-    registerSessionsCommand(program);
-
-    await program.parseAsync(["node", "test", "sessions", "inspect", "empty"]);
-
-    // Should not crash -- key is empty, so parsed parts will be short
-    expect(exitSpy.spy).not.toHaveBeenCalled();
-    const output = getSpyOutput(consoleSpy.log);
-    // Session Key row should be present (even if empty string)
-    expect(output).toContain("Session Key");
+  // `sessions inspect` takes an OPAQUE conversation ref plus explicit tenant and
+  // agent authority; it does not split the argument into tenant/user/channel
+  // parts. These cover an awkwardly-shaped ref reaching the renderer intact.
+  const historyResponse = (key: string) => ({
+    session: {
+      key,
+      agentId: "default",
+      channelType: "telegram",
+      messageCount: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      toolCalls: 0,
+      compactions: 0,
+      resetCount: 0,
+      createdAt: 1_700_000_000_000,
+      lastActiveAt: 1_700_000_000_000,
+    },
+    messages: [],
+    total: 0,
+    offset: 0,
+    limit: 50,
+    hasMore: false,
   });
 
-  it("inspect handles key with no colons", async () => {
+  async function inspectRef(ref: string, key = ref): Promise<void> {
     vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("session.status", {
-          model: "x",
-          agentName: "default",
-          tokensUsed: { totalTokens: 0, totalCost: 0 },
-          stepsExecuted: 0,
-          maxSteps: 25,
-        })
-        .build();
-      return fn(mockClient);
-    });
-
-    const program = createTestProgram();
-    registerSessionsCommand(program);
-
-    await program.parseAsync(["node", "test", "sessions", "inspect", "simplekey"]);
-
-    expect(exitSpy.spy).not.toHaveBeenCalled();
-    const output = getSpyOutput(consoleSpy.log);
-    expect(output).toContain("simplekey");
-  });
-
-  it("inspect handles key with one colon", async () => {
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("session.status", {
-          model: "x",
-          agentName: "default",
-          tokensUsed: { totalTokens: 0, totalCost: 0 },
-          stepsExecuted: 0,
-          maxSteps: 25,
-        })
-        .build();
-      return fn(mockClient);
-    });
-
-    const program = createTestProgram();
-    registerSessionsCommand(program);
-
-    await program.parseAsync(["node", "test", "sessions", "inspect", "tenant:user"]);
-
-    expect(exitSpy.spy).not.toHaveBeenCalled();
-    const output = getSpyOutput(consoleSpy.log);
-    expect(output).toContain("tenant:user");
-  });
-
-  it("inspect handles key with many colons", async () => {
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("session.status", {
-          model: "x",
-          agentName: "default",
-          tokensUsed: { totalTokens: 0, totalCost: 0 },
-          stepsExecuted: 0,
-          maxSteps: 25,
-        })
-        .build();
-      return fn(mockClient);
-    });
-
-    const program = createTestProgram();
-    registerSessionsCommand(program);
-
-    await program.parseAsync(["node", "test", "sessions", "inspect", "t:u:c:extra:parts"]);
-
-    expect(exitSpy.spy).not.toHaveBeenCalled();
-    const output = getSpyOutput(consoleSpy.log);
-    expect(output).toContain("t:u:c:extra:parts");
-    // With >= 3 parts from split, tenant should be "t", user "u", channel "c"
-    expect(output).toContain("t");
-  });
-
-  it("inspect handles key with special characters", async () => {
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("session.status", {
-          model: "x",
-          agentName: "default",
-          tokensUsed: { totalTokens: 0, totalCost: 0 },
-          stepsExecuted: 0,
-          maxSteps: 25,
-        })
-        .build();
+      const mockClient = createMockRpcClient().onCall("session.history", historyResponse(key)).build();
       return fn(mockClient);
     });
 
@@ -321,20 +238,58 @@ describe("session key parsing edge cases", () => {
     registerSessionsCommand(program);
 
     await program.parseAsync([
-      "node",
-      "test",
-      "sessions",
-      "inspect",
-      "tenant-1:user@email:channel#room",
+      "node", "test", "sessions", "inspect", ref, "--tenant", "t1", "--agent", "a1",
+    ]);
+  }
+
+  it("renders a single-token ref without a channel separator", async () => {
+    await inspectRef("simplekey");
+
+    expect(exitSpy.spy).not.toHaveBeenCalled();
+    expect(getSpyOutput(consoleSpy.log)).toContain("simplekey");
+  });
+
+  it("renders the session key row even when the store returns an empty key", async () => {
+    await inspectRef("conv-empty", "");
+
+    expect(exitSpy.spy).not.toHaveBeenCalled();
+    expect(getSpyOutput(consoleSpy.log)).toContain("Session Key");
+  });
+
+  it("echoes a colon-bearing ref verbatim rather than splitting it into parts", async () => {
+    await inspectRef("t:u:c:extra:parts");
+
+    expect(exitSpy.spy).not.toHaveBeenCalled();
+    expect(getSpyOutput(consoleSpy.log)).toContain("t:u:c:extra:parts");
+  });
+
+  it("echoes a ref carrying email and fragment characters verbatim", async () => {
+    await inspectRef("tenant-1:user@email:channel#room");
+
+    expect(exitSpy.spy).not.toHaveBeenCalled();
+    expect(getSpyOutput(consoleSpy.log)).toContain("tenant-1:user@email:channel#room");
+  });
+
+  it("sends the ref and the tenant and agent authority through to session.history", async () => {
+    const seen: unknown[] = [];
+    vi.mocked(withClient).mockImplementation(async (fn) => {
+      const mockClient = createMockRpcClient().onCall("session.history", historyResponse("k")).build();
+      const inner = mockClient.call.bind(mockClient);
+      mockClient.call = async (method: string, params?: unknown) => {
+        if (method === "session.history") seen.push(params);
+        return inner(method, params as never);
+      };
+      return fn(mockClient);
+    });
+
+    const program = createTestProgram();
+    registerSessionsCommand(program);
+    await program.parseAsync([
+      "node", "test", "sessions", "inspect", "conv-ref-1", "--tenant", "t1", "--agent", "a1",
     ]);
 
     expect(exitSpy.spy).not.toHaveBeenCalled();
-    const output = getSpyOutput(consoleSpy.log);
-    expect(output).toContain("tenant-1:user@email:channel#room");
-    // The three parts should be parsed correctly
-    expect(output).toContain("tenant-1");
-    expect(output).toContain("user@email");
-    expect(output).toContain("channel#room");
+    expect(seen[0]).toMatchObject({ tenant_id: "t1", agent_id: "a1", conversation_ref: "conv-ref-1" });
   });
 });
 
@@ -361,9 +316,7 @@ describe("agent list field normalization edge cases", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("config.read", {
-          agents: {
-            "bare-agent": { bindings: ["ch:1"] },
-          },
+          "bare-agent": { bindings: ["ch:1"] },
         })
         .build();
       return fn(mockClient);
@@ -393,9 +346,7 @@ describe("agent list field normalization edge cases", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("config.read", {
-          agents: {
-            broken: "not-an-object",
-          },
+          broken: "not-an-object",
         })
         .build();
       return fn(mockClient);
@@ -417,9 +368,7 @@ describe("agent list field normalization edge cases", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("config.read", {
-          agents: {
-            "null-agent": { provider: null, model: null },
-          },
+          "null-agent": { provider: null, model: null },
         })
         .build();
       return fn(mockClient);
@@ -443,15 +392,13 @@ describe("agent list field normalization edge cases", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("config.read", {
-          agents: {
-            "new-style": {
-              provider: "anthropic",
-              model: "claude-sonnet-4-5-20250929",
-            },
-            "old-style": {
-              defaultProvider: "openai",
-              defaultModel: "gpt-4o",
-            },
+          "new-style": {
+            provider: "anthropic",
+            model: "claude-sonnet-4-5-20250929",
+          },
+          "old-style": {
+            defaultProvider: "openai",
+            defaultModel: "gpt-4o",
           },
         })
         .build();

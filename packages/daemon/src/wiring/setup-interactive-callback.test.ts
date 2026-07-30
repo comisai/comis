@@ -228,8 +228,13 @@ function makeApprovalRequest(over: Partial<ApprovalRequest> = {}): ApprovalReque
     resolvingPrincipalId: "principal-user-a",
     trustLevel: "untrusted",
     callbackOwner: {
+      // The owner's userId is the CANONICAL PRINCIPAL, not the platform sender.
+      // It is built from `deliveryOrigin.userId`, which the inbound pipeline fills
+      // from `sessionKey.userId` — and `conversationScopeToSessionKey` sets that
+      // from `partition.principalId`. Seeding a raw sender id here made ownership
+      // unsatisfiable, so every resolve returned `unknown`.
       tenantId: "tenant",
-      userId: "user_a",
+      userId: "principal-user-a",
       channelType: "email",
       channelKey: "inbox-1",
       threadId: "thread-1",
@@ -294,7 +299,9 @@ describe("createInteractiveCallbackWiring (email link → router roundtrip)", ()
       tenantId: "tenant",
       conversationRef: CONVERSATION_REF,
       resolvingPrincipalId: "principal-user-a",
-      inboundUserId: "user_a",
+      // An email link has no live inbound sender, so the minter carries the
+      // owner's principal through as the inbound user for the later resolve.
+      inboundUserId: "principal-user-a",
       channelType: "email",
       channelKey: "inbox-1",
       agentId: "main",

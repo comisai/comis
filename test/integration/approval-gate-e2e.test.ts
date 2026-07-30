@@ -73,6 +73,13 @@ const DIRECT_APPROVAL_IDENTITY = {
   tenantId: APPROVAL_TENANT_ID,
   agentId: APPROVAL_AGENT_ID,
   conversationRef: APPROVAL_CONVERSATION_REF,
+  // `requestApproval` REQUIRES a non-empty sessionKey and traceId: without both
+  // it resolves immediately as `system:invalid-request` and never becomes
+  // pending, so every assertion in this file saw an empty pending list. The
+  // requirement is not caught at compile time here — integration tests import
+  // from `dist/` and are outside the build's type gate.
+  sessionKey: `${APPROVAL_TENANT_ID}:${APPROVAL_AGENT_ID}:test-chan`,
+  traceId: "trace-approval-e2e",
   resolvingPrincipalId: "principal:test-user",
   trustLevel: "admin" as const,
   callbackOwner: Object.freeze({

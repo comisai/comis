@@ -140,6 +140,10 @@ describe("SEC-05 Stage-B — approval gate pause → resolve", () => {
       tenantId: "default",
       agentId: "agent-1",
       conversationRef,
+      // Without a non-empty sessionKey and traceId the gate resolves the request
+      // immediately as `system:invalid-request`, so nothing ever becomes pending.
+      sessionKey: "default:agent-1:channel-1",
+      traceId: "trace-gateway-scopes",
       resolvingPrincipalId: "principal:user-1",
       trustLevel: "user",
       callbackOwner: {

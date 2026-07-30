@@ -198,7 +198,17 @@ describe(
       // (system-health.ts:316,328,331-333). The findings below all originate from
       // the SEEDED store, proving the structural claim without stubbing sources.
       // ────────────────────────────────────────────────────────────────────────
-      const report = await assembleSystemHealthReport({ obsStore: store, dataDir, clock }, 24);
+      // Provider cost/tokens/calls come from the durable usage ledger via an
+      // injected billingEstimator, NOT from the session-summary rows this store
+      // seeds — omit it and the reconciled tuple is all zeros, which is what made
+      // the cost assertion below unsatisfiable.
+      const billingEstimator = {
+        total: () => ({ totalCost: 0.2, totalTokens: 1_200, callCount: 2 }),
+      };
+      const report = await assembleSystemHealthReport(
+        { obsStore: store, dataDir, clock, billingEstimator },
+        24,
+      );
 
       // --- The report reproduces the corpus's I-track signal classes. ---
       const codes = report.findings.map((f) => f.code);

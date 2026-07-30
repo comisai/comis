@@ -145,6 +145,32 @@ function isSafePersistencePlaceholder(value: string): boolean {
     || (trimmed.startsWith("${") && trimmed.endsWith("}"));
 }
 
+/**
+ * A Comis-minted conversation reference: `cv_` plus 43 base64url chars.
+ *
+ * Mirrors `ConversationRefSchema`. Matched here so the projector can recognize
+ * the shape without importing the schema into the persistence hot path.
+ */
+const CONVERSATION_REF_SHAPE = /^cv_[A-Za-z0-9_-]{43}$/u;
+
+/**
+ * Whether a field carries a structural identifier the projector must leave alone.
+ *
+ * A conversation ref is a machine-minted, fixed-shape identity — high-entropy by
+ * construction and therefore indistinguishable from an API key to the entropy
+ * heuristics below. Redacting it does not protect anything (it is derived from
+ * already-stored conversation scope, not a credential) and it corrupts the record:
+ * a persisted `conversationRef` of `[REDACTED]` no longer parses, so the
+ * delivered-assistant idempotency scan skipped the stored attempt and appended a
+ * duplicate on every retry.
+ *
+ * Deliberately narrow — the field name AND the exact ref shape must both hold, so
+ * a credential parked under this key is still redacted.
+ */
+function isStructuralIdentifier(fieldName: string | undefined, value: string): boolean {
+  return fieldName === "conversationRef" && CONVERSATION_REF_SHAPE.test(value);
+}
+
 function projectPersistenceValue(
   value: unknown,
   fieldName: string | undefined,
@@ -158,6 +184,9 @@ function projectPersistenceValue(
       && !isSafePersistencePlaceholder(value)
     ) {
       return { value: REDACTION_PLACEHOLDER, redactions: 1 };
+    }
+    if (isStructuralIdentifier(fieldName, value)) {
+      return { value, redactions: 0 };
     }
     if (looksLikeApiKey(value)) {
       return { value: REDACTION_PLACEHOLDER, redactions: 1 };

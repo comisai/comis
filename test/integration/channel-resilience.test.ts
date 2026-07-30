@@ -191,6 +191,10 @@ function makeMinimalDeps(
       resolve: vi.fn(() => "default"),
     } as any,
     sessionManager: {
+      // `ensure` registers the conversation before the turn runs
+      // (inbound-pipeline). Absent, the pipeline throws before any
+      // assertion in the file can run.
+      ensure: vi.fn(() => ok(undefined)),
       loadOrCreate: vi.fn(() => []),
       save: vi.fn(),
       expire: vi.fn(),
