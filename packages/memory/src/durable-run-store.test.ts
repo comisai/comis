@@ -660,6 +660,27 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       if (res.ok) expect(res.value.records.map((r) => r.rootRunId)).not.toContain("r-revoke");
     });
 
+    it("preserves completed history when revoking another live checkpoint under the same root", async () => {
+      const rootRunId = "r-shared-history";
+      await store.upsertCheckpoint(makeRecord({
+        checkpointId: "checkpoint-completed",
+        rootRunId,
+      }));
+      await store.terminalize("checkpoint-completed", "completed");
+      await store.upsertCheckpoint(makeRecord({
+        checkpointId: "checkpoint-running",
+        rootRunId,
+      }));
+
+      const inv = await store.invalidateForRevoke(rootRunId);
+
+      expect(inv.ok).toBe(true);
+      const completed = await store.getByCheckpoint("checkpoint-completed");
+      const running = await store.getByCheckpoint("checkpoint-running");
+      expect(completed.ok && completed.value?.status).toBe("completed");
+      expect(running.ok && running.value?.status).toBe("revoked");
+    });
+
     it("a subsequent upsertCheckpoint(status:'running') does NOT resurrect a revoked row", async () => {
       // A timeout markResumable or a raced jailed checkpoint() upserts status:'running'.
       // Landing after a revoke it must NOT clobber the terminal 'revoked' back to
