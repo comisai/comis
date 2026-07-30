@@ -12,6 +12,7 @@ const mockCompositeResolver = {
   resolve: vi.fn(),
   schemes: ["tg://", "whatsapp://"],
 };
+const mockPersist = vi.fn();
 
 vi.mock("@comis/channels", () => ({
   createWhatsAppResolver: vi.fn(() => ({ resolve: vi.fn(), schemes: ["whatsapp://"] })),
@@ -22,7 +23,7 @@ vi.mock("@comis/channels", () => ({
 
 vi.mock("@comis/skills", () => ({
   createCompositeResolver: vi.fn(() => mockCompositeResolver),
-  createMediaPersistenceService: vi.fn(() => ({ persist: vi.fn() })),
+  createMediaPersistenceService: vi.fn(() => ({ persist: mockPersist })),
   preprocessMessage: vi.fn(async (_deps: any, msg: NormalizedMessage) => ({
     message: msg,
     imageContents: [],
@@ -119,6 +120,15 @@ function makeDeps(overrides: Partial<MediaPipelineDeps> = {}): MediaPipelineDeps
 describe("buildMediaPipeline", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPersist.mockResolvedValue({
+      ok: true,
+      value: {
+        relativePath: "photos/current.png",
+        mimeType: "image/png",
+        sizeBytes: 10,
+        mediaKind: "image",
+      },
+    });
   });
 
   it("creates compositeResolver with platform resolvers when adapters present", async () => {
@@ -332,6 +342,44 @@ describe("buildMediaPipeline", () => {
       model: "vision-model",
       path: "vision-direct",
       outcome: "ok",
+    });
+  });
+
+  it("persists an image when no media processor consumes its attachment", async () => {
+    const image = Buffer.from("image-data");
+    mockCompositeResolver.resolve.mockResolvedValueOnce({
+      ok: true,
+      value: { buffer: image },
+    });
+    const container = makeContainer();
+    container.config.integrations.media.persistence.enabled = true;
+    const deps = makeDeps({
+      container,
+      workspaceDirs: new Map([["default", "/workspace"]]),
+    });
+    const result = await buildMediaPipeline(deps);
+
+    await result.preprocessMessage({
+      id: "m1",
+      channelId: "c1",
+      channelType: "telegram",
+      senderId: "user_a",
+      text: "what does this say",
+      timestamp: Date.now(),
+      attachments: [{
+        type: "image",
+        url: "tg-file://current",
+        mimeType: "image/png",
+        sizeBytes: image.byteLength,
+      }],
+      metadata: {},
+    }, TEST_TURN_SCOPE);
+
+    expect(mockPersist).toHaveBeenCalledOnce();
+    expect(mockPersist).toHaveBeenCalledWith(image, {
+      mimeType: "image/png",
+      fileName: undefined,
+      mediaKind: "image",
     });
   });
 
