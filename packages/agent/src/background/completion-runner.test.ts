@@ -531,24 +531,33 @@ describe("createBackgroundCompletionRunner", () => {
     const finalize = vi.fn().mockResolvedValue(undefined);
     const dispose = vi.fn();
     const activityCoordinatorFactory = vi.fn(() => ({ start, finalize, dispose }));
+    let executorActivityContext: TurnActivityContext | undefined;
+    let approvalListenerCount = 0;
+    let approvalHadListener = false;
     executor.execute.mockImplementation(async (...args: unknown[]) => {
       const context = getContext();
-      expect(start).toHaveBeenCalledOnce();
-      eventBus.emit("approval:requested", {
+      const activityContext = activityCoordinatorFactory.mock.calls[0]![0];
+      executorActivityContext = {
+        ...activityContext,
+        traceId: context.traceId,
+        sessionKey: context.sessionKey ?? "",
+      };
+      approvalListenerCount = eventBus.listenerCount("approval:requested");
+      approvalHadListener = eventBus.emit("approval:requested", {
         requestId: "approval-1",
         shortId: "Ab3Cd4Ef5Gh6",
         toolName: "pipeline",
         action: "graph.execute",
         params: {},
         tenantId: context.tenantId,
-        agentId: context.agentId,
+        agentId: activityContext.agentId,
         conversationRef: task.origin.conversationRef,
-        sessionKey: formatSessionKey(context.sessionKey),
+        sessionKey: context.sessionKey,
         resolvingPrincipalId: context.userId,
         trustLevel: context.trustLevel,
         createdAt: 10,
         timeoutMs: 300_000,
-        traceId: context.traceId,
+        traceId: activityContext.traceId,
         channelType: "telegram",
       });
       return executeFinalized({
@@ -572,6 +581,9 @@ describe("createBackgroundCompletionRunner", () => {
 
     expect(activityCoordinatorFactory).toHaveBeenCalledOnce();
     const turnContext = activityCoordinatorFactory.mock.calls[0]![0];
+    expect(executorActivityContext).toEqual(turnContext);
+    expect(approvalListenerCount).toBe(1);
+    expect(approvalHadListener).toBe(true);
     expect(turnContext).toMatchObject({
       agentId: "default",
       sessionKey: originSessionKey(task.origin),
