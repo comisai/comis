@@ -80,8 +80,8 @@
   "devDependencies": {
     "@agentclientprotocol/sdk": "0.22.1",
     "@comis/core": "workspace:*",
-    "@earendil-works/pi-agent-core": "0.82.1",
-    "@earendil-works/pi-ai": "0.82.1",
+    "@earendil-works/pi-agent-core": "0.83.0",
+    "@earendil-works/pi-ai": "0.83.0",
     "@eslint/js": "10.0.1",
     "@line/bot-sdk": "10.8.0",
     "@mdx-js/mdx": "3.1.1",
@@ -119,7 +119,7 @@
   "pnpm": {
     "overrides": {
       "tar": "7.5.22",
-      "typebox": "1.3.6",
+      "typebox": "1.3.7",
       "protobufjs": ">=8.6.6",
       "@protobufjs/utf8": ">=1.1.1",
       "undici": ">=8.5.0",
@@ -149,7 +149,7 @@
       "qs": ">=6.15.2"
     },
     "patchedDependencies": {
-      "@earendil-works/pi-ai@0.82.1": "patches/@earendil-works__pi-ai@0.82.1.patch"
+      "@earendil-works/pi-ai@0.83.0": "patches/@earendil-works__pi-ai@0.83.0.patch"
     }
   }
 }
