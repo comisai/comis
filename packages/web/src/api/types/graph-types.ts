@@ -162,7 +162,7 @@ export interface MonitorSnapshot {
 export interface GraphRunSummary {
   readonly graphId: string;
   readonly name: string;
-  readonly status: "completed" | "failed";
+  readonly status: "running" | "interrupted" | "completed" | "failed";
   readonly nodeCount: number;
   readonly date: string;
   readonly fileCount: number;
@@ -179,7 +179,7 @@ export interface GraphRunNode {
 export interface GraphRunDetail {
   readonly graphId: string;
   readonly name: string;
-  readonly status: "completed" | "failed";
+  readonly status: "running" | "interrupted" | "completed" | "failed";
   readonly date: string;
   readonly nodes: ReadonlyArray<GraphRunNode>;
 }

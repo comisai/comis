@@ -92,12 +92,8 @@ export interface GraphRunState {
   resolvedLanguage?: string;
   /** Shared directory path for inter-node data sharing. */
   sharedDir: string;
-  /**
-   * Stable graph-run directory identity sourced from the protected checkpoint
-   * reference. It differs from `graphId` after an authority row is replaced on
-   * resume and keeps subsequent checkpoints beside the original workspace.
-   */
-  durableArtifactGraphId?: string;
+  /** Replacement authority-row identity used after a restart claim. */
+  durableCheckpointId?: string;
   /** Guards the tree-budget retention release against duplicate terminal transitions. */
   durableRetentionReleased?: boolean;
   /** Active driver states keyed by nodeId. */

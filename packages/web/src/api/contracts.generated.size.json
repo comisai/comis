@@ -1,6 +1,6 @@
 {
-  "totalMinified": 189728,
-  "totalGzipped": 19292,
+  "totalMinified": 189776,
+  "totalGzipped": 19297,
   "budget": {
     "minified": 190000,
     "gzipped": 38912
@@ -81,8 +81,8 @@
     "graph.list": 459,
     "graph.load": 293,
     "graph.outputs": 521,
-    "graph.runDetail": 892,
-    "graph.runs": 616,
+    "graph.runDetail": 916,
+    "graph.runs": 640,
     "graph.save": 729,
     "graph.status": 343,
     "heartbeat.get": 505,

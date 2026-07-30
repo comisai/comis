@@ -4434,6 +4434,7 @@ function seedGraphCheckpoint(
   }> = {},
 ): string {
   const content = JSON.stringify({
+    turnScope: makeCallerTurnScope("telegram", "chat_a"),
     graph: graph.graph,
     executionOrder: graph.executionOrder,
     nodes,
@@ -5112,9 +5113,20 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       await coordinator.shutdown();
     });
 
-    it("keeps the protected graph-run workspace when the replacement checkpoint id changes", async () => {
+    it("keeps the original graph identity and terminal delivery when the checkpoint authority changes", async () => {
       const durableRuns = createRecordingDurableRuns();
-      const { deps, runner } = createTestDeps({ durableRuns });
+      const sendGovernedAnnouncement = vi.fn(async () => ok({
+        delivered: true as const,
+        identity: {
+          agentId: "test-agent",
+          rootRunId: "root-original-workspace",
+          stepIndex: 1,
+        },
+      }));
+      const { deps, runner, eventBus } = createTestDeps({
+        durableRuns,
+        sendGovernedAnnouncement,
+      });
       const coordinator = createGraphCoordinator(deps);
       const exactGraph = buildGraph([{ nodeId: "A" }]);
       const checkpointRef = seedGraphCheckpoint(
@@ -5127,12 +5139,32 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         rootRunId: "root-original-workspace",
         spawnTree: [{ nodeId: "A", status: "running", runId: "old-run-a" }],
         checkpointRef,
+        deliveryOrigin: {
+          tenantId: "test-tenant",
+          userId: "user_a",
+          channelType: "telegram",
+          channelId: "chat_a",
+        },
       });
 
       expect(await coordinator.resumeGraph(record)).toEqual({ ok: true, value: undefined });
       expect(runner._getSpawnCalls()[0]?.graphSharedDir).toBe(
         "/tmp/test-comis/graph-runs/original-graph-run",
       );
+      expect(coordinator.getStatus("original-graph-run")).toBeDefined();
+      expect(coordinator.getStatus("resume-replacement-authority")).toBeUndefined();
+
+      const resumedRunId = runner._getSpawnCalls()[0]!._runId as string;
+      runner._completeRun(resumedRunId, "done");
+      simulateCompletion(eventBus, resumedRunId, true);
+
+      await vi.waitFor(() => {
+        expect(sendGovernedAnnouncement).toHaveBeenCalledTimes(1);
+        expect(durableRuns.terminalize).toHaveBeenCalledWith(
+          "resume-replacement-authority",
+          "completed",
+        );
+      });
 
       await coordinator.shutdown();
     });

@@ -28,7 +28,7 @@
 
 import { existsSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import type { ClockPort, TimerPort, TimerHandle, DurableRunPort, OutwardSendLedgerPort, DurableRunRecord, PerAgentConfig, AgentCapability, TypedEventBus, WorkspacePolicySnapshot } from "@comis/core";
+import type { ClockPort, TimerPort, TimerHandle, DurableRunPort, OutwardSendLedgerPort, DurableRunRecord, PerAgentConfig, AgentCapability, TypedEventBus, WorkspacePolicySnapshot, ResolvedTurnScope } from "@comis/core";
 import {
   createDeliveryOrigin,
   createResolvedRequestContext,
@@ -225,6 +225,8 @@ export interface SetupDurableResumeDeps {
   revokeLease?: (leaseId: string) => void;
   /** Resume a run from its checkpoint under the re-minted lease. */
   resumeRun: (record: DurableRunRecord, lease: IssuedLease) => Promise<Result<void, Error>>;
+  /** Resolve endpoint authority stored in a protected execution artifact. */
+  resolveTurnScope?: (record: DurableRunRecord) => Result<ResolvedTurnScope, Error>;
   /** Reclaim a dead resumable orchestrate run's artifacts on the orphan path. */
   reclaimOrchestrateRun?: (record: DurableRunRecord) => Promise<void>;
   /** Content-free operator notification for an orphan or parked outward operation. */
@@ -246,7 +248,7 @@ export interface DurableResumeResult {
 }
 
 export function setupDurableResume(deps: SetupDurableResumeDeps): DurableResumeResult {
-  const { db, config, eventBus, logger, remintLease, resumeRun, notify, clock, timers } = deps;
+  const { db, config, eventBus, logger, remintLease, resumeRun, resolveTurnScope, notify, clock, timers } = deps;
 
   // GATING: disabled (default, or no autonomy agent) ⇒ inert. No stores, no
   // engine, no timer — a default install is byte-identical (mirrors
@@ -276,6 +278,7 @@ export function setupDurableResume(deps: SetupDurableResumeDeps): DurableResumeR
     remintLease,
     ...(deps.revokeLease ? { revokeLease: deps.revokeLease } : {}),
     resumeRun,
+    ...(resolveTurnScope ? { resolveTurnScope } : {}),
     notify,
     nowMs: () => clock.now(),
     recoveryBudgetMs: config.recoveryBudgetMs,
@@ -480,6 +483,7 @@ export function buildDurableResume(deps: {
     agentId: string,
     policyHash: string,
   ) => Promise<Result<WorkspacePolicySnapshot, Error>>;
+  resolveTurnScope?: (record: DurableRunRecord) => Result<ResolvedTurnScope, Error>;
   /**
    * The orchestrate-kind resume + orphan-reclaim seams (workspace resolver +
    * fs-exists probe + cleanupRun/rmSync reclaim). When present: a flat row with
@@ -492,7 +496,7 @@ export function buildDurableResume(deps: {
    */
   orchestrateResume?: OrchestrateResumeWiring;
 }): DurableResumeWiring {
-  const { durabilityCfg, durableRunStore, outwardLedger, boundedAutonomy, sharedLeaseManager, eventBus, logger, clock, timers, resumeGraph, resumePlain, resolveWorkspacePolicy, orchestrateResume } = deps;
+  const { durabilityCfg, durableRunStore, outwardLedger, boundedAutonomy, sharedLeaseManager, eventBus, logger, clock, timers, resumeGraph, resumePlain, resolveWorkspacePolicy, resolveTurnScope, orchestrateResume } = deps;
   // Bind the engine's orphan-reclaim hook to the wiring's
   // reclaim seams (workspace + cleanupRun + guarded rmSync). The bound helper is
   // scoped (a non-orchestrate row is a no-op) + idempotent. Absent ⇒ no reclaim.
@@ -601,6 +605,7 @@ export function buildDurableResume(deps: {
       if (!outcome.ok) boundedAutonomy?.evictRootIfIdle(record.rootRunId);
       return outcome;
     },
+    ...(resolveTurnScope ? { resolveTurnScope } : {}),
     // reclaimOrchestrateRun: the engine calls this on the orphan path to reclaim a
     // dead resumable orchestrate run's results/ and pinned script. Absent
     // ⇒ no reclaim (the seams unwired / orchestrateResume off).

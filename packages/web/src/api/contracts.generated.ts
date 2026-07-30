@@ -6183,6 +6183,8 @@ export const CONTRACTS = {
         "status": {
           "type": "string",
           "enum": [
+            "running",
+            "interrupted",
             "completed",
             "failed"
           ]
@@ -6275,6 +6277,8 @@ export const CONTRACTS = {
               "status": {
                 "type": "string",
                 "enum": [
+                  "running",
+                  "interrupted",
                   "completed",
                   "failed"
                 ]

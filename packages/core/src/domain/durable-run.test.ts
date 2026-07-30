@@ -239,6 +239,16 @@ describe("parseDurableRunRecord domain validation", () => {
 
   it("accepts an authoritative graph checkpoint with topology outputs retries and ledgers", () => {
     const graphCheckpoint = {
+      turnScope: {
+        conversation: CONVERSATION_SCOPE,
+        principal: { principalId: "user-a" },
+        endpoint: {
+          channelType: "telegram",
+          channelInstanceId: "telegram-main",
+          conversationId: "chat-a",
+          conversationKind: "direct" as const,
+        },
+      },
       graph: {
         nodes: [
           { nodeId: "a", task: "first", dependsOn: [], retries: 1 },

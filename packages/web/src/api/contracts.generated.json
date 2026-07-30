@@ -6007,6 +6007,8 @@
         "status": {
           "type": "string",
           "enum": [
+            "running",
+            "interrupted",
             "completed",
             "failed"
           ]
@@ -6099,6 +6101,8 @@
               "status": {
                 "type": "string",
                 "enum": [
+                  "running",
+                  "interrupted",
                   "completed",
                   "failed"
                 ]

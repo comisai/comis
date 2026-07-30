@@ -17,8 +17,10 @@ import {
   tryGetContext,
   createConversationRef,
   conversationScopeToSessionKey,
+  formatSessionKey,
   validateAndSortGraph,
   parseDurableRunRecord,
+  ResolvedTurnScopeSchema,
   toSafeErrorLogString,
 } from "@comis/core";
 import { randomUUID } from "node:crypto";
@@ -28,6 +30,7 @@ import {
   createDurableGraphCheckpoint,
   graphRunIdFromCheckpointRef,
   readDurableGraphCheckpoint,
+  resolveGraphResumeTurnScope,
   snapshotToSpawnTree,
   validateGraphCheckpointSummary,
   writeDurableGraphCheckpoint,
@@ -110,14 +113,32 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       || gs.callerAgentId === undefined
       || gs.callerConversationLocator === undefined
       || gs.callerPrincipalId === undefined
+      || gs.callerEndpoint === undefined
     ) return true;
     const store = deps.durableRuns;
     const rootRunId = gs.rootRunId;
     const terminal = gs.stateMachine.isTerminal();
-    const graphCheckpoint = createDurableGraphCheckpoint(gs);
+    const parsedTurnScope = ResolvedTurnScopeSchema.safeParse({
+      conversation: gs.callerConversationLocator.conversationScope,
+      principal: { principalId: gs.callerPrincipalId },
+      endpoint: gs.callerEndpoint,
+    });
+    if (!parsedTurnScope.success) {
+      deps.logger?.warn(
+        {
+          graphId: gs.graphId,
+          rootRunId,
+          hint: "Preserve the resolved caller endpoint when submitting the graph; durable authority was not advanced",
+          errorKind: "validation" as const,
+        },
+        "Graph durable turn authority is incomplete",
+      );
+      return false;
+    }
+    const graphCheckpoint = createDurableGraphCheckpoint(gs, parsedTurnScope.data);
     const checkpointArtifact = writeDurableGraphCheckpoint(
       deps.dataDir,
-      gs.durableArtifactGraphId ?? gs.graphId,
+      gs.graphId,
       graphCheckpoint,
     );
     if (!checkpointArtifact.ok) {
@@ -145,7 +166,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     // the outward-send path already wrote. Outward sequencing belongs to the
     // separate ledger, so this checkpoint upsert never touches it.
     const record: DurableRunRecord = {
-      checkpointId: gs.graphId,
+      checkpointId: gs.durableCheckpointId ?? gs.graphId,
       rootRunId,
       tenantId: gs.callerConversationLocator.conversationScope.tenantId,
       agentId: gs.callerAgentId,
@@ -179,7 +200,10 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     if (terminal) {
       const completion = await graphCompletions.run(gs);
       if (!completion.ok) return false;
-      const completed = await store.terminalize(gs.graphId, "completed");
+      const completed = await store.terminalize(
+        gs.durableCheckpointId ?? gs.graphId,
+        "completed",
+      );
       if (!completed.ok) {
         deps.logger?.warn(
           { graphId: gs.graphId, rootRunId, err: toSafeErrorLogString(completed.error), hint: "Repair the durable authority store; graph completion remains parked and resumable", errorKind: "resource" as const },
@@ -197,7 +221,8 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       && gs.rootRunId !== undefined
       && gs.callerAgentId !== undefined
       && gs.callerConversationLocator !== undefined
-      && gs.callerPrincipalId !== undefined;
+      && gs.callerPrincipalId !== undefined
+      && gs.callerEndpoint !== undefined;
   }
 
   function releaseDurableRetention(gs: GraphRunState): void {
@@ -842,6 +867,12 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     if (!loaded.ok) return err(loaded.error);
     const durableArtifactGraphId = graphRunIdFromCheckpointRef(checkpointRef);
     if (!durableArtifactGraphId.ok) return durableArtifactGraphId;
+    const resumedTurnScope = resolveGraphResumeTurnScope(deps.dataDir, validRecord);
+    if (!resumedTurnScope.ok) return resumedTurnScope;
+    const callerSession = conversationScopeToSessionKey(
+      resumedTurnScope.value.conversation,
+    );
+    if (!callerSession.ok) return err(callerSession.error);
     const spawnTree = validRecord.spawnTree as Array<{
       nodeId: string;
       status: import("@comis/core").NodeStatus;
@@ -863,7 +894,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     const restored = restoreGraphStateMachine(validated, loaded.value.nodes);
     if (!restored.ok) return err(new Error(`resumeGraph: ${restored.error}`));
 
-    const graphId = validRecord.checkpointId;
+    const graphId = durableArtifactGraphId.value;
     const graphTraceId = randomUUID();
     const sharedDir = safePath(
       deps.dataDir,
@@ -887,18 +918,13 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         ? {}
         : { workspacePolicyHash: validRecord.workspacePolicyHash }),
       callerAgentId: validRecord.agentId,
+      callerSessionKey: formatSessionKey(callerSession.value),
       callerConversationLocator: {
-        conversationScope: validRecord.conversationScope,
+        conversationScope: resumedTurnScope.value.conversation,
         conversationRef: validRecord.conversationRef,
       },
-      callerPrincipalId: validRecord.principalId,
-      ...(() => {
-        const partition = validRecord.conversationScope.partition;
-        return partition.kind === "endpoint-conversation"
-          || partition.kind === "endpoint-conversation-principal"
-          ? { callerEndpoint: partition.endpoint }
-          : {};
-      })(),
+      callerPrincipalId: resumedTurnScope.value.principal.principalId,
+      callerEndpoint: resumedTurnScope.value.endpoint,
       rootRunId, // tree-stable durable key shared by recovered node attempts
       ...(validRecord.deliveryOrigin !== null
         ? {
@@ -921,7 +947,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       cumulativeTokens: loaded.value.cumulativeTokens,
       cumulativeCost: loaded.value.cumulativeCost,
       sharedDir,
-      durableArtifactGraphId: durableArtifactGraphId.value,
+      durableCheckpointId: validRecord.checkpointId,
       driverStates: new Map(),
       driverRunIdMap: new Map(),
       waitHandlers: new Map(),

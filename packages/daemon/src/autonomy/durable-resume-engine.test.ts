@@ -794,6 +794,50 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     expect(resumeRun.mock.calls[0][1]).toEqual({ leaseId: "lease-x", bearer: "b" });
   });
 
+  it("re-mints a broad conversation partition with its protected resolved endpoint", async () => {
+    const broadScope = {
+      tenantId: "tenant-a",
+      agentId: "agent-a",
+      partition: {
+        kind: "channel-principal" as const,
+        channelType: "telegram",
+        principalId: "user-a",
+      },
+    };
+    const broadReference = createConversationRef(broadScope);
+    if (!broadReference.ok) throw broadReference.error;
+    const turnScope = {
+      conversation: broadScope,
+      principal: { principalId: "user-a" },
+      endpoint: DURABLE_ENDPOINT,
+    };
+    const record = durableRecord({
+      conversationRef: broadReference.value,
+      conversationScope: broadScope,
+      deliveryOrigin: {
+        channelType: "telegram",
+        channelId: "chat-a",
+        userId: "user-a",
+        tenantId: "tenant-a",
+      },
+      spawnTree: [{ nodeId: "A", status: "running", runId: "run-a" }],
+      checkpointRef: `graph-runs/graph-a/durable-checkpoint-${"a".repeat(64)}.json`,
+    });
+    const remintLease = vi.fn(() => ({ leaseId: "lease-x", bearer: "b" }));
+    const resolveTurnScope = vi.fn(() => ok(turnScope));
+    const deps = makeEngineDeps({
+      durableRuns: makeDurableRuns({ resumable: [record] }),
+      remintLease,
+      resolveTurnScope,
+    });
+
+    const result = await createDurableResumeEngine(deps).resumeAll();
+
+    expect(result).toEqual({ ok: true, value: { resumed: 1, orphaned: 0, deferred: 0 } });
+    expect(resolveTurnScope).toHaveBeenCalledTimes(1);
+    expect(remintLease).toHaveBeenCalledWith(expect.objectContaining({ turnScope }));
+  });
+
   it("revoked-record-not-reminted: a status='revoked' re-read → markOrphaned + notify, remintLease NEVER called", async () => {
     // listResumable returns a running record, but the belt re-read shows revoked
     const running = durableRecord({ rootRunId: "root-rev", status: "running" });

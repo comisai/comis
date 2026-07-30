@@ -128,6 +128,7 @@ import { createWakeGateRunner, buildWakeGateRunnerDeps, type WakeGateRunner } fr
 // the breaker's lifetime; the orchestrator owns its logic.
 import { createActivityCircuitBreaker } from "@comis/orchestrator";
 import { createGraphCoordinator, createNodeTypeRegistry } from "./graph/index.js";
+import { resolveGraphResumeTurnScope } from "./graph/graph-durable-checkpoint.js";
 import { resolveGraphConcurrencyDefaults } from "./graph/graph-capability-defaults.js";
 import { createTokenRegistry } from "./api/token-handlers.js";
 import { buildObsMcpClientClosures } from "./wiring/obs-mcp-closures.js";
@@ -553,8 +554,6 @@ async function wirePostChannelsLifecycle(deps: {
    *  channelAdaptersRef.set loop below — the channel registry is now populated, so
    *  the poller's announce-on-complete reaches a LIVE adapter outside a turn. */
   startAndResumeVideoPoller?: () => Promise<void>;
-  /** Durable boot recovery + watchdog start. Runs after graph recovery wiring is ready. */
-  startAndResumeDurable?: () => Promise<void>;
   startMirrorPrune: BootContext["startMirrorPrune"];
   shutdownMirror: BootContext["shutdownMirror"];
   daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"];
@@ -563,7 +562,7 @@ async function wirePostChannelsLifecycle(deps: {
   outputRetentionConfig: BootContext["container"]["config"]["outputRetention"];
 }): Promise<{ outputRetentionHandle?: SetupOutputRetentionHandle }> {
   const { adaptersByType, channelAdaptersRef, drainAndStartDeliveryPrune,
-    startAndResumeVideoPoller, startAndResumeDurable, startMirrorPrune, daemonLogger, container, defaultWorkspaceDir,
+    startAndResumeVideoPoller, startMirrorPrune, daemonLogger, container, defaultWorkspaceDir,
     outputRetentionConfig } = deps;
   for (const [type, adapter] of adaptersByType) channelAdaptersRef.set(type, adapter);
   await drainAndStartDeliveryPrune();
@@ -572,9 +571,6 @@ async function wirePostChannelsLifecycle(deps: {
   // render's finished clip announces to the recorded channel outside any turn,
   // exactly like the delivery queue's drainAndStart above.
   await startAndResumeVideoPoller?.();
-  // Run durable recovery after the graph coordinator is ready. Outward recovery
-  // only parks uncertain effects; it never queries or replays through adapters.
-  await startAndResumeDurable?.();
   // eventBus.on("system:shutdown", ...) subscribers deleted —
   // shutdownDeliveryQueue, shutdownMirror, and outputRetentionHandle.shutdown
   // are surfaced through BootContext / wirePostChannelsLifecycle return
@@ -2022,6 +2018,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
       }
       return ok(loaded.value);
     },
+    resolveTurnScope: (record) =>
+      resolveGraphResumeTurnScope(container.config.dataDir || ".", record),
     // The orchestrate-kind resume + orphan-reclaim seams (workspace resolver + real existsSync + result-ref-store.cleanupRun + a safePath-guarded rmSync). Populated only when durability is enabled so a resumable orchestrate row's pinned script + checkpoint are verified on boot and a dead run's artifacts are reclaimed on orphan; absent ⇒ a scriptRef row degrades to the plain flat re-anchor (deny-by-absence — the runner only writes scriptRef rows under orchestrateResume).
     ...(durabilityCfg.enabled ? { orchestrateResume: buildOrchestrateResumeWiring({ workspaceDirs, logger: daemonLogger }) } : {}),
   });
@@ -2138,9 +2136,6 @@ async function bootChannels(boot: BootContext): Promise<void> {
     // registry is populated (the local videoPoller from buildVideoGenBundle above;
     // undefined when video is disabled → the optional call no-ops).
     ...(videoPoller ? { startAndResumeVideoPoller: () => videoPoller.startAndResume() } : {}),
-    // Run durable recovery after channels so uncertainty escalations have live
-    // notification routes; inert no-op when durability is off.
-    startAndResumeDurable,
     startMirrorPrune: handle.startMirrorPrune,
     shutdownMirror: handle.shutdownMirror,
     daemonLogger, container, defaultWorkspaceDir,
@@ -2327,6 +2322,9 @@ async function bootChannels(boot: BootContext): Promise<void> {
     );
     return resumed.ok ? ok(undefined) : resumed;
   };
+  // Recovery requires both late-bound handlers above and the live channel
+  // registry. Starting earlier turns valid checkpoints into false orphans.
+  await startAndResumeDurable();
   const namedGraphStore = createNamedGraphStore(db);
   // Seed the four canonical small-model DAG templates into the named-graph store. Idempotent (INSERT-OR-IGNORE in the seeder), so operator-customized templates survive restarts and re-running on every boot is safe.
   seedDefaultDagTemplates(namedGraphStore);
