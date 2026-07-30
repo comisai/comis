@@ -111,7 +111,12 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
       resolve(repositoryRoot, "skills/find-skills/SKILL.md"),
       "utf8",
     );
+    const description =
+      manifest.match(/^description:\s*(.+)$/mu)?.[1] ?? "";
 
+    expect(description).toMatch(/^MANDATORY:/u);
+    expect(description).toMatch(/load this skill/iu);
+    expect(description).toMatch(/do not answer from general capabilities/iu);
     expect(manifest).toMatch(/must run `npx skills find <query>` first/iu);
     expect(manifest).toMatch(/skills_manage/iu);
     expect(manifest).toMatch(/action:\s*["'`]import["'`]/iu);
