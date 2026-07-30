@@ -19,6 +19,8 @@ export interface ContextUsageData {
   tokens: number | null;
   contextWindow: number;
   percent: number | null;
+  /** Measurement authority used by the guard. */
+  source?: "assembled" | "sdk";
 }
 
 /** Status returned by the context window check. */
