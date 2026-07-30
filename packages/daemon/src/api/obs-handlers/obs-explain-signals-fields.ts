@@ -57,6 +57,17 @@ const RAW_BODY_SCAN_BOUND = 2_000;
  * directives). Matched on the bounded slice (post-cap), never the raw body.
  */
 const UNTRUSTED_CONTENT_MARKER_RE = /SECURITY NOTICE|UNTRUSTED source/i;
+const ABSOLUTE_PATH_RE =
+  // eslint-disable-next-line security/detect-unsafe-regex -- previewAndDigest bounds input to 2 KB before matching.
+  /(?<![:/])\/(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+/gu;
+
+function compactFailurePreviewPaths(value: string): string {
+  return value.replace(ABSOLUTE_PATH_RE, (match) => {
+    const segments = match.split("/").filter((segment) => segment.length > 0);
+    if (segments.length <= 2) return match;
+    return `…/${segments.slice(-2).join("/")}`;
+  });
+}
 
 export function asString(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
@@ -126,12 +137,12 @@ export function previewAndDigest(errorText: string | undefined): {
   const body = errorText ?? "";
   const resultBytes = Buffer.byteLength(body, "utf8");
   const resultDigest = fingerprint(body);
-  // Pre-bound BEFORE sanitize (ReDoS guard on oversized bodies), then redact,
-  // then hard-cap at MAX_ERROR_PREVIEW. The full body lives only in the digest.
-  const capped = sanitizeLogString(body.slice(0, RAW_BODY_SCAN_BOUND)).slice(
-    0,
-    MAX_ERROR_PREVIEW,
-  );
+  // Pre-bound BEFORE sanitize (ReDoS guard on oversized bodies), compact host
+  // paths, then hard-cap at MAX_ERROR_PREVIEW. The full body lives only in the
+  // digest.
+  const capped = compactFailurePreviewPaths(
+    sanitizeLogString(body.slice(0, RAW_BODY_SCAN_BOUND)),
+  ).slice(0, MAX_ERROR_PREVIEW);
   // Untrusted-content guard: a wrapped EXTERNAL body leads with the
   // "SECURITY NOTICE" injection marker, so the HEAD slice would inline it.
   // Collapse the preview to a digest reference — the body is still addressable
