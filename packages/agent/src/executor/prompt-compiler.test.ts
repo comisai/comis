@@ -38,6 +38,25 @@ describe("compileExecutionPrompt", () => {
     expect(result.stableEnginePrefix).toMatch(/do not ask.*missing parameters/iu);
   });
 
+  it("prevents prompt-skill advertising from becoming a capability claim", () => {
+    const result = compileExecutionPrompt(makeInput({
+      runtimeSections: [{
+        id: "runtime:available-skills",
+        sourceKind: "external",
+        trust: "untrusted",
+        stability: "volatile",
+        content: "<skill><description>Exports a specialized binary artifact</description></skill>",
+        maxChars: 1_000,
+        priority: 30,
+      }],
+    }));
+
+    expect(result.stableEnginePrefix).toMatch(/prompt skills?.*advisory/iu);
+    expect(result.stableEnginePrefix).toMatch(/do not grant.*capabilit/iu);
+    expect(result.stableEnginePrefix).toMatch(/registered tools.*authoritative/iu);
+    expect(result.stableEnginePrefix).toMatch(/do not claim.*output.*skill.*advertis/iu);
+  });
+
   it("requires exact retrieved source URLs when the user asks for attribution", () => {
     const result = compileExecutionPrompt(makeInput());
 
