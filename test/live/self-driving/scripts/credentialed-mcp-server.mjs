@@ -5,10 +5,15 @@
 const PROTOCOL_VERSION = "2024-11-05";
 const variant = process.argv[2] === "second" ? "second" : "first";
 const credential = process.env.MCP_TEST_TOKEN;
-const credentialReady =
-  typeof credential === "string"
-  && credential.startsWith("MCP-LIVE-SECRET-")
-  && !credential.includes("${");
+const credentialState =
+  typeof credential !== "string"
+  || credential.length === 0
+  || credential.includes("${")
+    ? "unresolved"
+    : credential.startsWith("MCP-LIVE-SECRET-")
+      ? "ready"
+      : "invalid";
+const credentialReady = credentialState === "ready";
 const summaries = {
   first: {
     account: "everyday-primary",
@@ -101,7 +106,7 @@ function credentialFailure(id) {
     id,
     textResult(
       JSON.stringify({
-        code: "credential_unresolved",
+        code: credentialState === "invalid" ? "credential_invalid" : "credential_unresolved",
         retryable: false,
         requiredEnv: "MCP_TEST_TOKEN",
       }),
