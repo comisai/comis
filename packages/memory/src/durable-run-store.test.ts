@@ -119,7 +119,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       })).ok).toBe(false);
     });
 
-    it("stores sibling checkpoints independently and revokes every checkpoint in one root", async () => {
+    it("stores sibling checkpoints independently and revokes only live checkpoints in one root", async () => {
       const first = makeRecord({ checkpointId: "checkpoint-a", rootRunId: "tree-root" });
       const second = makeRecord({
         checkpointId: "checkpoint-b",
@@ -140,7 +140,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       expect((await store.invalidateForRevoke("tree-root")).ok).toBe(true);
       const afterFirst = await store.getByCheckpoint("checkpoint-a");
       const afterSecond = await store.getByCheckpoint("checkpoint-b");
-      expect(afterFirst.ok && afterFirst.value?.status).toBe("revoked");
+      expect(afterFirst.ok && afterFirst.value?.status).toBe("completed");
       expect(afterSecond.ok && afterSecond.value?.status).toBe("revoked");
     });
 
@@ -658,6 +658,27 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       const res = await store.listResumable();
       expect(res.ok).toBe(true);
       if (res.ok) expect(res.value.records.map((r) => r.rootRunId)).not.toContain("r-revoke");
+    });
+
+    it("preserves completed history when revoking another live checkpoint under the same root", async () => {
+      const rootRunId = "r-shared-history";
+      await store.upsertCheckpoint(makeRecord({
+        checkpointId: "checkpoint-completed",
+        rootRunId,
+      }));
+      await store.terminalize("checkpoint-completed", "completed");
+      await store.upsertCheckpoint(makeRecord({
+        checkpointId: "checkpoint-running",
+        rootRunId,
+      }));
+
+      const inv = await store.invalidateForRevoke(rootRunId);
+
+      expect(inv.ok).toBe(true);
+      const completed = await store.getByCheckpoint("checkpoint-completed");
+      const running = await store.getByCheckpoint("checkpoint-running");
+      expect(completed.ok && completed.value?.status).toBe("completed");
+      expect(running.ok && running.value?.status).toBe("revoked");
     });
 
     it("a subsequent upsertCheckpoint(status:'running') does NOT resurrect a revoked row", async () => {

@@ -51,6 +51,7 @@ import type { LeaseManager } from "@comis/infra";
 import type { ComisLogger } from "@comis/infra";
 
 import type { EvictRegistry } from "../autonomy/evict-registry.js";
+import type { GraphCoordinator } from "../graph/graph-coordinator.js";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,11 @@ export interface AutonomyHandlerDeps {
   leaseManager: LeaseManager;
   /** The sub-agent runner — `killByRootRun` aborts a whole spawn tree. */
   subAgentRunner: { killByRootRun(rootRunId: string): { killed: number } };
+  /**
+   * The graph authority. A graph owns retry and terminal state, so a hard stop
+   * must cancel matching graphs before sweeping any remaining spawn-tree runs.
+   */
+  graphCoordinator?: Pick<GraphCoordinator, "cancelByRootRunId">;
   /**
    * The durable-run store. OPTIONAL — when a `rootRunId` is
    * revoked (lease.revoke by rootRunId, OR run.kill), the handler ALSO calls
@@ -224,9 +230,13 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
       const userParams = stripInternalFields(rawParams);
       RunKillContract.request.parse(userParams);
 
-      // HARD stop: kill every run of the tree (abort the SDK sessions) AND revoke
-      // every lease of the tree so a survivor child cannot keep operating.
-      const { killed } = deps.subAgentRunner.killByRootRun(rootRunId);
+      // HARD stop: cancel graph authorities first so killed nodes cannot be
+      // interpreted as retryable failures. Then sweep any non-graph runs left
+      // in the tree and revoke every lease so a survivor cannot keep operating.
+      const graphCancellation = deps.graphCoordinator?.cancelByRootRunId(rootRunId)
+        ?? { graphsCancelled: 0, killed: 0 };
+      const runnerCancellation = deps.subAgentRunner.killByRootRun(rootRunId);
+      const killed = graphCancellation.killed + runnerCancellation.killed;
       deps.leaseManager.revokeByRootRun(rootRunId);
       // ALSO poison the persisted checkpoint so a restart cannot resume
       // the killed tree under re-minted pre-revoke caps (the hard stop holds across restart).
@@ -234,7 +244,11 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
 
       // §2.7: content-free completion line — the killed COUNT + method only.
       deps.logger.info(
-        { method: RunKillContract.method, killed },
+        {
+          method: RunKillContract.method,
+          killed,
+          graphsCancelled: graphCancellation.graphsCancelled,
+        },
         "Spawn tree killed (hard stop) and its leases revoked",
       );
 

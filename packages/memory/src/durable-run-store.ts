@@ -280,7 +280,7 @@ export function createSqliteDurableRunStore(
   const invalidateForRevokeStmt = db.prepare(`
     UPDATE durable_run_checkpoints
     SET status = 'revoked', orphan_reason = 'revoked', updated_at_ms = ?
-    WHERE root_run_id = ?
+    WHERE root_run_id = ? AND status = 'running'
   `);
   const countByStatusStmt = db.prepare(`
     SELECT status, COUNT(*) AS c

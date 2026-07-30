@@ -62,6 +62,10 @@ import { clearAllTimers, discardGraphState, sweepExpiredGraphs } from "./graph-c
 import { computeGraphTimeoutFloorMs } from "./graph-timeout-floor.js";
 import { createGraphDurableTransitions } from "./graph-durable-transitions.js";
 import { createGraphCompletionTracker } from "./graph-completion-tracker.js";
+import {
+  cancelGraphRun,
+  cancelGraphsByRootRunId,
+} from "./graph-cancellation.js";
 export type { GraphCoordinatorDeps, GraphRunState, CoordinatorSharedState, CoordinatorConfig } from "./graph-coordinator-state.js";
 import type {
   CoordinatorSharedState,
@@ -684,65 +688,24 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
   }
 
   function cancel(graphId: string): boolean {
-    const gs = state.graphs.get(graphId);
-    if (!gs) return false;
-    if (gs.stateMachine.isTerminal()) return false;
+    return cancelGraphRun(
+      state,
+      deps,
+      graphId,
+      callbacks.handleGraphCompletion,
+    ).cancelled;
+  }
 
-    gs.cancelReason = "manual";
-
-    // Clean up event-driven spawn gate on cancel
-    gs.cacheWarmCleanup?.();
-
-    // Kill all running regular nodes
-    for (const [runId, nodeId] of gs.runIdToNode) {
-      deps.subAgentRunner.killRun(runId);
-      gs.stateMachine.markNodeFailed(nodeId, "Cancelled");
-    }
-    gs.runIdToNode.clear();
-
-    // Kill active driver runs, call onAbort, clean state
-    for (const [nodeId, ds] of gs.driverStates) {
-      if (ds.currentRunId) {
-        deps.subAgentRunner.killRun(ds.currentRunId);
-        gs.driverRunIdMap.delete(ds.currentRunId);
-      }
-      if (ds.pendingParallel) {
-        for (const [runId] of ds.pendingParallel) {
-          deps.subAgentRunner.killRun(runId);
-          gs.driverRunIdMap.delete(runId);
-        }
-      }
-      ds.driver.onAbort(ds.ctx);
-      deps.eventBus.emit("graph:driver_lifecycle", {
-        graphId: gs.graphId,
-        nodeId,
-        typeId: ds.driver.typeId,
-        phase: "aborted",
-      });
-      gs.stateMachine.markNodeFailed(nodeId, "Cancelled");
-    }
-    gs.driverStates.clear();
-    gs.driverRunIdMap.clear();
-
-    // Remove queued spawns for this graph from global queue
-    for (let i = state.spawnQueue.length - 1; i >= 0; i--) {
-      if (state.spawnQueue[i]!.graphId === graphId) {
-        state.spawnQueue.splice(i, 1);
-      }
-    }
-
-    // Clean up wait handlers
-    for (const [_nodeId, handler] of gs.waitHandlers) {
-      deps.eventBus.off("message:received", handler);
-    }
-    gs.waitHandlers.clear();
-    gs.syntheticRunResults.clear();
-
-    gs.runningCount = 0;
-    gs.stateMachine.cancel();
-    callbacks.handleGraphCompletion(gs);
-
-    return true;
+  function cancelByRootRunId(rootRunId: string): {
+    graphsCancelled: number;
+    killed: number;
+  } {
+    return cancelGraphsByRootRunId(
+      state,
+      deps,
+      rootRunId,
+      callbacks.handleGraphCompletion,
+    );
   }
 
   function listGraphs(recentMinutes?: number): GraphRunSummary[] {
@@ -1017,5 +980,15 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     return ok(undefined);
   }
 
-  return { run, getStatus, cancel, listGraphs, shutdown, getConcurrencyStats, notifyNodeFailed, resumeGraph };
+  return {
+    run,
+    getStatus,
+    cancel,
+    cancelByRootRunId,
+    listGraphs,
+    shutdown,
+    getConcurrencyStats,
+    notifyNodeFailed,
+    resumeGraph,
+  };
 }
