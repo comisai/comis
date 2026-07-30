@@ -484,6 +484,25 @@ describe("resolveDescription", () => {
     expect(result).toMatch(/say unknown/i);
   });
 
+  it("describes the real skills management lifecycle instead of retired actions", () => {
+    const description = resolveDescription(
+      { name: "skills_manage" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { trustLevel: "admin", modelTier: "large" },
+    );
+
+    expect(description).toContain("list");
+    expect(description).toContain("import");
+    expect(description).toContain("delete");
+    expect(description).toContain("create");
+    expect(description).toContain("update");
+    expect(description).toContain("GitHub directory URL");
+    expect(description).toContain("local");
+    expect(description).not.toContain("reload");
+    expect(description).not.toContain("enable");
+    expect(description).not.toContain("disable");
+  });
+
   it("all privileged tool dynamic builders follow admin suffix pattern", () => {
     const privileged = [
       "agents_manage", "obs_query", "sessions_manage", "memory_manage",

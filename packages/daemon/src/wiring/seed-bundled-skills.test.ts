@@ -102,6 +102,23 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     expect(violations).toEqual([]);
   });
 
+  it("directs skill discovery through the native catalog and registry import path", () => {
+    const repositoryRoot = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../../..",
+    );
+    const manifest = readFileSync(
+      resolve(repositoryRoot, "skills/find-skills/SKILL.md"),
+      "utf8",
+    );
+
+    expect(manifest).toMatch(/must run `npx skills find <query>` first/iu);
+    expect(manifest).toMatch(/skills_manage/iu);
+    expect(manifest).toMatch(/action:\s*["'`]import["'`]/iu);
+    expect(manifest).toMatch(/scope:\s*["'`]local["'`]/iu);
+    expect(manifest).not.toMatch(/copies it to ~\/\.comis\/skills/iu);
+  });
+
   it("downloads a generated chart into an ESM workspace without host renderers", () => {
     const repositoryRoot = resolve(
       dirname(fileURLToPath(import.meta.url)),
