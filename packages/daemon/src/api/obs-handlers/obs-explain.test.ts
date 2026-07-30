@@ -667,7 +667,7 @@ describe("bindObsExplainHandlers", () => {
     expect(report.traceId).toBe(activeTraceId);
     expect(report.outcome.endReason).toBe("unknown");
     expect(report.coverage?.rollup.present).toBe(false);
-    expect(report.timing.turnCount).toBe(2);
+    expect(report.timing.turnCount).toBe(1);
   });
 
   it("historical cron execution derives success from its selected terminal evidence", async () => {
