@@ -70,8 +70,17 @@ export default tseslint.config(
       // Astro's browser bundle.
       "website/scripts/**/*.js",
       "website/scripts/**/*.mjs",
+      // Repository-shipped prompt skills carry their own Node helper scripts,
+      // and `packages/*/bundled-skills/` is the committed copy the daemon ships
+      // (not a build artifact). `.cjs` is included because a skill helper that
+      // uses `require` must declare CommonJS by extension — the workspace is
+      // `"type": "module"`.
       "skills/*/scripts/**/*.js",
       "skills/*/scripts/**/*.mjs",
+      "skills/*/scripts/**/*.cjs",
+      "packages/*/bundled-skills/*/scripts/**/*.js",
+      "packages/*/bundled-skills/*/scripts/**/*.mjs",
+      "packages/*/bundled-skills/*/scripts/**/*.cjs",
       // CI workflow runner scripts (e.g. check-pr-description.mjs) run under Node.
       ".github/scripts/**/*.js",
       ".github/scripts/**/*.mjs",
