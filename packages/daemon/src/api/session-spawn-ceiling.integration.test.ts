@@ -43,7 +43,7 @@ import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
 import { createBoundedAutonomy } from "../autonomy/bounded-autonomy.js";
-import { createRootRunIdResolver } from "../wiring/setup-capability-endpoint-boot.js";
+import { createRootRunIdRegistry } from "../wiring/setup-capability-endpoint-boot.js";
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import { createSubAgentRunner, type SubAgentRunnerDeps } from "@comis/agent";
 import { createSessionHandlers } from "./session-handlers/index.js";
@@ -96,8 +96,12 @@ function makeHarness(autonomyOverrides?: Parameters<typeof resolveAutonomy>[0]) 
         boundedAutonomy.registerRoot(rootRunId, leaseId, parentLeaseId),
     },
   };
-  const rootRunIdIndex = new Map<string, string>();
-  const resolveRootRunId = createRootRunIdResolver({ holder, index: rootRunIdIndex });
+  const rootRunIds = createRootRunIdRegistry({
+    holder,
+    clock,
+    idFactory: () => "11111111-1111-4111-8111-111111111111",
+  });
+  const resolveRootRunId = rootRunIds.resolve;
 
   // Deferred control over each run's completion (keyed by call order).
   const pendingResolvers: Array<(v: unknown) => void> = [];

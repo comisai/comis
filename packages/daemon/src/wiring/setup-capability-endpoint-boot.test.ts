@@ -28,7 +28,6 @@ import { safeResultRunId } from "@comis/skills/tools";
 import { createLeaseManager } from "@comis/infra";
 import {
   createRootRunIdRegistry,
-  createRootRunIdResolver,
   constructCapabilityLayer,
 } from "./setup-capability-endpoint-boot.js";
 
@@ -181,6 +180,12 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
       ...createDeps({ a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig }, { dataDir }),
       boundedAutonomyHolder: holder,
     };
+    const registry = createRootRunIdRegistry({
+      holder,
+      clock: deps.clock,
+      idFactory: () => "11111111-1111-4111-8111-111111111111",
+    });
+    deps.resolveRootRunId = registry.resolve;
     const result = await constructCapabilityLayer(deps as Parameters<typeof constructCapabilityLayer>[0]);
     cleanups.push(() => result.capEndpointStop?.());
     // Before this plan the holder is never touched; after, current is the budget port.
@@ -197,7 +202,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
   });
 
   // The resolver returns a STABLE rootRunId per session: an unregistered (top-level,
-  // non-spawned) session gets a SYNTHETIC `root-session-<key>` id, registered on
+  // non-spawned) session gets a generated `root-session-*` id, registered on
   // first use so a self-spawning loop on ANY run is bounded (not only
   // orchestrate children). The same session resolves to the SAME id on a second call.
   it("resolveRootRunId returns a stable synthetic root for an unregistered session and registers it on first use", async () => {
@@ -207,11 +212,17 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
       ...createDeps({ a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig }, { dataDir }),
       boundedAutonomyHolder: holder,
     };
+    const registry = createRootRunIdRegistry({
+      holder,
+      clock: deps.clock,
+      idFactory: () => "11111111-1111-4111-8111-111111111111",
+    });
+    deps.resolveRootRunId = registry.resolve;
     const result = await constructCapabilityLayer(deps as Parameters<typeof constructCapabilityLayer>[0]);
     cleanups.push(() => result.capEndpointStop?.());
     const resolveRootRunId = result.resolveRootRunId;
     expect(resolveRootRunId).toBeDefined();
-    const sk = { tenantId: "t1", channelId: "c1", userId: "u1" };
+    const sk = { tenantId: "t1", agentId: "a1", channelId: "c1", userId: "u1" };
     const id1 = resolveRootRunId!("a1", sk);
     const id2 = resolveRootRunId!("a1", sk);
     expect(id1.ok).toBe(true);
@@ -227,6 +238,12 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
       ...createDeps({ a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig }, { dataDir }),
       boundedAutonomyHolder: holder,
     };
+    const registry = createRootRunIdRegistry({
+      holder,
+      clock: deps.clock,
+      idFactory: () => "11111111-1111-4111-8111-111111111111",
+    });
+    deps.resolveRootRunId = registry.resolve;
     const result = await constructCapabilityLayer(deps as Parameters<typeof constructCapabilityLayer>[0]);
     cleanups.push(() => result.capEndpointStop?.());
     const context = createResolvedRequestContext({
@@ -328,9 +345,9 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
   it("resolveRootRunId reports a trusted context identity mismatch without minting a fallback", () => {
     const registerRoot = vi.fn();
     const onContextMismatch = vi.fn();
-    const resolver = createRootRunIdResolver({
+    const registry = createRootRunIdRegistry({
       holder: { current: { reserveBudget: vi.fn(), registerRoot } },
-      index: new Map(),
+      clock: { now: () => 1_700_000_000_000 },
       onContextMismatch,
     });
     const context = createResolvedRequestContext({
@@ -346,7 +363,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     expect(context.ok).toBe(true);
     if (!context.ok) return;
 
-    const resolved = runWithContext(context.value, () => resolver(
+    const resolved = runWithContext(context.value, () => registry.resolve(
       "a2",
       { tenantId: "t1", agentId: "a2", channelId: "c1", userId: "u1" },
     ));

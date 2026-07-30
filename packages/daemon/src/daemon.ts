@@ -788,6 +788,7 @@ function buildRpcDispatchDeps(deps: {
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
     sessionStore: g.sessionStoreBridge, crossSessionSender: c.crossSessionSender, subAgentRunner: c.subAgentRunner, deliveryMirror: c.deliveryMirror,
     ...(c.resolveRootRunId ? { resolveRootRunId: c.resolveRootRunId } : {}), // session→rootRunId resolver so session.spawn propagates one tree root (ceiling/kill/budget key on it).
+    ...(c.retireRootRunId ? { retireRootRunId: c.retireRootRunId } : {}),
     // The daemon-wide LeaseManager (autonomy-handlers gate lease.revoke/run.kill on it).
     // durableRuns (revoke ALSO invalidates the persisted record) + outwardLedger (the message.send/reply/react wrap). Absent ⇒ degrade (no revoke RPC / pass-through wrap).
     ...(c.capEndpointHandle?.leaseManager ?? c.sharedLeaseManager ? { leaseManager: c.capEndpointHandle?.leaseManager ?? c.sharedLeaseManager } : {}),
@@ -1651,7 +1652,7 @@ async function bootAgents(
   const agentBootWindowInfo = new Map<string, AgentBootWindowInfo>();
 
   // The LATE-BOUND bounded-autonomy seam (built before the cap layer; see helper JSDoc).
-  const { boundedAutonomyBudgetHolder, resolveRootRunId, sharedLeaseManager } = createBoundedAutonomyWiring({ clock, logger: daemonLogger, eventBus: container.eventBus });
+  const { boundedAutonomyBudgetHolder, resolveRootRunId, retireRootRunId, sharedLeaseManager } = createBoundedAutonomyWiring({ clock, logger: daemonLogger, eventBus: container.eventBus });
 
   const {
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
@@ -1841,7 +1842,7 @@ async function bootAgents(
 
   Object.assign(boot, {
     defaultAgentId, defaultWorkspaceDir, agentsConfig,
-    boundedAutonomyBudgetHolder, resolveRootRunId, sharedLeaseManager, // ride the late-bind seam onto boot for bootChannels' cap layer
+    boundedAutonomyBudgetHolder, resolveRootRunId, retireRootRunId, sharedLeaseManager, // ride the late-bind seam onto boot for bootChannels' cap layer
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters, skillWatcherHandles, skillRegistries, lockCleanupTimer,
     singleAgentDeps, providerHealth, oauthCredentialStore, toolCapabilityPorts, mcpClientManager,
@@ -1976,7 +1977,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const msTeamsConversationStore = createSqliteMsTeamsConversationStore(db); // shared memory.db → createMsTeamsPlugin (capture + proactive recovery)
 
   // 7.9. Capability-lease layer + ACTIVATION — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. cronJobCount binds the bounded-autonomy rate count to the per-agent CronScheduler. durableRuns threads into the jail-leg chokepoint for the _outwardStepIndex allocation.
-  const { capEndpointHandle, capEndpointUnavailableReason, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { const jobs = handle.getAgentCronScheduler(agentId).getJobs(); return jobs.ok ? jobs.value.length : 0; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container, mcpClientManager, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}), ...(outwardLedgerEarly ? { outwardLedger: outwardLedgerEarly } : {}) }); // POPULATES the late-bound budget holder (read by the bridge at turn time) + shares the SAME LeaseManager as the cron-fire mint; the container is passed so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
+  const { capEndpointHandle, capEndpointUnavailableReason, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { const jobs = handle.getAgentCronScheduler(agentId).getJobs(); return jobs.ok ? jobs.value.length : 0; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, resolveRootRunId: handle.resolveRootRunId, leaseManager: handle.sharedLeaseManager, container, mcpClientManager, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}), ...(outwardLedgerEarly ? { outwardLedger: outwardLedgerEarly } : {}) }); // POPULATES the late-bound budget holder (read by the bridge at turn time) + shares the SAME LeaseManager as the cron-fire mint; the container is passed so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
   Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
 
   if (capEndpointHandle && sandboxProvider) { // pre-payload wake-gate runner: built after the cap layer (deps from capEndpointHandle), read at fire time

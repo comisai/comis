@@ -22,7 +22,7 @@ import { createChannelHealthMonitor } from "@comis/channels";
 import { createImageGenRateLimiter } from "@comis/skills";
 import { createLeaseManager, type LeaseManager } from "@comis/infra";
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
-import { createRootRunIdResolver } from "./setup-capability-endpoint-boot.js";
+import { createRootRunIdRegistry } from "./setup-capability-endpoint-boot.js";
 // Video generation: the FAL queue factory + per-agent rate
 // limiter, imported from the bare @comis/skills barrel exactly like the image
 // route (the adapter + @fal-ai/client dep stay in @comis/skills — no daemon
@@ -64,13 +64,13 @@ import type { SessionTracker } from "../notification/session-tracker.js";
 
 /** The bounded-autonomy late-bind seam built in
  *  `bootAgents`: the per-root budget holder (populated by the cap layer in bootChannels) +
- *  the session→rootRunId index + resolver (synthetic root-session-* fallback) + the
- *  daemon-wide LeaseManager (shared by the cron-fire mint AND the cap layer). Built before
+ *  the generated session-root registry + resolver/retirement pair + the daemon-wide
+ *  LeaseManager (shared by the cron-fire mint AND the cap layer). Built before
  *  setupAgents/setupSchedulers since the cap layer is LATER — reads at fire time. */
 export interface BoundedAutonomyWiring {
   boundedAutonomyBudgetHolder: BoundedAutonomyBudgetHolder;
-  rootRunIdIndex: Map<string, string>;
   resolveRootRunId: RootRunIdResolver;
+  retireRootRunId: (rootRunId: string) => boolean;
   sharedLeaseManager: LeaseManager;
 }
 
@@ -100,10 +100,9 @@ export function createBoundedAutonomyWiring(deps: {
   eventBus: TypedEventBus;
 }): BoundedAutonomyWiring {
   const boundedAutonomyBudgetHolder: BoundedAutonomyBudgetHolder = {};
-  const rootRunIdIndex = new Map<string, string>();
-  const resolveRootRunId = createRootRunIdResolver({
+  const rootRunIds = createRootRunIdRegistry({
     holder: boundedAutonomyBudgetHolder,
-    index: rootRunIdIndex,
+    clock: deps.clock,
     onContextMismatch: (error, agentId) => {
       deps.logger.audit(
         { agentId, outcome: "denied", reason: error.code },
@@ -118,7 +117,12 @@ export function createBoundedAutonomyWiring(deps: {
     },
   });
   const sharedLeaseManager = createLeaseManager({ clock: deps.clock });
-  return { boundedAutonomyBudgetHolder, rootRunIdIndex, resolveRootRunId, sharedLeaseManager };
+  return {
+    boundedAutonomyBudgetHolder,
+    resolveRootRunId: rootRunIds.resolve,
+    retireRootRunId: rootRunIds.retire,
+    sharedLeaseManager,
+  };
 }
 
 /**

@@ -100,6 +100,12 @@ export interface AutonomyHandlerDeps {
   /** Release retained DAG budget authority at an explicit root revoke/kill. */
   revokeDurableRoot?: (rootRunId: string) => void;
   /**
+   * Retire the active session-root generation after a root-wide revoke/kill.
+   * The durable tombstone remains permanent; only a later authenticated turn
+   * can resolve a fresh generation.
+   */
+  retireRootRunId?: (rootRunId: string) => boolean;
+  /**
    * The daemon-wide evicted-`rootRunId` set. OPTIONAL —
    * the composition root constructs `createEvictRegistry` and threads it
    * onto `deps`. CRITICAL: it MUST stay OPTIONAL so a partially-wired
@@ -149,10 +155,10 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
    * regardless; this only affects post-restart resumability). Inert when no
    * durable store is wired (durability off).
    */
-  async function invalidatePersistedRecord(rootRunId: string, method: string): Promise<void> {
+  async function invalidatePersistedRecord(rootRunId: string, method: string): Promise<boolean> {
     if (!deps.durableRuns) {
       deps.revokeDurableRoot?.(rootRunId);
-      return;
+      return deps.retireRootRunId?.(rootRunId) ?? false;
     }
     const r = await deps.durableRuns.invalidateForRevoke(rootRunId);
     if (!r.ok) {
@@ -162,6 +168,7 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
       );
     }
     deps.revokeDurableRoot?.(rootRunId);
+    return deps.retireRootRunId?.(rootRunId) ?? false;
   }
 
   // Capture the OPTIONAL evictRegistry once so the conditional spread
@@ -183,12 +190,16 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
       LeaseRevokeContract.request.parse(userParams);
 
       let revoked = 0;
+      let rootGenerationRetired = false;
       if (rootRunId) {
         // Revoke every lease of the spawn tree (cascading each to its descendants).
         revoked = deps.leaseManager.revokeByRootRun(rootRunId).revoked;
         // ALSO poison the persisted checkpoint so a restart cannot
         // resurrect the pre-revoke caps (the resurrection-window close).
-        await invalidatePersistedRecord(rootRunId, LeaseRevokeContract.method);
+        rootGenerationRetired = await invalidatePersistedRecord(
+          rootRunId,
+          LeaseRevokeContract.method,
+        );
       } else if (leaseId) {
         // Single-lease cooperative stop — report the HONEST count: 1 if the lease
         // existed (now revoked), 0 for an unknown id (never a phantom revoke:1 —
@@ -200,7 +211,12 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
       // §2.7: content-free completion line — the COUNT + method only, never the
       // bearer or the selector bodies.
       deps.logger.info(
-        { method: LeaseRevokeContract.method, revoked, by: rootRunId ? "rootRunId" : "leaseId" },
+        {
+          method: LeaseRevokeContract.method,
+          revoked,
+          by: rootRunId ? "rootRunId" : "leaseId",
+          rootGenerationRetired,
+        },
         "Capability lease(s) revoked",
       );
 
@@ -240,7 +256,10 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
       deps.leaseManager.revokeByRootRun(rootRunId);
       // ALSO poison the persisted checkpoint so a restart cannot resume
       // the killed tree under re-minted pre-revoke caps (the hard stop holds across restart).
-      await invalidatePersistedRecord(rootRunId, RunKillContract.method);
+      const rootGenerationRetired = await invalidatePersistedRecord(
+        rootRunId,
+        RunKillContract.method,
+      );
 
       // §2.7: content-free completion line — the killed COUNT + method only.
       deps.logger.info(
@@ -248,6 +267,7 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
           method: RunKillContract.method,
           killed,
           graphsCancelled: graphCancellation.graphsCancelled,
+          rootGenerationRetired,
         },
         "Spawn tree killed (hard stop) and its leases revoked",
       );

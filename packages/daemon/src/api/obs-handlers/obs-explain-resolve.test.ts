@@ -165,8 +165,8 @@ describe("resolveTraceToSession", () => {
 // `rootRunId` (an autonomy run) is canonicalized to the run's sessionKey FIRST,
 // so the system→explain drill-down (paste the worst run's rootRunId) shares the
 // ONE assembler path. TWO honest sources:
-//   1. a SYNTHETIC in-process root (`root-session-<formattedKey>`,
-//      setup-capability-endpoint-boot.ts:101) — a pure prefix-strip, NO I/O.
+//   1. a generated SYNTHETIC in-process root carrying its formatted session key
+//      — a pure prefix parse, NO I/O.
 //   2. a REAL socket/spawned root — scan the day-keyed session-index for a
 //      capability.audited record (events-orchestration.ts:90-104 carries BOTH
 //      `rootRunId` + `runId`) and return its runId (≈sessionKey).
@@ -265,14 +265,14 @@ describe("resolveRootRunToSession", () => {
       JSON.stringify({
         type: "capability.audited",
         data: {
-          rootRunId: "root-session-a1-default:agent:a1:u:c",
+          rootRunId: "root-session-11111111-1111-4111-8111-111111111111-a1-default:agent:a1:u:c",
           runId: "WRONG-FROM-INDEX",
         },
       }),
     ]);
     const resolved = await resolveRootRunToSession(
       dataDir,
-      "root-session-a1-default:agent:a1:u:c",
+      "root-session-11111111-1111-4111-8111-111111111111-a1-default:agent:a1:u:c",
     );
     expect(resolved).toBe("default:agent:a1:u:c");
   });
