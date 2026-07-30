@@ -647,6 +647,12 @@ describe("SYSTEM_PROMPT_GUIDES trigger reachability", () => {
     const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
     expect(lean as string).toMatch(/parallel|multiple/i);
   });
+
+  it("binds explicitly required child tools in the first-spawn description", () => {
+    const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
+    expect(lean as string).toContain("required_tools");
+    expect(lean as string).toContain("tool_groups");
+  });
 });
 
 /**
