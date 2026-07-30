@@ -103,4 +103,58 @@ export function getVisibleAssistantText(session: any): string {
     .map((b: any) => b.text)
     .join("");
 }
+
+export type FinalAssistantResponseSync =
+  | "unchanged"
+  | "updated"
+  | "missing";
+
+/**
+ * Keep the live canonical transcript aligned with the response that
+ * post-processing will deliver.
+ *
+ * Runtime honesty, locale, and degradation guards may replace the model's
+ * visible prose after the SDK appended its assistant message. Preserve
+ * non-visible protocol blocks (reasoning, tool calls, commentary) and replace
+ * only user-visible text so subsequent LCD ingest cannot persist a rejected
+ * draft as conversation ground truth.
+ */
+export function synchronizeFinalAssistantResponse(
+  session: any,
+  response: string,
+): FinalAssistantResponseSync {
+  const messages: any[] | undefined = session?.messages;
+  if (!Array.isArray(messages)) return "missing";
+
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]; // eslint-disable-line security/detect-object-injection
+    if (message?.role === "user") return "missing";
+    if (message?.role !== "assistant") continue;
+    if (
+      (message.stopReason === "aborted" || message.stopReason === "error")
+      && message.content?.length === 0
+    ) {
+      continue;
+    }
+    if (message.model === "synthetic") continue;
+
+    const content = Array.isArray(message.content) ? message.content : [];
+    const visible = content
+      .filter(isVisibleTextBlock)
+      .map((block: any) => block.text)
+      .join("");
+    if (visible === response) return "unchanged";
+
+    const protocolBlocks = content.filter(
+      (block: any) => !isVisibleTextBlock(block),
+    );
+    messages[index] = { // eslint-disable-line security/detect-object-injection
+      ...message,
+      content: [...protocolBlocks, { type: "text", text: response }],
+    };
+    return "updated";
+  }
+
+  return "missing";
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */

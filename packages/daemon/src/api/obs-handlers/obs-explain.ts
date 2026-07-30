@@ -50,6 +50,8 @@ import { boundIncidentReport } from "./obs-explain-bound.js";
 
 const DELEGATION_EVIDENCE_GUARD_ACTION =
   "response.delegation_evidence_guard";
+const PERSISTENT_ACTION_EVIDENCE_GUARD_ACTION =
+  "response.persistent_action_evidence_guard";
 const DESTRUCTIVE_ACTION_EVIDENCE_GUARD_ACTION =
   "response.destructive_action_evidence_guard";
 const VISION_FALLBACK_GROUNDED_ACTION =
@@ -548,6 +550,11 @@ export async function assembleIncidentReportFromSources(
     // that changed the user-visible outcome.
     report.likelyRootCause = delegationEvidenceVerdict;
   }
+  const persistentActionEvidenceVerdict =
+    persistentActionEvidenceGuardVerdict(auditRows, report.traceId);
+  if (persistentActionEvidenceVerdict !== null) {
+    report.likelyRootCause = persistentActionEvidenceVerdict;
+  }
   const destructiveActionEvidenceVerdict = destructiveActionEvidenceGuardVerdict(
     auditRows,
     report.traceId,
@@ -655,6 +662,33 @@ function destructiveActionEvidenceGuardVerdict(
       "inspect the failed exec record and its bound approval request",
       "confirm the intended target exists inside the configured workspace or write fence",
       "retry only after correcting the target; do not treat an exit-zero no-op as success",
+    ],
+  };
+}
+
+function persistentActionEvidenceGuardVerdict(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  traceId: string,
+): IncidentReport["likelyRootCause"] {
+  if (
+    traceId.length === 0
+    || !rows.some(
+      (row) =>
+        row.traceId === traceId
+        && row.action === PERSISTENT_ACTION_EVIDENCE_GUARD_ACTION
+        && row.outcome === "denied",
+    )
+  ) {
+    return null;
+  }
+  return {
+    code: "persistent_action_evidence_missing",
+    detail:
+      "the response honesty guard replaced a terminal result because the request "
+      + "required repeated current-turn action but this execution had no successful tool receipt",
+    suggestedNextSteps: [
+      "inspect the current tool inventory and action admission for this turn",
+      "retry after the required capability can produce current-turn evidence",
     ],
   };
 }

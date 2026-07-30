@@ -123,9 +123,10 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
+  enforcePersistentActionEvidence,
   enforceDestructiveEffectEvidence,
 } from "./executor-response-filter.js";
 import { BACKGROUND_POLLER_TOOL } from "../safety/background-failure-attribution.js";
@@ -135,6 +136,7 @@ import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { generateCanaryToken } from "@comis/core";
 import type { BackgroundTaskManager } from "../background/background-task-manager.js";
 import { reconcilePendingBackgroundTurn } from "./pending-background-reply.js";
+import { synchronizeFinalAssistantResponse } from "./phase-filter.js";
 import {
   classifyToolFailureRecovery,
   type ToolExecutionResultRecord,
@@ -1437,6 +1439,40 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       },
     });
   }
+  const persistentActionEvidence = enforcePersistentActionEvidence({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    honestResponse: buildPersistentActionEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    ),
+  });
+  if (persistentActionEvidence.corrected) {
+    result.response = persistentActionEvidence.response;
+    deps.logger.warn(
+      {
+        step: "action-evidence",
+        errorKind: "precondition" as const,
+        hint:
+          "The response was replaced because this persistent request had no successful "
+          + "current-turn tool receipt; inspect action admission and the tool inventory in comis explain.",
+      },
+      "Unverified persistent action result replaced",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.persistent_action_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "persistent_action",
+        reason: persistentActionEvidence.reason,
+      },
+    });
+  }
   const destructiveEffectEvidence = enforceDestructiveEffectEvidence({
     response: result.response ?? "",
     toolExecResults: bridgeResult.toolExecResults,
@@ -1678,6 +1714,28 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     });
     const cr = await runVerificationCritic({ response: result.response ?? "", plan: executionPlanRef.current, deps: cd, maxRetries: mr });
     if (cr.verdict !== "verified" && cr.verdict !== "skipped") { result.response = cr.response; }
+  }
+
+  const responseSync = synchronizeFinalAssistantResponse(
+    session,
+    result.response ?? "",
+  );
+  if (responseSync === "updated") {
+    deps.logger.info(
+      { step: "response-persistence" },
+      "Synchronized post-processed response with live session transcript",
+    );
+  } else if (responseSync === "missing" && (result.response?.length ?? 0) > 0) {
+    deps.logger.warn(
+      {
+        step: "response-persistence",
+        errorKind: "precondition" as const,
+        hint:
+          "The delivered response had no current-turn assistant message to update; inspect "
+          + "the session transcript before relying on LCD history for this turn.",
+      },
+      "Could not synchronize post-processed response with live session transcript",
+    );
   }
 
   // Map the settled finishReason to the terminal endReason ONCE via the single

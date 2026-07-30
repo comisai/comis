@@ -60,6 +60,12 @@ describe("createOutcomeJudgeSeam", () => {
       messages: Array<{ content: string }>;
     };
     expect(request.systemPrompt).toContain("Follow the configured task boundary");
+    expect(request.systemPrompt).toContain(
+      "Assistant prose and quoted command output are claims, not execution evidence",
+    );
+    expect(request.systemPrompt).toContain(
+      "successful current-turn tool or delivery result",
+    );
     expect(request.systemPrompt).not.toMatch(/foreign-script|refusal|business alternative/iu);
     expect(request.messages[0]?.content).toContain("<<<UNTRUSTED_judge-delimiter>>>");
   });

@@ -1020,6 +1020,90 @@ describe("current-turn delegation evidence guard", () => {
   });
 });
 
+type PersistentActionEvidenceGuard = (params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_current_turn_action_evidence";
+};
+
+function persistentActionEvidenceGuard(): PersistentActionEvidenceGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforcePersistentActionEvidence;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as PersistentActionEvidenceGuard;
+}
+
+describe("persistent action evidence guard", () => {
+  const request =
+    "Keep checking the local operation one attempt at a time until it passes. Do not stop early.";
+  const falseClaim =
+    "The operation passed after 3 attempts.\n\nEvidence:\n```\nSTATUS: PASSED\n```";
+  const honestResponse =
+    "I did not perform or verify the requested repeated action in this turn.";
+
+  it("replaces a fabricated terminal result when the turn executed no tool", () => {
+    expect(persistentActionEvidenceGuard()({
+      request,
+      response: falseClaim,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_current_turn_action_evidence",
+    });
+  });
+
+  it("preserves the terminal result when a current-turn tool succeeded", () => {
+    expect(persistentActionEvidenceGuard()({
+      request,
+      response: falseClaim,
+      toolExecResults: [{ toolName: "exec", success: true }],
+      honestResponse,
+    })).toEqual({
+      response: falseClaim,
+      corrected: false,
+    });
+  });
+
+  it("does not count a background placeholder as terminal action evidence", () => {
+    expect(persistentActionEvidenceGuard()({
+      request,
+      response: falseClaim,
+      toolExecResults: [{
+        toolName: "sessions_spawn",
+        success: true,
+        backgrounded: true,
+      }],
+      honestResponse,
+    }).corrected).toBe(true);
+  });
+
+  it("preserves an honest limitation and an ordinary non-persistent answer", () => {
+    expect(persistentActionEvidenceGuard()({
+      request,
+      response: "I could not run the checks in this turn.",
+      toolExecResults: [],
+      honestResponse,
+    }).corrected).toBe(false);
+    expect(persistentActionEvidenceGuard()({
+      request: "Explain what a passing status means.",
+      response: falseClaim,
+      toolExecResults: [],
+      honestResponse,
+    }).corrected).toBe(false);
+  });
+});
+
 type DestructiveEffectEvidenceGuard = (params: {
   response: string;
   toolExecResults?: ReadonlyArray<{

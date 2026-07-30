@@ -94,6 +94,30 @@ describe("destructive action evidence reply", () => {
   });
 });
 
+describe("persistent action evidence reply", () => {
+  it("is deterministic and can be replaced by an operator locale pack", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildPersistentActionEvidenceMissingReply;
+    expect(candidate).toBeTypeOf("function");
+    const build = candidate as (
+      language?: string,
+      catalog?: ReturnType<typeof catalogFromLocalePacks>,
+    ) => string;
+    const catalog = catalogFromLocalePacks({
+      he: {
+        persistent_action_evidence_missing:
+          "לא ביצעתי או אימתתי את הפעולה החוזרת בתור הנוכחי.",
+      },
+    });
+
+    expect(build()).toContain("did not perform or verify");
+    expect(build("he", catalog)).toBe(
+      "לא ביצעתי או אימתתי את הפעולה החוזרת בתור הנוכחי.",
+    );
+    expect(LOCALE_MESSAGE_IDS).toContain("persistent_action_evidence_missing");
+  });
+});
+
 describe("buildOutputStarvedAnnotation — vocabulary + content invariants", () => {
   it("returns a non-empty annotation string", () => {
     const annotation = buildOutputStarvedAnnotation();
