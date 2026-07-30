@@ -25,7 +25,11 @@ import { describe, it, expect } from "vitest";
 import { signCallbackData } from "@comis/core";
 import type { ActivityEvent, RichButton } from "@comis/core";
 import type { SignCallbackData } from "./approval-render.js";
-import { buildApprovalButtons, buildApprovalText } from "./approval-render.js";
+import {
+  buildApprovalButtons,
+  buildApprovalPrompt,
+  buildApprovalText,
+} from "./approval-render.js";
 
 /** Fixed 32-byte-ish test secret — the value is irrelevant; determinism is. */
 const TEST_SECRET = "test-signing-secret-do-not-use-in-prod";
@@ -82,6 +86,17 @@ function toolEvent(): ActivityEvent {
     semanticPhase: "tool",
     toolName: "search",
     defaultLabel: "searching",
+  } as ActivityEvent;
+}
+
+/** A completed approval retains correlation metadata but must not remain actionable. */
+function resolvedApprovalEvent(): ActivityEvent {
+  return {
+    ...approvalEvent(),
+    phase: "end",
+    status: "completed",
+    semanticPhase: "done",
+    defaultLabel: "approval granted",
   } as ActivityEvent;
 }
 
@@ -143,6 +158,10 @@ describe("buildApprovalButtons", () => {
     expect(buildApprovalButtons(toolEvent(), sign)).toEqual([]);
   });
 
+  it("returns no rows after an approval has resolved", () => {
+    expect(buildApprovalButtons(resolvedApprovalEvent(), sign)).toEqual([]);
+  });
+
   it("never signs over user text — only (choice, shortId) reach the signer", () => {
     // The signer is called with the choice id + shortId ONLY. A spy proves no
     // raw param / label is forwarded (no raw params in the approval UI).
@@ -173,5 +192,16 @@ describe("buildApprovalText", () => {
 
   it("returns empty string for a non-approval event", () => {
     expect(buildApprovalText(toolEvent())).toBe("");
+  });
+
+  it("returns empty string after an approval has resolved", () => {
+    expect(buildApprovalText(resolvedApprovalEvent())).toBe("");
+  });
+
+  it("does not count a resolved approval when disambiguating one pending prompt", () => {
+    expect(buildApprovalPrompt([
+      resolvedApprovalEvent(),
+      approvalEvent(),
+    ])).toBe("Reply approve or deny within the approval timeout");
   });
 });
