@@ -47,7 +47,10 @@ import type {
   ActivityStatusMarkers,
   TurnActivityContext,
 } from "@comis/core";
-import type { ActivityRenderActions } from "../shared/strategies/actions.js";
+import type {
+  ActivityRenderActions,
+  SendOptions,
+} from "../shared/strategies/actions.js";
 import { createEditPlaceRenderer } from "../shared/strategies/edit-place.js";
 import {
   buildApprovalButtons,
@@ -123,6 +126,8 @@ export function makeTelegramRenderActions(
   let pendingText: string | undefined;
   /** The id of the message being edited under backoff. */
   let pendingId: string | undefined;
+  /** The latest controls awaiting a rate-limit retry. */
+  let pendingOptions: SendOptions | undefined;
   /** The single in-flight retry timer; cancelled + rescheduled via handle.cancel(). */
   let retryHandle: TimerHandle | undefined;
   /** Consecutive retry attempts; caps the backoff so a sustained 429 cannot loop forever. */
@@ -136,15 +141,25 @@ export function makeTelegramRenderActions(
   }
 
   // Perform one edit attempt, applying the 429 buffer + drop-on-not_supported policy.
-  async function attemptEdit(id: string, text: string): Promise<Result<void, ActivityRenderError>> {
+  async function attemptEdit(
+    id: string,
+    text: string,
+    options?: SendOptions,
+  ): Promise<Result<void, ActivityRenderError>> {
     if (editsDropped) return err({ kind: "not_supported", capability: "edit" });
     if (!adapter.editMessage) return err({ kind: "not_supported", capability: "edit" });
 
-    const r = await adapter.editMessage(channelId, id, text);
+    const r = await adapter.editMessage(
+      channelId,
+      id,
+      text,
+      options?.buttons === undefined ? undefined : { buttons: options.buttons },
+    );
     if (r.ok) {
       // Success: any pending backoff is satisfied by the latest send.
       cancelRetry();
       pendingText = undefined;
+      pendingOptions = undefined;
       retryAttempts = 0;
       return ok(undefined);
     }
@@ -155,6 +170,7 @@ export function makeTelegramRenderActions(
       editsDropped = true;
       cancelRetry();
       pendingText = undefined;
+      pendingOptions = undefined;
       return err(classified);
     }
     if (classified.kind === "rate_limited" && timer !== undefined) {
@@ -162,6 +178,7 @@ export function makeTelegramRenderActions(
       // Pass the narrowed timer so scheduleRetry needs no undefined guard.
       pendingText = text;
       pendingId = id;
+      pendingOptions = options;
       scheduleRetry(timer, classified.retryAfterMs);
     }
     return err(classified);
@@ -172,6 +189,7 @@ export function makeTelegramRenderActions(
       // Bounded: give up replaying after the cap; the buffer never grows.
       cancelRetry();
       pendingText = undefined;
+      pendingOptions = undefined;
       return;
     }
     cancelRetry();
@@ -179,10 +197,11 @@ export function makeTelegramRenderActions(
     retryHandle = t.setTimeout(() => {
       const text = pendingText;
       const id = pendingId;
+      const options = pendingOptions;
       retryHandle = undefined;
       // Defensive: a delete/success between scheduling and firing clears the slot.
       if (text === undefined || id === undefined || editsDropped) return;
-      void attemptEdit(id, text);
+      void attemptEdit(id, text, options);
     }, retryAfterMs);
     // Never hold the event loop open for a retry at shutdown.
     retryHandle.unref();
@@ -209,14 +228,15 @@ export function makeTelegramRenderActions(
       return r.ok ? ok(r.value) : err(classifyTelegramError(r.error));
     },
 
-    async edit(id, text): Promise<Result<void, ActivityRenderError>> {
-      return attemptEdit(id, text);
+    async edit(id, text, opts): Promise<Result<void, ActivityRenderError>> {
+      return attemptEdit(id, text, opts);
     },
 
     async delete(id): Promise<Result<void, ActivityRenderError>> {
       // A delete supersedes any pending edit retry.
       cancelRetry();
       pendingText = undefined;
+      pendingOptions = undefined;
       if (!adapter.deleteMessage) return err({ kind: "not_supported", capability: "delete" });
       const r = await adapter.deleteMessage(channelId, id);
       return r.ok ? ok(undefined) : err(classifyTelegramError(r.error));

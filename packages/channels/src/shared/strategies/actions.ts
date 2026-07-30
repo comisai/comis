@@ -13,7 +13,7 @@
  * coordinator without throwing. `send` resolves to the created message's id so
  * a strategy can later edit or delete it.
  *
- * `send` accepts an optional `SendOptions.buttons` so a renderer can paint
+ * `send` and `edit` accept an optional `SendOptions.buttons` so a renderer can paint
  * native approval choices alongside the text. The buttons are
  * the signed `RichButton[][]` produced by `buildApprovalButtons` (the
  * `callback_data` is the signed `v1.<choice>.<shortId>.<hmac>` wire string). The param is OPTIONAL: a
@@ -26,7 +26,7 @@
 import type { Result } from "@comis/shared";
 import type { ActivityRenderError, RichButton } from "@comis/core";
 
-/** Optional rendering affordances a renderer may attach to a `send`. */
+/** Optional rendering affordances a renderer may attach to a `send` or `edit`. */
 export interface SendOptions {
   /**
    * Signed native approval choices to paint with the message. Each
@@ -44,8 +44,12 @@ export interface ActivityRenderActions {
    * support native buttons; omit it for a plain text line.
    */
   send(text: string, opts?: SendOptions): Promise<Result<string, ActivityRenderError>>;
-  /** Edit an existing activity message in place. */
-  edit(messageId: string, text: string): Promise<Result<void, ActivityRenderError>>;
+  /** Edit an existing activity message in place, including its rich controls. */
+  edit(
+    messageId: string,
+    text: string,
+    opts?: SendOptions,
+  ): Promise<Result<void, ActivityRenderError>>;
   /** Delete an activity message. */
   delete(messageId: string): Promise<Result<void, ActivityRenderError>>;
 }

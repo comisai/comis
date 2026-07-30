@@ -742,6 +742,29 @@ describe("createTelegramAdapter", () => {
       });
     });
 
+    it("updates inline approval buttons while editing an existing message", async () => {
+      mockEditMessageText.mockResolvedValue({});
+
+      const adapter = await createStartedTelegramAdapter();
+      const result = await adapter.editMessage("12345", "99", "Approval required", {
+        buttons: [[
+          { text: "Approve", callback_data: "v1.approve.short.signature" },
+          { text: "Deny", callback_data: "v1.deny.short.signature" },
+        ]],
+      });
+
+      expect(result.ok).toBe(true);
+      expect(mockEditMessageText).toHaveBeenCalledWith(12345, 99, "Approval required", {
+        parse_mode: "HTML",
+        reply_markup: expect.objectContaining({
+          inline_keyboard: [[
+            { text: "Approve", callback_data: "v1.approve.short.signature" },
+            { text: "Deny", callback_data: "v1.deny.short.signature" },
+          ]],
+        }),
+      });
+    });
+
     it("returns err on failure", async () => {
       mockEditMessageText.mockRejectedValue(new Error("Message not modified"));
 
