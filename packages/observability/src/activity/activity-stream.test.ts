@@ -197,6 +197,38 @@ describe("createActivityStream (EventBus → ActivityEvent mapping)", () => {
     sub.unsubscribe();
   });
 
+  it("routes a live approval by the formatted session key rather than its opaque authority", () => {
+    const bus = new TypedEventBus();
+    const stream = createActivityStream({ eventBus: bus, logger: makeLogger() });
+    const received: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(makeCtx(), (event) => received.push(event));
+
+    bus.emit("approval:requested", {
+      requestId: "req-distinct-correlation",
+      shortId: "Qw2Lp7Ka1Zx9",
+      toolName: "shell",
+      action: "run",
+      params: {},
+      tenantId: "tenant-a",
+      agentId: AGENT,
+      conversationRef: "cv_YW4tb3BhcXVlLWF1dGhvcml0eQ",
+      sessionKey: SESSION,
+      resolvingPrincipalId: "principal-a",
+      trustLevel: "admin",
+      createdAt: 1000,
+      timeoutMs: 60000,
+      traceId: TRACE,
+    });
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({
+      sessionKey: SESSION,
+      kind: "approval",
+      phase: "start",
+    });
+    sub.unsubscribe();
+  });
+
   it("carries the SAME authoritative shortId on the resolved event as the start event", () => {
     const bus = new TypedEventBus();
     const logger = makeLogger();
