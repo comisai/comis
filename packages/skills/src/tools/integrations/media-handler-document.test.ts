@@ -31,7 +31,12 @@ function makeDocumentAttachment(url = "tg-file://doc1"): Attachment {
   };
 }
 
-function makeFileExtractor(overrides?: { fail?: boolean; errorKind?: string; text?: string }): FileExtractionPort {
+function makeFileExtractor(overrides?: {
+  fail?: boolean;
+  errorKind?: string;
+  text?: string;
+  truncated?: boolean;
+}): FileExtractionPort {
   return {
     supportedMimes: ["text/plain", "application/pdf"],
     extract: overrides?.fail
@@ -41,7 +46,7 @@ function makeFileExtractor(overrides?: { fail?: boolean; errorKind?: string; tex
           fileName: "report.pdf",
           mimeType: "application/pdf",
           extractedChars: (overrides?.text ?? "Extracted document content").length,
-          truncated: false,
+          truncated: overrides?.truncated ?? false,
           durationMs: 15,
           buffer: Buffer.from("fake-pdf"),
         })),
@@ -118,6 +123,28 @@ describe("processDocumentAttachment", () => {
     expect(result.fileExtraction!.fileName).toBe("report.pdf");
     expect(result.fileExtraction!.extractedChars).toBe("Extracted document content".length);
     expect(result.extractedChars).toBe("Extracted document content".length);
+  });
+
+  it("surfaces actionable coverage metadata before a truncated document", async () => {
+    const deps: DocumentHandlerDeps = {
+      fileExtractor: makeFileExtractor({
+        text: `${"A".repeat(200_000)}\n[truncated at 200000 characters]`,
+        truncated: true,
+      }),
+      resolveAttachment: makeResolver(),
+      logger: makeLogger(),
+    };
+
+    const result = await processDocumentAttachment(
+      makeDocumentAttachment(), deps, makeBudget(), buildHint,
+    );
+
+    expect(result.textPrefix).toMatch(
+      /only a prefix.*extracted.*do not claim.*entire file.*split.*smaller files/isu,
+    );
+    expect(result.textPrefix).toMatch(/resending.*unchanged.*not.*increase coverage/isu);
+    expect(result.textPrefix!.indexOf("Document extraction coverage"))
+      .toBeLessThan(result.textPrefix!.indexOf("SECURITY NOTICE"));
   });
 
   it("returns empty result when extraction fails", async () => {
