@@ -17,7 +17,8 @@
 // @comis/agent is architecturally FORBIDDEN from depending on @comis/infra
 // (enforced by packages/agent/src/__tests__/architecture.test.ts). agent
 // already depends on @comis/core, so this adds no package edge.
-import { fingerprint } from "@comis/core";
+import { fingerprint, unwrapExternalContent } from "@comis/core";
+import { tryCatch } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // MCP attribution helpers
@@ -74,6 +75,47 @@ export function classifyMcpErrorType(errorText: string | undefined): McpErrorTyp
   if (lower.includes("crashed unexpectedly") || lower.includes("pipe") || lower.includes("epipe") || lower.includes("econnreset")) return "transport";
   if (lower.includes("mcp tool error:") || lower.includes("mcp tool returned an error")) return "tool_error";
   return "unknown";
+}
+
+const SAFE_MCP_FAILURE_CODES = new Set([
+  "credential_invalid",
+  "credential_missing",
+  "permission_denied",
+  "rate_limited",
+]);
+
+/**
+ * Extract a generic machine failure code from a structurally wrapped MCP
+ * result. Only known content-free codes are admitted; arbitrary external text
+ * and provider values never enter logs or trajectories through this path.
+ */
+export function extractMcpFailureCode(result: unknown): string | undefined {
+  if (result === null || typeof result !== "object") return undefined;
+  const content = (result as Record<string, unknown>).content;
+  if (!Array.isArray(content)) return undefined;
+
+  for (const part of content) {
+    if (
+      part === null
+      || typeof part !== "object"
+      || (part as Record<string, unknown>).type !== "text"
+    ) {
+      continue;
+    }
+    const text = (part as Record<string, unknown>).text;
+    if (typeof text !== "string") continue;
+    const external = unwrapExternalContent(text);
+    if (external === null || external.source !== "mcp_tool") continue;
+    const parsed = tryCatch(() => JSON.parse(external.content) as unknown);
+    if (!parsed.ok || parsed.value === null || typeof parsed.value !== "object") {
+      continue;
+    }
+    const code = (parsed.value as Record<string, unknown>).code;
+    if (typeof code === "string" && SAFE_MCP_FAILURE_CODES.has(code)) {
+      return code;
+    }
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------

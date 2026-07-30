@@ -143,6 +143,7 @@ export const IncidentReportSchema = z.object({
       httpStatus: z.number().optional(),
       errorKind: z.string(),
       matchedToken: z.string().optional(),
+      failureCode: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/).optional(),
       /** The failure-detector sub-rule that flipped the call — "self_grade" (a
        *  clean DOMAIN task-failure via the {graded:true,outcome} self-grade envelope)
        *  vs an error-token rule. Distinguishes an honest task-failure from a transport error. */

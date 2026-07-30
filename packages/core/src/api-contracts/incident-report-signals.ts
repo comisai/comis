@@ -33,6 +33,8 @@ export interface IncidentFailure {
   httpStatus?: number;
   errorKind: string;
   matchedToken?: string;
+  /** Content-free machine code admitted by the tool-boundary classifier. */
+  failureCode?: string;
   /** The failure-detector sub-rule ("self_grade" = a clean domain task-failure
    *  via the {graded:true,outcome} self-grade envelope, vs an error-token rule) — surfaced on
    *  `explain.failures` so an honest task-failure is distinguishable from a transport error. */
