@@ -1912,6 +1912,30 @@ describe("assembleIncidentReportFromSources — audit?", () => {
     });
   });
 
+  it("names a persistent-action evidence correction as the acute cause", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.persistent_action_evidence_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "persistent_action_evidence_missing",
+      detail:
+        "the response honesty guard replaced a terminal result because the request "
+        + "required repeated current-turn action but this execution had no successful tool receipt",
+      suggestedNextSteps: [
+        "inspect the current tool inventory and action admission for this turn",
+        "retry after the required capability can produce current-turn evidence",
+      ],
+    });
+  });
+
   it("names a corrected destructive no-effect claim as the acute cause", async () => {
     const reader = makeAuditReader([
       auditRow("audit", TRACE_ID, {
