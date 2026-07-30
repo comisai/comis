@@ -379,6 +379,26 @@ describe("ComisToolMetadata activity fields", () => {
     expect(verdict).toEqual({ errorKind: "dependency" });
   });
 
+  it("accepts a failureDetector returning a bounded user-safe failure disclosure", () => {
+    const meta: ComisToolMetadata = {
+      failureDetector: () => ({
+        errorKind: "resource",
+        failureDisclosure: {
+          kind: "quota_exhausted",
+          configKey: "tools.example.provider",
+        },
+      }),
+    };
+    const verdict = meta.failureDetector?.({ error: "quota" }, false);
+    expect(verdict).toEqual({
+      errorKind: "resource",
+      failureDisclosure: {
+        kind: "quota_exhausted",
+        configKey: "tools.example.provider",
+      },
+    });
+  });
+
   it("rejects a failureDetector errorKind outside the closed union", () => {
     const meta: ComisToolMetadata = {
       // @ts-expect-error - "boom" is not a member of the ErrorKind closed union
