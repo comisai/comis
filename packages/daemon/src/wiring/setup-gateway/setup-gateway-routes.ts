@@ -427,7 +427,6 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     const authorized = applyMcpClientIdentity(params, {
       tenantId: mcpTenantId,
       defaultAgentId,
-      callerConversationScope: identity.value.turnScope.conversation,
     });
     return runWithContext(requestContext.value, () =>
       rpcCall(method, authorized),

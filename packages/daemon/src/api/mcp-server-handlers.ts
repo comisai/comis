@@ -752,18 +752,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  */
 export function applyMcpClientIdentity(
   params: Record<string, unknown>,
-  identity: {
-    readonly tenantId: string;
-    readonly defaultAgentId: string;
-    /** The caller's own resolved conversation scope, carried alongside
-     *  `_agentId`. Session reads isolate by caller scope, so an injected
-     *  `_agentId` WITHOUT this reads as a model caller whose scope is
-     *  unavailable and is denied outright. The MCP client does have a scope —
-     *  the gateway turn identity resolved for the call — so the isolation check
-     *  is satisfied honestly rather than bypassed. Which session the client may
-     *  read remains gated by its per-client allowlist. */
-    readonly callerConversationScope?: unknown;
-  },
+  identity: { readonly tenantId: string; readonly defaultAgentId: string },
 ): Record<string, unknown> {
   // Defense-in-depth: re-strip any internal field (the dispatcher already
   // strips at Step 4). Keeps this helper a self-contained trust boundary.
@@ -771,11 +760,6 @@ export function applyMcpClientIdentity(
   authorized._tenantId = identity.tenantId;
   if (authorized.agentId === undefined) {
     authorized._agentId = identity.defaultAgentId;
-    // Paired with `_agentId` on purpose: the two together ARE the model-caller
-    // identity, and injecting one without the other is what denies the read.
-    if (identity.callerConversationScope !== undefined) {
-      authorized._callerConversationScope = identity.callerConversationScope;
-    }
   }
   return authorized;
 }
