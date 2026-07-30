@@ -32,7 +32,15 @@ export {
  */
 export function resolveCwd(workspacePath: string, cwdParam: string): string {
   try {
-    return safePath(workspacePath, cwdParam);
+    const resolved = safePath(workspacePath, cwdParam);
+    if (!existsSync(resolved)) {
+      throwToolError(
+        "not_found",
+        `Working directory does not exist: ${cwdParam}`,
+        { hint: "List the workspace and retry with an existing directory" },
+      );
+    }
+    return resolved;
   } catch (error) {
     if (error instanceof PathTraversalError) {
       throwToolError(
