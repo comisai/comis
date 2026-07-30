@@ -109,7 +109,7 @@ function makeRequest(over: Partial<ApprovalRequest> = {}): ApprovalRequest {
     trustLevel: "untrusted",
     callbackOwner: {
       tenantId: "tenant-a",
-      userId: "user-a",
+      userId: "principal-user-a",
       channelType: "telegram",
       channelKey: "chat-1",
       threadId: "thread-1",
@@ -217,7 +217,10 @@ describe("InteractiveCallbackRouter — signed branch", () => {
   it("cross-user: a signed callback cannot resolve another user's request in the same channel", async () => {
     const { router, resolveCalls } = makeRouter([makeRequest()]);
 
-    const res = await router.route(inbound(signedPayload("approve"), { inboundUserId: "user-b" }));
+    const res = await router.route(inbound(signedPayload("approve"), {
+      inboundUserId: "user-b",
+      resolvingPrincipalId: "principal-user-b",
+    }));
 
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toEqual({ kind: "unknown" });
@@ -362,7 +365,7 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
       threadId: "thread-1",
       conversationKind: "shared",
     },
-    userId: "user-a",
+    userId: "principal-user-a",
     sessionKey: SESSION_K,
     agentId: "agent-1",
     channelType: "telegram",
@@ -576,6 +579,7 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
     ["sender", {
       sessionKey: "tenant-a:agent:agent-1:other-user:chat-1:thread:thread-1",
       inboundUserId: "other-user",
+      resolvingPrincipalId: "principal-other-user",
     }],
     ["agent", { agentId: "agent-2" }],
     ["channel type", { channelType: "discord" }],
@@ -649,7 +653,10 @@ describe("InteractiveCallbackRouter — plain-text branch", () => {
   it("plain text cannot resolve a request owned by another user in the same channel", async () => {
     const { router, resolveCalls } = makeRouter([makeRequest()]);
 
-    const res = await router.route(inbound("approve", { inboundUserId: "user-b" }));
+    const res = await router.route(inbound("approve", {
+      inboundUserId: "user-b",
+      resolvingPrincipalId: "principal-user-b",
+    }));
 
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toEqual({ kind: "unknown" });

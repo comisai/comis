@@ -447,7 +447,7 @@ export async function setupAndRoute(
     // Queue-mediated path: route through CommandQueue for serialization
     // -----------------------------------------------------------------------
     if (deps.commandQueue) {
-      const enqueueResult = await deps.commandQueue.enqueue(sessionKey, msg, adapter.channelType, async (messages, execution) => {
+      const enqueueResult = await deps.commandQueue.submit(sessionKey, msg, adapter.channelType, async (messages, execution) => {
         const effectiveMsg = messages[0]!;
         const executionTraceId = tryGetContext()?.traceId;
         const executionSessionKey = formatSessionKey(sessionKey);

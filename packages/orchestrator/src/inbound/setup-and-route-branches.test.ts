@@ -298,7 +298,7 @@ describe("setupAndRoute typing controller behavior", () => {
     const noopEnqueue = vi.fn(async () => ok(undefined));
     const deps = makeMinimalDeps({
       eventBus,
-      commandQueue: { enqueue: noopEnqueue } as never,
+      commandQueue: { submit: noopEnqueue } as never,
       streamingConfig: {
         defaultMode: "instant",
         perChannel: {
@@ -395,7 +395,7 @@ describe("setupAndRoute typing controller behavior", () => {
     const noopEnqueue = vi.fn(async () => ok(undefined));
     const deps = makeMinimalDeps({
       eventBus: eventBus as never,
-      commandQueue: { enqueue: noopEnqueue } as never,
+      commandQueue: { submit: noopEnqueue } as never,
       streamingConfig: {
         defaultMode: "instant",
         perChannel: {
@@ -749,7 +749,7 @@ describe("setupAndRoute steer+followup routing", () => {
       resolveActiveSession: vi.fn(() => runHandle),
     };
     const enqueue = vi.fn(async () => ok(undefined));
-    const commandQueue = { enqueue };
+    const commandQueue = { submit: enqueue };
     const deps = makeMinimalDeps({
       sessionResolver: sessionResolver as never,
       commandQueue: commandQueue as never,
@@ -800,7 +800,7 @@ describe("setupAndRoute steer+followup routing", () => {
       sessionResolver: {
         resolveActiveSession: vi.fn(() => runHandle),
       } as never,
-      commandQueue: { enqueue } as never,
+      commandQueue: { submit: enqueue } as never,
       queueConfig: {
         defaultMode: "steer+followup",
         perChannel: {},
@@ -842,7 +842,7 @@ describe("setupAndRoute steer+followup routing", () => {
     const enqueue = vi.fn(async () => ok(undefined));
     const deps = makeMinimalDeps({
       sessionResolver: sessionResolver as never,
-      commandQueue: { enqueue } as never,
+      commandQueue: { submit: enqueue } as never,
       queueConfig: {
         defaultMode: "steer+followup",
         perChannel: { telegram: { mode: "queue" } },
@@ -899,7 +899,7 @@ describe("setupAndRoute command-queue routing", () => {
       child: vi.fn().mockReturnThis(),
     };
     const deps = makeMinimalDeps({
-      commandQueue: { enqueue } as never,
+      commandQueue: { submit: enqueue } as never,
       logger: logger as never,
     });
     const adapter = makeAdapter();
@@ -968,7 +968,7 @@ describe("setupAndRoute command-queue routing", () => {
       return ok(undefined);
     });
     const deps = makeMinimalDeps({
-      commandQueue: { enqueue } as never,
+      commandQueue: { submit: enqueue } as never,
       eventBus,
     });
     const msg = makeMsg({
@@ -1193,7 +1193,7 @@ describe("setupAndRoute command-queue routing", () => {
       return ok(undefined);
     });
     const deps = makeMinimalDeps({
-      commandQueue: { enqueue } as never,
+      commandQueue: { submit: enqueue } as never,
       sessionResolver: sessionResolver as never,
     });
 
@@ -1312,7 +1312,7 @@ describe("setupAndRoute command-queue routing", () => {
       return ok(undefined);
     });
     const deps = makeMinimalDeps({
-      commandQueue: { enqueue } as never,
+      commandQueue: { submit: enqueue } as never,
       sessionResolver: sessionResolver as never,
       eventBus,
     });

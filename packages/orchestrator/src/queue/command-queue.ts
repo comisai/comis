@@ -111,6 +111,23 @@ export interface CommandQueue {
     inboundProvenancePlan?: InboundMessageProvenancePlan,
   ): Promise<Result<void, Error>>;
 
+  /**
+   * Submit a message and return after queue admission.
+   *
+   * The queue retains execution and terminal-outcome ownership. Channel
+   * middleware uses this boundary so a paused turn cannot prevent the next
+   * control message from reaching the approval gate.
+   */
+  submit(
+    sessionKey: SessionKey,
+    message: NormalizedMessage,
+    channelType: string,
+    handler: QueueMessageHandler,
+    sourceTerminalScope?: SourceTerminalScope,
+    releaseResources?: () => void,
+    inboundProvenancePlan?: InboundMessageProvenancePlan,
+  ): Promise<Result<void, Error>>;
+
   /** Get current queue depth for a session (waiting + in-progress) */
   getQueueDepth(sessionKey: SessionKey): number;
 
@@ -428,6 +445,24 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
     );
   }
 
+  function observeSubmittedTask(
+    task: Promise<void>,
+    entry: QueuedMessageEntry,
+    mode: "followup" | "collect" | "steer",
+  ): void {
+    void fromPromise(task).then((settled) => {
+      if (settled.ok) return;
+      entry.runInAsyncScope(() => {
+        entry.sourceTerminalScope.publish(
+          "error",
+          "queue_rejected",
+          systemNowMs(),
+        );
+      });
+    });
+    void containBackgroundExecution(task, mode, entry.channelType);
+  }
+
   async function performShutdown(): Promise<void> {
     logger?.debug({ activeLanes: lanes.size }, "Command queue shutting down");
     isShutdown = true;
@@ -497,16 +532,16 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
     lanes.clear();
   }
 
-  return {
-    async enqueue(
-      sessionKey: SessionKey,
-      message: NormalizedMessage,
-      channelType: string,
-      handler: QueueMessageHandler,
-      sourceTerminalScope?: SourceTerminalScope,
-      releaseResources?: () => void,
-      inboundProvenancePlan?: InboundMessageProvenancePlan,
-    ): Promise<Result<void, Error>> {
+  async function enqueueMessage(
+    sessionKey: SessionKey,
+    message: NormalizedMessage,
+    channelType: string,
+    handler: QueueMessageHandler,
+    sourceTerminalScope: SourceTerminalScope | undefined,
+    releaseResources: (() => void) | undefined,
+    inboundProvenancePlan: InboundMessageProvenancePlan | undefined,
+    waitForCompletion: boolean,
+  ): Promise<Result<void, Error>> {
       if (isShutdown) {
         return err(new Error("Command queue is shut down"));
       }
@@ -578,7 +613,12 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
         // followup mode: Each message gets its own execution (default)
         // ---------------------------------------------------------------
         if (mode === "followup") {
-          await executeLaneTask(lane, entry);
+          const task = executeLaneTask(lane, entry);
+          if (waitForCompletion) {
+            await task;
+          } else {
+            observeSubmittedTask(task, entry, "followup");
+          }
           return ok(undefined);
         }
 
@@ -641,11 +681,16 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
           }
 
           // Lane is idle — process immediately (no debounce for first message)
-          await executeLaneTask(
+          const task = executeLaneTask(
             lane,
             entry,
             () => processCollectedMessages(key, lane),
           );
+          if (waitForCompletion) {
+            await task;
+          } else {
+            observeSubmittedTask(task, entry, "collect");
+          }
           return ok(undefined);
         }
 
@@ -728,18 +773,71 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
           }
 
           // Lane is idle — process immediately (like followup)
-          await executeLaneTask(lane, entry);
+          const task = executeLaneTask(lane, entry);
+          if (waitForCompletion) {
+            await task;
+          } else {
+            observeSubmittedTask(task, entry, "steer");
+          }
           return ok(undefined);
         }
 
         // Unknown mode — treat as followup for safety
-        await executeLaneTask(lane, entry);
+        const task = executeLaneTask(lane, entry);
+        if (waitForCompletion) {
+          await task;
+        } else {
+          observeSubmittedTask(task, entry, "followup");
+        }
         return ok(undefined);
       } catch (error: unknown) {
         const wrapped =
           error instanceof Error ? error : new Error(String(error));
         return err(wrapped);
       }
+  }
+
+  return {
+    enqueue(
+      sessionKey,
+      message,
+      channelType,
+      handler,
+      sourceTerminalScope,
+      releaseResources,
+      inboundProvenancePlan,
+    ): Promise<Result<void, Error>> {
+      return enqueueMessage(
+        sessionKey,
+        message,
+        channelType,
+        handler,
+        sourceTerminalScope,
+        releaseResources,
+        inboundProvenancePlan,
+        true,
+      );
+    },
+
+    submit(
+      sessionKey,
+      message,
+      channelType,
+      handler,
+      sourceTerminalScope,
+      releaseResources,
+      inboundProvenancePlan,
+    ): Promise<Result<void, Error>> {
+      return enqueueMessage(
+        sessionKey,
+        message,
+        channelType,
+        handler,
+        sourceTerminalScope,
+        releaseResources,
+        inboundProvenancePlan,
+        false,
+      );
     },
 
     getQueueDepth(sessionKey: SessionKey): number {

@@ -22,7 +22,7 @@ export interface QueueObservability {
   ): void;
   containBackgroundExecution(
     promise: Promise<unknown>,
-    mode: "collect" | "steer",
+    mode: "followup" | "collect" | "steer",
     channelType: string,
   ): Promise<void>;
 }
@@ -61,7 +61,7 @@ export function createQueueObservability(
 
   async function containBackgroundExecution(
     promise: Promise<unknown>,
-    mode: "collect" | "steer",
+    mode: "followup" | "collect" | "steer",
     channelType: string,
   ): Promise<void> {
     const settled = await fromPromise(promise);

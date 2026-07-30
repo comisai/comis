@@ -313,7 +313,7 @@ function makeRequest(overrides?: Partial<ApprovalRequest>): ApprovalRequest {
     trustLevel: "user",
     callbackOwner: {
       tenantId: "default",
-      userId: "user-1",
+      userId: "principal-user-1",
       channelType: "telegram",
       channelKey: "chat-1",
     },
@@ -648,7 +648,7 @@ describe("evaluateInboundGate /approve shortId slash path", () => {
     const req = makeRequest({
       callbackOwner: {
         tenantId: "default",
-        userId: "user-2",
+        userId: "principal-user-2",
         channelType: "telegram",
         channelKey: "chat-1",
       },
