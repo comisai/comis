@@ -29,7 +29,12 @@ import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-import { connectServer, isNeedsOAuthLoginError, reconnectServer } from "./mcp-client-connect.js";
+import {
+  connectServer,
+  disconnectServer,
+  isNeedsOAuthLoginError,
+  reconnectServer,
+} from "./mcp-client-connect.js";
 import { createTokenStore, type TokenStore } from "./oauth/token-store.js";
 import type { RefreshResult } from "./oauth/refresh-deduper.js";
 import type {
@@ -471,6 +476,76 @@ describe("connectServer — stdio failure diagnosability", () => {
 });
 
 describe("reconnectServer — live credential refresh", () => {
+  it("makes the old child unavailable before its asynchronous close settles", async () => {
+    connectImpl = () => Promise.resolve();
+    const state = makeState();
+    state.serverConfigs.set("svc", {
+      name: "svc",
+      transport: "http",
+      url: "https://example.com/mcp",
+      enabled: true,
+      env: { MCP_TEST_TOKEN: "test-key-stale" },
+    });
+    let releaseClose: (() => void) | undefined;
+    const closePending = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    state.connections.set("svc", {
+      name: "svc",
+      client: { close: vi.fn(() => closePending) } as unknown as McpConnection["client"],
+      status: "connected",
+      tools: [{ name: "account_summary", qualifiedName: "mcp:svc/account_summary", inputSchema: {} }],
+      lastHealthCheck: 0,
+      reconnectAttempt: 0,
+      maxReconnectAttempts: 5,
+      generation: 0,
+    });
+    const deps = { logger: makeLogger() } as unknown as McpClientManagerDeps;
+
+    const reconnecting = reconnectServer(state, deps, "svc", {
+      env: { MCP_TEST_TOKEN: "test-key-rotated" },
+      headers: undefined,
+    });
+
+    expect(state.connections.get("svc")?.status).toBe("reconnecting");
+    expect(state.generations.get("svc")).toBe(1);
+    releaseClose?.();
+    await expect(reconnecting).resolves.toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  it("makes a removed-credential child unavailable before its asynchronous close settles", async () => {
+    const state = makeState();
+    state.serverConfigs.set("svc", {
+      name: "svc",
+      transport: "http",
+      url: "https://example.com/mcp",
+      enabled: true,
+    });
+    let releaseClose: (() => void) | undefined;
+    const closePending = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    state.connections.set("svc", {
+      name: "svc",
+      client: { close: vi.fn(() => closePending) } as unknown as McpConnection["client"],
+      status: "connected",
+      tools: [{ name: "account_summary", qualifiedName: "mcp:svc/account_summary", inputSchema: {} }],
+      lastHealthCheck: 0,
+      reconnectAttempt: 0,
+      maxReconnectAttempts: 5,
+      generation: 0,
+    });
+    const deps = { logger: makeLogger() } as unknown as McpClientManagerDeps;
+
+    const disconnecting = disconnectServer(state, deps, "svc");
+
+    expect(state.connections.get("svc")?.status).toBe("disconnected");
+    expect(state.generations.get("svc")).toBe(1);
+    releaseClose?.();
+    await disconnecting;
+    expect(state.connections.get("svc")).toBeUndefined();
+  });
+
   it("replaces only credential fields while preserving the stored runtime config", async () => {
     connectImpl = () => Promise.resolve();
     const state = makeState();
