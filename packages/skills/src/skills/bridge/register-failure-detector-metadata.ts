@@ -46,6 +46,10 @@
 import { registerToolMetadata } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 
+const WEB_SEARCH_CONFIG_KEY = "tools.web.search";
+const WEB_SEARCH_PROVIDER_KEY =
+  /\b(tools\.web\.search(?:\.(?:perplexity|grok|searxng|tavily|exa|jina))?\.(?:apiKey|baseUrl))\b/;
+
 /**
  * Agent tools return structured data in `details`; direct-shape results remain
  * valid for lightweight and synthetic tools. Detectors inspect the structured
@@ -76,21 +80,48 @@ export function registerFailureDetectorMetadata(): void {
         ? r.failures.filter((f): f is string => typeof f === "string").join(" ")
         : "";
       const text = `${r.error} ${typeof r.message === "string" ? r.message : ""} ${failures}`;
-      if (/rate limit|quota exceeded|too many requests/i.test(text)) {
+      const missingConfigKey = WEB_SEARCH_PROVIDER_KEY.exec(text)?.[1];
+      if (missingConfigKey !== undefined && /needs an api key|needs a base url/i.test(text)) {
+        return {
+          errorKind: "config" satisfies ErrorKind,
+          classifiedField: "message",
+          matchedRule: "missing_provider_configuration",
+          failureDisclosure: {
+            kind: "missing_configuration",
+            configKey: missingConfigKey,
+          },
+        };
+      }
+      if (/rate limit|quota exceeded|usage limit|too many requests/i.test(text)) {
         // Attribute the verdict to the human-readable `message` field (the rate-limit
         // reason lives there + in `failures`, never in the stable `error` code) and report
         // the LITERAL rule that matched — a fixed description, not a serialized RegExp.
         return {
           errorKind: "resource" satisfies ErrorKind,
           classifiedField: "message",
-          matchedRule: "/rate limit|quota exceeded|too many requests/",
+          matchedRule: "/rate limit|quota exceeded|usage limit|too many requests/",
+          failureDisclosure: {
+            kind: "quota_exhausted",
+            configKey: WEB_SEARCH_CONFIG_KEY,
+          },
         };
       }
       // blocked/forbidden/provider-error set, broadened to the failures-chain reasons.
       // A genuine top-level error with an unrecognised reason is still a real failure →
       // default to dependency (never false once `error` is present). Attributed to the
       // top-level `error` machine code; no matchedRule/matchedToken (this is the catch-all).
-      return { errorKind: "dependency" satisfies ErrorKind, classifiedField: "error" };
+      return {
+        errorKind: "dependency" satisfies ErrorKind,
+        classifiedField: "error",
+        ...(r.error === "all_providers_failed"
+          ? {
+              failureDisclosure: {
+                kind: "provider_unavailable" as const,
+                configKey: WEB_SEARCH_CONFIG_KEY,
+              },
+            }
+          : {}),
+      };
     },
   });
 
