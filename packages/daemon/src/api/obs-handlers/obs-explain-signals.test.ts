@@ -219,6 +219,29 @@ describe("toIncidentSignals — response locale decision", () => {
     ).toBeUndefined();
   });
 
+  it("retains the locale repair skip from the selected session summary", () => {
+    const signals = toIncidentSignals([
+      event("session.summary", 1, {
+        responseLocaleRepairSkipped: {
+          reason: "unrecovered_tool_failure",
+          expectedScript: "Latn",
+          actualScript: "Hebr",
+          unrecoveredToolFailureCount: 1,
+        },
+      }),
+    ]);
+
+    expect(
+      (signals as unknown as { responseLocaleRepairSkipped?: unknown })
+        .responseLocaleRepairSkipped,
+    ).toEqual({
+      reason: "unrecovered_tool_failure",
+      expectedScript: "Latn",
+      actualScript: "Hebr",
+      unrecoveredToolFailureCount: 1,
+    });
+  });
+
   it("retains the latest normalized inbound kind", () => {
     const signals = toIncidentSignals([
       event("prompt.submitted", 1, { inboundKind: "message" }),

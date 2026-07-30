@@ -443,6 +443,12 @@ describe("applyResponseLocaleEnforcement", () => {
         expectedScript: "Arab",
         actualScript: "Latn",
       },
+      responseLocaleRepairSkipped: {
+        reason: "unrecovered_tool_failure",
+        expectedScript: "Arab",
+        actualScript: "Latn",
+        unrecoveredToolFailureCount: 1,
+      },
     });
     expect(session.prompt).not.toHaveBeenCalled();
     expect(logger.debug).toHaveBeenCalledWith(

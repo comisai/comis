@@ -179,6 +179,31 @@ describe("assembleIncidentReport — response locale decision", () => {
       },
     });
   });
+
+  it("surfaces why locale repair was skipped without response content", () => {
+    const responseLocaleRepairSkipped = {
+      reason: "unrecovered_tool_failure" as const,
+      expectedScript: "Latn",
+      actualScript: "Hebr",
+      unrecoveredToolFailureCount: 1,
+    };
+    const signals = makeSignals({
+      responseLocaleRepairSkipped,
+    } as unknown as Partial<IncidentSignals>);
+
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report).toMatchObject({ responseLocaleRepairSkipped });
+    expect(IncidentReportSchema.parse(report)).toMatchObject({
+      responseLocaleRepairSkipped,
+    });
+  });
 });
 
 describe("assembleIncidentReport — group history receipt", () => {

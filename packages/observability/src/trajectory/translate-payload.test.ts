@@ -70,6 +70,34 @@ describe("translatePayload — response locale decision", () => {
     expect("sessionKey" in data).toBe(false);
     expect("timestamp" in data).toBe(false);
   });
+
+  it("forwards only the content-free locale repair skip fields", () => {
+    const data = translatePayload("session:summary", {
+      degraded: true,
+      turnCount: 3,
+      costUsd: 0.1,
+      toolStats: { web_search: { ok: 0, failed: 1 } },
+      breakerTripCount: 0,
+      topErrorKinds: { resource: 1 },
+      source: "runtime",
+      endReason: "completed_with_tool_errors",
+      responseLocaleRepairSkipped: {
+        reason: "unrecovered_tool_failure",
+        expectedScript: "Latn",
+        actualScript: "Hebr",
+        unrecoveredToolFailureCount: 1,
+        responseText: "must never cross the content-free trajectory boundary",
+      },
+    } as Record<string, unknown>);
+
+    expect(data.responseLocaleRepairSkipped).toEqual({
+      reason: "unrecovered_tool_failure",
+      expectedScript: "Latn",
+      actualScript: "Hebr",
+      unrecoveredToolFailureCount: 1,
+    });
+    expect(JSON.stringify(data)).not.toContain("must never cross");
+  });
 });
 
 describe("translatePayload — script signals (envelope stripping)", () => {
