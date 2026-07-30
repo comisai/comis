@@ -554,6 +554,24 @@ describe("toIncidentSignals — log shape (503-like)", () => {
     expect(with503.length).toBeGreaterThanOrEqual(5);
     expect(with503.every((f) => f.errorKind === "overloaded")).toBe(true);
   });
+
+  it("compacts absolute host paths in operator-visible failure previews", () => {
+    const s = toIncidentSignals([
+      event("tool.result", 1, {
+        toolName: "exec",
+        success: false,
+        errorKind: "validation",
+        errorMessage:
+          "[not_found] Working directory does not exist: "
+          + "/Users/user_a/.comis/workspace/projects/missing-project",
+      }),
+    ]);
+
+    expect(s.failures[0]!.errorPreview).not.toContain("/Users/user_a");
+    expect(s.failures[0]!.errorPreview).toContain(
+      "…/projects/missing-project",
+    );
+  });
 });
 
 describe("toIncidentSignals — structured event shape (production)", () => {
