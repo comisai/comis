@@ -683,19 +683,23 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     return gs?.stateMachine.snapshot();
   }
 
-  function cancel(graphId: string): boolean {
+  function cancelGraph(graphId: string): {
+    cancelled: boolean;
+    killed: number;
+  } {
     const gs = state.graphs.get(graphId);
-    if (!gs) return false;
-    if (gs.stateMachine.isTerminal()) return false;
+    if (!gs) return { cancelled: false, killed: 0 };
+    if (gs.stateMachine.isTerminal()) return { cancelled: false, killed: 0 };
 
     gs.cancelReason = "manual";
+    let killed = 0;
 
     // Clean up event-driven spawn gate on cancel
     gs.cacheWarmCleanup?.();
 
     // Kill all running regular nodes
-    for (const [runId, nodeId] of gs.runIdToNode) {
-      deps.subAgentRunner.killRun(runId);
+    for (const [runId, nodeId] of [...gs.runIdToNode]) {
+      if (deps.subAgentRunner.killRun(runId).killed) killed++;
       gs.stateMachine.markNodeFailed(nodeId, "Cancelled");
     }
     gs.runIdToNode.clear();
@@ -703,12 +707,12 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     // Kill active driver runs, call onAbort, clean state
     for (const [nodeId, ds] of gs.driverStates) {
       if (ds.currentRunId) {
-        deps.subAgentRunner.killRun(ds.currentRunId);
+        if (deps.subAgentRunner.killRun(ds.currentRunId).killed) killed++;
         gs.driverRunIdMap.delete(ds.currentRunId);
       }
       if (ds.pendingParallel) {
         for (const [runId] of ds.pendingParallel) {
-          deps.subAgentRunner.killRun(runId);
+          if (deps.subAgentRunner.killRun(runId).killed) killed++;
           gs.driverRunIdMap.delete(runId);
         }
       }
@@ -742,7 +746,27 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     gs.stateMachine.cancel();
     callbacks.handleGraphCompletion(gs);
 
-    return true;
+    return { cancelled: true, killed };
+  }
+
+  function cancel(graphId: string): boolean {
+    return cancelGraph(graphId).cancelled;
+  }
+
+  function cancelByRootRunId(rootRunId: string): {
+    graphsCancelled: number;
+    killed: number;
+  } {
+    let graphsCancelled = 0;
+    let killed = 0;
+    for (const gs of [...state.graphs.values()]) {
+      if ((gs.rootRunId ?? gs.graphId) !== rootRunId) continue;
+      const result = cancelGraph(gs.graphId);
+      if (!result.cancelled) continue;
+      graphsCancelled++;
+      killed += result.killed;
+    }
+    return { graphsCancelled, killed };
   }
 
   function listGraphs(recentMinutes?: number): GraphRunSummary[] {
@@ -1017,5 +1041,15 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     return ok(undefined);
   }
 
-  return { run, getStatus, cancel, listGraphs, shutdown, getConcurrencyStats, notifyNodeFailed, resumeGraph };
+  return {
+    run,
+    getStatus,
+    cancel,
+    cancelByRootRunId,
+    listGraphs,
+    shutdown,
+    getConcurrencyStats,
+    notifyNodeFailed,
+    resumeGraph,
+  };
 }

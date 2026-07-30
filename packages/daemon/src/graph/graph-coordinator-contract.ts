@@ -43,6 +43,10 @@ export interface GraphCoordinator {
   run(params: GraphRunParams): Promise<Result<string, string>>;
   getStatus(graphId: string): GraphExecutionSnapshot | undefined;
   cancel(graphId: string): boolean;
+  cancelByRootRunId(rootRunId: string): {
+    graphsCancelled: number;
+    killed: number;
+  };
   listGraphs(recentMinutes?: number): GraphRunSummary[];
   shutdown(): Promise<void>;
   getConcurrencyStats(): {

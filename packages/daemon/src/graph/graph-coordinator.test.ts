@@ -1265,16 +1265,31 @@ describe("createGraphCoordinator", () => {
     });
 
     it("cancelByRootRunId terminalizes matching graphs without retrying killed nodes", async () => {
-      const { deps, runner } = createTestDeps();
+      const { deps, runner } = createTestDeps({
+        resolveRootRunId: () => ({ ok: true, value: "root-controlled" }),
+      });
       const coordinator = createGraphCoordinator(deps);
       const graph = buildGraph([
         { nodeId: "A", retries: 1 },
         { nodeId: "B", dependsOn: ["A"] },
       ]);
-      const result = await coordinator.run({
+      const callerSessionKey = "test-tenant:user_a:telegram:chat_a";
+      const callerTurnScope = makeCallerTurnScope("telegram", "chat_a");
+      const result = await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000020",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: callerSessionKey,
+        agentId: "test-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+        turnScope: callerTurnScope,
+      }, () => coordinator.run({
         graph,
-        callerRootRunId: "root-controlled",
-      });
+        callerSessionKey,
+        callerAgentId: "test-agent",
+        callerTurnScope,
+      }));
       expect(result.ok).toBe(true);
       if (!result.ok) return;
 
@@ -1284,8 +1299,11 @@ describe("createGraphCoordinator", () => {
       expect(runner.killRun).toHaveBeenCalledTimes(1);
       const status = coordinator.getStatus(result.value);
       expect(status?.isTerminal).toBe(true);
-      expect(status?.stats.running).toBe(0);
-      expect(status?.stats.pending).toBe(0);
+      expect(
+        [...(status?.nodes.values() ?? [])].some(
+          (node) => node.status === "running" || node.status === "pending",
+        ),
+      ).toBe(false);
 
       await coordinator.shutdown();
     });
