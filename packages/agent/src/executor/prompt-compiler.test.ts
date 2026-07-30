@@ -46,6 +46,14 @@ describe("compileExecutionPrompt", () => {
     expect(result.stableEnginePrefix).toMatch(/never (?:cite|invent).*URL.*not.*retriev/iu);
   });
 
+  it("keeps sources-only answers within successfully retrieved evidence", () => {
+    const result = compileExecutionPrompt(makeInput());
+
+    expect(result.stableEnginePrefix).toMatch(/sources? only.*every factual claim/iu);
+    expect(result.stableEnginePrefix).toMatch(/successful.*retriev/iu);
+    expect(result.stableEnginePrefix).toMatch(/omit.*not supported/iu);
+  });
+
   it("separates trusted operator policy from untrusted agent state", () => {
     const result = compileExecutionPrompt(makeInput({
       operatorPolicy: [{
