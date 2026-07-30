@@ -696,6 +696,50 @@ describe("obs-explain-heuristics", () => {
     );
   });
 
+  it("an unavailable vision path names the agent model and registry config knobs", () => {
+    const r = rootCause(
+      makeSignals({
+        agentId: "default",
+        endReason: "completed_with_tool_errors",
+        degraded: true,
+        vision: {
+          provider: "openai-codex",
+          mainProvider: "openai-codex",
+          outcome: "failed",
+          errorKind: "unsupported_provider",
+          path: "unavailable",
+        },
+        toolStats: {
+          image_analyze: { ok: 0, failed: 1, topErrorKind: "dependency" },
+        },
+        failures: [
+          {
+            seq: 8,
+            toolName: "image_analyze",
+            classifiedFailureBy: "sdk_iserror",
+            transportOk: false,
+            errorKind: "dependency",
+            resultDigest: "digest",
+            resultBytes: 0,
+            errorPreview: "No vision provider available for image analysis.",
+          },
+        ],
+      }),
+    );
+
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("vision_unavailable");
+    expect(r!.detail).toContain("openai-codex");
+    expect(r!.detail).toContain("unsupported_provider");
+    expect(r!.suggestedNextSteps.join(" ")).toContain("agents.default.model");
+    expect(r!.suggestedNextSteps.join(" ")).toContain(
+      "integrations.media.vision.providers",
+    );
+    expect(r!.suggestedNextSteps.join(" ")).toContain(
+      "integrations.media.vision.defaultProvider",
+    );
+  });
+
   it("the catch-all never fires on a clean session (no failures)", () => {
     expect(rootCause(makeSignals({ endReason: "success", toolStats: { web_fetch: { ok: 3, failed: 0 } } }))).toBeNull();
   });

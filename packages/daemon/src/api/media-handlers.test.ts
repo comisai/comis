@@ -631,6 +631,25 @@ describe("createMediaHandlers", () => {
         expect(failed!.data.path).toBe("unavailable");
       });
 
+      it("an unavailable image error names the binding model and vision config knobs", async () => {
+        visionState.capable = false;
+        const deps = makeDeps({
+          visionRegistry: new Map(),
+          mainModelIdFor: vi.fn(() => "text-only-model"),
+        });
+        const handlers = createMediaHandlers(deps);
+
+        await expect(
+          handlers["image.analyze"]!({
+            source_type: "base64",
+            source: "abc",
+            _agentId: "default",
+          }),
+        ).rejects.toThrow(
+          /agents\.default\.model[\s\S]*integrations\.media\.vision\.providers[\s\S]*integrations\.media\.vision\.defaultProvider[\s\S]*re-uploading will not help/i,
+        );
+      });
+
       it("when main-vision fails AND no registry can serve, the TERMINAL unavailable record carries the bridge's specific errorKind (not generic unsupported_provider)", async () => {
         // main-vision is the chosen path (sel.ok === true) and the bridge fails
         // with a SPECIFIC kind (auth_required — the main provider's key is
