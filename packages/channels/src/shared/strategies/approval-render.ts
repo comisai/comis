@@ -66,7 +66,7 @@ export function buildApprovalButtons(
   sign: SignCallbackData,
 ): RichButton[][] {
   const approval = event.approval;
-  if (approval === undefined) return [];
+  if (approval === undefined || event.status !== "running") return [];
 
   const row: RichButton[] = approval.choices.map((choice) => ({
     text: choice.defaultLabel,
@@ -97,7 +97,7 @@ export interface ApprovalTextOptions {
  */
 export function buildApprovalText(event: ActivityEvent, opts?: ApprovalTextOptions): string {
   const approval = event.approval;
-  if (approval === undefined) return "";
+  if (approval === undefined || event.status !== "running") return "";
 
   if (opts?.includeShortId === true) {
     const s = approval.shortId;
@@ -109,7 +109,9 @@ export function buildApprovalText(event: ActivityEvent, opts?: ApprovalTextOptio
 /** Count the `kind:"approval"` events pending in a frame's visible set. */
 export function countPendingApprovals(events: readonly ActivityEvent[]): number {
   let n = 0;
-  for (const e of events) if (e.approval !== undefined) n += 1;
+  for (const event of events) {
+    if (event.approval !== undefined && event.status === "running") n += 1;
+  }
   return n;
 }
 
