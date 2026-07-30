@@ -254,7 +254,8 @@ describe("tool failure recovery classification", () => {
 describe("subagent terminal tool failure classification", () => {
   const failedSearch: ToolExecutionResultRecord = {
     toolName: "web_search",
-    ok: false,
+    success: false,
+    durationMs: 25,
     errorKind: "resource",
     failureDisclosure: {
       kind: "quota_exhausted",
@@ -295,7 +296,15 @@ describe("subagent terminal tool failure classification", () => {
         operationType: "subagent",
         finishReason: "completed_with_tool_errors",
         failedTools: [],
-        toolExecResults: [failedSearch],
+        toolExecResults: [
+          { ...failedSearch, invocationSequence: 1 },
+          {
+            toolName: "web_search",
+            success: true,
+            durationMs: 18,
+            invocationSequence: 2,
+          },
+        ],
       }),
     ).toBeUndefined();
   });

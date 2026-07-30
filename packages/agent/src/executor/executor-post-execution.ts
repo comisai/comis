@@ -141,6 +141,7 @@ import { reconcilePendingBackgroundTurn } from "./pending-background-reply.js";
 import { synchronizeFinalAssistantResponse } from "./phase-filter.js";
 import {
   buildSubagentTerminalToolFailureReply,
+  classifySubagentTerminalToolFailure,
   classifyToolFailureRecovery,
   type ToolExecutionResultRecord,
 } from "../bridge/tool-failure-recovery.js";
@@ -1520,30 +1521,32 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     failedTools: bridgeResult.failedTools ?? [],
     toolExecResults: bridgeResult.toolExecResults,
   });
-  if (subagentTerminalToolFailureReply !== undefined) {
-    result.response = subagentTerminalToolFailureReply;
-    const disclosedFailure = bridgeResult.toolExecResults
-      ?.find((toolResult) => toolResult.failureDisclosure !== undefined);
-    const configKey =
-      disclosedFailure?.failureDisclosure?.configKey ?? "the failed tool's provider configuration";
+  const subagentTerminalToolFailure = classifySubagentTerminalToolFailure({
+    operationType: params.executionOverrides?.operationType,
+    finishReason: effectiveFinishReason,
+    failedTools: bridgeResult.failedTools ?? [],
+    toolExecResults: bridgeResult.toolExecResults,
+  });
+  if (subagentTerminalToolFailure !== undefined) {
+    if (subagentTerminalToolFailureReply !== undefined) {
+      result.response = subagentTerminalToolFailureReply;
+    }
+    const configKey = subagentTerminalToolFailure.disclosure.configKey;
     result.errorContext = {
       errorType: "UpstreamToolFailure",
       retryable: false,
-      ...(disclosedFailure?.toolName !== undefined
-        ? { failingTool: disclosedFailure.toolName }
-        : {}),
-      ...(disclosedFailure?.failureDisclosure?.configKey !== undefined
-        ? { configKey: disclosedFailure.failureDisclosure.configKey }
-        : {}),
+      failingTool: subagentTerminalToolFailure.toolName,
+      configKey,
     };
     deps.logger.warn(
       {
         step: "response-honesty",
-        errorKind: disclosedFailure?.errorKind ?? ("dependency" as const),
+        errorKind: subagentTerminalToolFailure.errorKind ?? ("dependency" as const),
         hint:
           `Restore provider access or update ${configKey} before retrying; changing request size will not recover this failure`,
+        responseReplaced: subagentTerminalToolFailureReply !== undefined,
       },
-      "Sub-agent timeout reply replaced with upstream tool cause",
+      "Sub-agent terminal failure attributed to upstream tool",
     );
   }
   const unavailableVisionFailure =

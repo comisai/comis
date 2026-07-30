@@ -290,6 +290,42 @@ function latestUnrecoveredDisclosure(
   return undefined;
 }
 
+export interface SubagentTerminalToolFailure {
+  readonly toolName: string;
+  readonly errorKind?: ErrorKind;
+  readonly disclosure: ToolFailureDisclosure;
+}
+
+/**
+ * Preserve trusted upstream failure facts for every unsuccessful sub-agent
+ * settlement without replacing a useful partial response.
+ */
+export function classifySubagentTerminalToolFailure(params: {
+  operationType: ModelOperationType | undefined;
+  finishReason: string;
+  failedTools: readonly string[];
+  toolExecResults: readonly ToolExecutionResultRecord[] | undefined;
+}): SubagentTerminalToolFailure | undefined {
+  if (
+    params.operationType !== "subagent"
+    || params.finishReason === "stop"
+    || params.finishReason === "end_turn"
+  ) {
+    return undefined;
+  }
+  const failure = latestUnrecoveredDisclosure(
+    params.failedTools,
+    params.toolExecResults,
+  );
+  const disclosure = failure?.failureDisclosure;
+  if (failure === undefined || disclosure === undefined) return undefined;
+  return {
+    toolName: failure.toolName,
+    ...(failure.errorKind === undefined ? {} : { errorKind: failure.errorKind }),
+    disclosure,
+  };
+}
+
 /**
  * Preserve the upstream tool cause when a sub-agent's later model call times
  * out. This text is parent-rewrite input, not a direct localized platform
@@ -307,11 +343,8 @@ export function buildSubagentTerminalToolFailureReply(params: {
   ) {
     return undefined;
   }
-  const failure = latestUnrecoveredDisclosure(
-    params.failedTools,
-    params.toolExecResults,
-  );
-  const disclosure = failure?.failureDisclosure;
+  const failure = classifySubagentTerminalToolFailure(params);
+  const disclosure = failure?.disclosure;
   if (failure === undefined || disclosure === undefined) return undefined;
 
   switch (disclosure.kind) {
