@@ -1615,6 +1615,14 @@ async function bootAgents(
     // The single mode-selected MCP OAuth token store (same instance threaded
     // into the login/handler path via the boot context). Undefined in env mode.
     mcpTokenStore,
+    secretManager: container.secretManager,
+    persistDeps: {
+      container,
+      configPaths: foundation.configPaths,
+      defaultConfigPaths: DEFAULT_CONFIG_PATHS,
+      configGitManager: foundation.configGitManager,
+      logger: skillsLogger,
+    },
   });
 
   // Ollama served-window probe — best-effort, fail-open.

@@ -5,7 +5,10 @@
  * and graceful degradation when servers fail to connect.
  */
 
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { safePath, TypedEventBus } from "@comis/core";
 import type { McpDeps } from "./setup-mcp.js";
 import type { TokenStore } from "@comis/skills";
 
@@ -20,6 +23,7 @@ const mockGetTools = vi.hoisted(() => vi.fn(() => []));
 const mockCallTool = vi.hoisted(() => vi.fn());
 const mockGetConnection = vi.hoisted(() => vi.fn());
 const mockGetAllConnections = vi.hoisted(() => vi.fn(() => []));
+const mockReconnect = vi.hoisted(() => vi.fn());
 
 const mockCreateMcpClientManager = vi.hoisted(() => vi.fn(() => ({
   connect: mockConnect,
@@ -29,6 +33,7 @@ const mockCreateMcpClientManager = vi.hoisted(() => vi.fn(() => ({
   getAllConnections: mockGetAllConnections,
   getTools: mockGetTools,
   callTool: mockCallTool,
+  reconnect: mockReconnect,
 })));
 
 vi.mock("@comis/skills", () => ({
@@ -869,5 +874,138 @@ describe("setupMcp", () => {
       }),
       expect.stringContaining("MCP setup complete"),
     );
+  });
+
+  it("refreshes every active MCP child whose persisted credentials reference an upserted secret", async () => {
+    const fixtureDir = mkdtempSync(safePath(tmpdir(), "comis-mcp-secret-rotation-"));
+    const configPath = safePath(fixtureDir, "config.yaml");
+    writeFileSync(
+      configPath,
+      [
+        "integrations:",
+        "  mcp:",
+        "    servers:",
+        "      - name: primary",
+        "        transport: stdio",
+        "        command: node",
+        "        env:",
+        '          MCP_TEST_TOKEN: "${MCP_TEST_TOKEN}"',
+        "      - name: secondary",
+        "        transport: http",
+        "        url: https://example.com/mcp",
+        "        headers:",
+        '          Authorization: "Bearer ${MCP_TEST_TOKEN}"',
+        "      - name: unrelated",
+        "        transport: stdio",
+        "        command: node",
+        "        env:",
+        '          OTHER_TOKEN: "${OTHER_TOKEN}"',
+        "",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    const eventBus = new TypedEventBus();
+    mockGetConnection.mockImplementation((name: string) =>
+      name === "primary" || name === "secondary"
+        ? { name, status: "connected", tools: [] }
+        : undefined,
+    );
+    mockReconnect.mockImplementation(async (name: string) => ok({
+      name,
+      status: "connected",
+      tools: [],
+      lastHealthCheck: 0,
+    }));
+
+    try {
+      await callSetupMcp({
+        servers: [],
+        logger,
+        eventBus,
+        secretManager: {
+          get: (key: string) =>
+            key === "MCP_TEST_TOKEN" ? "test-key-rotated" : undefined,
+        },
+        persistDeps: {
+          container: {} as never,
+          configPaths: [configPath],
+          defaultConfigPaths: [],
+          logger,
+        },
+      } as unknown as McpDeps);
+
+      eventBus.emit("secret:changed", {
+        name: "MCP_TEST_TOKEN",
+        action: "upserted",
+        timestamp: 1,
+      });
+
+      await vi.waitFor(() => expect(mockReconnect).toHaveBeenCalledTimes(2));
+      expect(mockReconnect).toHaveBeenCalledWith("primary", {
+        env: { MCP_TEST_TOKEN: "test-key-rotated" },
+        headers: undefined,
+      });
+      expect(mockReconnect).toHaveBeenCalledWith("secondary", {
+        env: undefined,
+        headers: { Authorization: "Bearer test-key-rotated" },
+      });
+      expect(mockReconnect).not.toHaveBeenCalledWith(
+        "unrelated",
+        expect.anything(),
+      );
+    } finally {
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  it("disconnects an active MCP child immediately when its referenced secret is removed", async () => {
+    const fixtureDir = mkdtempSync(safePath(tmpdir(), "comis-mcp-secret-removal-"));
+    const configPath = safePath(fixtureDir, "config.yaml");
+    writeFileSync(
+      configPath,
+      [
+        "integrations:",
+        "  mcp:",
+        "    servers:",
+        "      - name: primary",
+        "        transport: stdio",
+        "        command: node",
+        "        env:",
+        '          MCP_TEST_TOKEN: "${MCP_TEST_TOKEN}"',
+        "",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    const eventBus = new TypedEventBus();
+    mockGetConnection.mockImplementation((name: string) =>
+      name === "primary" ? { name, status: "connected", tools: [] } : undefined,
+    );
+    mockDisconnect.mockResolvedValue(undefined);
+
+    try {
+      await callSetupMcp({
+        servers: [],
+        logger,
+        eventBus,
+        secretManager: { get: () => undefined },
+        persistDeps: {
+          container: {} as never,
+          configPaths: [configPath],
+          defaultConfigPaths: [],
+          logger,
+        },
+      } as unknown as McpDeps);
+
+      eventBus.emit("secret:changed", {
+        name: "MCP_TEST_TOKEN",
+        action: "removed",
+        timestamp: 1,
+      });
+
+      await vi.waitFor(() => expect(mockDisconnect).toHaveBeenCalledWith("primary"));
+      expect(mockReconnect).not.toHaveBeenCalled();
+    } finally {
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
   });
 });

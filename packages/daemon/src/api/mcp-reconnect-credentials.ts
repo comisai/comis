@@ -79,6 +79,43 @@ function findRawServer(
   return ok(parsed.data);
 }
 
+export function findMcpServersReferencingSecret(
+  persistDeps: PersistToConfigDeps,
+  secretName: string,
+): Result<readonly string[], Error> {
+  const rawConfig = readRawLayeredConfig(persistDeps);
+  if (!rawConfig.ok) return rawConfig;
+  const integrations = record(rawConfig.value["integrations"]);
+  const mcp = record(integrations?.["mcp"]);
+  const servers = mcp?.["servers"];
+  if (!Array.isArray(servers)) return ok([]);
+
+  const referenced: string[] = [];
+  for (const rawServer of servers) {
+    const parsed = McpServerEntrySchema.safeParse(rawServer);
+    if (!parsed.success) {
+      const issues = parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ");
+      return err(new Error(
+        `[mcp_secret_dependency_config_invalid] Invalid persisted MCP server config: ${issues}`,
+      ));
+    }
+    if (!parsed.data.enabled) continue;
+    const names = new Set(
+      findUnresolvedEnvRefs(
+        {
+          env: parsed.data.env,
+          headers: parsed.data.headers,
+        },
+        () => undefined,
+      ).map((entry) => entry.varName),
+    );
+    if (names.has(secretName)) referenced.push(parsed.data.name);
+  }
+  return ok(referenced);
+}
+
 export function resolveMcpReconnectCredentials(
   deps: ReconnectCredentialDeps,
   serverName: string,
