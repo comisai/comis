@@ -2156,6 +2156,30 @@ describe("paired-conversation memory store applies the secret-egress guard", () 
     expect(enqueued).toHaveLength(0);
   });
 
+  it("behavior — a paired memory containing a replacement credential is not stored or embedded", async () => {
+    const { storePairedConversationMemory } = await loadHelper();
+    const memoryPort = makeCapturingMemoryPort();
+    const enqueued: Array<{ id: string; content: string }> = [];
+    const credential = "synthetic-service-token-7f3a9c2b8d4e6f10";
+
+    await storePairedConversationMemory({
+      memoryPort,
+      pairedContent:
+        `[user] replace the service token with ${credential}\n[agent] stored securely`,
+      effectiveAgentId: "agent_a",
+      sessionKey: { tenantId: "tenant_a", userId: "user_a" },
+      channelType: "telegram",
+      formattedKey: "agent_a:telegram:chan-1",
+      now: clock.now(),
+      logger: makeSilentLogger(),
+      embeddingEnqueue: (id: string, content: string) =>
+        enqueued.push({ id, content }),
+    });
+
+    expect(memoryPort.store).not.toHaveBeenCalled();
+    expect(enqueued).toHaveLength(0);
+  });
+
   it("behavior — a paired memory containing an unlabeled credential-shaped value is not stored or embedded", async () => {
     const { storePairedConversationMemory } = await loadHelper();
     const memoryPort = makeCapturingMemoryPort();
