@@ -34,13 +34,12 @@ import {
   accumulateToolSchemaRecord, buildLearningSignal, emptyLearningFold,
   accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord, accumulateSubAgentSpawnedRecord, accumulateSubAgentCompletedRecord,
   accumulateOrchestrateRunSummaryRecord, accumulateOrchestrateToolCall,
-  accumulateBackgroundTaskRecord,
+  accumulateBackgroundTaskRecord, buildBackgroundTasksSignal,
   parseContextBudgetRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
 } from "./obs-explain-signal-folds.js";
 import { summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
 import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
-// Tunable thresholds (module-top constants per the naming contract).
 // ---------------------------------------------------------------------------
 
 /** Minimum same-tool failures with a success for content-heuristic misclassification. */
@@ -738,6 +737,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     backgroundRecoveryByTask: new Map(),
     backgroundPromotionsByTask: new Map(),
     backgroundTerminalTaskIds: new Set(),
+    backgroundCompletedTaskIds: new Set(),
+    backgroundFailedTaskIds: new Set(),
+    backgroundAcceptedTaskIds: new Set(),
   };
 
   for (const rec of records) {
@@ -797,6 +799,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
   }
 
   const learning = buildLearningSignal(acc.learning); // undefined ⇒ omitted below
+  const backgroundTasks = buildBackgroundTasksSignal(acc);
   const turnTraceCount = acc.promptTraceIds.size > 0
     ? acc.promptTraceIds.size
     : acc.toolTraceIds.size;
@@ -922,8 +925,6 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),
     ...(acc.channelHealth !== undefined ? { channelHealth: acc.channelHealth } : {}),
-    // Surface the backgrounding ONLY when ≥1 promotion fired (undefined,
-    // never {}, when no drive backgrounded) — lets the terminal-drive verdict cite it.
     ...(acc.terminalDrivePromotedCount > 0
       ? {
           terminalDrivePromoted: {
@@ -985,6 +986,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
           },
         }
       : {}),
+    ...(backgroundTasks !== undefined ? { backgroundTasks } : {}),
     ...(acc.linkPrefetch !== undefined
       ? { linkPrefetch: acc.linkPrefetch }
       : {}),

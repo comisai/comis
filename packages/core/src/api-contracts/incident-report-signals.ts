@@ -160,6 +160,14 @@ export interface IncidentSignals {
     lastTaskId?: string;
     lastToolName?: string;
   };
+  /** Promoted background-task lifecycle, folded by distinct task id. */
+  backgroundTasks?: {
+    promoted: number;
+    completed: number;
+    failed: number;
+    accepted: number;
+    pending: number;
+  };
   /** Aggregate of automatic inbound link-prefetch receipts in this session.
    * Counts and elapsed time only; no URL or fetched content crosses the
    * trajectory or incident-report boundary. */
