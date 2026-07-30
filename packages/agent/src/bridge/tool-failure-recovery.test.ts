@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildToolRecoveryIdentity,
+  classifySubagentTerminalToolFailure,
   classifyToolFailureRecovery,
   type ToolExecutionResultRecord,
 } from "./tool-failure-recovery.js";
@@ -247,5 +248,55 @@ describe("tool failure recovery classification", () => {
     expect(serialized).not.toContain("private-channel-a");
     expect(serialized).not.toContain("private-report.pdf");
     expect(serialized).not.toContain("private message body");
+  });
+});
+
+describe("subagent terminal tool failure classification", () => {
+  const failedSearch: ToolExecutionResultRecord = {
+    toolName: "web_search",
+    ok: false,
+    errorKind: "resource",
+    failureDisclosure: {
+      kind: "quota_exhausted",
+      configKey: "tools.web.search",
+    },
+  };
+
+  it("retains actionable disclosure when a subagent completes with tool errors", () => {
+    expect(
+      classifySubagentTerminalToolFailure({
+        operationType: "subagent",
+        finishReason: "completed_with_tool_errors",
+        failedTools: ["web_search"],
+        toolExecResults: [failedSearch],
+      }),
+    ).toEqual({
+      toolName: "web_search",
+      errorKind: "resource",
+      disclosure: {
+        kind: "quota_exhausted",
+        configKey: "tools.web.search",
+      },
+    });
+  });
+
+  it("ignores successful or recovered subagent settlements", () => {
+    expect(
+      classifySubagentTerminalToolFailure({
+        operationType: "subagent",
+        finishReason: "stop",
+        failedTools: ["web_search"],
+        toolExecResults: [failedSearch],
+      }),
+    ).toBeUndefined();
+
+    expect(
+      classifySubagentTerminalToolFailure({
+        operationType: "subagent",
+        finishReason: "completed_with_tool_errors",
+        failedTools: [],
+        toolExecResults: [failedSearch],
+      }),
+    ).toBeUndefined();
   });
 });
