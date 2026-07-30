@@ -8,6 +8,7 @@ import {
   createConversationLocator,
   formatSessionKey,
   RequiredToolsUnreachableError,
+  TypedEventBus,
   type ConversationLocator,
 } from "@comis/core";
 import { SandboxDowngradeError } from "./sandbox-posture.js";
@@ -151,6 +152,8 @@ function persistedConversation(locator: ConversationLocator) {
 // ---------------------------------------------------------------------------
 
 function createMockDeps(): SubAgentRunnerDeps {
+  const eventBus = new TypedEventBus();
+  vi.spyOn(eventBus, "emit");
   return {
     sessionStore: createMockSessionStore(),
     executeAgent: vi.fn().mockResolvedValue({
@@ -161,7 +164,7 @@ function createMockDeps(): SubAgentRunnerDeps {
       stepsExecuted: 3,
     }),
     sendToChannel: vi.fn().mockResolvedValue(true),
-    eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+    eventBus,
     config: {
       enabled: true,
       maxPingPongTurns: 3,
@@ -228,6 +231,54 @@ describe("createSubAgentRunner", () => {
       cost: { total: 0.001 },
       finishReason: "stop",
       stepsExecuted: 1,
+    });
+  });
+
+  it("running run status exposes content-free live tool degradation", async () => {
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "inspect several sources",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+    });
+    const running = runner.getRunStatus(runId);
+    expect(running?.status).toBe("running");
+    if (running?.status !== "running") throw new Error("expected running run");
+
+    deps.eventBus.emit("tool:executed", {
+      toolName: "web_search",
+      toolCallId: "call-failed",
+      durationMs: 12,
+      success: false,
+      errorKind: "resource",
+      timestamp: 123,
+      agentId: "researcher",
+      sessionKey: running.sessionKey,
+      traceId: "child-trace",
+    });
+    deps.eventBus.emit("tool:executed", {
+      toolName: "web_fetch",
+      toolCallId: "call-ok",
+      durationMs: 8,
+      success: true,
+      timestamp: 124,
+      agentId: "researcher",
+      sessionKey: running.sessionKey,
+      traceId: "child-trace",
+    });
+
+    const listed = runner.listRuns(30).find((run) => run.runId === runId);
+    expect(listed).toMatchObject({
+      status: "running",
+      progress: {
+        health: "degraded",
+        toolCalls: 2,
+        failedToolCalls: 1,
+        lastFailedTool: "web_search",
+        lastErrorKind: "resource",
+        updatedAt: 124,
+      },
     });
   });
 

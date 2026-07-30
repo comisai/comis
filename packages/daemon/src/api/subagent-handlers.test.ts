@@ -49,6 +49,14 @@ function createMockDeps(): SubagentHandlerDeps {
           startedAt: Date.now() - 5_000,
           callerAgentId: "parent-agent",
           callerConversation,
+          progress: {
+            health: "degraded",
+            toolCalls: 22,
+            failedToolCalls: 14,
+            lastFailedTool: "web_fetch",
+            lastErrorKind: "dependency",
+            updatedAt: Date.now() - 100,
+          },
         },
         {
           runId: "run-2",
@@ -177,7 +185,18 @@ describe("createSubagentHandlers", () => {
     }) as { runs: Array<Record<string, unknown>>; total: number };
 
     expect(result.total).toBe(1);
-    expect(result.runs[0]).toMatchObject({ runId: "run-1", agentId: "researcher", status: "running" });
+    expect(result.runs[0]).toMatchObject({
+      runId: "run-1",
+      agentId: "researcher",
+      status: "running",
+      progress: {
+        health: "degraded",
+        toolCalls: 22,
+        failedToolCalls: 14,
+        lastFailedTool: "web_fetch",
+        lastErrorKind: "dependency",
+      },
+    });
     expect(result.runs[0]).not.toHaveProperty("task");
     expect(result.runs[0]).not.toHaveProperty("result");
     expect(result.runs[0]).not.toHaveProperty("error");
