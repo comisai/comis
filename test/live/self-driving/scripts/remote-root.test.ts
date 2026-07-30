@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -135,6 +135,53 @@ describe("sudo-aware live rig transport", () => {
 });
 
 describe("local rig mode", () => {
+  it("refuses to wipe a continuity-protected data root unless explicitly overridden", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-continuity-rig-"));
+    temporaryDirectories.push(directory);
+    writeFileSync(resolve(directory, ".continuity-protected"), "protected\n");
+
+    const blocked = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          `source ${shellQuote(RIG_HELPER)}`,
+          `DATA=${shellQuote(directory)}`,
+          'rig_refuse_continuity_wipe "$DATA"',
+          "echo WIPE-REACHED",
+        ].join("\n"),
+      ],
+      { encoding: "utf8", env: { ...process.env } },
+    );
+
+    expect(blocked.status).toBe(3);
+    expect(blocked.stdout).not.toContain("WIPE-REACHED");
+    expect(blocked.stderr).toContain("continuity-protected");
+    expect(blocked.stderr).toContain("ALLOW_CONTINUITY_WIPE=1");
+    expect(blocked.stderr).toContain("separate scratch DATA root");
+
+    const allowed = runRigHelper('rig_refuse_continuity_wipe "$DATA"; echo WIPE-ALLOWED', {
+      DATA: directory,
+      ALLOW_CONTINUITY_WIPE: "1",
+    });
+    expect(allowed.trim()).toBe("WIPE-ALLOWED");
+  });
+
+  it("checks continuity protection before clean restart stops or deletes anything", () => {
+    const source = readFileSync(CLEAN_RESTART, "utf8");
+    const guard = source.indexOf('rig_refuse_continuity_wipe "$DATA"');
+    const localStop = source.indexOf('pm2 stop "$SERVICE"');
+    const remoteStop = source.indexOf('systemctl stop "$SERVICE"');
+    const sessionWipe = source.indexOf("rm -rf '$DATA'/workspace/sessions/default/*");
+    const memoryWipe = source.indexOf("rm -f '$DATA'/memory.db");
+
+    expect(guard).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(localStop);
+    expect(guard).toBeLessThan(remoteStop);
+    expect(guard).toBeLessThan(sessionWipe);
+    expect(guard).toBeLessThan(memoryWipe);
+  });
+
   it("lets media injection select a sender independently from the chat", () => {
     const source = readFileSync(MEDIA_DRIVE, "utf8");
 
