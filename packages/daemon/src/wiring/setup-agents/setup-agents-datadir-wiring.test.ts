@@ -169,4 +169,31 @@ describe("setupSingleAgent threads the resolved dataDir to session-index writers
       expect.objectContaining({ dataDir: "/tmp/test-data" }),
     );
   });
+
+  it("passes resolved daemon and workspace skill paths into SDK discovery", async () => {
+    const agentId = "default";
+    const container = makeContainer(agentId);
+    const agentConfig = PerAgentConfigSchema.parse({
+      name: agentId,
+      model: "default",
+      provider: "default",
+      skills: { discoveryPaths: ["./skills"] },
+    });
+    container.config.agents[agentId] = agentConfig;
+    const deps = makeDeps(container);
+
+    await setupSingleAgent(agentId, agentConfig, deps);
+
+    expect(mockCreatePiExecutor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skills: expect.objectContaining({
+          discoveryPaths: [
+            "/tmp/test-workspace/skills",
+            "/tmp/test-data/skills",
+          ],
+        }),
+      }),
+      expect.anything(),
+    );
+  });
 });
