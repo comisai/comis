@@ -25,6 +25,7 @@ import {
   catalogFromLocalePacks,
   LOCALE_MESSAGE_IDS,
 } from "./degraded-reply.js";
+import * as degradedReply from "./degraded-reply.js";
 import {
   selectOutputStarvedAnnotation,
   selectContextExhaustedReply,
@@ -66,6 +67,30 @@ describe("buildDegradedReply — deterministic per endReason", () => {
 
   it("healthy cause (error) → returns undefined (strict no-op)", () => {
     expect(buildDegradedReply("error")).toBeUndefined();
+  });
+});
+
+describe("destructive action evidence reply", () => {
+  it("is deterministic and can be replaced by an operator locale pack", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildDestructiveActionNotVerifiedReply;
+    expect(candidate).toBeTypeOf("function");
+    const build = candidate as (
+      language?: string,
+      catalog?: ReturnType<typeof catalogFromLocalePacks>,
+    ) => string;
+    const catalog = catalogFromLocalePacks({
+      he: {
+        destructive_action_not_verified:
+          "לא ניתן לאמת שנמחק משהו; לפעולה לא הייתה השפעה נצפית.",
+      },
+    });
+
+    expect(build()).toContain("could not verify");
+    expect(build("he", catalog)).toBe(
+      "לא ניתן לאמת שנמחק משהו; לפעולה לא הייתה השפעה נצפית.",
+    );
+    expect(LOCALE_MESSAGE_IDS).toContain("destructive_action_not_verified");
   });
 });
 

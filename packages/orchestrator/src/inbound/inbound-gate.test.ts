@@ -598,6 +598,52 @@ describe("evaluateInboundGate button-callback intercept", () => {
 // ---------------------------------------------------------------------------
 
 describe("evaluateInboundGate /approve shortId slash path", () => {
+  it("treats a bare yes as approval when exactly one owned action is pending", async () => {
+    const req = makeRequest({
+      toolName: "exec",
+      action: "system.exec",
+    });
+    const { gate, resolveApproval } = makeFakeGate([req]);
+    const deps = makeDeps({ approvalGate: gate as never });
+
+    const result = await evaluateInboundGate(
+      deps,
+      makeAdapter(),
+      makeMsg({ text: "yes" }),
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      SEND_OVERRIDES as never,
+    );
+
+    expect(result).toEqual({ action: "handled" });
+    expect(resolveApproval).toHaveBeenCalledWith(
+      req.requestId,
+      true,
+      "chat:user-1",
+    );
+  });
+
+  it("does not consume a bare yes when no owned action is pending", async () => {
+    const { gate, resolveApproval } = makeFakeGate([]);
+    const deps = makeDeps({ approvalGate: gate as never });
+
+    const result = await evaluateInboundGate(
+      deps,
+      makeAdapter(),
+      makeMsg({ text: "yes" }),
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      SEND_OVERRIDES as never,
+    );
+
+    expect(result.action).not.toBe("handled");
+    expect(resolveApproval).not.toHaveBeenCalled();
+  });
+
   it("does not resolve a same-session request owned by another inbound user", async () => {
     const req = makeRequest({
       callbackOwner: {

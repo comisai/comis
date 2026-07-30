@@ -1003,6 +1003,84 @@ describe("current-turn delegation evidence guard", () => {
   });
 });
 
+type DestructiveEffectEvidenceGuard = (params: {
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    errorText?: string;
+  }>;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "destructive_action_no_effect";
+};
+
+function destructiveEffectEvidenceGuard(): DestructiveEffectEvidenceGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceDestructiveEffectEvidence;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as DestructiveEffectEvidenceGuard;
+}
+
+describe("destructive effect evidence guard", () => {
+  const honestResponse =
+    "I could not verify that anything was deleted. The command had no observable effect.";
+
+  it("replaces a completion claim after an exec deletion reports no effect", () => {
+    const guarded = destructiveEffectEvidenceGuard()({
+      response: "Done. Everything inside ~/Downloads was deleted.",
+      toolExecResults: [{
+        toolName: "exec",
+        success: false,
+        errorText:
+          "No filesystem entries were removed; the deletion command had no observable effect.",
+      }],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "destructive_action_no_effect",
+    });
+  });
+
+  it("preserves a completion claim when the exec evidence has no no-effect failure", () => {
+    const guarded = destructiveEffectEvidenceGuard()({
+      response: "Done. The requested cleanup is complete.",
+      toolExecResults: [{
+        toolName: "exec",
+        success: true,
+      }],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: "Done. The requested cleanup is complete.",
+      corrected: false,
+    });
+  });
+
+  it("preserves an honest failure disclosure after a no-effect deletion", () => {
+    const response =
+      "I couldn't delete anything because the target did not exist.";
+    const guarded = destructiveEffectEvidenceGuard()({
+      response,
+      toolExecResults: [{
+        toolName: "exec",
+        success: false,
+        errorText:
+          "No filesystem entries were removed; the deletion command had no observable effect.",
+      }],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({ response, corrected: false });
+  });
+});
+
 describe("empty-turn recovery does not narrate an already-delivered reply", () => {
   // LIVE: an onboarding turn sent its question via message({action:"send"}), so the
   // final assistant text was empty. Recovery then posted a SECOND bubble on top of

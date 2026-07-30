@@ -1851,6 +1851,31 @@ describe("assembleIncidentReportFromSources — audit?", () => {
     });
   });
 
+  it("names a corrected destructive no-effect claim as the acute cause", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.destructive_action_evidence_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "destructive_action_no_effect",
+      detail:
+        "the response honesty guard replaced a completion claim because the destructive "
+        + "exec command reported no observable filesystem effect",
+      suggestedNextSteps: [
+        "inspect the failed exec record and its bound approval request",
+        "confirm the intended target exists inside the configured workspace or write fence",
+        "retry only after correcting the target; do not treat an exit-zero no-op as success",
+      ],
+    });
+  });
+
   it("keeps an acute spawn ceiling refusal above its downstream delegation correction", async () => {
     const reader: IncidentSourceReader = {
       ...makeAuditReader([

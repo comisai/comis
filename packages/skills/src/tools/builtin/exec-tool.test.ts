@@ -92,6 +92,141 @@ describe("createExecTool", () => {
       const details = result.details as { stderr: string };
       expect(details.stderr).toContain("error");
     });
+
+    it("reports a forced deletion with no matching entry as a failed no-effect operation", async () => {
+      const workspace = join(
+        tmpdir(),
+        `comis-exec-no-effect-${process.pid}-${Math.random().toString(36).slice(2)}`,
+      );
+      mkdirSync(workspace, { recursive: true });
+      registry = createProcessRegistry();
+      const tool = createExecTool({
+        workspacePath: workspace,
+        registry,
+        secretManager: STUB_SM,
+        platformSecretNames: STUB_PLATFORM_NAMES,
+        toolCapabilityPort: createCapabilityPortStub(),
+      });
+
+      try {
+        const result = await tool.execute("tc-no-effect", {
+          command: "rm -rf missing-target",
+        });
+        const details = result.details as {
+          exitCode: number;
+          stderr: string;
+          destructiveEffect?: string;
+        };
+        expect(details.exitCode).not.toBe(0);
+        expect(details.stderr).toContain("no observable effect");
+        expect(details.destructiveEffect).toBe("none");
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    });
+
+    it("records observable evidence when a forced deletion removes an entry", async () => {
+      const workspace = join(
+        tmpdir(),
+        `comis-exec-delete-evidence-${process.pid}-${Math.random().toString(36).slice(2)}`,
+      );
+      const target = join(workspace, "delete-me");
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(target, "sentinel.txt"), "sentinel");
+      registry = createProcessRegistry();
+      const tool = createExecTool({
+        workspacePath: workspace,
+        registry,
+        secretManager: STUB_SM,
+        platformSecretNames: STUB_PLATFORM_NAMES,
+        toolCapabilityPort: createCapabilityPortStub(),
+      });
+
+      try {
+        const result = await tool.execute("tc-delete-evidence", {
+          command: "rm -rf delete-me",
+        });
+        const details = result.details as {
+          exitCode: number;
+          stdout: string;
+          destructiveEffect?: string;
+        };
+        expect(details.exitCode).toBe(0);
+        expect(details.stdout).not.toBe("");
+        expect(details.destructiveEffect).toBe("verified");
+        expect(existsSync(target)).toBe(false);
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("destructive command approval", () => {
+    it("binds a recursive deletion to the approval gate before spawning it", async () => {
+      const workspace = join(
+        tmpdir(),
+        `comis-exec-approval-${process.pid}-${Math.random().toString(36).slice(2)}`,
+      );
+      const target = join(workspace, "delete-me");
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(target, "sentinel.txt"), "sentinel");
+      const requestApproval = vi.fn().mockResolvedValue({
+        approved: false,
+        approvedBy: "test-operator",
+        reason: "denied for test",
+      });
+      const approvalGate = {
+        requestApproval,
+      } as unknown as Parameters<typeof createExecTool>[0]["approvalGate"];
+      registry = createProcessRegistry();
+      const tool = createExecTool({
+        workspacePath: workspace,
+        registry,
+        secretManager: STUB_SM,
+        platformSecretNames: STUB_PLATFORM_NAMES,
+        toolCapabilityPort: createCapabilityPortStub(),
+        approvalGate,
+      });
+
+      try {
+        await expect(
+          runWithContext(makeApprovalContext(), () =>
+            tool.execute("tc-delete-denied", { command: "rm -rf delete-me" }),
+          ),
+        ).rejects.toThrow(/not approved/i);
+        expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({
+          toolName: "exec",
+          action: "system.exec",
+          fingerprintParams: { command: "rm -rf delete-me" },
+        }));
+        expect(existsSync(target)).toBe(true);
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    });
+
+    it("does not approval-gate an ordinary read-only command", async () => {
+      const requestApproval = vi.fn();
+      const approvalGate = {
+        requestApproval,
+      } as unknown as Parameters<typeof createExecTool>[0]["approvalGate"];
+      registry = createProcessRegistry();
+      const tool = createExecTool({
+        workspacePath: tmpdir(),
+        registry,
+        secretManager: STUB_SM,
+        platformSecretNames: STUB_PLATFORM_NAMES,
+        toolCapabilityPort: createCapabilityPortStub(),
+        approvalGate,
+      });
+
+      const result = await runWithContext(makeApprovalContext(), () =>
+        tool.execute("tc-read-only", { command: "echo ok" }),
+      );
+
+      expect(result.details).toMatchObject({ exitCode: 0 });
+      expect(requestApproval).not.toHaveBeenCalled();
+    });
   });
 
   describe("env var allowlist", () => {
