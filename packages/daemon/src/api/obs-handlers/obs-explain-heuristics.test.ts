@@ -657,6 +657,45 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.length).toBeGreaterThan(0);
   });
 
+  it("an explicit STT authentication failure names the provider and transcription config knob", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "completed_with_tool_errors",
+        degraded: true,
+        voice: {
+          provider: "deepgram",
+          keyless: false,
+          source: "explicit",
+          outcome: "failed",
+          errorKind: "auth_required",
+        },
+        toolStats: {
+          transcribe_audio: { ok: 0, failed: 1, topErrorKind: "auth" },
+        },
+        failures: [
+          {
+            seq: 8,
+            toolName: "transcribe_audio",
+            classifiedFailureBy: "sdk_iserror",
+            transportOk: false,
+            errorKind: "auth",
+            resultDigest: "digest",
+            resultBytes: 0,
+            errorPreview: "STT provider deepgram is configured but its audio key is unavailable",
+          },
+        ],
+      }),
+    );
+
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("voice_auth_required");
+    expect(r!.detail).toContain("deepgram");
+    expect(r!.detail).toContain("auth_required");
+    expect(r!.suggestedNextSteps.join(" ")).toContain(
+      "integrations.media.transcription.provider",
+    );
+  });
+
   it("the catch-all never fires on a clean session (no failures)", () => {
     expect(rootCause(makeSignals({ endReason: "success", toolStats: { web_fetch: { ok: 3, failed: 0 } } }))).toBeNull();
   });
