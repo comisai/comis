@@ -4697,16 +4697,19 @@ describe("PiExecutor", () => {
     });
 
     it("disables SDK-global skill sources while retaining Comis discovery paths", async () => {
+      const discoveryPaths = ["/comis/workspace/skills", "/comis/data/skills"];
+      const configWithPaths = {
+        ...testConfig,
+        skills: { discoveryPaths, promptSkills: {} },
+      } as PerAgentConfig;
       const deps = createMockDeps();
-      const executor = createPiExecutor(testConfig, deps);
+      const executor = createPiExecutor(configWithPaths, deps);
 
       await executor.execute(testMessage, testSessionKey);
 
       expect(mockResourceLoaderArgs.captured).toBeTruthy();
       expect(mockResourceLoaderArgs.captured.noSkills).toBe(true);
-      expect(mockResourceLoaderArgs.captured.additionalSkillPaths).toEqual(
-        testConfig.skills?.discoveryPaths,
-      );
+      expect(mockResourceLoaderArgs.captured.additionalSkillPaths).toEqual(discoveryPaths);
     });
 
     it("skillsOverride filters denied skills", async () => {
