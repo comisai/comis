@@ -1,6 +1,6 @@
 ---
 name: log-troubleshooting
-version: 1.0.0
+version: 1.0.1
 description: Investigate and troubleshoot daemon logs at ~/.comis/logs/. Covers NDJSON log format, Pino level codes, field dictionary, and staged analysis strategies for efficient troubleshooting of large log files. Use this skill whenever the user asks about logs, errors, warnings, daemon issues, slow operations, debugging daemon behavior, checking what happened, or investigating any kind of platform issue -- even if they don't explicitly mention "logs".
 comis:
   requires:
@@ -13,7 +13,7 @@ You have read-only access to the daemon logs directory at `~/.comis/logs/`.
 
 This skill bundles `scripts/log-digest.py` -- a Python CLI that parses NDJSON logs and produces structured, context-friendly summaries. Use it as your primary analysis tool. It uses only Python 3 standard library (no pip install needed).
 
-All script paths below are relative to this skill's directory. Resolve them against the `<location>` shown in the available skills listing (e.g., if the skill location is `~/.comis/skills/log-troubleshooting`, then `scripts/log-digest.py` means `~/.comis/skills/log-troubleshooting/scripts/log-digest.py`).
+All script paths below are relative to this skill's directory. Resolve them against the directory containing the manifest file shown in `<location>` (e.g., if `<location>` is `~/.comis/skills/log-troubleshooting/SKILL.md`, then `scripts/log-digest.py` means `~/.comis/skills/log-troubleshooting/scripts/log-digest.py`).
 
 ## Quick Start
 
