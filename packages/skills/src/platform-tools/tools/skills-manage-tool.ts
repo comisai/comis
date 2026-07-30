@@ -93,7 +93,7 @@ function validateSkillsManageParams(
   params: Record<string, unknown>,
 ): void {
   if (action !== "import") return;
-  const url = readStringParam(params, "url").trim();
+  const url = readStringParam(params, "url")?.trim() ?? "";
   if (IMMUTABLE_GITHUB_SKILL_URL_RE.test(url)) return;
   throwToolError(
     "invalid_value",
