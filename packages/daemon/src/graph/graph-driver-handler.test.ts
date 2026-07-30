@@ -540,7 +540,7 @@ describe("executeDriverAction passes discoveredDeferredTools for mcpServers node
 });
 
 describe("executeDriverAction wait_for_input conversation matching", () => {
-  it("accepts the physical channel reply when the durable session uses a privacy-projected channel id", () => {
+  it("accepts the physical channel reply when the durable session uses a privacy-projected channel id", async () => {
     let received: ((payload: unknown) => void) | undefined;
     const deps = createMockDeps();
     vi.mocked(deps.eventBus.on).mockImplementation((event, handler) => {
@@ -603,6 +603,7 @@ describe("executeDriverAction wait_for_input conversation matching", () => {
         userId: "platform_user_a",
       },
     });
+    await Promise.resolve();
 
     expect(driver.onTurnComplete).toHaveBeenCalledWith(
       expect.anything(),
