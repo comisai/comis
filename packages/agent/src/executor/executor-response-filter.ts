@@ -207,8 +207,74 @@ const PERSISTENT_ACTION_REQUEST_PATTERNS = [
 ];
 
 const TERMINAL_SUCCESS_CLAIM_PATTERNS = [
-  /\b(?:pass(?:ed|es)?|succeed(?:ed|s)?|successful|verified)\b/iu,
+  /\b(?:pass(?:ed|es)?|succeed(?:ed|s)?|successful|verified)\b/giu,
+  /\b(?:done|finished|complete[d]?|ready|accomplished)\b/giu,
+  /\b(?:implemented|built|created|written)\b/giu,
 ];
+
+const TERMINAL_SUCCESS_NEGATION_PHRASES = [
+  "not",
+  "never",
+  "without",
+  "no",
+  "do not",
+  "does not",
+  "did not",
+  "can not",
+  "cannot",
+  "could not",
+  "is not",
+  "was not",
+  "were not",
+  "has not",
+  "have not",
+  "had not",
+  "don't",
+  "doesn't",
+  "didn't",
+  "can't",
+  "couldn't",
+  "isn't",
+  "wasn't",
+  "weren't",
+  "hasn't",
+  "haven't",
+  "hadn't",
+  "failed to",
+  "fails to",
+  "failing to",
+  "unable to",
+  "before",
+] as const;
+
+function terminalSuccessClaimIsNegated(clausePrefix: string): boolean {
+  const tail = ` ${
+    clausePrefix
+      .toLocaleLowerCase()
+      .replaceAll("’", "'")
+      .trim()
+      .split(/\s+/u)
+      .slice(-5)
+      .join(" ")
+  } `;
+  return TERMINAL_SUCCESS_NEGATION_PHRASES.some(
+    (phrase) => tail.includes(` ${phrase} `),
+  );
+}
+
+function hasUnnegatedTerminalSuccessClaim(response: string): boolean {
+  for (const pattern of TERMINAL_SUCCESS_CLAIM_PATTERNS) {
+    for (const match of response.matchAll(pattern)) {
+      const index = match.index ?? 0;
+      const prefix = response.slice(Math.max(0, index - 80), index);
+      const clausePrefix = prefix
+        .split(/[.!?;:\n]|\b(?:but|then|however)\b/iu)
+        .at(-1) ?? prefix;
+      if (!terminalSuccessClaimIsNegated(clausePrefix)) return true;
+    }
+  }
+  return false;
+}
 
 export interface PersistentActionEvidenceGuardResult {
   response: string;
@@ -248,11 +314,9 @@ export function enforcePersistentActionEvidence(params: {
     return { response: params.response, corrected: false };
   }
 
-  const claimsTerminalSuccess =
-    isCompletionClaim(params.response)
-    || TERMINAL_SUCCESS_CLAIM_PATTERNS.some(
-      (pattern) => pattern.test(params.response),
-    );
+  const claimsTerminalSuccess = hasUnnegatedTerminalSuccessClaim(
+    params.response,
+  );
   if (!claimsTerminalSuccess) {
     return { response: params.response, corrected: false };
   }

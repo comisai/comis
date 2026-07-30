@@ -1127,6 +1127,22 @@ describe("persistent action evidence guard", () => {
       corrected: false,
     });
   });
+
+  it("still rejects success reported after earlier failed attempts", () => {
+    const mixedOutcomeClaim =
+      "The first two attempts failed; the next attempt passed successfully.";
+
+    expect(persistentActionEvidenceGuard()({
+      request,
+      response: mixedOutcomeClaim,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_current_turn_action_evidence",
+    });
+  });
 });
 
 type DestructiveEffectEvidenceGuard = (params: {
