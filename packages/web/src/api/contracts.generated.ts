@@ -11335,6 +11335,10 @@ export const CONTRACTS = {
               "matchedToken": {
                 "type": "string"
               },
+              "failureCode": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+              },
               "matchedRule": {
                 "type": "string"
               },
@@ -12607,6 +12611,34 @@ export const CONTRACTS = {
           "required": [
             "retryRequiredCount",
             "unresolvedCount"
+          ],
+          "additionalProperties": false
+        },
+        "backgroundTasks": {
+          "type": "object",
+          "properties": {
+            "promoted": {
+              "type": "number"
+            },
+            "completed": {
+              "type": "number"
+            },
+            "failed": {
+              "type": "number"
+            },
+            "accepted": {
+              "type": "number"
+            },
+            "pending": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "promoted",
+            "completed",
+            "failed",
+            "accepted",
+            "pending"
           ],
           "additionalProperties": false
         },
