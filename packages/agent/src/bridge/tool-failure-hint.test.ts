@@ -29,6 +29,16 @@ describe("toolFailureHint", () => {
     expect(toolFailureHint(undefined)).toBe(GENERIC_TOOL_FAILURE_HINT);
   });
 
+  it("directs a destructive no-effect failure to the target and approval evidence", () => {
+    const hint = toolFailureHint(
+      "No filesystem entries were removed; the deletion command had no observable effect.",
+    );
+
+    expect(hint).toContain("target");
+    expect(hint).toContain("approval");
+    expect(hint).not.toBe(GENERIC_TOOL_FAILURE_HINT);
+  });
+
   it("does NOT match a bare single-word bracket or an array index (avoids false positives)", () => {
     expect(toolFailureHint("result[0] was empty")).toBe(GENERIC_TOOL_FAILURE_HINT);
     expect(toolFailureHint("[error] generic")).toBe(GENERIC_TOOL_FAILURE_HINT);
