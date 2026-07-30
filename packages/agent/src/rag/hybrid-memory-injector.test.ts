@@ -50,6 +50,23 @@ describe("createHybridMemoryInjector", () => {
       expect(result.systemPromptSections).toEqual([]);
     });
 
+    it("keeps inline recall subordinate to the current conversation when resolving references", () => {
+      const injector = createHybridMemoryInjector({ requesterUserId: "memory-owner" });
+      const result = injector.split(
+        [mockResult("An older conversation discussed project alpha", 0.95, "2026-01-15")],
+        5000,
+      );
+
+      expect(result.inlineMemory).toContain("may be outdated");
+      expect(result.inlineMemory).toContain(
+        "Resolve references from the current conversation first",
+      );
+      expect(result.inlineMemory).toContain(
+        "Use this memory only when the current conversation has no plausible referent",
+      );
+      expect(result.inlineMemory).toContain("ask the user rather than guess");
+    });
+
     it("keeps cross-sender memory out of the user-message inline position", () => {
       const injector = createHybridMemoryInjector({ requesterUserId: "current-user" });
       const results = [
@@ -128,7 +145,7 @@ describe("createHybridMemoryInjector", () => {
         mockResult("B".repeat(500), 0.7),
       ];
       // Very small budget -- may not fit all remaining
-      const result = injector.split(results, 100);
+      const result = injector.split(results, 400);
 
       expect(result.inlineMemory).toContain("Top memory");
       // System prompt sections may be empty if budget too small for header

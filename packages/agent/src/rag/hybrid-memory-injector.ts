@@ -124,7 +124,12 @@ export function createHybridMemoryInjector(opts?: {
             ? `, occurred ${systemDateFrom(top.entry.occurredAt).toISOString().split("T")[0]}`
             : "";
         const sanitized = sanitizeToolOutput(scrubSecretsFromText(top.entry.content).text);
-        const inlineMemory = `\n[Relevant context from memory: ${sanitized} (recorded ${date}${occurred})]\n`;
+        const inlineMemory =
+          "\n[Relevant context from memory: This is past context and may be outdated. " +
+          "Resolve references from the current conversation first. " +
+          "Use this memory only when the current conversation has no plausible referent; " +
+          "if ambiguity remains, ask the user rather than guess.\n" +
+          `${sanitized} (recorded ${date}${occurred})]\n`;
 
         // If the top hit cannot fit as a complete inline envelope, keep the
         // canonical formatter as the only placement. It either fits a complete

@@ -48,6 +48,7 @@ import { appendCausalLane } from "./recall-causal-lane.js";
 import { appendGraphSpreadLane } from "./recall-graph-spread-lane.js";
 import { captureRecallObservability, emitRecallDegraded } from "./recall-observability.js";
 import { applyProvenanceDownweighting } from "./recall-provenance.js";
+import { buildRelevanceQuery } from "./relevance-scorer.js";
 import { gateLanes, resolveEffectiveBaseFloor, logPrefilterDrops, passesBaseFloor, type PrefilterAccumulator } from "./recall-security-prefilter.js";
 import {
   vectorLaneCouldContribute,
@@ -78,7 +79,7 @@ export { passesBaseFloor } from "./recall-security-prefilter.js";
  */
 export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConfig): MemoryRecall {
   return {
-    async recall(query, memoryScope, sessionKey) {
+    async recall(query, memoryScope, sessionKey, recentUserTurns = []) {
       const agentId = memoryScope.agentId;
       // Trace capture is ADDITIVE: collected into local accumulators at the existing
       // stage snapshot points, assembled into ONE record at the end. When neither
@@ -127,9 +128,14 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // returns the base weight unchanged → byte-identity. A factual/unmatched intent also yields
       // multiplier 1.0 on every lane (intentMultiplier), so an ON-but-factual query is byte-identical.
       const intent = qu?.intentReweight === true ? classifyIntent(query) : undefined;
-      // Expand the query string (whole-query) when synonyms on; else the ORIGINAL.
-      // expandSynonyms returns the input verbatim when no token maps, so this is the identity off.
-      const searchQuery = qu?.synonyms === true ? expandSynonyms(query) : query;
+      // Retrieval uses the current request plus the two preceding user turns. Intent and
+      // temporal parsing stay anchored to the current request below, so older wording can
+      // disambiguate a referent without changing what kind of question the user just asked.
+      const relevanceQuery = buildRelevanceQuery([...recentUserTurns, query]);
+      const contextualQuery = recentUserTurns.length === 0 || relevanceQuery.degraded
+        ? query
+        : relevanceQuery.terms.join(" ");
+      const searchQuery = qu?.synonyms === true ? expandSynonyms(contextualQuery) : contextualQuery;
       // Parse an occurred_at range from the (ORIGINAL) query when temporalParse on; nowMs is
       // the injected clock's recallStart (never Date.now()). Unparseable → undefined → no filter.
       const occurredAtRange = qu?.temporalParse === true ? parseTemporalRange(query, recallStart) : undefined;

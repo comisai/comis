@@ -160,6 +160,7 @@ function makeParams(customTools: unknown[]): ToolAssemblyParams {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- NormalizedMessage
     msg: { id: "00000000-0000-4000-8000-000000000001", text: "capital of France?", senderId: "u", channelId: "c", channelType: "telegram", timestamp: 1, attachments: [], metadata: {} } as any,
     isFirstMessageInSession: true,
+    recentUserTurns: [],
     sm: { buildSessionContext: () => ({ messages: [] }), getSessionDir: () => "/tmp/agent/s" },
     deliveredGuides: new Set<string>(),
     resolvedModel: { id: "gpt-5.3-codex", provider: "openai-codex", contextWindow: 8_192, reasoning: false },
