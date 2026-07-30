@@ -345,11 +345,31 @@ describe("buildMediaPipeline", () => {
     });
   });
 
-  it("persists an image when no media processor consumes its attachment", async () => {
+  it("persists an unprocessed image and exposes its durable tool path", async () => {
     const image = Buffer.from("image-data");
     mockCompositeResolver.resolve.mockResolvedValueOnce({
       ok: true,
       value: { buffer: image },
+    });
+    vi.mocked(preprocessMessage).mockImplementationOnce(async (mediaDeps, msg) => {
+      const durablePath = mediaDeps.durableFilePath?.(msg.attachments[0]!);
+      const attachmentHint = durablePath === undefined
+        ? "use image_analyze tool to view | url: tg-file://current"
+        : `use image_analyze with source_type="file" and source="${durablePath}" to view`;
+      return {
+        message: {
+          ...msg,
+          text:
+            `[Attached: image (image/png, ${image.byteLength} bytes) — `
+            + `${attachmentHint}]\n\n${msg.text}`,
+        },
+        transcriptions: [],
+        sttReceipts: [],
+        analyses: [],
+        imageContents: [],
+        videoDescriptions: [],
+        fileExtractions: [],
+      };
     });
     const container = makeContainer();
     container.config.integrations.media.persistence.enabled = true;
@@ -359,7 +379,7 @@ describe("buildMediaPipeline", () => {
     });
     const result = await buildMediaPipeline(deps);
 
-    await result.preprocessMessage({
+    const processed = await result.preprocessMessage({
       id: "m1",
       channelId: "c1",
       channelType: "telegram",
@@ -381,6 +401,10 @@ describe("buildMediaPipeline", () => {
       fileName: undefined,
       mediaKind: "image",
     });
+    expect(processed.text).toContain(
+      'use image_analyze with source_type="file" and source="photos/current.png"',
+    );
+    expect(processed.text).not.toContain("url: tg-file://current");
   });
 
   it("audioPreflight is defined when transcriber provided", async () => {
