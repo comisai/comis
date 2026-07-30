@@ -53,6 +53,7 @@ export type {
   McpConnectionStatus,
   McpReconnectOptions,
   McpConnection,
+  McpReconnectCredentials,
   McpToolDefinition,
   McpToolCallResult,
   McpToolCallContent,
@@ -236,6 +237,6 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
     getAllConnections: () => getAllConnections(state),
     getTools: (): McpToolDefinition[] => listAllTools(state),
     callTool: (qualifiedName, args) => callTool(state, effectiveDeps, qualifiedName, args),
-    reconnect: (name) => reconnectServer(state, effectiveDeps, name),
+    reconnect: (name, credentials) => reconnectServer(state, effectiveDeps, name, credentials),
   };
 }

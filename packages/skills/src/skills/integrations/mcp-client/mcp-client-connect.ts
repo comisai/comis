@@ -28,6 +28,7 @@ import type {
   McpClientManagerDeps,
   McpClientManagerState,
   McpConnection,
+  McpReconnectCredentials,
   McpServerConfig,
   McpToolDefinition,
 } from "./mcp-client-types.js";
@@ -480,20 +481,19 @@ export function getConnection(
 export function getAllConnections(state: McpClientManagerState): McpConnection[] {
   return [...state.connections.values()];
 }
-
-// ---------------------------------------------------------------------------
 // reconnect (state-first; uses stored config)
-// ---------------------------------------------------------------------------
 
 export async function reconnectServer(
   state: McpClientManagerState,
   deps: McpClientManagerDeps,
   name: string,
+  credentials?: McpReconnectCredentials,
 ): Promise<Result<McpConnection, Error>> {
   const storedConfig = state.serverConfigs.get(name);
   if (!storedConfig) {
     return err(new Error(`MCP server "${name}" has no stored config -- use connect() instead`));
   }
+  const reconnectConfig = credentials === undefined ? storedConfig : { ...storedConfig, ...credentials };
   await disconnectServer(state, deps, name);
-  return connectServer(state, deps, storedConfig);
+  return connectServer(state, deps, reconnectConfig);
 }
