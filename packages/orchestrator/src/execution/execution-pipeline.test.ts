@@ -759,6 +759,51 @@ describe("executeAndDeliver", () => {
       expect(finalize).toHaveBeenCalledWith({ kind: "aborted", reason: "user_cancel" });
     });
 
+    it("cleans activity after a delivered background handoff while diagnostics stay pending", async () => {
+      const eventBus = makeEventBus();
+      const finalize = vi.fn(async () => undefined);
+      const deps = makeDeps({
+        eventBus,
+        activityStreamPort: {} as ExecutionPipelineDeps["activityStreamPort"],
+        coordinatorFactory: () => ({
+          start: vi.fn(),
+          finalize,
+          dispose: vi.fn(),
+          counters: vi.fn(() => ({})),
+        } as any),
+      });
+      const executor = makeExecutor({
+        execute: vi.fn(async () => ({
+          response: "Background work is still running. I will send the result when it finishes.",
+          sessionKey: makeSessionKey(),
+          tokensUsed: { input: 100, output: 50, total: 150 },
+          cost: { total: 0.001 },
+          stepsExecuted: 1,
+          llmCalls: 1,
+          finishReason: "background_pending" as const,
+        })),
+      });
+
+      await runWithContext(makeResolvedContext(), () => executeAndDeliver(
+        deps, makeAdapter(), makeMessage(), makeMessage(), executor, makeSessionKey(),
+        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      ));
+
+      expect(finalize).toHaveBeenCalledWith({
+        kind: "success",
+        trivial: false,
+        delivery: expect.objectContaining({ ok: true, deliveredChunks: 1 }),
+      });
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "diagnostic:message_processed",
+        expect.objectContaining({
+          status: "error",
+          finishReason: "background_pending",
+          errorKind: "precondition",
+        }),
+      );
+    });
+
     it("emits message:sent event carrying the real lastChunkMessageId (not block-delivery)", async () => {
       const eventBus = makeEventBus();
       const deps = makeDeps({ eventBus });
