@@ -42,6 +42,7 @@ import { qualifyToolName } from "./mcp-client-types.js";
 import { wireClientLifecycleCallbacks, handleDisconnection } from "./mcp-client-reconnect.js";
 import { startKeepaliveTicker, stopKeepaliveTicker } from "./mcp-client-keepalive.js";
 import { startIdleTicker, stopIdleTicker } from "./mcp-client-idle-eviction.js";
+import { markConnectionUnavailable } from "./mcp-client-lifecycle-state.js";
 import {
   osvMalwareCheck,
   extractMcpPackageName,
@@ -408,24 +409,22 @@ export async function disconnectServer(
 
   const conn = state.connections.get(name);
   if (!conn) return;
+  if (conn.status !== "reconnecting") {
+    markConnectionUnavailable(state, name, "disconnected");
+  }
 
   try {
-    if (conn.client && conn.status === "connected") {
+    if (conn.client && (conn.status === "connected" || conn.status === "reconnecting")) {
       await conn.client.close();
     }
   } catch (error: unknown) {
     logger.warn({ serverName: name, err: error instanceof Error ? error.message : String(error), hint: "MCP server disconnect failed; connection may be stale", errorKind: "dependency" as const }, "MCP server disconnect failed");
   }
 
-  // Stop the keepalive ticker BEFORE tearing down the queue (so the ticker
-  // cannot fire one last queue.add against a queue we are about to delete).
+  // Stop tickers before deleting queues so they cannot enqueue during teardown.
   stopKeepaliveTicker(state, name);
-
-  // Stop the idle-eviction ticker alongside keepalive.
   stopIdleTicker(state, name);
 
-  // Clear and remove call queue -- pending .add() callers get no resolution
-  // but that's acceptable since the connection is gone anyway
   const callQueue = state.callQueues.get(name);
   if (callQueue) {
     callQueue.clear();
@@ -493,6 +492,7 @@ export async function reconnectServer(
   if (!storedConfig) {
     return err(new Error(`MCP server "${name}" has no stored config -- use connect() instead`));
   }
+  markConnectionUnavailable(state, name, "reconnecting");
   const reconnectConfig = credentials === undefined ? storedConfig : { ...storedConfig, ...credentials };
   await disconnectServer(state, deps, name);
   return connectServer(state, deps, reconnectConfig);

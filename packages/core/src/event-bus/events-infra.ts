@@ -551,7 +551,7 @@ export interface InfraEvents {
   /** MCP server connection lost (transport closed or error) */
   "mcp:server:disconnected": {
     serverName: string;
-    reason: "transport_closed" | "transport_error" | "client_closed" | "client_error" | "keepalive_failed";
+    reason: "transport_closed" | "transport_error" | "client_closed" | "client_error" | "keepalive_failed" | "credential_rotation" | "credential_removed";
     timestamp: number;
   };
 
@@ -831,10 +831,9 @@ export interface InfraEvents {
    * For `action: "upserted"` on a NEW key: the value is immediately available
    * via `secretManager.get()` — live-applied to the shared Map (additive, no restart).
    *
-   * For `action: "upserted"` on an EXISTING key (rotation): the Map holds the OLD value
-   * until the daemon restarts (SIGUSR2 is scheduled); do NOT call `secretManager.get()`
-   * in response to this event expecting the new value. A future change will make rotation
-   * live-apply too, at which point this note becomes obsolete.
+   * For `action: "upserted"` on an EXISTING key (rotation): the shared Map
+   * already holds the new value. Consumers that captured a credential while
+   * constructing a client or child process must rebuild that dependent runtime.
    *
    * For `action: "removed"`: the key is no longer in the Map (removed before emit).
    */

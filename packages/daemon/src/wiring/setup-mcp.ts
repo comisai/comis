@@ -24,6 +24,8 @@ import {
   type McpServerConfig,
   type TokenStore,
 } from "@comis/skills";
+import type { PersistToConfigDeps } from "../api/shared/persist-to-config.js";
+import { wireMcpSecretRotation } from "./mcp-secret-rotation.js";
 
 // ---------------------------------------------------------------------------
 // Deps / Result types
@@ -65,6 +67,10 @@ export interface McpDeps {
    * — the manager then uses its no-OAuth default.
    */
   readonly mcpTokenStore?: TokenStore;
+  /** Raw layered config source used to map secret refs back to active children. */
+  readonly persistDeps?: PersistToConfigDeps;
+  /** Current live secret map used to resolve referenced credentials on rotation. */
+  readonly secretManager?: { get: (key: string) => string | undefined };
 }
 
 /** Result of MCP server setup. */
@@ -181,6 +187,15 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
     // Omitted when not supplied so createMcpClientManager uses its default.
     ...oauthDepsArg,
   });
+  if (deps.eventBus && deps.persistDeps && deps.secretManager) {
+    wireMcpSecretRotation({
+      eventBus: deps.eventBus,
+      mcpClientManager: manager,
+      persistDeps: deps.persistDeps,
+      secretManager: deps.secretManager,
+      logger,
+    });
+  }
 
   try {
     // Filter to enabled servers only, dedup by name (keep first occurrence)
