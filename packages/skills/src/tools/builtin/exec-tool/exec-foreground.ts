@@ -29,7 +29,12 @@ import {
   ROLLING_BUFFER_MAX,
   type ToolLogger,
 } from "./exec-types.js";
-import { buildSpawnCommand, killTree, buildInstallDetourHint } from "./exec-shared.js";
+import {
+  buildSpawnCommand,
+  killTree,
+  buildInstallDetourHint,
+  gradeDestructiveExecEffect,
+} from "./exec-shared.js";
 import { escalateToBackground } from "./exec-background.js";
 
 // ---------------------------------------------------------------------------
@@ -271,6 +276,15 @@ export function executeForeground(
         finalStderr += (finalStderr ? "\n" : "") + "Process aborted by signal";
       }
 
+      const destructiveEffect = gradeDestructiveExecEffect({
+        command,
+        exitCode,
+        stdout: finalStdout,
+        stderr: finalStderr,
+      });
+      exitCode = destructiveEffect.exitCode;
+      finalStderr = destructiveEffect.stderr;
+
       // Recovery diagnostics: prepend a `RECOVERY HINT:` line for known-recoverable
       // failures (e.g. Python ModuleNotFoundError + missing pyproject.toml). Same
       // surfacing pattern as breakSystemWarning on stdout — gives the LLM an
@@ -287,6 +301,9 @@ export function executeForeground(
         exitCode,
         stdout: finalStdout,
         stderr: finalStderr,
+        ...(destructiveEffect.destructiveEffect === undefined
+          ? {}
+          : { destructiveEffect: destructiveEffect.destructiveEffect }),
         ...(description && { description }),
       };
 

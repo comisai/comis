@@ -23,6 +23,7 @@ export type LocaleMessageId =
   | "prompt_timeout"
   | "background_task_failed_notice"
   | "delegation_evidence_missing"
+  | "destructive_action_not_verified"
   | "vision_unavailable";
 
 export type LocalePack = Readonly<Partial<Record<LocaleMessageId, string>>>;
@@ -63,6 +64,8 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "⚠️ This background task failed, so its result may be incomplete.",
   delegation_evidence_missing:
     "I did not successfully start the requested sub-agent in this turn, so I cannot claim a new independent check. Please retry the request.",
+  destructive_action_not_verified:
+    "I could not verify that anything was deleted. The command had no observable effect, so I am not treating the deletion as complete.",
   vision_unavailable:
     "I couldn't analyze this image because no vision provider is available. "
       + "Re-uploading the same image will not help until the vision configuration changes. "
@@ -255,6 +258,14 @@ export function selectDelegationEvidenceMissingReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "delegation_evidence_missing");
+}
+
+/** Honest replacement when a destructive command reports no observable effect. */
+export function selectDestructiveActionNotVerifiedReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "destructive_action_not_verified");
 }
 
 /** Honest replacement when image analysis reached the unavailable terminal. */

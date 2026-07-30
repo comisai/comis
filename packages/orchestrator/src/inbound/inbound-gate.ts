@@ -650,6 +650,27 @@ async function handleApprovalCommand(
   })
     .filter((request) => approvalRequestIsOwnedByInbound(request, callbackPrincipal));
 
+  const plainDecision = /^(yes|approve|no|deny)$/i.exec(text)?.[1]?.toLowerCase();
+  if (plainDecision !== undefined) {
+    const matches = ownedPending();
+    if (matches.length !== 1) {
+      return false;
+    }
+    const approved = plainDecision === "yes" || plainDecision === "approve";
+    gate.resolveApproval(matches[0].requestId, approved, `chat:${msg.senderId}`);
+    await deps.deliveryService.deliverToChannel(
+      adapter,
+      msg.channelId,
+      localized(deps, msg, "approval.resolved_one", {
+        outcome: approved ? "approved" : "denied",
+        action: matches[0].toolName ?? matches[0].action,
+        id: matches[0].shortId,
+      }),
+      inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
+    );
+    return true;
+  }
+
   // Bare command (no arguments) -- auto-resolve if unambiguous
   const bareApproveMatch = /^\/approve\s*$/i.test(text);
   const bareDenyMatch = !bareApproveMatch && /^\/deny\s*$/i.test(text);

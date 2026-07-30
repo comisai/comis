@@ -50,6 +50,8 @@ import { boundIncidentReport } from "./obs-explain-bound.js";
 
 const DELEGATION_EVIDENCE_GUARD_ACTION =
   "response.delegation_evidence_guard";
+const DESTRUCTIVE_ACTION_EVIDENCE_GUARD_ACTION =
+  "response.destructive_action_evidence_guard";
 const VISION_FALLBACK_GROUNDED_ACTION =
   "response.vision_fallback_grounded";
 
@@ -546,6 +548,13 @@ export async function assembleIncidentReportFromSources(
     // that changed the user-visible outcome.
     report.likelyRootCause = delegationEvidenceVerdict;
   }
+  const destructiveActionEvidenceVerdict = destructiveActionEvidenceGuardVerdict(
+    auditRows,
+    report.traceId,
+  );
+  if (destructiveActionEvidenceVerdict !== null) {
+    report.likelyRootCause = destructiveActionEvidenceVerdict;
+  }
   const bounded = boundIncidentReport(report, params.depth ?? "summary");
 
   // Attach the audit? section AFTER the bound pass (it is
@@ -618,6 +627,34 @@ function delegationEvidenceGuardVerdict(
       "inspect sessions_spawn admission and the tool inventory for this turn",
       "if a spawn was refused, inspect the bound-naming tool failure in this report",
       "retry the request after correcting the spawn precondition",
+    ],
+  };
+}
+
+function destructiveActionEvidenceGuardVerdict(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  traceId: string,
+): IncidentReport["likelyRootCause"] {
+  if (
+    traceId.length === 0
+    || !rows.some(
+      (row) =>
+        row.traceId === traceId
+        && row.action === DESTRUCTIVE_ACTION_EVIDENCE_GUARD_ACTION
+        && row.outcome === "denied",
+    )
+  ) {
+    return null;
+  }
+  return {
+    code: "destructive_action_no_effect",
+    detail:
+      "the response honesty guard replaced a completion claim because the destructive "
+      + "exec command reported no observable filesystem effect",
+    suggestedNextSteps: [
+      "inspect the failed exec record and its bound approval request",
+      "confirm the intended target exists inside the configured workspace or write fence",
+      "retry only after correcting the target; do not treat an exit-zero no-op as success",
     ],
   };
 }

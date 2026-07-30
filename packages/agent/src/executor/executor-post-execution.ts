@@ -123,8 +123,11 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
-import { enforceCurrentTurnDelegationEvidence } from "./executor-response-filter.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import {
+  enforceCurrentTurnDelegationEvidence,
+  enforceDestructiveEffectEvidence,
+} from "./executor-response-filter.js";
 import { BACKGROUND_POLLER_TOOL } from "../safety/background-failure-attribution.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
@@ -1431,6 +1434,37 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         claimKind: "delegation",
         reason: delegationEvidence.reason,
         requiredTool: "sessions_spawn",
+      },
+    });
+  }
+  const destructiveEffectEvidence = enforceDestructiveEffectEvidence({
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    honestResponse: buildDestructiveActionNotVerifiedReply(replyLanguage, localeCatalog),
+  });
+  if (destructiveEffectEvidence.corrected) {
+    result.response = destructiveEffectEvidence.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        errorKind: "precondition" as const,
+        hint:
+          "Inspect the failed exec record and bound approval in comis explain, confirm the "
+          + "target exists inside the workspace write fence, then retry the corrected target.",
+      },
+      "Unverified destructive action completion claim replaced",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.destructive_action_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "destructive_effect",
+        reason: destructiveEffectEvidence.reason,
+        requiredTool: "exec",
       },
     });
   }

@@ -29,6 +29,7 @@ import {
   selectPromptTimeoutReply,
   selectBackgroundTaskFailedNotice,
   selectDelegationEvidenceMissingReply,
+  selectDestructiveActionNotVerifiedReply,
   selectVisionUnavailableReply,
   type LocaleCatalog,
 } from "./degraded-reply-i18n.js";
@@ -183,6 +184,14 @@ export function buildDelegationEvidenceMissingReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectDelegationEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when a destructive command had no observable effect. */
+export function buildDestructiveActionNotVerifiedReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectDestructiveActionNotVerifiedReply(language, localeCatalog);
 }
 
 interface VisionFailureRecord {
