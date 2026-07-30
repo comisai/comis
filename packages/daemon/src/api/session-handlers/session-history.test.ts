@@ -424,7 +424,9 @@ describe("session.history agent-origin self-scoping", () => {
       handlers["session.history"]!({
         session_key: SESSION_KEY,
         _agentId: "attacker-agent",
+        _tenantId: "test",
         _callerSessionKey: "test:attacker-user:attacker-channel",
+        _callerConversationScope: scopeFor("attacker-agent"),
       }),
     ).rejects.toThrow(/does not match the authenticated caller/i);
   });

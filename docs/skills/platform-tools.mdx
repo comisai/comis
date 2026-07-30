@@ -67,7 +67,7 @@ ability to collaborate with other agents:
 
 - `session_search` -- search session history by query
 - `session_status` -- get the current session's status
-- `sessions_list` -- list all sessions for this agent
+- `sessions_list` -- list the caller conversation and directly delegated child sessions
 - `sessions_history` -- retrieve session history entries
 - `sessions_send` -- send a message to another agent's session
 - `sessions_spawn` -- create a new sub-agent session for parallel work
@@ -181,7 +181,7 @@ Four individual tools for querying and inspecting sessions:
 - **`session_search`** -- search session history by query (keywords, phrases, or boolean expressions); supports role-scoped filtering and optional LLM summarization.
 - **`session_status`** -- get the current session's status, including model, context usage, and active configuration.
 - **`sessions_history`** -- retrieve history entries for a durable `tenant_id` + `agent_id` + `conversation_ref`, with pagination (`offset`, `limit`).
-- **`sessions_list`** -- list all sessions for this agent, filterable by kind (`dm`, `group`, `sub-agent`) and recency (`since_minutes`).
+- **`sessions_list`** -- list the caller conversation and directly delegated child sessions, filterable by kind (`dm`, `group`, `sub-agent`) and recency (`since_minutes`).
 
 #### Memory tools
 

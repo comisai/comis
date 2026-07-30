@@ -42,7 +42,7 @@ The CLI is **opt-in and off by default** -- it is only available inside a jail w
 | `status` | `session.status` | self-scoped read (no capability) |
 | `list` | `session.list` | self-scoped read (no capability) |
 
-The first ten subcommands dispatch to a capability-mapped tool or method and are gated by `requireCapability`; a lease that does not hold the mapped capability is denied at the endpoint (the same denial the typed tool would receive). The last three -- `whoami`, `status`, `list` -- are **self-scoped reads**: any valid lease reaches the agent's **own** introspection and session reads (the request carries no `agentId`; the daemon resolves the caller's own scope, so an agent can never read another agent's sessions). `status list` is accepted as a two-token alias for `list`.
+The first ten subcommands dispatch to a capability-mapped tool or method and are gated by `requireCapability`; a lease that does not hold the mapped capability is denied at the endpoint (the same denial the typed tool would receive). The last three -- `whoami`, `status`, `list` -- are **self-scoped reads**: any valid lease reaches the agent's **own** introspection, exact caller conversation, and directly delegated child sessions. Unrelated conversations remain outside the lease's authority. `status list` is accepted as a two-token alias for `list`.
 
 <Note>
 The 1:1-to-capability table is the **same gate** the typed tools reach. `comis-agent spawn` and the `session.spawn` tool both arrive at the `session.spawn` handler behind `requireCapability("orch:spawn")` -- there is no separate, weaker CLI path. This is proved by `comis-agent-same-gate.test.ts`, which enumerates every `CLI_SUBCOMMAND_MAP` target and asserts it resolves to the same capability-map gate.

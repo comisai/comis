@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Sessions List Tool: list active sessions filtered by kind and recency.
+ * Sessions List Tool: list caller-visible sessions by kind and recency.
  *
  * Delegates to the daemon-side session.list RPC method. Sessions can be
  * filtered by kind (dm, group, sub-agent) and recency (since_minutes).
@@ -52,7 +52,7 @@ export function createSessionsListTool(rpcCall: RpcCall): AgentTool<typeof Sessi
   return {
     name: "sessions_list",
     label: "Sessions List",
-    description: "List active sessions filtered by kind and recency.",
+    description: "List the caller conversation and directly delegated child sessions, filtered by kind and recency.",
     parameters: SessionsListParams,
 
     async execute(

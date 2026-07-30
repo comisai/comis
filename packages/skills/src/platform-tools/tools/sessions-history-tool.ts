@@ -45,7 +45,7 @@ export function createSessionsHistoryTool(rpcCall: RpcCall): AgentTool<typeof Se
   return {
     name: "sessions_history",
     label: "Sessions History",
-    description: "View conversation history for a durable tenant, agent, and conversation reference with pagination. Sub-agent listings expose agentId, conversationRef, and conversationScope.tenantId for this lookup.",
+    description: "View history for the exact caller conversation or a directly delegated child, using its durable tenant, agent, and conversation reference.",
     parameters: SessionsHistoryParams,
 
     async execute(

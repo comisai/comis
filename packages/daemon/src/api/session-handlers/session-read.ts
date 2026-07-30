@@ -37,7 +37,11 @@ import {
   resolveSubagentController,
   subagentControllerOwnsRun,
 } from "../subagent-controller.js";
-import { requireSubagentConversationAccess } from "./session-subagent-authority.js";
+import {
+  denyModelSessionScopeMismatch,
+  requireModelSessionAccess,
+  resolveModelSessionCaller,
+} from "./session-read-authority.js";
 
 /**
  * Bind the session read handlers. Object-spread compatible with
@@ -84,27 +88,25 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       // The session-not-found error message preserves the user-friendly hint
       // including the list of available keys — that path runs AFTER the
       // parse since session_key must be present to do the lookup.
-      // Internal-field read BEFORE strip (caller-scoping). The
-      // tool.invoke rpc route injects `_agentId = lease.agentId`; its PRESENCE
-      // is the unforgeable agent-origin signal (inbound _agentId is stripped
-      // from external callers at the gateway). Admin/operator/CLI calls arrive
-      // with NO _agentId and keep full access.
-      const callerAgentId = rawParams._agentId as string | undefined;
-
+      // Internal fields are read before stripping. The model-facing route
+      // injects an exact structured conversation scope; the handler permits
+      // that conversation and directly delegated children only.
+      // Admin/operator/CLI calls arrive with no _agentId and keep full access.
       const userParams = stripInternalFields(rawParams);
       const params = SessionHistoryContract.request.parse(userParams);
 
       const authority = { tenantId: params.tenant_id, agentId: params.agent_id };
-      if (callerAgentId !== undefined && callerAgentId !== authority.agentId) {
-        throw new PreconditionError("Session query agent does not match the authenticated caller");
-      }
-      const callerTenantId = rawParams._tenantId as string | undefined;
-      if (callerTenantId !== undefined && callerTenantId !== authority.tenantId) {
-        throw new PreconditionError("Session query tenant does not match the authenticated caller");
+      const modelCaller = resolveModelSessionCaller(deps, rawParams, "session.history");
+      if (modelCaller !== undefined && modelCaller.tenantId !== authority.tenantId) {
+        return denyModelSessionScopeMismatch(
+          deps,
+          "session.history",
+          modelCaller,
+          "Session query tenant does not match the authenticated caller",
+        );
       }
       const parsedRef = ConversationRefSchema.safeParse(params.conversation_ref);
       if (!parsedRef.success) throw new PreconditionError("Invalid conversation reference");
-      requireSubagentConversationAccess(rawParams, parsedRef.data);
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 20;
 
@@ -112,6 +114,11 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       if (!loaded.ok) throw loaded.error;
       const data = loaded.value;
       if (!data) throw new PreconditionError(`Conversation not found: ${params.conversation_ref}`);
+      requireModelSessionAccess(deps, rawParams, {
+        conversationRef: parsedRef.data,
+        agentId: data.conversationScope.agentId,
+        metadata: data.metadata,
+      });
       const projected = conversationScopeToSessionKey(data.conversationScope);
       if (!projected.ok) throw projected.error;
       const sessionKey = formatSessionKey(projected.value);

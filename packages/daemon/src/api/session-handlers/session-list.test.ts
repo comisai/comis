@@ -98,7 +98,8 @@ function makeDeps(): SessionHandlerDeps {
       },
     },
     logger: {
-      info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis(),
+      info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(),
+      audit: vi.fn(), child: vi.fn().mockReturnThis(),
     },
   } as unknown as SessionHandlerDeps;
 }
@@ -205,6 +206,7 @@ describe("session list explicit authority", () => {
       agent_id: "agent_b",
       _agentId: "agent_a",
       _tenantId: "tenant_a",
+      _callerConversationScope: scope("agent_a"),
     })).rejects.toThrow(/does not match the authenticated caller/i);
   });
 

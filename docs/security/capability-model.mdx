@@ -57,7 +57,7 @@ tool that is not on the map has no capability and is **undispatchable**.
 | Tool | Capability | How it runs |
 |------|------------|-------------|
 | `read`, `grep`, `find`, `ls`, `jq` | `orch:read` | In-process builtins, run daemon-side under the agent's jailed workspace |
-| `memory_search`, `memory_get`, `session_search`, `sessions_list`, `session_status`, `sessions_history`, `extract_document` | `orch:read` | Routed to the existing registered RPC handler (self-scoped to the agent) |
+| `memory_search`, `memory_get`, `session_search`, `sessions_list`, `session_status`, `sessions_history`, `extract_document` | `orch:read` | Routed to the existing registered RPC handler (session reads are scoped to the caller conversation and directly delegated children) |
 | `web_search`, `web_fetch` | `orch:web` | Daemon-side on the daemon's network (the jail stays `--unshare-net`), DNS-pinned |
 
 The map above is representative; the **authoritative list is `TOOL_CAPABILITY_MAP`**
