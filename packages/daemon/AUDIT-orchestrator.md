@@ -4,7 +4,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:331–381`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 31 (15 required + 16 optional + 0 stale-fallback)
+**Field count:** 32 (15 required + 17 optional + 0 stale-fallback)
 **Location rationale:** Co-located with @comis/daemon package. `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from npm tarball.
 
 ## Field Classification
@@ -40,6 +40,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | getProviderCapabilityClass | optional | the per-agent `resolveCapabilityClass` wired at rpc-dispatch.ts:200 returns undefined, so every `pipeline:authored` records `capabilityClass:"unknown"` (the tier is recorded honestly, never dropped) | packages/daemon/src/api/types.ts:378 |
 | leaseManager | optional | the autonomy-handlers' `lease.revoke` / `run.kill` are not registered in the dispatcher (a partial boot); a stray call hits the dispatcher's unknown-method path. The composition root wires the real instance, so production always carries it | packages/daemon/src/api/types.ts:362 |
 | durableRuns | optional | the revoke does NOT poison the persisted run record, so a restart could re-mint pre-revoke caps; inert when absent (the in-memory lease revoke alone still stops the live bearer — only matters once durability is enabled, which is when the composition root wires this) | packages/daemon/src/api/types.ts:363 |
+| retireRootRunId | optional | a root-wide revoke/kill leaves the session bound to its permanently tombstoned root, so later authenticated turns cannot start new governed work in that conversation; the hard stop itself still succeeds | packages/daemon/src/api/types.ts:373 |
 | denialBreaker | optional | the per-rootRunId consecutive-floor-block circuit breaker (a pure count-based trip-once counter, no clock/throws) the dispatch chokepoint reads — recordAllow on the gated allow branch, recordDenial on a CapabilityDeniedError floor-block, trip→abort+escalate at the Nth consecutive deny (autonomy.denialBreakerN). Constructed at the cap-endpoint boot (setup-capability-endpoint-boot.ts:414) from the resolved autonomy-bearing config; absent when no autonomy agent ⇒ the chokepoint never trips and a deny loop is bounded only by the per-root budget | packages/daemon/src/api/types.ts:360 |
 | evictRegistry | optional | the daemon-wide in-memory evicted-rootRunId set — written by the autonomy.evict admin handler (mark) and read by the chokepoint (isEvicted → demote the run's mode to "default" mid-run, the run keeps going). Threading it onto these deps ALSO activates the conditionally-registered autonomy.evict handler via the createAutonomyHandlers `...deps` spread. Constructed at the cap-endpoint boot (setup-capability-endpoint-boot.ts:422); absent when no autonomy agent ⇒ autonomy.evict is not registered and no run can be demoted mid-flight | packages/daemon/src/api/types.ts:361 |
 | escalate | optional | the content-free out-of-band operator-escalation callback (a NotifyFn carrying ids + reason + hint, NEVER a message body). The chokepoint fires it fire-and-forget (never awaited) on an unattended-mode would-ask deny and on a breaker trip, so the deny still re-throws immediately and the run never hangs. Constructed at the cap-endpoint boot (setup-capability-endpoint-boot.ts:429) as a content-free WARN; absent when no autonomy agent ⇒ an unattended deny is denied without out-of-band escalation | packages/daemon/src/api/types.ts:362 |
@@ -52,7 +53,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 ## Summary
 
 - **Pre-audit count:** 17
-- **Final count:** 31 (15 required + 16 optional)
+- **Final count:** 32 (15 required + 17 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

@@ -37,6 +37,7 @@ import {
   createOutputGuard,
   formatSessionKey,
   resolveContextRootRunId,
+  tryGetContext,
   type PerAgentConfig,
   type ClockPort,
   type TimerPort,
@@ -68,6 +69,7 @@ import {
   type ResultRefStore,
 } from "@comis/skills/tools";
 import { readFileSync, realpathSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
   createCapabilityEndpoint,
@@ -85,28 +87,61 @@ export interface CapabilityWebSearchKeys {
   get: (name: string) => string | undefined;
 }
 
+/** One execution-root generation for an authenticated session principal. */
+interface RootRunGeneration {
+  readonly rootRunId: string;
+  readonly activatedAtMs: number;
+  retiredAtMs?: number;
+}
+
+/** Session-root authority shared by execution and root-wide stop paths. */
+export interface RootRunIdRegistry {
+  readonly resolve: RootRunIdResolver;
+  retire(rootRunId: string): boolean;
+}
+
 /**
- * Build the `resolveRootRunId(agentId, sessionKey) → rootRunId` resolver over a late-bound
- * budget holder + an authenticated agent/session→rootRunId index. The
- * resolver is a STABLE closure created EARLY (before setupAgents/setupSchedulers,
- * which hold it) and reads `holder.current` at call time — by the time a turn runs,
- * the cap layer has populated it.
+ * Build the session-root registry over a late-bound budget holder. A session
+ * keeps one root while it is active, but a root-wide revoke/kill retires that
+ * generation permanently. The first later authenticated turn receives a fresh
+ * root; an older in-flight turn keeps resolving to the retired root and cannot
+ * escape its durable tombstone.
  *
- * Resolution: return the session's already-registered root if present; otherwise
- * mint a SYNTHETIC per-principal root and `registerRoot`
- * it on first use (via the holder). The synthetic fallback is what bounds a
- * TOP-LEVEL (non-spawned) self-spawning loop — the budget's token/wall-clock limbs
- * then key on a stable id for ANY run, not only orchestrate children.
- * A synthetic root has no real lease, so a synthetic leaseId is recorded (the
- * correlation index is content-free; the meter only needs the wall-clock anchor).
- * Idempotent: the same session resolves to the SAME id on every call.
+ * Each generated root carries an unpredictable generation identifier. A daemon
+ * restart therefore cannot accidentally reuse a tombstoned root, while resumed
+ * work still carries its exact persisted root through RequestContext.
+ *
+ * A synthetic root has no real lease, so a synthetic leaseId is recorded. Calls
+ * outside a request scope fail closed onto the current generation and cannot
+ * rotate a retired root.
  */
-export function createRootRunIdResolver(deps: {
+export function createRootRunIdRegistry(deps: {
   holder: BoundedAutonomyBudgetHolder;
-  index: Map<string, string>;
+  clock: Pick<ClockPort, "now">;
+  idFactory?: () => string;
   onContextMismatch?: (error: RootRunContextError, agentId: string) => void;
-}): RootRunIdResolver {
-  return (agentId: string, sessionKey: SessionKey) => {
+}): RootRunIdRegistry {
+  const generationsByPrincipal = new Map<string, RootRunGeneration[]>();
+  const generationByRoot = new Map<string, RootRunGeneration>();
+  const idFactory = deps.idFactory ?? randomUUID;
+
+  function mintGeneration(
+    principalKey: string,
+    agentId: string,
+    formatted: string,
+    activatedAtMs: number,
+  ): string {
+    const rootRunId = `root-session-${idFactory()}-${agentId}-${formatted}`;
+    const generation: RootRunGeneration = { rootRunId, activatedAtMs };
+    const generations = generationsByPrincipal.get(principalKey) ?? [];
+    generations.push(generation);
+    generationsByPrincipal.set(principalKey, generations);
+    generationByRoot.set(rootRunId, generation);
+    deps.holder.current?.registerRoot(rootRunId, `lease-${rootRunId}`);
+    return rootRunId;
+  }
+
+  const resolveRootRunId: RootRunIdResolver = (agentId: string, sessionKey: SessionKey) => {
     const contextRoot = resolveContextRootRunId(agentId, sessionKey);
     if (!contextRoot.ok) {
       deps.onContextMismatch?.(contextRoot.error, agentId);
@@ -116,17 +151,52 @@ export function createRootRunIdResolver(deps: {
 
     const formatted = formatSessionKey(sessionKey);
     const principalKey = `${agentId}:${formatted}`;
-    const existing = deps.index.get(principalKey);
-    if (existing !== undefined) return ok(existing);
-    const synthetic = `root-session-${agentId}-${formatted}`;
-    deps.index.set(principalKey, synthetic);
-    // Anchor the synthetic root in the budget meter on first use (wall-clock
-    // deadline + the rootRunId↔leaseId correlation). No real lease for a top-level
-    // run → a synthetic leaseId; absent holder ⇒ skip (the resolver still returns
-    // a stable id so the bridge can call reserveBudget once `current` is populated).
-    deps.holder.current?.registerRoot(synthetic, `lease-${synthetic}`);
-    return ok(synthetic);
+    const requestStartedAt = tryGetContext()?.startedAt;
+    const generations = generationsByPrincipal.get(principalKey);
+    if (generations === undefined || generations.length === 0) {
+      return ok(mintGeneration(
+        principalKey,
+        agentId,
+        formatted,
+        requestStartedAt ?? deps.clock.now(),
+      ));
+    }
+
+    if (requestStartedAt !== undefined) {
+      for (let index = generations.length - 1; index >= 0; index--) {
+        const generation = generations[index]!;
+        if (
+          requestStartedAt >= generation.activatedAtMs
+          && (
+            generation.retiredAtMs === undefined
+            || requestStartedAt <= generation.retiredAtMs
+          )
+        ) {
+          return ok(generation.rootRunId);
+        }
+      }
+    }
+
+    const current = generations.at(-1)!;
+    if (
+      current.retiredAtMs === undefined
+      || requestStartedAt === undefined
+      || requestStartedAt <= current.retiredAtMs
+    ) {
+      return ok(current.rootRunId);
+    }
+    return ok(mintGeneration(principalKey, agentId, formatted, requestStartedAt));
   };
+
+  return Object.freeze({
+    resolve: resolveRootRunId,
+    retire(rootRunId: string): boolean {
+      const generation = generationByRoot.get(rootRunId);
+      if (generation === undefined || generation.retiredAtMs !== undefined) return false;
+      generation.retiredAtMs = deps.clock.now();
+      return true;
+    },
+  });
 }
 
 /** Deps for {@link constructCapabilityLayer} — the subset boot closes over. */
@@ -181,12 +251,8 @@ export interface CapabilityLayerDeps {
    * never wired (byte-identical).
    */
   boundedAutonomyHolder?: BoundedAutonomyBudgetHolder;
-  /**
-   * The session→rootRunId index the {@link createRootRunIdResolver} closure reads.
-   * Shared by reference with the resolver daemon.ts threads into setupAgents (built
-   * EARLY over the SAME holder). Optional — absent ⇒ a local index is used here.
-   */
-  rootRunIdIndex?: Map<string, string>;
+  /** The exact early-built session-root resolver shared by all daemon consumers. */
+  resolveRootRunId?: RootRunIdResolver;
   /**
    * A daemon-supplied LeaseManager, built EARLY in daemon.ts
    * (before setupSchedulers) so the cron-fire mint and this layer share the SAME
@@ -283,12 +349,8 @@ interface CapabilityLayerResultBase {
    */
   namespacePreflightOk: boolean;
   /**
-   * The `resolveRootRunId(agentId, sessionKey)` resolver built
-   * over the populated holder + the authenticated principal index. `undefined` when no
-   * autonomy agent (no cap layer). daemon.ts ALSO builds an equivalent resolver
-   * early (over the SAME holder + index) for setupAgents, which runs before this
-   * call — this returned one is the canonical resolver for any later consumer + the
-   * boot-test seam.
+   * The early-built `resolveRootRunId(agentId, sessionKey)` resolver shared with
+   * setupAgents. `undefined` when the caller did not provide the registry.
    */
   resolveRootRunId?: RootRunIdResolver;
 }
@@ -564,29 +626,7 @@ export async function constructCapabilityLayer(
   const preflight: NamespacePreflightResult = namespacePreflight();
   const { namespacePreflightOk } = preflight;
 
-  // The rootRunId resolver over the late-bound holder
-  // + the session→rootRunId index. Built whenever a holder is supplied (daemon.ts
-  // shares the SAME holder + index it threads into setupAgents early) — the resolver
-  // is a stable closure that reads `holder.current` at call time.
-  const rootRunIdIndex = deps.rootRunIdIndex ?? new Map<string, string>();
-  const resolveRootRunId = deps.boundedAutonomyHolder
-    ? createRootRunIdResolver({
-        holder: deps.boundedAutonomyHolder,
-        index: rootRunIdIndex,
-        onContextMismatch: (error, agentId) => {
-          daemonLogger.audit(
-            { agentId, outcome: "denied", reason: error.code },
-            "Trusted root context identity rejected",
-          );
-          void deps.container?.eventBus.emitSafely("security:warn", {
-            category: "root_context_mismatch",
-            agentId,
-            message: "Trusted root context identity rejected",
-            timestamp: clock.now(),
-          });
-        },
-      })
-    : undefined;
+  const resolveRootRunId = deps.resolveRootRunId;
 
   // The first autonomy-bearing agent's resolved posture is the daemon-wide
   // bounded-autonomy config source (the bound mechanisms are a single daemon-wide

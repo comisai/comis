@@ -455,9 +455,11 @@ export function handleWaitForInput(
 
   // 1. Register listener BEFORE sending prompt
   const handler = (payload: { message: NormalizedMessage; sessionKey: SessionKey }) => {
-    // Match by channel type + channel ID
+    // Match the physical endpoint carried by the normalized message. Session
+    // routing may intentionally project channelId to a privacy partition
+    // identifier, which is not the destination recorded on the graph run.
     if (payload.message.channelType !== gs.announceChannelType) return;
-    if (payload.sessionKey.channelId !== gs.announceChannelId) return;
+    if (payload.message.channelId !== gs.announceChannelId) return;
 
     // Match by user identity (if we have one)
     if (callerUserId && payload.sessionKey.userId !== callerUserId) return;

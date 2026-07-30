@@ -51,6 +51,7 @@ function createMockDeps(over: Partial<AutonomyHandlerDeps> = {}): AutonomyHandle
       invalidateForRevoke: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
     },
     revokeDurableRoot: vi.fn(),
+    retireRootRunId: vi.fn(),
     // A stub evicted-set whose mark/isEvicted/clear are
     // observable. The OPTIONAL dep — present here so the default deps register the
     // autonomy.evict handler; the gating test below omits it to prove the handler
@@ -250,12 +251,14 @@ describe("createAutonomyHandlers — lease.revoke + run.kill", () => {
     await handlers["lease.revoke"]!({ rootRunId: "R1" });
     expect(deps.durableRuns!.invalidateForRevoke).toHaveBeenCalledWith("R1");
     expect(deps.revokeDurableRoot).toHaveBeenCalledWith("R1");
+    expect(deps.retireRootRunId).toHaveBeenCalledWith("R1");
   });
 
   it("run.kill ALSO calls durableRuns.invalidateForRevoke(rootRunId)", async () => {
     await handlers["run.kill"]!({ rootRunId: "R1" });
     expect(deps.durableRuns!.invalidateForRevoke).toHaveBeenCalledWith("R1");
     expect(deps.revokeDurableRoot).toHaveBeenCalledWith("R1");
+    expect(deps.retireRootRunId).toHaveBeenCalledWith("R1");
   });
 
   it("lease.revoke by leaseId (no rootRunId) does NOT invalidate a persisted record", async () => {
@@ -277,6 +280,7 @@ describe("createAutonomyHandlers — lease.revoke + run.kill", () => {
     await expect(h["lease.revoke"]!({ rootRunId: "R1" })).resolves.toEqual({ revoked: 0 });
     await expect(h["run.kill"]!({ rootRunId: "R1" })).resolves.toEqual({ killed: 0 });
     expect(noStoreDeps.revokeDurableRoot).toHaveBeenCalledTimes(2);
+    expect(noStoreDeps.retireRootRunId).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -26,7 +26,10 @@ import {
 import type { McpClientManager } from "@comis/skills";
 import { safeResultRunId } from "@comis/skills/tools";
 import { createLeaseManager } from "@comis/infra";
-import { createRootRunIdResolver, constructCapabilityLayer } from "./setup-capability-endpoint-boot.js";
+import {
+  createRootRunIdRegistry,
+  constructCapabilityLayer,
+} from "./setup-capability-endpoint-boot.js";
 
 /** Track temp data dirs + stop thunks so each socket-binding test tears down. */
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -177,6 +180,12 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
       ...createDeps({ a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig }, { dataDir }),
       boundedAutonomyHolder: holder,
     };
+    const registry = createRootRunIdRegistry({
+      holder,
+      clock: deps.clock,
+      idFactory: () => "11111111-1111-4111-8111-111111111111",
+    });
+    deps.resolveRootRunId = registry.resolve;
     const result = await constructCapabilityLayer(deps as Parameters<typeof constructCapabilityLayer>[0]);
     cleanups.push(() => result.capEndpointStop?.());
     // Before this plan the holder is never touched; after, current is the budget port.
@@ -193,7 +202,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
   });
 
   // The resolver returns a STABLE rootRunId per session: an unregistered (top-level,
-  // non-spawned) session gets a SYNTHETIC `root-session-<key>` id, registered on
+  // non-spawned) session gets a generated `root-session-*` id, registered on
   // first use so a self-spawning loop on ANY run is bounded (not only
   // orchestrate children). The same session resolves to the SAME id on a second call.
   it("resolveRootRunId returns a stable synthetic root for an unregistered session and registers it on first use", async () => {
@@ -203,11 +212,17 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
       ...createDeps({ a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig }, { dataDir }),
       boundedAutonomyHolder: holder,
     };
+    const registry = createRootRunIdRegistry({
+      holder,
+      clock: deps.clock,
+      idFactory: () => "11111111-1111-4111-8111-111111111111",
+    });
+    deps.resolveRootRunId = registry.resolve;
     const result = await constructCapabilityLayer(deps as Parameters<typeof constructCapabilityLayer>[0]);
     cleanups.push(() => result.capEndpointStop?.());
     const resolveRootRunId = result.resolveRootRunId;
     expect(resolveRootRunId).toBeDefined();
-    const sk = { tenantId: "t1", channelId: "c1", userId: "u1" };
+    const sk = { tenantId: "t1", agentId: "a1", channelId: "c1", userId: "u1" };
     const id1 = resolveRootRunId!("a1", sk);
     const id2 = resolveRootRunId!("a1", sk);
     expect(id1.ok).toBe(true);
@@ -223,6 +238,12 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
       ...createDeps({ a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig }, { dataDir }),
       boundedAutonomyHolder: holder,
     };
+    const registry = createRootRunIdRegistry({
+      holder,
+      clock: deps.clock,
+      idFactory: () => "11111111-1111-4111-8111-111111111111",
+    });
+    deps.resolveRootRunId = registry.resolve;
     const result = await constructCapabilityLayer(deps as Parameters<typeof constructCapabilityLayer>[0]);
     cleanups.push(() => result.capEndpointStop?.());
     const context = createResolvedRequestContext({
@@ -247,12 +268,86 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     expect(registerRoot).not.toHaveBeenCalled();
   });
 
+  it("retires one session-root generation without letting its in-flight turn escape the tombstone", () => {
+    let nowMs = 1_700_000_000_100;
+    const registerRoot = vi.fn();
+    const ids = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    const registry = createRootRunIdRegistry({
+      holder: { current: { reserveBudget: vi.fn(), registerRoot } },
+      clock: { now: () => nowMs },
+      idFactory: () => ids.shift()!,
+    });
+    const sessionKey = {
+      tenantId: "t1",
+      agentId: "a1",
+      channelId: "c1",
+      userId: "u1",
+    };
+    const firstContext = createResolvedRequestContext({
+      tenantId: "t1",
+      userId: "u1",
+      sessionKey,
+      agentId: "a1",
+      traceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      startedAt: 1_700_000_000_000,
+      trustLevel: "user",
+    });
+    expect(firstContext.ok).toBe(true);
+    if (!firstContext.ok) return;
+
+    const firstRoot = runWithContext(
+      firstContext.value,
+      () => registry.resolve("a1", sessionKey),
+    );
+    expect(firstRoot).toEqual({
+      ok: true,
+      value: "root-session-11111111-1111-4111-8111-111111111111-a1-t1:agent:a1:u1:c1",
+    });
+    if (!firstRoot.ok) return;
+
+    nowMs = 1_700_000_000_200;
+    expect(registry.retire(firstRoot.value)).toBe(true);
+    expect(runWithContext(
+      firstContext.value,
+      () => registry.resolve("a1", sessionKey),
+    )).toEqual(firstRoot);
+
+    const laterContext = createResolvedRequestContext({
+      tenantId: "t1",
+      userId: "u1",
+      sessionKey,
+      agentId: "a1",
+      traceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      startedAt: 1_700_000_000_201,
+      trustLevel: "user",
+    });
+    expect(laterContext.ok).toBe(true);
+    if (!laterContext.ok) return;
+
+    const laterRoot = runWithContext(
+      laterContext.value,
+      () => registry.resolve("a1", sessionKey),
+    );
+    expect(laterRoot).toEqual({
+      ok: true,
+      value: "root-session-22222222-2222-4222-8222-222222222222-a1-t1:agent:a1:u1:c1",
+    });
+    expect(runWithContext(
+      firstContext.value,
+      () => registry.resolve("a1", sessionKey),
+    )).toEqual(firstRoot);
+    expect(registerRoot).toHaveBeenCalledTimes(2);
+  });
+
   it("resolveRootRunId reports a trusted context identity mismatch without minting a fallback", () => {
     const registerRoot = vi.fn();
     const onContextMismatch = vi.fn();
-    const resolver = createRootRunIdResolver({
+    const registry = createRootRunIdRegistry({
       holder: { current: { reserveBudget: vi.fn(), registerRoot } },
-      index: new Map(),
+      clock: { now: () => 1_700_000_000_000 },
       onContextMismatch,
     });
     const context = createResolvedRequestContext({
@@ -268,7 +363,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     expect(context.ok).toBe(true);
     if (!context.ok) return;
 
-    const resolved = runWithContext(context.value, () => resolver(
+    const resolved = runWithContext(context.value, () => registry.resolve(
       "a2",
       { tenantId: "t1", agentId: "a2", channelId: "c1", userId: "u1" },
     ));

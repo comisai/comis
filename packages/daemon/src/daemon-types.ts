@@ -521,6 +521,7 @@ export interface BootContext {
   // The LATE-BOUND bounded-autonomy seam (bootAgents → boot → cap layer populates/shares it).
   boundedAutonomyBudgetHolder?: BoundedAutonomyBudgetHolder;
   resolveRootRunId?: import("@comis/core").RootRunIdResolver;
+  retireRootRunId?: (rootRunId: string) => boolean;
   sharedLeaseManager?: LeaseManager;
   // Schedulers
   cronSchedulers?: Awaited<ReturnType<typeof setupSchedulers>>["cronSchedulers"];

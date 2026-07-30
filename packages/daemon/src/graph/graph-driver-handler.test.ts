@@ -539,6 +539,83 @@ describe("executeDriverAction passes discoveredDeferredTools for mcpServers node
   });
 });
 
+describe("executeDriverAction wait_for_input conversation matching", () => {
+  it("accepts the physical channel reply when the durable session uses a privacy-projected channel id", async () => {
+    let received: ((payload: unknown) => void) | undefined;
+    const deps = createMockDeps();
+    vi.mocked(deps.eventBus.on).mockImplementation((event, handler) => {
+      if (event === "message:received") received = handler as (payload: unknown) => void;
+      return deps.eventBus;
+    });
+    const driver = createMockDriver({
+      typeId: "approval-gate",
+      onTurnComplete: vi.fn().mockReturnValue({
+        action: "complete",
+        output: "Approved. User response: yes",
+      } as NodeDriverAction),
+    });
+    const gs = createMinimalGraphRunState({
+      announceChannelType: "telegram",
+      announceChannelId: "678314278",
+      callerPrincipalId: "platform_user_a",
+    });
+    gs.driverStates.set("debate-node", {
+      driver,
+      ctx: createMockCtx(),
+      currentRunId: undefined,
+    });
+    const state: CoordinatorSharedState = {
+      graphs: new Map([["graph-1", gs]]),
+      globalActiveSubAgents: 0,
+      spawnQueue: [],
+    };
+
+    executeDriverAction(
+      state,
+      deps,
+      createMockConfig(),
+      gs,
+      "debate-node",
+      {
+        action: "wait_for_input",
+        message: "Ready?",
+        timeoutMs: 60_000,
+      },
+      createMockCallbacks(),
+    );
+    expect(received).toBeDefined();
+
+    received?.({
+      message: {
+        id: "11111111-1111-4111-8111-111111111111",
+        channelId: "678314278",
+        channelType: "telegram",
+        senderId: "678314278",
+        text: "yes",
+        timestamp: 1_700_000_000_000,
+        attachments: [],
+        metadata: {},
+      },
+      sessionKey: {
+        tenantId: "default",
+        agentId: "default",
+        channelId: "telegram",
+        userId: "platform_user_a",
+      },
+    });
+    await Promise.resolve();
+
+    expect(driver.onTurnComplete).toHaveBeenCalledWith(
+      expect.anything(),
+      "yes",
+    );
+    expect(gs.stateMachine.markNodeCompleted).toHaveBeenCalledWith(
+      "debate-node",
+      "Approved. User response: yes",
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // graph-driver-handler honors the owner-only 0o600 file-mode invariant on
 // substrate-routed writes

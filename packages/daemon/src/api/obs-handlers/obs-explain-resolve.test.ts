@@ -165,8 +165,8 @@ describe("resolveTraceToSession", () => {
 // `rootRunId` (an autonomy run) is canonicalized to the run's sessionKey FIRST,
 // so the system→explain drill-down (paste the worst run's rootRunId) shares the
 // ONE assembler path. TWO honest sources:
-//   1. a SYNTHETIC in-process root (`root-session-<formattedKey>`,
-//      setup-capability-endpoint-boot.ts:101) — a pure prefix-strip, NO I/O.
+//   1. a generated SYNTHETIC in-process root carrying its formatted session key
+//      — a pure prefix parse, NO I/O.
 //   2. a REAL socket/spawned root — scan the day-keyed session-index for a
 //      capability.audited record (events-orchestration.ts:90-104 carries BOTH
 //      `rootRunId` + `runId`) and return its runId (≈sessionKey).
@@ -174,14 +174,14 @@ describe("resolveTraceToSession", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolveRootRunToSession", () => {
-  it("resolves the current synthetic in-process root shape without reading the session index", async () => {
-    // `root-session-<agentId>-<formattedKey>` repeats agentId before the
-    // canonical session key. A pure string op — pass a dataDir with NO index
-    // at all to prove no file access is required.
+  it("resolves the generated synthetic in-process root shape without reading the session index", async () => {
+    // `root-session-<generation>-<agentId>-<formattedKey>` carries a unique
+    // execution generation before the canonical session key. A pure string op
+    // — pass a dataDir with NO index at all to prove no file access is required.
     const emptyDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-rootrun-synthetic-"));
     const resolved = await resolveRootRunToSession(
       emptyDataDir,
-      "root-session-default-default:agent:default:user:telegram:1717000000",
+      "root-session-11111111-1111-4111-8111-111111111111-default-default:agent:default:user:telegram:1717000000",
     );
     expect(resolved).toBe("default:agent:default:user:telegram:1717000000");
   });
@@ -190,7 +190,7 @@ describe("resolveRootRunToSession", () => {
     const emptyDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-rootrun-hyphenated-"));
     const resolved = await resolveRootRunToSession(
       emptyDataDir,
-      "root-session-release-agent-default:agent:release-agent:user:telegram:1717000000",
+      "root-session-11111111-1111-4111-8111-111111111111-release-agent-default:agent:release-agent:user:telegram:1717000000",
     );
     expect(resolved).toBe("default:agent:release-agent:user:telegram:1717000000");
   });
@@ -265,14 +265,14 @@ describe("resolveRootRunToSession", () => {
       JSON.stringify({
         type: "capability.audited",
         data: {
-          rootRunId: "root-session-a1-default:agent:a1:u:c",
+          rootRunId: "root-session-11111111-1111-4111-8111-111111111111-a1-default:agent:a1:u:c",
           runId: "WRONG-FROM-INDEX",
         },
       }),
     ]);
     const resolved = await resolveRootRunToSession(
       dataDir,
-      "root-session-a1-default:agent:a1:u:c",
+      "root-session-11111111-1111-4111-8111-111111111111-a1-default:agent:a1:u:c",
     );
     expect(resolved).toBe("default:agent:a1:u:c");
   });
