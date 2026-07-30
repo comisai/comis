@@ -92,9 +92,11 @@ describe("self-driving kit references", () => {
     // An undocumented helper is tooling a run never learns exists, so the
     // driver hand-rolls a weaker version and gets a weaker oracle.
     // `_`-prefixed files are the internal mode/portability layer.
+    // A `*.test.mjs` is a helper's own unit test, not tooling a driver invokes —
+    // the same reason a `*.test.ts` neighbour is already outside this filter.
     const readme = read(`${KIT}/scripts/README.md`);
     const scripts = readdirSync(resolve(REPO_ROOT, KIT, "scripts"))
-      .filter((f) => /\.(sh|mjs)$/.test(f) && !f.startsWith("_"));
+      .filter((f) => /\.(sh|mjs)$/.test(f) && !f.startsWith("_") && !f.endsWith(".test.mjs"));
     expect(scripts.filter((s) => !readme.includes(s))).toEqual([]);
   });
 
