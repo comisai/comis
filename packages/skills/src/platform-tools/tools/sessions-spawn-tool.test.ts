@@ -86,6 +86,18 @@ describe("sessions_spawn tool", () => {
     expect(params.properties.max_steps.description).toContain("Floor of 30");
   });
 
+  it("schema requires explicitly named child tools to use the reachability contract", () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => ({}));
+    const tool = createSessionsSpawnTool(mockRpcCall);
+    const params = tool.parameters as { properties: Record<string, { description?: string }> };
+
+    expect(tool.description).toContain("required_tools");
+    expect(params.properties.task.description).toContain("required_tools");
+    expect(params.properties.required_tools.description).toMatch(/must|mandatory/iu);
+    expect(params.properties.tool_groups.description).toContain("obs_query");
+    expect(params.properties.tool_groups.description).toContain("supervisor");
+  });
+
   it("does not expose or forward model-selected announcement routes", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({ runId: "run_a", async: true }));
     const tool = createSessionsSpawnTool(mockRpcCall);

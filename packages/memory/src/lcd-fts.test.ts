@@ -195,6 +195,67 @@ describe("lcd-fts — FTS path degrades a corrupt hit PER ROW, not all-or-nothin
   });
 });
 
+describe("lcd-fts — MATCH results are bounded excerpts", () => {
+  it("word-lane search returns a focused excerpt instead of the full stored message", () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    ensureLcdTables(db);
+    db.prepare(`INSERT INTO lcd_messages VALUES ('m-focused','conv-a','t','a','s',0,'user',1,1)`).run();
+    db.prepare(`INSERT INTO lcd_message_parts VALUES ('p-focused','m-focused',0,'text',NULL,NULL,NULL,NULL,NULL,?)`).run(
+      JSON.stringify({
+        raw: {
+          type: "text",
+          text: `${"unrelated prefix ".repeat(500)}exact spending constraint${" unrelated suffix".repeat(500)}`,
+        },
+        rawType: "text",
+      }),
+    );
+    db.prepare(`
+      INSERT INTO lcd_messages_fts (content, conversation_ref, agent_id, message_id)
+      VALUES (?, 'conv-a', 'a', 'm-focused')
+    `).run(`${"unrelated prefix ".repeat(500)}exact spending constraint${" unrelated suffix".repeat(500)}`);
+
+    const { hits } = searchLcdImpl(db, "conv-a", "a", "spending constraint", {
+      limit: 10,
+      scope: "messages",
+    });
+
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.snippet).toContain("exact spending constraint");
+    expect(hits[0]!.snippet.length).toBeLessThan(2_000);
+  });
+
+  it("trigram-lane search returns a focused excerpt instead of the full stored message", () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    ensureLcdTables(db);
+    db.prepare(`INSERT INTO lcd_messages VALUES ('m-focused','conv-a','t','a','s',0,'user',1,1)`).run();
+    db.prepare(`INSERT INTO lcd_message_parts VALUES ('p-focused','m-focused',0,'text',NULL,NULL,NULL,NULL,NULL,?)`).run(
+      JSON.stringify({
+        raw: {
+          type: "text",
+          text: `${"תוכן לא קשור ".repeat(500)}מגבלת הוצאה מדויקת${" המשך לא קשור".repeat(500)}`,
+        },
+        rawType: "text",
+      }),
+    );
+    db.prepare(`
+      INSERT INTO lcd_messages_fts_tri (content, conversation_ref, agent_id, message_id)
+      VALUES (?, 'conv-a', 'a', 'm-focused')
+    `).run(`${"תוכן לא קשור ".repeat(500)}מגבלת הוצאה מדויקת${" המשך לא קשור".repeat(500)}`);
+
+    const { hits, lane } = searchLcdImpl(db, "conv-a", "a", "מגבלת הוצאה", {
+      limit: 10,
+      scope: "messages",
+    });
+
+    expect(lane).toBe("tri");
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.snippet).toContain("מגבלת הוצאה");
+    expect(hits[0]!.snippet.length).toBeLessThan(2_000);
+  });
+});
+
 /**
  * A base-tables-only db (FTS5 reported UNAVAILABLE, so `searchLcdImpl` routes to
  * the LIKE-scan fallback) whose LIKE SELECTs return CALLER-SUPPLIED rows. The

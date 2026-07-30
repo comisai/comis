@@ -480,7 +480,27 @@ describe("resolveDescription", () => {
     expect(result).toMatch(/what failed.*why it was slow.*counts.*cost/i);
     expect(result).toMatch(/call explain.*system_health.*billing before answering/i);
     expect(result).toMatch(/never infer runtime cause from chat memory/i);
+    expect(result).toMatch(/system_health for failure or degraded counts/i);
     expect(result).toMatch(/say unknown/i);
+  });
+
+  it("describes the real skills management lifecycle instead of retired actions", () => {
+    const description = resolveDescription(
+      { name: "skills_manage" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { trustLevel: "admin", modelTier: "large" },
+    );
+
+    expect(description).toContain("list");
+    expect(description).toContain("import");
+    expect(description).toContain("delete");
+    expect(description).toContain("create");
+    expect(description).toContain("update");
+    expect(description).toContain("GitHub directory URL");
+    expect(description).toContain("local");
+    expect(description).not.toContain("reload");
+    expect(description).not.toContain("enable");
+    expect(description).not.toContain("disable");
   });
 
   it("all privileged tool dynamic builders follow admin suffix pattern", () => {
@@ -646,6 +666,12 @@ describe("SYSTEM_PROMPT_GUIDES trigger reachability", () => {
   it("names parallel fan-out in the always-present sessions_spawn description", () => {
     const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
     expect(lean as string).toMatch(/parallel|multiple/i);
+  });
+
+  it("binds explicitly required child tools in the first-spawn description", () => {
+    const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
+    expect(lean as string).toContain("required_tools");
+    expect(lean as string).toContain("tool_groups");
   });
 });
 

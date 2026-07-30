@@ -623,6 +623,16 @@ export const IncidentReportSchema = z.object({
       lastToolName: z.string().optional(),
     })
     .optional(),
+  /** Distinct promoted background-task lifecycle counts. */
+  backgroundTasks: z
+    .object({
+      promoted: z.number(),
+      completed: z.number(),
+      failed: z.number(),
+      accepted: z.number(),
+      pending: z.number(),
+    })
+    .optional(),
   /** Reply blocks an aborted execution left UNSENT — the pacer's hard stop
    *  never reaches the delivery service, so no `delivery.dispatched` fires
    *  and the user silently receives nothing. Σ over the session's

@@ -2,6 +2,10 @@
 /* eslint-disable @typescript-eslint/no-require-imports -- CommonJS script */
 
 const fs = require("fs");
+const path = require("path");
+
+const ALLOWED_IMAGE_HOST = "mdn.alipayobjects.com";
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
 // Chart type mapping, consistent with src/utils/callTool.ts
 const CHART_TYPE_MAP = {
@@ -95,13 +99,88 @@ async function generateMap(tool, inputData) {
   return data.resultObj;
 }
 
+function resolveOutputPath(outputArg) {
+  if (!outputArg) {
+    throw new Error("The --output option requires a workspace-relative path");
+  }
+  const workspaceRoot = path.resolve(process.cwd());
+  const outputPath = path.resolve(workspaceRoot, outputArg);
+  const relativePath = path.relative(workspaceRoot, outputPath);
+  if (
+    relativePath === "" ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new Error("The --output path must stay inside the workspace");
+  }
+  return outputPath;
+}
+
+async function downloadChartImage(imageUrl, outputArg) {
+  const outputPath = resolveOutputPath(outputArg);
+  const parsedUrl = new URL(imageUrl);
+  if (
+    parsedUrl.protocol !== "https:" ||
+    parsedUrl.hostname !== ALLOWED_IMAGE_HOST
+  ) {
+    throw new Error(
+      `Chart service returned an unexpected image host: ${parsedUrl.hostname}`,
+    );
+  }
+
+  const response = await fetch(parsedUrl, {
+    redirect: "error",
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) {
+    throw new Error(`Image download returned HTTP ${response.status}`);
+  }
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.startsWith("image/")) {
+    throw new Error(`Image download returned ${contentType || "no content type"}`);
+  }
+  const declaredLength = Number(response.headers.get("content-length") || "0");
+  if (declaredLength > MAX_IMAGE_BYTES) {
+    throw new Error("Generated chart image exceeds the 20 MB limit");
+  }
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) {
+    throw new Error(
+      bytes.length === 0
+        ? "Generated chart image is empty"
+        : "Generated chart image exceeds the 20 MB limit",
+    );
+  }
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, bytes);
+  return outputPath;
+}
+
 async function main() {
   if (process.argv.length < 3) {
-    console.error("Usage: node generate.js <spec_json_or_file>");
-    process.exit(1);
+    console.error(
+      "Usage: node generate.cjs <spec_json_or_file> [--output <workspace_path>]",
+    );
+    process.exitCode = 1;
+    return;
   }
 
   const specArg = process.argv[2];
+  const outputFlagIndex = process.argv.indexOf("--output", 3);
+  const outputArg =
+    outputFlagIndex === -1 ? undefined : process.argv[outputFlagIndex + 1];
+  if (
+    outputFlagIndex !== -1 &&
+    (outputFlagIndex !== process.argv.length - 2 || !outputArg)
+  ) {
+    console.error(
+      "Usage: node generate.cjs <spec_json_or_file> [--output <workspace_path>]",
+    );
+    process.exitCode = 1;
+    return;
+  }
   let spec;
 
   try {
@@ -113,10 +192,17 @@ async function main() {
     }
   } catch (e) {
     console.error(`Error parsing spec: ${e.message}`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const specs = Array.isArray(spec) ? spec : [spec];
+  if (outputArg && specs.length !== 1) {
+    console.error("Error: --output accepts exactly one chart specification");
+    process.exitCode = 1;
+    return;
+  }
+  let failed = false;
 
   for (const item of specs) {
     const tool = item.tool;
@@ -126,12 +212,14 @@ async function main() {
       console.error(
         `Error: 'tool' field missing in spec: ${JSON.stringify(item)}`,
       );
+      failed = true;
       continue;
     }
 
     const chartType = CHART_TYPE_MAP[tool];
     if (!chartType) {
       console.error(`Error: Unknown tool '${tool}'`);
+      failed = true;
       continue;
     }
 
@@ -143,6 +231,9 @@ async function main() {
 
     try {
       if (isMapChartTool) {
+        if (outputArg) {
+          throw new Error("--output is not supported for map chart tools");
+        }
         const result = await generateMap(tool, args);
         if (result && result.content) {
           for (const contentItem of result.content) {
@@ -155,20 +246,34 @@ async function main() {
         }
       } else {
         const url = await generateChartUrl(chartType, args);
-        console.log(url);
+        console.log(
+          outputArg ? await downloadChartImage(url, outputArg) : url,
+        );
       }
     } catch (e) {
       console.error(`Error generating chart for ${tool}: ${e.message}`);
+      failed = true;
     }
+  }
+
+  if (failed) {
+    process.exitCode = 1;
   }
 }
 
 if (require.main === module) {
   main().catch((err) => {
     console.error(err.message);
-    process.exit(1);
+    process.exitCode = 1;
   });
 }
 
 // Export functions for testing
-module.exports = { generateChartUrl, generateMap, httpPost, CHART_TYPE_MAP };
+module.exports = {
+  generateChartUrl,
+  generateMap,
+  downloadChartImage,
+  resolveOutputPath,
+  httpPost,
+  CHART_TYPE_MAP,
+};

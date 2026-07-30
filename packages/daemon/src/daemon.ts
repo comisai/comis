@@ -2050,7 +2050,6 @@ async function bootChannels(boot: BootContext): Promise<void> {
       logger: daemonLogger,
     }),
     dataDir: container.config.dataDir || ".",
-    sdkSkillReadOnlyPaths: [safePath(safePath(os.homedir(), ".agents"), "skills"), pathResolve(singleAgentDeps.resolvedAgentDir, "skills")],
     secretManager: container.secretManager, platformSecretNames: container.platformSecretNames,
     eventBus: container.eventBus, skillsLogger, linkRunner,
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,

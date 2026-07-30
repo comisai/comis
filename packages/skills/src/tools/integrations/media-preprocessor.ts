@@ -30,7 +30,10 @@ import type {
   SttPreprocessSelection,
   WrapExternalContentOptions,
 } from "@comis/core";
-import { DOCUMENT_MIME_WHITELIST } from "@comis/core";
+import {
+  DOCUMENT_MIME_WHITELIST,
+  MAX_NORMALIZED_MESSAGE_TEXT_CHARS,
+} from "@comis/core";
 import type { Result } from "@comis/shared";
 import { processAudioAttachment } from "./media-handler-audio.js";
 import { processImageAttachment } from "./media-handler-image.js";
@@ -182,6 +185,9 @@ function buildAttachmentHint(
       const fileName = att.fileName ?? "file";
       const mime = att.mimeType ?? "application/octet-stream";
       const size = att.sizeBytes ? `, ${att.sizeBytes} bytes` : "";
+      if (durableFilePath !== undefined) {
+        return `[Attached: document "${fileName}" (${mime}${size}) — use ${toolName} with path="${durableFilePath}" to read]`;
+      }
       return `[Attached: document "${fileName}" (${mime}${size}) — use ${toolName} tool to read | url: ${att.url}]`;
     }
   }
@@ -262,8 +268,35 @@ export async function preprocessMessage(
       if (r.textPrefix) textPrefixes.push(r.textPrefix);
       if (r.videoDescription) videoDescriptions.push(r.videoDescription);
     } else if (kind === "document") {
-      const budgetState = { totalExtractedChars, maxTotalChars };
-      const r = await processDocumentAttachment(att, { fileExtractor: deps.fileExtractor, resolveAttachment, logger: deps.logger, onSuspiciousContent: deps.onSuspiciousContent }, budgetState, (a) => buildAttachmentHint("document", a, "extract_document"));
+      const existingPrefixChars =
+        textPrefixes.reduce((sum, prefix) => sum + prefix.length, 0)
+        + Math.max(0, textPrefixes.length - 1);
+      const maxInlinePrefixChars = Math.max(
+        0,
+        MAX_NORMALIZED_MESSAGE_TEXT_CHARS
+          - msg.text.length
+          - existingPrefixChars
+          - (textPrefixes.length > 0 ? 1 : 0)
+          - 2,
+      );
+      const durableFilePath = context?.durableFilePath(att);
+      const budgetState = {
+        totalExtractedChars,
+        maxTotalChars,
+        maxInlinePrefixChars,
+      };
+      const r = await processDocumentAttachment(att, {
+        fileExtractor: deps.fileExtractor,
+        resolveAttachment,
+        logger: deps.logger,
+        durableFilePath,
+        onSuspiciousContent: deps.onSuspiciousContent,
+      }, budgetState, (a) => buildAttachmentHint(
+        "document",
+        a,
+        "extract_document",
+        durableFilePath,
+      ));
       if (r.textPrefix) textPrefixes.push(r.textPrefix);
       if (r.fileExtraction) fileExtractions.push(r.fileExtraction);
       if (r.extractedChars) totalExtractedChars += r.extractedChars;

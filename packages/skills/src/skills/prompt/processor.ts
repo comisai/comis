@@ -19,7 +19,7 @@
 export interface PromptSkillDescription {
   readonly name: string;
   readonly description: string;
-  /** Absolute path to the skill directory. Emitted in available_skills listing and used by expandSkillForInvocation. */
+  /** Absolute path to the skill manifest file the model can read. */
   readonly location: string;
   /** When true, skill is hidden from the model's available skills listing. */
   readonly disableModelInvocation?: boolean;
@@ -79,9 +79,10 @@ export function escapeXml(str: string): string {
  * Skills with `disableModelInvocation === true` are filtered out.
  * Returns an empty string when no visible skills remain (including empty input).
  *
- * Each skill's name, description, location (absolute path), and source are
- * XML-escaped for safety. `source` defaults to `bundled` when unset, so platform
- * skills (which never set it) render `<source>bundled</source>` deterministically.
+ * Each skill's name, description, location (absolute manifest path), and source
+ * are XML-escaped for safety. `source` defaults to `bundled` when unset, so
+ * platform skills (which never set it) render `<source>bundled</source>`
+ * deterministically.
  *
  * @param skills - Readonly array of skill descriptions to list
  * @returns XML string or empty string if no visible skills

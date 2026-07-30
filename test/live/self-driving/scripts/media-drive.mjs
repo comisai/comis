@@ -20,6 +20,7 @@
 // ("transcription failed; send as text") which is a coverage-gap, NOT a Comis bug. (`05-CATALOG.md`.)
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { rig } from "./_rig.mjs";
+import { mediaMetaForPath } from "./media-file-meta.mjs";
 
 const [, , chatIdArg, fileOrB64, kindArg, captionArg, maxMsArg] = process.argv;
 const chatId = chatIdArg || rig.chatId;
@@ -34,9 +35,11 @@ if (!fileOrB64) {
 
 // AUTO-DETECT: an existing regular file → read+encode; else treat the arg as inline base64.
 let fileBase64;
+let fileMetadata = {};
 if (existsSync(fileOrB64) && statSync(fileOrB64).isFile()) {
   fileBase64 = readFileSync(fileOrB64).toString("base64");
-  process.stderr.write(`encoded file ${fileOrB64} (${fileBase64.length} b64 chars)\n`);
+  fileMetadata = mediaMetaForPath(fileOrB64);
+  process.stderr.write(`encoded file ${fileOrB64} (${fileBase64.length} b64 chars, ${JSON.stringify(fileMetadata)})\n`);
 } else {
   fileBase64 = fileOrB64;
   process.stderr.write(`treating arg as inline base64 (${fileBase64.length} chars)\n`);
@@ -53,7 +56,13 @@ const inj = await (
   await fetch(`${base}/control/chats/${chatId}/media`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ fromUserId: fromUser, kind, fileBase64, caption: caption || undefined }),
+    body: JSON.stringify({
+      fromUserId: fromUser,
+      kind,
+      fileBase64,
+      caption: caption || undefined,
+      ...fileMetadata,
+    }),
   })
 ).json();
 process.stderr.write(`injected media messageId=${inj.messageId} kind=${kind} (caption: ${JSON.stringify(caption).slice(0, 80)})\n`);

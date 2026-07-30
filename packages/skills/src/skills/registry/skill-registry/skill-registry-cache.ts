@@ -165,7 +165,7 @@ export function createSkillRegistry(
         descriptions.push({
           name: metadata.name,
           description: metadata.description,
-          location: metadata.path,
+          location: metadata.filePath,
           disableModelInvocation: metadata.disableModelInvocation || undefined,
           source: metadata.source,
         });

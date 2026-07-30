@@ -74,12 +74,15 @@ export function accumulateBackgroundTaskRecord(
     return;
   }
   if (type === "background_task.completed") {
+    if (acc.backgroundTerminalTaskIds.has(taskId)) return;
     acc.backgroundTerminalTaskIds.add(taskId);
+    acc.backgroundCompletedTaskIds.add(taskId);
     return;
   }
   if (type === "background_task.failed") {
     if (toolName === undefined || acc.backgroundTerminalTaskIds.has(taskId)) return;
     acc.backgroundTerminalTaskIds.add(taskId);
+    acc.backgroundFailedTaskIds.add(taskId);
     const entry = ensureBackgroundTool(acc, toolName);
     if (acc.backgroundPromotionsByTask.get(taskId) === toolName && entry.ok > 0) {
       entry.ok -= 1;
@@ -102,6 +105,17 @@ export function accumulateBackgroundTaskRecord(
   if (type !== "background_task.notified") return;
 
   const reason = asString(data.reason);
+  if (
+    data.notified === true
+    && (
+      reason === "live_turn_consumed"
+      || reason === "silent_consumed"
+      || reason === "continuation_accepted"
+      || reason === "fallback_accepted"
+    )
+  ) {
+    acc.backgroundAcceptedTaskIds.add(taskId);
+  }
   if (reason === "recovery_retry_required") {
     acc.backgroundRecoveryRetryCount += 1;
     acc.backgroundRecoveryByTask.set(taskId, {
@@ -129,6 +143,25 @@ export function accumulateBackgroundTaskRecord(
   const last = unresolved[unresolved.length - 1];
   acc.backgroundRecoveryLastTaskId = last?.[0];
   acc.backgroundRecoveryLastToolName = last?.[1].toolName;
+}
+
+/** Collapse distinct promoted background tasks into one content-free lifecycle signal. */
+export function buildBackgroundTasksSignal(
+  acc: Acc,
+): IncidentSignals["backgroundTasks"] {
+  const promotedIds = new Set(acc.backgroundPromotionsByTask.keys());
+  if (promotedIds.size === 0) return undefined;
+  const countPromoted = (ids: Set<string>): number =>
+    [...ids].filter((taskId) => promotedIds.has(taskId)).length;
+  const completed = countPromoted(acc.backgroundCompletedTaskIds);
+  const failed = countPromoted(acc.backgroundFailedTaskIds);
+  return {
+    promoted: promotedIds.size,
+    completed,
+    failed,
+    accepted: countPromoted(acc.backgroundAcceptedTaskIds),
+    pending: Math.max(0, promotedIds.size - completed - failed),
+  };
 }
 
 // ---------------------------------------------------------------------------

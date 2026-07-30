@@ -4995,6 +4995,27 @@ describe("discoveredDeferredTools inheritance", () => {
     expect(metadata.discoveredDeferredTools).toEqual([]);
   });
 
+  it("preseeds required tools into child discovery state before its first model call", () => {
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "use platform diagnostics",
+      agentId: "default",
+      toolGroups: ["coding", "supervisor"],
+      requiredTools: ["obs_query", "read"],
+      reachableToolNames: new Set(["obs_query", "read"]),
+      discoveredDeferredTools: ["existing_tool", "obs_query"],
+    });
+
+    expect(deps.sessionStore.save).toHaveBeenCalledTimes(1);
+    const saveCall = vi.mocked(deps.sessionStore.save).mock.calls[0]!;
+    const metadata = saveCall[2] as Record<string, unknown>;
+    expect(metadata.discoveredDeferredTools).toEqual([
+      "existing_tool",
+      "obs_query",
+      "read",
+    ]);
+  });
+
   it("SpawnPacket interface accepts discoveredDeferredTools field", () => {
     // Type-level test: verify the SpawnPacket interface allows the field
     const packet: import("@comis/core").SpawnPacket = {

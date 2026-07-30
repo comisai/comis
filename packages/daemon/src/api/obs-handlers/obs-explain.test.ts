@@ -1087,6 +1087,141 @@ describe("assembleIncidentReportFromSources", () => {
     expect(report.likelyRootCause?.code).not.toBe("background_recovery_retry_required");
   });
 
+  it("reclassifies an accepted background completion instead of reporting it as pending", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-background-"));
+    const sessionKey = "default:agent-a:telegram:chat-a:user_a";
+    const traceId = "trace-background-complete";
+    const records = [
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "prompt.submitted",
+        seq: 0,
+        traceId,
+        agentId: "agent-a",
+        data: { inboundKind: "message" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "tool.result",
+        seq: 1,
+        traceId,
+        agentId: "agent-a",
+        data: {
+          toolName: "skills_manage",
+          toolCallId: "call-invalid",
+          success: false,
+          errorKind: "validation",
+          errorMessage: "mutable ref rejected",
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "background_task.promoted",
+        seq: 2,
+        traceId,
+        agentId: "agent-a",
+        data: { taskId: "task-import-a", toolName: "skills_manage" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "tool.result",
+        seq: 3,
+        traceId,
+        agentId: "agent-a",
+        data: {
+          toolName: "skills_manage",
+          toolCallId: "call-pinned",
+          success: true,
+          backgrounded: true,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "background_task.completed",
+        seq: 4,
+        traceId,
+        agentId: "agent-a",
+        data: { taskId: "task-import-a", toolName: "skills_manage" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "prompt.submitted",
+        seq: 5,
+        traceId: "trace-background-reentry",
+        agentId: "agent-a",
+        data: { inboundKind: "background_task" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "delivery.dispatched",
+        seq: 6,
+        traceId,
+        agentId: "agent-a",
+        data: {
+          origin: "background-completion",
+          status: "success",
+          totalChunks: 1,
+          deliveredChunks: 1,
+          failedChunks: 0,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "background_task.notified",
+        seq: 7,
+        traceId,
+        agentId: "agent-a",
+        data: {
+          taskId: "task-import-a",
+          toolName: "skills_manage",
+          notified: true,
+          reason: "continuation_accepted",
+        },
+      },
+    ];
+    const reader: IncidentSourceReader = {
+      resolveTraceSessionKey: async () => sessionKey,
+      readSessionRecords: async () => records,
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({
+        traceId,
+        agentId: "agent-a",
+        sessionEnd: {
+          endReason: "background_pending",
+          degraded: true,
+          toolStats: { skills_manage: { ok: 0, failed: 1 } },
+        },
+      }),
+      readDiagnosticsRollup: async () => null,
+      readAuditEvents: async () => [],
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, dataDir, { traceId });
+
+    expect(report.backgroundTasks).toEqual({
+      promoted: 1,
+      completed: 1,
+      failed: 0,
+      accepted: 1,
+      pending: 0,
+    });
+    expect(report.outcome).toEqual({
+      endReason: "completed_with_tool_errors",
+      degraded: true,
+      severity: "degraded",
+    });
+    expect(report.likelyRootCause?.code).not.toBe("background_pending");
+    expect(report.toolStats.skills_manage).toMatchObject({ ok: 1, failed: 1 });
+  });
+
   it("678 fixture: produces content_heuristic_misclassification + degraded + breaker timeline WITHOUT any admin/_trustLevel param", async () => {
     // The seam the obs_explain MCP path uses: call the EXTRACTED assembler
     // DIRECTLY (no admin gate, no contract parse, no _trustLevel) with the SAME

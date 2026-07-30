@@ -396,7 +396,7 @@ describe("skills.import handler", () => {
     const handlers = createSkillHandlers(makeDeps());
     await expect(
       handlers["skills.import"]!({
-        url: "https://github.com/owner/repo/tree/main/skills/foo",
+        url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/foo",
       }),
     ).rejects.toThrow(/Agent ID is required/i);
   });
@@ -405,7 +405,7 @@ describe("skills.import handler", () => {
     const handlers = createSkillHandlers(makeDeps({ defaultAgentId: "owner" }));
     await expect(
       handlers["skills.import"]!({
-        url: "https://github.com/owner/repo/tree/main/skills/foo",
+        url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/foo",
         scope: "shared",
         _agentId: "other-agent",
       }),
@@ -429,11 +429,25 @@ describe("skills.import handler", () => {
     ).rejects.toThrow(/Invalid GitHub URL/i);
   });
 
+  it("rejects mutable GitHub refs before fetching import content", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const handlers = createSkillHandlers(makeDeps());
+
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/immutable GitHub commit URL/i);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects import when the derived skill name from URL path fails name validation pattern", async () => {
     const handlers = createSkillHandlers(makeDeps());
     await expect(
       handlers["skills.import"]!({
-        url: "https://github.com/o/r/tree/main/path/UPPER_NAME",
+        url: "https://github.com/o/r/tree/0123456789abcdef0123456789abcdef01234567/path/UPPER_NAME",
         _agentId: "agent-a",
       }),
     ).rejects.toThrow(/Invalid skill name derived from URL/i);
@@ -446,7 +460,7 @@ describe("skills.import handler", () => {
     const handlers = createSkillHandlers(makeDeps());
     await expect(
       handlers["skills.import"]!({
-        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/my-skill",
         _agentId: "agent-a",
       }),
     ).rejects.toThrow(/GitHub API error/i);
@@ -460,7 +474,7 @@ describe("skills.import handler", () => {
     const handlers = createSkillHandlers(makeDeps());
     await expect(
       handlers["skills.import"]!({
-        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/my-skill",
         _agentId: "agent-a",
       }),
     ).rejects.toThrow(/No files found/i);
@@ -484,10 +498,82 @@ describe("skills.import handler", () => {
     );
     await expect(
       handlers["skills.import"]!({
-        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/my-skill",
         _agentId: "agent-a",
       }),
     ).rejects.toThrow(/must contain a SKILL.md/i);
+  });
+
+  it("rejects import when skill markdown references a file outside the approved directory", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = typeof url === "string" ? url : url.toString();
+      if (u.startsWith("https://api.github.com/")) {
+        return new Response(
+          JSON.stringify([
+            {
+              name: "SKILL.md",
+              type: "file",
+              download_url: "https://download/SKILL.md",
+              path: "skills/my-skill/SKILL.md",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        "Follow the [shared workflow](../shared-workflow.md).",
+        { status: 200 },
+      );
+    });
+    const handlers = createSkillHandlers(
+      makeDeps({ workspaceDirs: new Map([["agent-a", wsDir]]) }),
+    );
+
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/my-skill",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/outside the approved GitHub directory/i);
+    expect(fs.existsSync(join(wsDir, "skills", "my-skill"))).toBe(false);
+  });
+
+  it("rejects import when skill markdown references a missing bundle file", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = typeof url === "string" ? url : url.toString();
+      if (u.startsWith("https://api.github.com/")) {
+        return new Response(
+          JSON.stringify([
+            {
+              name: "SKILL.md",
+              type: "file",
+              download_url: "https://download/SKILL.md",
+              path: "skills/my-skill/SKILL.md",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        "Read the [local guide](references/guide.md).",
+        { status: 200 },
+      );
+    });
+    const handlers = createSkillHandlers(
+      makeDeps({ workspaceDirs: new Map([["agent-a", wsDir]]) }),
+    );
+
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/my-skill",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/missing from the fetched bundle/i);
+    expect(fs.existsSync(join(wsDir, "skills", "my-skill"))).toBe(false);
   });
 
   it("rejects local-scope import when calling agent has no workspace directory registered", async () => {
@@ -500,7 +586,7 @@ describe("skills.import handler", () => {
     const handlers = createSkillHandlers(makeDeps({ workspaceDirs: new Map() }));
     await expect(
       handlers["skills.import"]!({
-        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/my-skill",
         scope: "local",
         _agentId: "agent-a",
       }),
@@ -525,7 +611,7 @@ describe("skills.import handler", () => {
     );
     await expect(
       handlers["skills.import"]!({
-        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/my-skill",
         scope: "local",
         _agentId: "agent-a",
       }),
@@ -565,7 +651,7 @@ describe("skills.import handler", () => {
       }),
     );
     const result = await handlers["skills.import"]!({
-      url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+      url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/my-skill",
       scope: "local",
       _agentId: "agent-a",
     });
@@ -608,7 +694,7 @@ describe("skills.import handler", () => {
       }),
     );
     await handlers["skills.import"]!({
-      url: "https://github.com/owner/repo/tree/main/skills/mode-skill",
+      url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/mode-skill",
       scope: "local",
       _agentId: "agent-a",
     });
@@ -662,7 +748,7 @@ describe("skills.import handler", () => {
     );
     await expect(
       handlers["skills.import"]!({
-        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/my-skill",
         _agentId: "agent-a",
       }),
     ).rejects.toThrow(/depth|recursion/i);
@@ -694,7 +780,7 @@ describe("skills.import handler", () => {
     );
     await expect(
       handlers["skills.import"]!({
-        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/my-skill",
         _agentId: "agent-a",
       }),
     ).rejects.toThrow(/file count|too many files/i);
@@ -1245,7 +1331,7 @@ describe("install-hook wiring", () => {
       }),
     );
     await handlers["skills.import"]!({
-      url: "https://github.com/owner/repo/tree/main/skills/import-bundle",
+      url: "https://github.com/owner/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/import-bundle",
       scope: "local",
       _agentId: "agent-a",
     });

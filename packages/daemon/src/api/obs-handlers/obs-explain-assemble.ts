@@ -292,6 +292,26 @@ export function assembleIncidentReport(
     (metadataEndReason === undefined || metadataEndReason === "error")
       ? signals.abortReason
       : metadataEndReason ?? "unknown";
+  const backgroundTasks = signals.backgroundTasks;
+  const backgroundCompletionAccepted =
+    executionEndReason === "background_pending"
+    && backgroundTasks !== undefined
+    && backgroundTasks.promoted > 0
+    && backgroundTasks.completed === backgroundTasks.promoted
+    && backgroundTasks.failed === 0
+    && backgroundTasks.accepted === backgroundTasks.completed;
+  const backgroundCompletionFailed =
+    executionEndReason === "background_pending"
+    && backgroundTasks !== undefined
+    && backgroundTasks.pending === 0
+    && backgroundTasks.failed > 0;
+  const lifecycleEndReason = backgroundCompletionAccepted
+    ? signals.failures.length > 0
+      ? "completed_with_tool_errors"
+      : "success"
+    : backgroundCompletionFailed
+      ? "error"
+      : executionEndReason;
   const deliveryStatus = signals.deliveryDispatch?.status;
   const deliveryFailed = deliveryStatus === "failure";
   const deliveryPartial = deliveryStatus === "partial";
@@ -299,12 +319,16 @@ export function assembleIncidentReport(
     ? "delivery_failed"
     : deliveryPartial
       ? "delivery_partial"
-      : executionEndReason;
+      : lifecycleEndReason;
   const isHardFailure = deliveryFailed || HARD_FAILURE_END_REASONS.has(endReason);
-  const explicitDegraded =
+  const persistedDegraded =
     (sessionEnd !== undefined ? asBoolean(sessionEnd.degraded) : undefined) ??
     (metadata !== null ? asBoolean(metadata.degraded) : undefined) ??
     asBoolean(rollupPayload.degraded);
+  const explicitDegraded =
+    backgroundCompletionAccepted || backgroundCompletionFailed
+      ? undefined
+      : persistedDegraded;
   const derivedDegraded =
     isHardFailure ||
     deliveryPartial ||
@@ -572,6 +596,7 @@ export function assembleIncidentReport(
     ...(signals.backgroundRecovery !== undefined
       ? { backgroundRecovery: signals.backgroundRecovery }
       : {}),
+    ...(backgroundTasks !== undefined ? { backgroundTasks } : {}),
     // The turn span (>1 only) — flags the
     // whole-session toolStats as cumulative across N turns (append-only trajectory).
     ...(signals.turnCount !== undefined ? { turnCount: signals.turnCount } : {}),

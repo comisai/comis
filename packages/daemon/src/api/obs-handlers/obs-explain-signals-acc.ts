@@ -282,6 +282,9 @@ export interface Acc {
   backgroundPromotionsByTask: Map<string, string>;
   /** Terminal task ids already folded; recovery redelivery must not duplicate outcomes. */
   backgroundTerminalTaskIds: Set<string>;
+  backgroundCompletedTaskIds: Set<string>;
+  backgroundFailedTaskIds: Set<string>;
+  backgroundAcceptedTaskIds: Set<string>;
   /** Session aggregate of direct `link.prefetch` counts-only receipts. */
   linkPrefetch?: NonNullable<IncidentSignals["linkPrefetch"]>;
 }

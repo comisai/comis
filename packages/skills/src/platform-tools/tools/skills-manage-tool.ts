@@ -15,7 +15,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { ApprovalGate } from "@comis/core";
 import { registerActivityLabelSpec } from "@comis/core";
-import { readStringParam } from "../tool-helpers.js";
+import { readStringParam, throwToolError } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
 
@@ -50,7 +50,10 @@ const SkillsManageToolParams = Type.Object({
   ),
   url: Type.Optional(
     Type.String({
-      description: "GitHub directory URL to import skills from. Required for import action.",
+      pattern: "^https://github\\.com/[^/]+/[^/]+/tree/[0-9a-fA-F]{40}/.+$",
+      description:
+        "Immutable commit-pinned GitHub directory URL to import a skill from. " +
+        "Required for import action.",
     }),
   ),
   name: Type.Optional(
@@ -82,6 +85,23 @@ const SkillsManageToolParams = Type.Object({
 });
 
 const VALID_ACTIONS = ["list", "import", "delete", "create", "update"] as const;
+const IMMUTABLE_GITHUB_SKILL_URL_RE =
+  /^https:\/\/github\.com\/[^/]+\/[^/]+\/tree\/[0-9a-f]{40}\/.+$/iu;
+
+function validateSkillsManageParams(
+  action: string,
+  params: Record<string, unknown>,
+): void {
+  if (action !== "import") return;
+  const url = readStringParam(params, "url")?.trim() ?? "";
+  if (IMMUTABLE_GITHUB_SKILL_URL_RE.test(url)) return;
+  throwToolError(
+    "invalid_value",
+    "skills_manage import requires an immutable GitHub commit URL: " +
+      "https://github.com/{owner}/{repo}/tree/{40-character-commit-sha}/{path}. " +
+      "Resolve the selected skill to a commit-pinned directory URL before retrying.",
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -115,6 +135,7 @@ export function createSkillsManageTool(
       validActions: VALID_ACTIONS,
       rpcPrefix: "skills",
       gatedActions: ["import", "delete", "create", "update"],
+      validateParams: validateSkillsManageParams,
       actionOverrides: {
         async list(_p, rpcCall, ctx) {
           return rpcCall("skills.list", { _trustLevel: ctx.trustLevel });

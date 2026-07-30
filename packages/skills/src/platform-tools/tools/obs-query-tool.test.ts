@@ -59,7 +59,26 @@ describe("obs_query tool", () => {
     expect(tool.description).toMatch(/what failed.*why it was slow.*counts.*cost/i);
     expect(tool.description).toMatch(/call explain.*system_health.*billing before answering/i);
     expect(tool.description).toMatch(/never infer runtime cause from chat memory/i);
+    expect(tool.description).toMatch(
+      /system_health for failure or degraded counts/i,
+    );
     expect(tool.description).toMatch(/say unknown/i);
+  });
+
+  it("publishes the exact diagnostic category values accepted by the RPC", () => {
+    const tool = createObsQueryTool(mockRpcCall);
+    const categorySchema = (
+      tool.parameters as unknown as {
+        properties: { category: { anyOf: Array<{ const: string }> } };
+      }
+    ).properties.category;
+
+    expect(categorySchema.anyOf.map((entry) => entry.const)).toEqual([
+      "usage",
+      "webhook",
+      "message",
+      "session",
+    ]);
   });
 
   // -----------------------------------------------------------------------
@@ -148,7 +167,7 @@ describe("obs_query tool", () => {
   // -----------------------------------------------------------------------
 
   describe("diagnostics action", () => {
-    it("calls rpcCall('obs.diagnostics') with category, limit, sinceMs", async () => {
+  it("calls rpcCall('obs.diagnostics') with category, limit, sinceMs", async () => {
       mockRpcCall.mockResolvedValue({ entries: [] });
 
       const tool = createObsQueryTool(mockRpcCall);
@@ -156,19 +175,35 @@ describe("obs_query tool", () => {
       const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-d1", {
           action: "diagnostics",
-          category: "errors",
+          category: "session",
           limit: 10,
           since_ms: 1000,
         } as never),
       );
 
       expect(mockRpcCall).toHaveBeenCalledWith("obs.diagnostics", {
-        category: "errors",
+        category: "session",
         limit: 10,
         sinceMs: 1000,
         _trustLevel: "admin",
       });
       expect(result.details).toEqual(expect.objectContaining({ entries: [] }));
+    });
+
+    it("rejects an unsupported failure filter before RPC dispatch", async () => {
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-d-invalid", {
+            action: "diagnostics",
+            category: "failure",
+          } as never),
+        ),
+      ).rejects.toThrow(
+        /Valid values: usage, webhook, message, session/,
+      );
+      expect(mockRpcCall).not.toHaveBeenCalled();
     });
 
     it("passes undefined for optional params when not provided", async () => {

@@ -1172,8 +1172,25 @@
           "type": "string"
         },
         "category": {
-          "description": "Diagnostic category filter (for diagnostics)",
-          "type": "string"
+          "anyOf": [
+            {
+              "const": "usage",
+              "type": "string"
+            },
+            {
+              "const": "webhook",
+              "type": "string"
+            },
+            {
+              "const": "message",
+              "type": "string"
+            },
+            {
+              "const": "session",
+              "type": "string"
+            }
+          ],
+          "description": "Diagnostic event family for action=diagnostics: usage | webhook | message | session. This is not a failure filter; use action=system_health for failure or degraded counts."
         },
         "channel_id": {
           "description": "Channel identifier (for channels.get, delivery.recent)",
@@ -3087,7 +3104,8 @@
           "description": "Skill scope (default: local). Valid values: local (calling agent's workspace), shared (global skills visible to all agents)."
         },
         "url": {
-          "description": "GitHub directory URL to import skills from. Required for import action.",
+          "description": "Immutable commit-pinned GitHub directory URL to import a skill from. Required for import action.",
+          "pattern": "^https://github\\.com/[^/]+/[^/]+/tree/[0-9a-fA-F]{40}/.+$",
           "type": "string"
         }
       },
@@ -3667,18 +3685,18 @@
           "type": "string"
         },
         "required_tools": {
-          "description": "Tool names that must be reachable by the sub-agent; spawn fails immediately if any are outside the profile ceiling",
+          "description": "Tool names the task must use. This is mandatory whenever task prose explicitly requires a named tool; pair it with tool_groups so spawn fails immediately if the tool is outside the profile ceiling.",
           "items": {
             "type": "string"
           },
           "type": "array"
         },
         "task": {
-          "description": "Task description for the sub-agent",
+          "description": "Goal-oriented task description for the sub-agent. Task prose does not grant tools: if it explicitly requires a named tool, also list that tool in required_tools.",
           "type": "string"
         },
         "tool_groups": {
-          "description": "Tool group names for sub-agent tool filtering (e.g., 'coding', 'web')",
+          "description": "Tool profile names for sub-agent filtering. Include every profile needed by required_tools (for example, 'coding' for exec or 'supervisor' for obs_query).",
           "items": {
             "type": "string"
           },

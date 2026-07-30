@@ -309,6 +309,11 @@ export async function setupSingleAgent(
     ...skillsConfig,
     discoveryPaths: resolvedPaths,
   };
+  // The Comis registry and the SDK resource loader must consume the same
+  // absolute paths. Passing the operator's relative paths to the SDK makes it
+  // resolve them against the workspace and then replace the correctly
+  // populated registry with a different skill set.
+  effectiveConfig.skills = resolvedSkillsConfig;
 
   const skillRegistry = createSkillRegistry(
     resolvedSkillsConfig,

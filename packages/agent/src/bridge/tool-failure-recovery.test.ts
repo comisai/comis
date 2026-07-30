@@ -308,4 +308,29 @@ describe("subagent terminal tool failure classification", () => {
       }),
     ).toBeUndefined();
   });
+
+  it("keeps direct resource aborts authoritative over earlier tool failures", () => {
+    for (const finishReason of [
+      "max_steps",
+      "budget_exceeded",
+      "budget_exhausted",
+      "spend_exceeded",
+      "context_loop",
+      "context_exhausted",
+      "loop_detected",
+      "circuit_open",
+      "provider_degraded",
+      "input_too_large",
+    ]) {
+      expect(
+        classifySubagentTerminalToolFailure({
+          operationType: "subagent",
+          finishReason,
+          failedTools: ["web_search"],
+          toolExecResults: [failedSearch],
+        }),
+        finishReason,
+      ).toBeUndefined();
+    }
+  });
 });

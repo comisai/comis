@@ -22,7 +22,11 @@ import type { RpcCall } from "./cron-tool.js";
 // ── Parameter Schema ────────────────────────────────────────────────
 
 const SessionsSpawnParams = Type.Object({
-  task: Type.String({ description: "Task description for the sub-agent" }),
+  task: Type.String({
+    description:
+      "Goal-oriented task description for the sub-agent. Task prose does not grant tools: " +
+      "if it explicitly requires a named tool, also list that tool in required_tools.",
+  }),
   async: Type.Optional(
     Type.Boolean({ description: "Optional explicit async intent; every spawn returns runId immediately" }),
   ),
@@ -55,10 +59,18 @@ const SessionsSpawnParams = Type.Object({
     Type.String({ description: "Objective statement that survives context compaction" }),
   ),
   tool_groups: Type.Optional(
-    Type.Array(Type.String(), { description: "Tool group names for sub-agent tool filtering (e.g., 'coding', 'web')" }),
+    Type.Array(Type.String(), {
+      description:
+        "Tool profile names for sub-agent filtering. Include every profile needed by required_tools " +
+        "(for example, 'coding' for exec or 'supervisor' for obs_query).",
+    }),
   ),
   required_tools: Type.Optional(
-    Type.Array(Type.String(), { description: "Tool names that must be reachable by the sub-agent; spawn fails immediately if any are outside the profile ceiling" }),
+    Type.Array(Type.String(), {
+      description:
+        "Tool names the task must use. This is mandatory whenever task prose explicitly requires a named tool; " +
+        "pair it with tool_groups so spawn fails immediately if the tool is outside the profile ceiling.",
+    }),
   ),
   include_parent_history: Type.Optional(
     Type.String({ description: "Parent context inclusion: 'none' (default) or 'summary'" }),
@@ -88,7 +100,8 @@ export function createSessionsSpawnTool(rpcCall: RpcCall): AgentTool<typeof Sess
       name: "sessions_spawn",
       label: "Sessions Spawn",
       description:
-        "Start a background sub-agent and return its run ID immediately.",
+        "Start a background sub-agent and return its run ID immediately. " +
+        "When the task requires named tools, bind them with required_tools and tool_groups; task prose alone cannot grant tools.",
       parameters: SessionsSpawnParams,
       rpcMethod: "session.spawn",
       preExecute(p) {

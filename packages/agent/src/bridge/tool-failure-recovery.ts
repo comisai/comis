@@ -16,6 +16,11 @@ const MESSAGE_ACTIONS = new Set([
   "fetch",
   "attach",
 ] as const);
+const TOOL_ATTRIBUTABLE_SUBAGENT_FINISH_REASONS = new Set([
+  "completed_with_tool_errors",
+  "error",
+  "prompt_timeout",
+] as const);
 
 export type MessageRecoveryAction =
   | "send"
@@ -297,8 +302,9 @@ export interface SubagentTerminalToolFailure {
 }
 
 /**
- * Preserve trusted upstream failure facts for every unsuccessful sub-agent
- * settlement without replacing a useful partial response.
+ * Preserve trusted upstream failure facts only when the terminal reason can
+ * represent a tool-caused settlement. Direct resource aborts remain
+ * authoritative even when earlier tool calls also failed.
  */
 export function classifySubagentTerminalToolFailure(params: {
   operationType: ModelOperationType | undefined;
@@ -308,8 +314,9 @@ export function classifySubagentTerminalToolFailure(params: {
 }): SubagentTerminalToolFailure | undefined {
   if (
     params.operationType !== "subagent"
-    || params.finishReason === "stop"
-    || params.finishReason === "end_turn"
+    || !TOOL_ATTRIBUTABLE_SUBAGENT_FINISH_REASONS.has(
+      params.finishReason as "completed_with_tool_errors" | "error" | "prompt_timeout",
+    )
   ) {
     return undefined;
   }

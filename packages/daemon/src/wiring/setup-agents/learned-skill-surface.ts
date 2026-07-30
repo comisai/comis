@@ -12,8 +12,8 @@
  * `<workspace>/.learned-skills/<name>/SKILL.md` — a SIBLING dot-dir the skill
  * registry never discovers (no double-listing), derived WHOLESALE from `list()` on
  * every refresh so a demoted procedure's file is gone (derive-on-refresh, never a
- * stale file). Its `<location>` is emitted ABSOLUTE — the same shape
- * platform skills use and the `read` tool reports — so skill-use
+ * stale file). Its `<location>` is emitted ABSOLUTE — the same manifest-file
+ * shape platform skills use and the `read` tool reports — so skill-use
  * attribution (exact `<location>`-string match) fires on a `read` of that path.
  *
  * Only the daemon may touch BOTH the skills registry AND the learned-skills store

@@ -368,7 +368,9 @@ function ftsSummaryHits(
   // + AND agent_id = ? (the vtable carries agent_id UNINDEXED) so a different
   // agent's summary hits never leak within a shared conversation.
   const stmt = db.prepare(`
-    SELECT summary_id AS ref_id, content AS snippet, rank
+    SELECT summary_id AS ref_id,
+           substr(snippet(lcd_summaries_fts, 0, '', '', ' … ', 48), 1, 1800) AS snippet,
+           rank
     FROM lcd_summaries_fts
     WHERE lcd_summaries_fts MATCH ? AND conversation_ref = ? AND agent_id = ?
     ORDER BY rank
@@ -388,7 +390,9 @@ function ftsMessageHits(
   // + AND agent_id = ? (the vtable carries agent_id UNINDEXED; the adapter
   // populates it on append) so cross-agent message hits never leak.
   const stmt = db.prepare(`
-    SELECT message_id AS ref_id, content AS snippet, rank
+    SELECT message_id AS ref_id,
+           substr(snippet(lcd_messages_fts, 0, '', '', ' … ', 48), 1, 1800) AS snippet,
+           rank
     FROM lcd_messages_fts
     WHERE lcd_messages_fts MATCH ? AND conversation_ref = ? AND agent_id = ?
     ORDER BY rank
@@ -457,7 +461,9 @@ function triSummaryHits(
   const { rows, errored } = safeAllReporting(() =>
     db
       .prepare(`
-        SELECT summary_id AS ref_id, content AS snippet, rank
+        SELECT summary_id AS ref_id,
+               substr(snippet(lcd_summaries_fts_tri, 0, '', '', ' … ', 48), 1, 1800) AS snippet,
+               rank
         FROM lcd_summaries_fts_tri
         WHERE lcd_summaries_fts_tri MATCH ? AND conversation_ref = ? AND agent_id = ?
         ORDER BY rank
@@ -482,7 +488,9 @@ function triMessageHits(
   const { rows, errored } = safeAllReporting(() =>
     db
       .prepare(`
-        SELECT message_id AS ref_id, content AS snippet, rank
+        SELECT message_id AS ref_id,
+               substr(snippet(lcd_messages_fts_tri, 0, '', '', ' … ', 48), 1, 1800) AS snippet,
+               rank
         FROM lcd_messages_fts_tri
         WHERE lcd_messages_fts_tri MATCH ? AND conversation_ref = ? AND agent_id = ?
         ORDER BY rank

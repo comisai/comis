@@ -421,7 +421,11 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     settingsManager,
     noExtensions: true,
     additionalSkillPaths: capabilitiesDisabled ? [] : config.skills?.discoveryPaths ?? [],
-    noSkills: capabilitiesDisabled,
+    // Suppress SDK settings/global skill sources. The explicit Comis registry
+    // paths above still load when noSkills is true, so there is one
+    // authoritative discovery order and a same-name ~/.agents skill cannot
+    // shadow an operator/workspace/bundled Comis skill.
+    noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
     systemPromptOverride: (_base) => promptResult.systemPrompt,

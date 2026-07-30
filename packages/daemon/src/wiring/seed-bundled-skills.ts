@@ -21,6 +21,8 @@ import {
   readFileSync as nodeReadFileSync,
   mkdirSync as nodeMkdirSync,
   cpSync as nodeCpSync,
+  renameSync as nodeRenameSync,
+  rmSync as nodeRmSync,
 } from "node:fs";
 import { safePath } from "@comis/core";
 
@@ -126,11 +128,31 @@ export function defaultSeedBundledSkillsDeps(
       }
     },
     seed: (name) => {
+      let stagedSkill: string | undefined;
       try {
         nodeMkdirSync(skillsTarget, { recursive: true });
+        const installedSkill = safePath(skillsTarget, name);
+        stagedSkill = safePath(skillsTarget, `.${name}.seed-next`);
+        nodeRmSync(stagedSkill, { recursive: true, force: true });
+        nodeCpSync(safePath(bundledRoot, name), stagedSkill, {
+          recursive: true,
+        });
+        nodeRmSync(installedSkill, { recursive: true, force: true });
         // fs-safe-allowed: bundled-skill seeding into `<dataDir>/skills/` (recursive copy, outside the substrate — same posture as the former skill-creator IIFE).
-        nodeCpSync(safePath(bundledRoot, name), safePath(skillsTarget, name), { recursive: true });
+        try {
+          nodeRenameSync(stagedSkill, installedSkill);
+        } catch {
+          nodeCpSync(stagedSkill, installedSkill, { recursive: true });
+          nodeRmSync(stagedSkill, { recursive: true, force: true });
+        }
       } catch {
+        if (stagedSkill !== undefined) {
+          try {
+            nodeRmSync(stagedSkill, { recursive: true, force: true });
+          } catch {
+            /* best-effort cleanup after a failed seed */
+          }
+        }
         /* best-effort: a failed seed of one skill must never abort boot */
       }
     },

@@ -928,7 +928,12 @@ describe("createSkillRegistry", () => {
 
     // Check field mapping
     expect(byName.get("helper")!.description).toBe("A helpful assistant");
-    expect(byName.get("helper")!.location).toBeDefined();
+    expect(byName.get("helper")!.location).toBe(
+      path.join(skillsDir, "helper.md"),
+    );
+    expect(byName.get("calculator")!.location).toBe(
+      path.join(skillsDir, "calculator", "SKILL.md"),
+    );
     expect(byName.get("helper")!.disableModelInvocation).toBeUndefined(); // false maps to undefined
     expect(byName.get("secret")!.disableModelInvocation).toBe(true);
   });
@@ -1677,6 +1682,9 @@ describe("initFromSdkSkills", () => {
     const snap = registry.getSnapshot();
     expect(snap.skills).toHaveLength(2);
     expect(snap.skills.map(s => s.name).sort()).toEqual(["alpha", "beta"]);
+    expect(snap.skills.find((skill) => skill.name === "alpha")?.location).toBe(
+      path.join(skillsDir, "alpha.md"),
+    );
   });
 
   it("reads comis: namespace from skill files for enrichment", () => {

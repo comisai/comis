@@ -315,6 +315,9 @@ describe("buildTaskDelegationSection", () => {
     expect(joined).toContain("exec, read, web_search");
     expect(joined).toContain("Sub-agents do NOT have: sessions_spawn, message");
     expect(joined).toContain("CRITICAL");
+    expect(joined).toContain("required_tools");
+    expect(joined).toContain("tool_groups");
+    expect(joined).toMatch(/before or after/iu);
   });
 
   it("omits parent-only warning when sub-agent has all parent tools", () => {
