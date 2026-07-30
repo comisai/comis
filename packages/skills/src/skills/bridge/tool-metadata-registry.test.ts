@@ -1222,6 +1222,7 @@ describe("tool-metadata-registry -- failure detectors", () => {
       errorKind: "resource",
       classifiedField: "message",
       matchedRule: "/rate limit|quota exceeded|usage limit|too many requests/",
+      matchedToken: "tools.web.search",
       failureDisclosure: {
         kind: "quota_exhausted",
         configKey: "tools.web.search",
@@ -1240,6 +1241,7 @@ describe("tool-metadata-registry -- failure detectors", () => {
       errorKind: "resource",
       classifiedField: "message",
       matchedRule: "/rate limit|quota exceeded|usage limit|too many requests/",
+      matchedToken: "tools.web.search",
       failureDisclosure: {
         kind: "quota_exhausted",
         configKey: "tools.web.search",
@@ -1258,6 +1260,7 @@ describe("tool-metadata-registry -- failure detectors", () => {
       errorKind: "resource",
       classifiedField: "message",
       matchedRule: "/rate limit|quota exceeded|usage limit|too many requests/",
+      matchedToken: "tools.web.search",
       failureDisclosure: {
         kind: "quota_exhausted",
         configKey: "tools.web.search",
@@ -1285,6 +1288,7 @@ describe("tool-metadata-registry -- failure detectors", () => {
       errorKind: "resource",
       classifiedField: "message",
       matchedRule: "/rate limit|quota exceeded|usage limit|too many requests/",
+      matchedToken: "tools.web.search",
       failureDisclosure: {
         kind: "quota_exhausted",
         configKey: "tools.web.search",
@@ -1312,6 +1316,7 @@ describe("tool-metadata-registry -- failure detectors", () => {
       errorKind: "config",
       classifiedField: "message",
       matchedRule: "missing_provider_configuration",
+      matchedToken: "tools.web.search.tavily.apiKey",
       failureDisclosure: {
         kind: "missing_configuration",
         configKey: "tools.web.search.tavily.apiKey",
