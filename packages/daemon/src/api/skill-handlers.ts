@@ -89,6 +89,7 @@ function parseGitHubDirUrl(url: string): { owner: string; repo: string; commitSh
 // Bounded GitHub Contents API walk (depth, file count, timeout) lives
 // in `./github-skill-fetch.ts` so this file stays under the 800-line cap.
 import { fetchGitHubDir } from "./github-skill-fetch.js";
+import { validateImportedSkillReferences } from "./skill-import-references.js";
 
 // Single source of truth: WorkspaceApiDeps (shared with workspace, browser,
 // approval, mcp, notification handlers).
@@ -383,6 +384,10 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       const hasSkillMd = fetchedFiles.some((f) => f.path === "SKILL.md" || f.path.endsWith("/SKILL.md"));
       if (!hasSkillMd) {
         throw new Error("Repository folder must contain a SKILL.md file");
+      }
+      const referenceValidation = validateImportedSkillReferences(fetchedFiles);
+      if (!referenceValidation.ok) {
+        throw referenceValidation.error;
       }
 
       // Scope-based path resolution
