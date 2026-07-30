@@ -1193,6 +1193,33 @@ describe("context_exhausted with budget evidence", () => {
     expect(r!.detail).toContain("context exhausted");
     expect(r!.suggestedNextSteps.length).toBeGreaterThan(0);
   });
+
+  it("flags a guard mismatch when the terminal abort contradicts a fitting assembled budget", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "context_exhausted",
+        contextBudget: {
+          ...BUDGET,
+          windowTokens: 272_000,
+          rawContextWindowTokens: 272_000,
+          windowCapSource: "none",
+          systemTokens: 28_814,
+          freshTailTokens: 10_517,
+          budgetedHistoryTokens: 150_132,
+          keptCount: 274,
+          assembledInputTokens: 189_463,
+          outputHeadroom: 3_840,
+          verdict: "fits",
+        },
+      }),
+    );
+
+    expect(r?.code).toBe("context_guard_budget_mismatch");
+    expect(r?.detail).toContain("189463");
+    expect(r?.detail).toContain("272000");
+    expect(r?.detail).toContain("fit");
+    expect(r?.suggestedNextSteps.join(" ")).toContain("assembled");
+  });
 });
 
 // ---------------------------------------------------------------------------
