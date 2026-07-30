@@ -1,6 +1,6 @@
 ---
 name: find-skills
-version: 1.0.2
+version: 1.0.3
 description: Discover and install agent skills from the open skills ecosystem at skills.sh. Use this skill when the user asks "how do I do X", "find a skill for X", "is there a skill that can...", "can you do X" for a specialized capability, wants to extend agent capabilities, or mentions wishing they had help with a specific domain (design, testing, deployment, etc.) -- even if they don't use the word "skill".
 comis:
   requires:
@@ -22,10 +22,11 @@ Identify the domain (e.g., React, testing, deployment), the specific task (e.g.,
 
 ### Step 2: Search for skills
 
-If `npx` is available, use the Skills CLI to search:
+For an existing-skill discovery request, you must run `npx skills find <query>` first through `exec`
+in the execution workspace. Use the non-interactive form:
 
 ```bash
-npx skills find [query]
+npx --yes skills find <query>
 ```
 
 Examples:
@@ -33,26 +34,38 @@ Examples:
 - User asks "can you help with PR reviews?" -- `npx skills find pr review`
 - User asks "I need to create a changelog" -- `npx skills find changelog`
 
-If npx is not available, the user can browse available skills online at the Skills directory website.
+Do not substitute generic web search while the native catalog command is available. If the command
+is missing or fails, report that exact limitation and offer direct help; never imply that a catalog
+skill was found.
 
 ### Step 3: Present options
 
-When you find relevant skills, present the skill name, what it does, and the install command.
+Present the strongest verified fit as the clear recommendation, including its
+`owner/repo@skill-name` identifier. Mention alternatives only when they materially differ. Do not
+claim details the catalog output did not establish.
 
 ### Step 4: Install
 
-Run the bundled install script. It clones the skill from GitHub directly into `~/.comis/skills/` (shared, visible to all agents):
+Never copy a skill into `~/.comis/skills/` and never use `npx skills add`; those paths bypass Comis's
+scoped registry, content scan, and approval gate.
 
-```bash
-bash scripts/install-skill.sh <owner/repo@skill-name>
-```
+When the user asks to install a catalog result:
 
-Example:
-```bash
-bash scripts/install-skill.sh vercel-labs/agent-skills@vercel-react-best-practices
-```
+1. Resolve its exact GitHub directory URL with the bundled resolver:
 
-The skill is available immediately after installation (hot-reloaded by the skill watcher).
+   ```bash
+   bash scripts/resolve-skill-url.sh <owner/repo@skill-name>
+   ```
+
+2. Call `skills_manage` with `action: "import"`, that URL, and `scope: "local"`. Local scope installs
+   into the calling agent's workspace. Use `scope: "shared"` only when the user explicitly asks for
+   a shared install and the calling agent is authorized.
+3. Let the normal approval gate complete; do not claim installation while approval is pending or
+   denied.
+4. Call `skills_manage` with `action: "list"` and confirm the returned entry. Report the exact
+   returned location as installation ground truth.
+
+The skill watcher makes a successfully listed import available without a daemon restart.
 
 ## Common Skill Categories
 

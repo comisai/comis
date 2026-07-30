@@ -217,7 +217,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   skills_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Manage skill registry: list, reload, enable, disable skills.";
+    const base = "Manage prompt skills: list installed entries; import from a GitHub directory URL; create, update, or delete. Use local scope for this agent's workspace; shared scope is default-agent only. Mutations use the approval gate.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   mcp_manage: (ctx: ToolDescriptionContext): string => {
