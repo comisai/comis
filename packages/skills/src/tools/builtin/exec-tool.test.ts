@@ -6,7 +6,7 @@ import type { ProcessRegistry } from "./process-registry.js";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExecSandboxConfig, SandboxProvider, SandboxOptions } from "./sandbox/types.js";
 import { homedir, tmpdir } from "node:os";
-import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -567,6 +567,31 @@ describe("createExecTool", () => {
       const result = await tool.execute("tc1", { command: "pwd" });
       const details = result.details as { exitCode: number };
       expect(details.exitCode).toBe(0);
+    });
+
+    it("missing cwd is rejected before spawning the sandbox provider", async () => {
+      registry = createProcessRegistry();
+      const workspace = mkdtempSync(join(tmpdir(), "exec-missing-cwd-"));
+      try {
+        const tool = createExecTool({
+          workspacePath: workspace,
+          registry,
+          secretManager: STUB_SM,
+          platformSecretNames: STUB_PLATFORM_NAMES,
+          toolCapabilityPort: createCapabilityPortStub(),
+        });
+
+        await expect(
+          tool.execute("tc-missing-cwd", {
+            command: "pwd",
+            cwd: "missing-project",
+          }),
+        ).rejects.toThrow(
+          "[not_found] Working directory does not exist: missing-project",
+        );
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
     });
 
     it("workspace-relative cwd resolves to absolute workspace path, not daemon cwd", async () => {
