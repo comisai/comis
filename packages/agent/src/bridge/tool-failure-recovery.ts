@@ -46,6 +46,8 @@ export type ToolRecoveryIdentity = MessageRecoveryIdentity | ExecRecoveryIdentit
 
 export interface ToolExecutionResultRecord {
   readonly toolName: string;
+  /** Bounded structured action discriminator from the tool arguments. */
+  readonly action?: string;
   readonly success: boolean;
   /** True when this record is a non-terminal background handoff placeholder. */
   readonly backgrounded?: boolean;

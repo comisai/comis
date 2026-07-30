@@ -14,6 +14,7 @@
  *     * (1 + temporalAlpha * (temporalProx(occurredAt, nowMs)  - 0.5))   // LIVE; occurredAt absent → 0.5 → 1.0
  *     * (1 + proofAlpha    * (decayedProof(entry, nowMs)       - 0.5))   // LIVE; see below — neutral 0.5 → 1.0
  *     * (1 + trustAlpha    * (trustWeight(trustLevel)          - 0.5))   // system 1.0 / learned 0.5 / external 0.0
+ *     * correctionFactor(entry)                                         // tagged correction 1.25 / otherwise 1.0
  *
  * `occurredAt` is a LIVE event-time signal: a typed optional MemoryEntry
  * field over which `temporalProx` computes real proximity (neutral 0.5 → a 1.0 factor only
@@ -55,11 +56,19 @@ const DAY_MS = 86_400_000;
 const TIE_EPSILON = 1e-9;
 
 /**
- * Per-memory multiplicative score breakdown. The six factors are the
+ * Explicit corrections are current-truth candidates, but they remain semantically close
+ * to the prior fact and can otherwise be removed by MMR as a duplicate. This bounded factor
+ * changes relevance ordering only; it does not raise trust, bypass the base floor, or delete
+ * the prior value's history.
+ */
+const EXPLICIT_CORRECTION_FACTOR = 1.25;
+
+/**
+ * Per-memory multiplicative score breakdown. The factors are the
  * EXACT multiplicands score() folds into the boosted score, surfaced so the recall
  * trace can record WHY a memory ranked where it did. Pure numbers — no redaction
  * concern (the breakdown is safe to persist). Invariant:
- *   final === base * recency * temporal * proof * trust * usefulness * forget
+ *   final === base * recency * temporal * proof * trust * usefulness * correction * forget
  * A neutral sub-signal contributes a factor of exactly 1.0 (recency/temporal/proof/
  * trust/usefulness are each centered on 0.5; forget is centered on its 1.0 neutral and is
  * byte-identical at event-age Δt=0 regardless of the enable flag — which itself defaults ON,
@@ -88,16 +97,18 @@ export interface ScoreBreakdown {
    * the `usefulness` factor from its 1.0 neutral (`usefulness - 1`): `+` boosts a proven-useful
    * memory, `-` demotes a recalled-but-ignored one, and EXACTLY `0` when no usefulness signal
    * is present (the no-reorder-when-absent point). This is an ANNOTATION, **not** a multiplicand
-   * — it is ABSENT from `final` (which stays the six-factor product), so adding it is byte-identical.
+   * — it is ABSENT from `final`, so adding it is byte-identical.
    * A derived FACTOR share — never a raw tuned-alpha value (the breakdown is a per-memory
    * trace artifact carrying normalized shares, not the learner's alpha state).
    */
   usefulnessOutcomeShare: number;
+  /** Bounded current-truth factor for an explicitly tagged correction; otherwise 1.0. */
+  correction: number;
   /** FadeMem decay factor `1 + forgetAlpha * (fadeMemFactor - 1.0)`; EXACTLY 1.0 at
    *  event-age 0 (the neutral-in-time byte-identity point), regardless of the enable flag
    *  (which defaults ON), OR when forget is explicitly disabled. */
   forget: number;
-  /** The boosted score = base × recency × temporal × proof × trust × usefulness × forget.
+  /** The boosted score = base × recency × temporal × proof × trust × usefulness × correction × forget.
    *  NOTE: `usefulnessOutcomeShare` is an annotation, NOT a factor — it does NOT enter this product. */
   final: number;
 }
@@ -148,6 +159,10 @@ function trustWeight(level: TrustLevel): number {
       return _exhaustive;
     }
   }
+}
+
+function correctionFactor(entry: MemorySearchResult["entry"]): number {
+  return entry.tags.includes("correction") ? EXPLICIT_CORRECTION_FACTOR : 1;
 }
 
 /**
@@ -414,9 +429,8 @@ function compareBoosted(a: MemorySearchResult, b: MemorySearchResult): number {
  * Apply the multiplicative boost stack to each result's base score AND surface the
  * per-memory factor breakdown, then sort identically to {@link score} (the
  * shared {@link compareBoosted}). Each returned object is a NEW result carrying
- * `breakdown = { base, recency, temporal, proof, trust, usefulness, final }` where the
- * five factors are the exact multiplicands and
- * `final === base * recency * temporal * proof * trust * usefulness`.
+ * `breakdown = { base, recency, temporal, proof, trust, usefulness, correction, final }`
+ * where the factors are the exact multiplicands.
  *
  * `usefulnessById` (optional) carries the per-memory usefulness signal read from
  * the feedback store. ABSENT (undefined, or an id not in the map) → usefulnessNorm 0.5 →
@@ -461,7 +475,8 @@ export function scoreWithBreakdown(
     // exactly 0 when the signal is absent (factor 1.0 → no reorder), positive for a proven-useful
     // memory, negative for a recalled-but-ignored one. It is NOT folded into `final` below.
     const usefulnessOutcomeShare = usefulnessFactor - 1;
-    // FadeMem decay: the 6th multiplicand, gated by the explicit forget toggle (which
+    const correction = correctionFactor(result.entry);
+    // FadeMem decay: the final multiplicand, gated by the explicit forget toggle (which
     // defaults ON). The factor is
     // centered on its 1.0 neutral (fadeMemFactor ∈ [0.5,1]), so `forgetFactor = 1 +
     // forgetAlpha·(fadeMemFactor − 1)` ∈ [1 − forgetAlpha·0.5, 1] — it only ever demotes a
@@ -472,7 +487,14 @@ export function scoreWithBreakdown(
       ? 1 + alphas.forgetAlpha * (fadeMemFactor(result.entry, nowMs, base, usefulnessSignal) - 1)
       : 1;
     const next =
-      base * recencyFactor * temporalFactor * proofFactor * trustFactor * usefulnessFactor * forgetFactor;
+      base *
+      recencyFactor *
+      temporalFactor *
+      proofFactor *
+      trustFactor *
+      usefulnessFactor *
+      correction *
+      forgetFactor;
     return {
       ...result,
       score: next,
@@ -484,6 +506,7 @@ export function scoreWithBreakdown(
         trust: trustFactor,
         usefulness: usefulnessFactor,
         usefulnessOutcomeShare,
+        correction,
         forget: forgetFactor,
         final: next,
       },

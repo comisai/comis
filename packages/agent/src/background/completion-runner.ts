@@ -117,6 +117,9 @@ function createReentryContext(
       traceId,
       startedAt: systemNowMs(),
       trustLevel: "guest" as const,
+      // A completion announcement continues an existing authorized turn. It is
+      // runtime-generated context, not fresh user evidence for durable learning.
+      learningEligible: false,
       channelType: deliveryOrigin.channelType,
       deliveryOrigin,
       turnScope: origin.turnScope,

@@ -752,6 +752,26 @@ describe("createPiEventBridge", () => {
       expect(endEmit![1].success).toBe(true);
     });
 
+    it("retains the bounded tool action in execution result records", () => {
+      const bridge = createPiEventBridge(deps);
+
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "memory_manage",
+        toolCallId: "tc-forget",
+        args: { action: "forget", query: "ordinary detail" },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent("memory_manage", "tc-forget") as any);
+
+      expect(bridge.getResult().toolExecResults).toEqual([
+        expect.objectContaining({
+          toolName: "memory_manage",
+          action: "forget",
+          success: true,
+        }),
+      ]);
+    });
+
     it("keeps an auto-background handoff neutral in breaker and execution outcome accounting", () => {
       const recordResult = vi.fn();
       const depsWithBreaker = createMockDeps({

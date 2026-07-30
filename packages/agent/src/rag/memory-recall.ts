@@ -5,7 +5,7 @@
  * Composes the full recall pipeline as one function, REPLACING the inline
  * search/filter/dedup block that lived in executor/prompt-assembly.ts:
  *
- *   1. SEARCH      memoryPort.search (tenant+agent scoped; overfetch only when reranking)
+ *   1. SEARCH      memoryPort.search (tenant+agent scoped; overfetch when a ranking stage needs a pool)
  *   2. FUSE        N-lane RRF (single lane now = identity; entity lane is a future seam)
  *   3. RERANK      opt-in cross-encoder (default-OFF); graceful degrade +
  *                  timeout -> fused order
@@ -153,8 +153,15 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const effectiveBaseFloor = resolveEffectiveBaseFloor(cfg.baseFloor, cfg.relevanceFirst);
       const prefilterAcc: PrefilterAccumulator = { trustDroppedIds: [], floorDroppedIds: [] };
 
-      // 1. SEARCH — overfetch only when rerank is enabled (default pool size unchanged).
-      const limit = cfg.rerank.mode === "on"
+      // 1. SEARCH — overfetch when either ranking stage needs a candidate pool. MMR cannot
+      // diversify the final maxResults slots if search has already discarded every tail
+      // candidate. Reuse the existing bounded rerank pool rather than adding another knob.
+      // The default/off path remains capped at maxResults.
+      const diversityNeedsPool =
+        cfg.mmr?.enabled === true &&
+        cfg.mmr.lambda < 1 &&
+        deps.embeddingStore !== undefined;
+      const limit = cfg.rerank.mode === "on" || diversityNeedsPool
         ? Math.max(cfg.maxResults, cfg.rerank.maxCandidates)
         : cfg.maxResults;
 
@@ -164,11 +171,12 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // adapter), fall back to the single-lane search() path VERBATIM — a graceful degrade,
       // NOT a compat toggle (mirrors the absent-reranker / absent-entityStore degrade).
       //
-      // BOTH paths produce ONE base lane that is CAPPED to cfg.maxResults and minScore-filtered:
+      // BOTH paths produce ONE base lane that is CAPPED to the search candidate limit and
+      // minScore-filtered:
       // on the fallback path search()->hybridSearch already does this internally
       // (filteredIds.slice(0, limit) then the adapter's minScore filter); on the searchLanes
       // path the lanes are PRE-filter candidate pools, so recall reproduces that here — fuse
-      // the fts+vector lanes (operator weights applied), slice the fused union to maxResults
+      // the fts+vector lanes (operator weights applied), slice the fused union to the candidate limit
       // (mirroring hybridSearch's slice), then minScore-filter. The result is the single
       // pre-fused base lane the prior path carried, so the downstream entity/temporal append + final
       // fuse() is byte-identical to that path at default config (count AND id order), and the
@@ -234,7 +242,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         const ftsVecLanes: FusionLane[] = [];
         if (gatedFts.length > 0) ftsVecLanes.push({ results: gatedFts, weight: ftsWeight });
         if (gatedVector.length > 0) ftsVecLanes.push({ results: gatedVector, weight: vectorWeight });
-        // Cap: fuse the fts+vector lanes, slice the fused union to cfg.maxResults
+        // Cap: fuse the fts+vector lanes, slice the fused union to the candidate limit
         // (mirroring hybridSearch.ts's `filteredIds.slice(0, options.limit)` — the cap the
         // un-fused lane split dropped), then minScore-filter. This single pre-fused base lane is
         // exactly what the prior search() returned, so the entity/temporal append + final fuse
@@ -243,7 +251,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         // (the proven lane-split guard) is untouched. An empty fts+vector union pushes nothing.
         if (ftsVecLanes.length > 0) {
           const base = fuse(ftsVecLanes)
-            .slice(0, cfg.maxResults)
+            .slice(0, limit)
             .filter((r) => (r.score ?? 0) >= cfg.minScore);
           if (base.length > 0) baseLanes.push({ results: base, weight: 1.0 });
         }

@@ -39,7 +39,7 @@ const MANAGE_METHODS = {
   channels:  ["list", "get", "enable", "disable", "restart"],            // configure → config.* (covered separately)
   heartbeat: ["states", "get", "update", "trigger"],                     // status → heartbeat.states
   mcp:       ["list", "status", "connect", "disconnect", "reconnect"],
-  memory:    ["stats", "browse", "delete", "flush", "export", "pin", "unpin"],
+  memory:    ["stats", "browse", "delete", "forget", "flush", "export", "pin", "unpin"],
   models:    ["list", "test", "list_providers"],
   providers: ["list", "get", "create", "update", "delete", "enable", "disable"],
   tokens:    ["list", "create", "revoke", "rotate"],

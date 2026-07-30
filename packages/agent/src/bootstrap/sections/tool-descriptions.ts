@@ -200,7 +200,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   },
   // Confusable pair: memory_manage / memory_search
   memory_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Admin memory CRUD: stats, browse, delete, flush, export. For search queries, use memory_search.";
+    const base = "Admin memory CRUD: stats, browse, delete, forget, flush, export. Use forget with a query when the user asks to forget something; use memory_search for read-only queries.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   channels_manage: (ctx: ToolDescriptionContext): string => {

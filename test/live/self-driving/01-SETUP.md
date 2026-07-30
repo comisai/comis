@@ -161,7 +161,7 @@ The daemon's real grammy Telegram adapter takes `channels.telegram.apiRoot`; poi
 
 ## 5. Clean-slate (between reproductions / before a fresh test)
 
-`scripts/clean-restart.sh` (as root, deployed to `/root/`): preserves `config.yaml`, `secrets.db`, the master key; `systemctl stop` → wipes the test sessions + LCD + logs + durable-drive/wake stores (+ crons with `WIPE_CRONS=1`) → `restart-daemon.sh` (systemd start, boot-verified from the fresh structured log).
+`scripts/clean-restart.sh` (as root, deployed to `/root/`): preserves `config.yaml`, `secrets.db`, the master key; `systemctl stop` → wipes the test sessions + LCD + logs + durable-drive/wake stores (+ crons with `WIPE_CRONS=1`) → `restart-daemon.sh` (systemd start, boot-verified from the fresh structured log). For a continuous relationship, set `PROTECT_CONTINUITY_AFTER_RESTART=1` on the initial clean slate. The resulting `$DATA/.continuity-protected` marker makes later clean restarts refuse before stopping or deleting anything; use normal `restart-daemon.sh` on that root and a separate scratch `DATA` root for destructive fix verification.
 - **The session dir is `workspace/sessions/default/<chatId>/` — NOT `default/telegram/`.** A clean-slate of the wrong path is a no-op.
 - **Replace `memory.db`** (`mv memory.db{,.bak}; rm -f memory.db-wal memory.db-shm`) — the conversation/LCD lives in `lcd_*` tables; `sessions reset` queries an empty `sessions` table and does NOT clear it. The daemon recreates `memory.db` fresh (and re-seeds bundled skills).
 - LCD contamination is the #1 "still broken after the fix" trap: prior turns persist in the session JSONL + `memory.db` and replay into a new turn.

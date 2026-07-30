@@ -2,6 +2,7 @@
 /** Governed daemon execution of one claimed cron agent turn. */
 import {
   classifyAgentTurnExecutionOutcome,
+  createDeliveryOrigin,
   createResolvedRequestContext,
   formatSessionKey,
   runWithContext,
@@ -117,6 +118,13 @@ export function createCronAgentTurnExecutor(deps: CronAgentTurnExecutorDeps) {
       return err(runtimeError("invalid_input", "validation", identity.error.message));
     }
     const sessionKey = identity.value.displaySessionKey;
+    const endpoint = identity.value.turnScope.endpoint;
+    const origin = createDeliveryOrigin({
+      tenantId: deps.tenantId,
+      userId: identity.value.turnScope.principal.principalId,
+      channelType: endpoint.channelType,
+      channelId: endpoint.conversationId,
+    });
     const context = createResolvedRequestContext({
       tenantId: deps.tenantId,
       userId: sessionKey.userId,
@@ -127,7 +135,8 @@ export function createCronAgentTurnExecutor(deps: CronAgentTurnExecutorDeps) {
       startedAt: deps.clock.now(),
       trustLevel: "user",
       learningEligible: false,
-      channelType: "scheduler",
+      channelType: endpoint.channelType,
+      deliveryOrigin: origin,
       turnScope: identity.value.turnScope,
     });
     if (!context.ok) {

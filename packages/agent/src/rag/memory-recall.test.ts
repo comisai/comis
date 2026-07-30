@@ -2984,6 +2984,38 @@ describe("createMemoryRecall — query understanding", () => {
     ]);
   });
 
+  it("SYNONYM-ON expands residence phrasing and a common abbreviated appointment term after relevance tokenization", async () => {
+    let seenQuery: string | undefined;
+    const recordingPort = {
+      async search() {
+        return ok([]);
+      },
+      async searchLanes(_key: SessionKey, query: string) {
+        seenQuery = query;
+        return ok({ fts: [], vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      {
+        memoryPort: recordingPort,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        queryUnderstanding: { intentReweight: false, synonyms: true, temporalParse: false },
+      } as Partial<MemoryRecallConfig>),
+    );
+
+    await recall.recall(
+      "Where am I living now, and what day is physio?",
+      memoryScope("agent_y", "tenant_x"),
+      SESSION_KEY_OBJ,
+    );
+
+    expect(seenQuery).toContain("location");
+    expect(seenQuery).toContain("physiotherapy");
+  });
+
   it("RANGE-ON: temporalParse=true + 'last week' → the search options carry the parsed occurredAtRange (from the fixedClock)", async () => {
     const fts = [makeResult("a", { base: 0.9 })];
     const capture: { laneOpts?: MemorySearchOptions } = {};
@@ -3227,6 +3259,94 @@ describe("createMemoryRecall — MMR diversity re-rank", () => {
     expect(offOrder).toEqual(["A", "B", "C"]); // relevance order (no diversity)
     expect(onOrder).toEqual(["A", "C", "B"]); // MMR promotes the orthogonal C ahead of the near-dup B
     expect(onOrder).not.toEqual(offOrder); // the reorder is real (the ON and OFF orders differ)
+  });
+
+  it("MMR diversifies an overfetched candidate pool before applying the output cap", async () => {
+    const capture: { laneOpts?: MemorySearchOptions } = {};
+    const fts = [
+      makeResult("A", { base: 0.95 }),
+      makeResult("B", { base: 0.94 }),
+      makeResult("C", { base: 0.93 }),
+      makeResult("D", { base: 0.92 }),
+      makeResult("E", { base: 0.91 }),
+      makeResult("F", { base: 0.9 }),
+    ];
+    const { store, calls } = fakeEmbeddingStore(new Map([
+      ["A", [1, 0]],
+      ["B", [1, 0]],
+      ["C", [1, 0]],
+      ["D", [1, 0]],
+      ["E", [1, 0]],
+      ["F", [0, 1]],
+    ]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }, capture),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        minScore: 0,
+        lanes: PARITY_LANES,
+        mmr: { enabled: true, lambda: 0.5 },
+      } as Partial<MemoryRecallConfig>),
+    );
+
+    const got = await recall.recall("q", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
+
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(capture.laneOpts?.limit).toBe(40);
+    expect(calls[0]?.ids).toContain("F");
+    expect(got.value).toHaveLength(5);
+    expect(got.value.map((result) => result.entry.id)).toContain("F");
+  });
+
+  it("MMR keeps an explicit correction ahead of its similar prior fact within the output cap", async () => {
+    const fts = [
+      makeResult("prior", { base: 0.95, content: "The setting is alpha." }),
+      makeResult("topic_b", { base: 0.94 }),
+      makeResult("topic_c", { base: 0.93 }),
+      makeResult("topic_d", { base: 0.92 }),
+      makeResult("topic_e", { base: 0.91 }),
+      makeResult("correction", {
+        base: 0.8,
+        content: "Correction: the setting is beta, not alpha.",
+        tags: ["correction"],
+      }),
+    ];
+    const { store } = fakeEmbeddingStore(new Map([
+      ["prior", [1, 0, 0, 0, 0]],
+      ["topic_b", [0, 1, 0, 0, 0]],
+      ["topic_c", [0, 0, 1, 0, 0]],
+      ["topic_d", [0, 0, 0, 1, 0]],
+      ["topic_e", [0, 0, 0, 0, 1]],
+      ["correction", [1, 0, 0, 0, 0]],
+    ]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        minScore: 0,
+        lanes: PARITY_LANES,
+        mmr: { enabled: true, lambda: 0.7 },
+      } as Partial<MemoryRecallConfig>),
+    );
+
+    const got = await recall.recall("setting", memoryScope("agent_y", "tenant_x"), SESSION_KEY_OBJ);
+
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value).toHaveLength(5);
+    expect(got.value.map((result) => result.entry.id)).toContain("correction");
+    expect(got.value.map((result) => result.entry.id)).not.toContain("prior");
   });
 
   it("SCOPE: the recorded readEmbeddings call's scope === {tenantId: SESSION_KEY_OBJ.tenantId, agentId: <recall agentId>}", async () => {

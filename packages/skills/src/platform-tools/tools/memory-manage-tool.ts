@@ -2,8 +2,8 @@
 /**
  * Memory management tool: multi-action tool for memory lifecycle management.
  *
- * Supports 7 actions: stats, browse, delete, flush, export, pin, unpin.
- * Destructive actions (delete, flush) require approval via the ApprovalGate.
+ * Supports 8 actions: stats, browse, delete, forget, flush, export, pin, unpin.
+ * Destructive actions (delete, forget, flush) require approval via the ApprovalGate.
  * All actions enforce admin trust level via createTrustGuard.
  * Delegates to memory.* RPC handlers via rpcCall.
  *
@@ -13,7 +13,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import type { ApprovalGate } from "@comis/core";
-import { tryGetContext, registerActivityLabelSpec } from "@comis/core";
+import { normalizeForSearch, tryGetContext, registerActivityLabelSpec } from "@comis/core";
 import {
   jsonResult,
   throwToolError,
@@ -49,12 +49,13 @@ const MemoryManageToolParams = Type.Object({
       Type.Literal("stats"),
       Type.Literal("browse"),
       Type.Literal("delete"),
+      Type.Literal("forget"),
       Type.Literal("flush"),
       Type.Literal("export"),
       Type.Literal("pin"),
       Type.Literal("unpin"),
     ],
-    { description: "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), flush (clear all entries for scope), export (full JSON export), pin (mark entry as always-injected in recall), unpin (remove always-inject mark)" },
+    { description: "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), forget (find and remove all scoped entries matching a natural-language query), flush (clear all entries for scope), export (full JSON export), pin (mark entry as always-injected in recall), unpin (remove always-inject mark)" },
   ),
   tenant_id: Type.Optional(
     Type.String({
@@ -69,6 +70,12 @@ const MemoryManageToolParams = Type.Object({
   ids: Type.Optional(
     Type.Array(Type.String(), {
       description: "Array of memory entry IDs to delete (required for delete action)",
+    }),
+  ),
+  query: Type.Optional(
+    Type.String({
+      description: "Natural-language memory to remove (required for forget action)",
+      minLength: 1,
     }),
   ),
   offset: Type.Optional(
@@ -114,19 +121,58 @@ const MemoryManageToolParams = Type.Object({
 
 type MemoryManageToolParamsType = Static<typeof MemoryManageToolParams>;
 
-const VALID_ACTIONS = ["stats", "browse", "delete", "flush", "export", "pin", "unpin"] as const;
+const VALID_ACTIONS = ["stats", "browse", "delete", "forget", "flush", "export", "pin", "unpin"] as const;
+const FORGET_MATCH_LIMIT = 5000;
+const FORGET_QUERY_NOISE = new Set([
+  "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "from",
+  "is", "it", "as", "be", "was", "are", "been", "being", "have", "has", "had", "do", "does", "did",
+  "will", "would", "could", "should", "may", "might", "can", "not", "no", "so", "if", "then", "than",
+  "that", "this", "these", "those", "what", "which", "who", "how", "when", "where", "why", "all",
+  "each", "every", "both", "more", "most", "other", "some", "such", "only", "own", "same", "too",
+  "very", "just", "about", "after", "again", "also", "am", "any", "because", "before", "between",
+  "during", "here", "into", "its", "me", "my", "our", "out", "over", "he", "her", "him", "his",
+  "i", "we", "they", "them", "their", "you", "your", "up", "down", "forget", "forgotten", "remember",
+  "memory", "detail", "details", "thing", "things", "fact", "facts", "information", "info",
+]);
+
+function forgetMatchTokens(value: string): Set<string> {
+  return new Set(
+    normalizeForSearch(value)
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((token) => token.length > 1 && !FORGET_QUERY_NOISE.has(token)),
+  );
+}
+
+function matchedMemoryIds(value: unknown, query: string): string[] {
+  if (value === null || typeof value !== "object") return [];
+  const results = (value as { results?: unknown }).results;
+  if (!Array.isArray(results)) return [];
+  const queryTokens = forgetMatchTokens(query);
+  if (queryTokens.size === 0) return [];
+  const requiredMatches = queryTokens.size === 1 ? 1 : 2;
+  return [...new Set(results.flatMap((entry) => {
+    if (entry === null || typeof entry !== "object") return [];
+    const id = (entry as { id?: unknown }).id;
+    const content = (entry as { content?: unknown }).content;
+    if (typeof id !== "string" || id.length === 0 || typeof content !== "string") return [];
+    const contentTokens = forgetMatchTokens(content);
+    const overlap = [...queryTokens].filter((token) => contentTokens.has(token)).length;
+    return overlap >= requiredMatches ? [id] : [];
+  }))];
+}
 
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
 /**
- * Create a memory management tool with 7 actions.
+ * Create a memory management tool with 8 actions.
  *
  * Actions:
  * - **stats** -- Get memory statistics (DB size, entry counts, FTS health)
  * - **browse** -- Paginated browsing of memory entries with filters
  * - **delete** -- Delete specific memory entries by ID array (requires approval)
+ * - **forget** -- Search and delete every scoped match for a natural-language query (requires approval)
  * - **flush** -- Flush all memory entries for a scope (requires approval)
  * - **export** -- Export full memory entries as JSON
  * - **pin** -- Mark a memory entry as always-injected in recall (requires id)
@@ -146,7 +192,7 @@ export function createMemoryManageTool(
     name: "memory_manage",
     label: "Memory Management",
     description:
-      "Admin memory CRUD: stats, browse, delete, flush, export, pin, unpin. Delete/flush require approval. Pin/unpin require id.",
+      "Admin memory CRUD: stats, browse, delete, forget, flush, export, pin, unpin. For a user's natural-language forget request, use forget with query so all scoped semantic and paired matches are removed. Delete/forget/flush require approval. Pin/unpin require id.",
     parameters: MemoryManageToolParams,
 
     async execute(
@@ -215,6 +261,50 @@ export function createMemoryManageTool(
               });
               if (!resolution.approved) {
                 throwToolError("permission_denied", `Action denied: memory.delete was not approved`, {
+                  hint: resolution.reason ?? "Request approval before retrying.",
+                });
+              }
+            }
+            const result = await rpcCall("memory.delete", {
+              ...deleteParams,
+              _trustLevel,
+            });
+            return jsonResult(result);
+          }
+
+          case "forget": {
+            const query = typeof p.query === "string" ? p.query.trim() : "";
+            if (query.length === 0) {
+              throwToolError("missing_param", "query is required for forget action");
+            }
+            const searchResult = await rpcCall("memory.search_files", {
+              query,
+              limit: FORGET_MATCH_LIMIT,
+              tenantId,
+              agentId,
+              _trustLevel,
+            });
+            const ids = matchedMemoryIds(searchResult, query);
+            if (ids.length === 0) {
+              return jsonResult({ deleted: 0, failed: 0, total: 0 });
+            }
+            const deleteParams = { ids, tenant_id: tenantId, agent_id: agentId };
+            if (approvalGate) {
+              const approvalContext = resolveApprovalRequestContext();
+              if (!approvalContext.ok) {
+                throwToolError("permission_denied", approvalContext.error.message, {
+                  hint: "Retry from a resolved agent request scope",
+                });
+              }
+              const resolution = await approvalGate.requestApproval({
+                toolName: "memory_manage",
+                action: "memory.forget",
+                params: { query, matches: ids.length },
+                fingerprintParams: { query, ...deleteParams },
+                ...approvalContext.value,
+              });
+              if (!resolution.approved) {
+                throwToolError("permission_denied", "Action denied: memory.forget was not approved", {
                   hint: resolution.reason ?? "Request approval before retrying.",
                 });
               }

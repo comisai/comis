@@ -4900,6 +4900,46 @@ describe("PiExecutor", () => {
       expect(mockEmbeddingEnqueue).not.toHaveBeenCalled();
     });
 
+    it("does not recreate paired memory after a natural-language forget operation", async () => {
+      mockGetResult.mockReturnValue({
+        tokensUsed: { input: 100, output: 50, total: 150 },
+        cost: { total: 0.01 },
+        stepsExecuted: 1,
+        llmCalls: 1,
+        finishReason: "stop",
+        toolExecResults: [{
+          toolName: "memory_manage",
+          action: "forget",
+          success: true,
+          durationMs: 10,
+        }],
+      });
+      const mockStore = vi.fn().mockResolvedValue(ok({ id: "test" }));
+      const deps = createMockDeps({
+        memoryPort: {
+          store: mockStore,
+          search: vi.fn(),
+          retrieve: vi.fn(),
+          update: vi.fn(),
+          delete: vi.fn(),
+          clear: vi.fn(),
+        } as any,
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      await withTestTurnScope(deps.agentId, () =>
+        executor.execute(memoryTestMessage, testSessionKey));
+
+      expect(mockStore).not.toHaveBeenCalled();
+      expect(deps.logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: deps.agentId,
+          step: "memory-persistence",
+        }),
+        "Paired memory skipped: turn requested durable forgetting",
+      );
+    });
+
     // Quality gate tests — shouldStorePairedMemory filtering
     it("skips memory when user message is below quality threshold", async () => {
       const shortMsg = { ...testMessage, text: "ok" } as NormalizedMessage;
@@ -6354,15 +6394,30 @@ describe("PiExecutor", () => {
       expect(replacement).toBeUndefined();
     });
 
-    it("skips mid-turn tool injection for OpenAI providers", async () => {
+    it("injects discovered tools mid-turn for OpenAI providers", async () => {
+      const imageGenerate = {
+        name: "image_generate",
+        description: "Generate an image",
+        parameters: { type: "object", properties: {} },
+        execute: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: "generated" }],
+          isError: false,
+        }),
+      };
       const deps = createMockDeps({
+        customTools: [imageGenerate] as any,
         modelRegistry: {
           find: vi.fn().mockReturnValue({ provider: "openai", id: "gpt-4o" }),
           getAll: vi.fn().mockReturnValue([]),
           getAvailable: vi.fn().mockReturnValue([]),
         } as any,
       });
-      const openaiConfig = { ...testConfig, provider: "openai", model: "gpt-4o" } as PerAgentConfig;
+      const openaiConfig = {
+        ...testConfig,
+        provider: "openai",
+        model: "gpt-4o",
+        deferredTools: { alwaysDefer: ["image_generate"] },
+      } as PerAgentConfig;
       const executor = createPiExecutor(openaiConfig, deps);
 
       await executor.execute(testMessage, testSessionKey);
@@ -6379,7 +6434,7 @@ describe("PiExecutor", () => {
         toolCall: { name: "discover_tools" },
         result: {
           sideEffects: {
-            discoveredTools: ["new_tool_a", "new_tool_b"],
+            discoveredTools: ["image_generate"],
           },
         },
         context: { tools: contextTools },
@@ -6387,16 +6442,13 @@ describe("PiExecutor", () => {
 
       await afterToolCall(mockCtx);
 
-      // contextTools should NOT have been modified (no injection)
-      expect(contextTools).toHaveLength(1);
-
-      // Debug log should indicate the skip
-      expect(deps.logger.debug).toHaveBeenCalledWith(
+      expect(contextTools.map(tool => tool.name)).toContain("image_generate");
+      expect(deps.logger.info).toHaveBeenCalledWith(
         expect.objectContaining({
-          discoveredCount: 2,
-          provider: "openai",
+          injectedCount: 1,
+          discoveredTools: ["image_generate"],
         }),
-        expect.stringContaining("Skipped mid-turn injection"),
+        expect.stringContaining("Mid-turn tool injection"),
       );
     });
 

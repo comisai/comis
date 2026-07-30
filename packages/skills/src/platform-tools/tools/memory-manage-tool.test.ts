@@ -291,6 +291,111 @@ describe("memory_manage tool", () => {
     });
   });
 
+  describe("forget action", () => {
+    it("searches the scoped memory and deletes every matched entry after approval", async () => {
+      (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
+        approved: true,
+        approvedBy: "operator",
+      });
+      mockRpcCall.mockImplementation(async (method) => {
+        if (method === "memory.search_files") {
+          return {
+            results: [
+              { id: "mem-explicit", content: "ordinary detail", score: 1, tags: [], createdAt: 1 },
+              { id: "mem-paired", content: "[user] ordinary detail\n[agent] paired detail", score: 0.9, tags: [], createdAt: 2 },
+            ],
+          };
+        }
+        if (method === "memory.delete") {
+          return { deleted: 2, failed: 0, total: 2 };
+        }
+        return {};
+      });
+
+      const tool = createMemoryManageTool(mockRpcCall, mockApprovalGate);
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-forget", {
+          action: "forget",
+          query: "ordinary detail",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenNthCalledWith(1, "memory.search_files", {
+        query: "ordinary detail",
+        limit: 5000,
+        tenantId: "default",
+        agentId: "test-agent",
+        _trustLevel: "admin",
+      });
+      expect(mockApprovalGate.requestApproval).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolName: "memory_manage",
+          action: "memory.forget",
+          params: { query: "ordinary detail", matches: 2 },
+          fingerprintParams: {
+            query: "ordinary detail",
+            ids: ["mem-explicit", "mem-paired"],
+            tenant_id: "default",
+            agent_id: "test-agent",
+          },
+        }),
+      );
+      expect(mockRpcCall).toHaveBeenNthCalledWith(2, "memory.delete", {
+        ids: ["mem-explicit", "mem-paired"],
+        tenant_id: "default",
+        agent_id: "test-agent",
+        _trustLevel: "admin",
+      });
+      expect(result.details).toEqual({ deleted: 2, failed: 0, total: 2 });
+    });
+
+    it("excludes unrelated semantic candidates from the destructive delete set", async () => {
+      (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
+        approved: true,
+        approvedBy: "operator",
+      });
+      mockRpcCall.mockImplementation(async (method) => {
+        if (method === "memory.search_files") {
+          return {
+            results: [
+              { id: "mem-target", content: "The old tote bag is purple.", score: 1, tags: [], createdAt: 1 },
+              {
+                id: "mem-unrelated",
+                content: "Physiotherapy is every Thursday and morning updates stay short.",
+                score: 0.9,
+                tags: [],
+                createdAt: 2,
+              },
+            ],
+          };
+        }
+        if (method === "memory.delete") {
+          return { deleted: 1, failed: 0, total: 1 };
+        }
+        return {};
+      });
+
+      const tool = createMemoryManageTool(mockRpcCall, mockApprovalGate);
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-forget-safe", {
+          action: "forget",
+          query: "the old tote bag",
+        } as never),
+      );
+
+      expect(mockApprovalGate.requestApproval).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "memory.forget",
+          params: { query: "the old tote bag", matches: 1 },
+        }),
+      );
+      expect(mockRpcCall).toHaveBeenLastCalledWith("memory.delete", expect.objectContaining({
+        ids: ["mem-target"],
+      }));
+      expect(result.details).toEqual({ deleted: 1, failed: 0, total: 1 });
+    });
+  });
+
   // -----------------------------------------------------------------------
   // flush action
   // -----------------------------------------------------------------------

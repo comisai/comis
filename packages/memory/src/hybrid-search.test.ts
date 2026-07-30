@@ -533,6 +533,21 @@ describe("hybridSearch", () => {
     expect(results[0]!.id).toBe("m1");
   });
 
+  it("keeps broad hybrid searches within the sqlite vector candidate ceiling", () => {
+    if (!isVecAvailable()) return;
+
+    insertMemory(db, "m1", "test notebook cover is teal");
+    insertEmbedding(db, "m1", [1, 0, 0, 0]);
+
+    let results: ReturnType<typeof hybridSearch> = [];
+    expect(() => {
+      results = hybridSearch(db, "test notebook cover", [1, 0, 0, 0], {
+        limit: 5_000,
+      });
+    }).not.toThrow();
+    expect(results.map((result) => result.id)).toContain("m1");
+  });
+
   it("falls back to FTS-only when no embedding provided", () => {
     insertMemory(db, "m1", "the quick brown fox");
     insertMemory(db, "m2", "lazy dog sleeps");

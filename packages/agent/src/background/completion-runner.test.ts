@@ -756,6 +756,7 @@ describe("createBackgroundCompletionRunner", () => {
       agentId: "agent_a",
       traceId: originTraceId,
       trustLevel: "guest",
+      learningEligible: false,
       channelType: "telegram",
       deliveryOrigin: {
         channelType: "telegram",

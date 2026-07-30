@@ -41,7 +41,9 @@ plus the VPS runbook + scripts — into one followable kit. It is the **canonica
 Every test ends **works** (predicate verified in **ground truth**, not the agent's reply) **or fails
 honestly** (truthful, reason-coded, names the missing knob). **A false success is the worst outcome.**
 Security/honesty oracles are **binary HARD**. When something breaks: **stop at the first failure → fix it
-test-first (RED in `packages/*/src/**` reproducing the live shape, then GREEN) → wipe logs+memory+test
-sessions → rebuild + clean-restart → reproduce on the clean slate → confirm → close the observability gap →
-only then continue. One issue fully closed before the next.** Leave the observability and the emulator
-**better than you found them, every time.**
+test-first (RED in `packages/*/src/**` reproducing the live shape, then GREEN) → reproduce on a clean
+scratch rig → confirm → rebuild and restart the rig under test → replay there → close the observability
+gap → only then continue.** Stateless campaigns may use `clean-restart.sh` directly. A continuous
+relationship must protect its data root and use a separate scratch root for the destructive clean-slate
+proof; wiping its relationship state invalidates the run. **One issue fully closed before the next.**
+Leave the observability and the emulator **better than you found them, every time.**
