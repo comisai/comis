@@ -631,6 +631,28 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
+  // A failed image analysis whose provider ladder reached the unavailable
+  // terminal is more specific than the generic tool-error catch-all. Name both
+  // ways to make vision servable: the agent's main-model binding and the
+  // credentialed registry configuration.
+  (s) => {
+    const vision = s.vision;
+    if (vision?.outcome !== "failed" || vision.path !== "unavailable") return null;
+    if (!s.failures.some((failure) => failure.toolName === "image_analyze")) return null;
+    const provider = vision.mainProvider ?? vision.provider ?? "<unknown>";
+    const errorKind = vision.errorKind ?? "unknown";
+    const modelKnob = `agents.${s.agentId ?? "<id>"}.model`;
+    return {
+      code: "vision_unavailable",
+      detail: `vision provider "${provider}" reached the unavailable path with ${errorKind}`,
+      suggestedNextSteps: [
+        `select a vision-capable model at ${modelKnob}, or configure integrations.media.vision.providers and integrations.media.vision.defaultProvider with an available credential`,
+        "re-uploading the same image will not help until the vision configuration changes",
+        "obs.explain depth=full for the failing image_analyze errorPreview",
+      ],
+    };
+  },
+
   // 10) completed_with_tool_errors (the CATCH-ALL ACUTE cause — last of the acute
   //     tier, above the BENIGN learning verdicts #11-13 below). A
   //     degraded session whose tool failures matched none of the named rules

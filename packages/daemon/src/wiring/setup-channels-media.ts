@@ -348,8 +348,12 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
 
       // Wrap resolveAttachment to intercept buffers for workspace persistence
       const persistedFiles: PersistedFile[] = [];
+      const persistenceResolutions = new Map<string, Promise<Buffer | null>>();
       const effectiveResolve = persistenceEnabled
-        ? async (att: Attachment) => {
+        ? (att: Attachment): Promise<Buffer | null> => {
+          const existing = persistenceResolutions.get(att.url);
+          if (existing) return existing;
+          const pending = (async () => {
             const buffer = await resolveAttachment(att);
             if (buffer) {
               // Classify attachment for subdirectory routing
@@ -389,7 +393,10 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
               }
             }
             return buffer;
-          }
+          })();
+          persistenceResolutions.set(att.url, pending);
+          return pending;
+        }
         : resolveAttachment;
 
       // Per-channel processor gating: disable processors when channel config says false
@@ -428,6 +435,12 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
         },
         enrichedMsg,
       );
+      if (persistenceEnabled) {
+        for (const attachment of enrichedMsg.attachments) {
+          if (attachment.sizeBytes !== undefined && attachment.sizeBytes > maxMediaBytes) continue;
+          await effectiveResolve(attachment);
+        }
+      }
       const sttReceipts = SttPreprocessReceiptsSchema.safeParse(
         result.sttReceipts,
       );
