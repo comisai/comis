@@ -15,7 +15,7 @@ icon: "users"
 | `session_search` | Search session history by query |
 | `session_status` | Get the current session status |
 | `sessions_history` | Retrieve session history entries |
-| `sessions_list` | List all sessions for the current agent |
+| `sessions_list` | List the caller conversation and delegated children |
 | `sessions_send` | Send a message into another session in 3 modes: `fire-and-forget`, `wait`, `ping-pong` |
 | `sessions_spawn` | Start a background sub-agent with artifact references and an optional objective |
 | `subagents` | Manage sub-agents (`list`, `wait`, `kill`, `steer`) |
@@ -33,7 +33,7 @@ For DAG-style multi-agent workflows (debate, vote, refine, map-reduce, etc.), se
 
 ### Session tools
 
-The four session tools (`session_search`, `session_status`, `sessions_history`, `sessions_list`) let agents inspect conversations and discover active sessions.
+The four session tools (`session_search`, `session_status`, `sessions_history`, `sessions_list`) let agents inspect their current conversation and directly delegated child sessions. Authenticated operator RPC calls use a separate control-plane authority.
 
 <AccordionGroup>
   <Accordion title="session_status -- View current session">
@@ -49,7 +49,7 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
   </Accordion>
 
   <Accordion title="sessions_list -- List active sessions">
-    Lists active sessions for the specified tenant and agent, with optional filters by session kind and recency.
+    Lists the caller conversation and directly delegated child sessions, with optional filters by session kind and recency.
 
     **Parameters:**
 
@@ -65,7 +65,7 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
   </Accordion>
 
   <Accordion title="sessions_history -- Browse conversation history">
-    Retrieves the conversation history for a durable conversation identity. Sub-agent listings expose the required agent, conversation reference, and conversation scope.
+    Retrieves history for the exact caller conversation or a directly delegated child using its durable conversation identity.
 
     **Parameters:**
 

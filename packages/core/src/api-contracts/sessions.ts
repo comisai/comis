@@ -87,9 +87,10 @@ export const AgentsListContract = defineContract({
 
 /**
  * `session.list` — Aggregated session list across SQLite + JSONL + workspace
- * sources, with optional recency + kind filters and sandboxed sub-agent
- * visibility. Agent-self RPC reads are scoped to the requested tenant and
- * agent. Handler: `session-handlers/session-list.ts`.
+ * sources, with optional recency + kind filters. Model-facing reads expose
+ * the exact caller conversation and directly delegated child sessions.
+ * Authenticated control-plane reads retain their explicit tenant-agent scope.
+ * Handler: `session-handlers/session-list.ts`.
  *
  * Bespoke pre-Zod: none.
  *
@@ -124,10 +125,9 @@ export const SessionListContract = defineContract({
     total: z.number(),
   }),
   // Agent-self read (classified "ungated" — read-only/lifecycle,
-  // no in-handler admin check). rpc-scoped so an agent's own _agentId
-  // rides it for self-scoping (the handler already filters to the caller's
-  // sessions when _agentId is present) instead of being denied by the
-  // deny-by-origin chokepoint. No cap required.
+  // no in-handler admin check). rpc-scoped so the trusted model caller scope
+  // reaches the handler, which limits visibility to the caller conversation
+  // and directly delegated children. No cap required.
   scopes: ["rpc"] as const,
 });
 

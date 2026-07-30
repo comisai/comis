@@ -65,21 +65,40 @@ export function wireQuiescenceFinished({
     && nowMs - lastNewMs >= quiesceMs;
 }
 
-/** Whether one emulator wire record belongs to the selected Telegram topic. */
-export function telegramOutboundMatchesThread(outbound, threadId) {
+/**
+ * Whether one emulator wire record belongs to the selected Telegram topic.
+ *
+ * Telegram accepts a reply to a message inside a forum topic without a separate
+ * `message_thread_id`. In that shape, the exact inbound reply target is the
+ * routing evidence. Do not broaden arbitrary threadless messages: only the
+ * injected inbound message id may substitute for an explicit thread id.
+ */
+export function telegramOutboundMatchesThread(outbound, threadId, inboundMessageId) {
   if (threadId === undefined) {
     return outbound?.messageThreadId === undefined || outbound?.messageThreadId === null;
   }
   const expected = Number(threadId);
   const actual = Number(outbound?.messageThreadId);
-  return Number.isFinite(expected) && Number.isFinite(actual) && actual === expected;
+  if (Number.isFinite(expected) && Number.isFinite(actual)) {
+    return actual === expected;
+  }
+  const expectedReply = Number(inboundMessageId);
+  const actualReply = Number(
+    outbound?.replyToMessageId
+    ?? outbound?.raw?.reply_parameters?.message_id
+    ?? outbound?.raw?.reply_to_message_id,
+  );
+  return Number.isFinite(expected)
+    && Number.isFinite(expectedReply)
+    && Number.isFinite(actualReply)
+    && actualReply === expectedReply;
 }
 
 /** Return the last substantive wire reply from one exact Telegram conversation. */
-export function findTelegramConversationWireAnswer(outbound, threadId) {
+export function findTelegramConversationWireAnswer(outbound, threadId, inboundMessageId) {
   for (let index = outbound.length - 1; index >= 0; index -= 1) {
     const item = outbound[index];
-    if (!telegramOutboundMatchesThread(item, threadId)) continue;
+    if (!telegramOutboundMatchesThread(item, threadId, inboundMessageId)) continue;
     const visibleText = outboundVisibleText(item);
     if (visibleText && !isDriveProgressText(visibleText)) return visibleText;
   }
@@ -264,7 +283,11 @@ export function wireContainsAssistantReply(outbound, assistantReply, route) {
       typeof item.text === "string" &&
       (
         route === undefined
-        || telegramOutboundMatchesThread(item, route.threadId)
+        || telegramOutboundMatchesThread(
+          item,
+          route.threadId,
+          route.inboundMessageId,
+        )
       ) &&
       normalizeWireText(item.text) === expected,
   );
@@ -281,10 +304,15 @@ export function sharedConversationFinished({
   sawAnswer,
   turnEnded,
   threadId,
+  inboundMessageId,
 }) {
   if (
     correlatedAnswer !== null
-    && wireContainsAssistantReply(outbound, correlatedAnswer, { threadId })
+    && wireContainsAssistantReply(
+      outbound,
+      correlatedAnswer,
+      { threadId, inboundMessageId },
+    )
   ) {
     return true;
   }

@@ -16,20 +16,34 @@ import {
 } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type SessionHandlerDeps } from "./session-helpers.js";
-import { AuthorizationError } from "../errors.js";
-import { subagentCallerConversationRef } from "./session-subagent-authority.js";
+import {
+  denyModelSessionScopeMismatch,
+  filterModelSessionCandidates,
+  resolveModelSessionCaller,
+} from "./session-read-authority.js";
 
 function requireQueryAuthority(
+  deps: SessionHandlerDeps,
   params: { tenant_id: string; agent_id: string },
   rawParams: Record<string, unknown>,
+  method: "session.list" | "session.search",
 ): SessionQueryScope {
-  const callerAgentId = rawParams._agentId as string | undefined;
-  const callerTenantId = rawParams._tenantId as string | undefined;
-  if (callerAgentId !== undefined && callerAgentId !== params.agent_id) {
-    throw new AuthorizationError("Session query agent does not match the authenticated caller");
+  const caller = resolveModelSessionCaller(deps, rawParams, method);
+  if (caller !== undefined && caller.agentId !== params.agent_id) {
+    return denyModelSessionScopeMismatch(
+      deps,
+      method,
+      caller,
+      "Session query agent does not match the authenticated caller",
+    );
   }
-  if (callerTenantId !== undefined && callerTenantId !== params.tenant_id) {
-    throw new AuthorizationError("Session query tenant does not match the authenticated caller");
+  if (caller !== undefined && caller.tenantId !== params.tenant_id) {
+    return denyModelSessionScopeMismatch(
+      deps,
+      method,
+      caller,
+      "Session query tenant does not match the authenticated caller",
+    );
   }
   return { tenantId: params.tenant_id, agentId: params.agent_id };
 }
@@ -196,15 +210,18 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
     [SessionListContract.method]: async (rawParams) => {
       const params = SessionListContract.request.parse(stripInternalFields(rawParams));
       const scope = requireQueryAuthority(
+        deps,
         { tenant_id: params.tenant_id, agent_id: params.agent_id },
         rawParams,
+        "session.list",
       );
       const kind = params.kind ?? "all";
-      let sessions = listSessions(deps, scope);
-      const callerRef = subagentCallerConversationRef(rawParams);
-      if (callerRef !== undefined) {
-        sessions = sessions.filter((session) => session.conversationRef === callerRef);
-      }
+      let sessions = filterModelSessionCandidates(
+        deps,
+        rawParams,
+        "session.list",
+        listSessions(deps, scope),
+      );
       if (params.since_minutes !== undefined) {
         const cutoff = systemNowMs() - params.since_minutes * 60_000;
         sessions = sessions.filter((session) => session.updatedAt >= cutoff);
@@ -230,14 +247,17 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
     [SessionSearchContract.method]: async (rawParams) => {
       const params = SessionSearchContract.request.parse(stripInternalFields(rawParams));
       const authority = requireQueryAuthority(
+        deps,
         { tenant_id: params.tenant_id, agent_id: params.agent_id },
         rawParams,
+        "session.search",
       );
-      let sessions = listSessions(deps, authority);
-      const callerRef = subagentCallerConversationRef(rawParams);
-      if (callerRef !== undefined) {
-        sessions = sessions.filter((session) => session.conversationRef === callerRef);
-      }
+      const sessions = filterModelSessionCandidates(
+        deps,
+        rawParams,
+        "session.search",
+        listSessions(deps, authority),
+      );
       if (!params.query) {
         const limit = Math.min(Math.max(params.limit ?? 10, 1), 30);
         const recent = sessions.slice(0, limit).map((session) => ({
