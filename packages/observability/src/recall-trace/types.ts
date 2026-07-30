@@ -87,7 +87,7 @@ export type RecallDegradationKind = (typeof RECALL_DEGRADATION_KINDS)[number];
 /**
  * Per-memory score breakdown. Pure numbers — no redaction concern.
  * `final` is the product of `base` and the multiplicative factors
- * (recency/temporal/proof/trust/usefulness/forget) surfaced from `score.ts`. The
+ * (recency/temporal/proof/trust/usefulness/correction/forget) surfaced from `score.ts`. The
  * `usefulness` factor is the read-side payoff of the recall-utility
  * feedback loop (1.0 when the per-memory usefulness signal is absent).
  *
@@ -109,6 +109,8 @@ const RecallScoreBreakdownSchema = z.object({
   /** Outcome-attributed usefulness contribution (annotation, NOT a multiplicand);
    *  optional so older trace lines parse. Signed: + boosts, - demotes, 0 when absent. */
   usefulnessOutcomeShare: z.number().optional(),
+  /** Bounded current-truth factor for explicit corrections; optional for older traces. */
+  correction: z.number().optional(),
   /** FadeMem decay factor surfaced from score.ts; optional (appended after the original
    *  5-factor schema) so older trace lines that predate it still parse. */
   forget: z.number().optional(),
