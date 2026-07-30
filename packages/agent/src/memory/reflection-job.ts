@@ -478,7 +478,7 @@ export function deriveRequiredTools(members: ReflectionSourceTrajectory[]): stri
  * Slack snowflakes) and for ALL skill/topic docs the raw name is already under the
  * cap, so this is byte-identical to the prior `<kind>-<topicKey>`.
  */
-function docNameForTopic(kind: "skill" | "profile" | "topic", topicKey: string): string {
+export function docNameForTopic(kind: "skill" | "profile" | "topic", topicKey: string): string {
   const name = `${kind}-${topicKey}`;
   if (name.length <= MAX_DOC_NAME_LENGTH) return name;
   // Over-cap raw group key (a long profile userId) → hash the KEY into the name. The

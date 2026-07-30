@@ -22,13 +22,14 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { err, ok } from "@comis/shared";
-import { applyDeltaOps, renderStructuredBody, MAX_DOC_NAME_LENGTH } from "@comis/core";
+import { applyDeltaOps, renderStructuredBody, MAX_DOC_NAME_LENGTH, validateLearnedDocBody } from "@comis/core";
 import type { ResolvedOutcome, StructuredBody } from "@comis/core";
 import { PROCEDURE_REFLECT_PROMPT, type ReflectionResult } from "./reflection-prompt.js";
 import {
   runReflection,
   classifyReflectOutcome,
   deriveRequiredTools,
+  docNameForTopic,
   type RunReflectionDeps,
   type RunReflectionConfig,
   type ReflectionSourceTrajectory,
@@ -2128,5 +2129,69 @@ describe("runReflection — cron self-corroboration is a cardinality-1 dead-end 
       expect(res.value.maxTopicCardinality).toBe(1); // 1 for ANY N — never self-corroborates
       expect(res.value.admitted).toBe(0);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// docNameForTopic — the naming layer must agree with the validation layer
+// ---------------------------------------------------------------------------
+//
+// `validateLearnedDocBody` scans the doc NAME with the shared secret-egress
+// guard, which redacts long high-entropy hex runs. A skill/topic topicKey is
+// always a full sha256 hex, so a name that embedded it whole was read as a
+// leaked credential and EVERY reflected doc was refused with
+// `rejected_validation` — the learning path admitted nothing at all, and the
+// funnel blamed poison rather than the name. These pin the agreement directly,
+// so the two layers cannot silently drift apart again.
+describe("docNameForTopic — every generated name satisfies the doc validator", () => {
+  const clean = (name: string): boolean =>
+    validateLearnedDocBody({ name, body: "Use when deploying the app.", description: "d" }).ok;
+
+  it("keeps a sha256 skill topicKey out of the secret-egress guard", () => {
+    const topicKey = createHash("sha256").update("deploy the app").digest("hex");
+    const name = docNameForTopic("skill", topicKey);
+
+    expect(clean(name)).toBe(true);
+    expect(name.startsWith("skill-")).toBe(true);
+    expect(name.length).toBeLessThanOrEqual(MAX_DOC_NAME_LENGTH);
+  });
+
+  it("keeps a sha256 topic topicKey out of the secret-egress guard", () => {
+    const topicKey = createHash("sha256").update("a recurring topic").digest("hex");
+
+    expect(clean(docNameForTopic("topic", topicKey))).toBe(true);
+  });
+
+  it("bounds an over-cap profile userId to a validator-clean name", () => {
+    const longUserId = `email:${"user.name+tag".repeat(12)}@example.com`;
+    const name = docNameForTopic("profile", longUserId);
+
+    expect(name.length).toBeLessThanOrEqual(MAX_DOC_NAME_LENGTH);
+    expect(clean(name)).toBe(true);
+  });
+
+  it("leaves a short profile userId readable rather than hashing it", () => {
+    // Readability is the reason the short path is not hashed — a channel id
+    // stays legible in the doc listing.
+    expect(docNameForTopic("profile", "678314278")).toBe("profile-678314278");
+  });
+
+  it("is deterministic so the get-then-admit pair addresses one row", () => {
+    const topicKey = createHash("sha256").update("same request").digest("hex");
+
+    expect(docNameForTopic("skill", topicKey)).toBe(docNameForTopic("skill", topicKey));
+  });
+
+  it("separates kinds that share a topicKey", () => {
+    const topicKey = createHash("sha256").update("shared").digest("hex");
+
+    expect(docNameForTopic("skill", topicKey)).not.toBe(docNameForTopic("topic", topicKey));
+  });
+
+  it("does not collide across distinct topicKeys", () => {
+    const a = docNameForTopic("skill", createHash("sha256").update("request-a").digest("hex"));
+    const b = docNameForTopic("skill", createHash("sha256").update("request-b").digest("hex"));
+
+    expect(a).not.toBe(b);
   });
 });

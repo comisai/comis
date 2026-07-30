@@ -42,6 +42,13 @@ const CRITICAL_PATTERN_SOURCES: ReadonlySet<string> = new Set(
 );
 
 /**
+ * The `criticalPatterns` label reported when the secret-egress scrubber redacted
+ * something. Named so a caller that must reason about this one pattern compares
+ * against the same literal this module emits instead of re-spelling it.
+ */
+export const SECRET_EGRESS_PATTERN = "secret-egress-guard";
+
+/**
  * Validates memory content before storage, classifying suspicious patterns
  * as WARN (trust downgrade) or CRITICAL (block storage).
  *
@@ -53,7 +60,11 @@ export function validateMemoryWrite(content: string): MemoryWriteValidationResul
   // scrubSecretsFromText uses the fast pre-filter; most content pays O(prefixes) only.
   const scrub = scrubSecretsFromText(content);
   if (scrub.redactions > 0) {
-    return { severity: "critical", patterns: ["secret-egress-guard"], criticalPatterns: ["secret-egress-guard"] };
+    return {
+      severity: "critical",
+      patterns: [SECRET_EGRESS_PATTERN],
+      criticalPatterns: [SECRET_EGRESS_PATTERN],
+    };
   }
 
   const patterns = detectSuspiciousPatterns(content);
