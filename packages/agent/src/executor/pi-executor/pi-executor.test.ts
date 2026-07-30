@@ -4900,6 +4900,46 @@ describe("PiExecutor", () => {
       expect(mockEmbeddingEnqueue).not.toHaveBeenCalled();
     });
 
+    it("does not recreate paired memory after a natural-language forget operation", async () => {
+      mockGetResult.mockReturnValue({
+        tokensUsed: { input: 100, output: 50, total: 150 },
+        cost: { total: 0.01 },
+        stepsExecuted: 1,
+        llmCalls: 1,
+        finishReason: "stop",
+        toolExecResults: [{
+          toolName: "memory_manage",
+          action: "forget",
+          success: true,
+          durationMs: 10,
+        }],
+      });
+      const mockStore = vi.fn().mockResolvedValue(ok({ id: "test" }));
+      const deps = createMockDeps({
+        memoryPort: {
+          store: mockStore,
+          search: vi.fn(),
+          retrieve: vi.fn(),
+          update: vi.fn(),
+          delete: vi.fn(),
+          clear: vi.fn(),
+        } as any,
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      await withTestTurnScope(deps.agentId, () =>
+        executor.execute(memoryTestMessage, testSessionKey));
+
+      expect(mockStore).not.toHaveBeenCalled();
+      expect(deps.logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: deps.agentId,
+          step: "memory-persistence",
+        }),
+        "Paired memory skipped: turn requested durable forgetting",
+      );
+    });
+
     // Quality gate tests — shouldStorePairedMemory filtering
     it("skips memory when user message is below quality threshold", async () => {
       const shortMsg = { ...testMessage, text: "ok" } as NormalizedMessage;
