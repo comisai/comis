@@ -118,6 +118,23 @@ describe("scrubSecretsFromText", () => {
     expect(result.redactions).toBe(1);
   });
 
+  it("scrubs a standalone credential-shaped value without relying on surrounding prose", () => {
+    const credential = "aZ9mQ2v7Kp3X8nL4tR6sB1cD5eF0gH7jK9mN2pQ4wX6yT8u0";
+    const result = scrubSecretsFromText(`ok try this one ${credential}`);
+
+    expect(result.text).toBe("ok try this one [REDACTED]");
+    expect(result.text).not.toContain(credential);
+    expect(result.redactions).toBe(1);
+  });
+
+  it.each([
+    "ok try this one 12345678901234567890",
+    "use commit b76e6141ed853dd08f280908db35cc37df85457e",
+    "try https://example.com/a/very/long/non-secret/resource?mode=active",
+  ])("preserves long non-secret values in ordinary prose: %s", (input) => {
+    expect(scrubSecretsFromText(input)).toEqual({ text: input, redactions: 0 });
+  });
+
   it("preserves environment references in natural-language storage confirmations", () => {
     const input =
       "Confirm storing SERVICE_PASSWORD in the encrypted secret store. The confirmed value is ${SERVICE_PASSWORD}.";
@@ -177,6 +194,14 @@ describe("mightContainSecret", () => {
 
   it("returns true for an environment-style password assignment", () => {
     expect(mightContainSecret("SERVICE_PASSWORD='ordinary-password-value'")).toBe(true);
+  });
+
+  it("returns true for a standalone credential-shaped value", () => {
+    expect(
+      mightContainSecret(
+        "ok try this one aZ9mQ2v7Kp3X8nL4tR6sB1cD5eF0gH7jK9mN2pQ4wX6yT8u0",
+      ),
+    ).toBe(true);
   });
 });
 
