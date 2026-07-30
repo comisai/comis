@@ -7,11 +7,10 @@
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { PathTraversalError, safePath, systemEnvSnapshot, systemNowMs, tryGetContext } from "@comis/core";
+import { safePath, systemEnvSnapshot, systemNowMs, tryGetContext } from "@comis/core";
 import type { SecretManager, ToolCapabilityPort, ApprovalGate, TypedEventBus } from "@comis/core";
 import type { ExecSandboxConfig } from "../sandbox/types.js";
 import { resolvePaths } from "../file/safe-path-wrapper.js";
-import { throwToolError } from "../../../platform-tools/tool-helpers.js";
 import { resolveApprovalRequestContext } from "../../../platform-tools/approval-request-context.js";
 import { parseInstallDetour, type InstallDetourDecision, type DetourOverlap } from "../install-detour.js";
 import { SECRET_REF_NAME_PATTERN, type ToolLogger } from "./exec-types.js";
@@ -21,38 +20,6 @@ export {
   gradeDestructiveExecEffect,
   isDestructiveExecCommand,
 } from "./exec-destructive.js";
-
-// ---------------------------------------------------------------------------
-// cwd resolution
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve a user-supplied `cwd` against the workspace root via safePath.
- * Throws via throwToolError when the path escapes workspace bounds.
- */
-export function resolveCwd(workspacePath: string, cwdParam: string): string {
-  try {
-    const resolved = safePath(workspacePath, cwdParam);
-    if (!existsSync(resolved)) {
-      throwToolError(
-        "not_found",
-        `Working directory does not exist: ${cwdParam}`,
-        { hint: "List the workspace and retry with an existing directory" },
-      );
-    }
-    return resolved;
-  } catch (error) {
-    if (error instanceof PathTraversalError) {
-      throwToolError(
-        "invalid_value",
-        `Working directory outside workspace bounds: ${cwdParam}`,
-      );
-    }
-    throw error;
-  }
-  // unreachable — throwToolError never returns, but TS needs this
-  return workspacePath;
-}
 
 // ---------------------------------------------------------------------------
 // Process tree kill

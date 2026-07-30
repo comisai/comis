@@ -36,13 +36,13 @@ import { resolveApprovalRequestContext } from "../../../platform-tools/approval-
 import { extractHeredoc, extractDashCArg, validateExecCommand } from "../exec-security/index.js";
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, ExecParams, type ExecToolDeps } from "./exec-types.js";
 import {
-  resolveCwd,
   commandUsesRawInterpreter,
   resolveSecretRefs,
   evaluateInstallDetourGate,
   buildExecEnv,
   isDestructiveExecCommand,
 } from "./exec-shared.js";
+import { resolveCwd } from "./exec-cwd.js";
 import { executeForeground } from "./exec-foreground.js";
 import { executeBackground } from "./exec-background.js";
 
