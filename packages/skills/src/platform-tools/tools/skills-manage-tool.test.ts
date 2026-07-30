@@ -222,6 +222,23 @@ describe("skills_manage tool", () => {
   // -----------------------------------------------------------------------
 
   describe("approval gate includes scope", () => {
+    it("rejects mutable GitHub refs before requesting import approval", async () => {
+      const tool = createSkillsManageTool(mockRpcCall, mockApprovalGate);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-a0", {
+            action: "import",
+            url: "https://github.com/org/repo/tree/main/skills/test",
+            scope: "local",
+          } as never),
+        ),
+      ).rejects.toThrow(/immutable GitHub commit URL/i);
+
+      expect(mockApprovalGate.requestApproval).not.toHaveBeenCalled();
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
     it("import approval params include scope", async () => {
       (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
         approved: true,

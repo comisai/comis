@@ -429,6 +429,20 @@ describe("skills.import handler", () => {
     ).rejects.toThrow(/Invalid GitHub URL/i);
   });
 
+  it("rejects mutable GitHub refs before fetching import content", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const handlers = createSkillHandlers(makeDeps());
+
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/immutable GitHub commit URL/i);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects import when the derived skill name from URL path fails name validation pattern", async () => {
     const handlers = createSkillHandlers(makeDeps());
     await expect(
