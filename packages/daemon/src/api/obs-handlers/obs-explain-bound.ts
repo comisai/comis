@@ -74,6 +74,8 @@ import {
   FULL_MAX_SPAWN_NODES,
   SUMMARY_MAX_ORCHESTRATE_RUNS,
   FULL_MAX_ORCHESTRATE_RUNS,
+  SUMMARY_MAX_GRAPH_NODES,
+  FULL_MAX_GRAPH_NODES,
   SUMMARY_MAX_TOOLSTATS,
   FULL_MAX_TOOLSTATS,
   MAX_SHED_ITERATIONS,
@@ -336,6 +338,43 @@ export function boundIncidentReport(
     orchestrate = orchestrate.slice(0, maxOrchestrate);
   }
 
+  let graph = report.graph;
+  if (graph !== undefined) {
+    const maxGraphNodes =
+      depth === "summary" ? SUMMARY_MAX_GRAPH_NODES : FULL_MAX_GRAPH_NODES;
+    if (graph.nodes.length > maxGraphNodes) {
+      truncations.push({
+        field: "graph.nodes",
+        reason: `capped at ${maxGraphNodes} nodes (had ${graph.nodes.length})`,
+        pointer: "obs.explain depth=full",
+      });
+    }
+    graph = {
+      ...graph,
+      graphId: digestIfOversized(graph.graphId, "graph.graphId", truncations),
+      ...(graph.traceId === undefined
+        ? {}
+        : { traceId: digestIfOversized(graph.traceId, "graph.traceId", truncations) }),
+      ...(graph.startedAt === undefined
+        ? {}
+        : { startedAt: digestIfOversized(graph.startedAt, "graph.startedAt", truncations) }),
+      ...(graph.completedAt === undefined
+        ? {}
+        : { completedAt: digestIfOversized(graph.completedAt, "graph.completedAt", truncations) }),
+      nodes: graph.nodes.slice(0, maxGraphNodes).map((node) => ({
+        ...node,
+        nodeId: digestIfOversized(node.nodeId, "graph.nodes[].nodeId", truncations),
+        subAgentRunId: node.subAgentRunId === null
+          ? null
+          : digestIfOversized(
+              node.subAgentRunId,
+              "graph.nodes[].subAgentRunId",
+              truncations,
+            ),
+      })),
+    };
+  }
+
   let bounded: IncidentReport = {
     ...report,
     channel,
@@ -350,6 +389,7 @@ export function boundIncidentReport(
     ...(cacheBreaks !== undefined ? { cacheBreaks } : {}),
     ...(spawnTree !== undefined ? { spawnTree } : {}),
     ...(orchestrate !== undefined ? { orchestrate } : {}),
+    ...(graph !== undefined ? { graph } : {}),
     truncations,
   };
 
@@ -511,6 +551,26 @@ export function boundIncidentReport(
             {
               field: "orchestrate",
               reason: `report exceeded ${SUMMARY_MAX_BYTES} bytes; orchestrate trimmed to ${half}`,
+              pointer: "obs.explain depth=full",
+            },
+          ],
+        };
+        continue;
+      }
+
+      if (bounded.graph !== undefined && bounded.graph.nodes.length > 1) {
+        const half = Math.max(1, Math.floor(bounded.graph.nodes.length / 2));
+        bounded = {
+          ...bounded,
+          graph: {
+            ...bounded.graph,
+            nodes: bounded.graph.nodes.slice(0, half),
+          },
+          truncations: [
+            ...bounded.truncations,
+            {
+              field: "graph.nodes",
+              reason: `report exceeded ${SUMMARY_MAX_BYTES} bytes; graph nodes trimmed to ${half}`,
               pointer: "obs.explain depth=full",
             },
           ],

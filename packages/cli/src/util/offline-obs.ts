@@ -182,7 +182,13 @@ async function loadDaemonAssemblers(): Promise<
 /** Assemble an IncidentReport from the local data dir without a daemon. */
 export async function assembleIncidentReportOffline(
   dataDir: string,
-  params: { sessionKey?: string; traceId?: string; rootRunId?: string; depth?: "summary" | "full" },
+  params: {
+    sessionKey?: string;
+    traceId?: string;
+    rootRunId?: string;
+    graphId?: string;
+    depth?: "summary" | "full";
+  },
 ): Promise<IncidentReport> {
   const { assembleIncidentReportFromSources, makeRealReader } = await loadDaemonAssemblers();
   const { store, contextBrowse, close } = openObsStoreIfPresent(dataDir);

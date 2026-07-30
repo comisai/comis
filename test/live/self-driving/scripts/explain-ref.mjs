@@ -8,8 +8,9 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export function paramsForExplainRef(ref, depth) {
+export function paramsForExplainRef(ref, depth, hasTerminalGraphRun = false) {
   if (ref.startsWith("root-")) return { rootRunId: ref, depth };
+  if (hasTerminalGraphRun) return { graphId: ref, depth };
   if (ref.includes(":")) return { sessionKey: ref, depth };
   return { traceId: ref, depth };
 }

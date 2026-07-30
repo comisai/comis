@@ -7,7 +7,7 @@
  * single agent session and prints it as a concise table or as JSON.
  *
  * Usage:
- *   comis explain <sessionKey|traceId|rootRunId> [--format table|json] [--depth summary|full]
+ *   comis explain <sessionKey|traceId|rootRunId|graphId> [--format table|json] [--depth summary|full]
  *
  * Arg routing: a `root-` prefix → {rootRunId} (a
  * governed session, cron, task-check, or spawned root,
@@ -24,12 +24,21 @@
  */
 
 import type { Command } from "commander";
-import { ObsExplainContract } from "@comis/core";
+import { existsSync } from "node:fs";
+import { ObsExplainContract, safePath } from "@comis/core";
 import type { IncidentReport } from "@comis/core";
+import { tryCatch } from "@comis/shared";
 import { callTyped, isGatewayAuthRejection, withClient } from "../client/rpc-client.js";
 import { info, error, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { assembleIncidentReportOffline, resolveOfflineDataDir } from "../util/offline-obs.js";
+
+function hasLocalGraphMetadata(dataDir: string, graphId: string): boolean {
+  const resolved = tryCatch(() =>
+    safePath(dataDir, "graph-runs", graphId, "_run-metadata.json")
+  );
+  return resolved.ok && existsSync(resolved.value);
+}
 
 /**
  * Register the `explain` command on the program.
@@ -48,14 +57,19 @@ export function registerExplainCommand(program: Command): void {
     )
     .option("--format <format>", "Output format: table | json", "table")
     .option("--depth <depth>", "Report depth: summary | full", "summary")
+    .option("--graph", "Treat the identifier as an execution graph id")
     .option(
       "--offline",
       "Assemble from the local ~/.comis files without contacting the daemon",
     )
     .action(
-      async (idArg: string, options: { format: string; depth: string; offline?: boolean }) => {
+      async (
+        idArg: string,
+        options: { format: string; depth: string; offline?: boolean; graph?: boolean },
+      ) => {
         try {
           const depth = options.depth as "summary" | "full";
+          const localDataDir = resolveOfflineDataDir();
           // Route by arg shape: the `root-` prefix is the
           // disambiguator for a governed run's rootRunId (a session root is
           // `root-session-<key>`; scheduler and spawned roots are also `root-…`) and is
@@ -64,6 +78,8 @@ export function registerExplainCommand(program: Command): void {
           // ':'); a traceId is a UUID (no ':').
           const params = idArg.startsWith("root-")
             ? { rootRunId: idArg, depth }
+            : options.graph === true || hasLocalGraphMetadata(localDataDir, idArg)
+              ? { graphId: idArg, depth }
             : idArg.includes(":")
               ? { sessionKey: idArg, depth }
               : { traceId: idArg, depth };
@@ -83,7 +99,7 @@ export function registerExplainCommand(program: Command): void {
               : "Assembling incident report...",
             async () => {
               if (options.offline === true) {
-                return assembleIncidentReportOffline(resolveOfflineDataDir(), params);
+                return assembleIncidentReportOffline(localDataDir, params);
               }
               try {
                 return await withClient((client) =>
@@ -98,7 +114,7 @@ export function registerExplainCommand(program: Command): void {
                 offlineReason = /admin access required/i.test(e instanceof Error ? e.message : String(e))
                   ? "obs.explain is admin-trust-only — report assembled offline from the local data dir"
                   : "daemon unreachable — report assembled offline from the local data dir";
-                return assembleIncidentReportOffline(resolveOfflineDataDir(), params);
+                return assembleIncidentReportOffline(localDataDir, params);
               }
             },
           );
@@ -112,7 +128,7 @@ export function registerExplainCommand(program: Command): void {
           // Table view — concise key fields (kept small; the test exercises both
           // this branch and the json branch to hold the coverage floor).
           info(`Session:    ${report.sessionKey}`);
-          const requestedSession = idArg.includes(":") && !idArg.startsWith("root-");
+          const requestedSession = "sessionKey" in params;
           info(
             requestedSession
               ? `Trace:      ${report.traceId} (latest; session totals below include prior turns — rerun explain with this trace for the exact turn)`
@@ -158,6 +174,21 @@ export function registerExplainCommand(program: Command): void {
             info(
               `Task check: ${disposition} · attempt=${task.attemptId} · correlation=${task.correlationId} · root=${task.rootRunId} · delivered=${delivered} failed=${failed} ambiguous=${ambiguous}`,
             );
+          }
+          if (report.graph !== undefined) {
+            const graph = report.graph;
+            info(
+              `Graph:      ${graph.status} · ${graph.graphId} · `
+              + `${graph.nodesSucceeded}/${graph.nodesTotal} succeeded · `
+              + `${graph.nodesFailed} failed · ${graph.nodesSkipped} skipped`,
+            );
+            for (const node of graph.nodes) {
+              const duration = node.durationMs === null ? "n/a" : `${node.durationMs}ms`;
+              info(
+                `  ${node.nodeId}: ${node.status} · ${duration} · attempts=${node.attemptsUsed}`
+                + (node.subAgentRunId === null ? "" : ` · run=${node.subAgentRunId}`),
+              );
+            }
           }
           // The root→children spawn tree (present only when the
           // session emitted per-cap audit records). Each node names its leaseId,

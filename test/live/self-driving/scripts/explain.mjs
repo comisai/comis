@@ -17,6 +17,8 @@
 // diagnosis; a schema nit is a separate test concern — IncidentReportSchema.parse runs in the unit tests.)
 process.env.NODE_ENV = process.env.NODE_ENV || 'production';
 
+import { existsSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
 // Code root (daemon dist) + data dir via _rig.mjs. rig.dataDir derives from the SERVICE USER's home
 // (never process HOME), which retires the old root-HOME trap: an `ssh root@vps 'node explain.mjs …'`
 // used to read /root/.comis → 0 records → a false "explain blind".
@@ -39,8 +41,16 @@ const narrowed = flags.has('--learning') || flags.has('--failures') || flags.has
 // the ESM named-export lexer misses.
 const daemonDist = await import(comisDist('daemon', 'dist/index.js'));
 const { assembleIncidentReportFromSources, makeRealReader } = { ...daemonDist.default, ...daemonDist };
+const graphRunsDir = resolve(dataDir, 'graph-runs');
+const graphMetadata = resolve(graphRunsDir, ref, '_run-metadata.json');
+const hasTerminalGraphRun =
+  graphMetadata.startsWith(`${graphRunsDir}${sep}`) && existsSync(graphMetadata);
 
-assembleIncidentReportFromSources(makeRealReader(dataDir), dataDir, paramsForExplainRef(ref, depth))
+assembleIncidentReportFromSources(
+  makeRealReader(dataDir),
+  dataDir,
+  paramsForExplainRef(ref, depth, hasTerminalGraphRun),
+)
   .then((r) => {
     if (flags.has('--json')) {
       console.log(JSON.stringify(r, null, 1));
@@ -51,6 +61,7 @@ assembleIncidentReportFromSources(makeRealReader(dataDir), dataDir, paramsForExp
       outcome: r.outcome,
       costUsd: r.cost ? r.cost.costUsd : undefined,
       likelyRootCause: r.likelyRootCause,
+      ...(r.graph ? { graph: r.graph } : {}),
       ...(r.perRootBudget ? { perRootBudget: r.perRootBudget } : {}),
     };
     if (!narrowed || flags.has('--failures')) {

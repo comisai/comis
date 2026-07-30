@@ -508,3 +508,70 @@ describe("ObsExplainContract.request rootRunId arm", () => {
     expect(ObsExplainContract.request.parse({ traceId: "t-1" }).traceId).toBe("t-1");
   });
 });
+
+describe("ObsExplainContract.request graphId arm", () => {
+  it("accepts a graphId-only request and preserves the declared reference", () => {
+    const parsed = ObsExplainContract.request.parse({
+      graphId: "5ea53a58-f0fc-4683-b6e6-53b1d828e602",
+      depth: "full",
+    }) as unknown as Record<string, unknown>;
+
+    expect(parsed.graphId).toBe("5ea53a58-f0fc-4683-b6e6-53b1d828e602");
+    expect(parsed.depth).toBe("full");
+  });
+
+  it("retains a content-free terminal graph section and strips graph content", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      graph: {
+        graphId: "5ea53a58-f0fc-4683-b6e6-53b1d828e602",
+        status: "completed",
+        traceId: "trace-graph-a",
+        startedAt: "2026-07-30T06:20:44.795Z",
+        completedAt: "2026-07-30T06:22:27.305Z",
+        durationMs: 102_510,
+        nodesTotal: 2,
+        nodesSucceeded: 2,
+        nodesFailed: 0,
+        nodesSkipped: 0,
+        nodesRetried: 1,
+        totalCostUsd: 0.25,
+        totalTokens: 12_000,
+        nodes: [
+          {
+            nodeId: "weather",
+            status: "completed",
+            durationMs: 29_576,
+            subAgentRunId: "run-weather",
+            attemptsUsed: 2,
+            output: "PRIVATE NODE OUTPUT MUST BE STRIPPED",
+          },
+          {
+            nodeId: "decision",
+            status: "completed",
+            durationMs: 2_915,
+            subAgentRunId: "run-decision",
+            attemptsUsed: 1,
+          },
+        ],
+        graphName: "PRIVATE GRAPH LABEL MUST BE STRIPPED",
+      },
+    }) as unknown as {
+      graph?: {
+        status: string;
+        nodes: Array<Record<string, unknown>>;
+      };
+    };
+
+    expect(parsed.graph?.status).toBe("completed");
+    expect(parsed.graph?.nodes).toHaveLength(2);
+    expect(parsed.graph?.nodes[0]).toEqual({
+      nodeId: "weather",
+      status: "completed",
+      durationMs: 29_576,
+      subAgentRunId: "run-weather",
+      attemptsUsed: 2,
+    });
+    expect(JSON.stringify(parsed.graph)).not.toContain("PRIVATE");
+  });
+});

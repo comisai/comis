@@ -15,6 +15,9 @@
  */
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { ObsExplainContract } from "@comis/core";
 import type { RpcClient } from "../client/rpc-client.js";
 import {
@@ -49,7 +52,8 @@ vi.mock("../util/offline-obs.js", () => ({
 // Dynamic imports after mocks.
 const { registerExplainCommand } = await import("./explain.js");
 const { withClient } = await import("../client/rpc-client.js");
-const { assembleIncidentReportOffline } = await import("../util/offline-obs.js");
+const { assembleIncidentReportOffline, resolveOfflineDataDir } =
+  await import("../util/offline-obs.js");
 
 /**
  * A minimal-but-valid IncidentReport — must satisfy IncidentReportSchema
@@ -170,6 +174,31 @@ describe("comis explain routes a UUID (no ':') to { traceId }", () => {
       traceId: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
       depth: "summary",
     });
+  });
+
+  it("routes a UUID with local terminal graph metadata to the graph parameter", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "comis-explain-graph-"));
+    try {
+      const graphId = "5ea53a58-f0fc-4683-b6e6-53b1d828e602";
+      const graphDir = path.join(dataDir, "graph-runs", graphId);
+      fs.mkdirSync(graphDir, { recursive: true });
+      fs.writeFileSync(path.join(graphDir, "_run-metadata.json"), "{}", "utf8");
+      vi.mocked(resolveOfflineDataDir).mockReturnValueOnce(dataDir);
+      const { client, calls } = captureClient();
+      vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+      const program = createTestProgram();
+      registerExplainCommand(program);
+      await program.parseAsync(["node", "test", "explain", graphId]);
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.params).toEqual({
+        graphId,
+        depth: "summary",
+      });
+    } finally {
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -365,6 +394,76 @@ describe("comis explain renders durable task-check lifecycle evidence", () => {
     expect(output).toContain("correlation=correlation-a");
     expect(output).toContain("root=root-task-check-a");
     expect(output).toContain("delivered=1 failed=0 ambiguous=0");
+  });
+});
+
+describe("comis explain renders terminal graph lifecycle evidence", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("prints graph status and every retained node without node output content", async () => {
+    const graphReport = {
+      ...FAKE_REPORT,
+      graph: {
+        graphId: "5ea53a58-f0fc-4683-b6e6-53b1d828e602",
+        status: "completed",
+        traceId: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+        durationMs: 102_510,
+        nodesTotal: 2,
+        nodesSucceeded: 2,
+        nodesFailed: 0,
+        nodesSkipped: 0,
+        nodesRetried: 1,
+        nodes: [
+          {
+            nodeId: "weather",
+            status: "completed",
+            durationMs: 29_576,
+            subAgentRunId: "run-weather",
+            attemptsUsed: 2,
+          },
+          {
+            nodeId: "decision",
+            status: "completed",
+            durationMs: 2_915,
+            subAgentRunId: "run-decision",
+            attemptsUsed: 1,
+          },
+        ],
+      },
+    };
+    const client: RpcClient = {
+      call: () => Promise.resolve(graphReport),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync([
+      "node",
+      "test",
+      "explain",
+      "5ea53a58-f0fc-4683-b6e6-53b1d828e602",
+    ]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Graph:      completed");
+    expect(output).toContain("weather");
+    expect(output).toContain("decision");
+    expect(output).toContain("attempts=2");
   });
 });
 
