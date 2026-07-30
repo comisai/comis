@@ -381,3 +381,75 @@ describe("buildBackgroundTaskFailedNotice", () => {
       .toBe("⚠️ משימת הרקע נכשלה ולכן התוצאה עלולה להיות חלקית.");
   });
 });
+
+describe("unavailable vision response honesty", () => {
+  type VisionHonestyExports = {
+    buildVisionUnavailableReply?: (
+      agentId: string,
+      language?: string,
+      localeCatalog?: ReturnType<typeof catalogFromLocalePacks>,
+    ) => string;
+    hasUnavailableVisionFailure?: (
+      records?: ReadonlyArray<{
+        toolName: string;
+        success: boolean;
+        errorText?: string;
+      }>,
+    ) => boolean;
+  };
+
+  async function loadVisionHonestyExports(): Promise<VisionHonestyExports> {
+    return await import("./degraded-reply.js") as unknown as VisionHonestyExports;
+  }
+
+  it("recognizes the actionable unavailable-vision tool receipt", async () => {
+    const { hasUnavailableVisionFailure } = await loadVisionHonestyExports();
+    expect(hasUnavailableVisionFailure).toBeTypeOf("function");
+    if (hasUnavailableVisionFailure === undefined) return;
+
+    expect(hasUnavailableVisionFailure([
+      {
+        toolName: "image_analyze",
+        success: false,
+        errorText:
+          '{"content":[{"type":"text","text":"No vision provider available for image analysis. '
+          + 'Active model \\"text-only-model\\" is configured at agents.default.model. '
+          + "Select a vision-capable model, or configure integrations.media.vision.providers and "
+          + "integrations.media.vision.defaultProvider with an available credential. "
+          + 'Re-uploading will not help until that configuration changes."}]}',
+      },
+    ])).toBe(true);
+    expect(hasUnavailableVisionFailure([
+      {
+        toolName: "image_analyze",
+        success: false,
+        errorText: "Failed to resolve attachment.",
+      },
+    ])).toBe(false);
+  });
+
+  it("replaces model recovery advice with the exact vision configuration truth", async () => {
+    const { buildVisionUnavailableReply } = await loadVisionHonestyExports();
+    expect(buildVisionUnavailableReply).toBeTypeOf("function");
+    if (buildVisionUnavailableReply === undefined) return;
+
+    const reply = buildVisionUnavailableReply("default");
+    expect(reply).toContain("Re-uploading the same image will not help");
+    expect(reply).toContain("agents.default.model");
+    expect(reply).toContain("integrations.media.vision.providers");
+    expect(reply).toContain("integrations.media.vision.defaultProvider");
+    expect(reply).not.toMatch(/please re-upload/i);
+  });
+
+  it("uses the resolved locale pack for the deterministic correction", async () => {
+    const { buildVisionUnavailableReply } = await loadVisionHonestyExports();
+    expect(buildVisionUnavailableReply).toBeTypeOf("function");
+    if (buildVisionUnavailableReply === undefined) return;
+
+    const catalog = catalogFromLocalePacks({
+      he: { vision_unavailable: "לא ניתן לנתח את התמונה כרגע." },
+    });
+    expect(buildVisionUnavailableReply("default", "he", catalog))
+      .toMatch(/^לא ניתן לנתח את התמונה כרגע\./);
+  });
+});

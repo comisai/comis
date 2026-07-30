@@ -870,6 +870,16 @@ describe("tool-failure endReason and notice", () => {
     const noticeBlock = stripped.match(/unrecovered[A-Za-z]*\s*\.length\s*>\s*0[\s\S]{0,600}?buildToolFailureNotice/);
     expect(noticeBlock).not.toBeNull();
   });
+
+  it("source-grep — unavailable vision replaces contradictory model recovery advice", () => {
+    const stripped = readPostExecStripped();
+    expect(stripped).toMatch(/hasUnavailableVisionFailure/);
+    expect(stripped).toMatch(
+      /result\.response\s*=\s*buildVisionUnavailableReply\s*\(\s*effectiveAgentId/,
+    );
+    expect(stripped.indexOf("buildVisionUnavailableReply"))
+      .toBeLessThan(stripped.indexOf("buildToolFailureNotice"));
+  });
 });
 
 // ---------------------------------------------------------------------------
