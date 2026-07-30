@@ -24,10 +24,22 @@ const { withClient } = await importCli("client/rpc-client.js");
 const secretResults = await Promise.all(secretNames.map((name) =>
   withClient((client) => client.call("secrets.get", { name }))));
 const secrets = secretResults.map((result, index) => {
-  if (result?.exists !== true || typeof result.value !== "string" || result.value.length === 0) {
-    throw new Error(`Secret ${secretNames[index]} is unavailable`);
+  if (result?.exists === true && typeof result.value === "string" && result.value.length > 0) {
+    return {
+      name: secretNames[index],
+      bytes: Buffer.from(result.value, "utf8"),
+      source: "secret-rpc",
+    };
   }
-  return { name: secretNames[index], bytes: Buffer.from(result.value, "utf8") };
+  const envValue = process.env[secretNames[index]];
+  if (typeof envValue !== "string" || envValue.length === 0) {
+    throw new Error(`Secret ${secretNames[index]} is unavailable from the secret RPC and process environment`);
+  }
+  return {
+    name: secretNames[index],
+    bytes: Buffer.from(envValue, "utf8"),
+    source: "process-env",
+  };
 });
 
 const categoryFor = (relativePath) => {
@@ -89,6 +101,7 @@ const report = Object.fromEntries(secretNames.map((name) => [
   name,
   {
     retrieved: true,
+    source: secrets.find((secret) => secret.name === name)?.source,
     totalMatches: 0,
     matchesByCategory: Object.fromEntries(categories.map((category) => [category, 0])),
     filesWithMatches: [],
