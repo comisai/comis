@@ -116,6 +116,20 @@ function recordsForExecution(
   return [...preparationRecords, ...records.slice(start, end)];
 }
 
+function latestPromptTraceId(
+  records: ReadonlyArray<Record<string, unknown>>,
+): string | undefined {
+  const latestPrompt = [...records].reverse().find(
+    (record) =>
+      record.type === "prompt.submitted"
+      && typeof record.traceId === "string"
+      && record.traceId.length > 0,
+  );
+  return typeof latestPrompt?.traceId === "string"
+    ? latestPrompt.traceId
+    : undefined;
+}
+
 function recordData(record: Record<string, unknown> | undefined): Record<string, unknown> {
   return typeof record?.data === "object" && record.data !== null
     ? record.data as Record<string, unknown>
@@ -181,7 +195,11 @@ function metadataForExecution(
       ? matchingMetadata.sessionEnd as Record<string, unknown>
       : {};
   const hasMatchingSessionEnd = Object.keys(matchingSessionEnd).length > 0;
-  const summary = recordData(lastRecordOfType(records, "session.summary"));
+  const summaryRecord = lastRecordOfType(records, "session.summary");
+  if (matchingMetadata === undefined && summaryRecord === undefined) {
+    return { traceId };
+  }
+  const summary = recordData(summaryRecord);
   const durationMs = matchingMetadata === undefined ? executionDurationMs(records) : undefined;
   const summaryEndReason =
     typeof summary.endReason === "string" && summary.endReason.length > 0
@@ -350,6 +368,11 @@ export async function assembleIncidentReportFromSources(
     ? []
     : await reader.readCacheTraceRecords(taskExecutionSessionKey);
   const executionTraceId = params.traceId ?? cronExecutionTraceId;
+  const latestSessionTraceId =
+    taskCheck === null && executionTraceId === undefined
+      ? latestPromptTraceId(sessionRecords)
+      : undefined;
+  const selectedTraceId = executionTraceId ?? latestSessionTraceId;
   const selectedRecords = taskCheck !== null
     ? taskSessionRecords
     : executionTraceId === undefined
@@ -370,14 +393,26 @@ export async function assembleIncidentReportFromSources(
     : executionTraceId === undefined
       ? sessionCache
       : sessionCache.filter((record) => recordHasTraceId(record, executionTraceId));
+  const metadataRecords =
+    selectedTraceId === undefined
+      ? records
+      : recordsForExecution(sessionRecords, selectedTraceId);
   const metadata = taskCheck !== null
     ? metadataForTaskCheckExecution(sessionMetadata, taskCheck)
-    : executionTraceId === undefined
+    : selectedTraceId === undefined
       ? sessionMetadata
-      : metadataForExecution(sessionMetadata, records, executionTraceId);
+      : metadataForExecution(sessionMetadata, metadataRecords, selectedTraceId);
   // Diagnostics rows are session-scoped and last-write-wins. They cannot
   // safely contribute to a historical cron execution report.
-  const rollup = taskCheck !== null || executionTraceId !== undefined ? null : sessionRollup;
+  const rollup =
+    taskCheck !== null
+    || executionTraceId !== undefined
+    || (
+      latestSessionTraceId !== undefined
+      && sessionMetadata?.traceId !== latestSessionTraceId
+    )
+      ? null
+      : sessionRollup;
   // A durable scheduler session emits session.started only once. Retain that
   // single session-invariant identity envelope for channel attribution, while
   // every execution-varying record remains selected by traceId above.

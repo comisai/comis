@@ -18,6 +18,7 @@ import {
   type TypedEventBus,
   type OutputGuardPort,
   type ClockPort,
+  type NormalizedMessage,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { isSilentResponse } from "@comis/shared";
@@ -144,6 +145,14 @@ export interface DelegationEvidenceGuardResult {
   reason?: "missing_current_turn_spawn";
 }
 
+/** Recognize the runtime-owned envelope that reports a settled background tool result. */
+export function isTrustedBackgroundCompletionEnvelope(
+  message: Pick<NormalizedMessage, "channelType" | "senderId">,
+): boolean {
+  return message.channelType === "background_task"
+    && message.senderId === "background-task-runner";
+}
+
 /**
  * Prevent historical context or unsupported prose from being presented as
  * delegation performed for the current request.
@@ -161,8 +170,12 @@ export function enforceCurrentTurnDelegationEvidence(params: {
     success: boolean;
     backgrounded?: boolean;
   }>;
+  runtimeCompletion?: boolean;
   honestResponse: string;
 }): DelegationEvidenceGuardResult {
+  if (params.runtimeCompletion === true) {
+    return { response: params.response, corrected: false };
+  }
   const request = normalizedEvidenceText(params.request);
   const requested = containsUnnegatedEvidencePhrase(
     request,
