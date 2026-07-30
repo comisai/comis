@@ -16,7 +16,7 @@
 import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, SttPreprocessSelection, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, MsTeamsConversationStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, EnvPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor, ComisSessionManager, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
+import type { AgentExecutor, ComisSessionManager, createSessionLifecycle, ActiveRunRegistry, BackgroundActivityCoordinatorFactory, BackgroundSessionResolver } from "@comis/agent";
 import type { createSessionStore, MemoryApi } from "@comis/memory";
 import type { CommandQueue } from "@comis/orchestrator";
 import type { VoiceResponsePipelineDeps, LifecycleReactor } from "@comis/channels";
@@ -64,6 +64,8 @@ export interface ChannelsResult {
   msTeamsIngress?: import("hono").Hono;
   /** The command queue instance for parent session TTL extension during graph execution. */
   commandQueue?: CommandQueue;
+  /** Signed per-turn activity path reused by durable background continuations. */
+  activityCoordinatorFactory?: BackgroundActivityCoordinatorFactory;
   /** DeliveryService constructed once at the daemon composition root. Threaded
    *  through setupCrossSession + createMessageHandlers so all production callers
    *  share a single closure-captured deps record. */
@@ -422,7 +424,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
 
   // Build the ChannelManager (voice pipeline + command queue + slash handlers +
   // lifecycle reactors).
-  const { channelManager, lifecycleReactors, commandQueue } =
+  const { channelManager, lifecycleReactors, commandQueue, activityCoordinatorFactory } =
     await buildAndStartChannelManager({
       container,
       dataDir: deps.dataDir,
@@ -480,6 +482,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     channelPlugins,
     msTeamsIngress,
     commandQueue,
+    activityCoordinatorFactory,
     deliveryService,
   };
 }

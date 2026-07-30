@@ -120,6 +120,7 @@ export interface ChannelManagerBuildResult {
   lifecycleReactors: LifecycleReactor[];
   commandQueue?: CommandQueue;
   activityRenderers: Map<string, ActivityRendererFactory>; // per-channelId factory, see buildActivityRenderers
+  activityCoordinatorFactory?: (ctx: TurnActivityContext) => ActivityTurnCoordinator;
 }
 
 /**
@@ -592,8 +593,15 @@ export async function buildAndStartChannelManager(
     }
   }
 
-  // activityRenderers + coordinatorFactory built BEFORE the manager (above); map returned for the registry's ChannelsResult activity-counters scrape.
-  return { channelManager, lifecycleReactors, commandQueue, activityRenderers };
+  // The same factory used by inbound turns is returned for durable background
+  // re-entry, so a continuation approval renders through one signed activity path.
+  return {
+    channelManager,
+    lifecycleReactors,
+    commandQueue,
+    activityRenderers,
+    activityCoordinatorFactory: coordinatorFactory,
+  };
 }
 // Re-export Attachment + ChannelPluginPort (silences lint; public-surface boundary).
 export type { Attachment, ChannelPluginPort };

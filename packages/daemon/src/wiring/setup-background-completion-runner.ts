@@ -19,6 +19,7 @@ import {
   type BackgroundCompletionRunner,
   type BackgroundCompletionRunnerDeps,
   type BackgroundCompletionDeliveryOutcome,
+  type BackgroundActivityCoordinatorFactory,
   type BackgroundTaskManager,
   type CompletionDispatcher,
   type NotifyFn,
@@ -73,6 +74,7 @@ export interface SetupBackgroundCompletionRunnerDeps {
   /** bgNotifyFn closure used when the originating session is gone. */
   fallbackNotifyFn: NotifyFn;
   outwardLedger?: OutwardSendLedgerPort;
+  activityCoordinatorFactory?: BackgroundActivityCoordinatorFactory;
   resolveMaxBackgroundHops(agentId: string): number;
   logger: ComisLogger;
 }
@@ -316,6 +318,9 @@ export function setupBackgroundCompletionRunner(
     deliveryProtection: deps.outwardLedger ? "ledger" : "none",
     resolveMaxBackgroundHops: deps.resolveMaxBackgroundHops,
     isTurnInFlight: (key) => turnFlight.isTurnInFlight(key),
+    ...(deps.activityCoordinatorFactory === undefined
+      ? {}
+      : { activityCoordinatorFactory: deps.activityCoordinatorFactory }),
     logger: deps.logger,
   });
 

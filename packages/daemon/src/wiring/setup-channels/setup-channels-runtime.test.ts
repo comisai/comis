@@ -87,8 +87,9 @@ describe("setup-channels-runtime", () => {
       // manager so coordinatorFactory can close over it — returned to the registry
       // for the ChannelsResult activity-counters scrape).
       activityRenderers: true,
+      activityCoordinatorFactory: true,
     };
-    expect(Object.keys(witness).length).toBe(4);
+    expect(Object.keys(witness).length).toBe(5);
   });
 
   it("channelCredentialMap is built from enabled channels and passed to createChannelManager", () => {
