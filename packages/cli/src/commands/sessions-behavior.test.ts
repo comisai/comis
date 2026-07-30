@@ -264,19 +264,29 @@ describe("sessions inspect full details", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
-  // SessionStatusContract returns a flat per-agent runtime stats payload,
-  // NOT a wrapped { session: {...} } shape. The CLI's `key` argument is
-  // preserved as display context; the RPC returns the current agent's
-  // status regardless. The CLI does not pre-validate "session not found"
-  // client-side (the contract returns valid stats unconditionally —
-  // session-not-found cases surface as an RPC error from the daemon,
-  // caught by the catch block below).
-  const SESSION_STATUS = {
-    model: "anthropic:claude-sonnet-4-5",
-    agentName: "default",
-    tokensUsed: { totalTokens: 1234, totalCost: 0.0523 },
-    stepsExecuted: 5,
-    maxSteps: 25,
+  const SESSION_HISTORY = {
+    session: {
+      key: "default:agent:default:user_a:telegram:peer:user_a",
+      agentId: "default",
+      channelType: "telegram",
+      messageCount: 2,
+      totalTokens: 1234,
+      inputTokens: 1000,
+      outputTokens: 234,
+      toolCalls: 3,
+      compactions: 1,
+      resetCount: 0,
+      createdAt: 100,
+      lastActiveAt: 200,
+    },
+    messages: [
+      { role: "user", content: "check the build", timestamp: 100 },
+      { role: "assistant", content: "build passed", timestamp: 200 },
+    ],
+    total: 2,
+    offset: 0,
+    limit: 20,
+    hasMore: false,
   };
 
   beforeEach(() => {
@@ -286,7 +296,7 @@ describe("sessions inspect full details", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("session.status", SESSION_STATUS)
+        .onCall("session.history", SESSION_HISTORY)
         .build();
       return fn(mockClient);
     });
@@ -297,26 +307,30 @@ describe("sessions inspect full details", () => {
     exitSpy.restore();
   });
 
-  it("displays session details including agent stats and parsed key components", async () => {
+  it("displays the requested conversation history instead of unrelated agent totals", async () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
-    await program.parseAsync(["node", "test", "sessions", "inspect", "test-tenant:user-1:discord-main"]);
+    await program.parseAsync([
+      "node",
+      "test",
+      "sessions",
+      "inspect",
+      "cv_test",
+      "--tenant",
+      "test-tenant",
+      "--agent",
+      "default",
+    ]);
 
     const output = getSpyOutput(consoleSpy.log);
 
-    // Session key from CLI argument
-    expect(output).toContain("test-tenant:user-1:discord-main");
-    // Parsed tenant from key
-    expect(output).toContain("test-tenant");
-    // Parsed user from key
-    expect(output).toContain("user-1");
-    // Parsed channel from key
-    expect(output).toContain("discord-main");
-    // Agent stats from session.status RPC
-    expect(output).toContain("anthropic:claude-sonnet-4-5");
+    expect(output).toContain("cv_test");
+    expect(output).toContain("default:agent:default:user_a:telegram:peer:user_a");
     expect(output).toContain("default");
-    expect(output).toContain("1234"); // totalTokens
+    expect(output).toContain("1234");
+    expect(output).toContain("check the build");
+    expect(output).not.toContain("Max Steps");
   });
 });
 
@@ -324,12 +338,26 @@ describe("sessions inspect --format json", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
-  const SESSION_STATUS = {
-    model: "anthropic:claude-sonnet-4-5",
-    agentName: "default",
-    tokensUsed: { totalTokens: 1234, totalCost: 0.0523 },
-    stepsExecuted: 5,
-    maxSteps: 25,
+  const SESSION_HISTORY = {
+    session: {
+      key: "default:agent:default:user_a:telegram:peer:user_a",
+      agentId: "default",
+      channelType: "telegram",
+      messageCount: 1,
+      totalTokens: 1234,
+      inputTokens: 1000,
+      outputTokens: 234,
+      toolCalls: 3,
+      compactions: 0,
+      resetCount: 0,
+      createdAt: 100,
+      lastActiveAt: 200,
+    },
+    messages: [{ role: "user", content: "check the build", timestamp: 100 }],
+    total: 1,
+    offset: 0,
+    limit: 20,
+    hasMore: false,
   };
 
   beforeEach(() => {
@@ -339,7 +367,7 @@ describe("sessions inspect --format json", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("session.status", SESSION_STATUS)
+        .onCall("session.history", SESSION_HISTORY)
         .build();
       return fn(mockClient);
     });
@@ -350,22 +378,33 @@ describe("sessions inspect --format json", () => {
     exitSpy.restore();
   });
 
-  it("outputs valid JSON of the session.status payload", async () => {
+  it("outputs valid JSON for the requested conversation history", async () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
-    await program.parseAsync(["node", "test", "sessions", "inspect", "test-tenant:user-1:discord-main", "--format", "json"]);
+    await program.parseAsync([
+      "node",
+      "test",
+      "sessions",
+      "inspect",
+      "cv_test",
+      "--tenant",
+      "test-tenant",
+      "--agent",
+      "default",
+      "--format",
+      "json",
+    ]);
 
     const output = getSpyOutput(consoleSpy.log);
     const parsed = JSON.parse(output) as {
-      model: string;
-      agentName: string;
-      tokensUsed: { totalTokens: number; totalCost: number };
+      session: { key: string; totalTokens: number };
+      messages: Array<{ content: string }>;
     };
 
-    expect(parsed.model).toBe("anthropic:claude-sonnet-4-5");
-    expect(parsed.agentName).toBe("default");
-    expect(parsed.tokensUsed.totalTokens).toBe(1234);
+    expect(parsed.session.key).toBe("default:agent:default:user_a:telegram:peer:user_a");
+    expect(parsed.session.totalTokens).toBe(1234);
+    expect(parsed.messages[0]?.content).toBe("check the build");
   });
 });
 
@@ -664,7 +703,10 @@ describe("session commands handle daemon offline", () => {
     registerSessionsCommand(program);
 
     try {
-      await program.parseAsync(["node", "test", "sessions", "inspect", "test-key"]);
+      await program.parseAsync([
+        "node", "test", "sessions", "inspect", "test-key",
+        "--tenant", "test-tenant", "--agent", "default",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }

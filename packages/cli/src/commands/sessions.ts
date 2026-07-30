@@ -6,7 +6,7 @@
  * for managing conversation sessions via the daemon RPC interface.
  *
  * Uses typed `callTyped(client, <Contract>, params)` for the three
- * surfaces: session.list, session.status, session.delete.
+ * surfaces: session.list, session.history, session.delete.
  *
  * @module
  */
@@ -19,7 +19,7 @@ import { existsSync, chmodSync, rmSync } from "node:fs";
 import os from "node:os";
 import {
   SessionListContract,
-  SessionStatusContract,
+  SessionHistoryContract,
   SessionDeleteContract,
   SessionResetConversationContract,
   ObsSystemPromptReportLatestContract,
@@ -136,51 +136,61 @@ export function registerSessionsCommand(program: Command): void {
       }
     });
 
-  // sessions inspect <key>
+  // sessions inspect <conversationRef>
   sessions
-    .command("inspect <key>")
+    .command("inspect <conversationRef>")
     .description("Display full details of a session")
+    .requiredOption("--tenant <tenantId>", "Tenant ID")
+    .requiredOption("--agent <agentId>", "Agent ID")
     .option("--format <format>", "Output format (table|json)", "table")
-    .action(async (key: string, options: { format: string }) => {
+    .action(async (
+      conversationRef: string,
+      options: { tenant: string; agent: string; format: string },
+    ) => {
       try {
-        // session.status returns agent/session runtime stats. The CLI's
-        // `key` argument is currently a no-op against the contract — the
-        // handler reads the agent context from the dispatcher-injected
-        // `_agentId` internal, not from a user-supplied key.
-        const statusResult = await withSpinner("Fetching session...", () =>
+        const history = await withSpinner("Fetching session...", () =>
           withClient(async (client) => {
-            return await callTyped(client, SessionStatusContract, {});
+            return await callTyped(client, SessionHistoryContract, {
+              tenant_id: options.tenant,
+              agent_id: options.agent,
+              conversation_ref: conversationRef,
+            });
           }),
         );
 
         if (options.format === "json") {
-          json(statusResult);
+          json(history);
           return;
         }
 
-        // Render the actual status response (model + agentName + counters)
-        // alongside the user-supplied session key string for context.
         const pairs: [string, string][] = [
-          [chalk.bold("Session Key"), key],
-          [chalk.bold("Model"), statusResult.model],
-          [chalk.bold("Agent"), statusResult.agentName],
-          [chalk.bold("Tokens Used"), String(statusResult.tokensUsed.totalTokens)],
-          [chalk.bold("Total Cost"), `$${statusResult.tokensUsed.totalCost.toFixed(4)}`],
-          [chalk.bold("Steps Executed"), String(statusResult.stepsExecuted)],
-          [chalk.bold("Max Steps"), String(statusResult.maxSteps)],
+          [chalk.bold("Conversation Ref"), conversationRef],
+          [chalk.bold("Session Key"), history.session.key],
+          [chalk.bold("Agent"), history.session.agentId],
+          [chalk.bold("Channel"), history.session.channelType],
+          [chalk.bold("Messages"), String(history.session.messageCount)],
+          [chalk.bold("Tokens"), String(history.session.totalTokens)],
+          [chalk.bold("Tool Calls"), String(history.session.toolCalls)],
+          [chalk.bold("Compactions"), String(history.session.compactions)],
+          [chalk.bold("Last Active"), formatRelativeTime(history.session.lastActiveAt)],
         ];
 
-        // Parse session key components (tenantId:userId:channelId) when shape matches.
-        const keyParts = key.split(":");
-        if (keyParts.length >= 3) {
-          pairs.push(
-            [chalk.bold("Tenant"), keyParts[0]!],
-            [chalk.bold("User"), keyParts[1]!],
-            [chalk.bold("Channel"), keyParts[2]!],
-          );
+        if (history.session.label !== undefined) {
+          pairs.push([chalk.bold("Label"), history.session.label]);
         }
 
         renderKeyValue(pairs);
+
+        if (history.messages.length > 0) {
+          renderTable(
+            ["Role", "Timestamp", "Content"],
+            history.messages.map((message) => [
+              message.role,
+              formatRelativeTime(message.timestamp),
+              message.content,
+            ]),
+          );
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         error(`Failed to inspect session: ${msg}`);
