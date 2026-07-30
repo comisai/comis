@@ -68,9 +68,8 @@ vi.mock("@comis/agent", async (importOriginal) => {
 import {
   buildExecuteSubAgent,
   resolveGraphCacheRetention,
-  MIN_SUB_AGENT_STEPS,
-  type ExecuteSubAgentDeps,
 } from "./setup-cross-session-graph.js";
+import { MIN_SUB_AGENT_STEPS, type ExecuteSubAgentDeps } from "./execute-sub-agent-contract.js";
 import { createWorktreeRegistry } from "../setup-worktree-sweep.js";
 import { createConversationLocator, runWithContext, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
 import type { ExecutionResult } from "@comis/agent";
