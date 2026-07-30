@@ -119,7 +119,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       })).ok).toBe(false);
     });
 
-    it("stores sibling checkpoints independently and revokes every checkpoint in one root", async () => {
+    it("stores sibling checkpoints independently and revokes only live checkpoints in one root", async () => {
       const first = makeRecord({ checkpointId: "checkpoint-a", rootRunId: "tree-root" });
       const second = makeRecord({
         checkpointId: "checkpoint-b",
@@ -140,7 +140,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       expect((await store.invalidateForRevoke("tree-root")).ok).toBe(true);
       const afterFirst = await store.getByCheckpoint("checkpoint-a");
       const afterSecond = await store.getByCheckpoint("checkpoint-b");
-      expect(afterFirst.ok && afterFirst.value?.status).toBe("revoked");
+      expect(afterFirst.ok && afterFirst.value?.status).toBe("completed");
       expect(afterSecond.ok && afterSecond.value?.status).toBe("revoked");
     });
 
