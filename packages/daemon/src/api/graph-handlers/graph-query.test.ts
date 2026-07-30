@@ -173,4 +173,36 @@ describe("graph run history checkpoint truthfulness", () => {
       ],
     }));
   });
+
+  it("reports a persisted manual cancellation as cancelled after restart", async () => {
+    const { dataDir, deps, graphId } = makeHardStoppedRun();
+    const graphDir = join(dataDir, "graph-runs", graphId);
+    writeFileSync(join(graphDir, "_run-metadata.json"), JSON.stringify({
+      graphId,
+      status: "completed",
+      cancelReason: "manual",
+      nodes: {
+        first: { status: "completed" },
+        second: { status: "skipped" },
+      },
+    }), { mode: 0o600 });
+    const handlers = bindGraphQueryHandlers(deps);
+
+    const runs = await handlers["graph.runs"]!({});
+    const detail = await handlers["graph.runDetail"]!({ graphId });
+
+    expect(runs).toEqual({
+      runs: [
+        expect.objectContaining({
+          graphId,
+          status: "cancelled",
+          nodeCount: 2,
+        }),
+      ],
+    });
+    expect(detail).toEqual(expect.objectContaining({
+      graphId,
+      status: "cancelled",
+    }));
+  });
 });

@@ -858,6 +858,23 @@ describe("GraphRunsContract", () => {
     ).not.toThrow();
   });
 
+  it("response carries runs with cancelled status", () => {
+    expect(() =>
+      GraphRunsContract.response.parse({
+        runs: [
+          {
+            graphId: "g1",
+            name: "Example Run",
+            status: "cancelled",
+            nodeCount: 2,
+            date: "2026-05-13T00:00:00Z",
+            fileCount: 4,
+          },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
   it("rejects unknown status enum", () => {
     expect(() =>
       GraphRunsContract.response.parse({
@@ -891,6 +908,18 @@ describe("GraphRunDetailContract", () => {
             artifacts: [{ filename: "a_chart.md", content: "x" }],
           },
         ],
+      }),
+    ).not.toThrow();
+  });
+
+  it("response carries a cancelled terminal status", () => {
+    expect(() =>
+      GraphRunDetailContract.response.parse({
+        graphId: "g1",
+        name: "Example Run",
+        status: "cancelled",
+        date: "2026-05-13T00:00:00Z",
+        nodes: [],
       }),
     ).not.toThrow();
   });
