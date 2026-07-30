@@ -217,6 +217,34 @@ describe("PiEventBridge failureDetector hook", () => {
     expect(executed.errorKind).toBe("validation");
   });
 
+  it("carries a detector failure disclosure only on the private execution result", () => {
+    registerToolMetadata("activity_disclosed_70_06", {
+      failureDetector: () => ({
+        errorKind: "resource" as const,
+        failureDisclosure: {
+          kind: "quota_exhausted" as const,
+          configKey: "tools.example.provider",
+        },
+      }),
+    });
+    const deps = createMockDeps();
+    const { listener, getResult } = createPiEventBridge(deps);
+
+    listener(startEvent("activity_disclosed_70_06", "tc-1") as any);
+    listener(endEvent("activity_disclosed_70_06", "tc-1", false) as any);
+
+    expect(getResult().toolExecResults?.[0]).toMatchObject({
+      toolName: "activity_disclosed_70_06",
+      success: false,
+      failureDisclosure: {
+        kind: "quota_exhausted",
+        configKey: "tools.example.provider",
+      },
+    });
+    const executed = emitPayload(deps, "tool:executed");
+    expect(executed).not.toHaveProperty("failureDisclosure");
+  });
+
   it("a THROWING failureDetector is caught: original success preserved, WARN with errorKind:internal", () => {
     registerToolMetadata("activity_boom_70_06", {
       failureDetector: () => {

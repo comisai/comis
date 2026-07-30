@@ -151,6 +151,33 @@ describe("AnnouncementBatcher", () => {
     );
   });
 
+  it("restores a required provider config key omitted by the parent rewrite", async () => {
+    const failureNotice = "⚠️ This background task failed.";
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue(
+        "The research provider ran out of capacity.",
+      ),
+      sendToChannel: vi.fn().mockResolvedValue(true),
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({
+      announcementText:
+        "[System Message]\nA background task failed because provider capacity was exhausted.",
+      terminalOutcome: {
+        status: "failed",
+        failureNotice,
+        requiredConfigKey: "tools.web.search",
+      } as never,
+    }));
+    await vi.advanceTimersByTimeAsync(2000);
+    await batcher.flush();
+
+    const delivered = vi.mocked(deps.sendToChannel).mock.calls[0]![2];
+    expect(delivered).toContain("tools.web.search");
+    expect(delivered).toContain(failureNotice);
+  });
+
   it("does not let NO_REPLY suppress a failed completion", async () => {
     const failureNotice = "⚠️ This background task failed, so its result may be incomplete.";
     const deps = makeDeps({

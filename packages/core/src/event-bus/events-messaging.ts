@@ -652,6 +652,20 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /**
+   * A model stream produced a text or thinking delta.
+   *
+   * Emitted at a bounded cadence by the executor so health monitoring can
+   * distinguish a long active generation from a stuck session. The payload is
+   * intentionally content-free: delta text and delta kind are not observable
+   * health data.
+   */
+  "execution:stream_progress": {
+    agentId: string;
+    sessionKey: string;
+    timestamp: number;
+  };
+
   /** Prompt execution timed out (wall-clock timeout exceeded).
    *  Every field beyond the first four is optional — emitters and stored
    *  rows that omit them stay valid. Content-free by construction: numbers,

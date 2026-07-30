@@ -2203,6 +2203,13 @@ async function runSessionLocked(
   const onDeltaWithStallReset = createDeltaResetComposer({}, {
     channelOnDelta: localeDeltaDelivery.onDelta,
     getResetTimer: () => currentResetTimer,
+    onActivity: () => {
+      deps.eventBus.emit("execution:stream_progress", {
+        agentId: deps.agentId,
+        sessionKey: formattedKey,
+        timestamp: deps.clock.now(),
+      });
+    },
     clock: deps.clock,
   });
   const bridge = createPiEventBridge({

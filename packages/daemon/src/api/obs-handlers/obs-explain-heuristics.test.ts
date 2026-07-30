@@ -1526,6 +1526,62 @@ describe("prompt_timeout terminal verdict", () => {
     expect(r!.code).toBe("provider_timeout");
   });
 
+  it("a provider quota disclosure out-ranks the downstream breaker and names the exact config surface", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "timeout",
+        breakerOpenedTool: "web_search",
+        repeatedFailureCount: { web_search: 9 },
+        failures: [
+          {
+            seq: 13,
+            toolName: "web_search",
+            classifiedFailureBy: "failure_detector",
+            transportOk: true,
+            errorKind: "resource",
+            matchedRule: "/rate limit|quota exceeded|usage limit|too many requests/",
+            matchedToken: "tools.web.search",
+            resultDigest: "d",
+            resultBytes: 100,
+            errorPreview: "bounded failure preview",
+          },
+        ],
+      }),
+    );
+
+    expect(r!.code).toBe("tool_provider_quota_exhausted");
+    expect(r!.detail).toContain("web_search");
+    expect(r!.suggestedNextSteps[0]).toContain("tools.web.search");
+    expect(r!.suggestedNextSteps.join(" ")).not.toContain("breaker threshold");
+  });
+
+  it("a missing provider configuration verdict preserves the detector-supplied config key", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "completed_with_tool_errors",
+        failures: [
+          {
+            seq: 4,
+            toolName: "web_search",
+            classifiedFailureBy: "failure_detector",
+            transportOk: true,
+            errorKind: "config",
+            matchedRule: "missing_provider_configuration",
+            matchedToken: "tools.web.search.tavily.apiKey",
+            resultDigest: "d",
+            resultBytes: 100,
+            errorPreview: "bounded failure preview",
+          },
+        ],
+      }),
+    );
+
+    expect(r!.code).toBe("tool_provider_configuration_missing");
+    expect(r!.suggestedNextSteps[0]).toContain(
+      "tools.web.search.tavily.apiKey",
+    );
+  });
+
   it("a timeout-heavy session with CLEAN tools gets the prompt_timeout verdict (no tool failure required)", () => {
     const r = rootCause(
       makeSignals({

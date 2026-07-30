@@ -169,12 +169,30 @@ export interface ComisToolMetadata {
         matchedRule?: string;
         /** The concrete token that matched, e.g. a status code. */
         matchedToken?: string;
+        /**
+         * Trusted adapter-authored terminal cause. The detector selects only
+         * fixed enum-like facts from structured failure fields; it must never
+         * copy provider prose, response bodies, credentials, or user content.
+         * Generic execution code may use this to explain why retrying the same
+         * request cannot recover.
+         */
+        failureDisclosure?: ToolFailureDisclosure;
       };
   /** Structured failure-to-tool alternatives. The agent loop appends guidance
    *  only when `details.error` matches and the named tool is live, so disabled
    *  capabilities never appear as available recovery paths. */
   failureFallbacks?: readonly ToolFailureFallback[];
 }
+
+/**
+ * Bounded failure facts a trusted capability adapter may expose to generic
+ * orchestration. The config key identifies the operator-controlled recovery
+ * surface without carrying any secret value.
+ */
+export type ToolFailureDisclosure =
+  | { kind: "missing_configuration"; configKey: string }
+  | { kind: "quota_exhausted"; configKey: string }
+  | { kind: "provider_unavailable"; configKey: string };
 
 // ---------------------------------------------------------------------------
 // Registry (module-level singleton Map)

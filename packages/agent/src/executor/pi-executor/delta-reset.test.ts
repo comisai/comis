@@ -29,6 +29,30 @@ function makeManualClock(startMs = 0): ClockPort & { set(ms: number): void; adva
 }
 
 describe("createDeltaResetComposer", () => {
+  it("reports content-free stream activity on the same throttle as stall resets", () => {
+    const clock = makeManualClock();
+    const reset = vi.fn();
+    const onActivity = vi.fn();
+    const args = {
+      channelOnDelta: undefined,
+      getResetTimer: () => reset,
+      onActivity,
+      clock,
+    } as Parameters<typeof createDeltaResetComposer>[1];
+    const onDelta = createDeltaResetComposer({}, args);
+
+    onDelta("first private delta", "thinking");
+    clock.advance(500);
+    onDelta("second private delta", "text");
+    clock.advance(500);
+    onDelta("third private delta", "text");
+
+    expect(reset).toHaveBeenCalledTimes(2);
+    expect(onActivity).toHaveBeenCalledTimes(2);
+    expect(onActivity).toHaveBeenNthCalledWith(1);
+    expect(onActivity).toHaveBeenNthCalledWith(2);
+  });
+
   it("forwards (delta, kind) to the channel callback AND resets for BOTH kinds — thinking deltas count as activity", () => {
     // text delta
     const clock = makeManualClock();

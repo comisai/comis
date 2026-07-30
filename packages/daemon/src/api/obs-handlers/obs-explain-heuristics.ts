@@ -108,6 +108,28 @@ export interface RootCause {
   suggestedNextSteps: string[];
 }
 
+function boundedConfigKey(value: string | undefined): string | undefined {
+  if (value === undefined || value.length === 0 || value.length > 256) {
+    return undefined;
+  }
+  const segments = value.split(".");
+  if (segments.length < 2 || segments.length > 9) return undefined;
+  for (const segment of segments) {
+    if (segment.length === 0) return undefined;
+    for (const character of segment) {
+      const code = character.charCodeAt(0);
+      const allowed =
+        (code >= 65 && code <= 90)
+        || (code >= 97 && code <= 122)
+        || (code >= 48 && code <= 57)
+        || character === "_"
+        || character === "-";
+      if (!allowed) return undefined;
+    }
+  }
+  return value;
+}
+
 // ---------------------------------------------------------------------------
 // The ordered registry (first non-null wins).
 // ---------------------------------------------------------------------------
@@ -257,6 +279,51 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   // spawn. It must outrank unrelated breaker state retained on a long-running
   // session.
   spawnCeilingVerdict,
+
+  // Adapter-classified provider capacity/configuration failures are upstream
+  // of the retry breaker. The matched token is a bounded config key selected
+  // by trusted adapter metadata, never copied provider prose.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) =>
+        candidate.matchedRule
+          === "/rate limit|quota exceeded|usage limit|too many requests/",
+    );
+    if (failure === undefined) return null;
+    const configKey = boundedConfigKey(failure.matchedToken);
+    return {
+      code: "tool_provider_quota_exhausted",
+      detail:
+        `${failure.toolName} could not continue because its provider quota or plan capacity was exhausted; `
+        + "the later retry-breaker transition is a downstream symptom",
+      suggestedNextSteps: [
+        configKey === undefined
+          ? `restore provider capacity for ${failure.toolName} or configure another provider`
+          : `restore provider capacity or configure another provider under ${configKey}`,
+        "retry only after provider capacity or configuration changes; narrowing the request does not restore quota",
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) => candidate.matchedRule === "missing_provider_configuration",
+    );
+    if (failure === undefined) return null;
+    const configKey = boundedConfigKey(failure.matchedToken);
+    return {
+      code: "tool_provider_configuration_missing",
+      detail:
+        `${failure.toolName} could not run because its provider configuration is missing`,
+      suggestedNextSteps: [
+        configKey === undefined
+          ? `configure a provider for ${failure.toolName}`
+          : `configure ${configKey} and restart the daemon if the setting is immutable`,
+        "obs.explain depth=full",
+      ],
+    };
+  },
 
   // 4) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {

@@ -140,9 +140,12 @@ import type { BackgroundTaskManager } from "../background/background-task-manage
 import { reconcilePendingBackgroundTurn } from "./pending-background-reply.js";
 import { synchronizeFinalAssistantResponse } from "./phase-filter.js";
 import {
+  buildSubagentTerminalToolFailureReply,
+  classifySubagentTerminalToolFailure,
   classifyToolFailureRecovery,
   type ToolExecutionResultRecord,
 } from "../bridge/tool-failure-recovery.js";
+export { buildSubagentTerminalToolFailureReply } from "../bridge/tool-failure-recovery.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1512,6 +1515,40 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     bridgeResult.failedTools ?? [],
     bridgeResult.toolExecResults,
   );
+  const subagentTerminalToolFailureReply = buildSubagentTerminalToolFailureReply({
+    operationType: params.executionOverrides?.operationType,
+    finishReason: effectiveFinishReason,
+    failedTools: bridgeResult.failedTools ?? [],
+    toolExecResults: bridgeResult.toolExecResults,
+  });
+  const subagentTerminalToolFailure = classifySubagentTerminalToolFailure({
+    operationType: params.executionOverrides?.operationType,
+    finishReason: effectiveFinishReason,
+    failedTools: bridgeResult.failedTools ?? [],
+    toolExecResults: bridgeResult.toolExecResults,
+  });
+  if (subagentTerminalToolFailure !== undefined) {
+    if (subagentTerminalToolFailureReply !== undefined) {
+      result.response = subagentTerminalToolFailureReply;
+    }
+    const configKey = subagentTerminalToolFailure.disclosure.configKey;
+    result.errorContext = {
+      errorType: "UpstreamToolFailure",
+      retryable: false,
+      failingTool: subagentTerminalToolFailure.toolName,
+      configKey,
+    };
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        errorKind: subagentTerminalToolFailure.errorKind ?? ("dependency" as const),
+        hint:
+          `Restore provider access or update ${configKey} before retrying; changing request size will not recover this failure`,
+        responseReplaced: subagentTerminalToolFailureReply !== undefined,
+      },
+      "Sub-agent terminal failure attributed to upstream tool",
+    );
+  }
   const unavailableVisionFailure =
     unrecoveredFailed.includes("image_analyze")
     && hasUnavailableVisionFailure(bridgeResult.toolExecResults);

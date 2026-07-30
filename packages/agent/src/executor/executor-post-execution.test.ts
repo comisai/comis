@@ -17,7 +17,7 @@ import * as fs from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, expectTypeOf, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, settleExecutionResult, unrecoveredFailedToolNames, recoveredFailedToolNames, type PostExecutionParams } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, settleExecutionResult, unrecoveredFailedToolNames, recoveredFailedToolNames, buildSubagentTerminalToolFailureReply, type PostExecutionParams } from "./executor-post-execution.js";
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildDegradedReply } from "./degraded-reply.js";
 import { resolveResponseLocalePolicy } from "./resolve-response-locale-policy.js";
 import {
@@ -85,6 +85,92 @@ describe("settleExecutionResult", () => {
 
     expect(result.finishReason).toBe("completed_with_tool_errors");
     expect(result.terminalErrorKind).toBe("dependency");
+  });
+});
+
+describe("buildSubagentTerminalToolFailureReply", () => {
+  const failedSearch = {
+    toolName: "web_search",
+    success: false,
+    durationMs: 10,
+    invocationSequence: 0,
+    errorKind: "resource" as const,
+    failureDisclosure: {
+      kind: "quota_exhausted" as const,
+      configKey: "tools.web.search",
+    },
+  };
+
+  it("replaces a subagent prompt timeout with the upstream quota cause and exact recovery surface", () => {
+    const reply = buildSubagentTerminalToolFailureReply({
+      operationType: "subagent",
+      finishReason: "prompt_timeout",
+      failedTools: ["web_search"],
+      toolExecResults: [failedSearch],
+    });
+
+    expect(reply).toContain("web_search");
+    expect(reply).toContain("quota or plan capacity");
+    expect(reply).toContain("tools.web.search");
+    expect(reply).toContain("Splitting or narrowing");
+    expect(reply).toContain("will not fix");
+  });
+
+  it("does not replace a timeout after the same tool recovered", () => {
+    expect(
+      buildSubagentTerminalToolFailureReply({
+        operationType: "subagent",
+        finishReason: "prompt_timeout",
+        failedTools: ["web_search"],
+        toolExecResults: [
+          failedSearch,
+          {
+            toolName: "web_search",
+            success: true,
+            durationMs: 10,
+            invocationSequence: 1,
+          },
+        ],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("does not alter foreground or non-timeout terminal replies", () => {
+    expect(
+      buildSubagentTerminalToolFailureReply({
+        operationType: "default",
+        finishReason: "prompt_timeout",
+        failedTools: ["web_search"],
+        toolExecResults: [failedSearch],
+      }),
+    ).toBeUndefined();
+    expect(
+      buildSubagentTerminalToolFailureReply({
+        operationType: "subagent",
+        finishReason: "completed_with_tool_errors",
+        failedTools: ["web_search"],
+        toolExecResults: [failedSearch],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("names a missing configuration key without exposing provider output", () => {
+    const reply = buildSubagentTerminalToolFailureReply({
+      operationType: "subagent",
+      finishReason: "prompt_timeout",
+      failedTools: ["web_search"],
+      toolExecResults: [{
+        ...failedSearch,
+        errorText: "provider response containing private upstream prose",
+        failureDisclosure: {
+          kind: "missing_configuration",
+          configKey: "tools.web.search.tavily.apiKey",
+        },
+      }],
+    });
+
+    expect(reply).toContain("tools.web.search.tavily.apiKey");
+    expect(reply).not.toContain("private upstream prose");
   });
 });
 const conversationRefForTest = (seed: string): ConversationRef =>

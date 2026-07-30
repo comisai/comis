@@ -10,6 +10,7 @@
  * same per-call/tool boundary signals the trajectory bridge records:
  *
  *   - `tool:started` / `tool:executed` — a tool boundary was crossed;
+ *   - `execution:stream_progress`     — an active model emitted a bounded delta signal;
  *   - `observability:token_usage`      — an LLM call completed.
  *
  * A hang INSIDE a single LLM call is governed by the prompt-timeout
@@ -61,6 +62,7 @@ export function createSubagentActivityTracker(
 
   eventBus.on("tool:started", touch);
   eventBus.on("tool:executed", touch);
+  eventBus.on("execution:stream_progress", touch);
   eventBus.on("observability:token_usage", touch);
 
   return {
@@ -75,6 +77,7 @@ export function createSubagentActivityTracker(
     dispose() {
       eventBus.off("tool:started", touch);
       eventBus.off("tool:executed", touch);
+      eventBus.off("execution:stream_progress", touch);
       eventBus.off("observability:token_usage", touch);
       lastActivity.clear();
     },

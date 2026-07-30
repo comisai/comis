@@ -126,6 +126,24 @@ describe("sweepStuckSubAgentRuns", () => {
 });
 
 describe("createSubagentActivityTracker", () => {
+  it("counts throttled model stream progress so a long answer is not killed as idle", () => {
+    const bus = new TypedEventBus();
+    const nowMs = vi.fn(() => 4_000);
+    const tracker = createSubagentActivityTracker(bus, nowMs);
+
+    (
+      bus as unknown as {
+        emit(event: string, payload: { sessionKey: string; timestamp: number }): void;
+      }
+    ).emit("execution:stream_progress", {
+      sessionKey: CHILD_KEY,
+      timestamp: 3_999,
+    });
+
+    expect(tracker.lastActivityFor(CHILD_KEY)).toBe(4_000);
+    tracker.dispose();
+  });
+
   it("tracks tool and model progress by sessionKey", () => {
     const bus = new TypedEventBus();
     const nowMs = vi.fn(() => 1_000);

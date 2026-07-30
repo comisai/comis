@@ -1221,7 +1221,12 @@ describe("tool-metadata-registry -- failure detectors", () => {
     ).toEqual({
       errorKind: "resource",
       classifiedField: "message",
-      matchedRule: "/rate limit|quota exceeded|too many requests/",
+      matchedRule: "/rate limit|quota exceeded|usage limit|too many requests/",
+      matchedToken: "tools.web.search",
+      failureDisclosure: {
+        kind: "quota_exhausted",
+        configKey: "tools.web.search",
+      },
     });
     expect(
       detect(
@@ -1235,7 +1240,12 @@ describe("tool-metadata-registry -- failure detectors", () => {
     ).toEqual({
       errorKind: "resource",
       classifiedField: "message",
-      matchedRule: "/rate limit|quota exceeded|too many requests/",
+      matchedRule: "/rate limit|quota exceeded|usage limit|too many requests/",
+      matchedToken: "tools.web.search",
+      failureDisclosure: {
+        kind: "quota_exhausted",
+        configKey: "tools.web.search",
+      },
     });
     expect(
       detect(
@@ -1249,7 +1259,68 @@ describe("tool-metadata-registry -- failure detectors", () => {
     ).toEqual({
       errorKind: "resource",
       classifiedField: "message",
-      matchedRule: "/rate limit|quota exceeded|too many requests/",
+      matchedRule: "/rate limit|quota exceeded|usage limit|too many requests/",
+      matchedToken: "tools.web.search",
+      failureDisclosure: {
+        kind: "quota_exhausted",
+        configKey: "tools.web.search",
+      },
+    });
+  });
+
+  it("web_search classifies provider plan usage limits as exhausted quota with the search config key", () => {
+    const detect = webSearchDetector()!;
+    expect(
+      detect(
+        {
+          error: "all_providers_failed",
+          message:
+            "All web_search providers failed: duckduckgo: blocked by CAPTCHA challenge | "
+            + "tavily: This request exceeds your plan's set usage limit.",
+          failures: [
+            "duckduckgo: blocked by CAPTCHA challenge",
+            "tavily: This request exceeds your plan's set usage limit.",
+          ],
+        },
+        false,
+      ),
+    ).toEqual({
+      errorKind: "resource",
+      classifiedField: "message",
+      matchedRule: "/rate limit|quota exceeded|usage limit|too many requests/",
+      matchedToken: "tools.web.search",
+      failureDisclosure: {
+        kind: "quota_exhausted",
+        configKey: "tools.web.search",
+      },
+    });
+  });
+
+  it("web_search exposes the exact missing provider-key knob without copying failure prose", () => {
+    const detect = webSearchDetector()!;
+    expect(
+      detect(
+        {
+          error: "all_providers_failed",
+          message:
+            "All web_search providers failed: tavily: web_search (tavily) needs an API key. "
+            + "Configure tools.web.search.tavily.apiKey in your config.",
+          failures: [
+            "tavily: web_search (tavily) needs an API key. "
+              + "Configure tools.web.search.tavily.apiKey in your config.",
+          ],
+        },
+        false,
+      ),
+    ).toEqual({
+      errorKind: "config",
+      classifiedField: "message",
+      matchedRule: "missing_provider_configuration",
+      matchedToken: "tools.web.search.tavily.apiKey",
+      failureDisclosure: {
+        kind: "missing_configuration",
+        configKey: "tools.web.search.tavily.apiKey",
+      },
     });
   });
 
@@ -1267,19 +1338,40 @@ describe("tool-metadata-registry -- failure detectors", () => {
         },
         false,
       ),
-    ).toEqual({ errorKind: "dependency", classifiedField: "error" });
+    ).toEqual({
+      errorKind: "dependency",
+      classifiedField: "error",
+      failureDisclosure: {
+        kind: "provider_unavailable",
+        configKey: "tools.web.search",
+      },
+    });
     expect(
       detect(
         { error: "all_providers_failed", message: "All web_search providers failed: brave: Forbidden" },
         false,
       ),
-    ).toEqual({ errorKind: "dependency", classifiedField: "error" });
+    ).toEqual({
+      errorKind: "dependency",
+      classifiedField: "error",
+      failureDisclosure: {
+        kind: "provider_unavailable",
+        configKey: "tools.web.search",
+      },
+    });
     expect(
       detect(
         { error: "all_providers_failed", message: "All web_search providers failed: brave: provider error: upstream down" },
         false,
       ),
-    ).toEqual({ errorKind: "dependency", classifiedField: "error" });
+    ).toEqual({
+      errorKind: "dependency",
+      classifiedField: "error",
+      failureDisclosure: {
+        kind: "provider_unavailable",
+        configKey: "tools.web.search",
+      },
+    });
     // A genuine top-level error with an unrecognised reason is STILL a real failure → dependency.
     expect(detect({ error: "invalid_provider", message: 'Invalid provider "x". Valid options: brave' }, false)).toEqual({
       errorKind: "dependency",
@@ -1301,7 +1393,14 @@ describe("tool-metadata-registry -- failure detectors", () => {
         },
         false,
       ),
-    ).toEqual({ errorKind: "dependency", classifiedField: "error" });
+    ).toEqual({
+      errorKind: "dependency",
+      classifiedField: "error",
+      failureDisclosure: {
+        kind: "provider_unavailable",
+        configKey: "tools.web.search",
+      },
+    });
   });
 
   // REGRESSION (production session 678314278): a SUCCESSFUL web_search (results present, NO

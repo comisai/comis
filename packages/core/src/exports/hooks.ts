@@ -32,5 +32,6 @@ export {
 export type {
   ComisToolMetadata,
   ToolCapabilityMetadata,
+  ToolFailureDisclosure,
   TrackedInvocationSideEffect,
 } from "../tool-metadata.js";

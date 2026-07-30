@@ -93,6 +93,8 @@ export interface ExecutionResultBase {
     originalError?: string;
     /** Tool that was in-flight when the error occurred (e.g., during PromptTimeout). */
     failingTool?: string;
+    /** Exact validated configuration surface that must change before retry. */
+    configKey?: string;
   };
   /** Per-turn budget tracking metrics (undefined if no user budget active). */
   budgetMetrics?: {
