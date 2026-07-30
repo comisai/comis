@@ -48,6 +48,11 @@ export interface AdminManageDescriptor<T extends TSchema = TSchema> {
   rpcPrefix: string;
   /** Actions that require approval gate confirmation */
   gatedActions?: readonly string[];
+  /** Validate action parameters after trust checks and before approval. */
+  validateParams?: (
+    action: string,
+    params: Record<string, unknown>,
+  ) => void;
   /** Whether trust guard is required (default: true) */
   requiresTrust?: boolean;
   /** Minimum trust level (default: "admin") */
@@ -146,6 +151,7 @@ export function createAdminManageTool<T extends TSchema>(
         const p = params as Record<string, unknown>;
         // 2. Action validation
         const action = readEnumParam(p, "action", descriptor.validActions as unknown as readonly string[]);
+        descriptor.validateParams?.(action, p);
 
         // 3. Approval gate for gated actions
         if (

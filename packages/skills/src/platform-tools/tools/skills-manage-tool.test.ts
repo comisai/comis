@@ -123,7 +123,7 @@ describe("skills_manage tool", () => {
       await runWithContext(makeContext("admin"), () =>
         tool.execute("call-s1", {
           action: "import",
-          url: "https://github.com/org/repo/tree/main/skills/test",
+          url: "https://github.com/org/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/test",
           scope: "shared",
         } as never),
       );
@@ -146,7 +146,7 @@ describe("skills_manage tool", () => {
       await runWithContext(makeContext("admin"), () =>
         tool.execute("call-s2", {
           action: "import",
-          url: "https://github.com/org/repo/tree/main/skills/test",
+          url: "https://github.com/org/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/test",
         } as never),
       );
 
@@ -251,7 +251,7 @@ describe("skills_manage tool", () => {
       await runWithContext(makeContext("admin"), () =>
         tool.execute("call-a1", {
           action: "import",
-          url: "https://github.com/org/repo/tree/main/skills/test",
+          url: "https://github.com/org/repo/tree/0123456789abcdef0123456789abcdef01234567/skills/test",
           scope: "shared",
         } as never),
       );

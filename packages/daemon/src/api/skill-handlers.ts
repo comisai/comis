@@ -63,6 +63,7 @@ import { runBundleInstallHook } from "../skills/bundle-install-helper.js";
 
 /** Skill name validation regex: lowercase alphanumeric + hyphens, 1-64 chars. */
 const SKILL_NAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+const GITHUB_COMMIT_SHA_RE = /^[0-9a-f]{40}$/iu;
 
 // ---------------------------------------------------------------------------
 // Dev-mode response parse helper
@@ -77,12 +78,12 @@ const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 
 /**
  * Parse a GitHub directory URL into API-friendly parts.
- * Accepts: https://github.com/{owner}/{repo}/tree/{branch}/{path}
+ * Accepts: https://github.com/{owner}/{repo}/tree/{commit-sha}/{path}
  */
-function parseGitHubDirUrl(url: string): { owner: string; repo: string; branch: string; path: string } | null {
+function parseGitHubDirUrl(url: string): { owner: string; repo: string; commitSha: string; path: string } | null {
   const m = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+)$/);
   if (!m) return null;
-  return { owner: m[1], repo: m[2], branch: m[3], path: m[4].replace(/\/$/, "") };
+  return { owner: m[1], repo: m[2], commitSha: m[3], path: m[4].replace(/\/$/, "") };
 }
 
 // Bounded GitHub Contents API walk (depth, file count, timeout) lives
@@ -348,7 +349,16 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       // Parse GitHub URL
       const parsed = parseGitHubDirUrl(url);
       if (!parsed) {
-        throw new Error("Invalid GitHub URL. Expected: https://github.com/{owner}/{repo}/tree/{branch}/{path}");
+        throw new Error(
+          "Invalid GitHub URL. Expected: " +
+          "https://github.com/{owner}/{repo}/tree/{40-character-commit-sha}/{path}",
+        );
+      }
+      if (!GITHUB_COMMIT_SHA_RE.test(parsed.commitSha)) {
+        throw new Error(
+          "Skill import requires an immutable GitHub commit URL: " +
+          "https://github.com/{owner}/{repo}/tree/{40-character-commit-sha}/{path}",
+        );
       }
 
       // Derive skill name from the last path segment
@@ -359,7 +369,12 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       }
 
       // Fetch all files from the GitHub directory
-      const fetchedFiles = await fetchGitHubDir(parsed.owner, parsed.repo, parsed.path, parsed.branch);
+      const fetchedFiles = await fetchGitHubDir(
+        parsed.owner,
+        parsed.repo,
+        parsed.path,
+        parsed.commitSha,
+      );
       if (fetchedFiles.length === 0) {
         throw new Error("No files found at the given URL");
       }

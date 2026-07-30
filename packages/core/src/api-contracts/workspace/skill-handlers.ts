@@ -114,9 +114,9 @@ export const SkillsUploadContract = defineContract({
 });
 
 /**
- * `skills.import` — import a skill from a GitHub directory URL. ADMIN
- * scope. The handler fetches the directory tree from the GitHub
- * Contents API and writes each file into the resolved skill folder.
+ * `skills.import` — import a skill from an immutable commit-pinned GitHub
+ * directory URL. ADMIN scope. The handler fetches the directory tree from
+ * the GitHub Contents API and writes each file into the resolved skill folder.
  *
  * Request: `{ url, scope?, agentId? }`.
  *
