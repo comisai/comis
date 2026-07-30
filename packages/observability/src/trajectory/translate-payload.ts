@@ -30,6 +30,7 @@ import { translateTaskPayload } from "./translate-task-payload.js";
 import { translateVideoPayload } from "./translate-video-payload.js";
 import { translateVisionPayload } from "./translate-vision-payload.js";
 import { translateVoicePayload } from "./translate-voice-payload.js";
+import { translateSessionSummaryPayload } from "./translate-session-summary.js";
 
 /**
  * Translate one EventBus payload into the `data` payload of a trajectory event.
@@ -258,19 +259,8 @@ export function translatePayload(
         exitReason: payload.exitReason,
       };
 
-    case "session:summary":
-      // Counts/flags ONLY — agentId/sessionKey/traceId are envelope
-      // correlation ids handled separately, never in the record data.
-      return {
-        degraded: payload.degraded,
-        turnCount: payload.turnCount,
-        costUsd: payload.costUsd,
-        toolStats: payload.toolStats,
-        breakerTripCount: payload.breakerTripCount,
-        topErrorKinds: payload.topErrorKinds,
-        source: payload.source,
-        endReason: payload.endReason,
-      };
+    // Counts/flags only; correlation ids remain on the recorder envelope.
+    case "session:summary": return translateSessionSummaryPayload(payload);
 
     case "memory:injected":
       return {

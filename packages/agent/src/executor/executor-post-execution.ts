@@ -24,6 +24,7 @@ import {
   type MemoryPort,
   type MemoryWriteScope,
   type ClockPort,
+  type ResponseLocaleRepairSkipped,
   type ContextStorePort,
   type ContextStoreScope,
   type ConversationRef,
@@ -896,6 +897,7 @@ export function emitSessionSummary(
      *  once at the chokepoint via END_REASON_MAP and co-persisted on sessionEnd.
      *  Carried so the row feeds the system `degradedByCause` aggregate. */
     endReason: string;
+    responseLocaleRepairSkipped?: ResponseLocaleRepairSkipped;
     clock: ClockPort;
   },
 ): void {
@@ -913,6 +915,9 @@ export function emitSessionSummary(
       topErrorKinds: args.rollup.topErrorKinds,
       source: "runtime" as const,
       endReason: args.endReason,
+      ...(args.responseLocaleRepairSkipped !== undefined
+        ? { responseLocaleRepairSkipped: args.responseLocaleRepairSkipped }
+        : {}),
       timestamp: args.clock.now(),
     });
   } catch (err) {
@@ -1837,6 +1842,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       turnCount: bridgeResult.turnCount ?? 0,
       rollup: sessionHealthRollup,
       endReason,
+      ...(result.responseLocaleRepairSkipped !== undefined
+        ? { responseLocaleRepairSkipped: result.responseLocaleRepairSkipped }
+        : {}),
       clock: deps.clock,
     },
   );

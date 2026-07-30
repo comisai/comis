@@ -70,6 +70,7 @@ export {
   parseWorkspacePolicySnapshot,
   verifyWorkspacePolicySnapshot,
   ResponseLocalePolicySchema,
+  ResponseLocaleRepairSkippedSchema,
   // DeliveryOrigin
   DeliveryOriginSchema,
   createDeliveryOrigin,
@@ -187,6 +188,7 @@ export type {
   InstructionSection,
   WorkspacePolicySnapshot,
   ResponseLocalePolicy,
+  ResponseLocaleRepairSkipped,
   DeliveryOrigin,
   DeliveryStatus,
   DeliveryFailureStage,

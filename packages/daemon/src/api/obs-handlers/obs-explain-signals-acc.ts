@@ -124,6 +124,10 @@ export interface Acc {
   groupHistory?: NonNullable<IncidentSignals["groupHistory"]>;
   /** The LAST valid `prompt.submitted` locale decision. */
   responseLocale?: NonNullable<IncidentSignals["responseLocale"]>;
+  /** The LAST valid locale-repair skip from a session summary. */
+  responseLocaleRepairSkipped?: NonNullable<
+    IncidentSignals["responseLocaleRepairSkipped"]
+  >;
   breakerOpenedTool?: string;
   hasDoNotRetrySignal: boolean;
   /** Tools for which a log-shape breaker "opened" event was already synthesized
