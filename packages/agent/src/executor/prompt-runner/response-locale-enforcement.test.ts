@@ -11,6 +11,8 @@ import type { RunPromptParams } from "./prompt-runner-types.js";
 import { allowProviderDispatch } from "../provider-dispatch.js";
 import { err } from "@comis/shared";
 import { buildToolRecoveryIdentity } from "../../bridge/tool-failure-recovery.js";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 
 const ARABIC_POLICY: ResponseLocalePolicy = {
   locale: "ar",
@@ -25,6 +27,80 @@ const LATIN_POLICY: ResponseLocalePolicy = {
 };
 
 const RECOVERY_IDENTITY_SALT = "identity-salt-a";
+
+const TEST_MODEL = {
+  id: "test-model",
+  name: "Test Model",
+  api: "openai-responses",
+  provider: "example",
+  baseUrl: "https://example.com",
+  reasoning: false,
+  input: ["text"],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 16_000,
+  maxTokens: 2_000,
+} as never;
+
+const TEST_USAGE = {
+  input: 1,
+  output: 1,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 2,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+function makeRealLocaleSession(
+  initialResponse: string,
+  repairedResponse: string,
+) {
+  const streamFunction = vi.fn(() => {
+    const stream = createAssistantMessageEventStream();
+    stream.push({
+      type: "done",
+      reason: "stop",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: repairedResponse }],
+        api: "openai-responses",
+        provider: "example",
+        model: "test-model",
+        usage: TEST_USAGE,
+        stopReason: "stop",
+        timestamp: 20,
+      },
+    });
+    return stream;
+  });
+  const agent = new Agent({
+    initialState: {
+      systemPrompt: "Keep the rewrite faithful.",
+      model: TEST_MODEL,
+      thinkingLevel: "off",
+      tools: [],
+      messages: [{
+        role: "assistant",
+        content: [{ type: "text", text: initialResponse }],
+        api: "openai-responses",
+        provider: "example",
+        model: "test-model",
+        usage: TEST_USAGE,
+        stopReason: "stop",
+        timestamp: 10,
+      }],
+    },
+    streamFn: streamFunction,
+  });
+  const prompt = vi.fn((instruction: string) => agent.prompt(instruction));
+  return {
+    agent,
+    prompt,
+    get messages() {
+      return agent.state.messages;
+    },
+    streamFunction,
+  };
+}
 
 function messageToolResult(input: {
   success: boolean;
@@ -278,6 +354,50 @@ describe("enforceResponseLocale", () => {
 });
 
 describe("applyResponseLocaleEnforcement", () => {
+  it("repairs in an isolated transcript without persisting a synthetic user turn", async () => {
+    const draft = "המעבר בוצע בהצלחה.";
+    const session = makeRealLocaleSession(
+      draft,
+      "The switch completed successfully.",
+    );
+    const beforeMessages = JSON.stringify(session.messages);
+    const result = { response: draft };
+    const params = {
+      responseLocalePolicy: LATIN_POLICY,
+      result,
+      msg: { text: "switch back to the model u had before" },
+      session,
+      config: { localePacks: {} },
+      bridge: {
+        getResult: () => ({}),
+        hasOutboundDelivery: () => false,
+      },
+      agentId: "agent-a",
+      sessionKey: {
+        tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
+      },
+      deps: {
+        eventBus: new TypedEventBus(),
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+        clock: { now: () => 10, nowDate: () => new Date(10) },
+      },
+    } as unknown as RunPromptParams;
+
+    await applyResponseLocaleEnforcement(params);
+
+    expect(result.response).toBe("The switch completed successfully.");
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(JSON.stringify(session.messages)).toBe(beforeMessages);
+    expect(session.streamFunction).toHaveBeenCalledTimes(1);
+    const providerContext = session.streamFunction.mock.calls[0]?.[1] as {
+      messages: Array<{ role: string; content: unknown }>;
+      tools?: unknown[];
+    };
+    expect(providerContext.messages).toHaveLength(1);
+    expect(providerContext.messages[0]?.role).toBe("user");
+    expect(providerContext.tools ?? []).toEqual([]);
+  });
+
   it("recovers the locale terminal error when a later deterministic guard satisfies the policy", () => {
     const candidate = (
       responseLocaleEnforcement as Record<string, unknown>
