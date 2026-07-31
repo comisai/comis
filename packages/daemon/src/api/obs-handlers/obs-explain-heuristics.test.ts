@@ -951,6 +951,24 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/delivery|lifecycle/i);
   });
 
+  it("tool invocation stall outranks an incidental recall miss", () => {
+    const r = rootCause(makeSignals({
+      endReason: "tool_invocation_stall",
+      degraded: true,
+      recall: allMissRecall,
+      requestRelevantToolNames: ["mcp__test-service--account_summary"],
+      recoveries: {
+        total: 1,
+        succeeded: 0,
+        byReason: { request_tool_nudge: 1 },
+      },
+    }));
+
+    expect(r?.code).toBe("tool_invocation_stall");
+    expect(r?.detail).toContain("mcp__test-service--account_summary");
+    expect(r?.detail).toMatch(/request_tool_nudge|recovery/iu);
+  });
+
   it("a DEGRADED session whose recalls ALL missed (no tool/context cause) → recall_miss", () => {
     // Grounded in live Hebrew-language runs where recall silently returned
     // nothing and comis explain root-caused nothing.
