@@ -483,6 +483,8 @@ describe("resolveDescription", () => {
     );
 
     expect(agentsDescription).toMatch(/separate.*dedicated.*assistant/isu);
+    expect(agentsDescription).toMatch(/create immediately.*reasonable.*defaults/isu);
+    expect(agentsDescription).toMatch(/do not require.*heartbeat/isu);
     expect(heartbeatDescription).toMatch(/explicitly.*heartbeat.*monitor/isu);
     expect(heartbeatDescription).toMatch(/not.*separate.*assistant/isu);
   });
