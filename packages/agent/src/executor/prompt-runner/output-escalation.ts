@@ -28,6 +28,7 @@ import { processFailurePath } from "./failure-path.js";
 import { applyInteractiveSilentRecovery } from "./interactive-silent-recovery.js";
 import { suppressRedundantFinalAfterOutboundDelivery } from "./outbound-delivery-reconciliation.js";
 import { applyResponseLocaleEnforcement } from "./response-locale-enforcement.js";
+import { runBudgetContinuation } from "./budget-continuation.js";
 
 /**
  * Compute the final PromptRunResult by running output escalation, success-
@@ -470,81 +471,5 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
       recovered: outcome.recovered,
       matchedToolNames: outcome.matchedToolNames,
     };
-  }
-}
-
-/**
- * Budget-driven continuation loop. Nudges the LLM to keep producing output
- * until either the budget is reached, diminishing returns, or maxContinuations.
- * Mutates `result.response`, `result.finishReason`, `result.budgetMetrics`.
- */
-async function runBudgetContinuation(
-  params: RunPromptParams,
-  budgetTracker: TurnBudgetTracker,
-  budgetCapped: boolean,
-  requestedBudget: number | undefined,
-): Promise<void> {
-  const { session, bridge, result, deps } = params;
-  let budgetContinuations = 0;
-
-  // Check after initial prompt round
-  const initialOutput = bridge.getResult().tokensUsed?.output ?? 0;
-  let decision = budgetTracker.check(initialOutput);
-
-  while (decision.action === "continue") {
-    budgetContinuations++;
-    const nudgePercent = Math.round(decision.utilization * 100);
-    // Nudge instructs LLM to continue without premature summarization
-    const budgetNudgeText = `[budget:nudge] You have used ${nudgePercent}% of the requested ${budgetTracker.targetTokens.toLocaleString()} token budget. Continue working on the task - do not summarize or wrap up prematurely. Produce more detailed output.`;
-
-    deps.logger.debug(
-      { utilization: decision.utilization, continuations: budgetContinuations, targetTokens: budgetTracker.targetTokens },
-      "Budget continuation nudge",
-    );
-
-    const continuationResult = await runContinuationTurn(
-      session,
-      budgetNudgeText,
-      resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
-    );
-    if (!continuationResult.ok) {
-      deps.logger.warn(
-        { err: toSafeErrorLogString(continuationResult.error), hint: "Budget continuation turn failed; preserving response collected so far", errorKind: "dependency" as ErrorKind },
-        "Continuation turn error, stopping budget continuation",
-      );
-      break;
-    }
-
-    // Re-extract response after continuation
-    const continuationResponse = getVisibleAssistantText(session);
-    if (continuationResponse) {
-      result.response = continuationResponse;
-    }
-
-    // Check budget again after continuation
-    const currentOutput = bridge.getResult().tokensUsed?.output ?? 0;
-    decision = budgetTracker.check(currentOutput);
-  }
-
-  const lastDecisionReason = decision.reason;
-  // Set finish reason based on tracker stop condition
-  if (decision.reason === "budget_reached" || decision.reason === "diminishing_returns" || decision.reason === "max_continuations") {
-    result.finishReason = "budget_exhausted";
-  }
-
-  // Populate budget metrics on result
-  result.budgetMetrics = {
-    requestedBudget: requestedBudget!,
-    effectiveBudget: budgetTracker.targetTokens,
-    wasCapped: budgetCapped,
-    utilization: decision.utilization,
-    continuations: budgetContinuations,
-    stopReason: lastDecisionReason,
-  };
-
-  // Prepend cap notice to response if user budget was capped
-  if (budgetCapped && result.response) {
-    const capNotice = `*Note: Your requested budget of ${requestedBudget!.toLocaleString()} tokens was capped to ${budgetTracker.targetTokens.toLocaleString()} tokens by operator limits.*\n\n`;
-    result.response = capNotice + result.response;
   }
 }

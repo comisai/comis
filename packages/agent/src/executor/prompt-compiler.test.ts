@@ -38,7 +38,7 @@ describe("compileExecutionPrompt", () => {
     expect(result.stableEnginePrefix).toMatch(/do not ask.*missing parameters/iu);
   });
 
-  it("grounds self-authority answers in live tools and current sender trust", () => {
+  it("includes live tools and current sender trust in self-authority grounding", () => {
     const result = compileExecutionPrompt(makeInput());
 
     expect(result.stableEnginePrefix).toMatch(

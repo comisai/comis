@@ -27,6 +27,8 @@ import {
 import type { RunPromptParams } from "./prompt-runner-types.js";
 import type { ExecutionResult } from "../types.js";
 import { classifyToolFailureRecovery } from "../../bridge/tool-failure-recovery.js";
+import { unrepairedMismatchHint } from "./locale-mismatch-hint.js";
+export { unrepairedMismatchHint } from "./locale-mismatch-hint.js";
 
 type LocaleEnforcementSession = Pick<AgentSession, "agent" | "prompt">;
 
@@ -481,29 +483,4 @@ export async function applyResponseLocaleEnforcement(params: RunPromptParams): P
       `Expected ${outcome.value.finalFinding?.expectedScript ?? "requested"} script `
       + `but repair produced ${outcome.value.finalFinding?.actualScript ?? "an incompatible"} script`,
   };
-}
-
-/**
- * Operator-facing `hint` for a locale repair that never converged.
- *
- * Branches on the RESOLVER TIER that produced the target, because the right knob
- * differs: a `request`-tier locale is INFERRED from the current message, so a
- * persistent mismatch usually means the inference is wrong — not the model. An
- * `explicit` locale is an operator pin, so the model genuinely failed to honour it.
- *
- * Exported for the same single-source reason as the other hint helpers: a hint
- * duplicated into its test drifts silently.
- *
- * @param source - the resolved `ResponseLocaleSource` tier.
- * @returns the hint text for the WARN's `hint` field.
- */
-export function unrepairedMismatchHint(source: string): string {
-  return source === "request"
-    ? "The enforced locale was INFERRED from this request (localeSource=request), not pinned by an operator. "
-      + "The model answered in a different script on every attempt, which usually means the conversation's "
-      + "established language differs from this one message's. Pin the intended language with the agent's "
-      + "explicit response-locale setting if the inferred target is wrong; a persistent mismatch here costs "
-      + "an extra model call and breaks the prompt cache each turn."
-    : "The enforced locale is an OPERATOR PIN (localeSource=explicit) and the model did not honour it. "
-      + "Verify the pin is the language you intend, then inspect the selected model's locale fidelity.";
 }

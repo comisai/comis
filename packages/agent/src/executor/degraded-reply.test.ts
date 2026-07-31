@@ -407,7 +407,7 @@ describe("buildAgentUpdateNoOpReply", () => {
 });
 
 describe("buildSenderAuthorityOverclaimReply", () => {
-  it("states that below-admin sender approval cannot grant admin authority", () => {
+  it("returns a below-admin boundary that cannot grant admin authority", () => {
     const reply = buildSenderAuthorityOverclaimReply();
 
     expect(reply).toMatch(/current trust.*admin-only/iu);

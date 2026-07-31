@@ -50,97 +50,11 @@ import { maybeUpgradeWithJudge, type OutcomeJudge, type JudgeScope } from "./set
 // The skill promote/demote loop lives in its own leaf (no cycle: it imports
 // failureCorroborated from setup-learning-corroboration.ts, nothing from here).
 import { applySkillOutcomeTransitions } from "./setup-learning-skill-transitions.js";
+import type { LearningOutcomeWiringDeps } from "./learning-outcome-wiring-types.js";
 // Re-export for the existing importers (setup-learning.test.ts) — moved to the leaf
 // to keep this file under the 800-line cap; the gate logic is unchanged.
 export { failureCorroborated, CORROBORATION_MIN_INDEPENDENT, MAX_TRACKED_FAILURE_MEMORIES };
-
-/** Dependencies for {@link wireLearningOutcome}. */
-export interface LearningOutcomeWiringDeps {
-  /** Configured deployment tenant used when an event fires outside request context. */
-  tenantId: string;
-  /** The daemon's typed event bus (source of the tool/graph completion events). */
-  eventBus: TypedEventBus;
-  /** The sole @comis/memory adapter for the outcome port (the observe/resolve target). */
-  outcomeStore: OutcomeSignalPort;
-  /**
-   * The sole @comis/memory recall-utility adapter (the reward/failure write target).
-   * The daemon is the ONLY place holding BOTH this AND
-   * `OutcomeSignalPort.resolve()` — the agent↛memory build cut means the agent
-   * never imports the store (closed graph). Injected from setup-memory.ts where it
-   * is already constructed.
-   */
-  usefulnessStore: MemoryUsefulnessStore;
-  /** Injected clock for `observedAt` — the deterministic time source (no ambient wall clock). */
-  clock: ClockPort;
-  /** Structured logger for the INFO completion line + the non-fatal failure WARN. */
-  logger: ComisLogger;
-  /**
-   * Per-agent effective enable: true ONLY when the agent has `learning.enabled`
-   * (the ONE collapsed learning flag) AND the master `memory.enabled` switch is on.
-   * With `memory.enabled:false` → the subscriber is a no-op.
-   */
-  learningOutcomeEnabled: (agentId: string) => boolean;
-  /**
-   * Per-agent reward-write enable: true ONLY when the agent has
-   * `learning.enabled` AND the master `memory.enabled` switch is on. Gates the
-   * SUCCESS→`recordUsage` positive-reward write (wired behind the one collapsed flag).
-   */
-  learningTuningEnabled: (agentId: string) => boolean;
-  /**
-   * Per-agent failure-accrual enable: true ONLY when the agent has
-   * `learning.enabled` AND the master `memory.enabled` switch is on. Gates the
-   * FAILURE/CORRECTED→`recordFailure` accrual (itself corroboration-gated;
-   * wired behind the one collapsed flag).
-   */
-  learningForgettingEnabled: (agentId: string) => boolean;
-  /**
-   * The sole @comis/memory learned-skill adapter (the promote/demote
-   * write target). The daemon is the ONLY place holding BOTH this AND
-   * `OutcomeSignalPort.resolve()` (the agent↛memory cut). OPTIONAL — when absent
-   * (e.g. learning disabled) the promote/demote loop is a no-op
-   * (byte-identical). Injected from setup-memory.ts where it is already constructed.
-   */
-  learnedSkillStore?: MentalModelStorePort;
-  /**
-   * Per-agent learned-skill promote/demote enable: true ONLY when the
-   * agent has `learning.enabled` (the ONE collapsed flag) AND the master
-   * `memory.enabled` switch is on. Gates the entire promote/demote loop (wired
-   * behind the one flag). With `memory.enabled:false` → no promote/demote/emit (byte-identical).
-   */
-  learningSkillsEnabled?: (agentId: string) => boolean;
-  /**
-   * Per-agent promote threshold (the candidate→active transition crosses it —
-   * `learning.reflect.promoteAtProofCount`, schema default 3). Passed verbatim into
-   * `learnedSkillStore.promote(id, scope, threshold)` (the store-side CASE gate).
-   */
-  learningSkillsPromoteAt?: (agentId: string) => number;
-  /**
-   * Refresh a given agent's learned-skill SURFACE cache after a promote/demote
-   * actually moved a row, so the NEXT session's prompt-skills freeze captures the new
-   * active set (next-SESSION pickup — never a mid-session mutation of an
-   * already-frozen snapshot). The per-agent surface caches live in setup-agents-runtime
-   * and are reached via a shared registry; this closure looks the agent's cache up and
-   * fires its async refresh fire-and-forget. OPTIONAL — absent (no registry threaded, or
-   * learning disabled) ⇒ no refresh (byte-identical). The boot refresh still runs.
-   */
-  refreshLearnedSkillSurface?: (agentId: string) => void;
-  /**
-   * Conversational-breadth fallback (built in the setup-learning-judge leaf):
-   * the cost-gated LLM outcome-judge seam, invoked ONLY when the deterministic resolve fused
-   * to `unknown` AND {@link learningOutcomeJudgeEnabled} is on — i.e. a CONVERSATIONAL turn
-   * with no tool/pipeline signal. Returns the verdict's `outcome` + the CODE-capped reward
-   * (≤ 0.7) the daemon `observe()`s as a `source:"judge"` row. OPTIONAL — absent (no judge
-   * wired, or the judge disabled for every agent) ⇒ the upgrade path is never entered
-   * (byte-identical). The returned verdict also carries content-free model, rubric,
-   * evidence, and policy provenance for the completion record. These three fields
-   * ARE the {@link JudgeUpgradeDeps} structural subset.
-   */
-  outcomeJudge?: OutcomeJudge;
-  /** Per-agent judge enable (memory.enabled && learningOutcome.enabled && judge.enabled); absent ⇒ never runs. */
-  learningOutcomeJudgeEnabled?: (agentId: string) => boolean;
-  /** LCD-backed per-turn transcript reader; absent/empty ⇒ the judge never runs (byte-identical). */
-  readTurnTranscript?: (scope: JudgeScope) => string | undefined;
-}
+export type { LearningOutcomeWiringDeps } from "./learning-outcome-wiring-types.js";
 
 /** High-confidence default for a clean deterministic tool/pipeline signal. */
 const DETERMINISTIC_CONFIDENCE = 0.9;
