@@ -94,7 +94,7 @@ export function summarizeToolStats(
 }
 
 // @optional-field-count: internal mutable fold accumulator — each optional field
-// is a DISTINCT terminal-record signal (breaker tool, contextBudget, promptTimeout,
+// is a DISTINCT terminal-record signal (breaker tool, contextBudget, rehydration, promptTimeout,
 // toolSchemaUnsupported, providerErrorCode, inboundEdit, responseLocale, lastRecall, spend, perRootBudget, the four media turns,
 // agentId, channel) that is absent until its trajectory record class is seen. They
 // are not a configuration surface; collapsing or splitting them would only obscure
@@ -142,6 +142,8 @@ export interface Acc {
   misclassTokenByTool: Map<string, string>;
   /** The LAST context.budget trajectory record (the terminal fit check). */
   contextBudget?: IncidentContextBudget;
+  /** The LAST valid `context.rehydrated` receipt. */
+  rehydration?: IncidentSignals["rehydration"];
   /** The per-turn context-budget CASCADE (the progression toward `contextBudget`). Deduped on
    *  transition + most-recent-40 capped (see the context.budget fold). Surfaced only when ≥2 states. */
   contextBudgetHistory: IncidentContextBudgetHistoryEntry[];

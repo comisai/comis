@@ -1326,18 +1326,14 @@ describe("assembleIncidentReport — rehydration threading", () => {
       overflowStripped: false,
     };
     const report = assembleIncidentReport(
-      makeSignals({
-        rehydration,
-      } as unknown as Partial<IncidentSignals>),
+      makeSignals({ rehydration }),
       makeMetadata(),
       null,
       SESSION_KEY,
       READ_COUNT,
     );
 
-    expect(
-      (report as unknown as { rehydration?: typeof rehydration }).rehydration,
-    ).toEqual(rehydration);
+    expect(IncidentReportSchema.parse(report).rehydration).toEqual(rehydration);
   });
 });
 

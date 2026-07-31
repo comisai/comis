@@ -1436,20 +1436,7 @@ describe("context.rehydrated extraction", () => {
         overflowStripped: false,
       }),
     ]);
-    const rehydration = (
-      signals as unknown as {
-        rehydration?: {
-          seq: number;
-          currentTurn: boolean;
-          sectionsInjected: number;
-          filesInjected: number;
-          skillsInjected: number;
-          overflowStripped: boolean;
-        };
-      }
-    ).rehydration;
-
-    expect(rehydration).toEqual({
+    expect(signals.rehydration).toEqual({
       seq: 11,
       currentTurn: true,
       sectionsInjected: 1,
@@ -1470,13 +1457,7 @@ describe("context.rehydrated extraction", () => {
       }),
       event("prompt.submitted", 20, {}),
     ]);
-    const rehydration = (
-      signals as unknown as {
-        rehydration?: { currentTurn: boolean };
-      }
-    ).rehydration;
-
-    expect(rehydration?.currentTurn).toBe(false);
+    expect(signals.rehydration?.currentTurn).toBe(false);
   });
 });
 

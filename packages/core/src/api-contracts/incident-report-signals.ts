@@ -16,6 +16,7 @@ import type {
   IncidentCronWakeGate,
   IncidentPromptTimeout,
   IncidentQueueTimelineEntry,
+  IncidentRehydration,
   SpawnTreeNode,
   OrchestrateRun,
 } from "./incident-report-sections.js";
@@ -61,10 +62,10 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 26 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 27 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
-// distinct trajectory record class (contextBudget / promptTimeout /
+// distinct trajectory record class (contextBudget / rehydration / promptTimeout /
 // toolSchemaUnsupported / recall / cacheBreaks / spend / image / vision /
 // videoGenerated / voice / learning / deliveryDispatch / channel / agentId / spawnTree / orchestrate / …) — absent
 // when that record class did not occur. Clustering them would couple unrelated
@@ -293,6 +294,11 @@ export interface IncidentSignals {
    * tool-schema share instead of the generic speculation.
    */
   contextBudget?: IncidentContextBudget;
+  /**
+   * The latest `context.rehydrated` receipt. `currentTurn` is false when the
+   * session contains an old rehydration event followed by a newer prompt.
+   */
+  rehydration?: IncidentRehydration;
   /** The per-turn context-budget cascade toward the terminal `contextBudget` (≥2 distinct states;
    *  deduped on transition, most-recent-40 capped). The assembler folds it onto IncidentReport. */
   contextBudgetHistory?: IncidentContextBudgetHistoryEntry[];

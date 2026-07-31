@@ -543,6 +543,8 @@ export function assembleIncidentReport(
     // The terminal per-call budget equation (absent when the trajectory carries
     // no context.budget record).
     ...(signals.contextBudget !== undefined ? { contextBudget: signals.contextBudget } : {}),
+    // The latest post-compaction policy rehydration receipt.
+    ...(signals.rehydration !== undefined ? { rehydration: signals.rehydration } : {}),
     // The per-turn budget cascade toward that terminal (present only when ≥2 distinct states).
     ...(signals.contextBudgetHistory !== undefined ? { contextBudgetHistory: signals.contextBudgetHistory } : {}),
     // The woke-fire wake-gate fact (absent when the trajectory has no

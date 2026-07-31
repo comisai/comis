@@ -26,6 +26,7 @@ import {
   IncidentGraphRunSchema,
   IncidentPromptTimeoutSchema,
   IncidentQueueTimelineEntrySchema,
+  IncidentRehydrationSchema,
   SpawnTreeNodeSchema,
   OrchestrateRunSchema,
 } from "./incident-report-sections.js";
@@ -35,6 +36,7 @@ import type {
   IncidentCronWakeGate,
   IncidentGraphRun,
   IncidentPromptTimeout,
+  IncidentRehydration,
   SpawnTreeNode,
   OrchestrateRun,
 } from "./incident-report-sections.js";
@@ -64,10 +66,11 @@ export {
   IncidentGraphRunSchema,
   IncidentPromptTimeoutSchema,
   IncidentQueueTimelineEntrySchema,
+  IncidentRehydrationSchema,
   SpawnTreeNodeSchema,
   OrchestrateRunSchema,
 };
-export type { IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentCronWakeGate, IncidentGraphRun, IncidentPromptTimeout, SpawnTreeNode, OrchestrateRun };
+export type { IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentCronWakeGate, IncidentGraphRun, IncidentPromptTimeout, IncidentRehydration, SpawnTreeNode, OrchestrateRun };
 
 export const IncidentReportSchema = z.object({
   schemaVersion: z.literal(1),
@@ -227,6 +230,8 @@ export const IncidentReportSchema = z.object({
    *  session's trajectory carries `context.budget` records; additive, schemaVersion
    *  stays 1). */
   contextBudget: IncidentContextBudgetSchema.optional(),
+  /** The latest content-free post-compaction policy rehydration receipt. */
+  rehydration: IncidentRehydrationSchema.optional(),
   /** The woke-fire wake-gate fact (optional — present ONLY when the session's
    *  trajectory carries a `scheduler.wake_gate` record, i.e. a gate that woke the
    *  model). A skipped fire opens no session, so it never reaches here. Content-free;

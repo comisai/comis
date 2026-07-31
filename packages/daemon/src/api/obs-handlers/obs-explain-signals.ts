@@ -453,6 +453,34 @@ function handleEventRecord(
       }
       return;
     }
+    case "context.rehydrated": {
+      const sectionsInjected = asNumber(data.sectionsInjected);
+      const filesInjected = asNumber(data.filesInjected);
+      const skillsInjected = asNumber(data.skillsInjected);
+      if (
+        sectionsInjected === undefined ||
+        filesInjected === undefined ||
+        skillsInjected === undefined ||
+        !Number.isSafeInteger(sectionsInjected) ||
+        !Number.isSafeInteger(filesInjected) ||
+        !Number.isSafeInteger(skillsInjected) ||
+        sectionsInjected < 0 ||
+        filesInjected < 0 ||
+        skillsInjected < 0 ||
+        typeof data.overflowStripped !== "boolean"
+      ) {
+        return;
+      }
+      acc.rehydration = {
+        seq: recordSeq ?? acc.seq++,
+        currentTurn: isCurrentTurn,
+        sectionsInjected,
+        filesInjected,
+        skillsInjected,
+        overflowStripped: data.overflowStripped,
+      };
+      return;
+    }
     case "execution.prompt_timeout": {
       const t = parsePromptTimeoutRecord(data);
       if (t !== undefined) acc.promptTimeout = t;
@@ -850,6 +878,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(misclassifiedTool !== undefined ? { misclassifiedTool } : {}),
     ...(misclassifiedToken !== undefined ? { misclassifiedToken } : {}),
     ...(acc.contextBudget !== undefined ? { contextBudget: acc.contextBudget } : {}),
+    ...(acc.rehydration !== undefined ? { rehydration: acc.rehydration } : {}),
     // A single budget state adds nothing beyond `contextBudget`.
     ...(acc.contextBudgetHistory.length >= 2 ? { contextBudgetHistory: acc.contextBudgetHistory } : {}),
     // A woke fire's wake-gate fact (absent when the trajectory carries no
