@@ -736,7 +736,7 @@ describe("discover_tools score-floor filter", () => {
     );
   });
 
-  it("real-signal query still matches with default threshold", async () => {
+  it("scores the deferred entry description instead of a central-name override", async () => {
     const logger = createMockLogger();
     const discoverTool = createDiscoverTool(makeNoiseFixture(), logger, undefined, undefined, new Set<string>());
 
@@ -746,6 +746,7 @@ describe("discover_tools score-floor filter", () => {
     const resultText = (searchResult.content[0] as any).text;
     expect(resultText).toContain("<functions>");
     expect(resultText).toContain('"name":"agents_manage"');
+    expect(resultText).not.toContain('"name":"tokens_manage"');
   });
 
   it("normalized BM25: top match with any positive signal always surfaces at default threshold (regression pin)", async () => {
