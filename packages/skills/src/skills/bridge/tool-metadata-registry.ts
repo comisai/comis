@@ -286,6 +286,17 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("agents_manage", {
     validActions: ["create", "get", "update", "delete", "suspend", "resume", "list"],
     readOnlyActions: ["list", "get"],
+    mutationRequestPrefixes: [
+      "create",
+      "update",
+      "delete",
+      "suspend",
+      "resume",
+      "configure",
+      "switch",
+      "change model",
+      "change the model",
+    ],
     validKeys: ["action", "agent_id", "config"],
     // agent_id is required for every action except list.
     requiredByAction: {

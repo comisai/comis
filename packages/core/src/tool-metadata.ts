@@ -73,7 +73,7 @@ export interface ToolFailureFallback {
 // ---------------------------------------------------------------------------
 
 /** Per-tool metadata stored in the side-channel registry. All fields optional. */
-// @optional-field-count: 18 optional fields — this is a side-channel metadata
+// @optional-field-count: 19 optional fields — this is a side-channel metadata
 // aggregator keyed by tool name, registered incrementally via spread-merge from
 // independent sources (result caps, parallel-safety flags, action-gating
 // schema, MCP-export policy, capability routing, activity hints, failure
@@ -90,6 +90,10 @@ export interface ComisToolMetadata {
   /** Read-only actions on a tool that otherwise supports mutation. Values must
    * also appear in `validActions`; known valid actions outside this set mutate. */
   readOnlyActions?: readonly string[];
+  /** Normalized request prefixes that directly ask this tool to mutate state.
+   * Capability adapters may declare locale-specific phrases without teaching
+   * the generic runtime a closed vocabulary. */
+  mutationRequestPrefixes?: readonly string[];
   /** Safe for parallel execution with other concurrency-safe tools. */
   isConcurrencySafe?: boolean;
   /** BM25 keyword hints for deferred tool discovery. */
@@ -250,6 +254,30 @@ export function classifyToolInvocationMutation(
     return "unclassified";
   }
   return metadata.readOnlyActions.includes(action) ? "read_only" : "mutating";
+}
+
+function normalizeMutationRequestText(value: string): string {
+  return value.toLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ") ?? "";
+}
+
+/** Match a direct mutation request using capability-owned request prefixes. */
+export function matchesToolMutationRequest(
+  name: string,
+  requestText: string,
+): boolean {
+  const prefixes = registry.get(name)?.mutationRequestPrefixes;
+  if (prefixes === undefined || prefixes.length === 0) return false;
+
+  const normalizedRequest = normalizeMutationRequestText(requestText);
+  if (normalizedRequest.length === 0) return false;
+  return prefixes.some((candidate) => {
+    const normalizedPrefix = normalizeMutationRequestText(candidate);
+    return normalizedPrefix.length > 0
+      && (
+        normalizedRequest === normalizedPrefix
+        || normalizedRequest.startsWith(`${normalizedPrefix} `)
+      );
+  });
 }
 
 /**

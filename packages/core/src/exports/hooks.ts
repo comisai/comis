@@ -27,6 +27,7 @@ export {
   registerToolMetadata,
   getToolMetadata,
   classifyToolInvocationMutation,
+  matchesToolMutationRequest,
   getAllToolMetadata,
   truncateContentBlocks,
 } from "../tool-metadata.js";

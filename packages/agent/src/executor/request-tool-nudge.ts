@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Bounded recovery for small models that repeat an old answer instead of acting. */
 
-import { getToolMetadata, type ComisLogger } from "@comis/core";
+import {
+  getToolMetadata,
+  matchesToolMutationRequest,
+  type ComisLogger,
+} from "@comis/core";
 import {
   runContinuationTurn,
   type ContinuationTurnSession,
@@ -17,7 +21,7 @@ export interface RequestToolNudgeOutcome {
     | "not_small_class"
     | "no_mutating_match"
     | "mutation_already_succeeded"
-    | "not_repeated"
+    | "not_action_request"
     | "recovered"
     | "still_no_mutation"
     | "followup_error";
@@ -25,6 +29,7 @@ export interface RequestToolNudgeOutcome {
 
 export interface RunRequestToolNudgeDeps {
   session: ContinuationTurnSession;
+  requestText: string;
   messages: unknown[];
   capabilityClass: string | undefined;
   requestRelevantToolNames: readonly string[];
@@ -69,10 +74,17 @@ function repeatsEarlierAssistantAnswer(messages: unknown[]): boolean {
   );
 }
 
-function buildDirective(toolNames: readonly string[]): string {
+function buildDirective(
+  toolNames: readonly string[],
+  trigger: "repeated_answer" | "declared_mutation_request",
+): string {
+  const triggerFact = trigger === "repeated_answer"
+    ? "Your last answer exactly repeated an earlier assistant answer."
+    : "Capability metadata identifies the current wording as a direct mutation request.";
   return [
     "[comis: continuation — the current request still needs tool-backed action]",
-    "Your last answer exactly repeated an earlier assistant answer and no tool was called.",
+    triggerFact,
+    "No matching mutating tool action has succeeded in this turn.",
     `The active mutating tools matched to the current request are: ${toolNames.join(", ")}.`,
     "If the request is applicable, invoke a mutating action on the matching tool now.",
     "Read-only list, get, search, status, or inspect actions do not complete a change request.",
@@ -119,14 +131,19 @@ export async function runRequestToolNudge(
       outcome: "mutation_already_succeeded",
     };
   }
-  if (!repeatsEarlierAssistantAnswer(deps.messages)) {
+  const repeatedAnswer = repeatsEarlierAssistantAnswer(deps.messages);
+  const declaredMutationRequest = matchedToolNames.some((toolName) =>
+    matchesToolMutationRequest(toolName, deps.requestText)
+  );
+  if (!repeatedAnswer && !declaredMutationRequest) {
     return {
       fired: false,
       recovered: false,
       matchedToolNames,
-      outcome: "not_repeated",
+      outcome: "not_action_request",
     };
   }
+  const trigger = repeatedAnswer ? "repeated_answer" : "declared_mutation_request";
 
   logger.info(
     {
@@ -134,7 +151,7 @@ export async function runRequestToolNudge(
       step: "request-tool-nudge",
       agentId,
       decision: "fire",
-      reason: "repeated_prior_answer_without_tool",
+      reason: trigger,
       capabilityClass,
       matchedToolNames,
     },
@@ -144,7 +161,7 @@ export async function runRequestToolNudge(
   const successfulMutationCountBefore = currentSuccessfulMutationCount();
   const continuation = await runContinuationTurn(
     deps.session,
-    buildDirective(matchedToolNames),
+    buildDirective(matchedToolNames, trigger),
     deps.guardProviderDispatch,
   );
   if (!continuation.ok) {

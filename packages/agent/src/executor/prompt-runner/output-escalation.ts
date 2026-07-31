@@ -436,6 +436,9 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
   const sessionMessages: unknown[] = (session as any).messages ?? [];
   const outcome = await runRequestToolNudge({
     session,
+    requestText:
+      params.msg.originalMessages?.map((message) => message.text).join("\n")
+      ?? params.msg.text,
     messages: sessionMessages,
     capabilityClass: params.modelProfile?.capabilityClass,
     requestRelevantToolNames: params.requestRelevantToolNames ?? [],
