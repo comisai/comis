@@ -46,7 +46,12 @@ const SkillsManageToolParams = Type.Object({
       Type.Literal("create"),
       Type.Literal("update"),
     ],
-    { description: "Skill management action. Valid values: list (show installed skills), import (install from GitHub URL), delete (remove skill by name), create (create new skill from content), update (modify existing skill content)" },
+    {
+      description:
+        "Skill management action. Valid values: list (show installed skills, availability, and missing requirements), " +
+        "import (install from GitHub URL), delete (remove skill by name), create (create new skill from content), " +
+        "update (modify existing skill content)",
+    },
   ),
   url: Type.Optional(
     Type.String({
@@ -111,7 +116,7 @@ function validateSkillsManageParams(
  * Create a skills management tool with 5 actions.
  *
  * Actions:
- * - **list** -- List all installed prompt skills with metadata
+ * - **list** -- List all installed prompt skills with availability diagnostics
  * - **import** -- Import skills from a GitHub directory URL (requires approval)
  * - **delete** -- Delete a skill by name (requires approval)
  * - **create** -- Create a new skill from SKILL.md content (requires approval)

@@ -58,6 +58,7 @@ function makeRegistry(descriptions: Array<{ name: string; location: string; desc
     init,
     loadPromptSkill: vi.fn(),
     getPromptSkillDescriptions: vi.fn(() => full),
+    getPromptSkillInventory: vi.fn(() => full.map((skill) => ({ ...skill, eligible: true }))),
     getUserInvocableSkillNames: vi.fn(() => new Set<string>()),
     findRelevantSkills: vi.fn(() => []),
     findRelevantSkillsForInvocation: vi.fn(() => []),
@@ -182,6 +183,43 @@ describe("skills.list handler", () => {
     );
     const result = await handlers["skills.list"]!({});
     expect(result.skills[0]!.name).toBe("first");
+  });
+
+  it("returns installed ineligible skills with the exact missing requirement reason", async () => {
+    const registry = makeRegistry([{ name: "ready", location: "/skills/ready/SKILL.md" }]);
+    registry.getPromptSkillInventory.mockReturnValue([
+      {
+        name: "ready",
+        description: "Ready skill",
+        location: "/skills/ready/SKILL.md",
+        source: "workspace",
+        eligible: true,
+      },
+      {
+        name: "podcast-skill",
+        description: "Podcast skill",
+        location: "/skills/podcast-skill/SKILL.md",
+        source: "workspace",
+        eligible: false,
+        reason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
+      },
+    ]);
+    const handlers = createSkillHandlers(
+      makeDeps({ skillRegistries: new Map([["agent-x", registry]]) }),
+    );
+
+    const result = await handlers["skills.list"]!({ agentId: "agent-x" });
+
+    expect(result.skills).toEqual([
+      expect.objectContaining({ name: "ready", eligible: true }),
+      expect.objectContaining({
+        name: "podcast-skill",
+        eligible: false,
+        reason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
+      }),
+    ]);
+    expect(registry.getPromptSkillInventory).toHaveBeenCalledOnce();
+    expect(registry.getPromptSkillDescriptions).not.toHaveBeenCalled();
   });
 });
 

@@ -76,6 +76,14 @@ export interface PromptSkillContent {
   readonly source: SkillSource;
 }
 
+/** Installed prompt skill plus its current policy and runtime availability. */
+export interface PromptSkillInventoryEntry extends PromptSkillDescription {
+  /** Whether the skill is available to the model in the current runtime. */
+  readonly eligible: boolean;
+  /** Exact policy or runtime prerequisite blocking the skill. */
+  readonly reason?: string;
+}
+
 /** Cached snapshot of prompt skill XML and metadata for a single reload cycle. */
 export interface SkillSnapshot {
   /** Pre-computed available_skills XML string (or empty string if no visible skills). */
@@ -113,6 +121,13 @@ export interface SkillRegistry {
    * Returns all prompt skills including disableModelInvocation field -- consumers filter.
    */
   getPromptSkillDescriptions(): PromptSkillDescription[];
+
+  /**
+   * Get every discovered prompt skill with current availability diagnostics.
+   * Unlike the model-facing description list, this management inventory keeps
+   * ineligible entries so callers can name the missing policy or runtime knob.
+   */
+  getPromptSkillInventory(): PromptSkillInventoryEntry[];
 
   /**
    * Get names of prompt skills where userInvocable === true.

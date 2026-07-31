@@ -12586,6 +12586,9 @@ export const CONTRACTS = {
             },
             "recoveredTurnCount": {
               "type": "number"
+            },
+            "backgroundPendingCleanupCount": {
+              "type": "number"
             }
           },
           "required": [
@@ -16050,12 +16053,19 @@ export const CONTRACTS = {
                   "workspace",
                   "local"
                 ]
+              },
+              "eligible": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
               }
             },
             "required": [
               "name",
               "description",
-              "location"
+              "location",
+              "eligible"
             ],
             "additionalProperties": false
           }

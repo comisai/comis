@@ -138,7 +138,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
           if (IS_DEV) SkillsListContract.response.parse(empty);
           return empty;
         }
-        const result = { skills: registry.getPromptSkillDescriptions() };
+        const result = { skills: registry.getPromptSkillInventory() };
         if (IS_DEV) SkillsListContract.response.parse(result);
         return result;
       }
@@ -152,7 +152,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         if (IS_DEV) SkillsListContract.response.parse(empty);
         return empty;
       }
-      const result = { skills: fallbackRegistry.getPromptSkillDescriptions() };
+      const result = { skills: fallbackRegistry.getPromptSkillInventory() };
       if (IS_DEV) SkillsListContract.response.parse(result);
       return result;
     },

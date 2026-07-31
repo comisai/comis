@@ -3084,7 +3084,7 @@
               "type": "string"
             }
           ],
-          "description": "Skill management action. Valid values: list (show installed skills), import (install from GitHub URL), delete (remove skill by name), create (create new skill from content), update (modify existing skill content)"
+          "description": "Skill management action. Valid values: list (show installed skills, availability, and missing requirements), import (install from GitHub URL), delete (remove skill by name), create (create new skill from content), update (modify existing skill content)"
         },
         "content": {
           "description": "Full SKILL.md content including frontmatter. Required for create and update actions. The agent should generate complete SKILL.md content with --- frontmatter --- and body.",

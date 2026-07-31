@@ -17,10 +17,9 @@ import { defineContract } from "../types.js";
 // ===========================================================================
 
 /**
- * PromptSkillDescription wire shape. Tight model — the source type at
- * `packages/skills/src/skills/prompt/processor.ts:19-28` is fully
- * allowlist-shaped (5 primitive fields, no nested records). The
- * `source` enum mirrors the source-tag emitted by the registry.
+ * Prompt-skill management inventory wire shape. The source enum mirrors the
+ * registry tag. Eligibility fields distinguish an absent artifact from an
+ * installed skill blocked by policy or missing runtime prerequisites.
  */
 const SkillDescriptionSchema = z.object({
   name: z.string(),
@@ -28,6 +27,8 @@ const SkillDescriptionSchema = z.object({
   location: z.string(),
   disableModelInvocation: z.boolean().optional(),
   source: z.enum(["bundled", "workspace", "local"]).optional(),
+  eligible: z.boolean(),
+  reason: z.string().optional(),
 });
 
 /**
@@ -60,7 +61,7 @@ const SkillScopeSchema = z.enum(["local", "shared"]);
  * models only the user-facing `agentId` (internals are stripped before
  * parse).
  *
- * Response: `{ skills: PromptSkillDescription[] }`.
+ * Response: `{ skills: PromptSkillInventoryEntry[] }`.
  */
 export const SkillsListContract = defineContract({
   method: "skills.list",

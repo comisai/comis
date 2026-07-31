@@ -48,6 +48,7 @@ import {
   scoreRelevance,
   tokenize,
 } from "./skill-registry-discovery.js";
+import { buildPromptSkillInventory } from "./skill-registry-inventory.js";
 import type {
   OperatorSkillHint,
   PromptSkillContent,
@@ -171,6 +172,15 @@ export function createSkillRegistry(
         });
       }
       return descriptions;
+    },
+
+    getPromptSkillInventory() {
+      return buildPromptSkillInventory({
+        metadata: metadataMap.values(),
+        config,
+        eligibilityContext,
+        logger,
+      });
     },
 
     getUserInvocableSkillNames(): Set<string> {
