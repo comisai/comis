@@ -507,6 +507,10 @@ export const IncidentReportSchema = z.object({
       skillsSurfacedButUncredited: z
         .array(z.object({ name: z.string(), coverage: z.number() }))
         .optional(),
+      // Skills whose topic credit was retained from the immediately preceding turn.
+      // This makes a multi-turn reuse explainable without reading raw trajectories.
+      // Names only; optional and additive.
+      skillsCreditedFromPriorTurn: z.array(z.string()).optional(),
       // The block stays counts/ids-only — no user-model or generalization fields belong here.
     })
     .optional(),

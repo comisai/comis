@@ -205,6 +205,7 @@ export function emptyLearningFold(): LearningFoldState {
     skillsDemoted: 0,
     failuresAttributed: 0,
     skillsSurfacedButUncredited: new Map(),
+    skillsCreditedFromPriorTurn: new Set(),
     skillsDemotedNames: new Set(),
   };
 }
@@ -300,7 +301,19 @@ export function accumulateSkillSurfacedRecord(state: LearningFoldState, data: Re
   if (!Array.isArray(data.scores)) return;
   for (const s of data.scores) {
     if (s === null || typeof s !== "object") continue;
-    const score = s as { name?: unknown; coverage?: unknown; credited?: unknown };
+    const score = s as {
+      name?: unknown;
+      coverage?: unknown;
+      credited?: unknown;
+      creditSource?: unknown;
+    };
+    if (
+      score.credited === true
+      && score.creditSource === "prior_turn"
+      && typeof score.name === "string"
+    ) {
+      state.skillsCreditedFromPriorTurn.add(score.name);
+    }
     if (score.credited === true) continue; // credited skills are already in skillsUsed
     if (typeof score.name !== "string") continue;
     const coverage = typeof score.coverage === "number" && Number.isFinite(score.coverage) ? score.coverage : 0;
@@ -398,6 +411,9 @@ export function buildLearningSignal(state: LearningFoldState): IncidentLearningS
             .map(([name, coverage]) => ({ name, coverage }))
             .sort((a, b) => b.coverage - a.coverage),
         }
+      : {}),
+    ...(state.skillsCreditedFromPriorTurn.size > 0
+      ? { skillsCreditedFromPriorTurn: [...state.skillsCreditedFromPriorTurn] }
       : {}),
   };
 }

@@ -37,6 +37,7 @@ export interface LearningFoldState {
   skillsDemoted: number;
   failuresAttributed: number;
   skillsSurfacedButUncredited: Map<string, number>;
+  skillsCreditedFromPriorTurn: Set<string>;
   skillsDemotedNames: Set<string>;
 }
 

@@ -12491,6 +12491,12 @@ export const CONTRACTS = {
                 ],
                 "additionalProperties": false
               }
+            },
+            "skillsCreditedFromPriorTurn": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
