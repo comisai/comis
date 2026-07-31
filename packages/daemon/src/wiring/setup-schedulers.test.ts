@@ -28,6 +28,8 @@ function makeScheduler() {
     activate: vi.fn(() => ok(undefined)),
     enterMaintenance: vi.fn(() => ok({ activeExecutions: 0 })),
     closeAdmission: vi.fn(() => ({ activeExecutions: 0 })),
+    waitForIdle: vi.fn(async () => undefined),
+    abortActive: vi.fn(() => ({ activeExecutions: 0 })),
     stop: vi.fn(async () => ok(undefined)),
     getJobs: vi.fn(() => ok([])),
   };
@@ -529,6 +531,43 @@ describe("scheduler composition lifecycle", () => {
     });
     expect(result.cronSchedulers.has("agent-a")).toBe(false);
     expect(result.ownedCronSchedulers.get("agent-a")).toBe(schedulers[0]);
+  });
+
+  it("retires every scheduler-owned resource for a deleted agent", async () => {
+    const { setupSchedulers } = await import("./setup-schedulers.js");
+    const runtimeDeps = deps({ "agent-a": agent(true) });
+    const result = await setupSchedulers(runtimeDeps);
+    const browserStop = vi.fn(async () => undefined);
+    const resetStop = vi.fn();
+    result.browserServices.set("agent-a", { stop: browserStop } as never);
+    result.resetSchedulers.set("agent-a", { stop: resetStop } as never);
+    const retireAgentRuntime = (result as unknown as {
+      retireAgentRuntime(agentId: string): Promise<ReturnType<typeof ok<void>>>;
+    }).retireAgentRuntime;
+
+    await expect(retireAgentRuntime("agent-a")).resolves.toEqual(ok(undefined));
+
+    expect(schedulers[0]!.closeAdmission).toHaveBeenCalledOnce();
+    expect(schedulers[0]!.abortActive).toHaveBeenCalledOnce();
+    expect(schedulers[0]!.waitForIdle).toHaveBeenCalledOnce();
+    expect(schedulers[0]!.stop).toHaveBeenCalledOnce();
+    expect(browserStop).toHaveBeenCalledOnce();
+    expect(resetStop).toHaveBeenCalledOnce();
+    expect(result.ownedCronSchedulers.has("agent-a")).toBe(false);
+    expect(result.cronSchedulers.has("agent-a")).toBe(false);
+    expect(result.executionTrackers.has("agent-a")).toBe(false);
+    expect(result.cronMaintenanceControllers.has("agent-a")).toBe(false);
+    expect(result.followupTaskStores.has("agent-a")).toBe(false);
+    expect(result.taskMaintenanceControllers.has("agent-a")).toBe(false);
+    expect(result.browserServices.has("agent-a")).toBe(false);
+    expect(result.resetSchedulers.has("agent-a")).toBe(false);
+    expect(result.getAgentSchedulerSeed("agent-a")).toMatchObject({
+      ok: false,
+      error: { code: "not_initialized" },
+    });
+    expect(() => result.getAgentCronAuthoringConfig("agent-a")).toThrow(
+      'Cron authoring is not enabled for agent "agent-a"',
+    );
   });
 
   it("keeps recovered authority valid when a health-event subscriber fails", async () => {

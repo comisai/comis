@@ -203,6 +203,25 @@ describe("task extraction queue", () => {
     expect(batches).toHaveLength(0);
   });
 
+  it("retires one agent without closing admission for the remaining runtime", () => {
+    const { queue, timers, batches } = setup();
+    queue.activate();
+    queue.enqueue(turn());
+    const retireAgent = (queue as unknown as {
+      retireAgent(agentId: string): { readonly droppedCount: number };
+    }).retireAgent;
+
+    expect(retireAgent("agent-a")).toEqual({ droppedCount: 1 });
+    expect(queue.getStatus()).toMatchObject({
+      accepting: true,
+      itemCount: 0,
+      droppedCount: 1,
+    });
+    expect(timers.unrefRecord()[0]).toMatchObject({ cancelled: true });
+    timers.advance(2_000);
+    expect(batches).toHaveLength(0);
+  });
+
   it("counts and reports failed batch ownership transfer", () => {
     const { queue, timers, onBatch, onBatchFailed } = setup();
     onBatch.mockImplementationOnce(() => err({ code: "runner_closed", errorKind: "precondition" }));
