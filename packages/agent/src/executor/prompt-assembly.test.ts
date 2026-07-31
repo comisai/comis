@@ -2914,6 +2914,9 @@ describe("assembleExecutionPrompt", () => {
       expect(result.dynamicPreamble).toContain("## Your Recent Outbound Messages");
       expect(result.dynamicPreamble).toContain("[You sent on telegram]: First message");
       expect(result.dynamicPreamble).toContain("[You sent on discord]: Second message");
+      expect(result.dynamicPreamble.lastIndexOf("## Current Execution")).toBeGreaterThan(
+        result.dynamicPreamble.lastIndexOf("## Your Recent Outbound Messages"),
+      );
     });
 
     it("respects maxEntriesPerInjection budget", async () => {
@@ -3204,6 +3207,9 @@ describe("bootstrap file snapshotting", () => {
 
       expect(result.inlineMemory).toBeUndefined();
       expect(result.dynamicPreamble).toContain("## Relevant Memories");
+      expect(result.dynamicPreamble.lastIndexOf("## Current Execution")).toBeGreaterThan(
+        result.dynamicPreamble.lastIndexOf("## Relevant Memories"),
+      );
     });
 
     it("returns undefined inlineMemory when RAG is disabled", async () => {
@@ -4285,8 +4291,11 @@ describe("parent prefix reuse", () => {
     expect(result.dynamicPreamble).toContain("SAFETY-REMINDER"); // safety reinforcement
     expect(result.dynamicPreamble).toContain("test-mcp"); // MCP instructions
     expect(result.dynamicPreamble).toContain("<response-locale");
-    expect(result.dynamicPreamble.lastIndexOf("<response-locale")).toBeGreaterThan(
+    expect(result.dynamicPreamble.lastIndexOf("## Current Execution")).toBeGreaterThan(
       result.dynamicPreamble.lastIndexOf("## MCP Server Instructions"),
+    );
+    expect(result.dynamicPreamble.lastIndexOf("<response-locale")).toBeGreaterThan(
+      result.dynamicPreamble.lastIndexOf("## Current Execution"),
     );
     expect(result.inlineMemory).toBeUndefined();
   });
