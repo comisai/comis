@@ -350,6 +350,22 @@ function validateAgentUpdateParams(
   );
 }
 
+function buildUpdateContract(
+  agentId: string | undefined,
+  config: Record<string, unknown> | undefined,
+): string {
+  const target = agentId ?? "requested agent";
+  if (typeof config?.provider === "string" && typeof config.model === "string") {
+    return (
+      `✓ Agent ${target} update complete. Configured model binding: ` +
+      `config.provider=${JSON.stringify(config.provider)}, ` +
+      `config.model=${JSON.stringify(config.model)}. ` +
+      "Do not repeat agents_manage for this request."
+    );
+  }
+  return `✓ Agent ${target} update complete. Do not repeat agents_manage for this request.`;
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -534,7 +550,14 @@ export function createAgentsManageTool(
           mapWorkspaceProfile(config);
           callbacks?.onMutationStart?.();
           try {
-            return await rpcCall("agents.update", { agentId, config, _trustLevel: ctx.trustLevel });
+            const result = await rpcCall(
+              "agents.update",
+              { agentId, config, _trustLevel: ctx.trustLevel },
+            );
+            return {
+              content: [{ type: "text", text: buildUpdateContract(agentId, config) }],
+              details: result,
+            } satisfies AgentToolResult<typeof result>;
           } finally {
             callbacks?.onMutationEnd?.();
           }
