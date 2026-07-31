@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockClearSessionToolNameSnapshot = vi.hoisted(() => vi.fn());
 const mockClearSessionBootstrapFileSnapshot = vi.hoisted(() => vi.fn());
 const mockClearSessionPromptSkillsXmlSnapshot = vi.hoisted(() => vi.fn());
+const mockClearSessionPromptTopicMatchState = vi.hoisted(() => vi.fn());
 const mockClearSessionDeliveredGuides = vi.hoisted(() => vi.fn());
 const mockClearSessionToolSchemaSnapshot = vi.hoisted(() => vi.fn());
 const mockClearSessionBreakpointIndex = vi.hoisted(() => vi.fn());
@@ -31,6 +32,7 @@ vi.mock("./prompt-assembly.js", () => ({
   clearSessionToolNameSnapshot: mockClearSessionToolNameSnapshot,
   clearSessionBootstrapFileSnapshot: mockClearSessionBootstrapFileSnapshot,
   clearSessionPromptSkillsXmlSnapshot: mockClearSessionPromptSkillsXmlSnapshot,
+  clearSessionPromptTopicMatchState: mockClearSessionPromptTopicMatchState,
   clearCacheSafeParams: mockClearCacheSafeParams,
 }));
 
@@ -114,7 +116,7 @@ describe("session-snapshot-cleanup", () => {
   // ---------------------------------------------------------------------------
 
   describe("clearSessionState", () => {
-    it("delegates to all 23 clearSession* functions with the same key", () => {
+    it("delegates to every session-state clearer with the same key", () => {
       const key = "agent:bot1:t:u:c";
 
       clearSessionState(key);
@@ -122,6 +124,7 @@ describe("session-snapshot-cleanup", () => {
       expect(mockClearSessionToolNameSnapshot).toHaveBeenCalledWith(key);
       expect(mockClearSessionBootstrapFileSnapshot).toHaveBeenCalledWith(key);
       expect(mockClearSessionPromptSkillsXmlSnapshot).toHaveBeenCalledWith(key);
+      expect(mockClearSessionPromptTopicMatchState).toHaveBeenCalledWith(key);
       expect(mockClearCacheSafeParams).toHaveBeenCalledWith(key);
       expect(mockClearSessionDeliveredGuides).toHaveBeenCalledWith(key);
       expect(mockClearSessionToolSchemaSnapshot).toHaveBeenCalledWith(key);
@@ -154,6 +157,7 @@ describe("session-snapshot-cleanup", () => {
       expect(mockClearSessionToolNameSnapshot).toHaveBeenCalledTimes(1);
       expect(mockClearSessionBootstrapFileSnapshot).toHaveBeenCalledTimes(1);
       expect(mockClearSessionPromptSkillsXmlSnapshot).toHaveBeenCalledTimes(1);
+      expect(mockClearSessionPromptTopicMatchState).toHaveBeenCalledTimes(1);
       expect(mockClearCacheSafeParams).toHaveBeenCalledTimes(1);
       expect(mockClearSessionDeliveredGuides).toHaveBeenCalledTimes(1);
       expect(mockClearSessionToolSchemaSnapshot).toHaveBeenCalledTimes(1);
@@ -209,6 +213,7 @@ describe("session-snapshot-cleanup", () => {
       expect(mockClearSessionToolNameSnapshot).toHaveBeenCalledWith(expectedKey);
       expect(mockClearSessionBootstrapFileSnapshot).toHaveBeenCalledWith(expectedKey);
       expect(mockClearSessionPromptSkillsXmlSnapshot).toHaveBeenCalledWith(expectedKey);
+      expect(mockClearSessionPromptTopicMatchState).toHaveBeenCalledWith(expectedKey);
       expect(mockClearSessionDeliveredGuides).toHaveBeenCalledWith(expectedKey);
       expect(mockClearSessionToolSchemaSnapshot).toHaveBeenCalledWith(expectedKey);
       expect(mockClearSessionToolSchemaSnapshotHash).toHaveBeenCalledWith(expectedKey);
