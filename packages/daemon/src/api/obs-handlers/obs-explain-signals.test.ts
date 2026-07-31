@@ -152,6 +152,22 @@ describe("toIncidentSignals — request-relevant tool selection", () => {
 
     expect(signals.operatorPolicyToolProjections).toEqual([projection]);
   });
+
+  it("retains the latest request relevance history saturation evidence", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        requestRelevanceHistory: { turnCount: 8, charCount: 147, saturated: true },
+        responseLocaleSource: "unset",
+        responseLocaleEnforced: false,
+      }),
+    ]);
+
+    expect(
+      (signals as unknown as {
+        requestRelevanceHistory?: { turnCount: number; charCount: number; saturated: boolean };
+      }).requestRelevanceHistory,
+    ).toEqual({ turnCount: 8, charCount: 147, saturated: true });
+  });
 });
 
 describe("toIncidentSignals — queue disposition timeline", () => {

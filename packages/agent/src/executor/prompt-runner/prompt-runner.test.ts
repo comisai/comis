@@ -135,6 +135,12 @@ describe("prompt-runner.ts — orchestrator structure", () => {
     expect(helperBlock).toMatch(/\.slice\(0,\s*16\)/);
   });
 
+  it("emits content-free request relevance history saturation evidence", () => {
+    const helperBlock = source.slice(source.indexOf("function emitPromptSubmitted("));
+    expect(helperBlock).toMatch(/params\.requestRelevanceHistory/);
+    expect(helperBlock).toMatch(/requestRelevanceHistory/);
+  });
+
   it("emits content-free operator-policy tool projection reports", () => {
     const helperBlock = source.slice(source.indexOf("function emitPromptSubmitted("));
     expect(helperBlock).toMatch(/params\.operatorPolicyToolProjections/);

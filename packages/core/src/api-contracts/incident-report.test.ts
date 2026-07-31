@@ -149,6 +149,19 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     expect(parsed.operatorPolicyToolProjections).toEqual(projection);
   });
 
+  it("retains content-free request relevance history saturation evidence", () => {
+    const evidence = { turnCount: 8, charCount: 147, saturated: true };
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      requestRelevanceHistory: evidence,
+    });
+
+    expect(
+      (parsed as unknown as { requestRelevanceHistory?: typeof evidence })
+        .requestRelevanceHistory,
+    ).toEqual(evidence);
+  });
+
   it("retains the normalized inbound edit kind", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),

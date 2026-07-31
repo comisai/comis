@@ -158,6 +158,27 @@ describe("assembleIncidentReport — request-relevant tool selection", () => {
     expect(IncidentReportSchema.parse(report).operatorPolicyToolProjections)
       .toEqual(projection);
   });
+
+  it("surfaces request relevance history saturation on the one-call report", () => {
+    const evidence = { turnCount: 8, charCount: 147, saturated: true };
+    const report = assembleIncidentReport(
+      makeSignals({ requestRelevanceHistory: evidence } as unknown as Partial<IncidentSignals>),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(
+      (report as unknown as { requestRelevanceHistory?: typeof evidence })
+        .requestRelevanceHistory,
+    ).toEqual(evidence);
+    expect(
+      (IncidentReportSchema.parse(report) as unknown as {
+        requestRelevanceHistory?: typeof evidence;
+      }).requestRelevanceHistory,
+    ).toEqual(evidence);
+  });
 });
 
 describe("assembleIncidentReport — queue disposition timeline", () => {
