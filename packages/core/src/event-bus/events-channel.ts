@@ -385,7 +385,10 @@ export interface ChannelEvents {
     /** The EFFECTIVE outcome kind dispatched to the renderer. */
     outcome: "success" | "success_with_recovered_failures" | "failure" | "silent" | "aborted";
     errorKind?: string;
-    /** The fixed one-line human reason for a resource abort, when present. */
+    /**
+     * The fixed one-line human reason for a resource abort or the closed
+     * background-pending cleanup reason, when present.
+     */
     reason?: string;
     /** True when an observed failed event flipped a delivered success to
      *  success_with_recovered_failures. */

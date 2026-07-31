@@ -420,7 +420,7 @@ describe("createActivityTurnCoordinator — delete gate", () => {
     await coord.finalize({
       kind: "silent",
       reason: "BACKGROUND_PENDING",
-    } as unknown as TurnOutcome);
+    });
 
     const calls = emit.mock.calls.filter((c) => c[0] === "activity:turn_finalized");
     expect(calls).toHaveLength(1);

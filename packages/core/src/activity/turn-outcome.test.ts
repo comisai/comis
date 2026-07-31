@@ -114,19 +114,22 @@ describe("TurnOutcome discriminated union", () => {
     expect(o.kind).toBe("silent");
   });
 
-  it("constrains silent.reason to the SILENT/HEARTBEAT_OK/NO_REPLY token set (rejects 'OTHER')", () => {
+  it("constrains silent.reason to the closed cleanup-reason token set", () => {
     type SilentReason = Extract<TurnOutcome, { kind: "silent" }>["reason"];
-    expectTypeOf<SilentReason>().toEqualTypeOf<"SILENT" | "HEARTBEAT_OK" | "NO_REPLY">();
+    expectTypeOf<SilentReason>().toEqualTypeOf<
+      "SILENT" | "HEARTBEAT_OK" | "NO_REPLY" | "BACKGROUND_PENDING"
+    >();
     expectTypeOf<"OTHER">().not.toMatchTypeOf<SilentReason>();
   });
 
-  it("silent.reason uses the SILENT/HEARTBEAT_OK/NO_REPLY token set", () => {
+  it("silent.reason includes ordinary silence and pending-background cleanup", () => {
     const reasons: Array<Extract<TurnOutcome, { kind: "silent" }>["reason"]> = [
       "SILENT",
       "HEARTBEAT_OK",
       "NO_REPLY",
+      "BACKGROUND_PENDING",
     ];
-    expect(reasons).toHaveLength(3);
+    expect(reasons).toHaveLength(4);
   });
 
   it("covers aborted with reason user_cancel/timeout/fatal", () => {
