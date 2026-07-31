@@ -817,7 +817,11 @@ export function promoteToolInvocationStall(
   effectiveFinishReason: string,
   requestToolNudge: { fired: boolean; recovered: boolean } | undefined,
 ): string {
-  if (effectiveFinishReason !== "stop" && effectiveFinishReason !== "end_turn") {
+  if (
+    effectiveFinishReason !== "stop"
+    && effectiveFinishReason !== "end_turn"
+    && effectiveFinishReason !== "completed_with_tool_errors"
+  ) {
     return effectiveFinishReason;
   }
   if (requestToolNudge?.fired === true && requestToolNudge.recovered === false) {
