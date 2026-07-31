@@ -140,6 +140,28 @@ describe("runRequestToolNudge", () => {
     expect(outcome.outcome).toBe("recovered");
   });
 
+  it("anchors mutation recovery to exact trusted identifiers instead of inferred secret targets", async () => {
+    const deps = makeDeps({
+      requestText: "heres the credential",
+      messages: [
+        { role: "assistant", content: "Please provide the credential." },
+        { role: "user", content: "heres the credential" },
+        { role: "assistant", content: "Please provide the credential." },
+      ],
+    });
+
+    await runRequestToolNudge(deps);
+
+    expect(deps.session.prompt).toHaveBeenCalledWith(
+      expect.stringMatching(/exact identifiers.*trusted operator policy/iu),
+      expect.anything(),
+    );
+    expect(deps.session.prompt).toHaveBeenCalledWith(
+      expect.stringMatching(/never infer.*(?:secret|credential).*(?:name|target).*(?:contents|channel)/iu),
+      expect.anything(),
+    );
+  });
+
   it("does not run for an informational request with a fresh answer", async () => {
     const deps = makeDeps({
       requestText: "what model are you using now",

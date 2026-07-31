@@ -93,6 +93,21 @@ describe("TOOL_GUIDES", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/before asking/i);
   });
 
+  it("gateway lean description forbids inferred secret names and unrelated overwrites", () => {
+    const description = resolveDescription(
+      { name: "gateway" },
+      LEAN_TOOL_DESCRIPTIONS,
+      {
+        modelTier: "small",
+        trustLevel: "admin",
+      },
+    );
+
+    expect(description).toMatch(/exact operator.*(?:name|key)/iu);
+    expect(description).toMatch(/never infer/iu);
+    expect(description).toMatch(/overwrite/iu);
+  });
+
   it("gateway guide preserves existing security language", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/## Gateway Security/);
     expect(TOOL_GUIDES.gateway).toMatch(/CRITICAL/);
