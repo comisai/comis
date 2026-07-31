@@ -349,11 +349,30 @@ describe("heartbeat wake coordinator", () => {
     timers.advance(0);
     await flushDispatch();
 
+    coordinator.submitWake({
+      target: target(),
+      reason: "interval",
+      timing: { kind: "routine", notBeforeMs: NOW_MS },
+    });
+    timers.advance(0);
+    await flushDispatch();
+
     expect(registerRoot).not.toHaveBeenCalled();
     expect(runAgent).not.toHaveBeenCalled();
-    expect(terminals).toEqual([
+    expect(terminals).toHaveLength(2);
+    expect(terminals).toEqual(expect.arrayContaining([
       expect.objectContaining({ status: "skipped", retainedReason: "interval", eventEntryCount: 0 }),
-    ]);
+    ]));
+    const terminalState = (coordinator as unknown as {
+      getAgentTerminalState?: (agentId: string) => unknown;
+    }).getAgentTerminalState?.("agent_a");
+    expect(terminalState).toEqual({
+      terminalCount: 2,
+      lastRunAtMs: NOW_MS,
+      lastStatus: "skipped",
+      lastReason: "empty_file",
+      lastLlmCalls: 0,
+    });
   });
 
   it("skips a disabled task lane before root registration or model execution", async () => {
