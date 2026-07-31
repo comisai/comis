@@ -879,6 +879,48 @@ describe("createPiEventBridge", () => {
       );
     });
 
+    it("redacts a misrouted env_value from failed-call arguments and validation text", () => {
+      const { listener } = createPiEventBridge(deps);
+      const secret = "test-key";
+      const args = {
+        action: "env_set",
+        env_key: "EXAMPLE_TOKEN",
+        env_value: secret,
+      };
+      listener({
+        type: "tool_execution_start",
+        toolName: "mcp_manage",
+        toolCallId: "tc-misrouted-secret",
+        args,
+      } as any);
+      listener(makeToolExecutionEndEvent(
+        "mcp_manage",
+        "tc-misrouted-secret",
+        true,
+        {
+          content: [{
+            type: "text",
+            text:
+              'Validation failed for tool "mcp_manage":\n'
+              + "  - action: must be equal to one of the allowed values\n\n"
+              + `Received arguments:\n${JSON.stringify(args)}`,
+          }],
+          details: {},
+        },
+      ) as any);
+
+      const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+      const endEmit = emit.mock.calls.find(
+        (call) => call[0] === "tool:executed"
+          && call[1].toolCallId === "tc-misrouted-secret",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].argsPreview.env_value).toBe("<redacted>");
+      expect(endEmit![1].errorMessage).not.toContain(secret);
+      expect(endEmit![1].errorMessage).not.toContain("Received arguments:");
+      expect(JSON.stringify(endEmit![1])).not.toContain(secret);
+    });
+
     it("does NOT carry argsPreview on a SUCCESSFUL tool:executed (failure-only — keeps the trajectory lean)", () => {
       const { listener } = createPiEventBridge(deps);
       listener(makeToolExecutionStartEvent("read", "tc-ok") as any);

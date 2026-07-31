@@ -731,6 +731,31 @@ describe("projectSessionValueForPersistence — bare-token name collision", () =
   });
 });
 
+describe("projectSessionValueForPersistence — validation argument dumps", () => {
+  it("removes a rejected secret argument from persisted tool-result text", () => {
+    const secret = "test-key";
+    const text =
+      'Validation failed for tool "mcp_manage":\n'
+      + "  - action: must be equal to one of the allowed values\n\n"
+      + "Received arguments:\n"
+      + JSON.stringify({
+        action: "env_set",
+        env_key: "EXAMPLE_TOKEN",
+        env_value: secret,
+      });
+    const out = projectSessionValueForPersistence({
+      role: "toolResult",
+      content: [{ type: "text", text }],
+    });
+    const persisted = JSON.stringify(out.value);
+
+    expect(persisted).not.toContain(secret);
+    expect(persisted).not.toContain("Received arguments:");
+    expect(persisted).toContain("Invalid parameters");
+    expect(out.redactions).toBeGreaterThan(0);
+  });
+});
+
 describe("projectSessionValueForPersistence — structural conversation identity", () => {
   // A conversation ref is `cv_` + 43 base64url chars: machine-minted, and
   // high-entropy by construction, so the API-key heuristic reads it as a
