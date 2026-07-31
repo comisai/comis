@@ -16,6 +16,9 @@ import type { ErrorKind } from "../logging/log-fields.js";
 import type { PlatformDeliveryOutcome } from "./platform-delivery-outcome.js";
 import { ok, type Result } from "@comis/shared";
 
+/** Delivery origin for runtime-owned degraded replies, not assistant evidence. */
+export const RUNTIME_FAILURE_DELIVERY_ORIGIN = "agent-runtime-failure";
+
 // -------------------------------------------------------------------------
 // Delivery strategy + adapter
 // -------------------------------------------------------------------------

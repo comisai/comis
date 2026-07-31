@@ -84,6 +84,7 @@ export type {
 export {
   DeliveryQueueTransitionError,
   resolvePlatformDeliveryResult,
+  RUNTIME_FAILURE_DELIVERY_ORIGIN,
 } from "../delivery/types.js";
 
 // DeliveryService factory + interfaces. Provides a `createDeliveryService(deps):

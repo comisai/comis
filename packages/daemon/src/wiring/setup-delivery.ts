@@ -36,6 +36,7 @@ import {
   systemNowMs,
   systemSetInterval,
   systemClearInterval,
+  RUNTIME_FAILURE_DELIVERY_ORIGIN,
 } from "@comis/core";
 import { createSqliteDeliveryQueue, createSqliteDeliveryMirror } from "@comis/memory";
 import type { ComisLogger } from "@comis/infra";
@@ -649,6 +650,16 @@ export async function setupDeliveryMirror(deps: {
     version: "1.0.0",
     register(api) {
       api.registerHook("after_delivery", async (event, ctx) => {
+        if (event.origin === RUNTIME_FAILURE_DELIVERY_ORIGIN) {
+          logger.debug(
+            {
+              step: "delivery-mirror-eligibility",
+              origin: event.origin,
+            },
+            "Runtime failure reply omitted from delivery mirror",
+          );
+          return;
+        }
         if (ctx.deliveryAuthority === undefined || ctx.destinationEndpoint === undefined) {
           logger.warn(
             {

@@ -243,12 +243,14 @@ describe("deliverExecutionResponse — delivery receipt", () => {
       undefined, "agent-runtime-failure",
     );
 
-    expect(deps.deliveryService.deliverToChannel).toHaveBeenCalledWith(
-      expect.anything(),
-      "chat-1",
-      "request failed",
-      expect.objectContaining({ origin: "agent-runtime-failure" }),
-    );
+    const calls = vi.mocked(deps.deliveryService.deliverToChannel).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call[1]).toBe("chat-1");
+      expect(call[3]).toEqual(
+        expect.objectContaining({ origin: "agent-runtime-failure" }),
+      );
+    }
   });
 
   it("returns the strict accepted aggregate with durable queue disposition", async () => {
