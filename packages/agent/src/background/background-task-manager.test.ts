@@ -726,6 +726,28 @@ describe("BackgroundTaskManager", () => {
         expect.objectContaining({ agentId: "agent-1", error: "error" }),
       );
     });
+
+    it("classifies a missing MCP secret reference without retaining its error body", () => {
+      const result = manager.promote(
+        "mcp_manage",
+        new Promise(() => {}),
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+      if (!result.ok) return;
+
+      manager.fail(
+        result.value,
+        new Error(
+          '[invalid_value] enabled MCP server "example-primary" references env var MISSING_KEY which is not in the secrets store.',
+        ),
+      );
+
+      expect((eventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+        "background_task:failed",
+        expect.objectContaining({ failureCode: "mcp_secret_reference_missing" }),
+      );
+    });
   });
 
   describe("cancel", () => {

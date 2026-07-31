@@ -897,6 +897,28 @@ describe("obs-explain-heuristics", () => {
     expect(JSON.stringify(r)).not.toContain("../");
   });
 
+  it("names a missing MCP secret reference without requesting an unavailable preview", () => {
+    const r = rootCause(makeSignals({
+      endReason: "completed_with_tool_errors",
+      degraded: true,
+      failures: [{
+        seq: 3,
+        toolName: "mcp_manage",
+        classifiedFailureBy: "background_task",
+        transportOk: false,
+        errorKind: "dependency",
+        failureCode: "mcp_secret_reference_missing" as never,
+        resultDigest: "",
+        resultBytes: 0,
+        errorPreview: "",
+      }],
+    }));
+
+    expect(r?.code).toBe("mcp_secret_reference_missing");
+    expect(r?.detail).toMatch(/secret.*reference.*store/iu);
+    expect(r?.suggestedNextSteps.join(" ")).not.toMatch(/errorPreview/iu);
+  });
+
   it("explains a background mutation that ran but did not persist", () => {
     const r = rootCause(makeSignals({
       failures: [{

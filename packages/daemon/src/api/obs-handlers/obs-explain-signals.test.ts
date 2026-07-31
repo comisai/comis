@@ -1727,6 +1727,29 @@ describe("toolStats fidelity", () => {
     ]);
   });
 
+  it("retains the content-free code for a missing MCP secret reference", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.failed",
+        seq: 1,
+        data: {
+          taskId: "task-mcp-secret",
+          toolName: "mcp_manage",
+          errorKind: "dependency",
+          failureCode: "mcp_secret_reference_missing",
+        },
+      },
+    ]);
+
+    expect(s.failures).toEqual([
+      expect.objectContaining({
+        toolName: "mcp_manage",
+        failureCode: "mcp_secret_reference_missing",
+      }),
+    ]);
+  });
+
   it("replaces a promoted success with a degraded runtime-only background completion", () => {
     const s = toIncidentSignals([
       {
