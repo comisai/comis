@@ -1370,7 +1370,7 @@ describe("assembleExecutionPrompt", () => {
       await assembleExecutionPrompt(makeParams({
         config: learningOnlyConfig(),
         deps,
-        msg: makeMsg({ text: opening }),
+        msg: makeMsg({ id: "turn-opening", text: opening }),
         recentUserTurns: [],
         sessionKey,
       }));
@@ -1379,7 +1379,7 @@ describe("assembleExecutionPrompt", () => {
       await assembleExecutionPrompt(makeParams({
         config: learningOnlyConfig(),
         deps,
-        msg: makeMsg({ text: suppliedData }),
+        msg: makeMsg({ id: "turn-supplied-data", text: suppliedData }),
         recentUserTurns: [opening],
         sessionKey,
       }));
@@ -1388,7 +1388,7 @@ describe("assembleExecutionPrompt", () => {
       await assembleExecutionPrompt(makeParams({
         config: learningOnlyConfig(),
         deps,
-        msg: makeMsg({ text: "book a dentist appointment tomorrow" }),
+        msg: makeMsg({ id: "turn-unrelated", text: "book a dentist appointment tomorrow" }),
         recentUserTurns: [opening, suppliedData],
         sessionKey,
       }));
