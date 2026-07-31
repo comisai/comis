@@ -37,6 +37,13 @@ function makeDeps(
       audit: vi.fn(),
       child: vi.fn(),
     },
+    eventBus: {
+      emit: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
+    },
+    sessionKey: "default:agent:default:user_a:telegram:peer:user_a",
+    clock: { now: () => 123 },
     getVisibleAssistantText: () => visibleAssistantText,
     guardProviderDispatch: allowProviderDispatch,
     ...overrides,
@@ -69,6 +76,16 @@ describe("runRequestToolNudge", () => {
       response: "Updated.",
       matchedToolNames: ["test_mutating_tool"],
       outcome: "recovered",
+    });
+    const eventBus = (deps as unknown as {
+      eventBus: { emit: ReturnType<typeof vi.fn> };
+    }).eventBus;
+    expect(eventBus.emit).toHaveBeenCalledWith("execution:recovery_attempted", {
+      agentId: "default",
+      sessionKey: "default:agent:default:user_a:telegram:peer:user_a",
+      reason: "request_tool_nudge",
+      succeeded: true,
+      timestamp: 123,
     });
   });
 
