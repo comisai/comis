@@ -452,6 +452,12 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
             record.action === undefined ? {} : { action: record.action },
           ) === "mutating",
       ).length,
+    currentSuccessfulToolCount: () => {
+      const relevantNames = new Set(params.requestRelevantToolNames ?? []);
+      return (params.bridge.getResult().toolExecResults ?? []).filter(
+        (record) => record.success && relevantNames.has(record.toolName),
+      ).length;
+    },
     logger: deps.logger,
     eventBus: deps.eventBus,
     sessionKey: formatSessionKey(params.sessionKey),

@@ -10,10 +10,12 @@ function makeDeps(
   overrides: Partial<RunRequestToolNudgeDeps> = {},
 ): RunRequestToolNudgeDeps {
   let successfulMutationCount = 0;
+  let successfulToolCount = 0;
   let visibleAssistantText = "same stale answer";
   const session = {
     prompt: vi.fn(async () => {
       successfulMutationCount = 1;
+      successfulToolCount = 1;
       visibleAssistantText = "Updated.";
     }),
   };
@@ -29,6 +31,7 @@ function makeDeps(
     capabilityClass: "small",
     requestRelevantToolNames: ["test_mutating_tool"],
     currentSuccessfulMutationCount: () => successfulMutationCount,
+    currentSuccessfulToolCount: () => successfulToolCount,
     logger: {
       info: vi.fn(),
       warn: vi.fn(),
@@ -112,6 +115,22 @@ describe("runRequestToolNudge", () => {
       matchedToolNames: ["test_read_only_tool"],
       outcome: "recovered",
     });
+  });
+
+  it("does not run for an informational mention of a read-only tool", async () => {
+    const deps = makeDeps({
+      requestText: "describe the account summary capability",
+      requestRelevantToolNames: ["test_read_only_tool"],
+      messages: [
+        { role: "user", content: "describe the account summary capability" },
+        { role: "assistant", content: "It returns a bounded summary." },
+      ],
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(deps.session.prompt).not.toHaveBeenCalled();
+    expect(outcome.outcome).toBe("not_action_request");
   });
 
   it("runs when a declared mutation request gets a fresh answer without a mutation", async () => {
@@ -224,7 +243,7 @@ describe("runRequestToolNudge", () => {
     const outcome = await runRequestToolNudge(deps);
 
     expect(deps.session.prompt).not.toHaveBeenCalled();
-    expect(outcome.outcome).toBe("mutation_already_succeeded");
+    expect(outcome.outcome).toBe("tool_already_succeeded");
   });
 
   it("reports a persistent stall when the continuation performs no successful mutation", async () => {
@@ -240,7 +259,7 @@ describe("runRequestToolNudge", () => {
     expect(outcome).toMatchObject({
       fired: true,
       recovered: false,
-      outcome: "still_no_mutation",
+      outcome: "still_no_tool_call",
     });
   });
 

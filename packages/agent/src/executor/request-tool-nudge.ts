@@ -9,6 +9,7 @@ import {
   type ComisLogger,
   type TypedEventBus,
 } from "@comis/core";
+import { extractMcpServerName } from "@comis/shared";
 import {
   runContinuationTurn,
   type ContinuationTurnSession,
@@ -22,11 +23,11 @@ export interface RequestToolNudgeOutcome {
   matchedToolNames: readonly string[];
   outcome:
     | "not_small_class"
-    | "no_mutating_match"
-    | "mutation_already_succeeded"
+    | "no_tool_match"
+    | "tool_already_succeeded"
     | "not_action_request"
     | "recovered"
-    | "still_no_mutation"
+    | "still_no_tool_call"
     | "followup_error";
 }
 
@@ -37,6 +38,7 @@ export interface RunRequestToolNudgeDeps {
   capabilityClass: string | undefined;
   requestRelevantToolNames: readonly string[];
   currentSuccessfulMutationCount: () => number;
+  currentSuccessfulToolCount: () => number;
   logger: ComisLogger;
   eventBus: TypedEventBus;
   sessionKey: string;
@@ -84,6 +86,9 @@ function repeatsEarlierAssistantAnswer(messages: unknown[]): boolean {
 const EXTERNAL_ACTION_ATTEMPT_PATTERN =
   /\b(?:i|we)\s+(?:attempted|tried)\s+to\s+(?:access|apply|change|check|connect|create|delete|download|edit|fetch|install|invoke|modify|open|post|read|remove|restart|run|save|search|send|set|store|update|upload|verify|write)\b/iu;
 
+const EXPLICIT_TOOL_USE_REQUEST_PATTERN =
+  /\b(?:call|check|compare|fetch|get|inspect|invoke|look\s+up|query|read|run|search|test|use|verify)\b/iu;
+
 function claimsExternalActionAttempt(messages: unknown[]): boolean {
   const entries = messages as Array<{ role?: unknown; content?: unknown }>;
   const last = entries.at(-1);
@@ -97,13 +102,16 @@ function buildDirective(
   trigger:
     | "repeated_answer"
     | "declared_mutation_request"
-    | "claimed_action_attempt",
+    | "claimed_action_attempt"
+    | "explicit_tool_use_request",
 ): string {
   const triggerFact = trigger === "repeated_answer"
     ? "Your last answer exactly repeated an earlier assistant answer."
     : trigger === "declared_mutation_request"
       ? "Capability metadata identifies the current wording as a direct mutation request."
-      : "Your last answer claimed an external action attempt without a current-turn tool receipt.";
+      : trigger === "claimed_action_attempt"
+        ? "Your last answer claimed an external action attempt without a current-turn tool receipt."
+        : "The current request explicitly asks to use a matched capability, but no current-turn tool receipt exists.";
   const capabilityGuidance = toolNames.flatMap((toolName) => {
     const guidance = getToolMetadata(toolName)?.mutationRecoveryGuidance?.trim();
     return guidance
@@ -113,9 +121,9 @@ function buildDirective(
   return [
     "[comis: continuation — the current request still needs tool-backed action]",
     triggerFact,
-    "No matching mutating tool action has succeeded in this turn.",
-    `The active mutating tools matched to the current request are: ${toolNames.join(", ")}.`,
-    "If the request is applicable, invoke a mutating action on the matching tool now.",
+    "No matching tool action has succeeded in this turn.",
+    `The active tools matched to the current request are: ${toolNames.join(", ")}.`,
+    "If the request is applicable, invoke the matching tools now and ground the answer in their current-turn results.",
     "Use exact identifiers from trusted operator policy and the current request; never guess or substitute a nearby target.",
     "Never infer a secret or credential name from its contents or the active channel.",
     ...capabilityGuidance,
@@ -132,6 +140,7 @@ export async function runRequestToolNudge(
     capabilityClass,
     requestRelevantToolNames,
     currentSuccessfulMutationCount,
+    currentSuccessfulToolCount,
     logger,
     eventBus,
     sessionKey,
@@ -148,30 +157,38 @@ export async function runRequestToolNudge(
   }
 
   const matchedToolNames = requestRelevantToolNames.filter(
-    (toolName) => getToolMetadata(toolName)?.isReadOnly === false,
+    (toolName) =>
+      getToolMetadata(toolName)?.isReadOnly !== undefined
+      || extractMcpServerName(toolName) !== undefined,
   );
   if (matchedToolNames.length === 0) {
     return {
       fired: false,
       recovered: false,
       matchedToolNames,
-      outcome: "no_mutating_match",
+      outcome: "no_tool_match",
     };
   }
-  if (currentSuccessfulMutationCount() > 0) {
-    return {
-      fired: false,
-      recovered: false,
-      matchedToolNames,
-      outcome: "mutation_already_succeeded",
-    };
-  }
-  const repeatedAnswer = repeatsEarlierAssistantAnswer(deps.messages);
-  const declaredMutationRequest = matchedToolNames.some((toolName) =>
+  const mutatingToolNames = matchedToolNames.filter(
+    (toolName) => getToolMetadata(toolName)?.isReadOnly === false,
+  );
+  const toolBackedReadNames = matchedToolNames.filter(
+    (toolName) =>
+      getToolMetadata(toolName)?.isReadOnly === true
+      || extractMcpServerName(toolName) !== undefined,
+  );
+  const declaredMutationRequest = mutatingToolNames.some((toolName) =>
     matchesToolMutationRequest(toolName, deps.requestText)
   );
+  const explicitToolUseRequest = toolBackedReadNames.length > 0
+    && EXPLICIT_TOOL_USE_REQUEST_PATTERN.test(deps.requestText);
+  const repeatedAnswer = repeatsEarlierAssistantAnswer(deps.messages);
   const claimedActionAttempt = claimsExternalActionAttempt(deps.messages);
-  if (!repeatedAnswer && !declaredMutationRequest && !claimedActionAttempt) {
+  const mutationRecoveryRequested = mutatingToolNames.length > 0
+    && (repeatedAnswer || declaredMutationRequest || claimedActionAttempt);
+  const readRecoveryRequested = toolBackedReadNames.length > 0
+    && (explicitToolUseRequest || claimedActionAttempt);
+  if (!mutationRecoveryRequested && !readRecoveryRequested) {
     return {
       fired: false,
       recovered: false,
@@ -179,11 +196,28 @@ export async function runRequestToolNudge(
       outcome: "not_action_request",
     };
   }
-  const trigger = repeatedAnswer
-    ? "repeated_answer"
-    : declaredMutationRequest
-      ? "declared_mutation_request"
-      : "claimed_action_attempt";
+  const useReadRecovery = readRecoveryRequested && !mutationRecoveryRequested;
+  const trigger = declaredMutationRequest
+    ? "declared_mutation_request"
+    : useReadRecovery && explicitToolUseRequest
+      ? "explicit_tool_use_request"
+      : repeatedAnswer
+        ? "repeated_answer"
+        : "claimed_action_attempt";
+  const recoveryToolNames = useReadRecovery
+    ? toolBackedReadNames
+    : mutatingToolNames;
+  const successfulCount = useReadRecovery
+    ? currentSuccessfulToolCount
+    : currentSuccessfulMutationCount;
+  if (successfulCount() > 0) {
+    return {
+      fired: false,
+      recovered: false,
+      matchedToolNames: recoveryToolNames,
+      outcome: "tool_already_succeeded",
+    };
+  }
 
   logger.info(
     {
@@ -193,15 +227,15 @@ export async function runRequestToolNudge(
       decision: "fire",
       reason: trigger,
       capabilityClass,
-      matchedToolNames,
+      matchedToolNames: recoveryToolNames,
     },
     "Request-tool nudge firing",
   );
 
-  const successfulMutationCountBefore = currentSuccessfulMutationCount();
+  const successfulToolCountBefore = successfulCount();
   const continuation = await runContinuationTurn(
     deps.session,
-    buildDirective(matchedToolNames, trigger),
+    buildDirective(recoveryToolNames, trigger),
     deps.guardProviderDispatch,
   );
   if (!continuation.ok) {
@@ -210,7 +244,7 @@ export async function runRequestToolNudge(
         submodule: SUBMODULE,
         step: "request-tool-nudge",
         agentId,
-        matchedToolNames,
+        matchedToolNames: recoveryToolNames,
         errorKind: "internal" as const,
         hint:
           "The bounded request-tool continuation failed; inspect provider admission "
@@ -228,25 +262,25 @@ export async function runRequestToolNudge(
     return {
       fired: true,
       recovered: false,
-      matchedToolNames,
+      matchedToolNames: recoveryToolNames,
       outcome: "followup_error",
     };
   }
 
   const response = deps.getVisibleAssistantText(deps.session);
-  const successfulMutationCountAfter = currentSuccessfulMutationCount();
+  const successfulToolCountAfter = successfulCount();
   const recovered =
-    successfulMutationCountAfter > successfulMutationCountBefore
+    successfulToolCountAfter > successfulToolCountBefore
     && response.trim().length > 0;
   logger.info(
     {
       submodule: SUBMODULE,
       step: "request-tool-nudge",
       agentId,
-      matchedToolNames,
-      outcome: recovered ? "recovered" : "still_no_mutation",
-      successfulMutationCountBefore,
-      successfulMutationCountAfter,
+      matchedToolNames: recoveryToolNames,
+      outcome: recovered ? "recovered" : "still_no_tool_call",
+      successfulToolCountBefore,
+      successfulToolCountAfter,
     },
     "Request-tool nudge completed",
   );
@@ -262,13 +296,13 @@ export async function runRequestToolNudge(
         fired: true,
         recovered: true,
         response,
-        matchedToolNames,
+        matchedToolNames: recoveryToolNames,
         outcome: "recovered",
       }
     : {
         fired: true,
         recovered: false,
-        matchedToolNames,
-        outcome: "still_no_mutation",
+        matchedToolNames: recoveryToolNames,
+        outcome: "still_no_tool_call",
       };
 }
