@@ -42,6 +42,21 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     expect(parsed.cacheBreaks).toBeUndefined();
   });
 
+  it("retains a content-free successful no-op tool count", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      toolStats: {
+        agents_manage: {
+          ok: 1,
+          failed: 0,
+          noOp: 1,
+        },
+      },
+    });
+
+    expect(parsed.toolStats.agents_manage?.noOp).toBe(1);
+  });
+
   it("retains the content-free response locale decision", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),

@@ -769,6 +769,43 @@ describe("createAgentHandlers", () => {
       expect(result.config.name).toBe("Test Agent");
     });
 
+    it("reports an unchanged patch without persisting or replacing runtime state", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const existing = deps.agents["default"];
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "default",
+        config: {
+          provider: "anthropic",
+          model: "claude-sonnet-4-5-20250929",
+        },
+        _trustLevel: "admin",
+      })) as {
+        updated: boolean;
+        changed: boolean;
+        dryRun: boolean;
+      };
+
+      expect(result).toMatchObject({
+        updated: false,
+        changed: false,
+        dryRun: false,
+      });
+      expect(deps.agents["default"]).toBe(existing);
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+      expect(persistDeps.logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: "agents.update",
+          agentId: "default",
+          step: "update-noop",
+          durationMs: expect.any(Number),
+        }),
+        "Agent configuration already matched the requested update",
+      );
+    });
+
     it("rejects a model-only update outside the provider catalog without mutating state", async () => {
       const persistDeps = makePersistDeps();
       const catalogModels = [{

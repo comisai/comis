@@ -1520,6 +1520,28 @@ describe("scheduler.wake_gate extraction (incident fork)", () => {
 // ---------------------------------------------------------------------------
 
 describe("toolStats fidelity", () => {
+  it("counts successful unchanged effects separately from applied tool outcomes", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 1,
+        data: {
+          toolName: "agents_manage",
+          toolCallId: "tc-agent-noop",
+          success: true,
+          changed: false,
+        },
+      },
+    ]);
+
+    expect(s.toolStats.agents_manage).toEqual({
+      ok: 1,
+      failed: 0,
+      noOp: 1,
+    });
+  });
+
   it("a comis-cache-trace tool:after record does not count as a tool success", () => {
     const s = toIncidentSignals([
       {

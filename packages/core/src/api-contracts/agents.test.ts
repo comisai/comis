@@ -205,11 +205,25 @@ describe("AgentsUpdateContract", () => {
     });
   });
 
-  it("response.updated must be literal true", () => {
-    expect(() => AgentsUpdateContract.response.parse({
+  it("response distinguishes an applied update from an unchanged no-op", () => {
+    expect(AgentsUpdateContract.response.parse({
       agentId: "alpha",
       config: {},
       updated: false,
+      changed: false,
+      dryRun: false,
+    })).toEqual({
+      agentId: "alpha",
+      config: {},
+      updated: false,
+      changed: false,
+      dryRun: false,
+    });
+    expect(() => AgentsUpdateContract.response.parse({
+      agentId: "alpha",
+      config: {},
+      updated: true,
+      dryRun: false,
     })).toThrow();
   });
 });

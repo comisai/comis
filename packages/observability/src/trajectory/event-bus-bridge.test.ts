@@ -132,6 +132,26 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     expect(data.errorKind).toBe("internal");
   });
 
+  it("tool_executed_forwards_an_unchanged_effect_onto_tool_result", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("tool:executed", {
+      toolName: "agents_manage",
+      toolCallId: "tc-agent-noop",
+      durationMs: 12,
+      success: true,
+      changed: false,
+      timestamp: Date.now(),
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+    });
+
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.changed).toBe(false);
+  });
+
   it("forwards the content-free web_search grounding summary (resultCount + domains) onto tool.result", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();

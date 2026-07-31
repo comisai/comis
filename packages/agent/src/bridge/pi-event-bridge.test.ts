@@ -2976,6 +2976,42 @@ describe("createPiEventBridge", () => {
       expect(result.toolExecResults![1]).toMatchObject({ toolName: "bash", success: false, errorText: "command failed" });
     });
 
+    it("tracks an unchanged management result as a successful no-op effect", () => {
+      const { listener, getResult } = createPiEventBridge(deps);
+
+      listener({
+        type: "tool_execution_start",
+        toolName: "agents_manage",
+        toolCallId: "tc-agent-noop",
+        args: { action: "update" },
+      } as any);
+      listener(makeToolExecutionEndEvent(
+        "agents_manage",
+        "tc-agent-noop",
+        false,
+        {
+          content: [{ type: "text", text: "No configuration change." }],
+          details: { updated: false, changed: false, dryRun: false },
+        },
+      ) as any);
+
+      expect(getResult().toolExecResults?.[0]).toMatchObject({
+        toolName: "agents_manage",
+        action: "update",
+        success: true,
+        changed: false,
+      });
+      const event = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call) =>
+          call[0] === "tool:executed"
+          && call[1].toolCallId === "tc-agent-noop",
+      );
+      expect(event?.[1]).toMatchObject({
+        success: true,
+        changed: false,
+      });
+    });
+
     it("carries a bounded builtin failure code into the execution result", () => {
       const { listener, getResult } = createPiEventBridge(deps);
 
