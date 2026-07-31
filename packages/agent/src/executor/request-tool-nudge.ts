@@ -25,6 +25,7 @@ export interface RequestToolNudgeOutcome {
     | "not_small_class"
     | "no_tool_match"
     | "tool_already_succeeded"
+    | "tool_work_deferred"
     | "not_action_request"
     | "recovered"
     | "still_no_tool_call"
@@ -39,6 +40,8 @@ export interface RunRequestToolNudgeDeps {
   requestRelevantToolNames: readonly string[];
   currentSuccessfulMutationCount: () => number;
   currentSuccessfulToolCount: () => number;
+  /** Accepted non-terminal handoffs for tools matched to this request. */
+  currentDeferredWorkCount: () => number;
   logger: ComisLogger;
   eventBus: TypedEventBus;
   sessionKey: string;
@@ -141,6 +144,7 @@ export async function runRequestToolNudge(
     requestRelevantToolNames,
     currentSuccessfulMutationCount,
     currentSuccessfulToolCount,
+    currentDeferredWorkCount,
     logger,
     eventBus,
     sessionKey,
@@ -216,6 +220,14 @@ export async function runRequestToolNudge(
       recovered: false,
       matchedToolNames: recoveryToolNames,
       outcome: "tool_already_succeeded",
+    };
+  }
+  if (currentDeferredWorkCount() > 0) {
+    return {
+      fired: false,
+      recovered: false,
+      matchedToolNames: recoveryToolNames,
+      outcome: "tool_work_deferred",
     };
   }
 

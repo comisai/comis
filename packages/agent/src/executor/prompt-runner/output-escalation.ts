@@ -458,6 +458,12 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
         (record) => record.success && relevantNames.has(record.toolName),
       ).length;
     },
+    currentDeferredWorkCount: () => {
+      const relevantNames = new Set(params.requestRelevantToolNames ?? []);
+      return (params.bridge.getResult().toolExecResults ?? []).filter(
+        (record) => record.backgrounded === true && relevantNames.has(record.toolName),
+      ).length;
+    },
     logger: deps.logger,
     eventBus: deps.eventBus,
     sessionKey: formatSessionKey(params.sessionKey),

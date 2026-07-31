@@ -32,6 +32,7 @@ function makeDeps(
     requestRelevantToolNames: ["test_mutating_tool"],
     currentSuccessfulMutationCount: () => successfulMutationCount,
     currentSuccessfulToolCount: () => successfulToolCount,
+    currentDeferredWorkCount: () => 0,
     logger: {
       info: vi.fn(),
       warn: vi.fn(),
@@ -247,12 +248,12 @@ describe("runRequestToolNudge", () => {
   });
 
   it("does not duplicate a mutation after its background handoff was accepted", async () => {
-    const deps = makeDeps();
-    Object.assign(deps, { currentDeferredWorkCount: () => 1 });
+    const deps = makeDeps({ currentDeferredWorkCount: () => 1 });
 
-    await runRequestToolNudge(deps);
+    const outcome = await runRequestToolNudge(deps);
 
     expect(deps.session.prompt).not.toHaveBeenCalled();
+    expect(outcome.outcome).toBe("tool_work_deferred");
   });
 
   it("reports a persistent stall when the continuation performs no successful mutation", async () => {
