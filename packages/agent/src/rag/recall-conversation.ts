@@ -5,7 +5,7 @@ import {
   parseInboundMessageProvenanceBatch,
 } from "@comis/core";
 
-const RECENT_USER_TURN_COUNT = 2;
+const RECENT_USER_TURN_COUNT = 3;
 
 interface SessionEntryLike {
   readonly type?: unknown;

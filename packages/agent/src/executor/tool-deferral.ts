@@ -74,6 +74,9 @@ export interface DeferralContext {
   capabilityClass: CapabilityClass;
   /** Current user-authored request used for content-free capability routing. */
   requestText?: string;
+  /** Bounded user-authored conversation text used only for lexical relevance.
+   * The current request above remains authoritative for mutation intent. */
+  requestRelevanceText?: string;
   recentlyUsedToolNames: Set<string>;
   toolNames: string[];
   /** Tool names demoted by lifecycle management. When provided, these tools
@@ -467,6 +470,8 @@ export function applyToolDeferral(
     && deferralContext.requestText?.trim()
   ) {
     const requestText = deferralContext.requestText;
+    const requestRelevanceText =
+      deferralContext.requestRelevanceText?.trim() || requestText;
     const eligibleTools = tools.filter((tool) =>
       deferredSet.has(tool.name) && !policyDeferredSet.has(tool.name)
     );
@@ -480,7 +485,7 @@ export function applyToolDeferral(
       return { name: tool.name, text: searchText };
     });
     const lexicalMatches = bm25Score(
-      requestText.slice(0, MAX_EMBED_QUERY_CHARS),
+      requestRelevanceText.slice(0, MAX_EMBED_QUERY_CHARS),
       documents,
     );
     const lexicalTopScore = lexicalMatches[0]?.score ?? 0;
