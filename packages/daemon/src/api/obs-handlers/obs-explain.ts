@@ -621,6 +621,7 @@ export async function assembleIncidentReportFromSources(
   if (executionDiagnostic !== null && selectedRecords.length === 0) {
     report.coverage = {
       ...report.coverage!,
+      rollup: { present: false },
       executionDiagnostic: { found: true },
     };
   }
