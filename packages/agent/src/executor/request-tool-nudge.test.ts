@@ -121,6 +121,25 @@ describe("runRequestToolNudge", () => {
     expect(outcome.outcome).toBe("recovered");
   });
 
+  it("runs when a follow-up reply claims an external action attempt without a receipt", async () => {
+    const fabricatedAttempt =
+      "I attempted to access your account using the provided credential, but could not connect.";
+    const deps = makeDeps({
+      requestText: "here is the credential",
+      messages: [
+        { role: "assistant", content: "Please provide the credential." },
+        { role: "user", content: "here is the credential" },
+        { role: "assistant", content: fabricatedAttempt },
+      ],
+      getVisibleAssistantText: () => fabricatedAttempt,
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(deps.session.prompt).toHaveBeenCalledTimes(1);
+    expect(outcome.outcome).toBe("recovered");
+  });
+
   it("does not run for an informational request with a fresh answer", async () => {
     const deps = makeDeps({
       requestText: "what model are you using now",
