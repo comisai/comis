@@ -78,7 +78,7 @@ export interface DeferralContext {
    * The current request above remains authoritative for mutation intent. */
   requestRelevanceText?: string;
   recentlyUsedToolNames: Set<string>;
-  /** Tool names invoked between the most recent user message and its final reply. */
+  /** Tool names from the most recent tool-bearing assistant message. */
   previousTurnToolNames?: ReadonlySet<string>;
   toolNames: string[];
   /** Tool names demoted by lifecycle management. When provided, these tools
@@ -268,15 +268,14 @@ export function extractRecentlyUsedToolNames(
   return names;
 }
 
-/** Extract tool calls from only the immediately preceding user turn. */
+/** Extract the latest actual tool-call group, skipping internal completion narration. */
 export function extractPreviousTurnToolNames(
   messages: Array<Record<string, unknown>>,
 ): Set<string> {
-  const names = new Set<string>();
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
-    if (message?.role === "user") break;
     if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+    const names = new Set<string>();
     for (const block of message.content as Record<string, unknown>[]) {
       if (
         (block.type === "tool_use" || block.type === "toolCall")
@@ -285,8 +284,9 @@ export function extractPreviousTurnToolNames(
         names.add(block.name);
       }
     }
+    if (names.size > 0) return names;
   }
-  return names;
+  return new Set<string>();
 }
 
 // ---------------------------------------------------------------------------
