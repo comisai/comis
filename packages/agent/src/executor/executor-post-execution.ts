@@ -1023,8 +1023,10 @@ export function snapshotSummarizerDepsForDefer<T extends LeafSummarizerDeps | un
  * plumbed on some path) every failed tool is reported as unrecovered —
  * so this never HIDES a genuine unrecovered failure.
  *
- * Observability is unaffected: effectiveFinishReason / logs / system rollup still
- * record the failure. Only the user-facing reply is gated.
+ * Raw tool statistics retain every failed attempt. Terminal classification and
+ * the user-facing failure notice consume the unrecovered subset, so a later
+ * matching success can settle the requested operation cleanly without erasing
+ * the diagnostic record of the rejected attempt.
  *
  * Pure: no I/O, no side effects. Returns deduped names with no proven recovery.
  */
@@ -1039,12 +1041,10 @@ export function unrecoveredFailedToolNames(
  * The COMPLEMENT of {@link unrecoveredFailedToolNames}: failed tools with a
  * later matching recovery in the same turn.
  *
- * Surfaced on the execution bookend (`recoveredTools`) so an operator reading
- * `failedTools:["write"]` + `completed_with_tool_errors` can tell a SELF-HEALED
- * turn from a terminally-degraded one without diffing the raw per-call
- * `toolExecResults`. This does NOT change the degraded classification: by
- * design effectiveFinishReason / the rollup STILL record the failure (the
- * tool DID error); this only makes the recovery VISIBLE.
+ * Surfaced on the execution bookend (`recoveredTools`) so an operator can tell
+ * a corrected attempt from a turn with no failures without diffing the raw
+ * per-call `toolExecResults`. The raw failure remains in tool statistics while
+ * terminal classification consumes the unrecovered complement.
  * Pure; deduped; empty when nothing was recovered.
  */
 export function recoveredFailedToolNames(
@@ -1295,13 +1295,17 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // an output_starved turn — which carries result.finishReason="stop" until promoted here —
   // is visible in the bookend as degraded. The variables are declared early and referenced
   // again by the tool-failure append and degraded-reply gate below (no double-computation).
-  const hasToolFailures = (bridgeResult.failedTools?.length ?? 0) > 0;
+  const unrecoveredToolFailures = unrecoveredFailedToolNames(
+    bridgeResult.failedTools ?? [],
+    bridgeResult.toolExecResults,
+  );
   const finishReasonStr = result.finishReason as string;
   const isStopTurn = finishReasonStr === "stop" || finishReasonStr === "end_turn";
-  // Stage 1: tool-failure reconciliation (a clean stop turn with failed tools
-  // becomes completed_with_tool_errors).
+  // Stage 1: tool-failure reconciliation. A clean stop turn becomes
+  // completed_with_tool_errors only when a failed operation has no proven
+  // later matching success. Raw tool statistics still retain every attempt.
   const toolReconciledFinishReason =
-    hasToolFailures && isStopTurn
+    unrecoveredToolFailures.length > 0 && isStopTurn
       ? "completed_with_tool_errors"
       : result.finishReason;
   // Stage 2: promote a PATHOLOGICAL terminal output truncation. Fires ONLY
@@ -1349,9 +1353,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // fields read from the same observation (the getter is cheap but the
   // read-twice pattern would still be a micro-divergence risk).
   const scrubCounters = ceSetup.getSignatureScrubCounters();
-  // recoveredTools: failed tools that self-healed in the same turn. Surfaced on the bookend so a self-healed
-  // turn is distinguishable from a terminally-degraded one. effectiveFinishReason
-  // STILL records the failure (by design) — this is visibility only.
+  // recoveredTools: failed tools that self-healed in the same turn. The raw
+  // failed count remains visible alongside the clean terminal classification.
   const recoveredTools = recoveredFailedToolNames(
     bridgeResult.failedTools ?? [],
     bridgeResult.toolExecResults,
@@ -1650,10 +1653,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       },
     });
   }
-  const unrecoveredFailed = unrecoveredFailedToolNames(
-    bridgeResult.failedTools ?? [],
-    bridgeResult.toolExecResults,
-  );
+  const unrecoveredFailed = unrecoveredToolFailures;
   const subagentTerminalToolFailureReply = buildSubagentTerminalToolFailureReply({
     operationType: params.executionOverrides?.operationType,
     finishReason: effectiveFinishReason,

@@ -1026,8 +1026,9 @@ describe("tool-failure endReason and notice", () => {
   // -------------------------------------------------------------------------
   // The user-facing '[tool failure]' notice must surface only failures without a
   // proven later matching invocation. Delivery recovery additionally requires
-  // the same action and exact content-free route/target identity. Observability
-  // still records recovered failures; only the user-facing reply is gated.
+  // the same action and exact content-free route/target identity. Raw tool
+  // statistics still record recovered failures while the terminal outcome and
+  // user-facing notice consume only the unrecovered subset.
   it("source-grep — failure notice gated on unrecoveredFailedToolNames (recovered failures suppressed)", () => {
     const stripped = readPostExecStripped();
     // The notice call site must consult the recovery-aware helper, not raw failedTools.
@@ -1179,9 +1180,8 @@ describe("unrecoveredFailedToolNames", () => {
   });
 });
 
-// recoveredFailedToolNames — the complement: surfaces self-healed failures on the
-// bookend so a recovered turn is distinguishable from a terminal one.
-// Does NOT change the degraded classification (by design).
+// recoveredFailedToolNames — the complement: surfaces self-healed failures on
+// the bookend while terminal classification consumes the unrecovered subset.
 describe("recoveredFailedToolNames", () => {
   it("returns failed tools that later succeeded in the same turn", () => {
     expect(
