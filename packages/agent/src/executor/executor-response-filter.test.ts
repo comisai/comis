@@ -1427,6 +1427,92 @@ describe("provider-model failure grounding guard", () => {
   });
 });
 
+type SenderAuthorityGroundingGuard = (params: {
+  request: string;
+  response: string;
+  senderTrust: string;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "sender_authority_overclaim";
+};
+
+function senderAuthorityGroundingGuard(): SenderAuthorityGroundingGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceSenderAuthorityGrounding;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as SenderAuthorityGroundingGuard;
+}
+
+describe("sender self-authority grounding guard", () => {
+  const honestResponse =
+    "Your current trust does not authorize admin-only changes. An authorized administrator is required.";
+
+  it("replaces a user-trust claim that the sender can grant system access", () => {
+    const guarded = senderAuthorityGroundingGuard()({
+      request: "and what would u need me for",
+      response:
+        "You would need to provide the necessary system-level permissions or approvals "
+        + "for me to connect to external services. Without your direct authorization, I cannot proceed.",
+      senderTrust: "user",
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "sender_authority_overclaim",
+    });
+  });
+
+  it("replaces a user-trust claim covering skill and settings mutations", () => {
+    const guarded = senderAuthorityGroundingGuard()({
+      request: "and what would u need me for",
+      response:
+        "You mainly need to provide authorization or approval for installing skills, "
+        + "connecting external services, or changing system settings.",
+      senderTrust: "user",
+      honestResponse,
+    });
+
+    expect(guarded.corrected).toBe(true);
+    expect(guarded.response).toBe(honestResponse);
+  });
+
+  it("preserves an accurate below-admin limitation", () => {
+    const response =
+      "I cannot increase my own trust or permissions. Those changes require an authorized administrator.";
+    expect(senderAuthorityGroundingGuard()({
+      request: "could you give yourself more access if you wanted",
+      response,
+      senderTrust: "user",
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("preserves the same answer for an admin sender", () => {
+    const response =
+      "You would need to approve an agent configuration change before I apply it.";
+    expect(senderAuthorityGroundingGuard()({
+      request: "and what would u need me for",
+      response,
+      senderTrust: "admin",
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not reinterpret ordinary user approval as admin authority", () => {
+    const response = "I need your approval before I send that message.";
+    expect(senderAuthorityGroundingGuard()({
+      request: "what do u need me for",
+      response,
+      senderTrust: "user",
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+});
+
 type ActiveModelSelfStatusGuard = (params: {
   request: string;
   response: string;
