@@ -3272,6 +3272,28 @@ describe("bootstrap file snapshotting", () => {
   // dynamic preamble relocation
   // -----------------------------------------------------------------
   describe("dynamic preamble relocation", () => {
+    it("projects the exact resolved model as authoritative current execution state", async () => {
+      const result = await assembleExecutionPrompt(makeParams({
+        config: makeConfig({
+          provider: "configured-provider",
+          model: "configured-model",
+        }),
+        resolvedModelProvider: "resolved-provider",
+        resolvedModelId: "resolved-model",
+      }));
+
+      expect(result.dynamicPreamble).toContain("## Current Execution");
+      expect(result.dynamicPreamble).toContain(
+        'Active model: {"provider":"resolved-provider","model":"resolved-model"}',
+      );
+      expect(result.dynamicPreamble).toContain(
+        "Model catalogs do not identify or change this active model.",
+      );
+      expect(result.dynamicPreamble).not.toContain(
+        'Active model: {"provider":"configured-provider","model":"configured-model"}',
+      );
+    });
+
     it("prefers clear current prose over the typed device locale", async () => {
       mockBuildBootstrapContextFiles.mockReturnValue([
         { path: "USER.md", content: "- **Preferred language:** fr-CA" },
@@ -4367,6 +4389,12 @@ describe("parent prefix reuse", () => {
     // Early return should trigger because resolved matches, even though config differs
     expect(result.systemPrompt).toBe("parent-frozen-prompt");
     expect(mockAssembleRichSystemPrompt).not.toHaveBeenCalled();
+    expect(result.dynamicPreamble).toContain(
+      'Active model: {"provider":"anthropic","model":"claude-3-opus"}',
+    );
+    expect(result.dynamicPreamble).not.toContain(
+      'Active model: {"provider":"config-provider","model":"claude-config-model"}',
+    );
   });
 
   it("falls back to config.model/config.provider when resolvedModelId/resolvedModelProvider absent", async () => {
