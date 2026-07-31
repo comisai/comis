@@ -94,7 +94,7 @@ export const TOOL_SUMMARIES: Record<string, string> = {
   slack_action: "Perform actions on Slack platform",
   whatsapp_action: "Perform actions on WhatsApp platform",
   // Privileged / Supervisor
-  agents_manage: "Manage full agent system (admin)",
+  agents_manage: "Create and manage dedicated agents (admin)",
   obs_query: "Query platform diagnostics data (admin)",
   sessions_manage: "Manage session lifecycle operations (admin)",
   memory_manage: "Admin memory CRUD operations (admin)",
@@ -186,7 +186,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
 
   // ----- Privileged / Supervisor (dynamic: admin suffix) -----
   agents_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Manage agent system: list, create, get, update, delete, suspend, resume. For batch creation, pass workspace.role/identity inline to skip the 2-step write flow.";
+    const base = "Manage agents: list, create, get, update, delete, suspend, resume. Use when the user asks for a separate, dedicated assistant or agent. For heartbeat or monitoring schedules, use heartbeat_manage.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   obs_query: (ctx: ToolDescriptionContext): string => {
@@ -225,7 +225,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   heartbeat_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Manage heartbeat schedules: list, create, update, delete, trigger.";
+    const base = "Manage heartbeat schedules: list, create, update, delete, trigger. Use only when the user explicitly asks for a heartbeat, recurring check, or monitoring. Do not use for a separate assistant; use agents_manage.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
 
