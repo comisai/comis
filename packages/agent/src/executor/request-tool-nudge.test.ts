@@ -60,6 +60,13 @@ registerToolMetadata("test_read_only_tool", {
   isReadOnly: true,
 });
 
+registerToolMetadata("test_guided_mutating_tool", {
+  isReadOnly: false,
+  mutationRequestPrefixes: ["connect"],
+  mutationRecoveryGuidance:
+    "Map every trusted operator connection field into one complete tool call.",
+} as never);
+
 describe("runRequestToolNudge", () => {
   it("runs one continuation when nano repeats an earlier answer instead of calling a matched mutating tool", async () => {
     const deps = makeDeps();
@@ -158,6 +165,27 @@ describe("runRequestToolNudge", () => {
     );
     expect(deps.session.prompt).toHaveBeenCalledWith(
       expect.stringMatching(/never infer.*(?:secret|credential).*(?:name|target).*(?:contents|channel)/iu),
+      expect.anything(),
+    );
+  });
+
+  it("includes capability-owned recovery guidance in a mutation continuation", async () => {
+    const deps = makeDeps({
+      requestText: "connect another one",
+      requestRelevantToolNames: ["test_guided_mutating_tool"],
+      messages: [
+        { role: "assistant", content: "I need more details." },
+        { role: "user", content: "connect another one" },
+        { role: "assistant", content: "I need more details." },
+      ],
+    });
+
+    await runRequestToolNudge(deps);
+
+    expect(deps.session.prompt).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Map every trusted operator connection field into one complete tool call.",
+      ),
       expect.anything(),
     );
   });
