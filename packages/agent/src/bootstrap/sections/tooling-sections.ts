@@ -435,7 +435,7 @@ export function buildPrivilegedToolsSection(
     "- models_manage: all actions (list models, test availability)",
     "- agents_manage: get, update, suspend, resume",
     "- sessions_manage: export, compact",
-    "- memory_manage: stats, browse, export",
+    "- memory_manage: stats, browse, export, roundtrip",
     "- channels_manage: list, get",
     "- tokens_manage: list",
     "- providers_manage: list, get, update, enable, disable",

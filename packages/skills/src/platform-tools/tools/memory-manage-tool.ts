@@ -2,7 +2,7 @@
 /**
  * Memory management tool: multi-action tool for memory lifecycle management.
  *
- * Supports 8 actions: stats, browse, delete, forget, flush, export, pin, unpin.
+ * Supports 9 actions: stats, browse, delete, forget, flush, export, roundtrip, pin, unpin.
  * Destructive actions (delete, forget, flush) require approval via the ApprovalGate.
  * All actions enforce admin trust level via createTrustGuard.
  * Delegates to memory.* RPC handlers via rpcCall.
@@ -13,7 +13,13 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import type { ApprovalGate } from "@comis/core";
-import { normalizeForSearch, tryGetContext, registerActivityLabelSpec } from "@comis/core";
+import {
+  MemoryPortabilityExportContract,
+  MemoryPortabilityImportContract,
+  normalizeForSearch,
+  tryGetContext,
+  registerActivityLabelSpec,
+} from "@comis/core";
 import {
   jsonResult,
   throwToolError,
@@ -34,6 +40,7 @@ registerActivityLabelSpec("memory_manage", {
     delete: { label: "deleting memory entries" },
     flush: { label: "flushing memory" },
     export: { label: "exporting memory" },
+    roundtrip: { label: "round-tripping memory" },
     pin:   { label: "pinning memory entry" },
     unpin: { label: "unpinning memory entry" },
   },
@@ -52,10 +59,11 @@ const MemoryManageToolParams = Type.Object({
       Type.Literal("forget"),
       Type.Literal("flush"),
       Type.Literal("export"),
+      Type.Literal("roundtrip"),
       Type.Literal("pin"),
       Type.Literal("unpin"),
     ],
-    { description: "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), forget (find and remove all scoped entries matching a natural-language query), flush (clear all entries for scope), export (full JSON export), pin (mark entry as always-injected in recall), unpin (remove always-inject mark)" },
+    { description: "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), forget (find and remove all scoped entries matching a natural-language query), flush (clear all entries for scope), export (versioned scrubbed JSON export), roundtrip (export and immediately import the same scope without placing entries in model context), pin (mark entry as always-injected in recall), unpin (remove always-inject mark)" },
   ),
   tenant_id: Type.Optional(
     Type.String({
@@ -121,7 +129,17 @@ const MemoryManageToolParams = Type.Object({
 
 type MemoryManageToolParamsType = Static<typeof MemoryManageToolParams>;
 
-const VALID_ACTIONS = ["stats", "browse", "delete", "forget", "flush", "export", "pin", "unpin"] as const;
+const VALID_ACTIONS = [
+  "stats",
+  "browse",
+  "delete",
+  "forget",
+  "flush",
+  "export",
+  "roundtrip",
+  "pin",
+  "unpin",
+] as const;
 const FORGET_MATCH_LIMIT = 5000;
 const FORGET_QUERY_NOISE = new Set([
   "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "from",
@@ -166,7 +184,7 @@ function matchedMemoryIds(value: unknown, query: string): string[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Create a memory management tool with 8 actions.
+ * Create a memory management tool with 9 actions.
  *
  * Actions:
  * - **stats** -- Get memory statistics (DB size, entry counts, FTS health)
@@ -174,7 +192,8 @@ function matchedMemoryIds(value: unknown, query: string): string[] {
  * - **delete** -- Delete specific memory entries by ID array (requires approval)
  * - **forget** -- Search and delete every scoped match for a natural-language query (requires approval)
  * - **flush** -- Flush all memory entries for a scope (requires approval)
- * - **export** -- Export full memory entries as JSON
+ * - **export** -- Export memory entries in the versioned scrubbed envelope
+ * - **roundtrip** -- Export and immediately re-import the same scope without exposing entries
  * - **pin** -- Mark a memory entry as always-injected in recall (requires id)
  * - **unpin** -- Remove the always-inject mark from a memory entry (requires id)
  *
@@ -192,7 +211,7 @@ export function createMemoryManageTool(
     name: "memory_manage",
     label: "Memory Management",
     description:
-      "Admin memory CRUD: stats, browse, delete, forget, flush, export, pin, unpin. For a user's natural-language forget request, use forget with query so all scoped semantic and paired matches are removed. Delete/forget/flush require approval. Pin/unpin require id.",
+      "Admin memory CRUD: stats, browse, delete, forget, flush, export, roundtrip, pin, unpin. Use roundtrip when the user asks to export current memory and import it back; it keeps entries out of model context and returns dedupe counts. For a user's natural-language forget request, use forget with query so all scoped semantic and paired matches are removed. Delete/forget/flush require approval. Pin/unpin require id.",
     parameters: MemoryManageToolParams,
 
     async execute(
@@ -347,14 +366,47 @@ export function createMemoryManageTool(
           }
 
           case "export": {
-            const result = await rpcCall("memory.export", {
-              offset: p.offset,
+            const result = await rpcCall("memory.portability.export", {
               limit: p.limit,
               tenant_id: tenantId,
               agent_id: agentId,
               _trustLevel,
             });
             return jsonResult(result);
+          }
+
+          case "roundtrip": {
+            const exportResult = await rpcCall("memory.portability.export", {
+              tenant_id: tenantId,
+              agent_id: agentId,
+              limit: p.limit,
+              _trustLevel,
+            });
+            const parsedExport = MemoryPortabilityExportContract.response.safeParse(exportResult);
+            if (!parsedExport.success) {
+              throwToolError("invalid_value", "Invalid memory portability export", {
+                hint: "Inspect the memory portability export RPC response before retrying",
+              });
+            }
+            const importResult = await rpcCall("memory.portability.import", {
+              entries: parsedExport.data.entries,
+              tenant_id: tenantId,
+              agent_id: agentId,
+              dry_run: false,
+              _trustLevel,
+            });
+            const parsedImport = MemoryPortabilityImportContract.response.safeParse(importResult);
+            if (!parsedImport.success) {
+              throwToolError("invalid_value", "Invalid memory portability import result", {
+                hint: "Inspect the memory portability import RPC response before retrying",
+              });
+            }
+            return jsonResult({
+              roundtrip: true,
+              schemaVersion: parsedExport.data.schemaVersion,
+              entryCount: parsedExport.data.entryCount,
+              ...parsedImport.data,
+            });
           }
 
           case "pin": {

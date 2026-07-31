@@ -200,7 +200,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   },
   // Confusable pair: memory_manage / memory_search
   memory_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Admin memory CRUD: stats, browse, delete, forget, flush, export. Use forget with a query when the user asks to forget something; use memory_search for read-only queries.";
+    const base = "Admin memory CRUD: stats, browse, delete, forget, flush, export, roundtrip. For export-and-import-back requests, use roundtrip; it keeps entries out of model context and reports deduplication. For forget requests, use forget with a query; use memory_search for read-only queries.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   channels_manage: (ctx: ToolDescriptionContext): string => {
@@ -727,7 +727,7 @@ calling a gated action will pause execution until the operator approves or denie
 - providers_manage: list, get, update, enable, disable, set_default, test
 - agents_manage: get, update, suspend, resume
 - sessions_manage: export, compact
-- memory_manage: stats, browse, export
+- memory_manage: stats, browse, export, roundtrip
 - channels_manage: list, get
 - tokens_manage: list
 

@@ -543,7 +543,6 @@ describe("memory_manage tool", () => {
         _trustLevel: "admin",
       });
       expect(mockRpcCall).toHaveBeenNthCalledWith(2, "memory.portability.import", {
-        schemaVersion: "comis-memory-export-v1",
         entries,
         tenant_id: "my-tenant",
         agent_id: "my-agent",

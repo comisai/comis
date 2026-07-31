@@ -1049,7 +1049,7 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
     ["channels_manage",  ["list", "get", "enable", "disable", "restart", "configure"], 4],
     ["sessions_manage",  ["delete", "reset", "export", "compact"], 5],
     ["skills_manage",    ["list", "import", "delete", "create", "update"], 6],
-    ["memory_manage",    ["stats", "browse", "delete", "forget", "flush", "export", "pin", "unpin"], 12],
+    ["memory_manage",    ["stats", "browse", "delete", "forget", "flush", "export", "roundtrip", "pin", "unpin"], 12],
     ["models_manage",    ["list", "test", "list_providers"], 3],
     ["heartbeat_manage", ["get", "update", "status", "trigger"], 15],
   ] as const)(

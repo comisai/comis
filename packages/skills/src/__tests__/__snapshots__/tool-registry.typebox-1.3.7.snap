@@ -652,6 +652,19 @@
           "minItems": 1,
           "type": "array"
         },
+        "scope": {
+          "anyOf": [
+            {
+              "const": "run",
+              "type": "string"
+            },
+            {
+              "const": "tree",
+              "type": "string"
+            }
+          ],
+          "description": "Kill scope (default: run). Use tree for requests such as stop everything or cancel all work; it hard-stops every descendant in the trusted current spawn tree and reports the exact count."
+        },
         "target": {
           "description": "Run ID of the target subagent (for kill/steer)",
           "type": "string"
@@ -1165,7 +1178,7 @@
               "type": "string"
             }
           ],
-          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), system_health (cross-session system-health triage: degradation rate, recurring WARNs, model/config health over a window), audit (the durable security-decision audit log: secret access, injection detection, command blocks — filter by kind/classification/agent/tenant/outcome/since/until)"
+          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by current autonomy root/provider/agent/session/daemon total), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), system_health (cross-session system-health triage: degradation rate, recurring WARNs, model/config health over a window), audit (the durable security-decision audit log: secret access, injection detection, command blocks — filter by kind/classification/agent/tenant/outcome/since/until)"
         },
         "agent_id": {
           "description": "Agent identifier (for billing.byAgent)",
@@ -1233,7 +1246,7 @@
           "type": "integer"
         },
         "sub_action": {
-          "description": "Sub-action within the category. billing: byProvider | byAgent | bySession | total. delivery: recent | stats. channels: all | stale | get.",
+          "description": "Sub-action within the category. billing: currentRoot | byProvider | byAgent | bySession | total. currentRoot is the default and includes spawned descendants. delivery: recent | stats. channels: all | stale | get.",
           "type": "string"
         },
         "tenant": {
@@ -1899,6 +1912,10 @@
               "type": "string"
             },
             {
+              "const": "roundtrip",
+              "type": "string"
+            },
+            {
               "const": "pin",
               "type": "string"
             },
@@ -1907,7 +1924,7 @@
               "type": "string"
             }
           ],
-          "description": "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), forget (find and remove all scoped entries matching a natural-language query), flush (clear all entries for scope), export (full JSON export), pin (mark entry as always-injected in recall), unpin (remove always-inject mark)"
+          "description": "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), forget (find and remove all scoped entries matching a natural-language query), flush (clear all entries for scope), export (versioned scrubbed JSON export), roundtrip (export and immediately import the same scope without placing entries in model context), pin (mark entry as always-injected in recall), unpin (remove always-inject mark)"
         },
         "agent_id": {
           "description": "Agent ID scope for filtering",
