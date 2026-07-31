@@ -135,12 +135,10 @@ async function summarizeHistory(
     config.chunkOverlapMessages,
   );
   const summaries: string[] = [];
-  let previousSummary: string | undefined;
   for (const chunk of chunks) {
     const summarized = await fromPromise(
       summarizeLeafChunk(chunk, deps, {
         reserveTokens: config.reserveTokens,
-        previousSummary,
       }),
     );
     if (!summarized.ok) return err(summarized.error);
@@ -150,7 +148,6 @@ async function summarizeHistory(
       ));
     }
     summaries.push(summarized.value.content);
-    previousSummary = summarized.value.content;
   }
 
   if (summaries.length === 1) return ok(summaries[0]!);
