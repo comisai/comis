@@ -11427,6 +11427,14 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "requestRelevantToolNames": {
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+          }
+        },
         "responseLocale": {
           "anyOf": [
             {
@@ -18766,11 +18774,9 @@ export type MethodName = keyof WebRpcMethodMap;
 // ---------------------------------------------------------------------------
 
 export function validateRequest(method: MethodName, v: unknown): boolean {
-  const entry = CONTRACTS[method];
-  return validateNode(entry.request, v);
+  return validateNode(CONTRACTS[method].request, v);
 }
 
 export function validateResponse(method: MethodName, v: unknown): boolean {
-  const entry = CONTRACTS[method];
-  return validateNode(entry.response, v);
+  return validateNode(CONTRACTS[method].response, v);
 }
