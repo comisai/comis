@@ -20,6 +20,7 @@ function makeDeps(
 
   return {
     session,
+    requestText: "switch back to the model u had before",
     messages: [
       { role: "assistant", content: "same stale answer" },
       { role: "user", content: "switch back to the model u had before" },
@@ -44,6 +45,7 @@ function makeDeps(
 
 registerToolMetadata("test_mutating_tool", {
   isReadOnly: false,
+  mutationRequestPrefixes: ["switch"],
 });
 
 registerToolMetadata("test_read_only_tool", {
@@ -85,7 +87,7 @@ describe("runRequestToolNudge", () => {
     });
   });
 
-  it("does not run when the current answer does not repeat an earlier answer", async () => {
+  it("runs when a declared mutation request gets a fresh answer without a mutation", async () => {
     const deps = makeDeps({
       messages: [
         { role: "assistant", content: "an earlier answer" },
@@ -97,8 +99,25 @@ describe("runRequestToolNudge", () => {
 
     const outcome = await runRequestToolNudge(deps);
 
+    expect(deps.session.prompt).toHaveBeenCalledTimes(1);
+    expect(outcome.outcome).toBe("recovered");
+  });
+
+  it("does not run for an informational request with a fresh answer", async () => {
+    const deps = makeDeps({
+      requestText: "what model are you using now",
+      messages: [
+        { role: "assistant", content: "an earlier answer" },
+        { role: "user", content: "what model are you using now" },
+        { role: "assistant", content: "a new answer" },
+      ],
+      getVisibleAssistantText: () => "a new answer",
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
     expect(deps.session.prompt).not.toHaveBeenCalled();
-    expect(outcome.outcome).toBe("not_repeated");
+    expect(outcome.outcome).toBe("not_action_request");
   });
 
   it("does not run outside the small model capability class", async () => {

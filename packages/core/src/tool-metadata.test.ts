@@ -4,6 +4,7 @@ import {
   registerToolMetadata,
   getToolMetadata,
   classifyToolInvocationMutation,
+  matchesToolMutationRequest,
   getAllToolMetadata,
   truncateContentBlocks,
   _clearRegistryForTest,
@@ -98,6 +99,20 @@ describe("tool invocation mutation classification", () => {
     expect(classifyToolInvocationMutation("mutation_by_action", { action: "unknown" })).toBe(
       "unclassified",
     );
+  });
+
+  it("matches declared mutation prefixes without treating information requests as actions", () => {
+    registerToolMetadata("mutation_by_request", {
+      isReadOnly: false,
+      mutationRequestPrefixes: ["switch", "configure agent"],
+    });
+
+    expect(matchesToolMutationRequest("mutation_by_request", "  SWITCH-back now")).toBe(true);
+    expect(matchesToolMutationRequest("mutation_by_request", "configure agent alpha")).toBe(true);
+    expect(matchesToolMutationRequest("mutation_by_request", "what model are you using now")).toBe(
+      false,
+    );
+    expect(matchesToolMutationRequest("unregistered_mutation", "switch back")).toBe(false);
   });
 });
 

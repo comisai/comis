@@ -1704,6 +1704,7 @@ describe("tool-metadata-registry -- co-discovery metadata", () => {
     expect(meta).toBeDefined();
     expect(meta!.coDiscoverWith).toContain("models_manage");
     expect(meta!.readOnlyActions).toEqual(["list", "get"]);
+    expect(meta!.mutationRequestPrefixes).toContain("switch");
   });
 });
 
