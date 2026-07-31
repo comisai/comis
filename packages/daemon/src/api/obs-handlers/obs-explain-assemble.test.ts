@@ -138,6 +138,26 @@ describe("assembleIncidentReport — request-relevant tool selection", () => {
       }).requestRelevantToolNames,
     ).toEqual(selected);
   });
+
+  it("surfaces operator-policy tool projection evidence on the one-call report", () => {
+    const projection = [{
+      toolName: "mcp_manage",
+      sectionId: "workspace:tools",
+      contentHash: "a".repeat(64),
+      projectedChars: 318,
+    }];
+    const report = assembleIncidentReport(
+      makeSignals({ operatorPolicyToolProjections: projection }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.operatorPolicyToolProjections).toEqual(projection);
+    expect(IncidentReportSchema.parse(report).operatorPolicyToolProjections)
+      .toEqual(projection);
+  });
 });
 
 describe("assembleIncidentReport — queue disposition timeline", () => {

@@ -57,6 +57,13 @@ describe("translatePayload — response locale decision", () => {
         },
       ],
       requestRelevantToolNames: ["mcp_manage", "gateway"],
+      operatorPolicyToolProjections: [{
+        toolName: "mcp_manage",
+        sectionId: "workspace:tools",
+        contentHash: "a".repeat(64),
+        projectedChars: 318,
+        content: "must never cross the content-free trajectory boundary",
+      }],
       requestText: "must never cross the content-free trajectory boundary",
       timestamp: 1717171717,
     } as Record<string, unknown>);
@@ -79,6 +86,12 @@ describe("translatePayload — response locale decision", () => {
         },
       ],
       requestRelevantToolNames: ["mcp_manage", "gateway"],
+      operatorPolicyToolProjections: [{
+        toolName: "mcp_manage",
+        sectionId: "workspace:tools",
+        contentHash: "a".repeat(64),
+        projectedChars: 318,
+      }],
     });
     expect(JSON.stringify(data)).not.toContain("description");
     expect("requestText" in data).toBe(false);

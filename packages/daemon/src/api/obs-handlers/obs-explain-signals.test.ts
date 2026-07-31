@@ -134,6 +134,24 @@ describe("toIncidentSignals — request-relevant tool selection", () => {
         .requestRelevantToolNames,
     ).toEqual(["mcp_manage", "gateway"]);
   });
+
+  it("retains the latest content-free operator-policy tool projection", () => {
+    const projection = {
+      toolName: "mcp_manage",
+      sectionId: "workspace:tools",
+      contentHash: "a".repeat(64),
+      projectedChars: 318,
+    };
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        operatorPolicyToolProjections: [projection],
+        responseLocaleSource: "unset",
+        responseLocaleEnforced: false,
+      }),
+    ]);
+
+    expect(signals.operatorPolicyToolProjections).toEqual([projection]);
+  });
 });
 
 describe("toIncidentSignals — queue disposition timeline", () => {

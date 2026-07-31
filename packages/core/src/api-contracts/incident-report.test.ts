@@ -134,6 +134,21 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     ).toBe("credential_invalid");
   });
 
+  it("retains content-free operator-policy tool projection evidence", () => {
+    const projection = [{
+      toolName: "mcp_manage",
+      sectionId: "workspace:tools",
+      contentHash: "a".repeat(64),
+      projectedChars: 318,
+    }];
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      operatorPolicyToolProjections: projection,
+    });
+
+    expect(parsed.operatorPolicyToolProjections).toEqual(projection);
+  });
+
   it("retains the normalized inbound edit kind", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),

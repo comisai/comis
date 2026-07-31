@@ -362,6 +362,12 @@ describe("assembleTools — per-request tool merging with deps.customTools", () 
       .not.toContain("stale connection notes");
     expect(passedTools.find((tool) => tool.name === "read")?.description)
       .toBe("Read files");
+    expect(result.operatorPolicyToolProjections).toEqual([{
+      toolName: "mcp_manage",
+      sectionId: "workspace:tools",
+      contentHash: "a".repeat(64),
+      projectedChars: operatorToolNotes.length,
+    }]);
   });
 
   it("reserves system-token budget for the POST-deferral active tools, not the full pre-deferral set", async () => {

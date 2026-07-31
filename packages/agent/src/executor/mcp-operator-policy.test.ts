@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import type { WorkspacePolicySnapshot } from "@comis/core";
-import { attachMcpOperatorPolicy } from "./mcp-operator-policy.js";
+import {
+  attachMcpOperatorPolicy,
+  describeMcpOperatorPolicyProjection,
+} from "./mcp-operator-policy.js";
 
 function policy(content: string): WorkspacePolicySnapshot {
   return {
@@ -64,5 +67,18 @@ describe("attachMcpOperatorPolicy", () => {
     });
 
     expect(result).toEqual(tools);
+  });
+
+  it("describes the projection without retaining operator content", () => {
+    const content = "exact connection notes";
+    const report = describeMcpOperatorPolicyProjection(policy(content));
+
+    expect(report).toEqual({
+      toolName: "mcp_manage",
+      sectionId: "workspace:tools",
+      contentHash: "a".repeat(64),
+      projectedChars: content.length,
+    });
+    expect(JSON.stringify(report)).not.toContain(content);
   });
 });
