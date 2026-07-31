@@ -434,8 +434,14 @@ describe("createMemoryRecall — orchestrator composition", () => {
         base: 0.7,
       }),
     ];
-    const recall = createMemoryRecall(
-      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
+    const { recallTrace, records } = recordingRecallTrace();
+    const recall = recallWithObs(
+      {
+        memoryPort: fakeMemoryPort(input),
+        clock: fixedClock,
+        logger: noopLogger,
+        recallTrace,
+      },
       baseConfig(),
     );
 
@@ -452,6 +458,11 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(ids).not.toContain("recent-duplicate");
     expect(ids).toContain("distinct-same-session");
     expect(ids).toContain("matching-cross-session");
+    const ranked = records[0]?.ranked as
+      | Array<{ id: string; reason: string }>
+      | undefined;
+    expect(ranked?.find((entry) => entry.id === "recent-duplicate")?.reason)
+      .toBe("recent_tail_duplicate");
   });
 
   it("NON-DESTRUCTIVE: two CONFLICTING memories about the same subject BOTH survive recall (no write-time deletion of older facts)", async () => {
@@ -1488,7 +1499,13 @@ describe("createMemoryRecall — recall-trace capture", () => {
     expect(rec.ranked?.length).toBeGreaterThan(0);
     for (const entry of rec.ranked ?? []) {
       expect(typeof entry.id).toBe("string");
-      expect(["included", "trust_filtered", "deduped", "below_budget"]).toContain(entry.reason);
+      expect([
+        "included",
+        "trust_filtered",
+        "deduped",
+        "below_budget",
+        "recent_tail_duplicate",
+      ]).toContain(entry.reason);
     }
     const included = (rec.ranked ?? []).filter((e) => e.reason === "included");
     expect(included.length).toBeGreaterThan(0);

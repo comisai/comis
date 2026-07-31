@@ -49,6 +49,7 @@ export interface RecallCaptureCtx {
   finalRanked: MemorySearchResult[];
   trustFilteredIds: string[];
   dedupedIds: string[];
+  recentTailDuplicateIds: string[];
   breakdownById: Map<string, ScoreBreakdown>;
   degradations: RecallDegradation[];
   durationMs: number;
@@ -83,6 +84,9 @@ export function captureRecallObservability(
   }
   for (const id of ctx.trustFilteredIds) ranked.push({ id, reason: "trust_filtered" });
   for (const id of ctx.dedupedIds) ranked.push({ id, reason: "deduped" });
+  for (const id of ctx.recentTailDuplicateIds) {
+    ranked.push({ id, reason: "recent_tail_duplicate" });
+  }
 
   try {
     deps.recallTrace?.recordRecall(
