@@ -125,6 +125,21 @@ describe("session_search tool", () => {
     await expect(tool.execute("call-7", { ...authority, query: "test" })).rejects.toThrow("Session not found");
   });
 
+  it("preserves an RPC authorization denial as a structured permission error", async () => {
+    const rpcCall = vi.fn(async () => {
+      const error = new Error("Session query tenant does not match the authenticated caller");
+      error.name = "AuthorizationError";
+      throw error;
+    });
+    const tool = createSessionSearchTool(rpcCall);
+
+    await expect(
+      tool.execute("call-auth", { ...authority, query: "harbor code" }),
+    ).rejects.toThrow(
+      /\[permission_denied\].*Session query tenant does not match.*Hint:.*caller conversation/s,
+    );
+  });
+
   it("calls rpcCall without query for recent-sessions mode", async () => {
     const rpcCall = createMockRpcCall({ mode: "recent", sessions: [], total: 0 });
     const tool = createSessionSearchTool(rpcCall);

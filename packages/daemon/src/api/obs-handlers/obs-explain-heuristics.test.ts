@@ -839,6 +839,25 @@ describe("obs-explain-heuristics", () => {
 
   const allMissRecall = { recalls: 2, zeroHits: 2, lastLanes: 3, lastFinalCount: 0, rerankerAvailable: false };
 
+  it("returns provider_invalid_tool_identity before an incidental recall miss", () => {
+    const signals = makeSignals({
+      endReason: "error",
+      degraded: true,
+      recall: allMissRecall,
+      modelTokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
+    });
+    (
+      signals as IncidentSignals & {
+        providerErrorCode: "invalid_tool_identity";
+      }
+    ).providerErrorCode = "invalid_tool_identity";
+
+    const r = rootCause(signals);
+    expect(r?.code).toBe("provider_invalid_tool_identity");
+    expect(r?.detail).toMatch(/persisted tool-call identity/i);
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/toolCall|toolResult/);
+  });
+
   it("background pending outranks an incidental recall miss", () => {
     const r = rootCause(makeSignals({
       endReason: "background_pending",
@@ -1192,6 +1211,33 @@ describe("context_exhausted with budget evidence", () => {
     expect(r!.code).toBe("context_exhausted");
     expect(r!.detail).toContain("context exhausted");
     expect(r!.suggestedNextSteps.length).toBeGreaterThan(0);
+  });
+
+  it("flags a guard mismatch when the terminal abort contradicts a fitting assembled budget", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "context_exhausted",
+        contextBudget: {
+          ...BUDGET,
+          windowTokens: 272_000,
+          rawContextWindowTokens: 272_000,
+          windowCapSource: "none",
+          systemTokens: 28_814,
+          freshTailTokens: 10_517,
+          budgetedHistoryTokens: 150_132,
+          keptCount: 274,
+          assembledInputTokens: 189_463,
+          outputHeadroom: 3_840,
+          verdict: "fits",
+        },
+      }),
+    );
+
+    expect(r?.code).toBe("context_guard_budget_mismatch");
+    expect(r?.detail).toContain("189463");
+    expect(r?.detail).toContain("272000");
+    expect(r?.detail).toContain("fit");
+    expect(r?.suggestedNextSteps.join(" ")).toContain("assembled");
   });
 });
 

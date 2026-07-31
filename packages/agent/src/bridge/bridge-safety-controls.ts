@@ -369,6 +369,9 @@ export function checkContextWindow(
     logger.warn(
       {
         contextPercent: guardStatus.percent,
+        contextTokens: contextUsage.tokens,
+        contextWindow: contextUsage.contextWindow,
+        contextUsageSource: contextUsage.source ?? "unknown",
         hint: "Context window approaching capacity; compaction should trigger soon",
         errorKind: "resource" as const,
       },
@@ -406,6 +409,9 @@ export function emitContextAbort(
   deps.logger.warn(
     {
       contextPercent,
+      contextTokens: contextUsage.tokens,
+      contextWindow: contextUsage.contextWindow,
+      contextUsageSource: contextUsage.source ?? "unknown",
       hint: "Context window critically full; aborting to prevent failed LLM calls -- increase model context window or enable compaction",
       errorKind: "resource" as const,
     },

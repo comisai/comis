@@ -16,7 +16,11 @@
  * @module
  */
 
-import { fingerprint, sanitizeLogString } from "@comis/core";
+import {
+  fingerprint,
+  ResponseLocaleRepairSkippedSchema,
+  sanitizeLogString,
+} from "@comis/core";
 import type { IncidentSignals } from "@comis/core";
 // The voice fold lives in a sibling (the obs-handlers/* 500-line cap);
 // applyMediaRecord dispatches the media.stt.*/media.tts.* arms to it.
@@ -75,6 +79,33 @@ export function asString(v: unknown): string | undefined {
 
 export function asNumber(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+interface SessionSummaryAccumulator {
+  summaryCostUsd?: number;
+  summaryTurnCount?: number;
+  responseLocaleRepairSkipped?: NonNullable<
+    IncidentSignals["responseLocaleRepairSkipped"]
+  >;
+}
+
+/** Fold one per-execution summary while retaining only its latest locale skip. */
+export function accumulateSessionSummaryRecord(
+  acc: SessionSummaryAccumulator,
+  data: Record<string, unknown>,
+): void {
+  const costUsd = asNumber(data.costUsd);
+  if (costUsd !== undefined) acc.summaryCostUsd = (acc.summaryCostUsd ?? 0) + costUsd;
+  const turnCount = asNumber(data.turnCount);
+  if (turnCount !== undefined) acc.summaryTurnCount = (acc.summaryTurnCount ?? 0) + turnCount;
+
+  delete acc.responseLocaleRepairSkipped;
+  const parsedRepairSkip = ResponseLocaleRepairSkippedSchema.safeParse(
+    data.responseLocaleRepairSkipped,
+  );
+  if (parsedRepairSkip.success) {
+    acc.responseLocaleRepairSkipped = parsedRepairSkip.data;
+  }
 }
 
 /** The latest sequenced prompt anchor, or undefined for sparse historical streams. */

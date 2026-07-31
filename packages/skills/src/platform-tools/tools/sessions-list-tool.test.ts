@@ -61,4 +61,17 @@ describe("sessions_list tool", () => {
 
     await expect(tool.execute("call-3", authority as never)).rejects.toThrow("connection lost");
   });
+
+  it("preserves an RPC authorization denial as a structured permission error", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => {
+      const error = new Error("Session query access denied");
+      error.name = "AuthorizationError";
+      throw error;
+    });
+    const tool = createSessionsListTool(mockRpcCall);
+
+    await expect(tool.execute("call-auth", authority as never)).rejects.toThrow(
+      /\[permission_denied\].*Session query access denied.*Hint:.*caller conversation/s,
+    );
+  });
 });

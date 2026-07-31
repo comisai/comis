@@ -734,6 +734,25 @@ describe("emitSessionSummary emits session:summary, fire-and-forget", () => {
     expect(payload.source).toBe("runtime");
   });
 
+  it("carries a content-free locale repair skip onto the session summary", () => {
+    const emit = vi.fn();
+    const eventBus = { emit, on: vi.fn(), off: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
+    const responseLocaleRepairSkipped = {
+      reason: "unrecovered_tool_failure" as const,
+      expectedScript: "Latn",
+      actualScript: "Hebr",
+      unrecoveredToolFailureCount: 1,
+    };
+
+    emitSessionSummary(
+      { eventBus, logger: undefined },
+      { ...baseArgs, responseLocaleRepairSkipped },
+    );
+
+    const payload = emit.mock.calls.find((call) => call[0] === "session:summary")![1] as Record<string, unknown>;
+    expect(payload.responseLocaleRepairSkipped).toEqual(responseLocaleRepairSkipped);
+  });
+
   it("a THROWING eventBus listener does NOT propagate out of emitSessionSummary (fire-and-forget)", () => {
     const eventBus = {
       emit: vi.fn().mockImplementation(() => {

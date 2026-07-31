@@ -176,6 +176,7 @@ import type { PiExecutorDeps } from "./pi-executor-types.js";
 export type { PiExecutorDeps } from "./pi-executor-types.js";
 import type { ExecutionBudgetWindow } from "../../budget/budget-guard.js";
 import { computeOutputHeadroom } from "../../context-engine/output-headroom.js";
+import { resolveContextGuardUsage } from "../context-guard-usage.js";
 
 /** Number of turns to restrict breakpoints after server eviction. */
 const EVICTION_COOLDOWN_TURNS = 2;
@@ -2262,14 +2263,17 @@ async function runSessionLocked(
       suppressError(session.abort(), "session abort on compaction cancel");
     },
     onAbortRetry: () => session.abortRetry(),
-    getContextUsage: () => {
-      try {
-        const usage = session.getContextUsage?.();
-        return usage ?? undefined;
-      } catch {
-        return undefined;
-      }
-    },
+    getContextUsage: () => resolveContextGuardUsage({
+      assembledInputTokens: streamSetup.assembledInputTokensRef.current,
+      effectiveWindow: streamSetup.effectiveWindowRef.current,
+      getSdkUsage: () => {
+        try {
+          return session.getContextUsage?.() ?? undefined;
+        } catch {
+          return undefined;
+        }
+      },
+    }),
     contextGuard,
     compactionSettings: {
       enabled: true,

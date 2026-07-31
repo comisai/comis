@@ -97,6 +97,22 @@ export function assertSubagentTargetAuthorized(
 }
 
 export function projectCallerSubagentRun(run: RunnerRun): Record<string, unknown> {
+  const runningProjection = run.status === "running"
+    ? {
+        progress: {
+          health: run.progress.health,
+          toolCalls: run.progress.toolCalls,
+          failedToolCalls: run.progress.failedToolCalls,
+          ...(run.progress.lastFailedTool !== undefined
+            ? { lastFailedTool: run.progress.lastFailedTool }
+            : {}),
+          ...(run.progress.lastErrorKind !== undefined
+            ? { lastErrorKind: run.progress.lastErrorKind }
+            : {}),
+          updatedAt: run.progress.updatedAt,
+        },
+      }
+    : {};
   const terminalProjection = run.status === "completed" || run.status === "failed"
     ? {
         completion: {
@@ -114,6 +130,7 @@ export function projectCallerSubagentRun(run: RunnerRun): Record<string, unknown
     agentId: run.agentId,
     startedAt: run.startedAt,
     ...(run.queuedAt !== undefined ? { queuedAt: run.queuedAt } : {}),
+    ...runningProjection,
     ...terminalProjection,
     ...(run.depth !== undefined ? { depth: run.depth } : {}),
     ...(run.rootRunId !== undefined ? { rootRunId: run.rootRunId } : {}),

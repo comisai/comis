@@ -201,6 +201,7 @@ function makeTurnEndEvent(usage?: {
   cacheWrite?: number;
   cost?: { input: number; output: number; total: number; cacheRead?: number; cacheWrite?: number };
   stopReason?: string;
+  errorMessage?: string;
 }) {
   const defaultUsage = {
     input: usage?.input ?? 100,
@@ -221,6 +222,7 @@ function makeTurnEndEvent(usage?: {
       model: "claude-sonnet-4-5-20250929",
       usage: defaultUsage,
       stopReason: usage?.stopReason ?? "stop",
+      ...(usage?.errorMessage !== undefined ? { errorMessage: usage.errorMessage } : {}),
       timestamp: Date.now(),
     },
     toolResults: [],
@@ -837,6 +839,44 @@ describe("createPiEventBridge", () => {
       expect(ap, "failed tool:executed must carry argsPreview").toBeDefined();
       expect(ap.path).toBe("IDENTITY.md"); // small value verbatim
       expect(String(ap.edits)).toMatch(/^\[\d+ chars\]$/); // large value bounded to a size placeholder
+    });
+
+    it("keeps numeric authority identifiers diagnosable in a failed-call preview while credentials stay redacted", () => {
+      const { listener } = createPiEventBridge(deps);
+      listener({
+        type: "tool_execution_start",
+        toolName: "session_search",
+        toolCallId: "tc-auth",
+        args: {
+          tenant_id: "678314278",
+          agent_id: "default",
+          query: "harbor code",
+          token: "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+        },
+      } as any);
+      listener(makeToolExecutionEndEvent(
+        "session_search",
+        "tc-auth",
+        true,
+        { message: "[permission_denied] Session query tenant does not match the authenticated caller" },
+      ) as any);
+
+      const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+      const endEmit = emit.mock.calls.find(
+        (call) => call[0] === "tool:executed" && call[1].toolCallId === "tc-auth",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].errorKind).toBe("auth");
+      expect(endEmit![1].argsPreview).toEqual({
+        tenant_id: "678314278",
+        agent_id: "default",
+        query: "harbor code",
+        token: "<redacted>",
+      });
+      expect(endEmit![1].params.tenant_id).toBe("<redacted>");
+      expect(JSON.stringify(endEmit![1])).not.toContain(
+        "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+      );
     });
 
     it("does NOT carry argsPreview on a SUCCESSFUL tool:executed (failure-only — keeps the trajectory lean)", () => {
@@ -1880,6 +1920,32 @@ describe("createPiEventBridge", () => {
       expect(deps.eventBus.emit).toHaveBeenCalledWith("observability:token_usage", expect.objectContaining({
         stopReason: "refusal",
       }));
+    });
+
+    it("classifies an invalid persisted tool identity without exposing the provider error text", () => {
+      const { listener } = createPiEventBridge(deps);
+      const providerError =
+        "Invalid 'input[16].name': string does not match pattern '^[a-zA-Z0-9_-]+$'.";
+
+      listener(makeTurnEndEvent({
+        stopReason: "error",
+        errorMessage: providerError,
+      }) as any);
+
+      const payload = lastTokenUsagePayload();
+      expect(payload.providerErrorCode).toBe("invalid_tool_identity");
+      expect(JSON.stringify(payload)).not.toContain(providerError);
+    });
+
+    it("does not invent a provider error code for an unrelated provider failure", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      listener(makeTurnEndEvent({
+        stopReason: "error",
+        errorMessage: "upstream service unavailable",
+      }) as any);
+
+      expect("providerErrorCode" in lastTokenUsagePayload()).toBe(false);
     });
 
     // m.finishReason is initialized to the literal "stop"

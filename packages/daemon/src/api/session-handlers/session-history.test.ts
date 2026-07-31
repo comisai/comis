@@ -33,6 +33,7 @@ import {
   conversationScopeToSessionKey,
   formatSessionKey,
   messageToParts,
+  TypedEventBus,
   type ContextStoreScope,
   type ConversationScope,
   type DeliveryQueueEntry,
@@ -455,7 +456,13 @@ describe("session.history agent-origin self-scoping", () => {
     const targetRefResult = createConversationRef(targetScope);
     if (!targetRefResult.ok) throw targetRefResult.error;
     const targetRef = targetRefResult.value;
-    const deps = makeDeps({
+    const eventBus = new TypedEventBus();
+    const auditEvents: unknown[] = [];
+    eventBus.on("audit:event", (event) => {
+      auditEvents.push(event);
+    });
+    const deps = {
+      ...makeDeps({
       deliveryQueue: makeQueuePort([]),
       sessionStore: {
         listDetailed: vi.fn().mockReturnValue(ok([])),
@@ -468,7 +475,9 @@ describe("session.history agent-origin self-scoping", () => {
           updatedAt: 2,
         })),
       } as never,
-    });
+      }),
+      eventBus,
+    } as SessionHandlerDeps;
     const handlers = bindSessionReadHandlersRaw(deps);
 
     await expect(handlers["session.history"]!({
@@ -479,14 +488,22 @@ describe("session.history agent-origin self-scoping", () => {
       _tenantId: "test",
       _callerConversationScope: callerScope,
     })).rejects.toThrow(/session history access denied/i);
-    expect(deps.logger.audit).toHaveBeenCalledWith(
+    expect(auditEvents).toEqual([
       expect.objectContaining({
+        tenantId: "test",
+        agentId: "caller-agent",
         kind: "capability_denied",
         outcome: "denied",
         actionType: "session.history",
+        classification: "read",
+        metadata: {
+          authorizationFailure: "conversation_scope_mismatch",
+          decision: "deny",
+          method: "session.history",
+        },
       }),
-      "session.history conversation scope denied",
-    );
+    ]);
+    expect(deps.logger.audit).not.toHaveBeenCalled();
     expect(deps.logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         method: "session.history",

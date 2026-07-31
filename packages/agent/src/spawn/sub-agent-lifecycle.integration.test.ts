@@ -23,7 +23,7 @@ import {
   createSubAgentRunner,
   type SubAgentRunnerDeps,
 } from "./sub-agent-runner.js";
-import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+import { TypedEventBus, type ClockPort, type TimerPort, type TimerHandle } from "@comis/core";
 import { ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
@@ -63,6 +63,8 @@ const testTimers: TimerPort = {
 // ---------------------------------------------------------------------------
 
 function buildDeps(overrides?: Partial<SubAgentRunnerDeps>): SubAgentRunnerDeps {
+  const eventBus = new TypedEventBus();
+  vi.spyOn(eventBus, "emit");
   return {
     sessionStore: {
       save: vi.fn(() => ok(undefined)),
@@ -76,7 +78,7 @@ function buildDeps(overrides?: Partial<SubAgentRunnerDeps>): SubAgentRunnerDeps 
       finishReason: "stop",
     }),
     sendToChannel: vi.fn().mockResolvedValue(true),
-    eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+    eventBus,
     config: {
       enabled: true,
       maxPingPongTurns: 3,

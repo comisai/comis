@@ -26,6 +26,7 @@ import {
   relativizeDiskPath,
   previewAndDigest,
   applyMediaRecord,
+  accumulateSessionSummaryRecord,
   currentTurnBreakerOpenedTool,
   latestPromptSequence,
 } from "./obs-explain-signals-fields.js";
@@ -578,17 +579,8 @@ function handleEventRecord(
       return;
     }
     case "session.summary": {
-      // One summary record per EXECUTION, each carrying that execution's own
-      // costUsd — Σ them for the session cost. The sessionEnd rollup is
-      // overwritten per execution (last write wins), so it holds only the
-      // FINAL execution's cost; the assembler prefers this ledger sum.
-      const c = asNumber(data.costUsd);
-      if (c !== undefined) acc.summaryCostUsd = (acc.summaryCostUsd ?? 0) + c;
-      // Σ the per-execution turn counts — the sessionEnd rollup's turnCount is
-      // last-write-wins (the final execution's only), so a multi-execution
-      // session under-reported (the incident's 11-turn session showed 1).
-      const t = asNumber(data.turnCount);
-      if (t !== undefined) acc.summaryTurnCount = (acc.summaryTurnCount ?? 0) + t;
+      // Sums cost/turn counts and keeps only this latest summary's locale skip.
+      accumulateSessionSummaryRecord(acc, data);
       return;
     }
     case "model.completed": {
@@ -601,6 +593,9 @@ function handleEventRecord(
       t.cacheRead += asNumber(data.cacheReadTokens) ?? 0;
       t.cacheCreation += asNumber(data.cacheCreationTokens) ?? 0;
       acc.modelTokens = t;
+      if (data.providerErrorCode === "invalid_tool_identity") {
+        acc.providerErrorCode = data.providerErrorCode;
+      }
       return;
     }
     // The spend kill-switch breach (LAST wins) — delegated to a fold helper (learning-fold mold) for the subdir cap.
@@ -809,6 +804,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.inboundEdit !== undefined ? { inboundEdit: acc.inboundEdit } : {}),
     ...(acc.groupHistory !== undefined ? { groupHistory: acc.groupHistory } : {}),
     ...(acc.responseLocale !== undefined ? { responseLocale: acc.responseLocale } : {}),
+    ...(acc.responseLocaleRepairSkipped !== undefined
+      ? { responseLocaleRepairSkipped: acc.responseLocaleRepairSkipped }
+      : {}),
     toolStats,
     failures: currentTurnFailures,
     breakerEvents: acc.breakerEvents,
@@ -911,6 +909,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.summaryCostUsd !== undefined ? { summaryCostUsd: acc.summaryCostUsd } : {}),
     ...(acc.summaryTurnCount !== undefined ? { summaryTurnCount: acc.summaryTurnCount } : {}),
     ...(acc.modelTokens !== undefined ? { modelTokens: acc.modelTokens } : {}),
+    ...(acc.providerErrorCode !== undefined ? { providerErrorCode: acc.providerErrorCode } : {}),
     ...(acc.turnFinalized !== undefined ? { turnFinalized: acc.turnFinalized } : {}),
     ...(acc.turnFinalizeCounts !== undefined ? { turnFinalizeCounts: acc.turnFinalizeCounts } : {}),
     ...(acc.deliveryDispatch !== undefined ? { deliveryDispatch: acc.deliveryDispatch } : {}),

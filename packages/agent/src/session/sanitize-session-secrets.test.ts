@@ -539,6 +539,51 @@ describe("sanitizeSessionSecrets", () => {
     expect(sanitizeSessionSecrets(path)).toBe(0);
   });
 
+  it("preserves provider-valid high-entropy tool identities for durable replay", () => {
+    const toolName = "mcp__background-report--read_assistant_report";
+    const toolCallId =
+      "call_OktL6czNeX1zvUGUSxFWc2AA_fc_0ba45e2560717fc5016a6be59679688191b559987d1f1d7c67";
+    const path = writeJsonl(tmpDir, [
+      { type: "session", version: 1, id: "s1" },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              name: toolName,
+              id: toolCallId,
+              arguments: { subject: "synthetic report" },
+            },
+          ],
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId,
+          toolName,
+          content: [{ type: "text", text: "synthetic result" }],
+        },
+      },
+    ]);
+
+    expect(sanitizeSessionSecrets(path)).toBe(0);
+    const entries = readJsonlEntries(path) as Array<{
+      message?: {
+        toolCallId?: string;
+        toolName?: string;
+        content?: Array<{ id?: string; name?: string }>;
+      };
+    }>;
+    expect(entries[1]?.message?.content?.[0]?.name).toBe(toolName);
+    expect(entries[1]?.message?.content?.[0]?.id).toBe(toolCallId);
+    expect(entries[2]?.message?.toolName).toBe(toolName);
+    expect(entries[2]?.message?.toolCallId).toBe(toolCallId);
+  });
+
   it("redacts multiple different key types in same message", () => {
     const path = writeJsonl(tmpDir, [
       { type: "session", version: 1, id: "s1" },

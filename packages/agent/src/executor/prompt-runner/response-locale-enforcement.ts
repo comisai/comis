@@ -243,6 +243,12 @@ export async function applyResponseLocaleEnforcement(params: RunPromptParams): P
     bridgeResult.toolExecResults,
   );
   if (recovery.unrecoveredFailureCount > 0) {
+    params.result.responseLocaleRepairSkipped = {
+      reason: "unrecovered_tool_failure",
+      expectedScript: initialFinding.expectedScript,
+      actualScript: initialFinding.actualScript,
+      unrecoveredToolFailureCount: recovery.unrecoveredFailureCount,
+    };
     params.deps.logger.debug(
       {
         step: "response-locale-repair-skipped",

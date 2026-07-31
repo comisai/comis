@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { BackgroundTask } from "../background/background-task-types.js";
+import { backgroundToolLabel } from "../background/background-tool-label.js";
 
 export interface PendingBackgroundTurnInput {
   response: string;
@@ -31,7 +32,9 @@ export function reconcilePendingBackgroundTurn(
   if (pending.length === 0) {
     return { response: input.response, finishReason: undefined, pendingCount: 0 };
   }
-  const labels = pending.map((task) => `${task.toolName} (${task.id})`).join(", ");
+  const labels = pending
+    .map((task) => `${backgroundToolLabel(task.toolName)} (${task.id})`)
+    .join(", ");
   return {
     response: `⏳ Background work is still running: ${labels}. I will continue this conversation when it finishes.`,
     finishReason: "background_pending",

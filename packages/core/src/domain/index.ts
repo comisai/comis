@@ -139,11 +139,13 @@ export {
   CanonicalLocaleSchema,
   ResponseLocaleSourceSchema,
   ResponseLocalePolicySchema,
+  ResponseLocaleRepairSkippedSchema,
   parseResponseLocalePolicy,
 } from "./response-locale-policy.js";
 export type {
   ResponseLocaleSource,
   ResponseLocalePolicy,
+  ResponseLocaleRepairSkipped,
 } from "./response-locale-policy.js";
 export type {
   InstructionSourceKind,

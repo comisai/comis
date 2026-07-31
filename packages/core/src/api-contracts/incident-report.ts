@@ -15,6 +15,7 @@
  */
 import { z } from "zod";
 import { defineContract } from "./types.js";
+import { ResponseLocaleRepairSkippedSchema } from "../domain/response-locale-policy.js";
 // The section sub-schemas live in a sibling module (file-size cap). Imported
 // locally for use in IncidentReportSchema AND re-exported below so the public
 // barrel surface is unchanged.
@@ -126,6 +127,8 @@ export const IncidentReportSchema = z.object({
       }),
     ])
     .optional(),
+  /** Content-free reason an enforced script mismatch retained its original response. */
+  responseLocaleRepairSkipped: ResponseLocaleRepairSkippedSchema.optional(),
   toolStats: z.record(
     z.string(),
     z.object({

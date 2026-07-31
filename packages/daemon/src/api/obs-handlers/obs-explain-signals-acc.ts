@@ -94,7 +94,7 @@ export function summarizeToolStats(
 
 // @optional-field-count: internal mutable fold accumulator — each optional field
 // is a DISTINCT terminal-record signal (breaker tool, contextBudget, promptTimeout,
-// toolSchemaUnsupported, inboundEdit, responseLocale, lastRecall, spend, perRootBudget, the four media turns,
+// toolSchemaUnsupported, providerErrorCode, inboundEdit, responseLocale, lastRecall, spend, perRootBudget, the four media turns,
 // agentId, channel) that is absent until its trajectory record class is seen. They
 // are not a configuration surface; collapsing or splitting them would only obscure
 // the one-fold-per-record-class structure.
@@ -124,6 +124,10 @@ export interface Acc {
   groupHistory?: NonNullable<IncidentSignals["groupHistory"]>;
   /** The LAST valid `prompt.submitted` locale decision. */
   responseLocale?: NonNullable<IncidentSignals["responseLocale"]>;
+  /** The LAST valid locale-repair skip from a session summary. */
+  responseLocaleRepairSkipped?: NonNullable<
+    IncidentSignals["responseLocaleRepairSkipped"]
+  >;
   breakerOpenedTool?: string;
   hasDoNotRetrySignal: boolean;
   /** Tools for which a log-shape breaker "opened" event was already synthesized
@@ -209,6 +213,8 @@ export interface Acc {
    *  token ledger (source of cost.totalTokens + cacheReadRatio). Absent ⇒ no
    *  model.completed records. */
   modelTokens?: { input: number; output: number; cacheRead: number; cacheCreation: number };
+  /** The LAST recognized content-free provider protocol error classification. */
+  providerErrorCode?: "invalid_tool_identity";
   /** The terminal
    *  `execution.aborted` record's `reason` (e.g. "spend_exceeded"). A HARD abort
    *  skips the clean `sessionEnd` rollup, so the assembler's metadata-derived

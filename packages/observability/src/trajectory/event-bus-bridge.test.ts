@@ -554,6 +554,37 @@ describe("attachTrajectoryToEventBus -- model events", () => {
     expect(data.finishReason).toBe("stop");
   });
 
+  it("model_completed_forwards_only_the_content_free_provider_error_code", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("observability:token_usage", {
+      timestamp: Date.now(),
+      traceId: "trace-tu",
+      agentId: "agent-1",
+      channelId: "c1",
+      executionId: "exec-001",
+      provider: "anthropic",
+      model: "claude-sonnet-4-20250514",
+      tokens: { prompt: 0, completion: 0, total: 0 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      latencyMs: 250,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      sessionKey: "t1:u1:c1",
+      savedVsUncached: 0,
+      cacheEligible: true,
+      stopReason: "error",
+      providerErrorCode: "invalid_tool_identity",
+    } as any);
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.providerErrorCode).toBe("invalid_tool_identity");
+    expect("errorMessage" in data).toBe(false);
+  });
+
   it("model_completed_omits_stopReason_and_finishReason_keys when the token_usage event lacks them (no undefined keys)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
@@ -583,6 +614,7 @@ describe("attachTrajectoryToEventBus -- model events", () => {
     // present on model.completed (not even as an undefined value).
     expect("stopReason" in data).toBe(false);
     expect("finishReason" in data).toBe(false);
+    expect("providerErrorCode" in data).toBe(false);
   });
 });
 

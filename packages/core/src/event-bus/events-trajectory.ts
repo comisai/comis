@@ -16,6 +16,8 @@
  * @module
  */
 
+import type { ResponseLocaleRepairSkipped } from "../domain/response-locale-policy.js";
+
 export interface TrajectoryEvents {
   /**
    * Prompt assembly completed; the next pi-mono `agent_start` call will
@@ -118,6 +120,8 @@ export interface TrajectoryEvents {
     source: "runtime" | "test" | "bench";
     /** The mapped endReason (the named degradation cause) — closed-set label. */
     endReason: string;
+    /** Why a detected response-script mismatch could not enter its repair turn. */
+    responseLocaleRepairSkipped?: ResponseLocaleRepairSkipped;
     timestamp: number;
   };
 

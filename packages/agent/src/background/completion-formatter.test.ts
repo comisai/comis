@@ -3,6 +3,8 @@ import { describe, it, expect } from "vitest";
 import { formatCompletionAnnouncement, TRAILING_INSTRUCTION } from "./completion-formatter.js";
 import { TRAILING_INSTRUCTION as NARRATIVE_TRAILING } from "../spawn/narrative-caster.js";
 import type { BackgroundTask } from "./background-task-types.js";
+import { scrubSecretsFromText } from "@comis/core";
+import { projectSessionValueForPersistence } from "../session/sanitize-session-secrets.js";
 
 function buildTask(overrides: Partial<BackgroundTask> = {}): BackgroundTask {
   return {
@@ -46,6 +48,19 @@ describe("formatCompletionAnnouncement", () => {
     const task = buildTask({ status: "failed", error: "ERROR_BODY", result: undefined });
     const out = formatCompletionAnnouncement(task);
     expect(out).toContain("ERROR_BODY");
+  });
+
+  it("keeps a registered high-entropy tool label usable in completion replay", () => {
+    const task = buildTask({
+      toolName: "mcp__background-report--read_assistant_report",
+      result: "RESULT_BODY",
+    });
+    const out = formatCompletionAnnouncement(task);
+    const projected = projectSessionValueForPersistence(out);
+
+    expect(projected.redactions).toBe(0);
+    expect(scrubSecretsFromText(projected.value).redactions).toBe(0);
+    expect(projected.value).not.toContain("[REDACTED]");
   });
 
   it("trailing instruction byte-identical to narrative-caster.ts", () => {

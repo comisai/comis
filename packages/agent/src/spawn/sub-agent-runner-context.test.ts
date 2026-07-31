@@ -5,6 +5,7 @@ import {
   createDeliveryOrigin,
   getContext,
   runWithContext,
+  TypedEventBus,
   type ClockPort,
   type RequestContext,
   type TimerHandle,
@@ -68,7 +69,7 @@ function createDeps(
     },
     executeAgent,
     sendToChannel: vi.fn().mockResolvedValue(true),
-    eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+    eventBus: new TypedEventBus(),
     config: {
       enabled: true,
       maxPingPongTurns: 3,

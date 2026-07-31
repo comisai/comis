@@ -218,6 +218,57 @@ describe("scrubRedactedToolCalls", () => {
     expect(content[0].text).toContain("exec");
   });
 
+  it("neutralizes a persisted tool pair whose protocol identity was redacted", () => {
+    const fileEntries = [
+      msg("assistant", [
+        {
+          type: "toolCall",
+          id: "[REDACTED]",
+          name: "[REDACTED]",
+          arguments: { subject: "synthetic report" },
+        },
+      ]),
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "[REDACTED]",
+          toolName: "[REDACTED]",
+          content: [{ type: "text", text: "synthetic result" }],
+        },
+      },
+      msg("user", [{ type: "text", text: "unrelated later turn" }]),
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "[REDACTED]",
+          toolName: "[REDACTED]",
+          content: [{ type: "text", text: "unpaired historical result" }],
+        },
+      },
+    ];
+
+    const result = scrubRedactedToolCalls({ fileEntries } as any);
+
+    expect(result).toEqual({
+      scrubbed: true,
+      blocksRewritten: 1,
+      resultsRewritten: 1,
+    });
+    expect((fileEntries[0] as any).message.content).toEqual([
+      expect.objectContaining({ type: "text" }),
+    ]);
+    const repairedResult = (fileEntries[1] as any).message;
+    expect(repairedResult.role).toBe("user");
+    expect(repairedResult.toolCallId).toBeUndefined();
+    expect(repairedResult.toolName).toBeUndefined();
+    expect(repairedResult.content).toEqual([
+      { type: "text", text: "synthetic result" },
+    ]);
+    expect((fileEntries[3] as any).message.role).toBe("toolResult");
+  });
+
   it("is idempotent: running twice yields the same fileEntries", () => {
     const fileEntries = [
       msg("assistant", [

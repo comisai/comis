@@ -197,6 +197,24 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   // execution summary. It must not be hidden by an earlier clean model stop.
   deliveryFailedVerdict,
 
+  // A replayed structured tool identity was rejected by the provider before
+  // generation. This is the concrete execution failure and must outrank an
+  // incidental zero-hit recall from the same turn.
+  (s) => {
+    if (s.providerErrorCode !== "invalid_tool_identity") return null;
+    return {
+      code: "provider_invalid_tool_identity",
+      detail:
+        "the provider rejected a persisted tool-call identity before generation; "
+        + "the request produced no usable model response",
+      suggestedNextSteps: [
+        "inspect the durable session's structured toolCall and toolResult name/id fields for redaction placeholders or invalid characters",
+        "verify session persistence keeps registered tool names and provider call IDs unchanged",
+        "retry after repairing the persisted protocol fields; changing a display label does not repair replay",
+      ],
+    };
+  },
+
   // An unrecovered channel transition means the transport stopped accepting
   // inbound work even when the last completed agent turn itself was clean.
   // A later healthy lifecycle record sets recovered=true in the signal fold,
@@ -514,6 +532,22 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     if (s.endReason !== "context_exhausted") return null;
     const b = s.contextBudget;
     if (b !== undefined) {
+      const fitBound = b.windowTokens - b.outputHeadroom;
+      if (b.verdict !== "exhausted" && b.assembledInputTokens <= fitBound) {
+        const slack = fitBound - b.assembledInputTokens;
+        return {
+          code: "context_guard_budget_mismatch",
+          detail:
+            "context guard evidence conflicts with the assembled request budget: the terminal state says " +
+            `context_exhausted, but ${String(b.assembledInputTokens)} assembled tokens fit within the ` +
+            `${String(b.windowTokens)}-token window with ${String(slack)} tokens left before reserved output headroom`,
+          suggestedNextSteps: [
+            "verify the context guard reads the current assembled dispatch instead of the unassembled SDK transcript",
+            "compare contextBudgetHistory across the turn; every fitting dispatch should remain eligible to continue",
+            "restart the daemon on a build where assembled context usage is authoritative",
+          ],
+        };
+      }
       const capped = b.windowCapSource !== "none";
       const systemSharePct =
         b.windowTokens > 0 ? Math.round((b.systemTokens / b.windowTokens) * 100) : 0;

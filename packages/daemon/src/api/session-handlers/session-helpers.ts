@@ -11,12 +11,13 @@
 
 import { systemGetEnv } from "@comis/core";
 
-// Re-aliased from the cluster slice in api/types.ts.
-// Single source of truth: SessionsApiDeps. The session-handlers factory
-// consumes SessionHandlerDeps as before; the alias keeps call sites and
-// handler bodies unchanged.
-import type { SessionsApiDeps as SessionHandlerDeps } from "../types.js";
-export type { SessionHandlerDeps };
+// SessionsApiDeps remains the source of truth for session dependencies.
+// MemoryApiDeps owns the optional eventBus field shared by dispatcher slices;
+// session read handlers borrow only that field for durable authorization audit.
+import type { MemoryApiDeps, SessionsApiDeps } from "../types.js";
+export type SessionHandlerDeps =
+  & SessionsApiDeps
+  & Pick<MemoryApiDeps, "eventBus">;
 
 /**
  * Run `contract.response.parse(result)` only when NODE_ENV !== "production".

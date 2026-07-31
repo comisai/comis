@@ -59,6 +59,28 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     });
   });
 
+  it("retains the content-free locale repair skip diagnosis", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      responseLocaleRepairSkipped: {
+        reason: "unrecovered_tool_failure",
+        expectedScript: "Latn",
+        actualScript: "Hebr",
+        unrecoveredToolFailureCount: 1,
+      },
+    });
+
+    expect(
+      (parsed as unknown as { responseLocaleRepairSkipped?: unknown })
+        .responseLocaleRepairSkipped,
+    ).toEqual({
+      reason: "unrecovered_tool_failure",
+      expectedScript: "Latn",
+      actualScript: "Hebr",
+      unrecoveredToolFailureCount: 1,
+    });
+  });
+
   it("retains content-free group history receipt counts", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),

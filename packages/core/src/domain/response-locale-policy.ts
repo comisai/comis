@@ -51,8 +51,18 @@ export const ResponseLocalePolicySchema = z.strictObject({
   }
 });
 
+export const ResponseLocaleRepairSkippedSchema = z.strictObject({
+  reason: z.literal("unrecovered_tool_failure"),
+  expectedScript: z.string().regex(/^[A-Z][a-z]{3}$/u),
+  actualScript: z.string().regex(/^[A-Z][a-z]{3}$/u),
+  unrecoveredToolFailureCount: z.number().int().positive(),
+});
+
 export type ResponseLocaleSource = z.infer<typeof ResponseLocaleSourceSchema>;
 export type ResponseLocalePolicy = z.infer<typeof ResponseLocalePolicySchema>;
+export type ResponseLocaleRepairSkipped = z.infer<
+  typeof ResponseLocaleRepairSkippedSchema
+>;
 
 export function parseResponseLocalePolicy(
   raw: unknown,

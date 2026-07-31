@@ -511,6 +511,9 @@ export function assembleIncidentReport(
     ...(signals.responseLocale !== undefined
       ? { responseLocale: signals.responseLocale }
       : {}),
+    ...(signals.responseLocaleRepairSkipped !== undefined
+      ? { responseLocaleRepairSkipped: signals.responseLocaleRepairSkipped }
+      : {}),
     toolStats,
     failures,
     breakerTimeline,

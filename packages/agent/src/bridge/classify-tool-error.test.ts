@@ -42,12 +42,18 @@ describe("classifyToolError", () => {
       "not_read",
       "stale_file",
       "file_not_found",
-      "permission_denied",
       "path_traversal",
       "write_secret_blocked",
     ]) {
       expect(classifyToolError("edit", wrap(code))).toBe("validation");
     }
+  });
+
+  it("classifies structured permission denial as auth rather than validation or dependency", () => {
+    expect(classifyToolError(
+      "session_search",
+      wrap("permission_denied", "Session query tenant does not match the authenticated caller"),
+    )).toBe("auth");
   });
 
   it("classifies genuine IO failures as internal, not dependency", () => {

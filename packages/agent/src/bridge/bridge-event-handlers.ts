@@ -17,7 +17,7 @@
 // @comis/agent is architecturally FORBIDDEN from depending on @comis/infra
 // (enforced by packages/agent/src/__tests__/architecture.test.ts). agent
 // already depends on @comis/core, so this adds no package edge.
-import { fingerprint, unwrapExternalContent } from "@comis/core";
+import { fingerprint, redactValue, unwrapExternalContent } from "@comis/core";
 import { tryCatch } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
@@ -141,6 +141,59 @@ export function sanitizeToolArgs(args: Record<string, unknown>): Record<string, 
     }
   }
   return out;
+}
+
+const DIAGNOSTIC_AUTHORITY_ID_KEYS = new Set([
+  "tenant_id",
+  "tenantId",
+  "agent_id",
+  "agentId",
+]);
+const NUMERIC_AUTHORITY_ID = /^\d{1,32}$/;
+
+/**
+ * Build the trajectory-only failed-call argument preview.
+ *
+ * Numeric tenant and agent identifiers can resemble phone numbers. Preserve
+ * them only when phone-shape detection was the sole redaction reason for that
+ * exact authority field; every secret, path, and other PII decision remains
+ * untouched. User-visible tool params continue to use the ordinary fully
+ * redacted value.
+ */
+export function buildFailureArgsPreview(
+  args: unknown,
+  homeDir?: string,
+): Record<string, unknown> | undefined {
+  if (args === null || typeof args !== "object" || Array.isArray(args)) {
+    return undefined;
+  }
+  const rawArgs = args as Record<string, unknown>;
+  const redacted = redactValue(rawArgs, { homeDir });
+  if (
+    redacted.value === null
+    || typeof redacted.value !== "object"
+    || Array.isArray(redacted.value)
+  ) {
+    return undefined;
+  }
+
+  const preview = { ...(redacted.value as Record<string, unknown>) };
+  for (const key of DIAGNOSTIC_AUTHORITY_ID_KEYS) {
+    const rawValue = rawArgs[key];
+    if (typeof rawValue !== "string" || !NUMERIC_AUTHORITY_ID.test(rawValue)) {
+      continue;
+    }
+    const reasons = redacted.redactionsApplied
+      .filter((record) => record.key === key)
+      .map((record) => record.reason);
+    if (
+      reasons.length > 0
+      && reasons.every((reason) => reason === "pii_phone")
+    ) {
+      preview[key] = rawValue;
+    }
+  }
+  return sanitizeToolArgs(preview);
 }
 
 /**

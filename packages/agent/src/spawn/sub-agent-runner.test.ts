@@ -8,6 +8,7 @@ import {
   createConversationLocator,
   formatSessionKey,
   RequiredToolsUnreachableError,
+  TypedEventBus,
   type ConversationLocator,
 } from "@comis/core";
 import { SandboxDowngradeError } from "./sandbox-posture.js";
@@ -93,6 +94,12 @@ function createMockSessionStore(): SubAgentRunnerDeps["sessionStore"] {
   };
 }
 
+function createTestEventBus(): TypedEventBus {
+  const eventBus = new TypedEventBus();
+  vi.spyOn(eventBus, "emit");
+  return eventBus;
+}
+
 function createTestConversation(overrides: {
   tenantId?: string;
   agentId?: string;
@@ -161,7 +168,7 @@ function createMockDeps(): SubAgentRunnerDeps {
       stepsExecuted: 3,
     }),
     sendToChannel: vi.fn().mockResolvedValue(true),
-    eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+    eventBus: createTestEventBus(),
     config: {
       enabled: true,
       maxPingPongTurns: 3,
@@ -228,6 +235,54 @@ describe("createSubAgentRunner", () => {
       cost: { total: 0.001 },
       finishReason: "stop",
       stepsExecuted: 1,
+    });
+  });
+
+  it("running run status exposes content-free live tool degradation", async () => {
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "inspect several sources",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+    });
+    const running = runner.getRunStatus(runId);
+    expect(running?.status).toBe("running");
+    if (running?.status !== "running") throw new Error("expected running run");
+
+    deps.eventBus.emit("tool:executed", {
+      toolName: "web_search",
+      toolCallId: "call-failed",
+      durationMs: 12,
+      success: false,
+      errorKind: "resource",
+      timestamp: 123,
+      agentId: "researcher",
+      sessionKey: running.sessionKey,
+      traceId: "child-trace",
+    });
+    deps.eventBus.emit("tool:executed", {
+      toolName: "web_fetch",
+      toolCallId: "call-ok",
+      durationMs: 8,
+      success: true,
+      timestamp: 124,
+      agentId: "researcher",
+      sessionKey: running.sessionKey,
+      traceId: "child-trace",
+    });
+
+    const listed = runner.listRuns(30).find((run) => run.runId === runId);
+    expect(listed).toMatchObject({
+      status: "running",
+      progress: {
+        health: "degraded",
+        toolCalls: 2,
+        failedToolCalls: 1,
+        lastFailedTool: "web_search",
+        lastErrorKind: "resource",
+        updatedAt: 124,
+      },
     });
   });
 
@@ -2161,7 +2216,7 @@ describe("createSubAgentRunner", () => {
         sessionStore: createMockSessionStore(),
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves -- keeps children "running"
         sendToChannel: vi.fn().mockResolvedValue(true),
-        eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+        eventBus: createTestEventBus(),
         config: {
           enabled: true,
           maxPingPongTurns: 3,
@@ -2404,7 +2459,7 @@ describe("createSubAgentRunner", () => {
           finishReason: "stop", stepsExecuted: 1,
         }),
         sendToChannel: vi.fn().mockResolvedValue(true),
-        eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+        eventBus: createTestEventBus(),
         config: {
           enabled: true, maxPingPongTurns: 3, allowAgents: [],
           subAgentRetentionMs: 3_600_000, waitTimeoutMs: 60_000,
@@ -2457,7 +2512,7 @@ describe("createSubAgentRunner", () => {
         sessionStore: createMockSessionStore(),
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
         sendToChannel: vi.fn().mockResolvedValue(true),
-        eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+        eventBus: createTestEventBus(),
         config: {
           enabled: true, maxPingPongTurns: 3, allowAgents: [],
           subAgentRetentionMs: 3_600_000, waitTimeoutMs: 60_000,
@@ -2495,7 +2550,7 @@ describe("createSubAgentRunner", () => {
         sessionStore: createMockSessionStore(),
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
         sendToChannel: vi.fn().mockResolvedValue(true),
-        eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+        eventBus: createTestEventBus(),
         config: {
           enabled: true, maxPingPongTurns: 3, allowAgents: [],
           subAgentRetentionMs: 3_600_000, waitTimeoutMs: 60_000,
@@ -2530,7 +2585,7 @@ describe("createSubAgentRunner", () => {
         sessionStore: createMockSessionStore(),
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
         sendToChannel: vi.fn().mockResolvedValue(true),
-        eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+        eventBus: createTestEventBus(),
         config: {
           enabled: true, maxPingPongTurns: 3, allowAgents: [],
           subAgentRetentionMs: 3_600_000, waitTimeoutMs: 60_000,
@@ -2836,7 +2891,7 @@ describe("createSubAgentRunner", () => {
         sessionStore: createMockSessionStore(),
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves -- keeps children "running"
         sendToChannel: vi.fn().mockResolvedValue(true),
-        eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+        eventBus: createTestEventBus(),
         config: {
           enabled: true,
           maxPingPongTurns: 3,
@@ -4407,7 +4462,7 @@ describe("spawn rejection WARN logs", () => {
       sessionStore: createMockSessionStore(),
       executeAgent: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves
       sendToChannel: vi.fn().mockResolvedValue(true),
-      eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+      eventBus: createTestEventBus(),
       config: {
         enabled: true,
         maxPingPongTurns: 3,
@@ -5454,7 +5509,7 @@ describe("sub-agent-runner uses BackgroundSessionResolver for parent-session loo
       ...createMockDeps(),
       // The DLQ recovery path registers a provider:recovered listener, so the
       // event bus needs `on` here (the default mock only stubs `emit`).
-      eventBus: { emit: vi.fn(), on: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+      eventBus: createTestEventBus(),
       deadLetterQueue: deadLetterQueue as unknown as SubAgentRunnerDeps["deadLetterQueue"],
       deliveryDedup,
     });
@@ -5510,7 +5565,7 @@ describe("sandbox no-downgrade gate", () => {
       // never resolves -- keeps children "running" so the children-limit path is reachable
       executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
       sendToChannel: vi.fn().mockResolvedValue(true),
-      eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
+      eventBus: createTestEventBus(),
       config: {
         enabled: true,
         maxPingPongTurns: 3,

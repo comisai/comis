@@ -16,6 +16,7 @@ import {
   readNumberParam,
 } from "../tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";
+import { rethrowSessionReadRpcError } from "./session-read-tool-error.js";
 
 // ── Parameter Schema ────────────────────────────────────────────────
 
@@ -68,8 +69,7 @@ export function createSessionsHistoryTool(rpcCall: RpcCall): AgentTool<typeof Se
         });
         return jsonResult(result);
       } catch (err) {
-        if (err instanceof Error && err.message.startsWith("[")) throw err;
-        throw err instanceof Error ? err : new Error(String(err));
+        rethrowSessionReadRpcError(err);
       }
     },
   };

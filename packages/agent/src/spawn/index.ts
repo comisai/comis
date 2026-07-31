@@ -37,6 +37,7 @@ export type {
   SubAgentFailedRun,
   SubAgentCompletion,
   SubAgentRunTelemetry,
+  SubAgentRunProgress,
   SubAgentWaitResult,
   SpawnParams,
   SubAgentRunnerLogger,

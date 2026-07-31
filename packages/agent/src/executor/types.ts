@@ -11,6 +11,7 @@ import type {
   SessionKey,
   SpawnPacket,
   ResponseLocalePolicy,
+  ResponseLocaleRepairSkipped,
   WorkspacePolicySnapshot,
   AgentExecutionFinishReason,
   ExecutionSideEffectSummary,
@@ -50,6 +51,8 @@ export interface ExecutionResultBase {
   finalResponseSuppressedBy?: "outbound_delivery";
   /** Content-free finding recorded when the initial model output required locale repair. */
   localeQualityFinding?: ResponseLocaleQualityFinding;
+  /** Content-free reason the original mismatched response had to be preserved. */
+  responseLocaleRepairSkipped?: ResponseLocaleRepairSkipped;
   /** PER-EXECUTION token totals (the bridge's accumulation for THIS execute()
    *  call) — scope-consistent with `cost`. For the session-cumulative total
    *  (across every execution on the persisted session) read `sessionTokensUsed`. */

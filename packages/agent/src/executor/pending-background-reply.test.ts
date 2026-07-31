@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { BackgroundTask } from "../background/background-task-types.js";
 import { reconcilePendingBackgroundTurn } from "./pending-background-reply.js";
+import { scrubSecretsFromText } from "@comis/core";
 
 function task(overrides: Partial<BackgroundTask> = {}): BackgroundTask {
   return {
@@ -35,7 +36,8 @@ describe("reconcilePendingBackgroundTurn", () => {
     });
 
     expect(result.finishReason).toBe("background_pending");
-    expect(result.response).toContain("mcp__large_report");
+    expect(result.response).toContain("large report");
+    expect(result.response).not.toContain("mcp__large_report");
     expect(result.response).toContain("task-a");
     expect(result.response).not.toContain("Tel Aviv");
   });
@@ -47,6 +49,20 @@ describe("reconcilePendingBackgroundTurn", () => {
       executionId: "11111111-1111-4111-8111-111111111111",
       tasks: [task({ status: "completed" })],
     })).toEqual({ response, finishReason: undefined, pendingCount: 0 });
+  });
+
+  it("renders a high-entropy registered tool as egress-safe status prose", () => {
+    const result = reconcilePendingBackgroundTurn({
+      response: "unrelated",
+      executionId: "11111111-1111-4111-8111-111111111111",
+      tasks: [task({ toolName: "mcp__background-report--read_assistant_report" })],
+    });
+
+    expect(scrubSecretsFromText(result.response)).toEqual({
+      text: result.response,
+      redactions: 0,
+    });
+    expect(result.response).not.toContain("[REDACTED]");
   });
 
   it("is wired at the post-execution terminal chokepoint with the task manager", () => {
