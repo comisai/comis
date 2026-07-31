@@ -582,6 +582,12 @@ export function assembleIncidentReport(
               ? {
                   failedTurnCount: signals.turnFinalizeCounts.failure,
                   recoveredTurnCount: signals.turnFinalizeCounts.recovered,
+                  ...(signals.turnFinalizeCounts.backgroundPending > 0
+                    ? {
+                        backgroundPendingCleanupCount:
+                          signals.turnFinalizeCounts.backgroundPending,
+                      }
+                    : {}),
                 }
               : {}),
           },

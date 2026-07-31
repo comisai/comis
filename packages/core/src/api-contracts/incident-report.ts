@@ -602,6 +602,11 @@ export const IncidentReportSchema = z.object({
       failedTurnCount: z.number().optional(),
       /** Session-wide count of turns that finalized as recovered successes. */
       recoveredTurnCount: z.number().optional(),
+      /**
+       * Session-wide count of foreground activity scaffolds removed after a
+       * background handoff. Present only when at least one occurred.
+       */
+      backgroundPendingCleanupCount: z.number().optional(),
     })
     .optional(),
   /** Silent-failure recovery attempts folded from the session's

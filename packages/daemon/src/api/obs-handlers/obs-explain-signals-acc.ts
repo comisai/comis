@@ -186,10 +186,14 @@ export interface Acc {
     renderErrorKind?: string;
     reclassified: boolean;
   };
-  /** Session-wide finalize tally: how many turns painted a kept failure pill
-   *  and how many finalized as recovered successes — the last-wins snapshot
-   *  above cannot answer "which turn wore the pill" mid-session. */
-  turnFinalizeCounts?: { failure: number; recovered: number };
+  /** Session-wide finalize tally for surface states that a later finalize can
+   *  hide: kept failure pills, recovered successes, and background-pending
+   *  scaffold cleanup. */
+  turnFinalizeCounts?: {
+    failure: number;
+    recovered: number;
+    backgroundPending: number;
+  };
   /** Σ over `memory.recall_degraded` records: how many recalls this session
    *  degraded (a lane or the whole split failed) + the last closed scope /
    *  ErrorKind labels. Content-free. */

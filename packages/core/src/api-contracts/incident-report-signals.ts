@@ -371,12 +371,17 @@ export interface IncidentSignals {
     reclassified: boolean;
   };
   /**
-   * Session-wide finalize tally: turns that painted a kept failure pill and
-   * turns that finalized as recovered successes. The last-wins `turnFinalized`
-   * snapshot above cannot answer "which turn wore the pill" mid-session.
+   * Session-wide finalize tally: turns that painted a kept failure pill,
+   * finalized as recovered successes, or removed a scaffold for a pending
+   * background handoff. The last-wins `turnFinalized` snapshot above cannot
+   * retain these earlier user-surface states.
    * Absent ⇒ no finalize records.
    */
-  turnFinalizeCounts?: { failure: number; recovered: number };
+  turnFinalizeCounts?: {
+    failure: number;
+    recovered: number;
+    backgroundPending: number;
+  };
   /**
    * The LAST `delivery.dispatched` record. This is the terminal user-delivery
    * truth, independent of the earlier model/execution summary. A later
