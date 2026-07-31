@@ -289,7 +289,11 @@ export function registerAllToolMetadata(): void {
       const hasCommand = typeof params.command === "string" && params.command.trim().length > 0;
       const hasUrl = typeof params.url === "string" && params.url.trim().length > 0;
       if (hasCommand || hasUrl) return undefined;
-      return "mcp_manage connect requires command or url (command for stdio; url for HTTP/SSE)";
+      return (
+        "mcp_manage connect requires command or url (command for stdio; url for HTTP/SSE). " +
+        "Resolve omitted connection fields only from trusted operator workspace policy such as TOOLS.md. " +
+        "If policy does not define them, ask the operator; never guess or reuse model-authored values."
+      );
     },
   });
 

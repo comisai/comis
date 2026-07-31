@@ -340,7 +340,10 @@ function validateConnectParams(
       "missing_param",
       `mcp_manage(action="connect") is missing required parameters: ${missing.join(", ")}.`,
       {
-        hint: 'Provide all required fields: server_name, transport ("stdio"|"sse"|"http"), and either command (for stdio) or url (for sse/http).',
+        hint:
+          'Provide all required fields: server_name, transport ("stdio"|"sse"|"http"), and either command (for stdio) or url (for sse/http). ' +
+          "Resolve omitted connection fields only from trusted operator workspace policy such as TOOLS.md. " +
+          "If policy does not define them, ask the operator; never guess or reuse model-authored values.",
       },
     );
   }
