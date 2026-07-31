@@ -352,7 +352,23 @@ export function translatePayload(
     case "background_task:promoted":
       return { taskId: payload.taskId, toolName: payload.toolName };
     case "background_task:completed":
-      return { taskId: payload.taskId, toolName: payload.toolName, durationMs: payload.durationMs };
+      return {
+        taskId: payload.taskId,
+        toolName: payload.toolName,
+        durationMs: payload.durationMs,
+        ...(payload.resultOutcome === "success" || payload.resultOutcome === "degraded"
+          ? { resultOutcome: payload.resultOutcome }
+          : {}),
+        ...(payload.persistence === "persisted"
+          || payload.persistence === "runtime_only"
+          || payload.persistence === "skipped"
+          ? { persistence: payload.persistence }
+          : {}),
+        ...(payload.errorKind === "config" ? { errorKind: payload.errorKind } : {}),
+        ...(payload.failureCode === "mutation_not_persisted"
+          ? { failureCode: payload.failureCode }
+          : {}),
+      };
     case "background_task:failed":
       return {
         taskId: payload.taskId,

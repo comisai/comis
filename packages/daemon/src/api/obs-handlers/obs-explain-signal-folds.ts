@@ -157,6 +157,29 @@ export function accumulateBackgroundTaskRecord(
     if (acc.backgroundTerminalTaskIds.has(taskId)) return;
     acc.backgroundTerminalTaskIds.add(taskId);
     acc.backgroundCompletedTaskIds.add(taskId);
+    if (data.resultOutcome !== "degraded" || toolName === undefined) return;
+    const entry = ensureBackgroundTool(acc, toolName);
+    if (acc.backgroundPromotionsByTask.get(taskId) === toolName && entry.ok > 0) {
+      entry.ok -= 1;
+    }
+    entry.failed += 1;
+    const errorKind = asString(data.errorKind) ?? "internal";
+    const failureCode = narrow(
+      ["mutation_not_persisted"] as const,
+      data.failureCode,
+    );
+    entry.errorKinds.set(errorKind, (entry.errorKinds.get(errorKind) ?? 0) + 1);
+    acc.failures.push({
+      seq,
+      toolName,
+      classifiedFailureBy: "background_task",
+      transportOk: false,
+      errorKind,
+      ...(failureCode !== undefined ? { failureCode } : {}),
+      resultDigest: fingerprint(`${taskId}:${toolName}:${errorKind}`),
+      resultBytes: 0,
+      errorPreview: "",
+    });
     return;
   }
   if (type === "background_task.failed") {

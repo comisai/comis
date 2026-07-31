@@ -151,6 +151,37 @@ function classifyBackgroundTaskFailure(
   return undefined;
 }
 
+function projectBackgroundCompletionResult(
+  serializedResult: string | undefined,
+): {
+  resultOutcome?: "success" | "degraded";
+  persistence?: "persisted" | "runtime_only" | "skipped";
+  errorKind?: ErrorKind;
+  failureCode?: Extract<BackgroundTaskFailureCode, "mutation_not_persisted">;
+} {
+  if (serializedResult === undefined) return {};
+  const parsed = tryCatch(
+    () => JSON.parse(serializedResult) as unknown,
+    () => new Error("Background result is not structured JSON"),
+  );
+  if (!parsed.ok || parsed.value === null || typeof parsed.value !== "object") return {};
+  const details = (parsed.value as Record<string, unknown>).details;
+  if (details === null || typeof details !== "object" || Array.isArray(details)) return {};
+  const persistence = (details as Record<string, unknown>).persistence;
+  if (persistence === "persisted") {
+    return { resultOutcome: "success", persistence };
+  }
+  if (persistence === "runtime_only" || persistence === "skipped") {
+    return {
+      resultOutcome: "degraded",
+      persistence,
+      errorKind: "config",
+      failureCode: "mutation_not_persisted",
+    };
+  }
+  return {};
+}
+
 export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): BackgroundTaskManager {
   const {
     dataDir,
@@ -443,6 +474,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       const committed = commitTerminal(task, terminal);
       if (!committed.ok) return committed;
       const durationMs = terminal.completedAt - task.startedAt;
+      const completionProjection = projectBackgroundCompletionResult(terminal.result);
       emitObservationalEventSafely({ eventBus, logger }, "background_task:completed", {
         agentId: task.origin.turnScope.conversation.agentId,
         taskId,
@@ -453,6 +485,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
         ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
         ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
+        ...completionProjection,
       });
       return ok(undefined);
     },
@@ -635,6 +668,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         }
         if (task.status === "completed") {
           count++;
+          const completionProjection = projectBackgroundCompletionResult(task.result);
           emitObservationalEventSafely({ eventBus, logger }, "background_task:completed", {
             agentId: task.origin.turnScope.conversation.agentId,
             taskId: task.id,
@@ -645,6 +679,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
             ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
             ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
+            ...completionProjection,
           });
         } else if (task.status === "failed") {
           count++;
@@ -851,7 +886,10 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           dispatchRedelivery: true,
         };
         if (event === "background_task:completed") {
-          emitObservationalEventSafely({ eventBus, logger }, event, common);
+          emitObservationalEventSafely({ eventBus, logger }, event, {
+            ...common,
+            ...projectBackgroundCompletionResult(current.result),
+          });
         } else {
           emitObservationalEventSafely({ eventBus, logger }, event, {
             ...common,

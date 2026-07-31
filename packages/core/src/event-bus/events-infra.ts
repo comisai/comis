@@ -7,7 +7,10 @@ import type { ErrorKind } from "../logging/log-fields.js";
 import type { ModelResolutionSource } from "../domain/agent-execution-outcome.js";
 /** Content-free reason for a failed outbound webhook delivery. */
 export type WebhookFailureReason = "handler_error" | "task_not_delivered";
-export type BackgroundTaskFailureCode = "skill_import_incomplete" | "mcp_connection_details_missing";
+export type BackgroundTaskFailureCode =
+  | "skill_import_incomplete"
+  | "mcp_connection_details_missing"
+  | "mutation_not_persisted";
 /**
  * InfraEvents: Config, plugin, hook, auth, diagnostic,
  * media, scheduler, system, and metrics events.
@@ -672,6 +675,14 @@ export interface InfraEvents {
     sessionKey?: string;
     /** Trace id captured at promote time — see the failed variant. */
     traceId?: string;
+    /** Content-free verdict projected from a structured management-tool result. */
+    resultOutcome?: "success" | "degraded";
+    /** Durable-write disposition when the tool result exposes one. */
+    persistence?: "persisted" | "runtime_only" | "skipped";
+    /** Present only for a degraded structured completion. */
+    errorKind?: ErrorKind;
+    /** Closed cause for a completed tool whose requested mutation was not durable. */
+    failureCode?: Extract<BackgroundTaskFailureCode, "mutation_not_persisted">;
   };
 
   /** Background task failed (timeout, error, or daemon restart).

@@ -372,6 +372,25 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
+  // A management tool may finish its runtime mutation while its durable
+  // config write fails. The terminal background event is authoritative over
+  // the foreground handoff success and must name the persistence boundary.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) => candidate.failureCode === "mutation_not_persisted",
+    );
+    if (failure === undefined) return null;
+    return {
+      code: "mutation_not_persisted",
+      detail:
+        `${failure.toolName} completed its runtime mutation but the change was not persisted`,
+      suggestedNextSteps: [
+        "inspect the config persistence warning and repair the named config path or secret reference",
+        `retry ${failure.toolName} and confirm the resulting config change survives a daemon restart`,
+      ],
+    };
+  },
+
   // A skill bundle whose declared local references do not resolve inside the
   // approved immutable directory is a concrete import rejection. The closed
   // failure code retains that diagnosis without retaining any source path.
