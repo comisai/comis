@@ -43,6 +43,20 @@ describe("selectRecentUserTurns", () => {
     ]);
   });
 
+  it("keeps the original referent when exact retries exceed the turn bound", () => {
+    const turns = selectRecentUserTurns([
+      message("user", "check my synthetic account"),
+      message("user", "here is the credential"),
+      ...Array.from({ length: 9 }, () => message("user", "connect a second one")),
+    ]);
+
+    expect(turns).toEqual([
+      "check my synthetic account",
+      "here is the credential",
+      "connect a second one",
+    ]);
+  });
+
   it("ignores empty user content while joining multiple text blocks", () => {
     const turns = selectRecentUserTurns([
       message("user", "   "),

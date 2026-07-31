@@ -642,6 +642,48 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
     expect(result.deferredNames).toContain("tokens_manage");
   });
 
+  it("keeps tied namespaced read tools active for a plural follow-up", () => {
+    const logger = createMockLogger();
+    const tools = [
+      {
+        ...makeTool("mcp__primary--account_summary"),
+        description: "Return the configured synthetic account summary.",
+      },
+      {
+        ...makeTool("mcp__secondary--account_summary"),
+        description: "Return the configured synthetic account summary.",
+      },
+      {
+        ...makeTool("mcp__primary--forbidden_action"),
+        description: "Record a synthetic mutation. Use only on a direct operator request.",
+      },
+    ] as unknown as ToolDefinition[];
+    for (const tool of tools) {
+      registerToolMetadata(tool.name, { searchHint: tool.description ?? "" });
+    }
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      requestText: "use both and tell me whats different",
+      requestRelevanceText: [
+        "check my synthetic account",
+        "here is the credential",
+        "connect to it",
+        "connect a second one",
+        "use both and tell me whats different",
+      ].join("\n"),
+      toolNames: tools.map((tool) => tool.name),
+    });
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.requestRelevantToolNames).toEqual([
+      "mcp__primary--account_summary",
+      "mcp__secondary--account_summary",
+    ]);
+    expect(result.deferredNames).toContain("mcp__primary--forbidden_action");
+  });
+
   it("selects a recently active declared mutation tool ahead of incidental deferred matches", () => {
     const logger = createMockLogger();
     registerToolMetadata("models_manage", {
