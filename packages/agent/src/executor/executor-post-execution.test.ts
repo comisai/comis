@@ -1039,6 +1039,19 @@ describe("tool-failure endReason and notice", () => {
     expect(noticeBlock).not.toBeNull();
   });
 
+  it("source-grep — recovered tool failures do not degrade successful turns", () => {
+    const stripped = readPostExecStripped();
+    const recoveryAwareReconciliation = stripped.match(
+      /const unrecoveredToolFailures\s*=\s*unrecoveredFailedToolNames\([\s\S]{0,800}?const toolReconciledFinishReason\s*=[\s\S]{0,400}?;/,
+    );
+
+    expect(recoveryAwareReconciliation).not.toBeNull();
+    expect(recoveryAwareReconciliation?.[0]).toMatch(
+      /unrecoveredToolFailures\.length\s*>\s*0/,
+    );
+    expect(recoveryAwareReconciliation?.[0]).not.toMatch(/\bhasToolFailures\b/);
+  });
+
   it("source-grep — unavailable vision replaces contradictory model recovery advice", () => {
     const stripped = readPostExecStripped();
     expect(stripped).toMatch(/hasUnavailableVisionFailure/);
