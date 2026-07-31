@@ -891,6 +891,7 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     expect(
       (report.coverage as Record<string, unknown>).executionDiagnostic,
     ).toEqual({ found: true });
+    expect(report.coverage?.rollup).toEqual({ present: false });
     expect(JSON.stringify(report)).not.toContain("message-private");
     expect(JSON.stringify(report)).not.toContain("conversation-private");
     db.close();
