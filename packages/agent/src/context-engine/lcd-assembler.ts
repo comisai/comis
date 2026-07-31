@@ -774,7 +774,11 @@ function coalesceConsecutiveSummaryRefs(
         0,
       );
       outItems.push({
-        msg: { role: "user", content: [{ type: "text", text: joinedText }] } as unknown as AgentMessage,
+        msg: {
+          role: "user",
+          compactionSummary: true,
+          content: [{ type: "text", text: joinedText }],
+        } as unknown as AgentMessage,
         tokens,
         representedMessageCount,
       });
