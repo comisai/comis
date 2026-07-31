@@ -503,6 +503,35 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
     ]);
   });
 
+  it("routes a natural external-account request to MCP management", () => {
+    const logger = createMockLogger();
+    registerToolMetadata("mcp_manage", {
+      searchHint: "mcp server protocol connect disconnect tool external",
+    });
+    const backgroundTasks = {
+      ...makeTool("background_tasks"),
+      description:
+        "Manage background tasks. Use list, get, or cancel to check status or cancel work.",
+    } as unknown as ToolDefinition;
+    const tools: ToolDefinition[] = [
+      makeTool("read"),
+      makeTool("mcp_manage"),
+      backgroundTasks,
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      requestText: "i want u to be able to check my test account yourself",
+      toolNames: tools.map((tool) => tool.name),
+    });
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.requestRelevantToolNames).toEqual(["mcp_manage"]);
+    expect(result.activeTools.map((tool) => tool.name)).toContain("mcp_manage");
+    expect(result.deferredNames).toContain("background_tasks");
+  });
+
   it("selects a recently active declared mutation tool ahead of incidental deferred matches", () => {
     const logger = createMockLogger();
     registerToolMetadata("models_manage", {
