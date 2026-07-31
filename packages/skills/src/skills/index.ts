@@ -68,7 +68,11 @@ export {
 } from "./bridge/mcp-tool-bridge.js";
 
 // Prompt processor
-export { expandSkillForInvocation, formatAvailableSkillsXml } from "./prompt/processor.js";
+export {
+  expandSkillForInvocation,
+  formatAvailableSkillsXml,
+  formatUnavailableSkillsXml,
+} from "./prompt/processor.js";
 export type { PromptSkillDescription } from "./prompt/processor.js";
 
 // Content scanner (security scan before write)

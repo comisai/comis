@@ -131,6 +131,8 @@ export interface OutcomeVerdict {
 export interface OutcomeJudgeInput {
   /** The finished user/assistant turn. Always delimiter-wrapped before model input. */
   trajectoryContent: string;
+  /** Code-owned availability evidence for installed prompt skills. */
+  unavailableSkills?: ReadonlyArray<{ name: string; reason: string }>;
   /** Exact turn snapshot; never reread from the workspace at verdict time. */
   policySnapshot?: WorkspacePolicySnapshot;
 }
@@ -146,6 +148,7 @@ Apply this generic rubric:
 - Did the turn reach a terminal outcome?
 - Did the response truthfully reflect tool and delivery results?
 - Were required actions completed or explicitly reported unavailable?
+- Treat proven honest unavailability as successful completion, not failure.
 - Did security, approval, capability, or output guards report a violation?
 - Did the result comply with the supplied immutable operator policy?
 - Is the evidence sufficient for the verdict?
@@ -224,6 +227,18 @@ function unknownVerdict(audit: VerdictAuditMetadata): OutcomeVerdict {
     ...audit,
     rubricHash: OUTCOME_JUDGE_RUBRIC_HASH,
   };
+}
+
+function buildOutcomeJudgeEvidence(input: OutcomeJudgeInput): string {
+  const unavailableSkills = (input.unavailableSkills ?? [])
+    .slice(0, 25)
+    .map((skill) => ({
+      name: skill.name.slice(0, 128),
+      reason: skill.reason.slice(0, 512),
+      status: "installed_unavailable" as const,
+    }));
+  if (unavailableSkills.length === 0) return input.trajectoryContent;
+  return `${JSON.stringify({ runtimeFacts: { skillAvailability: unavailableSkills } })}\n${input.trajectoryContent}`;
 }
 
 /**
@@ -351,7 +366,8 @@ export function createOutcomeJudgeSeam(
     // content, never read as an instruction (bound #1). The wrap reads
     // `contentDelimiter` from the ALS context for cache-stable, session-consistent
     // markers.
-    const wrapped = wrapExternalContent(input.trajectoryContent, { source: "outcome_judge" });
+    const evidence = buildOutcomeJudgeEvidence(input);
+    const wrapped = wrapExternalContent(evidence, { source: "outcome_judge" });
     const text = await callModel(buildOutcomeJudgePrompt(input.policySnapshot), wrapped);
     // A failed/aborted call → no verdict (undefined); the outcome stays unresolved.
     if (text === undefined) return undefined;
@@ -362,7 +378,7 @@ export function createOutcomeJudgeSeam(
         ? {}
         : { policyHash: input.policySnapshot.combinedHash }),
       judgeModel: `${provider}/${modelId}`,
-      evidenceRefs: [createHash("sha256").update(input.trajectoryContent, "utf-8").digest("hex")],
+      evidenceRefs: [createHash("sha256").update(evidence, "utf-8").digest("hex")],
     });
   };
 }

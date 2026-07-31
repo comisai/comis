@@ -94,12 +94,17 @@ export function buildCustomJudgeModelSpec(
 
 /** Per-call output bound for the cheap outcome-judge verdict (a tiny JSON shape). */
 const OUTCOME_JUDGE_MAX_OUTPUT_TOKENS = 1024;
-/** Max recent user/assistant text messages the judge scores per turn (bounds prompt size). */
+/** Max user/assistant text messages retained from one judged turn. */
 const JUDGE_TRANSCRIPT_MAX_MESSAGES = 12;
 
 /** The mapped judge seam the resolve consume-seam calls (the verdict's narrow union + the CODE-capped reward). */
 export type OutcomeJudge = (
-  input: { agentId: string; trajectoryContent: string; workspacePolicyHash?: string },
+  input: {
+    agentId: string;
+    trajectoryContent: string;
+    workspacePolicyHash?: string;
+    unavailableSkills?: ReadonlyArray<{ name: string; reason: string }>;
+  },
 ) => Promise<OutcomeVerdict | undefined>;
 
 /** The resolved scope an upgrade/transcript-read keys on (mirrors the setup-learning OutcomeScope). */
@@ -110,6 +115,7 @@ export interface JudgeScope {
   trajectoryId: string;
   conversationRef?: ConversationRef;
   workspacePolicyHash?: string;
+  unavailableSkills?: ReadonlyArray<{ name: string; reason: string }>;
 }
 
 // ===========================================================================
@@ -392,8 +398,12 @@ export function buildOutcomeJudgeWiring(
           })
           .filter((l) => l.length > 0);
         if (lines.length === 0) return undefined;
-        // Take the most-recent N (bounds prompt size); keep chronological order.
-        const recent = lines.slice(-JUDGE_TRANSCRIPT_MAX_MESSAGES);
+        const latestUserIndex = lines.findLastIndex((line) => line.startsWith("user: "));
+        if (latestUserIndex < 0) return undefined;
+        const currentTurn = lines.slice(latestUserIndex);
+        const recent = currentTurn.length <= JUDGE_TRANSCRIPT_MAX_MESSAGES
+          ? currentTurn
+          : [currentTurn[0]!, ...currentTurn.slice(-(JUDGE_TRANSCRIPT_MAX_MESSAGES - 1))];
         return recent.join("\n");
       }
     : undefined;
@@ -456,6 +466,9 @@ export async function maybeUpgradeWithJudge(
     const jv = await deps.outcomeJudge({
       agentId: scope.agentId,
       trajectoryContent: text,
+      ...(scope.unavailableSkills === undefined
+        ? {}
+        : { unavailableSkills: scope.unavailableSkills }),
       ...(scope.workspacePolicyHash === undefined
         ? {}
         : { workspacePolicyHash: scope.workspacePolicyHash }),

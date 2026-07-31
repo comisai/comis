@@ -387,6 +387,10 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   // Last opt-in tool self-grade per trajectory. Generic tool calls may follow the
   // grader, so the completion seam persists this explicit terminal state after them.
   const terminalToolGrades = new Map<string, "success" | "failure">();
+  const unavailableSkillsByTrajectory = new Map<
+    string,
+    ReadonlyArray<{ name: string; reason: string }>
+  >();
   const terminalGradeKey = (scope: OutcomeScope): string =>
     `${scope.tenantId}\u0000${scope.agentId}\u0000${scope.trajectoryId}`;
   // Auto-background handoffs are neutral until every promoted task settles.
@@ -410,6 +414,11 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     // Dedup FIRST (synchronous check-and-mark before the async resolve) so a
     // both-events DAG turn cannot slip a second chain through.
     if (!markTrajectoryResolved(scope.trajectoryId, resolvedTrajectories)) return;
+    const unavailableSkills = unavailableSkillsByTrajectory.get(scope.trajectoryId);
+    unavailableSkillsByTrajectory.delete(scope.trajectoryId);
+    const judgeScope: JudgeScope = unavailableSkills === undefined
+      ? scope
+      : { ...scope, unavailableSkills };
     void deps.outcomeStore
       .resolve(scope.trajectoryId, { tenantId: scope.tenantId, agentId: scope.agentId })
       .then(async (r) => {
@@ -429,7 +438,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
         // tool/pipeline signal) gets ONE cheap-model judge pass as the fallback source;
         // a non-`unknown` verdict is returned unchanged (the judge never runs). The
         // dedup already ran at the top — this is the SAME chain (no second chain).
-        const verdict = await maybeUpgradeWithJudge(deps, scope, r.value);
+        const verdict = await maybeUpgradeWithJudge(deps, judgeScope, r.value);
         // Fail-closed coverage: an `unknown` verdict is NOT counted as resolved.
         if (verdict.outcome !== "unknown") resolved += 1;
 
@@ -543,6 +552,22 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
         );
       });
   }
+
+  deps.eventBus.on("prompt:submitted", (payload) => {
+    if (!deps.learningOutcomeEnabled(payload.agentId)) return;
+    const unavailableSkills = payload.unavailableSkills;
+    if (unavailableSkills === undefined || unavailableSkills.length === 0) {
+      unavailableSkillsByTrajectory.delete(payload.traceId);
+      return;
+    }
+    unavailableSkillsByTrajectory.set(
+      payload.traceId,
+      unavailableSkills.slice(0, 25).map((skill) => ({
+        name: skill.name.slice(0, 128),
+        reason: skill.reason.slice(0, 512),
+      })),
+    );
+  });
 
   function maybeResolveBackground(scope: OutcomeScope): void {
     const trajectoryId = scope.trajectoryId;

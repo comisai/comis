@@ -88,6 +88,10 @@ export interface RunPromptParams {
    */
   capabilityIndexResult: CapabilityIndexRenderResult;
   inlineMemory: string | undefined;
+  unavailablePromptSkills: readonly {
+    readonly name: string;
+    readonly reason: string;
+  }[];
   systemPrompt: string | undefined;
   mergedCustomTools: Array<{ name: string; description?: string; parameters?: unknown }>;
   // Command/state

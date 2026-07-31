@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   escapeXml,
   formatAvailableSkillsXml,
+  formatUnavailableSkillsXml,
   expandSkillForInvocation,
   parseSkillArgs,
   substituteSkillArgs,
@@ -19,7 +20,7 @@ describe("escapeXml", () => {
     expect(escapeXml("hello")).toBe("hello");
   });
 
-  it("escapes ampersand", () => {
+  it("escapes ampersands in XML text", () => {
     expect(escapeXml("a & b")).toBe("a &amp; b");
   });
 
@@ -221,6 +222,29 @@ describe("formatAvailableSkillsXml", () => {
     expect(index.size).toBe(2);
     expect(index.get("/skills/alpha")).toBe("alpha");
     expect(index.get("/skills/beta")).toBe("beta");
+  });
+});
+
+describe("formatUnavailableSkillsXml", () => {
+  it("returns an empty string when every installed skill is available", () => {
+    expect(formatUnavailableSkillsXml([])).toBe("");
+  });
+
+  it("renders only escaped names and blocking reasons", () => {
+    const result = formatUnavailableSkillsXml([
+      {
+        name: "voice<&helper",
+        reason: 'missing env var: VOICE_APP_ID & "VOICE_ACCESS_TOKEN"',
+      },
+    ]);
+
+    expect(result).toContain("<name>voice&lt;&amp;helper</name>");
+    expect(result).toContain(
+      "<reason>missing env var: VOICE_APP_ID &amp; &quot;VOICE_ACCESS_TOKEN&quot;</reason>",
+    );
+    expect(result).toContain("installed but unavailable");
+    expect(result).not.toContain("<description>");
+    expect(result).not.toContain("<location>");
   });
 });
 

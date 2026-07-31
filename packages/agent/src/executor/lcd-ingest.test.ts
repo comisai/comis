@@ -582,10 +582,11 @@ function makeStoreWithPersistedCount(
     append(input: AppendMessageInput): void {
       appended.push(input);
     },
-    // The assembler/ingest both read `getMessages(id).length` as the high-water
-    // mark; return that many placeholder rows so .length is the mark.
+    // Return contiguous placeholder sequences so the durable maximum is the
+    // expected next-sequence high-water mark.
     getMessages() {
-      return new Array(persistedCount).fill(null) as unknown as ReturnType<ContextStorePort["getMessages"]>;
+      return Array.from({ length: persistedCount }, (_, seq) => ({ seq })) as unknown as
+        ReturnType<ContextStorePort["getMessages"]>;
     },
     getIngestCursor(_scope: ContextStoreScope) {
       return cursor;
@@ -940,6 +941,35 @@ describe("continue-append / rebase (the epoch-cursor algorithm)", () => {
     for (let i = 0; i < 7; i++) {
       expect(rows2[40 + i]!.seq).toBe(40 + i);
     }
+  });
+
+  it("a prior sequence gap does not drop the next turn's user message", () => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const logger = createMockLogger();
+    const live: AgentMessage[] = [
+      epochBUser(EPOCH_B_TS_0, "first request"),
+      epochBAssistant(EPOCH_B_TS_1, "first reply"),
+      epochBUser(EPOCH_B_TS_1 + 1, "missing historical row"),
+      epochBAssistant(EPOCH_B_TS_1 + 2, "retained historical row"),
+      epochBUser(EPOCH_B_TS_1 + 3, "current request"),
+      epochBAssistant(EPOCH_B_TS_1 + 4, "current reply"),
+    ];
+
+    ingestTurn(store, SCOPE, 0, live.slice(0, 2), FIXED_NOW, logger);
+    ingestTurn(store, SCOPE, 3, live.slice(3, 4), FIXED_NOW, logger);
+    store.upsertIngestCursor(
+      SCOPE,
+      { epochAnchor: messageEpochAnchor(live[0]!), ingestedLiveLen: 4 },
+      FIXED_NOW,
+    );
+
+    ingestTurnGuarded(store, SCOPE, live, FIXED_NOW, logger);
+
+    const rows = store.getMessages(SCOPE);
+    expect(rows.map((row) => row.seq)).toEqual([0, 1, 3, 4, 5]);
+    expect(rows.slice(-2).map((row) => row.role)).toEqual(["user", "assistant"]);
   });
 
   // -------------------------------------------------------------------------

@@ -270,6 +270,13 @@ export function messageEpochAnchor(msg: AgentMessage): string {
   return `${role}:${ts}:${fp}`;
 }
 
+function nextStoredSequence(store: ContextStorePort, scope: ContextStoreScope): number {
+  return store.getMessages(scope).reduce(
+    (next, message) => Math.max(next, message.seq + 1),
+    0,
+  );
+}
+
 /**
  * Guarded afterTurn ingest: derive the not-yet-persisted delta from the durable
  * epoch cursor and append it — with three distinct guard paths:
@@ -362,9 +369,9 @@ export function ingestTurnGuarded(
     // getMessages is AGENT-SCOPED so each agent keeps an independent
     // seq sequence. The unique (conversation_id, agent_id, tenant_id, seq)
     // index is the per-agent backstop against duplicate seqs.
-    const persisted = store.getMessages(scope).length;
+    const startSeq = nextStoredSequence(store, scope);
     const delta = live; // ingest the entire new live array starting from live[0]
-    ingestTurn(store, scope, persisted, delta, now, logger);
+    ingestTurn(store, scope, startSeq, delta, now, logger);
     // Persist the cursor INSIDE the same runOnConversation lambda (see call site).
     // Guarantees cursor + rows are written in the same serialized slot (atomicity).
     store.upsertIngestCursor(scope, { epochAnchor: currentAnchor, ingestedLiveLen: live.length }, now);
@@ -403,11 +410,12 @@ export function ingestTurnGuarded(
   // Steady state — append only the delta (live.slice(ingestedLiveLen)).
   // When ingestedLiveLen === persisted (the common path), this is byte-identical
   // to the plain live.slice(persisted) behavior (pinned by the steady-state parity test).
-  // persisted is AGENT-SCOPED via getMessages(scope).
-  const persisted = store.getMessages(scope).length;
+  // Start after the durable maximum, not the row count: a prior failed append can
+  // leave a sequence gap, and count-as-seq would collide with the retained tail.
+  const startSeq = nextStoredSequence(store, scope);
   const delta = live.slice(ingestedLiveLen);
   if (delta.length > 0) {
-    ingestTurn(store, scope, persisted, delta, now, logger);
+    ingestTurn(store, scope, startSeq, delta, now, logger);
   }
   // Always update the cursor (even if delta is empty — keeps updatedAt fresh and
   // ensures ingestedLiveLen is authoritative for subsequent calls).

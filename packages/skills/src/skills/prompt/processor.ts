@@ -109,6 +109,41 @@ export function formatAvailableSkillsXml(
 }
 
 // ---------------------------------------------------------------------------
+// Unavailable Installed Skills XML Listing
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate an `<unavailable_skills>` block from bounded availability facts.
+ *
+ * The block deliberately contains only a skill name and its current blocking
+ * reason. It never exposes the manifest path, description, or skill body, so an
+ * unavailable skill cannot become indirectly loadable through prompt metadata.
+ */
+export function formatUnavailableSkillsXml(
+  skills: readonly {
+    readonly name: string;
+    readonly reason: string;
+  }[],
+): string {
+  if (skills.length === 0) return "";
+
+  const entries = skills.map(
+    (skill) =>
+      `  <skill>\n` +
+      `    <name>${escapeXml(skill.name)}</name>\n` +
+      `    <reason>${escapeXml(skill.reason)}</reason>\n` +
+      `  </skill>`,
+  );
+
+  return (
+    `<unavailable_skills>\n` +
+    `  <instruction>These skills are installed but unavailable. Do not load or invoke them, and do not describe them as uninstalled. If asked, explain the listed reason without exposing secret values.</instruction>\n` +
+    `${entries.join("\n")}\n` +
+    `</unavailable_skills>`
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Argument Parsing
 // ---------------------------------------------------------------------------
 

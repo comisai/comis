@@ -282,8 +282,16 @@ describe("materializeLearnedSkills — derive wholesale", () => {
 // renderLearnedSkillsXml — the SYNC seam reader (default-off byte identity)
 // ---------------------------------------------------------------------------
 
-/** A minimal SkillRegistry stub exposing getSnapshot() (the only method the seam reads). */
-function makeRegistry(descriptions: PromptSkillDescription[]) {
+/** A minimal SkillRegistry stub exposing the prompt snapshot and installed inventory. */
+function makeRegistry(
+  descriptions: PromptSkillDescription[],
+  inventory: ReadonlyArray<
+    PromptSkillDescription & {
+      readonly eligible: boolean;
+      readonly reason?: string;
+    }
+  > = descriptions.map((description) => ({ ...description, eligible: true })),
+) {
   const prompt =
     descriptions.length === 0
       ? ""
@@ -295,6 +303,7 @@ function makeRegistry(descriptions: PromptSkillDescription[]) {
           .join("\n")}\n</available_skills>`;
   return {
     getSnapshot: () => ({ prompt, skills: descriptions, version: 1 }),
+    getPromptSkillInventory: () => [...inventory],
   } as unknown as import("@comis/skills").SkillRegistry;
 }
 
@@ -325,6 +334,32 @@ describe("renderLearnedSkillsXml — sync seam reader", () => {
     expect((out.match(/<available_skills>/g) ?? []).length).toBe(1);
     expect(out.indexOf("<name>P1</name>")).toBeLessThan(out.indexOf("<name>L1</name>"));
     expect(out).toContain("<source>learned</source>");
+  });
+
+  it("identifies installed unavailable skills before available skills without exposing their content", () => {
+    const available = platform("P1");
+    const reg = makeRegistry(
+      [available],
+      [
+        { ...available, eligible: true },
+        {
+          name: "voice-helper",
+          description: "private setup text with credential-value",
+          location: "/private/skills/voice-helper/SKILL.md",
+          eligible: false,
+          reason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
+        },
+      ],
+    );
+
+    const out = renderLearnedSkillsXml({ skillRegistry: reg, learnedSkills: [], workspaceDir: workDir });
+
+    expect(out).toContain("<unavailable_skills>");
+    expect(out).toContain("<name>voice-helper</name>");
+    expect(out).toContain("<reason>missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN</reason>");
+    expect(out.indexOf("<unavailable_skills>")).toBeLessThan(out.indexOf("<available_skills>"));
+    expect(out).not.toContain("private setup text with credential-value");
+    expect(out).not.toContain("/private/skills/voice-helper/SKILL.md");
   });
 });
 

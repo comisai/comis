@@ -122,6 +122,12 @@ describe("prompt-runner.ts — orchestrator structure", () => {
     expect(helperBlock).toMatch(/groupHistoryContext/);
   });
 
+  it("emits the frozen installed-skill availability facts without parsing prompt text", () => {
+    const helperBlock = source.slice(source.indexOf("function emitPromptSubmitted("));
+    expect(helperBlock).toMatch(/unavailableSkills:\s*params\.unavailablePromptSkills/);
+    expect(helperBlock).not.toMatch(/<unavailable_skills>|match\(|parse/);
+  });
+
   it("swallows emit errors so dispatch is never aborted by an observability failure", () => {
     // Structural lock: the emit helper body must be wrapped in
     // try/catch with the debug-log on failure.

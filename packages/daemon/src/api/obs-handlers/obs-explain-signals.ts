@@ -20,22 +20,19 @@
  */
 import { fingerprint, type IncidentSignals } from "@comis/core";
 import {
-  asString,
-  asNumber,
-  relativizeDiskPath,
-  previewAndDigest,
-  applyMediaRecord,
-  accumulateSessionSummaryRecord,
-  currentTurnBreakerOpenedTool,
-  latestPromptSequence,
+  asString, asNumber,
+  relativizeDiskPath, previewAndDigest, applyMediaRecord,
+  accumulateSessionSummaryRecord, currentTurnBreakerOpenedTool, latestPromptSequence,
 } from "./obs-explain-signals-fields.js";
 import {
-  accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillUsedRecord, accumulateSkillSurfacedRecord, accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
+  accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillUsedRecord, accumulateSkillSurfacedRecord,
+  accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
   accumulateToolSchemaRecord, buildLearningSignal, emptyLearningFold,
   accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord, accumulateSubAgentSpawnedRecord, accumulateSubAgentCompletedRecord,
   accumulateOrchestrateRunSummaryRecord, accumulateOrchestrateToolCall,
   accumulateBackgroundTaskRecord, buildBackgroundTasksSignal,
   parseContextBudgetRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
+  readSkillAvailability,
 } from "./obs-explain-signal-folds.js";
 import { summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
@@ -147,6 +144,7 @@ function handleEventRecord(
   if (accumulateQueueRecord(acc, type, recordSeq, data)) return;
   switch (type) {
     case "prompt.submitted": {
+      acc.skillAvailability = readSkillAvailability(data.unavailableSkills);
       const inboundKind = asString(data.inboundKind);
       if (inboundKind === "message" || inboundKind === "edit") acc.inboundEdit = inboundKind === "edit";
       const groupHistoryMessageCount = nonnegativeInteger(data.groupHistoryMessageCount);
@@ -805,6 +803,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.inboundEdit !== undefined ? { inboundEdit: acc.inboundEdit } : {}),
     ...(acc.groupHistory !== undefined ? { groupHistory: acc.groupHistory } : {}),
     ...(acc.responseLocale !== undefined ? { responseLocale: acc.responseLocale } : {}),
+    ...(acc.skillAvailability !== undefined ? { skillAvailability: acc.skillAvailability } : {}),
     ...(acc.responseLocaleRepairSkipped !== undefined
       ? { responseLocaleRepairSkipped: acc.responseLocaleRepairSkipped }
       : {}),

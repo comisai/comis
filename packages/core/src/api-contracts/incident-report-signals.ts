@@ -92,6 +92,10 @@ export interface IncidentSignals {
         source: "unset";
         enforced: false;
       };
+  /** Installed prompt skills unavailable to the selected turn. */
+  skillAvailability?: {
+    unavailable: Array<{ name: string; reason: string }>;
+  };
   /** The latest selected turn whose locale repair was safety-skipped. */
   responseLocaleRepairSkipped?: ResponseLocaleRepairSkipped;
   /** The terminal provider rejected a persisted structured protocol identity
