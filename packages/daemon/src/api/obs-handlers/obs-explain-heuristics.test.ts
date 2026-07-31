@@ -962,6 +962,9 @@ describe("obs-explain-heuristics", () => {
         succeeded: 0,
         byReason: { request_tool_nudge: 1 },
       },
+      breakerOpenedTool: "skills_manage",
+      hasDoNotRetrySignal: true,
+      repeatedFailureCount: { skills_manage: 0 },
     }));
 
     expect(r?.code).toBe("tool_invocation_stall");
