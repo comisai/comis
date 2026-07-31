@@ -158,9 +158,20 @@ function approvalLabel(p: EventMap["approval:requested"]): string {
   if (transport !== undefined) details.push(transport);
   if (command !== undefined) details.push(`command ${command}`);
   if (credentialKeys.length > 0) {
-    details.push(`credentials ${credentialKeys.join(",")}`);
+    details.push(`secret ${credentialKeys.join(",")}`);
   }
   const operation = action === undefined ? p.toolName : `${p.toolName} ${action}`;
+  if (serverName !== undefined) {
+    const execution = [transport, command].filter(
+      (value): value is string => value !== undefined,
+    );
+    const compactDetails = [
+      serverName,
+      ...(execution.length > 0 ? [execution.join(" ")] : []),
+      ...(credentialKeys.length > 0 ? [`secret ${credentialKeys.join(",")}`] : []),
+    ];
+    return clampLabel(`approval: ${operation} — ${compactDetails.join("; ")}`);
+  }
   return clampLabel(
     details.length === 0
       ? `approval required: ${operation}`
