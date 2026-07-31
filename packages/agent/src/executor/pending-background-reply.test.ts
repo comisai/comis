@@ -42,12 +42,25 @@ describe("reconcilePendingBackgroundTurn", () => {
     expect(result.response).not.toContain("Tel Aviv");
   });
 
-  it("leaves a terminal answer unchanged when this execution has no running work", () => {
+  it("keeps a completed same-turn handoff nonterminal until its continuation is delivered", () => {
+    const result = reconcilePendingBackgroundTurn({
+      response: "The skill import is still processing.",
+      executionId: "11111111-1111-4111-8111-111111111111",
+      tasks: [task({ status: "completed", dispatchState: "pending" })],
+    });
+
+    expect(result.finishReason).toBe("background_pending");
+    expect(result.pendingCount).toBe(1);
+    expect(result.response).toContain("background result is ready");
+    expect(result.response).not.toContain("still processing");
+  });
+
+  it("leaves a terminal answer unchanged after the background continuation was delivered", () => {
     const response = "The requested report is complete.";
     expect(reconcilePendingBackgroundTurn({
       response,
       executionId: "11111111-1111-4111-8111-111111111111",
-      tasks: [task({ status: "completed" })],
+      tasks: [task({ status: "completed", dispatchState: "delivered" })],
     })).toEqual({ response, finishReason: undefined, pendingCount: 0 });
   });
 
