@@ -97,18 +97,20 @@ describe("runRequestToolNudge", () => {
     });
   });
 
-  it("does not run for a request matched only to read-only tools", async () => {
+  it("runs for an explicit use request matched only to read-only tools", async () => {
     const deps = makeDeps({
+      requestText: "use both and tell me whats different",
       requestRelevantToolNames: ["test_read_only_tool"],
     });
 
     const outcome = await runRequestToolNudge(deps);
 
-    expect(deps.session.prompt).not.toHaveBeenCalled();
+    expect(deps.session.prompt).toHaveBeenCalledTimes(1);
     expect(outcome).toMatchObject({
-      fired: false,
-      recovered: false,
-      outcome: "no_mutating_match",
+      fired: true,
+      recovered: true,
+      matchedToolNames: ["test_read_only_tool"],
+      outcome: "recovered",
     });
   });
 
