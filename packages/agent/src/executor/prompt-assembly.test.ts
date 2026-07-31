@@ -144,7 +144,7 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-import { assembleExecutionPrompt as assembleExecutionPromptRaw, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, getSessionPromptSkillLocations, getSessionPromptMemoryInjected, clearSessionPromptMemoryInjected, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
+import { assembleExecutionPrompt as assembleExecutionPromptRaw, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, getSessionPromptSkillLocations, getSessionPromptTopicMatchedSkills, getSessionPromptMemoryInjected, clearSessionPromptMemoryInjected, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 // node:fs (sync) is NOT mocked here (only node:fs/promises is) — safe for the
 // sub-agent-language source-grep chokepoint below.
@@ -1032,6 +1032,27 @@ describe("assembleExecutionPrompt", () => {
         createdAt: 1_000,
       };
     }
+    function skillDoc(): import("@comis/core").MentalModel {
+      return {
+        id: "mm-skill-grocery-sort",
+        name: "skill-grocery-sort",
+        description: "Sort a supplied item list under a stated budget",
+        body: "(rendered)",
+        kind: "skill",
+        topicKey: "grocery-sort",
+        trustLevel: "learned",
+        state: "candidate",
+        proofCount: 1,
+        confidence: 0.7,
+        mutating: false,
+        sourceTrajIds: ["s1", "s2"],
+        structuredBody: {
+          topicTokens: ["180", "grocery", "list", "shekel", "sort", "under"],
+          sections: [],
+        },
+        createdAt: 1_000,
+      };
+    }
     /**
      * A spy MentalModelStorePort counting list() calls + recording the (scope, kind)
      * each call received, returning a fixed doc set.
@@ -1327,6 +1348,51 @@ describe("assembleExecutionPrompt", () => {
       // The single shared list is unfiltered (kind omitted) —
       // partitioned in-process for the profile block + the skill topic-match.
       expect(spy.lastKind()).toBeUndefined();
+    });
+
+    it("credits a matched learned skill on one immediate data follow-up but not a later unrelated turn", async () => {
+      const opening = "sort the picnic groceries from the park list and keep it under 180 shekels";
+      const suppliedData =
+        "bread 14 hummus 18 tomatoes 12 cucumbers 10 apples 16 juice 9 plates 12 napkins 8 sunscreen 45 cookies 13";
+      const sessionKey = {
+        tenantId: "t",
+        agentId: "agent-1",
+        userId: "u",
+        channelId: "skill-follow-up",
+      } as SessionKey;
+      const formattedKey = formatSessionKey(sessionKey);
+      const spy = makeSpyStore([skillDoc()]);
+      const deps = {
+        workspaceDir: "/workspace",
+        mentalModelStore: spy.store,
+      };
+
+      await assembleExecutionPrompt(makeParams({
+        config: learningOnlyConfig(),
+        deps,
+        msg: makeMsg({ text: opening }),
+        recentUserTurns: [],
+        sessionKey,
+      }));
+      expect(getSessionPromptTopicMatchedSkills(formattedKey)).toEqual(["skill-grocery-sort"]);
+
+      await assembleExecutionPrompt(makeParams({
+        config: learningOnlyConfig(),
+        deps,
+        msg: makeMsg({ text: suppliedData }),
+        recentUserTurns: [opening],
+        sessionKey,
+      }));
+      expect(getSessionPromptTopicMatchedSkills(formattedKey)).toEqual(["skill-grocery-sort"]);
+
+      await assembleExecutionPrompt(makeParams({
+        config: learningOnlyConfig(),
+        deps,
+        msg: makeMsg({ text: "book a dentist appointment tomorrow" }),
+        recentUserTurns: [opening, suppliedData],
+        sessionKey,
+      }));
+      expect(getSessionPromptTopicMatchedSkills(formattedKey)).toEqual([]);
     });
   });
 
