@@ -113,6 +113,27 @@ export type FinalAssistantResponseSync =
   | "updated_memory_only"
   | "missing";
 
+function matchingAssistantLeaf(persisted: any, live: any): boolean {
+  if (persisted === live) return true;
+  if (persisted?.role !== "assistant" || live?.role !== "assistant") return false;
+  if (
+    typeof persisted.timestamp !== "number"
+    || persisted.timestamp !== live.timestamp
+  ) {
+    return false;
+  }
+  const persistedText = Array.isArray(persisted.content)
+    ? persisted.content.filter(isVisibleTextBlock).map((block: any) => block.text).join("")
+    : "";
+  const liveText = Array.isArray(live.content)
+    ? live.content.filter(isVisibleTextBlock).map((block: any) => block.text).join("")
+    : "";
+  return persistedText === liveText
+    && persisted.provider === live.provider
+    && persisted.model === live.model
+    && persisted.stopReason === live.stopReason;
+}
+
 function persistAssistantReplacement(
   sessionManager: SessionManager,
   current: any,
@@ -122,7 +143,7 @@ function persistAssistantReplacement(
   if (
     leaf?.type !== "message"
     || leaf.message.role !== "assistant"
-    || leaf.message !== current
+    || !matchingAssistantLeaf(leaf.message, current)
   ) {
     return false;
   }
