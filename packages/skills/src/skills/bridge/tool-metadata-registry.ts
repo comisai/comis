@@ -265,6 +265,15 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("mcp_manage", {
     validActions: ["list", "status", "connect", "disconnect", "reconnect"],
     validKeys: ["action", "server_name", "transport", "command", "args", "url", "headers", "auth", "env"],
+    mutationRequestPrefixes: [
+      "connect",
+      "disconnect",
+      "reconnect",
+      "here is the token",
+      "heres the token",
+      "here is the credential",
+      "heres the credential",
+    ],
     // connect requires only [server_name] at this pre-flight gate. `transport` is
     // INFERABLE (stdio from `command`, http from `url`) and the real "command OR
     // url" requirement is transport-conditional — neither can be expressed as a
