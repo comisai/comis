@@ -63,7 +63,7 @@ const McpManageToolParams = Type.Object({
   ),
   command: Type.Optional(
     Type.String({
-      description: "Command to execute for stdio transport (e.g. npx). Required for stdio connect.",
+      description: "Executable for stdio transport (e.g. node or npx), not its script/package; put the script/package in args. Preserve separate operator-provided Command and Arguments fields exactly. Required for stdio connect.",
     }),
   ),
   args: Type.Optional(
@@ -93,7 +93,7 @@ const McpManageToolParams = Type.Object({
   env: Type.Optional(
     Type.Record(Type.String(), Type.String(), {
       description:
-        'Environment variables for a STDIO server (e.g. SERVICE_USERNAME). REQUIRED for stdio servers that need credentials/config in the environment. Values may reference stored secrets as ${VAR_NAME} (e.g. {"SERVICE_PASSWORD":"${SERVICE_PASSWORD}"}) — resolved from the encrypted secret store at spawn, so the plaintext never enters config. Keys are env-var names, values are the value or a ${VAR} reference.',
+        'Environment variables for a STDIO server (e.g. SERVICE_USERNAME). Preserve operator-provided env fields exactly. REQUIRED for stdio servers that need credentials/config in the environment. Store credentials with gateway env_set first, then reference them as ${VAR_NAME} (e.g. {"SERVICE_PASSWORD":"${SERVICE_PASSWORD}"}) — resolved from the encrypted secret store at spawn, so the plaintext never enters config.',
     }),
   ),
 });
@@ -330,8 +330,9 @@ export function createMcpManageTool(
       name: "mcp_manage",
       label: "MCP Server Management",
       description:
-        "Connect and manage MCP servers for an external account or service: "
-          + "list, status, connect, disconnect, reconnect.",
+        "Connect and inspect an external account or service through MCP. For stdio, command is the executable; "
+          + "put scripts/packages in args. Preserve operator-provided command, args, and env exactly. Store credentials "
+          + "with gateway env_set first, then pass ${NAME} env references. Supports list, status, connect, disconnect, reconnect.",
       parameters: McpManageToolParams,
       validActions: VALID_ACTIONS,
       rpcPrefix: "mcp",

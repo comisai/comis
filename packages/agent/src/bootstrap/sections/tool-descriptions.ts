@@ -222,8 +222,9 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   },
   mcp_manage: (ctx: ToolDescriptionContext): string => {
     const base =
-      "Connect an external account, then check account or service access through MCP: "
-        + "list, connect, disconnect, status.";
+      "Connect and inspect external accounts via MCP. For stdio, command is the executable; "
+        + "put scripts/packages in args. Preserve operator-provided command, args, and env exactly. "
+        + "Store credentials with gateway env_set first, then pass ${NAME} env references.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   heartbeat_manage: (ctx: ToolDescriptionContext): string => {
@@ -487,7 +488,7 @@ Enable, disable, and configure actions persist to config.yaml and trigger daemon
 
   mcp_manage: `Use mcp_manage as the canonical path for MCP server connect, disconnect, and status. A Validation failed result means fix the arguments — not abandon the tool or switch to gateway.
 ## STDIO servers that need credentials/env
-A stdio server that reads credentials or config from the environment (e.g. SERVICE_USERNAME/SERVICE_PASSWORD) takes them via the connect action's env field: mcp_manage(action:"connect", server_name, command:"npx", args:[...], env:{"SERVICE_PASSWORD":"\${SERVICE_PASSWORD}", ...}). Reference stored secrets as \${VAR_NAME} (store them first with gateway env_set / your secret tool) so the plaintext never enters config — the daemon resolves them at spawn. If connect returns "Connection closed" for a stdio server, the most common cause is a MISSING or wrong env — check the server's required env vars and pass them via env, do NOT switch to gateway.
+For stdio, command is the executable (such as node or npx); a script or package belongs in args. Preserve distinct command, args, and env fields from operator policy exactly instead of collapsing or omitting them. A server that reads credentials or config from the environment (e.g. SERVICE_USERNAME/SERVICE_PASSWORD) takes them via the connect action's env field: mcp_manage(action:"connect", server_name, command:"npx", args:[...], env:{"SERVICE_PASSWORD":"\${SERVICE_PASSWORD}", ...}). Reference stored secrets as \${VAR_NAME} (store them first with gateway env_set / your secret tool) so the plaintext never enters config — the daemon resolves them at spawn. If connect returns "Connection closed" for a stdio server, the most common cause is a MISSING or wrong env — check the server's required env vars and pass them via env, do NOT switch to gateway.
 ## OAuth-required MCP servers
 When mcp_manage(action:"connect", url:..., transport:"http") returns an Unauthorized error or a structured needs_oauth_login action hint, the server requires OAuth. Retry as: mcp_manage(action:"connect", auth:"oauth", url:..., transport:"http"). If the daemon then responds with a needs_oauth_login action, invoke mcp_login({server_name}) to start the PKCE flow. mcp_login returns a verification URL — deliver it to the user via the message tool BEFORE starting any background polling. Do NOT curl device-code endpoints. Do NOT write tokens to the workspace. Do NOT call gateway(action:"patch") against integrations.mcp.servers. For RFC 8628 device-flow servers (when mcp_login returns status:"device_code_pending"), deliver BOTH the verificationUri AND the userCode to the user via the message tool in the form \`Verification URL: <verificationUri>\\nCode: <userCode>\` BEFORE waiting for the poll to complete. Do NOT continue with other tool calls until the operator has had time to authorize at the verification URL.`,
 
