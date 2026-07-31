@@ -17,7 +17,7 @@ import * as fs from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, expectTypeOf, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, settleExecutionResult, unrecoveredFailedToolNames, recoveredFailedToolNames, buildSubagentTerminalToolFailureReply, type PostExecutionParams } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, promoteToolInvocationStall, settleExecutionResult, unrecoveredFailedToolNames, recoveredFailedToolNames, buildSubagentTerminalToolFailureReply, type PostExecutionParams } from "./executor-post-execution.js";
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildDegradedReply } from "./degraded-reply.js";
 import { resolveResponseLocalePolicy } from "./resolve-response-locale-policy.js";
 import {
@@ -491,7 +491,7 @@ describe("buildSessionEndMetadata", () => {
       "stop", "end_turn", "error", "max_steps",
       "budget_exceeded", "budget_exhausted", "circuit_open", "provider_degraded",
       "context_loop", "context_exhausted", "output_starved", "session_reset", "loop_detected",
-      "completed_with_tool_errors", "prompt_timeout", "spend_exceeded",
+      "completed_with_tool_errors", "prompt_timeout", "spend_exceeded", "tool_invocation_stall",
     ];
     for (const reason of ALL_FINISH_REASONS) {
       const mappedEndReason = END_REASON_MAP[reason] ?? "error";
@@ -567,6 +567,35 @@ describe("promoteNarrationStall — narrate-without-emit turns stop reading as c
   it("an already-non-clean upstream cause always wins (never overwritten)", () => {
     for (const reason of ["context_exhausted", "completed_with_tool_errors", "error", "output_starved"]) {
       expect(promoteNarrationStall(reason, { fired: true, recovered: false })).toBe(reason);
+    }
+  });
+});
+
+describe("promoteToolInvocationStall — repeated action answers stop reading as clean success", () => {
+  it("promotes a clean terminal when the request-tool nudge fired without a tool call", () => {
+    expect(promoteToolInvocationStall("stop", { fired: true, recovered: false })).toBe(
+      "tool_invocation_stall",
+    );
+    expect(promoteToolInvocationStall("end_turn", { fired: true, recovered: false })).toBe(
+      "tool_invocation_stall",
+    );
+    expect(END_REASON_MAP.tool_invocation_stall).toBe("tool_invocation_stall");
+  });
+
+  it("does not promote recovered or never-fired request-tool nudges", () => {
+    expect(promoteToolInvocationStall("stop", { fired: true, recovered: true })).toBe("stop");
+    expect(promoteToolInvocationStall("stop", { fired: false, recovered: false })).toBe("stop");
+    expect(promoteToolInvocationStall("stop", undefined)).toBe("stop");
+  });
+
+  it("preserves an already non-clean upstream terminal cause", () => {
+    for (const reason of [
+      "context_exhausted",
+      "completed_with_tool_errors",
+      "error",
+      "output_starved",
+    ]) {
+      expect(promoteToolInvocationStall(reason, { fired: true, recovered: false })).toBe(reason);
     }
   });
 });

@@ -130,9 +130,10 @@ describe("ExecutionResult settled contract", () => {
     const reasons: ExecutionResult["finishReason"][] = [
       "completed_with_tool_errors",
       "narration_stall",
+      "tool_invocation_stall",
       "background_pending",
     ];
-    expect(reasons).toHaveLength(3);
+    expect(reasons).toHaveLength(4);
   });
 
   it("requires a closed error kind on otherwise unclassified error terminals", () => {

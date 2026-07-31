@@ -16,7 +16,7 @@ describe("closed agent execution outcome contracts", () => {
       "provider_degraded", "context_loop", "context_exhausted", "output_starved",
       "session_reset", "loop_detected", "prompt_timeout", "spend_exceeded",
       "input_too_large", "completed_with_tool_errors", "narration_stall",
-      "background_pending", "error",
+      "tool_invocation_stall", "background_pending", "error",
     ];
     expect(members.every((member) => AgentExecutionFinishReasonSchema.safeParse(member).success)).toBe(true);
     expect(AgentExecutionFinishReasonSchema.safeParse("end_turn").success).toBe(false);
@@ -48,6 +48,7 @@ describe("closed agent execution outcome contracts", () => {
     expect(classifyAgentFinishErrorKind("input_too_large")).toBe("validation");
     expect(classifyAgentFinishErrorKind("background_pending")).toBe("precondition");
     expect(classifyAgentFinishErrorKind("narration_stall")).toBe("internal");
+    expect(classifyAgentFinishErrorKind("tool_invocation_stall")).toBe("internal");
     expect(classifyAgentFinishErrorKind("output_starved")).toBe("resource");
     expect(classifyAgentFinishErrorKind("error")).toBeUndefined();
   });

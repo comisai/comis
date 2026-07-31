@@ -51,6 +51,7 @@ describe("execution lifecycle outcome classification", () => {
     ["circuit_open", { status: "error", failureStage: "execution", errorKind: "dependency" }],
     ["provider_degraded", { status: "error", failureStage: "execution", errorKind: "dependency" }],
     ["session_reset", { status: "error", failureStage: "execution", errorKind: "internal" }],
+    ["tool_invocation_stall", { status: "error", failureStage: "execution", errorKind: "internal" }],
     ["prompt_timeout", { status: "timeout", failureStage: "execution", errorKind: "timeout" }],
     ["input_too_large", { status: "error", failureStage: "execution", errorKind: "validation" }],
     ["error", { status: "error", failureStage: "execution", errorKind: "dependency" }],
