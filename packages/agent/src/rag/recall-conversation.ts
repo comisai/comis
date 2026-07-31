@@ -5,7 +5,23 @@ import {
   parseInboundMessageProvenanceBatch,
 } from "@comis/core";
 
-const RECENT_USER_TURN_COUNT = 8;
+export const RECENT_USER_TURN_COUNT = 8;
+
+export interface RecentUserTurnSelectionEvidence {
+  readonly turnCount: number;
+  readonly charCount: number;
+  readonly saturated: boolean;
+}
+
+export function describeRecentUserTurnSelection(
+  turns: readonly string[],
+): RecentUserTurnSelectionEvidence {
+  return {
+    turnCount: turns.length,
+    charCount: turns.join("\n").length,
+    saturated: turns.length >= RECENT_USER_TURN_COUNT,
+  };
+}
 
 function selectBoundedDistinctTurns(turns: readonly string[]): string[] {
   const seen = new Set<string>();

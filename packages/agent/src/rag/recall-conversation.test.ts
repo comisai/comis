@@ -2,7 +2,10 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import { INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE } from "@comis/core";
-import { selectRecentUserTurns } from "./recall-conversation.js";
+import {
+  describeRecentUserTurnSelection,
+  selectRecentUserTurns,
+} from "./recall-conversation.js";
 
 function message(role: string, content: unknown): AgentMessage {
   return { role, content } as AgentMessage;
@@ -54,6 +57,11 @@ describe("selectRecentUserTurns", () => {
       "here is the credential",
       "connect a second one",
     ]);
+    expect(describeRecentUserTurnSelection(turns)).toEqual({
+      turnCount: 3,
+      charCount: turns.join("\n").length,
+      saturated: false,
+    });
   });
 
   it("ignores empty user content while joining multiple text blocks", () => {

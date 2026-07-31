@@ -99,6 +99,12 @@ export interface IncidentSignals {
   };
   /** The LAST prompt's bounded request-relevant tool names. */
   requestRelevantToolNames?: string[];
+  /** Content-free evidence about the selected prior-user-turn relevance window. */
+  requestRelevanceHistory?: {
+    turnCount: number;
+    charCount: number;
+    saturated: boolean;
+  };
   /** Content-free proof that immutable policy reached request-relevant tool schemas. */
   operatorPolicyToolProjections?: Array<{
     toolName: string;

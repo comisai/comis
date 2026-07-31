@@ -81,6 +81,12 @@ export interface RunPromptParams {
   dynamicPreamble: string | undefined;
   /** Active tools selected specifically because they match the current request. */
   requestRelevantToolNames?: readonly string[];
+  /** Content-free evidence about the bounded prior-user-turn relevance window. */
+  requestRelevanceHistory?: {
+    readonly turnCount: number;
+    readonly charCount: number;
+    readonly saturated: boolean;
+  };
   /** Content-free evidence that immutable operator policy reached tool schemas. */
   operatorPolicyToolProjections?: readonly {
     readonly toolName: string;

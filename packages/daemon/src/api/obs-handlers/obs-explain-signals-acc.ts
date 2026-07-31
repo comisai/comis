@@ -132,6 +132,10 @@ export interface Acc {
   requestRelevantToolNames?: NonNullable<
     IncidentSignals["requestRelevantToolNames"]
   >;
+  /** The LAST prompt's bounded relevance-history evidence. */
+  requestRelevanceHistory?: NonNullable<
+    IncidentSignals["requestRelevanceHistory"]
+  >;
   /** The LAST prompt's content-free operator-policy tool projections. */
   operatorPolicyToolProjections?: NonNullable<
     IncidentSignals["operatorPolicyToolProjections"]

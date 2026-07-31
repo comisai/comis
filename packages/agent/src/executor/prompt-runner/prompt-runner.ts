@@ -127,6 +127,9 @@ function emitPromptSubmitted(params: RunPromptParams, messageText: string): void
       ...(requestRelevantToolNames.length > 0
         ? { requestRelevantToolNames }
         : {}),
+      ...(params.requestRelevanceHistory !== undefined
+        ? { requestRelevanceHistory: params.requestRelevanceHistory }
+        : {}),
       ...(params.operatorPolicyToolProjections !== undefined
         && params.operatorPolicyToolProjections.length > 0
         ? { operatorPolicyToolProjections: params.operatorPolicyToolProjections }

@@ -117,6 +117,12 @@ export const IncidentReportSchema = z.object({
   requestRelevantToolNames: z.array(
     z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u),
   ).max(16).optional(),
+  /** Content-free evidence about the selected prior-user-turn relevance window. */
+  requestRelevanceHistory: z.strictObject({
+    turnCount: z.number().int().nonnegative().max(8),
+    charCount: z.number().int().nonnegative().max(1_000_000),
+    saturated: z.boolean(),
+  }).optional(),
   /** Content-free immutable-policy projection evidence for selected tool schemas. */
   operatorPolicyToolProjections: z.array(z.strictObject({
     toolName: z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u),

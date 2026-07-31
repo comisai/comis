@@ -49,6 +49,12 @@ export interface TrajectoryEvents {
     }>;
     /** Bounded tool names selected as relevant to this exact request. */
     requestRelevantToolNames?: readonly string[];
+    /** Content-free evidence about the bounded prior-user-turn relevance window. */
+    requestRelevanceHistory?: {
+      readonly turnCount: number;
+      readonly charCount: number;
+      readonly saturated: boolean;
+    };
     /** Content-free evidence that immutable policy was projected onto tool schemas. */
     operatorPolicyToolProjections?: readonly {
       readonly toolName: string;

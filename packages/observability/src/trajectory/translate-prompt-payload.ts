@@ -13,6 +13,29 @@ function boundedToolNames(value: unknown): string[] | undefined {
   return names.length > 0 ? names : undefined;
 }
 
+function boundedRequestRelevanceHistory(value: unknown): {
+  turnCount: number;
+  charCount: number;
+  saturated: boolean;
+} | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (
+    !Number.isSafeInteger(record.turnCount)
+    || (record.turnCount as number) < 0
+    || (record.turnCount as number) > 8
+    || !Number.isSafeInteger(record.charCount)
+    || (record.charCount as number) < 0
+    || (record.charCount as number) > 1_000_000
+    || typeof record.saturated !== "boolean"
+  ) return undefined;
+  return {
+    turnCount: record.turnCount as number,
+    charCount: record.charCount as number,
+    saturated: record.saturated,
+  };
+}
+
 function boundedOperatorPolicyToolProjections(value: unknown): Array<{
   toolName: string;
   sectionId: string;
@@ -50,6 +73,9 @@ export function translatePromptPayload(
   const requestRelevantToolNames = boundedToolNames(
     payload.requestRelevantToolNames,
   );
+  const requestRelevanceHistory = boundedRequestRelevanceHistory(
+    payload.requestRelevanceHistory,
+  );
   const operatorPolicyToolProjections = boundedOperatorPolicyToolProjections(
     payload.operatorPolicyToolProjections,
   );
@@ -68,6 +94,9 @@ export function translatePromptPayload(
       : {}),
     ...(requestRelevantToolNames !== undefined
       ? { requestRelevantToolNames }
+      : {}),
+    ...(requestRelevanceHistory !== undefined
+      ? { requestRelevanceHistory }
       : {}),
     ...(operatorPolicyToolProjections !== undefined
       ? { operatorPolicyToolProjections }

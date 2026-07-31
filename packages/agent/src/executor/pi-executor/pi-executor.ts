@@ -127,7 +127,10 @@ import {
 import { resolveLocale } from "../resolve-response-locale-policy.js";
 import { assembleTools } from "../executor-tool-assembly.js";
 import { assembleModelRequest, prepareTurn } from "../turn-preparation.js";
-import { selectRecentUserTurns } from "../../rag/recall-conversation.js";
+import {
+  describeRecentUserTurnSelection,
+  selectRecentUserTurns,
+} from "../../rag/recall-conversation.js";
 import {
   getDeliveredGuides,
   setDeliveredGuides,
@@ -1164,6 +1167,7 @@ async function runSessionLocked(
     sm.getEntries?.() ?? [],
     msg.id,
   );
+  const requestRelevanceHistory = describeRecentUserTurnSelection(recentUserTurns);
 
   // Get or create session-scoped guide delivery tracking.
   // Clear on session reset (isFirstMessageInSession) so guides re-inject.
@@ -2761,6 +2765,7 @@ async function runSessionLocked(
         executionOverrides, executionStartMs, effectiveTimeout, executionId,
         bridge, dynamicPreamble, responseLocalePolicy,
         requestRelevantToolNames: deferralResult.requestRelevantToolNames,
+        requestRelevanceHistory,
         operatorPolicyToolProjections,
         deferredContext, capabilityIndexResult, inlineMemory,
         unavailablePromptSkills,

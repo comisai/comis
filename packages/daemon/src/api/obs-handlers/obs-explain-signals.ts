@@ -158,6 +158,27 @@ function handleEventRecord(
         ))].slice(0, 16);
         if (names.length > 0) acc.requestRelevantToolNames = names;
       }
+      delete acc.requestRelevanceHistory;
+      if (
+        data.requestRelevanceHistory !== null
+        && typeof data.requestRelevanceHistory === "object"
+        && !Array.isArray(data.requestRelevanceHistory)
+      ) {
+        const history = data.requestRelevanceHistory as Record<string, unknown>;
+        const turnCount = nonnegativeInteger(history.turnCount);
+        const charCount = nonnegativeInteger(history.charCount);
+        if (
+          turnCount <= 8
+          && charCount <= 1_000_000
+          && typeof history.saturated === "boolean"
+        ) {
+          acc.requestRelevanceHistory = {
+            turnCount,
+            charCount,
+            saturated: history.saturated,
+          };
+        }
+      }
       delete acc.operatorPolicyToolProjections;
       if (Array.isArray(data.operatorPolicyToolProjections)) {
         const projections = data.operatorPolicyToolProjections.flatMap((candidate) => {
@@ -811,6 +832,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.skillAvailability !== undefined ? { skillAvailability: acc.skillAvailability } : {}),
     ...(acc.requestRelevantToolNames !== undefined
       ? { requestRelevantToolNames: acc.requestRelevantToolNames }
+      : {}),
+    ...(acc.requestRelevanceHistory !== undefined
+      ? { requestRelevanceHistory: acc.requestRelevanceHistory }
       : {}),
     ...(acc.operatorPolicyToolProjections !== undefined
       ? { operatorPolicyToolProjections: acc.operatorPolicyToolProjections }
