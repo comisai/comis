@@ -8160,7 +8160,7 @@ describe("regression: pi-executor capabilityCap is Infinity when providerCapabil
     );
     expect(capLogCall).toBeDefined();
     expect(capLogCall![0]).toMatchObject({
-      source: "capability",
+      source: "effectiveContextCapSmall",
       effectiveWindow: configuredCap,
       configured: 256_000,
       capabilityCap: configuredCap,
