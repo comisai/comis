@@ -237,6 +237,48 @@ function coerceEnv(p: Record<string, unknown>): unknown {
   );
 }
 
+function inferredTransport(p: Record<string, unknown>): string | undefined {
+  const explicit =
+    typeof p.transport === "string" && p.transport.length > 0
+      ? p.transport
+      : undefined;
+  if (explicit !== undefined) return explicit;
+  if (typeof p.command === "string" && p.command.length > 0) return "stdio";
+  if (typeof p.url === "string" && p.url.length > 0) return "http";
+  return undefined;
+}
+
+function referencedCredentialKeys(p: Record<string, unknown>): string[] {
+  const env = coerceEnv(p);
+  if (typeof env !== "object" || env === null || Array.isArray(env)) return [];
+  const keys = new Set<string>();
+  for (const value of Object.values(env)) {
+    if (typeof value !== "string") continue;
+    const match = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/u.exec(value);
+    if (match?.[1] !== undefined) keys.add(match[1]);
+  }
+  return [...keys].sort();
+}
+
+function approvalParams(
+  action: string,
+  p: Record<string, unknown>,
+): Record<string, unknown> {
+  const summary: Record<string, unknown> = { action };
+  if (typeof p.server_name === "string" && p.server_name.length > 0) {
+    summary.server_name = p.server_name;
+  }
+  if (action !== "connect") return summary;
+  const transport = inferredTransport(p);
+  if (transport !== undefined) summary.transport = transport;
+  if (typeof p.command === "string" && p.command.length > 0) {
+    summary.command = p.command;
+  }
+  const credentialKeys = referencedCredentialKeys(p);
+  if (credentialKeys.length > 0) summary.credential_keys = credentialKeys;
+  return summary;
+}
+
 /**
  * Coerce and validate the `auth` field.
  *
@@ -337,6 +379,7 @@ export function createMcpManageTool(
       validActions: VALID_ACTIONS,
       rpcPrefix: "mcp",
       gatedActions: ["connect", "disconnect", "reconnect"],
+      approvalParams,
       actionOverrides: {
         async list(_p, rpcCall, ctx) {
           return rpcCall("mcp.list", { _trustLevel: ctx.trustLevel });
@@ -354,22 +397,15 @@ export function createMcpManageTool(
           // (McpServerEntrySchema z.preprocess). Kept inline here so the
           // multi-field LLM-UX missing-param error from
           // validateConnectParams fires BEFORE the RPC round-trip.
-          const explicitTransport =
-            typeof p.transport === "string" && p.transport.length > 0
-              ? p.transport
-              : undefined;
-          const hasCommand = typeof p.command === "string" && p.command.length > 0;
-          const hasUrl = typeof p.url === "string" && p.url.length > 0;
-          const inferredTransport =
-            explicitTransport ?? (hasCommand ? "stdio" : hasUrl ? "http" : undefined);
+          const transport = inferredTransport(p);
           const coercedAuth = coerceAuth(p);
-          validateConnectParams(serverName, inferredTransport, p.command, p.url);
+          validateConnectParams(serverName, transport, p.command, p.url);
           // validateConnectParams threw if any field was missing — past this
-          // point both serverName and inferredTransport are non-empty strings.
+          // point both serverName and transport are non-empty strings.
           try {
             const connectResult = await rpcCall("mcp.connect", {
               server_name: serverName,
-              transport: inferredTransport,
+              transport,
               command: p.command,
               args: coercedArgs,
               url: p.url,

@@ -48,6 +48,11 @@ export interface AdminManageDescriptor<T extends TSchema = TSchema> {
   rpcPrefix: string;
   /** Actions that require approval gate confirmation */
   gatedActions?: readonly string[];
+  /** Build the bounded, non-secret operation summary shown to the approver. */
+  approvalParams?: (
+    action: string,
+    params: Record<string, unknown>,
+  ) => Record<string, unknown>;
   /** Validate action parameters after trust checks and before approval. */
   validateParams?: (
     action: string,
@@ -167,7 +172,7 @@ export function createAdminManageTool<T extends TSchema>(
           const resolution = await approvalGate.requestApproval({
             toolName: descriptor.name,
             action: `${descriptor.rpcPrefix}.${action}`,
-            params: { action },
+            params: descriptor.approvalParams?.(action, p) ?? { action },
             fingerprintParams: p,
             ...approvalContext.value,
           });
