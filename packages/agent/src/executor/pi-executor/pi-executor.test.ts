@@ -6596,6 +6596,21 @@ describe("PiExecutor", () => {
 
       expect(createMutationSerializer).toHaveBeenCalledOnce();
     });
+
+    it("starts auto-background timing only after a mutating call acquires serialization", () => {
+      const source = readFileSync(
+        resolve(dirname(fileURLToPath(import.meta.url)), "pi-executor.ts"),
+        "utf-8",
+      );
+      const autoBackgroundIndex = source.indexOf("wrapToolForAutoBackground(");
+      const serializerIndex = source.indexOf(
+        "applyMutationSerializer(",
+        autoBackgroundIndex,
+      );
+
+      expect(autoBackgroundIndex).toBeGreaterThan(-1);
+      expect(serializerIndex).toBeGreaterThan(autoBackgroundIndex);
+    });
   });
 });
 

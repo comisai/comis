@@ -485,6 +485,18 @@ describe("applyMutationSerializer — mutation serializer wrapping for parallel-
     const result = applyMutationSerializer(tools, logger);
     expect(result.length).toBe(tools.length);
   });
+
+  it("wraps registered tool objects in place so serialization can follow runtime wrappers", () => {
+    const logger = createMockLogger();
+    const originalExecute = vi.fn().mockResolvedValue({ content: [], details: undefined });
+    const tools = [makeTool({ name: "alpha", execute: originalExecute })];
+
+    const result = applyMutationSerializer(tools, logger);
+
+    expect(result).toBe(tools);
+    expect(result[0]).toBe(tools[0]);
+    expect(tools[0]!.execute).not.toBe(originalExecute);
+  });
 });
 
 // ---------------------------------------------------------------------------
