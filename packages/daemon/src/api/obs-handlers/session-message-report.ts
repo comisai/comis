@@ -109,6 +109,8 @@ export interface SessionMessagesCoverage {
   byteCappedFiles: number;
   totalByteCapReached: boolean;
   internalExcluded: number;
+  /** Platform button/callback interactions excluded from the typed-message report. */
+  interactionsExcluded: number;
   secretRedactions: number;
   truncated: boolean;
   matchedBeforeLimit: number;

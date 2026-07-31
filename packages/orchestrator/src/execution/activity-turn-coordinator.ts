@@ -659,7 +659,8 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
         ...(effective.kind === "failure" && effective.errorKind !== undefined
           ? { errorKind: effective.errorKind }
           : {}),
-        ...(effective.kind === "failure" && effective.reason !== undefined
+        ...((effective.kind === "failure" || effective.kind === "silent")
+          && effective.reason !== undefined
           ? { reason: effective.reason }
           : {}),
         ...(renderError !== undefined ? { renderErrorKind: renderError.kind } : {}),

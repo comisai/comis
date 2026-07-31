@@ -117,6 +117,7 @@ function provenanceRecord(
     senderId: string;
     text: string;
     timestamp: number;
+    interaction?: "button_callback";
   }>,
   options: {
     batchId?: string;
@@ -1147,6 +1148,79 @@ describe("extractSessionMessages", () => {
       originals.map(({ id, text }) => ({ messageId: id, text })),
     );
     expect(coverage.structuredProvenanceRecordsSeen).toBe(2);
+  });
+
+  it("excludes provenance explicitly marked as a button callback interaction", () => {
+    const dataDir = tmpDataDir();
+    const sessionsBase = path.join(dataDir, "workspace", "sessions");
+    const sessionPath = writeSessionFile(dataDir, PEER_SESSION_KEY, []);
+    const ledgerPath =
+      `${sessionKeyToPath(PEER_SESSION_KEY, sessionsBase).slice(0, -".jsonl".length)}${INBOUND_MESSAGE_LEDGER_SUFFIX}`;
+    const callback = {
+      id: "33333333-3333-4333-8333-333333333333",
+      channelId: "555",
+      channelType: "telegram",
+      senderId: "sender-a",
+      text: "v1.approve.Ab12Cd34Ef56.ABCDEFGHIJKLMNO_",
+      timestamp: Date.parse("2026-07-12T10:02:00.001Z"),
+      interaction: "button_callback" as const,
+    };
+    fs.writeFileSync(
+      ledgerPath,
+      `${JSON.stringify(provenanceRecord([callback]))}\n`,
+      "utf8",
+    );
+    expect(path.dirname(ledgerPath)).toBe(path.dirname(sessionPath));
+
+    const { messages, coverage } = extractSessionMessages(dataDir, {});
+
+    expect(messages).toEqual([]);
+    expect(coverage.interactionsExcluded).toBe(1);
+    expect(coverage.invalidProvenanceRecords).toBe(0);
+  });
+
+  it("excludes a ledger-only signed callback while preserving typed callback-shaped text", () => {
+    const dataDir = tmpDataDir();
+    const sessionsBase = path.join(dataDir, "workspace", "sessions");
+    const callbackText = "v1.approve.Ab12Cd34Ef56.ABCDEFGHIJKLMNO_";
+    const typed = {
+      id: "44444444-4444-4444-8444-444444444444",
+      channelId: "555",
+      channelType: "telegram",
+      senderId: "sender-a",
+      text: callbackText,
+      timestamp: Date.parse("2026-07-12T10:03:00.001Z"),
+    };
+    const callback = {
+      ...typed,
+      id: "55555555-5555-4555-8555-555555555555",
+      timestamp: Date.parse("2026-07-12T10:04:00.001Z"),
+    };
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
+      provenanceRecord([typed]),
+      userRecord(
+        "2026-07-12T10:03:00.001Z",
+        `[telegram] sender-a (10:03 AM):\n${callbackText}`,
+      ),
+    ]);
+    const sessionPath = sessionKeyToPath(PEER_SESSION_KEY, sessionsBase);
+    const ledgerPath =
+      `${sessionPath.slice(0, -".jsonl".length)}${INBOUND_MESSAGE_LEDGER_SUFFIX}`;
+    fs.writeFileSync(
+      ledgerPath,
+      [
+        provenanceRecord([typed]),
+        provenanceRecord([callback]),
+      ].map((record) => JSON.stringify(record)).join("\n") + "\n",
+      "utf8",
+    );
+
+    const { messages, coverage } = extractSessionMessages(dataDir, {});
+
+    expect(messages.map(({ messageId, text }) => ({ messageId, text }))).toEqual([
+      { messageId: typed.id, text: callbackText },
+    ]);
+    expect(coverage.interactionsExcluded).toBe(1);
   });
 
   it("filters structured messages by their authoritative provenance-record timestamp", () => {

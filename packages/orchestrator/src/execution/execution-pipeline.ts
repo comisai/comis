@@ -480,9 +480,9 @@ export async function executeAndDeliver(
       // A background hand-off is non-terminal UI state, not a failed activity:
       // the accepted task continues under the background manager and the
       // delivered acknowledgement already tells the user it is pending.
-      // Keep the execution diagnostic classified as `background_pending`, but
-      // let successful acknowledgement delivery close the transient activity
-      // scaffold through the normal success-shaped renderer path.
+      // Keep the execution diagnostic classified as `background_pending`.
+      // Successful acknowledgement delivery selects silent activity cleanup
+      // below; a failed acknowledgement still takes the delivery-failure path.
       if (execResult.finishReason === "background_pending") return undefined;
       const executionLifecycle = readExecutionLifecycle();
       const currentAbortReason = execResult.currentAbortReason();
@@ -736,11 +736,15 @@ export async function executeAndDeliver(
         deliveryReceipt: mediaFailureReceipt,
       });
     } else if (deliveryReceipt.ok) {
-      await finalizeCoordinator({
-        kind: "success",
-        trivial: false,
-        delivery: deliveryReceipt.value,
-      });
+      await finalizeCoordinator(
+        execResult.finishReason === "background_pending"
+          ? { kind: "silent", reason: "BACKGROUND_PENDING" }
+          : {
+              kind: "success",
+              trivial: false,
+              delivery: deliveryReceipt.value,
+            },
+      );
     } else {
       await finalizeCoordinator({
         kind: "failure",

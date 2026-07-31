@@ -89,7 +89,10 @@ export type TurnOutcome =
        * even when partial text delivered.
        */
       delivery?: FinalDeliveryReceipt }
-  | { kind: "silent"; reason: "SILENT" | "HEARTBEAT_OK" | "NO_REPLY" }
+  | {
+      kind: "silent";
+      reason: "SILENT" | "HEARTBEAT_OK" | "NO_REPLY" | "BACKGROUND_PENDING";
+    }
   | { kind: "aborted"; reason: "user_cancel" | "timeout" | "fatal" };
 
 /**

@@ -406,6 +406,33 @@ describe("createActivityTurnCoordinator — delete gate", () => {
     coord.dispose();
   });
 
+  it("records background-pending cleanup without claiming activity success", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps } = makeCoordinatorDeps({ clock });
+    const emit = vi.fn((_event: string, _payload: unknown) => true);
+    const emitSafely = vi.fn((event: string, payload: unknown) => ({
+      hadListeners: emit(event, payload),
+      failures: [],
+    }));
+    const coord = createActivityTurnCoordinator({ ...deps, eventBus: { emit, emitSafely } as never });
+    coord.start(makeCtx());
+
+    await coord.finalize({
+      kind: "silent",
+      reason: "BACKGROUND_PENDING",
+    });
+
+    const calls = emit.mock.calls.filter((c) => c[0] === "activity:turn_finalized");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![1]).toMatchObject({
+      outcome: "silent",
+      reason: "BACKGROUND_PENDING",
+      reclassified: false,
+    });
+
+    coord.dispose();
+  });
+
   it("reclassifies even a trivial success to success_with_recovered_failures when a failed event was observed", async () => {
     const clock = createFakeClock(5_000);
     const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });

@@ -308,6 +308,22 @@ describe("NormalizedMessage", () => {
       }]);
     });
 
+    it("marks a button callback as a non-text physical interaction", () => {
+      const result = parseMessage(validMessage({
+        text: "v1.approve.Ab12Cd34Ef56.ABCDEFGHIJKLMNO_",
+        metadata: {
+          isButtonCallback: true,
+          callbackData: "v1.approve.Ab12Cd34Ef56.ABCDEFGHIJKLMNO_",
+        },
+      }));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      expect(getOriginalInboundMessages(result.value)).toEqual([
+        expect.objectContaining({ interaction: "button_callback" }),
+      ]);
+    });
+
     it("projects a restart continuation as an internal provenance record", () => {
       const result = parseMessage(validMessage({
         metadata: { isRestartContinuation: true },

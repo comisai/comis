@@ -534,10 +534,17 @@ function handleEventRecord(
           ...(asString(data.renderErrorKind) !== undefined ? { renderErrorKind: asString(data.renderErrorKind) } : {}),
           reclassified: data.reclassified === true,
         };
-        // Session-wide tally retains failures hidden by a later success.
-        const counts = acc.turnFinalizeCounts ?? { failure: 0, recovered: 0 };
+        // Session-wide tally retains surface states hidden by a later finalize.
+        const counts = acc.turnFinalizeCounts ?? {
+          failure: 0,
+          recovered: 0,
+          backgroundPending: 0,
+        };
         if (outcome === "failure") counts.failure += 1;
         if (outcome === "success_with_recovered_failures") counts.recovered += 1;
+        if (outcome === "silent" && asString(data.reason) === "BACKGROUND_PENDING") {
+          counts.backgroundPending += 1;
+        }
         acc.turnFinalizeCounts = counts;
       }
       return;
