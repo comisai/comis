@@ -657,6 +657,8 @@ export interface PromptAssemblyParams {
   /** Whether the resolved model has native reasoning support (e.g. encrypted thinking blocks).
    *  When true, the `<think>`/`<final>` tag hint is suppressed to avoid double-reasoning. */
   resolvedModelReasoning?: boolean;
+  /** Previous distinct model binding proven by successful session transitions. */
+  previousModelBinding?: import("../session/model-binding-history.js").ModelBinding;
   /** Operation type from ExecutionOverrides. Resolves promptMode and bootstrap filter.
    *  When omitted by callers at the TypeScript level, executor-tool-assembly supplies
    *  "interactive" as the default before invoking this function, so this is required

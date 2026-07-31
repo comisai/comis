@@ -52,19 +52,26 @@ export interface DynamicPreambleInput {
 export function renderCurrentExecutionSection(
   params: Pick<
     PromptAssemblyParams,
-    "config" | "resolvedModelId" | "resolvedModelProvider"
+    "config" | "resolvedModelId" | "resolvedModelProvider" | "previousModelBinding"
   >,
 ): string {
   const state = JSON.stringify({
     provider: params.resolvedModelProvider ?? params.config.provider,
     model: params.resolvedModelId ?? params.config.model,
   });
-  return [
+  const lines = [
     "## Current Execution",
     `Active model: ${state}`,
     "This live runtime fact is authoritative for the current execution and was captured after the historical context above. " +
       "Model catalogs do not identify or change this active model.",
-  ].join("\n");
+  ];
+  if (params.previousModelBinding !== undefined) {
+    lines.push(
+      `Previous active model: ${JSON.stringify(params.previousModelBinding)}`,
+      "This is the most recent distinct binding proven by successful current-session configuration transitions.",
+    );
+  }
+  return lines.join("\n");
 }
 
 export async function buildDynamicPreamble(input: DynamicPreambleInput): Promise<string> {

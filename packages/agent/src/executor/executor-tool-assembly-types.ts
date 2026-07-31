@@ -238,6 +238,7 @@ export interface ToolAssemblyParams {
   sm: {
     buildSessionContext(): { messages: unknown[] };
     getSessionDir(): string;
+    getBranch?(): unknown[];
   };
   formattedKeyForGuides: string;
   deliveredGuides: Set<string>;

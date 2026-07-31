@@ -16,6 +16,7 @@ import {
   SettingsManager,
   DefaultResourceLoader,
 } from "@earendil-works/pi-coding-agent";
+import { tryCatch } from "@comis/shared";
 
 /** Partial<Settings> extracted from SettingsManager.applyOverrides() parameter type.
  *  Settings is not re-exported from the SDK's index -- extract from the class method. */
@@ -43,6 +44,7 @@ import {
 } from "./executor-tool-pipeline.js";
 import { assembleExecutionPrompt } from "./prompt-assembly.js";
 import { toolDefOverheadChars } from "./tool-overhead.js";
+import { resolvePreviousModelBinding } from "../session/model-binding-history.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 import { computeTokenBudgetForProfile } from "../context-engine/budget-capacity-cap.js";
 import type {
@@ -281,6 +283,31 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // -------------------------------------------------------------------
   // 4. Prompt assembly (extracted to prompt-assembly.ts)
   // -------------------------------------------------------------------
+  const currentModelBinding = {
+    provider: resolvedModel?.provider ?? config.provider,
+    model: resolvedModel?.id ?? config.model,
+  };
+  let previousModelBinding;
+  if (agentId !== undefined && sm.getBranch !== undefined) {
+    const branch = tryCatch(() => sm.getBranch!());
+    if (branch.ok) {
+      const previous = resolvePreviousModelBinding(
+        branch.value,
+        agentId,
+        currentModelBinding,
+      );
+      if (previous.ok) previousModelBinding = previous.value;
+    } else {
+      deps.logger.warn(
+        {
+          step: "model-binding-history",
+          hint: "Inspect the active session branch before retrying model-state restoration",
+          errorKind: "internal" as const,
+        },
+        "Previous model binding could not be resolved",
+      );
+    }
+  }
   const promptResult = await assembleExecutionPrompt({
     config,
     recentUserTurns,
@@ -361,6 +388,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     resolvedModelId: resolvedModel?.id,
     resolvedModelProvider: resolvedModel?.provider,
     resolvedModelReasoning: resolvedModel?.reasoning,
+    previousModelBinding,
     // "interactive" default guards the optional overrides; mirrors pi-executor.ts:1077.
     operationType: executionOverrides?.operationType ?? "interactive",
     // Forward ModelProfile to prompt-assembly.ts for compact-secure mode selection.
