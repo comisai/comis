@@ -918,6 +918,75 @@ describe("createLcdContextEngine context_items + eviction", () => {
     expect(texts).not.toContain("a1");
   });
 
+  it("an LCD summary rehydrates configured workspace sections through the canonical assembler", async () => {
+    const msgs = seedTextTurns(4);
+    store.getContextItems(SCOPE);
+    store.appendLeafSummary({
+      scope: SCOPE,
+      tokenCount: 5,
+      content: "The user asked to retain the original material.",
+      descendantCount: 4,
+      earliestAt: FIXED_CREATED_AT,
+      latestAt: FIXED_CREATED_AT,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: FIXED_CREATED_AT,
+      startOrdinal: 0,
+      endOrdinal: 3,
+    });
+
+    const onBaselineTokens = vi.fn();
+    const { deps: baselineDeps } = makeDeps(store);
+    baselineDeps.onAssembledInputTokens = onBaselineTokens;
+    await createLcdContextEngine(dagConfig(1), baselineDeps).transformContext(
+      msgs as AgentMessage[],
+    );
+    const baselineTokens = onBaselineTokens.mock.calls[0]?.[0] as number;
+
+    const onRehydrated = vi.fn();
+    const onRehydratedTokens = vi.fn();
+    const { deps } = makeDeps(store);
+    deps.onAssembledInputTokens = onRehydratedTokens;
+    deps.getRehydrationDeps = () => ({
+      logger: deps.logger,
+      getAgentsMdContent: () => `# Operator policy
+
+## Session Startup
+Preserve the user's active thread after compaction.
+
+## Red Lines
+Never overwrite the user's original material without current confirmation.
+`,
+      postCompactionSections: ["Session Startup", "Red Lines"],
+      getRecentFiles: () => [],
+      readFile: async () => "",
+      getActiveState: () => ({
+        channelType: "telegram",
+        channelId: "peer_a",
+        agentId: "agent_a",
+      }),
+      onRehydrated,
+    });
+
+    const engine = createLcdContextEngine(dagConfig(1), deps);
+    const out = await engine.transformContext(msgs as AgentMessage[]);
+    const outputText = JSON.stringify(out);
+
+    expect(outputText).toContain("[LCD summary");
+    expect(outputText).toContain("Preserve the user's active thread after compaction.");
+    expect(outputText).toContain(
+      "Never overwrite the user's original material without current confirmation.",
+    );
+    expect(outputText).toContain("[Resume instruction]");
+    expect(onRehydrated).toHaveBeenCalledWith(expect.objectContaining({
+      sectionsInjected: 1,
+      overflowStripped: false,
+    }));
+    expect(onRehydratedTokens).toHaveBeenCalledOnce();
+    expect(onRehydratedTokens.mock.calls[0]?.[0]).toBeGreaterThan(baselineTokens);
+  });
+
   it("emits a durable health signal when represented-message coverage is genuinely short", async () => {
     const msgs = seedTextTurns(2);
     const missingFirstItemStore: ContextStorePort = {

@@ -65,7 +65,13 @@ import {
 } from "./executor-session-state.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
-import { createConversationRef, TypedEventBus } from "@comis/core";
+import {
+  computeWorkspacePolicyCombinedHash,
+  createConversationRef,
+  hashWorkspacePolicyContent,
+  TypedEventBus,
+  type WorkspacePolicySnapshot,
+} from "@comis/core";
 import type { ContextEngineSetupParams, ContextEngineSetupDeps } from "./executor-context-engine-setup.js";
 import { SummarizerDegradeError, type SummarizerSpendBreaker } from "../safety/summarizer-spend-breaker.js";
 import type { LeafSummarizer } from "../context-engine/lcd-leaf-summarizer.js";
@@ -158,6 +164,37 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("setupContextEngine — createContextEngine() dependency wiring", () => {
+  it("sources post-compaction AGENTS content from the immutable turn snapshot", () => {
+    const agentsContent = `# Operator policy
+
+## Session Startup
+Resume from the durable summary.
+`;
+    const agentsSection = {
+      id: "workspace:agents",
+      sourceKind: "operator" as const,
+      trust: "trusted" as const,
+      stability: "stable" as const,
+      content: agentsContent,
+      contentHash: hashWorkspacePolicyContent(agentsContent),
+      maxChars: 100_000,
+    };
+    const workspacePolicySnapshot: WorkspacePolicySnapshot = {
+      agentId: "agent-1",
+      sections: [agentsSection],
+      combinedHash: computeWorkspacePolicyCombinedHash([agentsSection]),
+    };
+    const params = makeParams() as ContextEngineSetupParams & {
+      workspacePolicySnapshot: WorkspacePolicySnapshot;
+    };
+    params.workspacePolicySnapshot = workspacePolicySnapshot;
+
+    setupContextEngine(params);
+
+    const rehydrationDeps = captured.calls[0]?.deps.getRehydrationDeps();
+    expect(rehydrationDeps.getAgentsMdContent()).toBe(agentsContent);
+  });
+
   it("invokes createContextEngine() exactly once per setupContextEngine call (no extra invocations)", () => {
     setupContextEngine(makeParams());
     expect(captured.calls.length).toBe(1);
