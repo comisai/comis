@@ -729,6 +729,22 @@ describe("assembleIncidentReport — outcome", () => {
     expect(report.outcome.severity).toBe("failed");
   });
 
+  it("treats a tool invocation stall as a hard failure even without a persisted degraded flag", () => {
+    const report = assembleIncidentReport(
+      makeSignals({ failures: [] }),
+      makeMetadata({ sessionEnd: { endReason: "tool_invocation_stall", degraded: false } }),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.outcome).toEqual({
+      endReason: "tool_invocation_stall",
+      degraded: true,
+      severity: "failed",
+    });
+  });
+
   it("derives degraded from the F2 rollup degraded flag when metadata lacks it", () => {
     const report = assembleIncidentReport(
       makeSignals(),
