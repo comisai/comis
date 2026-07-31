@@ -536,6 +536,16 @@ export async function setupProactiveSchedulers(
     requestTaskRescan: (agentId) => taskRuntime === undefined
       ? Promise.resolve(err({ errorKind: "precondition" as const }))
       : taskRuntime.requestRescan(agentId),
+    retireAgent(agentId) {
+      const heartbeatTargetRemoved = coordinator.removeTarget({ kind: "agent", agentId });
+      const taskStatus = taskRuntime?.retireAgent(agentId);
+      return {
+        heartbeatTargetRemoved,
+        taskCheckActiveCount: taskStatus?.taskCheckActiveCount ?? 0,
+        extractionActiveCount: taskStatus?.extractionActiveCount ?? 0,
+        droppedExtractionCount: taskStatus?.droppedExtractionCount ?? 0,
+      };
+    },
     async enterTaskMaintenance(agentId) {
       const lane = coordinator.closeTaskLane(agentId, "maintenance");
       const runtimeStatus = taskRuntime?.enterMaintenance(agentId);
@@ -682,6 +692,14 @@ async function setupQuiescentProactiveSchedulers(
     heartbeatRunner,
     duplicateDetector,
     requestTaskRescan: async () => err({ errorKind: "precondition" as const }),
+    retireAgent(agentId) {
+      return {
+        heartbeatTargetRemoved: coordinator.removeTarget({ kind: "agent", agentId }),
+        taskCheckActiveCount: 0,
+        extractionActiveCount: 0,
+        droppedExtractionCount: 0,
+      };
+    },
     async enterTaskMaintenance(agentId) {
       const lane = coordinator.closeTaskLane(agentId, "maintenance");
       return ok({ taskCheckActiveCount: lane.activeCount, extractionActiveCount: 0 });

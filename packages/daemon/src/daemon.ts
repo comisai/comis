@@ -610,7 +610,7 @@ type PostChannelsBootContext = BootContext & Required<Pick<BootContext,
   | "channelHealthMonitor" | "notificationContext"
   | "modelCatalog" | "channelConfig" | "suspendedAgents"
   | "approvalGate" | "heartbeatCoordinator" | "proactiveSchedulers"
-  | "cronSchedulers" | "ownedCronSchedulers" | "executionTrackers" | "cronMaintenanceControllers" | "followupTaskStores" | "taskRuntimeGate" | "taskMaintenanceControllers" | "getAgentCronScheduler" | "getAgentCronAuthoringConfig" | "getAgentSchedulerSeed" | "getAgentBrowserService"
+  | "cronSchedulers" | "ownedCronSchedulers" | "executionTrackers" | "cronMaintenanceControllers" | "followupTaskStores" | "taskRuntimeGate" | "taskMaintenanceControllers" | "retireAgentRuntime" | "getAgentCronScheduler" | "getAgentCronAuthoringConfig" | "getAgentSchedulerSeed" | "getAgentBrowserService"
   | "memoryApi" | "memoryAdapter" | "embeddingQueue" | "continuationTracker"
   | "ttsAdapter" | "visionRegistry" | "linkRunner" | "transcriber" | "fileExtractor"
   | "resolveAttachment" | "deliveryQueue"
@@ -664,7 +664,7 @@ export function createHotRemove(deps: {
   const {
     activeRunRegistry, daemonLogger, skillWatcherHandles, executors, workspaceDirs,
     costTrackers, budgetGuards, stepCounters, piSessionAdapters, skillRegistries,
-    toolCapabilityPorts, container,
+    toolCapabilityPorts, proactiveSchedulers, retireAgentRuntime, container,
   } = deps.channels;
   return async (agentId) => {
     const startMs = systemNowMs();
@@ -679,6 +679,8 @@ export function createHotRemove(deps: {
         "Hot-removing agent with possible active executions",
       );
     }
+    const proactiveRetirement = proactiveSchedulers.retireAgent(agentId);
+    const schedulerRetirement = await retireAgentRuntime(agentId);
     // Stop skill watcher if present
     const watcher = skillWatcherHandles.get(agentId);
     if (watcher) {
@@ -694,8 +696,18 @@ export function createHotRemove(deps: {
     piSessionAdapters.delete(agentId);
     skillRegistries.delete(agentId);
     toolCapabilityPorts.delete(agentId);
+    if (!schedulerRetirement.ok) {
+      throw new Error(schedulerRetirement.error.message);
+    }
     container.eventBus.emit("agent:hot_removed", { agentId, timestamp: systemNowMs() });
-    daemonLogger.info({ agentId, durationMs: systemNowMs() - startMs }, "Agent hot-removed from running daemon");
+    daemonLogger.info({
+      agentId,
+      heartbeatTargetRemoved: proactiveRetirement.heartbeatTargetRemoved,
+      taskCheckActiveCount: proactiveRetirement.taskCheckActiveCount,
+      extractionActiveCount: proactiveRetirement.extractionActiveCount,
+      droppedExtractionCount: proactiveRetirement.droppedExtractionCount,
+      durationMs: systemNowMs() - startMs,
+    }, "Agent hot-removed from running daemon");
   };
 }
 
@@ -1745,6 +1757,7 @@ async function bootAgents(
   const {
     cronSchedulers, ownedCronSchedulers, executionTrackers, cronMaintenanceControllers, browserServices, resetSchedulers,
     followupTaskStores, taskBootId, taskRuntimeGate, taskMaintenanceControllers, bindTaskMaintenanceRuntime,
+    retireAgentRuntime,
     getAgentCronScheduler, getAgentCronAuthoringConfig, getAgentBrowserService,
     getAgentSchedulerSeed, cronRuntimeBinding, activateCronSchedulers, deactivateCronSchedulers,
   } = await setupSchedulers({
@@ -1858,6 +1871,7 @@ async function bootAgents(
     continuationTracker, subprocessEnv, execToolEnv,
     cronSchedulers, ownedCronSchedulers, executionTrackers, cronMaintenanceControllers, browserServices, resetSchedulers,
     followupTaskStores, taskBootId, taskRuntimeGate, taskMaintenanceControllers, bindTaskMaintenanceRuntime,
+    retireAgentRuntime,
     getAgentCronScheduler, getAgentCronAuthoringConfig, getAgentBrowserService,
     getAgentSchedulerSeed, cronRuntimeBinding,
     activateCronSchedulers, deactivateCronSchedulers,
@@ -1917,7 +1931,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     | "linkRunner" | "ssrfFetcher" | "transcriber" | "ttsAdapter"
     | "audioConverter" | "mediaTempManager" | "mediaSemaphore" | "fileExtractor"
     | "rpcCall" | "wireDispatch" | "continuationTracker" | "subprocessEnv" | "execToolEnv"
-    | "cronSchedulers" | "executionTrackers" | "followupTaskStores" | "taskBootId" | "taskRuntimeGate" | "taskMaintenanceControllers" | "bindTaskMaintenanceRuntime" | "browserServices" | "getAgentCronScheduler" | "getAgentCronAuthoringConfig" | "getAgentSchedulerSeed" | "cronRuntimeBinding" | "activateCronSchedulers" | "deactivateCronSchedulers"
+    | "cronSchedulers" | "executionTrackers" | "followupTaskStores" | "taskBootId" | "taskRuntimeGate" | "taskMaintenanceControllers" | "bindTaskMaintenanceRuntime" | "retireAgentRuntime" | "browserServices" | "getAgentCronScheduler" | "getAgentCronAuthoringConfig" | "getAgentSchedulerSeed" | "cronRuntimeBinding" | "activateCronSchedulers" | "deactivateCronSchedulers"
     | "sessionTrackerRegistry" | "auditAggregator" | "onSuspiciousContent"
     | "mcpClientManager" | "singleAgentDeps" | "providerHealth"
     | "channelAdaptersRef" | "deliveryQueue" | "drainAndStartDeliveryPrune"

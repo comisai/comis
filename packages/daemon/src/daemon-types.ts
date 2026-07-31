@@ -131,6 +131,12 @@ export interface ProactiveSchedulersHandle {
   readonly heartbeatRunner: HeartbeatRunner | undefined;
   readonly duplicateDetector: DuplicateDetector;
   requestTaskRescan(agentId: string): Promise<Result<void, { readonly errorKind: ErrorKind }>>;
+  retireAgent(agentId: string): {
+    readonly heartbeatTargetRemoved: boolean;
+    readonly taskCheckActiveCount: number;
+    readonly extractionActiveCount: number;
+    readonly droppedExtractionCount: number;
+  };
   enterTaskMaintenance(agentId: string): Promise<Result<{
     readonly taskCheckActiveCount: number;
     readonly extractionActiveCount: number;
@@ -532,6 +538,7 @@ export interface BootContext {
   taskRuntimeGate?: Awaited<ReturnType<typeof setupSchedulers>>["taskRuntimeGate"];
   taskMaintenanceControllers?: Awaited<ReturnType<typeof setupSchedulers>>["taskMaintenanceControllers"];
   bindTaskMaintenanceRuntime?: Awaited<ReturnType<typeof setupSchedulers>>["bindTaskMaintenanceRuntime"];
+  retireAgentRuntime?: Awaited<ReturnType<typeof setupSchedulers>>["retireAgentRuntime"];
   cronMaintenanceControllers?: Awaited<ReturnType<typeof setupSchedulers>>["cronMaintenanceControllers"];
   browserServices?: Awaited<ReturnType<typeof setupSchedulers>>["browserServices"];
   resetSchedulers?: Awaited<ReturnType<typeof setupSchedulers>>["resetSchedulers"];
