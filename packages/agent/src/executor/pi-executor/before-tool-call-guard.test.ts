@@ -203,6 +203,67 @@ describe("createBeforeToolCallGuard", () => {
     });
   });
 
+  it("allows one explicit provider and model binding before agent mutation", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "switch to openai-codex gpt-5.4-mini",
+      new Set(["openai", "openai-codex"]),
+    ]);
+
+    await expect(guard({
+      toolCall: { name: "agents_manage" },
+      args: {
+        action: "update",
+        agent_id: "default",
+        config: {
+          provider: "openai-codex",
+          model: "gpt-5.4-mini",
+        },
+      },
+    })).resolves.toBeUndefined();
+  });
+
+  it("reports the requested model when a paired binding substitutes it", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "switch to openai-codex gpt-5.4-mini",
+      new Set(["openai", "openai-codex"]),
+    ]);
+
+    const result = await guard({
+      toolCall: { name: "agents_manage" },
+      args: {
+        action: "update",
+        agent_id: "default",
+        config: {
+          provider: "openai-codex",
+          model: "gpt-4-turbo",
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringMatching(
+        /requested model identifier "gpt-5\.4-mini".*proposes "gpt-4-turbo"/,
+      ),
+    });
+  });
+
   it("allows an exact explicit model identifier and a qualitative model choice", async () => {
     const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
     const exactGuard = Reflect.apply(createBeforeToolCallGuard, undefined, [
