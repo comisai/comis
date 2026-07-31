@@ -3,7 +3,11 @@
 // and untrusted-result checks. Stdout is reserved for newline-delimited JSON-RPC.
 
 const PROTOCOL_VERSION = "2024-11-05";
-const variant = process.argv[2] === "second" ? "second" : "first";
+const variantArg = process.argv[2];
+const variant = variantArg === "first" || variantArg === "second"
+  ? variantArg
+  : "unresolved";
+const variantReady = variant !== "unresolved";
 const credential = process.env.MCP_TEST_TOKEN;
 const credentialState =
   typeof credential !== "string"
@@ -133,6 +137,14 @@ function handle(message) {
     return;
   }
   if (method === "tools/list") {
+    if (!variantReady) {
+      fail(
+        id,
+        -32002,
+        "variant_unresolved: command arguments must select first or second",
+      );
+      return;
+    }
     if (!credentialReady) {
       fail(
         id,
