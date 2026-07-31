@@ -40,8 +40,8 @@ import { ERROR_KINDS } from "../logging/log-fields.js";
 // for the OBSERVABILITY_CONTRACTS array below; re-export so the `@comis/core`
 // public surface + registered RPC set are unchanged.
 import { ObsExplainContract } from "./incident-report.js";
-export { ObsExplainContract, IncidentReportSchema, IncidentContextBudgetSchema, IncidentCronWakeGateSchema, IncidentGraphRunSchema, IncidentPromptTimeoutSchema, IncidentRehydrationSchema } from "./incident-report.js";
-export type { IncidentReport, IncidentFailure, IncidentSignals, IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentCronWakeGate, IncidentGraphRun, IncidentPromptTimeout, IncidentRehydration } from "./incident-report.js";
+export { ObsExplainContract, IncidentReportSchema, IncidentContextBudgetSchema, IncidentCronWakeGateSchema, IncidentGraphRunSchema, IncidentPromptTimeoutSchema } from "./incident-report.js";
+export type { IncidentReport, IncidentFailure, IncidentSignals, IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentCronWakeGate, IncidentGraphRun, IncidentPromptTimeout } from "./incident-report.js";
 // The `obs.system.health` contract + wire schema live in the
 // sibling `system-health-report.ts` (file-size split, mirroring incident-report.ts
 // which holds BOTH IncidentReportSchema + ObsExplainContract). Import the contract

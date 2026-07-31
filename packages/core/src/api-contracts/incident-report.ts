@@ -36,7 +36,6 @@ import type {
   IncidentCronWakeGate,
   IncidentGraphRun,
   IncidentPromptTimeout,
-  IncidentRehydration,
   SpawnTreeNode,
   OrchestrateRun,
 } from "./incident-report-sections.js";
@@ -66,11 +65,10 @@ export {
   IncidentGraphRunSchema,
   IncidentPromptTimeoutSchema,
   IncidentQueueTimelineEntrySchema,
-  IncidentRehydrationSchema,
   SpawnTreeNodeSchema,
   OrchestrateRunSchema,
 };
-export type { IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentCronWakeGate, IncidentGraphRun, IncidentPromptTimeout, IncidentRehydration, SpawnTreeNode, OrchestrateRun };
+export type { IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentCronWakeGate, IncidentGraphRun, IncidentPromptTimeout, SpawnTreeNode, OrchestrateRun };
 
 export const IncidentReportSchema = z.object({
   schemaVersion: z.literal(1),

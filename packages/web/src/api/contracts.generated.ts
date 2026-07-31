@@ -11987,6 +11987,44 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "rehydration": {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "type": "number"
+            },
+            "currentTurn": {
+              "type": "boolean"
+            },
+            "sectionsInjected": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "filesInjected": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "skillsInjected": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "overflowStripped": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "seq",
+            "currentTurn",
+            "sectionsInjected",
+            "filesInjected",
+            "skillsInjected",
+            "overflowStripped"
+          ],
+          "additionalProperties": false
+        },
         "cronWakeGate": {
           "type": "object",
           "properties": {

@@ -31,7 +31,7 @@ import {
   accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord, accumulateSubAgentSpawnedRecord, accumulateSubAgentCompletedRecord,
   accumulateOrchestrateRunSummaryRecord, accumulateOrchestrateToolCall,
   accumulateBackgroundTaskRecord, buildBackgroundTasksSignal,
-  parseContextBudgetRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
+  accumulateContextRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
   readSkillAvailability,
 } from "./obs-explain-signal-folds.js";
 import { summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
@@ -142,6 +142,7 @@ function handleEventRecord(
   const isCurrentTurn = latestPromptSeq === undefined
     || (recordSeq !== undefined && recordSeq > latestPromptSeq);
   if (accumulateQueueRecord(acc, type, recordSeq, data)) return;
+  if (accumulateContextRecord(acc, type, data, recordSeq, isCurrentTurn)) return;
   switch (type) {
     case "prompt.submitted": {
       acc.skillAvailability = readSkillAvailability(data.unavailableSkills);
@@ -422,65 +423,8 @@ function handleEventRecord(
     case "orchestrate.run_summary":
       accumulateOrchestrateRunSummaryRecord(acc.orchestrateRunsByRunId, data);
       return;
-    // The budget equation (LCD pre-flight) + prompt-timeout attribution —
-    // schema-validated LAST-wins folds delegated to helpers (subdir cap). An
-    // undefined parse leaves acc.* unchanged (malformed/partial ignored, fwd-compat).
-    case "context.budget": {
-      const b = parseContextBudgetRecord(data);
-      if (b !== undefined) {
-        acc.contextBudget = b; // The terminal fit-check (LAST wins).
-        // Also record the per-turn CASCADE. Dedup on transition (the window is fixed per session
-        // + S is ~fixed, so push only when assembled-input/eviction/verdict MOVES) so a stable
-        // multi-turn session adds nothing; cap to the most-recent 40 (the tightening toward an
-        // exhaustion is at the tail). Surfaced only when ≥2 states (see the assemble guard).
-        const entry = {
-          windowTokens: b.windowTokens,
-          assembledInputTokens: b.assembledInputTokens,
-          keptCount: b.keptCount,
-          verdict: b.verdict,
-        };
-        const prev = acc.contextBudgetHistory[acc.contextBudgetHistory.length - 1];
-        if (
-          prev === undefined ||
-          prev.assembledInputTokens !== entry.assembledInputTokens ||
-          prev.keptCount !== entry.keptCount ||
-          prev.verdict !== entry.verdict ||
-          prev.windowTokens !== entry.windowTokens
-        ) {
-          acc.contextBudgetHistory.push(entry);
-          if (acc.contextBudgetHistory.length > 40) acc.contextBudgetHistory.shift();
-        }
-      }
-      return;
-    }
-    case "context.rehydrated": {
-      const sectionsInjected = asNumber(data.sectionsInjected);
-      const filesInjected = asNumber(data.filesInjected);
-      const skillsInjected = asNumber(data.skillsInjected);
-      if (
-        sectionsInjected === undefined ||
-        filesInjected === undefined ||
-        skillsInjected === undefined ||
-        !Number.isSafeInteger(sectionsInjected) ||
-        !Number.isSafeInteger(filesInjected) ||
-        !Number.isSafeInteger(skillsInjected) ||
-        sectionsInjected < 0 ||
-        filesInjected < 0 ||
-        skillsInjected < 0 ||
-        typeof data.overflowStripped !== "boolean"
-      ) {
-        return;
-      }
-      acc.rehydration = {
-        seq: recordSeq ?? acc.seq++,
-        currentTurn: isCurrentTurn,
-        sectionsInjected,
-        filesInjected,
-        skillsInjected,
-        overflowStripped: data.overflowStripped,
-      };
-      return;
-    }
+    // Prompt-timeout attribution uses a schema-validated LAST-wins fold. An
+    // undefined parse leaves the accumulator unchanged.
     case "execution.prompt_timeout": {
       const t = parsePromptTimeoutRecord(data);
       if (t !== undefined) acc.promptTimeout = t;

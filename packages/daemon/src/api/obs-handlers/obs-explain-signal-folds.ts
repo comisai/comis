@@ -42,6 +42,72 @@ function narrow<T extends string>(vocab: readonly T[], v: unknown): T | undefine
   return typeof v === "string" && (vocab as readonly string[]).includes(v) ? (v as T) : undefined;
 }
 
+function nonnegativeInteger(value: unknown): number | undefined {
+  const parsed = asNumber(value);
+  return parsed !== undefined && Number.isSafeInteger(parsed) && parsed >= 0
+    ? parsed
+    : undefined;
+}
+
+/**
+ * Fold context-budget and post-compaction rehydration receipts. Returning true
+ * means the record type was recognized, including malformed records that were
+ * intentionally ignored.
+ */
+export function accumulateContextRecord(
+  acc: Acc,
+  type: string,
+  data: Record<string, unknown>,
+  recordSeq: number | undefined,
+  currentTurn: boolean,
+): boolean {
+  if (type === "context.budget") {
+    const budget = parseContextBudgetRecord(data);
+    if (budget === undefined) return true;
+    acc.contextBudget = budget;
+    const entry = {
+      windowTokens: budget.windowTokens,
+      assembledInputTokens: budget.assembledInputTokens,
+      keptCount: budget.keptCount,
+      verdict: budget.verdict,
+    };
+    const previous = acc.contextBudgetHistory[acc.contextBudgetHistory.length - 1];
+    if (
+      previous === undefined ||
+      previous.assembledInputTokens !== entry.assembledInputTokens ||
+      previous.keptCount !== entry.keptCount ||
+      previous.verdict !== entry.verdict ||
+      previous.windowTokens !== entry.windowTokens
+    ) {
+      acc.contextBudgetHistory.push(entry);
+      if (acc.contextBudgetHistory.length > 40) acc.contextBudgetHistory.shift();
+    }
+    return true;
+  }
+
+  if (type !== "context.rehydrated") return false;
+  const sectionsInjected = nonnegativeInteger(data.sectionsInjected);
+  const filesInjected = nonnegativeInteger(data.filesInjected);
+  const skillsInjected = nonnegativeInteger(data.skillsInjected);
+  if (
+    sectionsInjected === undefined ||
+    filesInjected === undefined ||
+    skillsInjected === undefined ||
+    typeof data.overflowStripped !== "boolean"
+  ) {
+    return true;
+  }
+  acc.rehydration = {
+    seq: recordSeq ?? acc.seq++,
+    currentTurn,
+    sectionsInjected,
+    filesInjected,
+    skillsInjected,
+    overflowStripped: data.overflowStripped,
+  };
+  return true;
+}
+
 export function readSkillAvailability(value: unknown): IncidentSignals["skillAvailability"] {
   if (!Array.isArray(value)) return undefined;
   const unavailable = value.slice(0, 25).flatMap((item) => {
