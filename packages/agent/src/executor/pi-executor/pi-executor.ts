@@ -1034,7 +1034,11 @@ async function runSessionLocked(
   );
 
   const isFirstMessageInSession = sessionContext.messages.length === 0;
-  const recentUserTurns = selectRecentUserTurns(sessionContext.messages);
+  const recentUserTurns = selectRecentUserTurns(
+    sessionContext.messages,
+    sm.getEntries?.() ?? [],
+    msg.id,
+  );
 
   // Get or create session-scoped guide delivery tracking.
   // Clear on session reset (isFirstMessageInSession) so guides re-inject.

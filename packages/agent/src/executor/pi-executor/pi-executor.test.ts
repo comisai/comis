@@ -8378,8 +8378,8 @@ describe("recent recall context provenance wiring", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
 
-    expect(src).toContain(
-      "selectRecentUserTurns(sessionContext.messages, sm.getEntries(), msg.id)",
+    expect(src).toMatch(
+      /selectRecentUserTurns\(\s*sessionContext\.messages,\s*sm\.getEntries\?\.\(\) \?\? \[\],\s*msg\.id,\s*\)/,
     );
   });
 });

@@ -48,12 +48,12 @@ describe("selectRecentUserTurns", () => {
       customType: INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
       data: {
         schemaVersion: 1,
-        batchId: "prior-batch",
+        batchId: "0f0d0f4a-02ff-4cd7-87e4-615723598b59",
         chunkIndex: 0,
         chunkCount: 1,
         recordedAt: 100,
         messages: [{
-          id: "prior-message",
+          id: "f7097f69-1c86-4f7c-9bbe-fb14bb88ee14",
           channelId: "channel_a",
           channelType: "telegram",
           senderId: "user_a",
@@ -67,12 +67,12 @@ describe("selectRecentUserTurns", () => {
       customType: INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
       data: {
         schemaVersion: 1,
-        batchId: "current-batch",
+        batchId: "ac149996-ea60-4c4e-8189-15ea8a36c34e",
         chunkIndex: 0,
         chunkCount: 1,
         recordedAt: 200,
         messages: [{
-          id: "current-message",
+          id: "1366bb29-bd14-4a2b-a204-f7da377b344e",
           channelId: "channel_a",
           channelType: "telegram",
           senderId: "user_a",
@@ -85,7 +85,7 @@ describe("selectRecentUserTurns", () => {
     const turns = selectRecentUserTurns(
       enriched,
       [prior, prior, current],
-      "current-batch",
+      "ac149996-ea60-4c4e-8189-15ea8a36c34e",
     );
 
     expect(turns).toEqual(["use exact-provider instead"]);
