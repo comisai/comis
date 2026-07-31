@@ -300,7 +300,12 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
         maxConsecutiveDependencyErrors: params.maxConsecutiveDependencyErrors,
       });
       unwrap(await scheduler.addJob(job));
-      const result = { jobId: job.id, name: job.name, schedule: job.schedule };
+      const result = {
+        jobId: job.id,
+        name: job.name,
+        schedule: job.schedule,
+        resolvedAgentId: agentId,
+      };
       if (IS_DEV) CronAddContract.response.parse(result);
       return result;
     },
@@ -312,13 +317,16 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
           throw new AuthorizationError("Admin access required for all-agent cron inventory");
         }
         const jobs = [...deps.cronSchedulers.values()].flatMap((scheduler) => [...getJobs(scheduler)]);
-        const result = { jobs };
+        const result = { jobs, resolvedAgentId: "*" as const };
         if (IS_DEV) CronListContract.response.parse(result);
         return result;
       }
       const agentId = resolveAgentId(deps, rawParams, params.agentId);
       const scheduler = deps.cronSchedulers.get(agentId);
-      const result = { jobs: scheduler === undefined ? [] : [...getJobs(scheduler)] };
+      const result = {
+        jobs: scheduler === undefined ? [] : [...getJobs(scheduler)],
+        resolvedAgentId: agentId,
+      };
       if (IS_DEV) CronListContract.response.parse(result);
       return result;
     },
@@ -367,7 +375,7 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
           : params.maxConsecutiveDependencyErrors ?? existing.maxConsecutiveDependencyErrors,
       });
       unwrap(await scheduler.replaceJob(existing.id, updated));
-      const result = { jobName: updated.name, updated: true };
+      const result = { jobName: updated.name, updated: true, resolvedAgentId: agentId };
       if (IS_DEV) CronUpdateContract.response.parse(result);
       return result;
     },
@@ -382,7 +390,7 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
         throw new PreconditionError("Config-owned cron jobs cannot be removed through cron.remove");
       }
       const removed = unwrap(await scheduler.removeJob(existing.id));
-      const result = { jobName: existing.name, removed };
+      const result = { jobName: existing.name, removed, resolvedAgentId: agentId };
       if (IS_DEV) CronRemoveContract.response.parse(result);
       return result;
     },
@@ -441,10 +449,12 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       const agentId = resolveAgentId(deps, rawParams, params.agentId);
       const scheduler = deps.cronSchedulers.get(agentId);
       const tracker = deps.executionTrackers.get(agentId);
-      if (scheduler === undefined || tracker === undefined) return { runs: [] };
+      if (scheduler === undefined || tracker === undefined) {
+        return { runs: [], resolvedAgentId: agentId };
+      }
       const existing = findJob(scheduler, { jobName: params.jobName });
       const history = unwrap(await tracker.listHistory({ jobId: existing.id, limit: params.limit ?? 20 }));
-      const result = { runs: history.map(projectRun) };
+      const result = { runs: history.map(projectRun), resolvedAgentId: agentId };
       if (IS_DEV) CronRunsContract.response.parse(result);
       return result;
     },

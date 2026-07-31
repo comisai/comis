@@ -420,20 +420,23 @@ describe("strict cron RPC mutations", () => {
     const result = await bound["cron.runs"]!({ jobName: "Daily status", limit: 7 });
 
     expect(executionTracker.listHistory).toHaveBeenCalledWith({ jobId: "job-a", limit: 7 });
-    expect(result).toEqual({ runs: [{
-      executionId: "execution-a",
-      jobId: "job-a",
-      agentId: "agent-a",
-      scheduledForMs: NOW_MS,
-      trigger: "manual",
-      workKind: "heartbeat_event",
-      rootRunId: null,
-      startedAtMs: NOW_MS,
-      terminalAtMs: NOW_MS + 20,
-      durationMs: 20,
-      status: "dispatched",
-      deliveryStatus: "not_requested",
-    }] });
+    expect(result).toEqual({
+      resolvedAgentId: "agent-a",
+      runs: [{
+        executionId: "execution-a",
+        jobId: "job-a",
+        agentId: "agent-a",
+        scheduledForMs: NOW_MS,
+        trigger: "manual",
+        workKind: "heartbeat_event",
+        rootRunId: null,
+        startedAtMs: NOW_MS,
+        terminalAtMs: NOW_MS + 20,
+        durationMs: 20,
+        status: "dispatched",
+        deliveryStatus: "not_requested",
+      }],
+    });
   });
 
   it("projects internal-action counters through cron.runs without model content", async () => {
@@ -491,6 +494,7 @@ describe("strict cron RPC mutations", () => {
     }));
 
     await expect(bound["cron.runs"]!({ jobName: "Reflection", limit: 1 })).resolves.toEqual({
+      resolvedAgentId: "agent-a",
       runs: [{
         executionId: "execution-reflection-a",
         jobId: "reflection-agent-a",
@@ -527,6 +531,7 @@ describe("strict cron RPC mutations", () => {
     await expect(bound["cron.remove"]!({ jobId: authored.id })).resolves.toEqual({
       jobName: authored.name,
       removed: true,
+      resolvedAgentId: "agent-a",
     });
     expect(cronScheduler.removeJob).toHaveBeenCalledWith(authored.id);
     await expect(bound["cron.remove"]!({ jobId: builtIn.id }))

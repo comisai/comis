@@ -375,6 +375,7 @@ describe("CronAddContract strict authoring projection", () => {
         jobId: "uuid-1",
         name: "test-job",
         schedule: { kind: "every", everyMs: 60000, anchorMs: 1_800_000_000_000 },
+        resolvedAgentId: "agent-a",
       }),
     ).not.toThrow();
   });
@@ -385,6 +386,7 @@ describe("CronAddContract strict authoring projection", () => {
         jobId: "uuid-1",
         name: "test-job",
         schedule: { kind: "every", everyMs: 60000 },
+        resolvedAgentId: "agent-a",
       }),
     ).toThrow();
   });
@@ -400,12 +402,16 @@ describe("CronListContract", () => {
   });
 
   it("accepts response with empty jobs", () => {
-    expect(() => CronListContract.response.parse({ jobs: [] })).not.toThrow();
+    expect(() => CronListContract.response.parse({
+      resolvedAgentId: "agent-a",
+      jobs: [],
+    })).not.toThrow();
   });
 
   it("accepts strict authored and built-in job projections", () => {
     expect(() =>
       CronListContract.response.parse({
+        resolvedAgentId: "agent-a",
         jobs: [
           {
             id: "j1",
@@ -471,7 +477,11 @@ describe("CronUpdateContract", () => {
 
   it("response carries jobName + updated", () => {
     expect(() =>
-      CronUpdateContract.response.parse({ jobName: "x", updated: true }),
+      CronUpdateContract.response.parse({
+        jobName: "x",
+        updated: true,
+        resolvedAgentId: "agent-a",
+      }),
     ).not.toThrow();
   });
 });
@@ -491,7 +501,11 @@ describe("CronRemoveContract", () => {
 
   it("response carries jobName + removed", () => {
     expect(() =>
-      CronRemoveContract.response.parse({ jobName: "x", removed: true }),
+      CronRemoveContract.response.parse({
+        jobName: "x",
+        removed: true,
+        resolvedAgentId: "agent-a",
+      }),
     ).not.toThrow();
   });
 });
@@ -550,7 +564,10 @@ describe("CronRunsContract", () => {
   });
 
   it("response with empty runs", () => {
-    expect(() => CronRunsContract.response.parse({ runs: [] })).not.toThrow();
+    expect(() => CronRunsContract.response.parse({
+      runs: [],
+      resolvedAgentId: "agent-a",
+    })).not.toThrow();
   });
 
   it("response preserves bounded internal-action diagnostic counters", () => {
@@ -574,12 +591,16 @@ describe("CronRunsContract", () => {
       ],
     };
 
-    expect(CronRunsContract.response.parse({ runs: [run] })).toEqual({ runs: [run] });
+    expect(CronRunsContract.response.parse({
+      runs: [run],
+      resolvedAgentId: "agent-a",
+    })).toEqual({ runs: [run], resolvedAgentId: "agent-a" });
     expect(() => CronRunsContract.response.parse({
       runs: [{
         ...run,
         counters: Array.from({ length: 33 }, (_, index) => ({ name: `counter_${index}`, value: index })),
       }],
+      resolvedAgentId: "agent-a",
     })).toThrow();
   });
 });

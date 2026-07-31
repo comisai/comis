@@ -152,6 +152,7 @@ export const CronAddContract = defineContract({
     jobId: IdentifierSchema,
     name: z.string().min(1),
     schedule: CronPersistedScheduleProjectionSchema,
+    resolvedAgentId: IdentifierSchema,
   }),
   scopes: ["rpc"] as const,
 });
@@ -211,7 +212,10 @@ const CronJobProjectionSchema = z.strictObject({
 export const CronListContract = defineContract({
   method: "cron.list",
   request: z.strictObject({ agentId: z.string().min(1).optional() }),
-  response: z.strictObject({ jobs: z.array(CronJobProjectionSchema) }),
+  response: z.strictObject({
+    resolvedAgentId: z.union([IdentifierSchema, z.literal("*")]),
+    jobs: z.array(CronJobProjectionSchema),
+  }),
   scopes: ["rpc"] as const,
 });
 
@@ -234,7 +238,11 @@ export const CronUpdateContract = defineContract({
   }).refine((value) => value.jobId !== undefined || value.jobName !== undefined, {
     message: "jobId or jobName is required",
   }),
-  response: z.strictObject({ jobName: z.string(), updated: z.boolean() }),
+  response: z.strictObject({
+    jobName: z.string(),
+    updated: z.boolean(),
+    resolvedAgentId: IdentifierSchema,
+  }),
   scopes: ["rpc"] as const,
 });
 
@@ -244,7 +252,11 @@ export const CronRemoveContract = defineContract({
     .refine((value) => value.jobId !== undefined || value.jobName !== undefined, {
       message: "jobId or jobName is required",
     }),
-  response: z.strictObject({ jobName: z.string(), removed: z.boolean() }),
+  response: z.strictObject({
+    jobName: z.string(),
+    removed: z.boolean(),
+    resolvedAgentId: IdentifierSchema,
+  }),
   scopes: ["rpc"] as const,
 });
 
@@ -354,7 +366,10 @@ export const CronRunsContract = defineContract({
     limit: PositiveSafeIntegerSchema.max(10_000).optional(),
     agentId: z.string().min(1).optional(),
   }),
-  response: z.strictObject({ runs: z.array(CronExecutionGroupProjectionSchema) }),
+  response: z.strictObject({
+    runs: z.array(CronExecutionGroupProjectionSchema),
+    resolvedAgentId: IdentifierSchema,
+  }),
   scopes: ["rpc"] as const,
 });
 

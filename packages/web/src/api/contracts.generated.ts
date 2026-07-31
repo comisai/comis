@@ -3330,12 +3330,18 @@ export const CONTRACTS = {
               "additionalProperties": false
             }
           ]
+        },
+        "resolvedAgentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         }
       },
       "required": [
         "jobId",
         "name",
-        "schedule"
+        "schedule",
+        "resolvedAgentId"
       ],
       "additionalProperties": false
     },
@@ -3359,6 +3365,19 @@ export const CONTRACTS = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
+        "resolvedAgentId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "string",
+              "const": "*"
+            }
+          ]
+        },
         "jobs": {
           "type": "array",
           "items": {
@@ -3999,6 +4018,7 @@ export const CONTRACTS = {
         }
       },
       "required": [
+        "resolvedAgentId",
         "jobs"
       ],
       "additionalProperties": false
@@ -4033,11 +4053,17 @@ export const CONTRACTS = {
         },
         "removed": {
           "type": "boolean"
+        },
+        "resolvedAgentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         }
       },
       "required": [
         "jobName",
-        "removed"
+        "removed",
+        "resolvedAgentId"
       ],
       "additionalProperties": false
     },
@@ -4551,10 +4577,16 @@ export const CONTRACTS = {
             ],
             "additionalProperties": false
           }
+        },
+        "resolvedAgentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         }
       },
       "required": [
-        "runs"
+        "runs",
+        "resolvedAgentId"
       ],
       "additionalProperties": false
     },
@@ -5433,11 +5465,17 @@ export const CONTRACTS = {
         },
         "updated": {
           "type": "boolean"
+        },
+        "resolvedAgentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         }
       },
       "required": [
         "jobName",
-        "updated"
+        "updated",
+        "resolvedAgentId"
       ],
       "additionalProperties": false
     },
