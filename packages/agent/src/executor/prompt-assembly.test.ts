@@ -3298,6 +3298,14 @@ describe("bootstrap file snapshotting", () => {
       expect(result.dynamicPreamble).not.toContain(
         'Active model: {"provider":"configured-provider","model":"configured-model"}',
       );
+      expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
+        expect.objectContaining({
+          executionModel: {
+            provider: "resolved-provider",
+            model: "resolved-model",
+          },
+        }),
+      );
     });
 
     it("prefers clear current prose over the typed device locale", async () => {
