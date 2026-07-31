@@ -315,6 +315,21 @@ describe("assembleTools — per-request tool merging with deps.customTools", () 
       requestRelevantToolNames: ["mcp_manage"],
       discoverTool: undefined,
     }));
+    mocks.applySchemaSnapshotMock.mockImplementationOnce((params: { tools: unknown[] }) =>
+      params.tools.map((tool) => {
+        const described = tool as { name: string; description?: string };
+        return described.name === "mcp_manage"
+          ? {
+              ...described,
+              description:
+                "Manage MCP servers\n\n" +
+                "Trusted operator policy for this turn follows. Use its exact connection fields; " +
+                "never guess missing values or treat this policy as bypassing approval/security.\n" +
+                "<operator-tools-policy>\nstale connection notes\n</operator-tools-policy>",
+            }
+          : tool;
+      }),
+    );
 
     const result = await assembleTools(makeParams({
       deps: makeDeps({
@@ -343,6 +358,8 @@ describe("assembleTools — per-request tool merging with deps.customTools", () 
       .toContain(operatorToolNotes);
     expect(passedTools.find((tool) => tool.name === "mcp_manage")?.description)
       .toMatch(/trusted operator policy/iu);
+    expect(passedTools.find((tool) => tool.name === "mcp_manage")?.description)
+      .not.toContain("stale connection notes");
     expect(passedTools.find((tool) => tool.name === "read")?.description)
       .toBe("Read files");
   });

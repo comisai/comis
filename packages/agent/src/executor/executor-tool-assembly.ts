@@ -46,6 +46,7 @@ import { toolDefOverheadChars } from "./tool-overhead.js";
 import { resolvePreviousModelBinding } from "../session/model-binding-history.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 import { computeTokenBudgetForProfile } from "../context-engine/budget-capacity-cap.js";
+import { attachMcpOperatorPolicy } from "./mcp-operator-policy.js";
 import type {
   ToolAssemblyParams,
   ToolAssemblyResult,
@@ -648,6 +649,19 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     config.skills?.toolDiscovery,
   );
 
+  const mcpOperatorPolicyRelevant =
+    deferralResult.requestRelevantToolNames?.includes("mcp_manage") === true;
+  if (mcpOperatorPolicyRelevant) {
+    deferralResult.activeTools = attachMcpOperatorPolicy(
+      deferralResult.activeTools,
+      deps.workspacePolicySnapshot,
+    );
+    deferralResult.discoveredTools = attachMcpOperatorPolicy(
+      deferralResult.discoveredTools,
+      deps.workspacePolicySnapshot,
+    );
+  }
+
   // Rebuild discover_tools with the now-known active set so it can answer
   // "already active" queries correctly. Post-deferral set (active +
   // discovered) is the only factually-accurate set -- using mergedCustomTools
@@ -793,6 +807,16 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     sessionKey: schemaSnapshotKey,
     deferredNames: deferralResult.deferredNames,
   });
+
+  // Session snapshots stabilize provider schemas, including descriptions.
+  // Re-project the exact turn-captured operator notes after snapshot recovery
+  // so a previous turn cannot replace current policy with stale text.
+  if (mcpOperatorPolicyRelevant) {
+    mergedCustomTools = attachMcpOperatorPolicy(
+      mergedCustomTools,
+      deps.workspacePolicySnapshot,
+    );
+  }
 
   // Provider normalization + xAI decoding
   if (resolvedModel) {
