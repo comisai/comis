@@ -2,6 +2,7 @@
 /** Bounded final-response locale enforcement with tools disabled during repair. */
 
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { Agent } from "@earendil-works/pi-agent-core";
 import {
   emitObservationalEventSafely,
   formatSessionKey,
@@ -28,6 +29,11 @@ import type { ExecutionResult } from "../types.js";
 import { classifyToolFailureRecovery } from "../../bridge/tool-failure-recovery.js";
 
 type LocaleEnforcementSession = Pick<AgentSession, "agent" | "prompt">;
+
+interface IsolatedLocaleRepairSession {
+  readonly session: LocaleEnforcementSession;
+  readonly getVisibleResponse: () => string;
+}
 
 export interface ResponseLocaleEnforcementOutcome {
   readonly response: string;
@@ -62,6 +68,50 @@ interface RequiredResponseLiteral {
 const MAX_REQUIRED_RESPONSE_LITERALS = 32;
 const MAX_REQUIRED_RESPONSE_LITERAL_CHARS = 512;
 const MAX_REQUEST_LANGUAGE_SAMPLE_CHARS = 4_096;
+
+function createIsolatedLocaleRepairSession(
+  sourceSession: Pick<AgentSession, "agent">,
+): Result<IsolatedLocaleRepairSession, Error> {
+  const created = (() => {
+    // Agent construction is the narrow SDK boundary: translate any throwing
+    // constructor/property access immediately into the local Result contract.
+    try {
+      const sourceAgent = sourceSession.agent;
+      const isolatedAgent = new Agent({
+        initialState: {
+          systemPrompt: sourceAgent.state.systemPrompt,
+          model: sourceAgent.state.model,
+          thinkingLevel: sourceAgent.state.thinkingLevel,
+          tools: [],
+          messages: [],
+        },
+        convertToLlm: sourceAgent.convertToLlm,
+        streamFn: sourceAgent.streamFunction,
+        getApiKey: sourceAgent.getApiKey,
+        onPayload: sourceAgent.onPayload,
+        onResponse: sourceAgent.onResponse,
+        thinkingBudgets: sourceAgent.thinkingBudgets,
+        transport: sourceAgent.transport,
+        maxRetryDelayMs: sourceAgent.maxRetryDelayMs,
+        toolExecution: "sequential",
+      });
+      const session: LocaleEnforcementSession = {
+        agent: isolatedAgent,
+        prompt: async (text: string) => isolatedAgent.prompt(text),
+      } as LocaleEnforcementSession;
+      return ok({
+        session,
+        getVisibleResponse: () =>
+          getVisibleAssistantText({ messages: isolatedAgent.state.messages }),
+      });
+    } catch (cause) {
+      return err(cause instanceof Error
+        ? cause
+        : new Error("Locale repair isolation setup failed"));
+    }
+  })();
+  return created;
+}
 
 function extractRequiredResponseLiterals(response: string): readonly RequiredResponseLiteral[] {
   const literals: RequiredResponseLiteral[] = [];
@@ -325,16 +375,22 @@ export async function applyResponseLocaleEnforcement(params: RunPromptParams): P
     return;
   }
   const enforcementStartedAt = params.deps.clock.now();
-  const outcome = await enforceResponseLocale({
-    policy: params.responseLocalePolicy,
-    response: params.result.response,
-    requestText: params.msg?.text,
-    session: params.session,
-    getVisibleResponse: () => getVisibleAssistantText(params.session),
-    guardProviderDispatch: resolveProviderDispatchGuard(
-      params.executionOverrides?.onProviderStart,
-    ),
-  });
+  const isolatedRepair = createIsolatedLocaleRepairSession(params.session);
+  const outcome = isolatedRepair.ok
+    ? await enforceResponseLocale({
+        policy: params.responseLocalePolicy,
+        response: params.result.response,
+        requestText: params.msg?.text,
+        session: isolatedRepair.value.session,
+        getVisibleResponse: isolatedRepair.value.getVisibleResponse,
+        guardProviderDispatch: resolveProviderDispatchGuard(
+          params.executionOverrides?.onProviderStart,
+        ),
+      })
+    : err({
+        cause: isolatedRepair.error,
+        finding: initialFinding,
+      });
   const durationMs = Math.max(0, params.deps.clock.now() - enforcementStartedAt);
 
   if (!outcome.ok) {
