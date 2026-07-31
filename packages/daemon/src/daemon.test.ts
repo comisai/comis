@@ -67,6 +67,7 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
           model: "claude-sonnet-4-5-20250929",
           provider: "anthropic",
           maxSteps: 25,
+          skills: { watchEnabled: false },
           budgets: { perExecution: 100_000, perHour: 500_000, perDay: 2_000_000 },
           circuitBreaker: { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenTimeoutMs: 30_000 },
           modelRoutes: {},
@@ -327,9 +328,12 @@ describe("daemon main()", () => {
   // .../config-handlers.test.ts` because the leaky worker is later
   // reused for that file).
   const instances: DaemonInstance[] = [];
+  let testDataDir: string;
 
   beforeEach(() => {
     process.env = { ...originalEnv };
+    testDataDir = mkdtempSync(resolve(tmpdir(), "comis-daemon-main-"));
+    process.env["COMIS_DATA_DIR"] = testDataDir;
   });
 
   afterEach(async () => {
@@ -351,6 +355,7 @@ describe("daemon main()", () => {
       }
     }
     process.env = originalEnv;
+    rmSync(testDataDir, { recursive: true, force: true });
   });
 
   it("completes full startup sequence in correct order (gateway disabled)", async () => {
