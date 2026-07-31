@@ -66,10 +66,12 @@ describe("mcp_manage tool", () => {
   // Metadata
   // -----------------------------------------------------------------------
 
-  it("has correct name and label", () => {
+  it("describes external-account connection for request routing", () => {
     const tool = createMcpManageTool(mockRpcCall);
     expect(tool.name).toBe("mcp_manage");
     expect(tool.label).toBe("MCP Server Management");
+    expect(tool.description).toContain("external account");
+    expect(tool.description).toContain("connect");
   });
 
   // -----------------------------------------------------------------------
