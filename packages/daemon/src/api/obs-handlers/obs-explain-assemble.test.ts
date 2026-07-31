@@ -1517,12 +1517,13 @@ describe("assembleIncidentReport — recovery attempts", () => {
       { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 1, sessionKey: SESSION_KEY, data: { reason: "silent_retry", succeeded: false } },
       { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 2, sessionKey: SESSION_KEY, data: { reason: "silent_retry", succeeded: true } },
       { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 3, sessionKey: SESSION_KEY, data: { reason: "lkw_fallback", succeeded: true } },
+      { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 4, sessionKey: SESSION_KEY, data: { reason: "sender_authority_grounding", succeeded: true } },
     ]);
-    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 3);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 4);
     expect(report.recoveries).toEqual({
-      total: 3,
-      succeeded: 2,
-      byReason: { silent_retry: 2, lkw_fallback: 1 },
+      total: 4,
+      succeeded: 3,
+      byReason: { silent_retry: 2, lkw_fallback: 1, sender_authority_grounding: 1 },
     });
   });
 

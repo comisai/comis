@@ -989,6 +989,12 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/senderTrust:\s*params\.senderTrust/);
     expect(stripped).toMatch(/buildSenderAuthorityOverclaimReply\(/);
     expect(stripped).toMatch(/response\.sender_authority_grounding_guard/);
+    expect(stripped).toMatch(
+      /senderAuthorityGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"sender_authority_grounding"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped).toMatch(
+      /reason:\s*"sender_authority_grounding"[\s\S]*?traceId:\s*tryGetContext\(\)\?\.traceId/,
+    );
     expect(stripped.indexOf("enforceSenderAuthorityGrounding("))
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
   });

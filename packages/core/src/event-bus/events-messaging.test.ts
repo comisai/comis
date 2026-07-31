@@ -17,6 +17,24 @@ const testMessage = {
 };
 
 describe("MessagingEvents payload structure", () => {
+  it("execution recovery can identify a sender-authority grounding correction", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["execution:recovery_attempted"] = {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-authority-1",
+      reason: "sender_authority_grounding",
+      succeeded: true,
+      timestamp: Date.now(),
+    };
+
+    bus.on("execution:recovery_attempted", handler);
+    bus.emit("execution:recovery_attempted", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+  });
+
   it("message:received delivers NormalizedMessage + SessionKey", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();

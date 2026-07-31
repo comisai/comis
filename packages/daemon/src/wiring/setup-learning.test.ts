@@ -1606,6 +1606,59 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
     expect(ls.promoteByName.mock.calls[0]![0]).toBe("s1");
   });
 
+  it("a sender-authority grounding correction blocks judge success and invalidates the credited skill", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 384);
+    const bus = new TypedEventBus();
+    const ls = mockLearnedSkillStore();
+    const outcomeJudge = vi.fn(async () => judgeVerdict("success"));
+    const emitSpy = vi.spyOn(bus, "emit");
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: createSqliteOutcomeStore({ db }),
+      usefulnessStore: mockUsefulnessStore().store,
+      learnedSkillStore: ls.store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      learningSkillsEnabled: () => true,
+      learningSkillsPromoteAt: () => 1,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+      outcomeJudge,
+      learningOutcomeJudgeEnabled: () => true,
+      readTurnTranscript: () => "user: what would you need me for\nassistant: you can authorize admin changes",
+    });
+
+    bus.emit("memory:skill_used", skillUsedPayload({
+      usedSkillIds: ["skill-authority"],
+      usedCount: 1,
+    }));
+    await flushMicrotasks();
+    bus.emit("execution:recovery_attempted", {
+      agentId: AGENT,
+      sessionKey: SESSION_KEY,
+      traceId: TRACE,
+      reason: "sender_authority_grounding",
+      succeeded: true,
+      timestamp: NOW,
+    });
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    const outcome = emitSpy.mock.calls.find((call) => call[0] === "learning:outcome_observed");
+    expect((outcome?.[1] as EventMap["learning:outcome_observed"] | undefined)?.outcome).toBe("corrected");
+    expect(outcomeJudge).not.toHaveBeenCalled();
+    expect(ls.promoteByName).not.toHaveBeenCalled();
+    expect(ls.demoteByName).toHaveBeenCalledTimes(1);
+    expect(ls.demoteByName).toHaveBeenCalledWith(
+      "skill-authority",
+      expect.objectContaining({ tenantId: "tenant-x", agentId: AGENT }),
+    );
+    db.close();
+  });
+
   it("records the completed-turn boundary after tool observations before resolving a single-agent turn", async () => {
     const bus = new TypedEventBus();
     const { store, observe, resolve } = makeStubStore();
