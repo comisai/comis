@@ -452,6 +452,9 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
           ) === "mutating",
       ).length,
     logger: deps.logger,
+    eventBus: deps.eventBus,
+    sessionKey: formatSessionKey(params.sessionKey),
+    clock: deps.clock,
     agentId,
     getVisibleAssistantText,
     guardProviderDispatch: resolveProviderDispatchGuard(

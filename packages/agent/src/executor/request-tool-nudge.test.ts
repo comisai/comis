@@ -39,6 +39,7 @@ function makeDeps(
     },
     eventBus: {
       emit: vi.fn(),
+      emitSafely: vi.fn(() => ({ failures: [] })),
       on: vi.fn(),
       off: vi.fn(),
     },
@@ -78,9 +79,9 @@ describe("runRequestToolNudge", () => {
       outcome: "recovered",
     });
     const eventBus = (deps as unknown as {
-      eventBus: { emit: ReturnType<typeof vi.fn> };
+      eventBus: { emitSafely: ReturnType<typeof vi.fn> };
     }).eventBus;
-    expect(eventBus.emit).toHaveBeenCalledWith("execution:recovery_attempted", {
+    expect(eventBus.emitSafely).toHaveBeenCalledWith("execution:recovery_attempted", {
       agentId: "default",
       sessionKey: "default:agent:default:user_a:telegram:peer:user_a",
       reason: "request_tool_nudge",

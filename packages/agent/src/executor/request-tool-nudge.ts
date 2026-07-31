@@ -2,9 +2,12 @@
 /** Bounded recovery for small models that repeat an old answer instead of acting. */
 
 import {
+  emitObservationalEventSafely,
   getToolMetadata,
   matchesToolMutationRequest,
+  type ClockPort,
   type ComisLogger,
+  type TypedEventBus,
 } from "@comis/core";
 import {
   runContinuationTurn,
@@ -35,6 +38,9 @@ export interface RunRequestToolNudgeDeps {
   requestRelevantToolNames: readonly string[];
   currentSuccessfulMutationCount: () => number;
   logger: ComisLogger;
+  eventBus: TypedEventBus;
+  sessionKey: string;
+  clock: ClockPort;
   agentId?: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   getVisibleAssistantText: (session: any) => string;
@@ -101,6 +107,9 @@ export async function runRequestToolNudge(
     requestRelevantToolNames,
     currentSuccessfulMutationCount,
     logger,
+    eventBus,
+    sessionKey,
+    clock,
     agentId,
   } = deps;
   if (capabilityClass !== "small" && capabilityClass !== "nano") {
@@ -178,6 +187,13 @@ export async function runRequestToolNudge(
       },
       "Request-tool nudge continuation failed",
     );
+    emitObservationalEventSafely({ eventBus, logger }, "execution:recovery_attempted", {
+      agentId: agentId ?? "default",
+      sessionKey,
+      reason: "request_tool_nudge",
+      succeeded: false,
+      timestamp: clock.now(),
+    });
     return {
       fired: true,
       recovered: false,
@@ -203,6 +219,13 @@ export async function runRequestToolNudge(
     },
     "Request-tool nudge completed",
   );
+  emitObservationalEventSafely({ eventBus, logger }, "execution:recovery_attempted", {
+    agentId: agentId ?? "default",
+    sessionKey,
+    reason: "request_tool_nudge",
+    succeeded: recovered,
+    timestamp: clock.now(),
+  });
   return recovered
     ? {
         fired: true,

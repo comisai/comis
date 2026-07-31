@@ -719,7 +719,8 @@ export interface MessagingEvents {
    *  after an empty/thinking-only turn. `reason` is the closed recovery class:
    *  `silent_retry` (strip empty turn + re-enter), `lkw_fallback` (retry on the last-known-working model
    *  after a silent auth failure), `continuation_nudge` (a single followUp on a
-   *  thinking-only "stop" turn), `interactive_silent_sentinel` (an interactive
+   *  thinking-only "stop" turn), `request_tool_nudge` (one bounded retry after
+   *  a matched mutation request emitted no action), `interactive_silent_sentinel` (an interactive
    *  request returned a silent-control token without exact-route delivery), or
    *  `locale_fidelity` (one tools-disabled response-locale repair turn).
    *  Content-free: a closed reason + a boolean. */
@@ -730,6 +731,7 @@ export interface MessagingEvents {
       | "silent_retry"
       | "lkw_fallback"
       | "continuation_nudge"
+      | "request_tool_nudge"
       | "interactive_silent_sentinel"
       | "locale_fidelity";
     succeeded: boolean;
