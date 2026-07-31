@@ -654,8 +654,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       }
 
       // The effective capability class: operator PIN (agents.<id>.capabilityClass)
-      // → provider-level override → provider-family heuristic → the "small"
-      // fail-safe — the SAME precedence resolveModelProfile uses, so the pin that
+      // → provider-level override → conservative model-marker downshift
+      // → provider-family heuristic → the "small" fail-safe — the SAME precedence
+      // resolveModelProfile uses, so the pin that
       // drives tool-deferral/context also drives the one-shot auto-repair class-gate
       // (a pinned-`small` frontier-provider agent must get repair, not silently OFF).
       // Auto-repair is a PURE class-gate off this (no config toggle); the "small"
@@ -664,6 +665,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         agentConfig?.capabilityClass,
         deps.getProviderCapabilityClass?.(agentConfig?.provider),
         agentConfig?.provider,
+        agentConfig?.model,
       );
       // The daemon-minted repair closure — resolved ONLY when the class is
       // repair-eligible AND a utility model resolves (else undefined → repair off).

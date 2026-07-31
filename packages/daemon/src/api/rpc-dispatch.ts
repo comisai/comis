@@ -103,7 +103,7 @@ import { createGraphHandlers } from "./graph-handlers/index.js";
 // place to import @comis/agent and inject the conservative repair matcher into
 // the graph handlers (buildGraphInput receives it via deps.repairMatch — never a
 // direct daemon→agent import in the pure helper).
-import { matchRawGraphToTemplate, capabilityClassFromProvider } from "@comis/agent";
+import { matchRawGraphToTemplate, capabilityClassFromModel } from "@comis/agent";
 import { createWorkspaceHandlers } from "./workspace-handlers.js";
 import { createHeartbeatHandlers } from "./heartbeat-handlers.js";
 import { createSkillHandlers } from "./skill-handlers.js";
@@ -365,11 +365,13 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
         // `providers.entries.<p>.capabilities.capabilityClass` override is pinned. Without this
         // fallback the override-only resolver returned undefined for every un-pinned config (the
         // common case), so `pipeline:authored` always emitted capabilityClass:"unknown" and the
-        // small-model-authoring-rate metric was dead. The heuristic (anthropic/openai→frontier,
-        // google→mid, else→small) is the same one the executor's live ModelProfile derives.
+        // small-model-authoring-rate metric was dead. The model-aware resolver applies the same
+        // conservative weak-tier downshift and provider-family fallback as the live ModelProfile.
         (() => {
-          const provider = deps.agents[agentId ?? ""]?.provider;
-          return deps.getProviderCapabilityClass?.(provider) ?? capabilityClassFromProvider(provider);
+          const agent = deps.agents[agentId ?? ""];
+          const provider = agent?.provider;
+          return deps.getProviderCapabilityClass?.(provider)
+            ?? capabilityClassFromModel(provider, agent?.model);
         })(),
       // Thread the orchestration.authoring gate +
       // inject the conservative repair matcher. The daemon→agent boundary is

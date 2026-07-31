@@ -137,12 +137,36 @@ export function capabilityClassFromProvider(provider: string | undefined): Capab
 }
 
 /**
+ * Resolve a capability class from a model identity, conservatively downshifting
+ * only explicit weak-tier markers before falling back to the provider family.
+ *
+ * Provider families describe protocol behavior, not the capability of every
+ * model they serve. A hosted provider can expose both frontier and nano models.
+ * Exact `nano` and `small` tokens are therefore treated as model metadata in
+ * the fail-safe direction. Ambiguous marketing labels such as `mini` are not
+ * guessed; operators can pin those through the existing config override.
+ *
+ * This never upgrades a provider's default class, so a custom/local model
+ * cannot weaken security by naming itself `frontier`.
+ */
+export function capabilityClassFromModel(
+  provider: string | undefined,
+  modelId: string | undefined,
+): CapabilityClass | undefined {
+  const tokens = modelId?.toLowerCase().split(/[^a-z0-9]+/u).filter(Boolean) ?? [];
+  if (tokens.includes("nano")) return "nano";
+  if (tokens.includes("small")) return "small";
+  return capabilityClassFromProvider(provider);
+}
+
+/**
  * Resolve the EFFECTIVE capability class an agent runs under, honoring the SAME
  * precedence as {@link resolveModelProfile}'s `capabilityClassOverride`:
  *   1. the operator PIN (`agents.<id>.capabilityClass`) — OVERRIDES everything;
  *   2. the provider-level class (`providers.entries.<id>.capabilities.capabilityClass`);
- *   3. the provider-family heuristic ({@link capabilityClassFromProvider});
- *   4. the `"small"` fail-safe (repair-ON for an unknown/keyless small target).
+ *   3. the model-aware conservative downshift ({@link capabilityClassFromModel});
+ *   4. the provider-family heuristic ({@link capabilityClassFromProvider});
+ *   5. the `"small"` fail-safe (repair-ON for an unknown/keyless small target).
  *
  * The single source of truth for any daemon-side call site that must class-gate on
  * the SAME class the model profile resolved — so a `capabilityClass` pin cannot be
@@ -154,8 +178,9 @@ export function resolveEffectiveCapabilityClass(
   pin: CapabilityClass | undefined,
   providerLevel: CapabilityClass | undefined,
   provider: string | undefined,
+  modelId?: string,
 ): CapabilityClass {
-  return pin ?? providerLevel ?? capabilityClassFromProvider(provider) ?? "small";
+  return pin ?? providerLevel ?? capabilityClassFromModel(provider, modelId) ?? "small";
 }
 
 // ---------------------------------------------------------------------------
@@ -169,12 +194,13 @@ export function resolveEffectiveCapabilityClass(
  * Pure — no I/O, no side effects, deterministic for equal inputs.
  * Unknown models (resolvedModel = undefined) fail closed → most-locked profile.
  *
- * capabilityClass derivation (config override > provider family > fail-safe):
+ * capabilityClass derivation (config override > weak model marker > provider family > fail-safe):
  *  1. capabilityClassOverride (explicit) → use directly
- *  2. providerFamily = "anthropic" (anthropic, amazon-bedrock, bedrock, ...) → "frontier"
- *  3. providerFamily = "openai" (openai, azure-openai-responses, openai-codex, ...) → "frontier"
- *  4. providerFamily = "google" (google, google-vertex, gcp-vertex, ...) → "mid"
- *  5. all others (ollama, custom, etc.) → "small"  (fail-safe direction)
+ *  2. exact model-id tier marker "nano" / "small" → downshift
+ *  3. providerFamily = "anthropic" (anthropic, amazon-bedrock, bedrock, ...) → "frontier"
+ *  4. providerFamily = "openai" (openai, azure-openai-responses, openai-codex, ...) → "frontier"
+ *  5. providerFamily = "google" (google, google-vertex, gcp-vertex, ...) → "mid"
+ *  6. all others (ollama, custom, etc.) → "small"  (fail-safe direction)
  *
  * Provider-family resolution is single-sourced to capabilities.ts so all
  * canonical aliases (amazon-bedrock → anthropic, google-vertex → google,
@@ -229,11 +255,13 @@ export function resolveModelProfile(
     // Explicit config override wins unconditionally
     capabilityClass = capabilityClassOverride;
   } else {
-    // Provider-family mapping (single-sourced via capabilityClassFromProvider →
-    // resolveProviderCapabilities) so all aliases (amazon-bedrock, google-vertex,
-    // azure-openai-responses, bedrock, gcp-vertex, etc.) map to their correct family.
-    // resolvedModel.provider is always defined here; "small" is the fail-safe direction.
-    capabilityClass = capabilityClassFromProvider(resolvedModel.provider) ?? "small";
+    // Model-aware weak-tier downshift followed by the provider-family mapping.
+    // This distinguishes a provider's nano offering from its frontier models
+    // without deriving capability from context size or ambiguous labels.
+    capabilityClass = capabilityClassFromModel(
+      resolvedModel.provider,
+      resolvedModel.id,
+    ) ?? "small";
   }
 
   // Derived from capabilityClass (lookup tables — no magic)
