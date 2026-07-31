@@ -314,6 +314,28 @@ describe("connectServer — stdio failure diagnosability", () => {
     expect(state.connections.get("svc")?.error).toContain("SERVICE_USERNAME is a required");
   });
 
+  it("preserves a meaningful server protocol error when stderr is also present", async () => {
+    const state = makeState();
+    connectImpl = () => {
+      state.lastStderr.set("svc", "credentialed MCP fixture ready\n");
+      return Promise.reject(
+        new Error(
+          "MCP error -32002: variant_unresolved: command arguments must select first or second",
+        ),
+      );
+    };
+    const { bus } = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+
+    const result = await connectServer(state, deps, STDIO_CONFIG);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error.message).toContain("variant_unresolved");
+    expect(result.error.message).toContain("credentialed MCP fixture ready");
+    expect(state.connections.get("svc")?.error).toContain("variant_unresolved");
+  });
+
   it("sanitizes a credential leaked in the child stderr before folding it into the error + error-state entry", async () => {
     const state = makeState();
     // A credentialed server that dies while echoing its own connection string to
