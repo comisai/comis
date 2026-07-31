@@ -608,6 +608,8 @@ export function registerAllToolMetadata(): void {
   // Model switching requires both models_manage (catalog) and agents_manage (apply model to agent)
   registerToolMetadata("models_manage", { coDiscoverWith: ["agents_manage"] });
   registerToolMetadata("agents_manage", { coDiscoverWith: ["models_manage"] });
+  // MCP connections may require gateway env_set for encrypted secret storage.
+  registerToolMetadata("mcp_manage", { coDiscoverWith: ["gateway"] });
 
   // =========================================================================
   // MCP Export Policy
