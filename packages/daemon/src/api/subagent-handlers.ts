@@ -21,6 +21,7 @@
  */
 
 import {
+  RunKillContract,
   SubagentListContract,
   SubagentKillContract,
   SubagentPauseContract,
@@ -33,6 +34,7 @@ import {
   systemNowMs,
   wrapExternalContent,
 } from "@comis/core";
+import { createAutonomyHandlers } from "./autonomy-handlers.js";
 import {
   assertSubagentTargetAuthorized,
   projectCallerSubagentRun,
@@ -59,11 +61,12 @@ const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 // Types
 // ---------------------------------------------------------------------------
 
-// Re-aliased from the cluster slice in api/types.ts.
-// Single source of truth: OrchestratorApiDeps (shared with cron, graph,
-// heartbeat handlers).
-import type { OrchestratorApiDeps as SubagentHandlerDeps } from "./types.js";
-export type { SubagentHandlerDeps };
+// Re-aliased from the cluster slices in api/types.ts. Sub-agent lifecycle owns
+// orchestration state; tree cancellation additionally releases the same bounded
+// autonomy authority that outward channel actions consume.
+import type { ChannelsApiDeps, OrchestratorApiDeps } from "./types.js";
+export type SubagentHandlerDeps = OrchestratorApiDeps
+  & Pick<ChannelsApiDeps, "boundedAutonomy">;
 
 // ---------------------------------------------------------------------------
 // Rate-limit state for steer
@@ -220,13 +223,49 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
       const userParams = stripInternalFields(rawParams);
       SubagentKillContract.request.parse(userParams);
 
+      if (target === "tree") {
+        if (controller.kind !== "caller" || controller.rootRunId === undefined) {
+          throw new AuthorizationError(
+            "Spawn-tree kill requires trusted current-root authority",
+          );
+        }
+        if (!deps.leaseManager) {
+          throw new Error(
+            "Spawn-tree kill is unavailable because the capability lease manager is not configured",
+          );
+        }
+        const boundedAutonomy = deps.boundedAutonomy;
+        const treeKillHandler = createAutonomyHandlers({
+          ...deps,
+          leaseManager: deps.leaseManager,
+          eventBus: deps.eventBus,
+          now: deps.schedulerNowMs,
+          ...(boundedAutonomy
+            ? {
+                revokeDurableRoot: (rootRunId: string) =>
+                  boundedAutonomy.revokeDurableRoot(rootRunId),
+              }
+            : {}),
+        })[RunKillContract.method]!;
+        const treeResult = await treeKillHandler({
+          rootRunId: controller.rootRunId,
+        }) as { killed: number };
+        const result = {
+          killed: treeResult.killed > 0,
+          runId: target,
+          count: treeResult.killed,
+        };
+        if (IS_DEV) SubagentKillContract.response.parse(result);
+        return result;
+      }
+
       assertSubagentTargetAuthorized(controller, deps.subAgentRunner.getRunStatus(target));
 
       const killResult = deps.subAgentRunner.killRun(target);
       if (!killResult.killed) {
         throw new Error(killResult.error!);
       }
-      const result = { killed: true, runId: target };
+      const result = { killed: true, runId: target, count: 1 };
       if (IS_DEV) SubagentKillContract.response.parse(result);
       return result;
     },

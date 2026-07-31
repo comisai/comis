@@ -98,6 +98,7 @@ function createMockDeps(): SubagentHandlerDeps {
     },
     defaultAgentId: "default",
     tenantId: "default",
+    schedulerNowMs: vi.fn().mockReturnValue(123),
     // securityConfig.agentToAgent.steerInject gates the steer handler
     // (flag-on inject / flag-off byte-identical kill+respawn). Default the flag
     // OFF here — individual tests flip it on.
@@ -468,7 +469,7 @@ describe("createSubagentHandlers", () => {
     expect(deps.eventBus!.emit).toHaveBeenCalledWith("autonomy:killed", {
       rootRunId: "root-current",
       killed: 3,
-      timestamp: expect.any(Number),
+      timestamp: 123,
     });
   });
 

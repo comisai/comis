@@ -119,15 +119,17 @@ export const SubagentWaitContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `subagent.kill` — Mark a running sub-agent run as failed. Agent callers may
- * control only an exact direct child; admins may control any selected run.
+ * `subagent.kill` — Mark a running sub-agent run as failed, or hard-stop the
+ * caller's trusted current spawn tree with the reserved target `tree`. Agent
+ * callers may control only an exact direct child or their trusted current tree;
+ * admins may control any selected run and use `run.kill` for an explicit tree.
  *
  * Bespoke pre-Zod validation:
  *   - Missing `target` → `"Missing required parameter: target"`.
  *   - killRun returns !killed → throws with the result's error message.
  *
- * Request: `{ target }`. `target` is the runId.
- * Response: `{ killed, runId }`.
+ * Request: `{ target }`. `target` is the runId or the reserved value `tree`.
+ * Response: `{ killed, runId, count }`.
  */
 export const SubagentKillContract = defineContract({
   method: "subagent.kill",
@@ -137,6 +139,7 @@ export const SubagentKillContract = defineContract({
   response: z.object({
     killed: z.boolean(),
     runId: z.string(),
+    count: z.number().int().nonnegative(),
   }),
   scopes: ["rpc", "admin"] as const,
 });

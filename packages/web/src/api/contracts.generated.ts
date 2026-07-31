@@ -16510,11 +16510,17 @@ export const CONTRACTS = {
         },
         "runId": {
           "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
         "killed",
-        "runId"
+        "runId",
+        "count"
       ],
       "additionalProperties": false
     },

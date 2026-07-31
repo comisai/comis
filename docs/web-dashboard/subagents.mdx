@@ -13,7 +13,7 @@ The Sub-Agents view shows all recently spawned sub-agent runs. Sub-agents are cr
 ## Backing RPC and SSE
 
 - `subagent.list` -- runs from the last 60 minutes (with status, depth, parent, cost, tokens, steps)
-- `subagent.kill(spawnId)` -- cancel a running or queued sub-agent
+- `subagent.kill(spawnId)` -- cancel a running or queued sub-agent and return the exact killed count
 - `subagent.steer(spawnId, message)` -- send a steering message to a running sub-agent
 - SSE events `subagent:spawned` and `subagent:status` drive a debounced auto-reload so you see status changes without refreshing
 

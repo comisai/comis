@@ -1,6 +1,6 @@
 {
-  "totalMinified": 194829,
-  "totalGzipped": 20247,
+  "totalMinified": 194895,
+  "totalGzipped": 20253,
   "budget": {
     "minified": 195072,
     "gzipped": 38912
@@ -201,7 +201,7 @@
     "skills.update": 514,
     "skills.upload": 675,
     "slack.action": 268,
-    "subagent.kill": 369,
+    "subagent.kill": 443,
     "subagent.list": 590,
     "subagent.pause": 449,
     "subagent.resume": 449,
