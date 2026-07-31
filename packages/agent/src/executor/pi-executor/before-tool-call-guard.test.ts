@@ -264,6 +264,37 @@ describe("createBeforeToolCallGuard", () => {
     });
   });
 
+  it("supplies the exact requested binding when a provider is omitted", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "switch to openai-codex gpt-5.4-mini",
+      new Set(["openai", "openai-codex"]),
+    ]);
+
+    const result = await guard({
+      toolCall: { name: "agents_manage" },
+      args: {
+        action: "update",
+        agent_id: "default",
+        config: { model: "gpt-5.4-mini" },
+      },
+    });
+
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringMatching(
+        /config\.provider="openai-codex".*config\.model="gpt-5\.4-mini"/,
+      ),
+    });
+  });
+
   it("allows an exact explicit model identifier and a qualitative model choice", async () => {
     const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
     const exactGuard = Reflect.apply(createBeforeToolCallGuard, undefined, [
