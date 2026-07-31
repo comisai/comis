@@ -469,7 +469,7 @@ export async function assembleSystemHealthReport(
     preSessionFailures.failures.length === 0
       ? undefined
       : {
-          code: "pre_session_execution_failure",
+          code: "pre_session_message_failure",
           detail:
             `${preSessionFailures.failures.length} message lifecycle failures had no matching session summary`,
           count: preSessionFailures.failures.length,
