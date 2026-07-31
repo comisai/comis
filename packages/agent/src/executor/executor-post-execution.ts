@@ -128,11 +128,12 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
   enforceDestructiveEffectEvidence,
+  enforceProviderModelFailureGrounding,
   hasTrustedRuntimeActionEvidence,
   isTrustedBackgroundCompletionEnvelope,
 } from "./executor-response-filter.js";
@@ -1528,6 +1529,37 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       },
     });
   }
+  const providerModelFailureGrounding = enforceProviderModelFailureGrounding({
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    honestResponse: buildProviderRequiresModelReply(replyLanguage, localeCatalog),
+  });
+  if (providerModelFailureGrounding.corrected) {
+    result.response = providerModelFailureGrounding.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        errorKind: "validation" as const,
+        hint:
+          `Test the provider credentials, list exact models with models_manage, then retry `
+          + `agents.${effectiveAgentId}.provider and agents.${effectiveAgentId}.model together`,
+      },
+      "Provider-as-model response replaced with grounded guidance",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.provider_model_grounding_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "configuration_failure",
+        reason: providerModelFailureGrounding.reason,
+        requiredTool: "agents_manage",
+      },
+    });
+  }
   const unrecoveredFailed = unrecoveredFailedToolNames(
     bridgeResult.failedTools ?? [],
     bridgeResult.toolExecResults,
@@ -1633,6 +1665,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   }
   if (
     !unavailableVision &&
+    !providerModelFailureGrounding.corrected &&
     userVisibleFailed.length > 0 &&
     isStopTurn &&
     !modelAcknowledgedFailure(result.response ?? "", userVisibleFailed) &&

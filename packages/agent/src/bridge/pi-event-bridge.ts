@@ -98,6 +98,15 @@ const TOOL_ERROR_AUTH_CODES: ReadonlySet<string> = new Set([
  * indices.
  */
 const BRACKETED_TOOL_ERROR_CODE = /\[([a-z]+(?:_[a-z]+)+)\]/;
+const MAX_TOOL_ERROR_CODE_CHARS = 64;
+
+function extractBracketedToolErrorCode(errorText: string | undefined): string | undefined {
+  if (errorText === undefined) return undefined;
+  const code = BRACKETED_TOOL_ERROR_CODE.exec(errorText)?.[1];
+  return code !== undefined && code.length <= MAX_TOOL_ERROR_CODE_CHARS
+    ? code
+    : undefined;
+}
 
 /**
  * Raw Node errno prefixes (no bracketed `[code]`) that can ONLY be a wrong-path-
@@ -166,7 +175,7 @@ function perRootBudgetAbortReason(limb: SpendLimb | undefined): string {
  * a chat channel as "❌ dependency" (live-UAT Telegram onboarding, 2026-06-21).
  */
 export function classifyToolError(_toolName: string, errorText: string | undefined): ErrorKind {
-  const code = errorText ? BRACKETED_TOOL_ERROR_CODE.exec(errorText)?.[1] : undefined;
+  const code = extractBracketedToolErrorCode(errorText);
   if (code !== undefined) {
     if (TOOL_ERROR_INTERNAL_CODES.has(code)) return "internal";
     if (TOOL_ERROR_AUTH_CODES.has(code)) return "auth";
@@ -1202,8 +1211,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const mcpServer = extractMcpServerName(endEvent.toolName);
           if (!toolSuccess) {
             errorText = extractErrorText(endEvent.result);
+            failureCode = extractBracketedToolErrorCode(errorText);
             if (mcpServer !== undefined) {
-              failureCode = extractMcpFailureCode(endEvent.result);
+              failureCode = extractMcpFailureCode(endEvent.result) ?? failureCode;
             }
             runtimeToolGuard = classifyRuntimeToolGuard(errorText);
             const serialized =
@@ -1447,6 +1457,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // Carry the closed-union errorKind (set on the failure path only)
             // for the rollup's bounded topErrorKinds.
             ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
+            ...(failureCode !== undefined && { failureCode }),
             ...(failureDisclosure !== undefined && { failureDisclosure }),
           });
 

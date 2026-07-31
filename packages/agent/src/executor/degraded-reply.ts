@@ -33,6 +33,7 @@ import {
   selectDelegationEvidenceMissingReply,
   selectPersistentActionEvidenceMissingReply,
   selectDestructiveActionNotVerifiedReply,
+  selectProviderRequiresModelReply,
   selectVisionUnavailableReply,
   type LocaleCatalog,
 } from "./degraded-reply-i18n.js";
@@ -218,6 +219,14 @@ export function buildDestructiveActionNotVerifiedReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectDestructiveActionNotVerifiedReply(language, localeCatalog);
+}
+
+/** Honest replacement when a provider name was supplied as a model identifier. */
+export function buildProviderRequiresModelReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectProviderRequiresModelReply(language, localeCatalog);
 }
 
 interface VisionFailureRecord {

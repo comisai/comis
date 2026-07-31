@@ -55,6 +55,8 @@ export interface ToolExecutionResultRecord {
   readonly invocationSequence?: number;
   readonly errorText?: string;
   readonly errorKind?: ErrorKind;
+  /** Bounded snake_case terminal code emitted by the trusted tool boundary. */
+  readonly failureCode?: string;
   /** Trusted, bounded adapter classification; never raw tool/provider prose. */
   readonly failureDisclosure?: ToolFailureDisclosure;
   readonly recoveryIdentity?: ToolRecoveryIdentity;

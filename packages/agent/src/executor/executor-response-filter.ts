@@ -252,6 +252,58 @@ export function enforceDestructiveEffectEvidence(params: {
   };
 }
 
+export interface ProviderModelFailureGroundingGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "provider_requires_model";
+}
+
+/**
+ * Replace model-authored prose after the agent-management boundary reports
+ * that a provider name was supplied where an exact model identifier belongs.
+ *
+ * This terminal code is authoritative runtime state. A model paraphrase can
+ * otherwise reverse it by calling the provider a model or suggesting a
+ * different, unevidenced provider. A later successful update is current-turn
+ * evidence that the rejected request was corrected and suppresses replacement.
+ */
+export function enforceProviderModelFailureGrounding(params: {
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    action?: string;
+    success: boolean;
+    failureCode?: string;
+  }>;
+  honestResponse: string;
+}): ProviderModelFailureGroundingGuardResult {
+  const results = params.toolExecResults ?? [];
+  const failedIndex = results.findIndex(
+    (result) =>
+      result.toolName === "agents_manage"
+      && result.action === "update"
+      && !result.success
+      && result.failureCode === "provider_requires_model",
+  );
+  if (failedIndex < 0) {
+    return { response: params.response, corrected: false };
+  }
+  const recovered = results.slice(failedIndex + 1).some(
+    (result) =>
+      result.toolName === "agents_manage"
+      && result.action === "update"
+      && result.success,
+  );
+  if (recovered) {
+    return { response: params.response, corrected: false };
+  }
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "provider_requires_model",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Unified OutputGuard scanning (replaces 3 near-identical blocks)
 // ---------------------------------------------------------------------------

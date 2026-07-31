@@ -27,6 +27,7 @@ export type LocaleMessageId =
   | "delegation_evidence_missing"
   | "persistent_action_evidence_missing"
   | "destructive_action_not_verified"
+  | "provider_requires_model"
   | "vision_unavailable";
 
 export type LocalePack = Readonly<Partial<Record<LocaleMessageId, string>>>;
@@ -73,6 +74,10 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "I did not perform or verify the requested repeated action in this turn, so I cannot report it as successful. Please retry the request.",
   destructive_action_not_verified:
     "I could not verify that anything was deleted. The command had no observable effect, so I am not treating the deletion as complete.",
+  provider_requires_model:
+    "I did not change the agent. The requested value names a provider, not an exact model. "
+      + "Test that provider's credentials, list its available models, then retry with both "
+      + "the provider and an exact model identifier.",
   vision_unavailable:
     "I couldn't analyze this image because no vision provider is available. "
       + "Re-uploading the same image will not help until the vision configuration changes. "
@@ -293,6 +298,14 @@ export function selectDestructiveActionNotVerifiedReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "destructive_action_not_verified");
+}
+
+/** Honest replacement when a provider name was supplied as a model identifier. */
+export function selectProviderRequiresModelReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "provider_requires_model");
 }
 
 /** Honest replacement when image analysis reached the unavailable terminal. */

@@ -117,7 +117,7 @@ function assertKnownAgentModel(
       },
     });
     throw new PreconditionError(
-      `"${patch.model}" is a provider, not a model identifier. ${hint}.`,
+      `[provider_requires_model] "${patch.model}" is a provider, not a model identifier. ${hint}.`,
     );
   }
 
