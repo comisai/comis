@@ -134,8 +134,9 @@ describe("orchestrator-umbrella domain contracts", () => {
   // Route-scope invariant
   // -------------------------------------------------------------------------
 
-  it("only owner-scoped subagent lifecycle methods expose both agent and admin routes", () => {
+  it("only explicitly operator-readable methods expose both agent and admin routes", () => {
     const dualScopeMethods = new Set([
+      "cron.list",
       "subagent.list",
       "subagent.wait",
       "subagent.kill",
@@ -152,10 +153,9 @@ describe("orchestrator-umbrella domain contracts", () => {
   // Scope assignment per handler-file cluster
   // -------------------------------------------------------------------------
 
-  it("cron-handlers and graph-handlers are scoped to rpc per setup-gateway-api.ts:130-157 + 317-321", () => {
+  it("cron and graph mutations stay agent-reachable while cron inventory is also operator-readable", () => {
     const cronAndGraph = [
       CronAddContract,
-      CronListContract,
       CronUpdateContract,
       CronRemoveContract,
       CronStatusContract,
@@ -176,6 +176,7 @@ describe("orchestrator-umbrella domain contracts", () => {
       GraphDeleteRunContract,
     ];
     for (const c of cronAndGraph) expect(c.scopes, `${c.method} scopes`).toEqual(["rpc"]);
+    expect(CronListContract.scopes).toEqual(["rpc", "admin"]);
     expect(CronResetContract.scopes).toEqual(["admin"]);
   });
 
