@@ -878,6 +878,49 @@ describe("agents_manage tool", () => {
         expect.objectContaining({ agentId: "bot-1", updated: true }),
       );
     });
+
+    it.each([
+      ["model-only", { model: "model_two" }],
+      ["provider-only", { provider: "provider_b" }],
+    ])("rejects a %s model binding patch before mutation", async (_label, config) => {
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-u-pair", {
+            action: "update",
+            agent_id: "bot-1",
+            config,
+          } as never),
+        ),
+      ).rejects.toThrow(
+        /\[invalid_value\].*config\.provider and config\.model.*together/,
+      );
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
+    it("accepts an exact provider and model pair for an update", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "bot-1",
+        config: { provider: "provider_b", model: "model_two" },
+        updated: true,
+      });
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-u-exact-pair", {
+          action: "update",
+          agent_id: "bot-1",
+          config: { provider: "provider_b", model: "model_two" },
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("agents.update", {
+        agentId: "bot-1",
+        config: { provider: "provider_b", model: "model_two" },
+        _trustLevel: "admin",
+      });
+    });
   });
 
   // -----------------------------------------------------------------------
