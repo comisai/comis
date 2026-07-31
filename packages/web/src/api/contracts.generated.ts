@@ -4024,8 +4024,7 @@ export const CONTRACTS = {
       "additionalProperties": false
     },
     "scopes": [
-      "rpc",
-      "admin"
+      "rpc"
     ]
   },
   "cron.remove": {
