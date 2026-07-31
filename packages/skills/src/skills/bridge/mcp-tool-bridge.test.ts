@@ -8,7 +8,7 @@ import { ok, err } from "@comis/shared";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { describe, it, expect, vi } from "vitest";
-import { runWithContext } from "@comis/core";
+import { getToolMetadata, runWithContext } from "@comis/core";
 import type { McpToolDefinition, McpClientManager } from "../integrations/mcp-client/index.js";
 import type { ToolSourceProfile } from "../../tools/builtin/tool-source-profiles.js";
 import { mcpToolsToAgentTools, jsonSchemaToTypeBox, sanitizeMcpToolName, extractMcpServerName, classifyMcpErrorType } from "./mcp-tool-bridge.js";
@@ -217,6 +217,21 @@ describe("jsonSchemaToTypeBox", () => {
 // ---------------------------------------------------------------------------
 
 describe("mcpToolsToAgentTools", () => {
+  it("retains a server-declared mutation warning for conservative routing", () => {
+    mcpToolsToAgentTools([
+      makeTool({
+        name: "mutate",
+        qualifiedName: "mcp:db-server/mutate",
+        ...({ annotations: { readOnlyHint: false, destructiveHint: true } } as object),
+      } as McpToolDefinition),
+    ], makeCallTool());
+
+    const metadata = getToolMetadata("mcp__db-server--mutate") as unknown as {
+      externalMutationHint?: boolean;
+    };
+    expect(metadata.externalMutationHint).toBe(true);
+  });
+
   it("converts MCP tool with string params to AgentTool", () => {
     const tools = mcpToolsToAgentTools([makeTool()], makeCallTool());
 

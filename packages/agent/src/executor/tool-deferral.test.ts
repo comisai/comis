@@ -659,23 +659,33 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
         description: "Record a synthetic mutation. Use only on a direct operator request.",
       },
       {
+        ...makeTool("mcp__secondary--forbidden_action"),
+        description: "Record a synthetic mutation. Use only on a direct operator request.",
+      },
+      {
         ...makeTool("mcp_login"),
         description:
           "Start the OAuth login flow for an MCP server. Use after connecting an OAuth server.",
       },
     ] as unknown as ToolDefinition[];
     for (const tool of tools) {
-      registerToolMetadata(tool.name, { searchHint: tool.description ?? "" });
+      registerToolMetadata(tool.name, {
+        searchHint: tool.description ?? "",
+        externalMutationHint: tool.name.endsWith("--forbidden_action"),
+      } as never);
     }
     const ctx = makeContext({
       trustLevel: "admin",
       capabilityClass: "nano",
       requestText: "use both and tell me whats different",
       requestRelevanceText: [
-        "check my synthetic account",
-        "here is the credential",
-        "connect to it",
         "connect a second one",
+        "use both and tell me whats different",
+        "connect to it",
+        "connect the first one",
+        "retry the first one",
+        "retry the first one using the exact approved argument map in TOOLS.md",
+        "connect only the second one using the exact secondary approved argument map in TOOLS.md",
         "use both and tell me whats different",
       ].join("\n"),
       toolNames: tools.map((tool) => tool.name),
@@ -688,6 +698,7 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
       "mcp__secondary--account_summary",
     ]);
     expect(result.deferredNames).toContain("mcp__primary--forbidden_action");
+    expect(result.deferredNames).toContain("mcp__secondary--forbidden_action");
   });
 
   it("routes an explicit retry to the single tool used in the previous turn", () => {

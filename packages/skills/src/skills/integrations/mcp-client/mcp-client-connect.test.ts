@@ -54,6 +54,7 @@ import type {
 
 let connectImpl: () => Promise<void>;
 let serverInstructions: unknown;
+let listedTools: unknown[];
 
 vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
   class FakeClient {
@@ -61,7 +62,7 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
       return connectImpl();
     }
     async listTools(): Promise<{ tools: unknown[] }> {
-      return { tools: [] };
+      return { tools: listedTools };
     }
     getInstructions(): unknown {
       return serverInstructions;
@@ -83,6 +84,7 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
 
 beforeEach(() => {
   serverInstructions = undefined;
+  listedTools = [];
 });
 
 // The redirect-policy fetch is irrelevant here (we never reach the network); the
@@ -487,6 +489,25 @@ describe("connectServer — stdio failure diagnosability", () => {
     const ev = emitted.find((e) => e.event === "mcp:server:connected");
     expect(ev).toBeDefined();
     expect((ev!.payload as { serverName: string }).serverName).toBe("svc");
+  });
+
+  it("preserves tool annotations discovered during the MCP handshake", async () => {
+    connectImpl = () => Promise.resolve();
+    listedTools = [{
+      name: "mutate",
+      description: "Perform an external mutation.",
+      inputSchema: { type: "object", properties: {} },
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    }];
+    const state = makeState();
+    const deps = { logger: makeLogger() } as unknown as McpClientManagerDeps;
+
+    const result = await connectServer(state, deps, STDIO_CONFIG);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect((result.value.tools[0] as unknown as { annotations?: unknown }).annotations)
+      .toEqual({ readOnlyHint: false, destructiveHint: true });
   });
 
   it("rejects malformed server instructions with an actionable warning and health event", async () => {
